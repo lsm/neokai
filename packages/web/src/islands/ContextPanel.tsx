@@ -160,7 +160,6 @@ export function ContextPanel() {
 		try {
 			const room = await lobbyStore.createRoom({
 				name: `Room ${new Date().toLocaleDateString()}`,
-				description: '',
 			});
 
 			if (room) {

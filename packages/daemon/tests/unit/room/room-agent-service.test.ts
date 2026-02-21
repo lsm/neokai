@@ -143,7 +143,7 @@ describe('RoomAgentService', () => {
 		roomManager = new RoomManager(db);
 		room = roomManager.createRoom({
 			name: 'Test Room',
-			allowedPaths: ['/workspace/test'],
+			allowedPaths: [{ path: '/workspace/test' }],
 			defaultPath: '/workspace/test',
 		});
 
@@ -1172,7 +1172,7 @@ describe('RoomAgentService', () => {
 			// Create another room
 			const room2 = roomManager.createRoom({
 				name: 'Room 2',
-				allowedPaths: ['/workspace/test2'],
+				allowedPaths: [{ path: '/workspace/test2' }],
 			});
 
 			const service2 = new RoomAgentService({
@@ -1199,7 +1199,7 @@ describe('RoomAgentService', () => {
 		it('should handle events only for its own room', async () => {
 			const room2 = roomManager.createRoom({
 				name: 'Room 2',
-				allowedPaths: ['/workspace/test2'],
+				allowedPaths: [{ path: '/workspace/test2' }],
 			});
 
 			const service2 = new RoomAgentService({

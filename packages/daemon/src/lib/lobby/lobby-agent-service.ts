@@ -883,15 +883,19 @@ export class LobbyAgentService {
 			onCreateRoom: async (params: LobbyCreateRoomParams) => {
 				let room = this.roomManager.createRoom({
 					name: params.name,
-					description: params.description,
-					allowedPaths: params.allowedPaths ?? [],
-					defaultPath: params.defaultPath,
+					background: params.description, // Map description to background
 				});
 
-				// Update instructions if provided (separate step since it's not in CreateRoomParams)
-				if (params.instructions) {
+				// Update additional settings after creation
+				if (params.allowedPaths || params.defaultPath || params.instructions) {
+					// Convert string[] to WorkspacePath[]
+					const allowedPaths = params.allowedPaths?.map((p) => ({ path: p }));
 					room =
-						this.roomManager.updateRoom(room.id, { instructions: params.instructions }) ?? room;
+						this.roomManager.updateRoom(room.id, {
+							allowedPaths,
+							defaultPath: params.defaultPath,
+							instructions: params.instructions,
+						}) ?? room;
 				}
 
 				// Link repositories if provided

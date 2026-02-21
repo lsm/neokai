@@ -21,3 +21,6 @@ export type { ContextVersionHistoryProps } from './ContextVersionHistory';
 // @public - Library export
 export { ContextVersionViewer } from './ContextVersionViewer';
 export type { ContextVersionViewerProps } from './ContextVersionViewer';
+// @public - Library export
+export { RoomSettings } from './RoomSettings';
+export type { RoomSettingsProps } from './RoomSettings';

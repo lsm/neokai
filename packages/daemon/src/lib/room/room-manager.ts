@@ -149,8 +149,8 @@ export class RoomManager {
 	/**
 	 * Add an allowed path to a room
 	 */
-	addAllowedPath(roomId: string, path: string): Room | null {
-		return this.roomRepo.addPath(roomId, path);
+	addAllowedPath(roomId: string, path: string, description?: string): Room | null {
+		return this.roomRepo.addPath(roomId, path, description);
 	}
 
 	/**

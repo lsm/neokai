@@ -98,11 +98,12 @@ function createMockRoomManager(): {
 	const mockRoom: Room = {
 		id: 'room-123',
 		name: 'Test Room',
-		description: 'A test room',
+		background: 'A test room',
 		allowedPaths: [],
-		sessions: [],
-		createdAt: new Date().toISOString(),
-		updatedAt: new Date().toISOString(),
+		sessionIds: [],
+		status: 'active',
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
 	};
 
 	const mockRoomOverview: RoomOverview = {
@@ -220,27 +221,21 @@ describe('Room RPC Handlers', () => {
 			);
 		});
 
-		it('creates a room with all parameters', async () => {
+		it('creates a room with background', async () => {
 			const handler = messageHubData.handlers.get('room.create');
 			expect(handler).toBeDefined();
 
 			await handler!(
 				{
 					name: 'Full Room',
-					description: 'A full featured room',
-					allowedPaths: ['/path1', '/path2'],
-					defaultPath: '/default',
-					defaultModel: 'claude-sonnet',
+					background: 'A full featured room',
 				},
 				{}
 			);
 
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith({
 				name: 'Full Room',
-				description: 'A full featured room',
-				allowedPaths: ['/path1', '/path2'],
-				defaultPath: '/default',
-				defaultModel: 'claude-sonnet',
+				background: 'A full featured room',
 			});
 		});
 
@@ -338,8 +333,8 @@ describe('Room RPC Handlers', () => {
 				{
 					roomId: 'room-123',
 					name: 'Updated Name',
-					description: 'Updated description',
-					allowedPaths: ['/new-path'],
+					background: 'Updated background',
+					allowedPaths: [{ path: '/new-path' }],
 					defaultPath: '/new-default',
 					defaultModel: 'claude-opus',
 				},
@@ -348,8 +343,8 @@ describe('Room RPC Handlers', () => {
 
 			expect(roomManagerData.mocks.updateRoom).toHaveBeenCalledWith('room-123', {
 				name: 'Updated Name',
-				description: 'Updated description',
-				allowedPaths: ['/new-path'],
+				background: 'Updated background',
+				allowedPaths: [{ path: '/new-path' }],
 				defaultPath: '/new-default',
 				defaultModel: 'claude-opus',
 			});
@@ -576,7 +571,11 @@ describe('Room RPC Handlers', () => {
 
 			await handler!({ roomId: 'room-123', path: '/new/path' }, {});
 
-			expect(roomManagerData.mocks.addAllowedPath).toHaveBeenCalledWith('room-123', '/new/path');
+			expect(roomManagerData.mocks.addAllowedPath).toHaveBeenCalledWith(
+				'room-123',
+				'/new/path',
+				undefined
+			);
 		});
 
 		it('throws error when roomId is missing', async () => {

@@ -28,8 +28,8 @@ interface NewSessionModalProps {
 	rooms: Room[];
 	onCreateRoom?: (params: {
 		name: string;
-		description?: string;
-		allowedPaths?: string[];
+		background?: string;
+		allowedPaths?: { path: string; description?: string }[];
 		defaultPath?: string;
 	}) => Promise<Room | null>;
 }
@@ -98,8 +98,8 @@ export function NewSessionModal({
 
 			const room = await onCreateRoom({
 				name: newRoomName.trim(),
-				description: newRoomDescription.trim() || undefined,
-				allowedPaths: [selectedPath],
+				background: newRoomDescription.trim() || undefined,
+				allowedPaths: [{ path: selectedPath }],
 				defaultPath: selectedPath,
 			});
 

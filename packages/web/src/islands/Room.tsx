@@ -14,14 +14,14 @@ import { roomStore } from '../lib/room-store';
 import { navigateToHome } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
-import { ContextEditor, GoalsEditor, RecurringJobsConfig } from '../components/room';
+import { ContextEditor, GoalsEditor, RecurringJobsConfig, RoomSettings } from '../components/room';
 import type { CreateJobParams } from '../components/room/RecurringJobsConfig';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'dashboard' | 'context' | 'goals' | 'jobs';
+type RoomTab = 'dashboard' | 'context' | 'goals' | 'jobs' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -177,7 +177,6 @@ export default function Room({ roomId }: RoomProps) {
 				<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4 flex items-center justify-between">
 					<div>
 						<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
-						{room.description && <p class="text-sm text-gray-400 mt-1">{room.description}</p>}
 					</div>
 					<div class="flex gap-2">
 						<Button
@@ -195,9 +194,6 @@ export default function Room({ roomId }: RoomProps) {
 							onClick={() => setShowDeleteModal(true)}
 						>
 							Delete
-						</Button>
-						<Button variant="ghost" size="sm" onClick={() => navigateToHome()}>
-							Leave Room
 						</Button>
 					</div>
 				</div>
@@ -244,6 +240,16 @@ export default function Room({ roomId }: RoomProps) {
 					>
 						Jobs
 					</button>
+					<button
+						class={`px-4 py-2 text-sm font-medium transition-colors ${
+							activeTab === 'settings'
+								? 'text-blue-400 border-b-2 border-blue-400'
+								: 'text-gray-400 hover:text-gray-200'
+						}`}
+						onClick={() => setActiveTab('settings')}
+					>
+						Settings
+					</button>
 				</div>
 
 				{/* Tab content */}
@@ -287,6 +293,15 @@ export default function Room({ roomId }: RoomProps) {
 								onDeleteJob={handleDeleteJob}
 								onTriggerJob={handleTriggerJob}
 								isLoading={roomStore.jobsLoading.value}
+							/>
+						</div>
+					)}
+					{activeTab === 'settings' && (
+						<div class="h-full overflow-y-auto p-4">
+							<RoomSettings
+								room={room}
+								onSave={(params) => roomStore.updateSettings(params)}
+								isLoading={roomStore.loading.value}
 							/>
 						</div>
 					)}

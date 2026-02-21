@@ -68,7 +68,7 @@ export class SessionPairManager {
 		});
 
 		// 3. Determine workspace path and model
-		const workspacePath = params.workspacePath ?? room.defaultPath ?? room.allowedPaths[0];
+		const workspacePath = params.workspacePath ?? room.defaultPath ?? room.allowedPaths[0]?.path;
 		if (!workspacePath) {
 			throw new Error('No workspace path available for session pair');
 		}

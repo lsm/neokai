@@ -135,13 +135,15 @@ export function createTables(db: BunDatabase): void {
       CREATE TABLE IF NOT EXISTS rooms (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        description TEXT,
+        background_context TEXT,
+        instructions TEXT,
         allowed_paths TEXT DEFAULT '[]',
         default_path TEXT,
         default_model TEXT,
         session_ids TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
         context_id TEXT,
+        context_version INTEGER DEFAULT 1,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )

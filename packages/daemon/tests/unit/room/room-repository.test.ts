@@ -8,7 +8,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { RoomRepository } from '../../../src/storage/repositories/room-repository';
 import { createTables } from '../../../src/storage/schema';
-import type { Room, CreateRoomParams } from '@neokai/shared';
+import type { CreateRoomParams, WorkspacePath } from '@neokai/shared';
 
 describe('RoomRepository', () => {
 	let db: Database;
@@ -37,10 +37,7 @@ describe('RoomRepository', () => {
 		it('should create a room and verify all fields are set correctly', () => {
 			const params: CreateRoomParams = {
 				name: 'Test Room',
-				description: 'A test room for unit tests',
-				allowedPaths: ['/path/to/workspace', '/path/to/another'],
-				defaultPath: '/path/to/workspace',
-				defaultModel: 'claude-sonnet-4-20250514',
+				background: 'A test room for unit tests',
 			};
 
 			const room = repository.createRoom(params);
@@ -49,10 +46,10 @@ describe('RoomRepository', () => {
 			expect(room.id).toBeDefined();
 			expect(room.id.length).toBeGreaterThan(0);
 			expect(room.name).toBe('Test Room');
-			expect(room.description).toBe('A test room for unit tests');
-			expect(room.allowedPaths).toEqual(['/path/to/workspace', '/path/to/another']);
-			expect(room.defaultPath).toBe('/path/to/workspace');
-			expect(room.defaultModel).toBe('claude-sonnet-4-20250514');
+			expect(room.background).toBe('A test room for unit tests');
+			expect(room.allowedPaths).toEqual([]);
+			expect(room.defaultPath).toBeUndefined();
+			expect(room.defaultModel).toBeUndefined();
 			expect(room.sessionIds).toEqual([]);
 			expect(room.status).toBe('active');
 			expect(room.contextId).toBeUndefined();
@@ -70,23 +67,12 @@ describe('RoomRepository', () => {
 
 			expect(room.id).toBeDefined();
 			expect(room.name).toBe('Minimal Room');
-			expect(room.description).toBeUndefined();
+			expect(room.background).toBeUndefined();
 			expect(room.allowedPaths).toEqual([]);
 			expect(room.defaultPath).toBeUndefined();
 			expect(room.defaultModel).toBeUndefined();
 			expect(room.sessionIds).toEqual([]);
 			expect(room.status).toBe('active');
-		});
-
-		it('should create a room with empty allowedPaths', () => {
-			const params: CreateRoomParams = {
-				name: 'Empty Paths Room',
-				allowedPaths: [],
-			};
-
-			const room = repository.createRoom(params);
-
-			expect(room.allowedPaths).toEqual([]);
 		});
 
 		it('should create unique IDs for different rooms', () => {
@@ -101,7 +87,7 @@ describe('RoomRepository', () => {
 		it('should get room by ID', () => {
 			const created = repository.createRoom({
 				name: 'Test Room',
-				description: 'Test description',
+				background: 'Test background',
 			});
 
 			const room = repository.getRoom(created.id);
@@ -109,7 +95,7 @@ describe('RoomRepository', () => {
 			expect(room).not.toBeNull();
 			expect(room?.id).toBe(created.id);
 			expect(room?.name).toBe('Test Room');
-			expect(room?.description).toBe('Test description');
+			expect(room?.background).toBe('Test background');
 		});
 
 		it('should return null for non-existent room', () => {
@@ -119,21 +105,23 @@ describe('RoomRepository', () => {
 		});
 
 		it('should return all fields correctly', () => {
-			const params: CreateRoomParams = {
+			const created = repository.createRoom({
 				name: 'Full Room',
-				description: 'Description',
-				allowedPaths: ['/a', '/b'],
+				background: 'Background context',
+			});
+			// Update with additional settings
+			repository.updateRoom(created.id, {
+				allowedPaths: [{ path: '/a' }, { path: '/b' }],
 				defaultPath: '/a',
 				defaultModel: 'model-x',
-			};
-			const created = repository.createRoom(params);
+			});
 
 			const room = repository.getRoom(created.id)!;
 
 			expect(room.id).toBe(created.id);
 			expect(room.name).toBe('Full Room');
-			expect(room.description).toBe('Description');
-			expect(room.allowedPaths).toEqual(['/a', '/b']);
+			expect(room.background).toBe('Background context');
+			expect(room.allowedPaths).toEqual([{ path: '/a' }, { path: '/b' }]);
 			expect(room.defaultPath).toBe('/a');
 			expect(room.defaultModel).toBe('model-x');
 			expect(room.sessionIds).toEqual([]);
@@ -208,24 +196,27 @@ describe('RoomRepository', () => {
 			expect(updated?.name).toBe('New Name');
 		});
 
-		it('should update room description', () => {
-			const room = repository.createRoom({ name: 'Room', description: 'Old desc' });
+		it('should update room background', () => {
+			const room = repository.createRoom({ name: 'Room', background: 'Old background' });
 
-			const updated = repository.updateRoom(room.id, { description: 'New desc' });
+			const updated = repository.updateRoom(room.id, { background: 'New background' });
 
-			expect(updated?.description).toBe('New desc');
+			expect(updated?.background).toBe('New background');
 		});
 
 		it('should update room allowedPaths', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: ['/old'] });
+			const room = repository.createRoom({ name: 'Room' });
+			repository.updateRoom(room.id, { allowedPaths: [{ path: '/old' }] });
 
-			const updated = repository.updateRoom(room.id, { allowedPaths: ['/new', '/paths'] });
+			const paths: WorkspacePath[] = [{ path: '/new' }, { path: '/paths' }];
+			const updated = repository.updateRoom(room.id, { allowedPaths: paths });
 
-			expect(updated?.allowedPaths).toEqual(['/new', '/paths']);
+			expect(updated?.allowedPaths).toEqual(paths);
 		});
 
 		it('should update room defaultPath', () => {
-			const room = repository.createRoom({ name: 'Room', defaultPath: '/old' });
+			const room = repository.createRoom({ name: 'Room' });
+			repository.updateRoom(room.id, { defaultPath: '/old' });
 
 			const updated = repository.updateRoom(room.id, { defaultPath: '/new' });
 
@@ -233,7 +224,8 @@ describe('RoomRepository', () => {
 		});
 
 		it('should update room defaultModel', () => {
-			const room = repository.createRoom({ name: 'Room', defaultModel: 'old-model' });
+			const room = repository.createRoom({ name: 'Room' });
+			repository.updateRoom(room.id, { defaultModel: 'old-model' });
 
 			const updated = repository.updateRoom(room.id, { defaultModel: 'new-model' });
 
@@ -243,18 +235,18 @@ describe('RoomRepository', () => {
 		it('should update multiple fields at once', () => {
 			const room = repository.createRoom({
 				name: 'Original',
-				description: 'Old',
-				defaultModel: 'old-model',
+				background: 'Old',
 			});
+			repository.updateRoom(room.id, { defaultModel: 'old-model' });
 
 			const updated = repository.updateRoom(room.id, {
 				name: 'Updated',
-				description: 'New',
+				background: 'New',
 				defaultModel: 'new-model',
 			});
 
 			expect(updated?.name).toBe('Updated');
-			expect(updated?.description).toBe('New');
+			expect(updated?.background).toBe('New');
 			expect(updated?.defaultModel).toBe('new-model');
 		});
 
@@ -275,12 +267,12 @@ describe('RoomRepository', () => {
 			expect(updated).toBeNull();
 		});
 
-		it('should set description to null when explicitly set to null', () => {
-			const room = repository.createRoom({ name: 'Room', description: 'Has description' });
+		it('should set background to null when explicitly set to null', () => {
+			const room = repository.createRoom({ name: 'Room', background: 'Has background' });
 
-			const updated = repository.updateRoom(room.id, { description: null });
+			const updated = repository.updateRoom(room.id, { background: null });
 
-			expect(updated?.description).toBeUndefined();
+			expect(updated?.background).toBeUndefined();
 		});
 	});
 
@@ -391,38 +383,49 @@ describe('RoomRepository', () => {
 
 	describe('addPath', () => {
 		it('should add allowed path to room', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: [] });
+			const room = repository.createRoom({ name: 'Room' });
 
 			const updated = repository.addPath(room.id, '/new/path');
 
-			expect(updated?.allowedPaths).toEqual(['/new/path']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/new/path' }]);
+		});
+
+		it('should add path with description', () => {
+			const room = repository.createRoom({ name: 'Room' });
+
+			const updated = repository.addPath(room.id, '/new/path', 'Project workspace');
+
+			expect(updated?.allowedPaths).toEqual([
+				{ path: '/new/path', description: 'Project workspace' },
+			]);
 		});
 
 		it('should add multiple paths', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: [] });
+			const room = repository.createRoom({ name: 'Room' });
 
 			repository.addPath(room.id, '/path/1');
 			const updated = repository.addPath(room.id, '/path/2');
 
-			expect(updated?.allowedPaths).toEqual(['/path/1', '/path/2']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/path/1' }, { path: '/path/2' }]);
 		});
 
 		it('should be idempotent - adding same path twice should not duplicate', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: [] });
+			const room = repository.createRoom({ name: 'Room' });
 
 			repository.addPath(room.id, '/duplicate/path');
 			const updated = repository.addPath(room.id, '/duplicate/path');
 
-			expect(updated?.allowedPaths).toEqual(['/duplicate/path']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/duplicate/path' }]);
 			expect(updated?.allowedPaths.length).toBe(1);
 		});
 
 		it('should preserve existing paths when adding new one', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: ['/existing'] });
+			const room = repository.createRoom({ name: 'Room' });
+			repository.addPath(room.id, '/existing');
 
 			const updated = repository.addPath(room.id, '/new');
 
-			expect(updated?.allowedPaths).toEqual(['/existing', '/new']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/existing' }, { path: '/new' }]);
 		});
 
 		it('should return null for non-existent room', () => {
@@ -444,23 +447,26 @@ describe('RoomRepository', () => {
 
 	describe('removePath', () => {
 		it('should remove allowed path from room', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: ['/path/1', '/path/2'] });
+			const room = repository.createRoom({ name: 'Room' });
+			repository.addPath(room.id, '/path/1');
+			repository.addPath(room.id, '/path/2');
 
 			const updated = repository.removePath(room.id, '/path/1');
 
-			expect(updated?.allowedPaths).toEqual(['/path/2']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/path/2' }]);
 		});
 
 		it('should be idempotent - removing non-existent path should not error', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: ['/path/1'] });
+			const room = repository.createRoom({ name: 'Room' });
+			repository.addPath(room.id, '/path/1');
 
 			const updated = repository.removePath(room.id, '/non-existent');
 
-			expect(updated?.allowedPaths).toEqual(['/path/1']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/path/1' }]);
 		});
 
 		it('should return room unchanged when removing from empty allowedPaths', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: [] });
+			const room = repository.createRoom({ name: 'Room' });
 
 			const updated = repository.removePath(room.id, '/any/path');
 
@@ -474,8 +480,9 @@ describe('RoomRepository', () => {
 		});
 
 		it('should update updatedAt timestamp when removing path', async () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: ['/path'] });
-			const beforeRemove = room.updatedAt;
+			const room = repository.createRoom({ name: 'Room' });
+			repository.addPath(room.id, '/path');
+			const beforeRemove = repository.getRoom(room.id)!.updatedAt;
 
 			await new Promise((resolve) => setTimeout(resolve, 5));
 			const updated = repository.removePath(room.id, '/path');
@@ -549,16 +556,17 @@ describe('RoomRepository', () => {
 		it('should preserve other fields when archiving', () => {
 			const room = repository.createRoom({
 				name: 'Room to Archive',
-				description: 'Important room',
-				allowedPaths: ['/path/1', '/path/2'],
+				background: 'Important room',
 			});
+			repository.addPath(room.id, '/path/1');
+			repository.addPath(room.id, '/path/2');
 			repository.addSessionToRoom(room.id, 'session-1');
 
 			const archived = repository.archiveRoom(room.id);
 
 			expect(archived?.name).toBe('Room to Archive');
-			expect(archived?.description).toBe('Important room');
-			expect(archived?.allowedPaths).toEqual(['/path/1', '/path/2']);
+			expect(archived?.background).toBe('Important room');
+			expect(archived?.allowedPaths).toEqual([{ path: '/path/1' }, { path: '/path/2' }]);
 			expect(archived?.sessionIds).toEqual(['session-1']);
 			expect(archived?.status).toBe('archived');
 		});
@@ -593,7 +601,7 @@ describe('RoomRepository', () => {
 
 	describe('transaction behavior', () => {
 		it('should handle concurrent path additions correctly', () => {
-			const room = repository.createRoom({ name: 'Room', allowedPaths: [] });
+			const room = repository.createRoom({ name: 'Room' });
 
 			// Simulate concurrent additions
 			repository.addPath(room.id, '/path/1');
@@ -602,9 +610,9 @@ describe('RoomRepository', () => {
 
 			const final = repository.getRoom(room.id);
 			expect(final?.allowedPaths).toHaveLength(3);
-			expect(final?.allowedPaths).toContain('/path/1');
-			expect(final?.allowedPaths).toContain('/path/2');
-			expect(final?.allowedPaths).toContain('/path/3');
+			expect(final?.allowedPaths).toContainEqual({ path: '/path/1' });
+			expect(final?.allowedPaths).toContainEqual({ path: '/path/2' });
+			expect(final?.allowedPaths).toContainEqual({ path: '/path/3' });
 		});
 
 		it('should handle concurrent session additions correctly', () => {

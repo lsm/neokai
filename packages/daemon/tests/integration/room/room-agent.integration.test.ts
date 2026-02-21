@@ -264,7 +264,7 @@ async function createTestContext(): Promise<TestContext> {
 	const roomManager = new RoomManager(bunDb);
 	const room = roomManager.createRoom({
 		name: 'Test Room',
-		allowedPaths: ['/workspace/test'],
+		allowedPaths: [{ path: '/workspace/test' }],
 		defaultPath: '/workspace/test',
 	});
 

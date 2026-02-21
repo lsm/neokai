@@ -52,7 +52,7 @@ describe('RoomAgentLifecycleManager', () => {
 		roomManager = new RoomManager(db);
 		const room = roomManager.createRoom({
 			name: 'Test Room',
-			allowedPaths: ['/workspace/test'],
+			allowedPaths: [{ path: '/workspace/test' }],
 			defaultPath: '/workspace/test',
 		});
 		roomId = room.id;

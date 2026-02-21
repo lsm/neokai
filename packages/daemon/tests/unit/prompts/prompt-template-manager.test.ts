@@ -70,7 +70,7 @@ describe('PromptTemplateManager', () => {
 		return {
 			roomId: 'room-1',
 			roomName: 'Test Room',
-			allowedPaths: ['/workspace/test'],
+			allowedPaths: [{ path: '/workspace/test' }],
 			repositories: ['owner/repo'],
 			activeGoals: [],
 			currentDate: '2026-02-18',

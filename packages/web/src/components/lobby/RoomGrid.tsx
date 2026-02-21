@@ -67,9 +67,7 @@ function RoomCard({ room, onClick }: RoomCardProps) {
 				)}
 			</div>
 
-			{room.description && (
-				<p class="text-sm text-gray-400 mb-4 line-clamp-2">{room.description}</p>
-			)}
+			{room.background && <p class="text-sm text-gray-400 mb-4 line-clamp-2">{room.background}</p>}
 
 			<div class="flex items-center gap-4 text-sm">
 				<div class="flex items-center gap-1.5">

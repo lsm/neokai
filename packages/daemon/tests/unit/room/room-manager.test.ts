@@ -13,7 +13,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
 import { RoomManager } from '../../../src/lib/room/room-manager';
-import type { CreateRoomParams } from '@neokai/shared';
+import type { CreateRoomParams, WorkspacePath } from '@neokai/shared';
 
 describe('RoomManager', () => {
 	let db: Database;
@@ -49,22 +49,16 @@ describe('RoomManager', () => {
 			expect(room.updatedAt).toBe(room.createdAt);
 		});
 
-		it('should create a room with all optional fields', () => {
+		it('should create a room with background context', () => {
 			const params: CreateRoomParams = {
 				name: 'Full Room',
-				description: 'A room with all fields',
-				allowedPaths: ['/workspace/project1', '/workspace/project2'],
-				defaultPath: '/workspace/project1',
-				defaultModel: 'claude-sonnet-4-20250514',
+				background: 'A room with background context',
 			};
 
 			const room = roomManager.createRoom(params);
 
 			expect(room.name).toBe('Full Room');
-			expect(room.description).toBe('A room with all fields');
-			expect(room.allowedPaths).toEqual(['/workspace/project1', '/workspace/project2']);
-			expect(room.defaultPath).toBe('/workspace/project1');
-			expect(room.defaultModel).toBe('claude-sonnet-4-20250514');
+			expect(room.background).toBe('A room with background context');
 		});
 
 		it('should create a context for the room', () => {
@@ -122,19 +116,21 @@ describe('RoomManager', () => {
 		});
 
 		it('should return complete room data', () => {
-			const params: CreateRoomParams = {
+			const created = roomManager.createRoom({
 				name: 'Complete Room',
-				description: 'Description',
-				allowedPaths: ['/path1'],
+				background: 'Background context',
+			});
+			// Update with additional settings
+			roomManager.updateRoom(created.id, {
+				allowedPaths: [{ path: '/path1' }],
 				defaultPath: '/path1',
 				defaultModel: 'claude-opus-4-5-20250514',
-			};
-			const created = roomManager.createRoom(params);
+			});
 			const room = roomManager.getRoom(created.id)!;
 
 			expect(room.name).toBe('Complete Room');
-			expect(room.description).toBe('Description');
-			expect(room.allowedPaths).toEqual(['/path1']);
+			expect(room.background).toBe('Background context');
+			expect(room.allowedPaths).toEqual([{ path: '/path1' }]);
 			expect(room.defaultPath).toBe('/path1');
 			expect(room.defaultModel).toBe('claude-opus-4-5-20250514');
 			expect(room.status).toBe('active');
@@ -278,20 +274,21 @@ describe('RoomManager', () => {
 			expect(updated?.id).toBe(room.id);
 		});
 
-		it('should update room description', () => {
+		it('should update room background', () => {
 			const room = roomManager.createRoom({ name: 'Room' });
-			const updated = roomManager.updateRoom(room.id, { description: 'New description' });
+			const updated = roomManager.updateRoom(room.id, { background: 'New background context' });
 
-			expect(updated?.description).toBe('New description');
+			expect(updated?.background).toBe('New background context');
 		});
 
 		it('should update allowed paths', () => {
 			const room = roomManager.createRoom({ name: 'Room' });
+			const paths: WorkspacePath[] = [{ path: '/new/path1' }, { path: '/new/path2' }];
 			const updated = roomManager.updateRoom(room.id, {
-				allowedPaths: ['/new/path1', '/new/path2'],
+				allowedPaths: paths,
 			});
 
-			expect(updated?.allowedPaths).toEqual(['/new/path1', '/new/path2']);
+			expect(updated?.allowedPaths).toEqual(paths);
 		});
 
 		it('should update default path', () => {
@@ -314,12 +311,12 @@ describe('RoomManager', () => {
 			const room = roomManager.createRoom({ name: 'Original' });
 			const updated = roomManager.updateRoom(room.id, {
 				name: 'Updated Name',
-				description: 'Updated description',
+				background: 'Updated background',
 				defaultModel: 'claude-sonnet-4-20250514',
 			});
 
 			expect(updated?.name).toBe('Updated Name');
-			expect(updated?.description).toBe('Updated description');
+			expect(updated?.background).toBe('Updated background');
 			expect(updated?.defaultModel).toBe('claude-sonnet-4-20250514');
 		});
 
@@ -342,18 +339,20 @@ describe('RoomManager', () => {
 		it('should allow clearing optional fields with null', () => {
 			const room = roomManager.createRoom({
 				name: 'Room',
-				description: 'To be cleared',
+				background: 'To be cleared',
+			});
+			roomManager.updateRoom(room.id, {
 				defaultPath: '/to/be/cleared',
 				defaultModel: 'to-be-cleared',
 			});
 
 			const updated = roomManager.updateRoom(room.id, {
-				description: null,
+				background: null,
 				defaultPath: null,
 				defaultModel: null,
 			});
 
-			expect(updated?.description).toBeUndefined();
+			expect(updated?.background).toBeUndefined();
 			expect(updated?.defaultPath).toBeUndefined();
 			expect(updated?.defaultModel).toBeUndefined();
 		});
@@ -734,7 +733,16 @@ describe('RoomManager', () => {
 			const room = roomManager.createRoom({ name: 'Room' });
 			const updated = roomManager.addAllowedPath(room.id, '/new/path');
 
-			expect(updated?.allowedPaths).toContain('/new/path');
+			expect(updated?.allowedPaths).toEqual([{ path: '/new/path' }]);
+		});
+
+		it('should add a path with description', () => {
+			const room = roomManager.createRoom({ name: 'Room' });
+			const updated = roomManager.addAllowedPath(room.id, '/new/path', 'Project workspace');
+
+			expect(updated?.allowedPaths).toEqual([
+				{ path: '/new/path', description: 'Project workspace' },
+			]);
 		});
 
 		it('should be idempotent - adding same path twice', () => {
@@ -754,23 +762,20 @@ describe('RoomManager', () => {
 
 	describe('removeAllowedPath', () => {
 		it('should remove a path from allowed paths', () => {
-			const room = roomManager.createRoom({
-				name: 'Room',
-				allowedPaths: ['/path1', '/path2'],
-			});
+			const room = roomManager.createRoom({ name: 'Room' });
+			roomManager.addAllowedPath(room.id, '/path1');
+			roomManager.addAllowedPath(room.id, '/path2');
 			const updated = roomManager.removeAllowedPath(room.id, '/path1');
 
-			expect(updated?.allowedPaths).toEqual(['/path2']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/path2' }]);
 		});
 
 		it('should be idempotent - removing non-existent path', () => {
-			const room = roomManager.createRoom({
-				name: 'Room',
-				allowedPaths: ['/path1'],
-			});
+			const room = roomManager.createRoom({ name: 'Room' });
+			roomManager.addAllowedPath(room.id, '/path1');
 			const updated = roomManager.removeAllowedPath(room.id, '/non-existent');
 
-			expect(updated?.allowedPaths).toEqual(['/path1']);
+			expect(updated?.allowedPaths).toEqual([{ path: '/path1' }]);
 		});
 
 		it('should return null for non-existent room', () => {

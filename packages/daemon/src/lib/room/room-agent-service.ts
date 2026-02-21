@@ -201,7 +201,8 @@ export class RoomAgentService {
 			// Build the AgentSessionInit
 			const init: AgentSessionInit = {
 				sessionId: this.sessionId,
-				workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0] ?? process.cwd(),
+				workspacePath:
+					this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0]?.path ?? process.cwd(),
 				systemPrompt,
 				mcpServers: {
 					'room-agent-tools': this.roomMcpServer as unknown as McpServerConfig,
@@ -636,7 +637,7 @@ export class RoomAgentService {
 				roomSessionId: this.sessionId,
 				taskTitle: task.title,
 				taskDescription: task.description,
-				workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0],
+				workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0]?.path,
 			});
 
 			if (this.lifecycleManager) {
@@ -1101,7 +1102,7 @@ export class RoomAgentService {
 					roomSessionId: this.sessionId,
 					taskTitle: task.title,
 					taskDescription: task.description,
-					workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0],
+					workspacePath: this.ctx.room.defaultPath ?? this.ctx.room.allowedPaths[0]?.path,
 				});
 
 				await this.taskManager.startTask(params.taskId, result.pair.workerSessionId);
