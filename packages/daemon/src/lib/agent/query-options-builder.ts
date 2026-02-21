@@ -187,6 +187,40 @@ export class QueryOptionsBuilder {
 			canUseTool: this.canUseTool,
 		};
 
+		// ============ Room Session Restrictions ============
+		// Room agents are orchestrators only — they must not have access to built-in
+		// file/shell tools or user-configured MCP servers (e.g. chrome-devtools).
+		if (this.ctx.session.type === 'room') {
+			const builtinTools = [
+				'Task',
+				'TaskOutput',
+				'TaskStop',
+				'Bash',
+				'Read',
+				'Edit',
+				'Write',
+				'Glob',
+				'Grep',
+				'NotebookEdit',
+				'WebFetch',
+				'WebSearch',
+				'TodoWrite',
+				'AskUserQuestion',
+				'EnterPlanMode',
+				'ExitPlanMode',
+				'Skill',
+				'ToolSearch',
+			];
+			queryOptions.disallowedTools = [
+				...new Set([...(queryOptions.disallowedTools ?? []), ...builtinTools]),
+			];
+			// Prevent user-configured MCP servers (from ~/.claude/settings.json) from
+			// being merged in — the room agent only needs its own room-agent-tools MCP.
+			queryOptions.strictMcpConfig = true;
+			// Skip settings file loading so user's settings.json doesn't inject extra tools.
+			queryOptions.settingSources = [];
+		}
+
 		// ============ Coordinator Mode ============
 		// When coordinator mode is enabled, apply the coordinator agent to the main thread
 		// and merge specialist agents with any user-defined agents
