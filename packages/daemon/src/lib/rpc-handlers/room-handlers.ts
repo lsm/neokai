@@ -22,7 +22,7 @@
  * Renamed from neo.room.* to room.* for cleaner API.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, WorkspacePath } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
@@ -39,10 +39,7 @@ export function setupRoomHandlers(
 	messageHub.onRequest('room.create', async (data) => {
 		const params = data as {
 			name: string;
-			description?: string;
-			allowedPaths?: string[];
-			defaultPath?: string;
-			defaultModel?: string;
+			background?: string;
 		};
 
 		if (!params.name) {
@@ -51,10 +48,7 @@ export function setupRoomHandlers(
 
 		const room = roomManager.createRoom({
 			name: params.name,
-			description: params.description,
-			allowedPaths: params.allowedPaths,
-			defaultPath: params.defaultPath,
-			defaultModel: params.defaultModel,
+			background: params.background,
 		});
 
 		// Broadcast room creation event
@@ -99,10 +93,11 @@ export function setupRoomHandlers(
 		const params = data as {
 			roomId: string;
 			name?: string;
-			description?: string;
-			allowedPaths?: string[];
+			allowedPaths?: WorkspacePath[];
 			defaultPath?: string;
 			defaultModel?: string;
+			background?: string;
+			instructions?: string;
 		};
 
 		if (!params.roomId) {
@@ -111,10 +106,11 @@ export function setupRoomHandlers(
 
 		const room = roomManager.updateRoom(params.roomId, {
 			name: params.name,
-			description: params.description,
 			allowedPaths: params.allowedPaths,
 			defaultPath: params.defaultPath,
 			defaultModel: params.defaultModel,
+			background: params.background,
+			instructions: params.instructions,
 		});
 
 		if (!room) {
@@ -375,7 +371,7 @@ export function setupRoomHandlers(
 
 	// room.addPath - Add an allowed path to a room
 	messageHub.onRequest('room.addPath', async (data) => {
-		const params = data as { roomId: string; path: string };
+		const params = data as { roomId: string; path: string; description?: string };
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
@@ -384,7 +380,7 @@ export function setupRoomHandlers(
 			throw new Error('Path is required');
 		}
 
-		const room = roomManager.addAllowedPath(params.roomId, params.path);
+		const room = roomManager.addAllowedPath(params.roomId, params.path, params.description);
 		if (!room) {
 			throw new Error(`Room not found: ${params.roomId}`);
 		}

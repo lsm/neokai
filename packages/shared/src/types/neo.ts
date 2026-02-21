@@ -15,6 +15,16 @@
 export type RoomStatus = 'active' | 'archived';
 
 /**
+ * A workspace path with optional description
+ */
+export interface WorkspacePath {
+	/** The filesystem path */
+	path: string;
+	/** Optional description of what's in this path */
+	description?: string;
+}
+
+/**
  * A conceptual workspace for organizing work
  * Rooms are long-running work dimensions that can span multiple sessions and workspaces
  */
@@ -23,10 +33,8 @@ export interface Room {
 	id: string;
 	/** Human-readable name */
 	name: string;
-	/** Optional description of the room's purpose */
-	description?: string;
 	/** Allowed workspace paths for this room (multi-path support) */
-	allowedPaths: string[];
+	allowedPaths: WorkspacePath[];
 	/** Default workspace path for new sessions (must be in allowedPaths) */
 	defaultPath?: string;
 	/** Default model for sessions created in this room */
@@ -95,10 +103,8 @@ export interface RoomGoal {
  */
 export interface CreateRoomParams {
 	name: string;
-	description?: string;
-	allowedPaths?: string[];
-	defaultPath?: string;
-	defaultModel?: string;
+	/** Background context for the room - describes project, goals, constraints */
+	background?: string;
 }
 
 /**
@@ -106,8 +112,7 @@ export interface CreateRoomParams {
  */
 export interface UpdateRoomParams {
 	name?: string;
-	description?: string;
-	allowedPaths?: string[];
+	allowedPaths?: WorkspacePath[];
 	defaultPath?: string;
 	defaultModel?: string;
 	/** Background context for the room */

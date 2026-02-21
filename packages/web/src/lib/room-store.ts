@@ -28,6 +28,7 @@ import type {
 	RecurringJob,
 	CreateRecurringJobParams,
 	RoomContextVersion,
+	WorkspacePath,
 } from '@neokai/shared';
 
 /**
@@ -767,6 +768,33 @@ class RoomStore {
 	// ========================================
 	// Room Management Methods
 	// ========================================
+
+	/**
+	 * Update room settings (name, allowedPaths, defaultPath, defaultModel)
+	 */
+	async updateSettings(params: {
+		name?: string;
+		allowedPaths?: WorkspacePath[];
+		defaultPath?: string;
+		defaultModel?: string;
+	}): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		try {
+			await hub.request('room.update', { roomId, ...params });
+		} catch (err) {
+			logger.error('Failed to update room settings:', err);
+			throw err;
+		}
+	}
 
 	/**
 	 * Archive the current room (soft delete, data preserved)

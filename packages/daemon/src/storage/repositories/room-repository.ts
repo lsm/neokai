@@ -7,7 +7,13 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-import type { Room, CreateRoomParams, UpdateRoomParams, ContextChangedBy } from '@neokai/shared';
+import type {
+	Room,
+	CreateRoomParams,
+	UpdateRoomParams,
+	ContextChangedBy,
+	WorkspacePath,
+} from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 import { RoomContextVersionRepository } from './room-context-version-repository';
 
@@ -36,17 +42,17 @@ export class RoomRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO rooms (id, name, description, allowed_paths, default_path, default_model, session_ids, status, context_id, created_at, updated_at)
+			`INSERT INTO rooms (id, name, background_context, allowed_paths, default_path, default_model, session_ids, status, context_id, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
 			id,
 			params.name,
-			params.description ?? null,
-			JSON.stringify(params.allowedPaths ?? []),
-			params.defaultPath ?? null,
-			params.defaultModel ?? null,
+			params.background ?? null,
+			JSON.stringify([]), // allowedPaths - set via settings after creation
+			null, // defaultPath
+			null, // defaultModel
 			'[]',
 			'active',
 			null,
@@ -94,10 +100,6 @@ export class RoomRepository {
 		if (params.name !== undefined) {
 			fields.push('name = ?');
 			values.push(params.name);
-		}
-		if (params.description !== undefined) {
-			fields.push('description = ?');
-			values.push(params.description ?? null);
 		}
 		if (params.allowedPaths !== undefined) {
 			fields.push('allowed_paths = ?');
@@ -315,17 +317,17 @@ export class RoomRepository {
 	/**
 	 * Add a path to the room's allowed paths
 	 */
-	addPath(id: string, path: string): Room | null {
+	addPath(id: string, path: string, description?: string): Room | null {
 		const tx = this.db.transaction(() => {
 			const room = this.getRoom(id);
 			if (!room) return null;
 
 			// Idempotent - don't add if already present
-			if (room.allowedPaths.includes(path)) {
+			if (room.allowedPaths.some((p) => p.path === path)) {
 				return room;
 			}
 
-			const allowedPaths = [...room.allowedPaths, path];
+			const allowedPaths: WorkspacePath[] = [...room.allowedPaths, { path, description }];
 			const stmt = this.db.prepare(
 				`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`
 			);
@@ -345,11 +347,11 @@ export class RoomRepository {
 			if (!room) return null;
 
 			// Idempotent - no-op if path not in allowed paths
-			if (!room.allowedPaths.includes(path)) {
+			if (!room.allowedPaths.some((p) => p.path === path)) {
 				return room;
 			}
 
-			const allowedPaths = room.allowedPaths.filter((p) => p !== path);
+			const allowedPaths = room.allowedPaths.filter((p) => p.path !== path);
 			const stmt = this.db.prepare(
 				`UPDATE rooms SET allowed_paths = ?, updated_at = ? WHERE id = ?`
 			);
@@ -364,11 +366,16 @@ export class RoomRepository {
 	 * Convert a database row to a Room object
 	 */
 	private rowToRoom(row: Record<string, unknown>): Room {
+		// Parse allowedPaths, handling backward compatibility with string[] format
+		const rawPaths = JSON.parse((row.allowed_paths as string) ?? '[]');
+		const allowedPaths = rawPaths.map((p: string | { path: string; description?: string }) =>
+			typeof p === 'string' ? { path: p } : p
+		);
+
 		return {
 			id: row.id as string,
 			name: row.name as string,
-			description: (row.description as string | null) ?? undefined,
-			allowedPaths: JSON.parse((row.allowed_paths as string) ?? '[]') as string[],
+			allowedPaths,
 			defaultPath: (row.default_path as string | null) ?? undefined,
 			defaultModel: (row.default_model as string | null) ?? undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],

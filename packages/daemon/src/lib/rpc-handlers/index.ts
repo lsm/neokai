@@ -50,6 +50,7 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
 import { PromptTemplateManager } from '../prompts/prompt-template-manager';
+import { setupDialogHandlers } from './dialog-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -230,6 +231,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		roomManager,
 		deps.gitHubService ?? null
 	);
+
+	// Dialog handlers (native OS dialogs)
+	setupDialogHandlers(deps.messageHub);
 
 	// Return cleanup function to stop background services
 	return () => {
