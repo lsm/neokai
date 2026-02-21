@@ -7,15 +7,17 @@ import ToastContainer from './islands/ToastContainer.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { currentSessionIdSignal, navRailOpenSignal } from './lib/signals.ts';
+import { currentSessionIdSignal, currentRoomIdSignal, navRailOpenSignal } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
 import {
 	initializeRouter,
 	navigateToSession,
+	navigateToRoom,
 	navigateToHome,
 	createSessionPath,
+	createRoomPath,
 } from './lib/router.ts';
 
 export function App() {
@@ -62,19 +64,26 @@ export function App() {
 
 		init();
 
-		// STEP 4: Sync URL when session changes from external sources
+		// STEP 4: Sync URL when session/room changes from external sources
 		// (e.g., session created/deleted in another tab)
 		// This effect watches for signal changes and updates the URL
 		return effect(() => {
 			const sessionId = currentSessionIdSignal.value;
+			const roomId = currentRoomIdSignal.value;
 			const currentPath = window.location.pathname;
-			const expectedPath = sessionId ? createSessionPath(sessionId) : '/';
+			const expectedPath = sessionId
+				? createSessionPath(sessionId)
+				: roomId
+					? createRoomPath(roomId)
+					: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
 			if (currentPath !== expectedPath) {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
+				} else if (roomId) {
+					navigateToRoom(roomId, true);
 				} else {
 					navigateToHome(true);
 				}

@@ -266,8 +266,12 @@ export function initializeRouter(): string | null {
 	if (initialRoomId) {
 		currentRoomIdSignal.value = initialRoomId;
 		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 	} else {
 		currentSessionIdSignal.value = initialSessionId;
+		if (initialSessionId) {
+			navSectionSignal.value = 'chats';
+		}
 	}
 
 	// Set up popstate listener for back/forward navigation
