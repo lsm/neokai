@@ -489,22 +489,24 @@ export class RoomNeo {
 			throw new Error('Room not initialized');
 		}
 
+		const pathStrings = this.room.allowedPaths.map((p) => p.path);
+
 		// If specific path requested, validate it
 		if (requestedPath) {
-			if (this.room.allowedPaths.includes(requestedPath)) {
+			if (pathStrings.includes(requestedPath)) {
 				return requestedPath;
 			}
 			throw new Error(`Path "${requestedPath}" is not allowed in this room`);
 		}
 
 		// Use room's default path if available and valid
-		if (this.room.defaultPath && this.room.allowedPaths.includes(this.room.defaultPath)) {
+		if (this.room.defaultPath && pathStrings.includes(this.room.defaultPath)) {
 			return this.room.defaultPath;
 		}
 
 		// Fall back to first allowed path
-		if (this.room.allowedPaths.length > 0) {
-			return this.room.allowedPaths[0];
+		if (pathStrings.length > 0) {
+			return pathStrings[0];
 		}
 
 		throw new Error('No allowed paths configured for this room');

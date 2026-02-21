@@ -15,7 +15,7 @@ export function buildRoomPrompt(
 ): string {
 	return _ROOM_NEO_SYSTEM_PROMPT
 		.replace('{roomName}', room.name)
-		.replace('{roomDescription}', room.description || 'No description')
+		.replace('{roomDescription}', room.background || 'No background context')
 		.replace('{activeSessions}', sessions.length.toString())
 		.replace('{pendingTasks}', tasks.filter((t) => t.status === 'pending').length.toString());
 }

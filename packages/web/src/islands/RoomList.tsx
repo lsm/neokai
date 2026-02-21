@@ -55,7 +55,7 @@ function RoomListItem({ room, onClick }: RoomListItemProps) {
 					<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">Archived</span>
 				)}
 			</div>
-			{room.description && <p class="text-xs text-gray-500 mt-1 truncate">{room.description}</p>}
+			{room.background && <p class="text-xs text-gray-500 mt-1 truncate">{room.background}</p>}
 			<div class="flex items-center gap-3 mt-2 text-xs text-gray-400">
 				<div class="flex items-center gap-1.5">
 					<div

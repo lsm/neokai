@@ -94,7 +94,7 @@ export function createLobbyAgentMcpServer(config: LobbyAgentToolsConfig) {
 							rooms: rooms.map((r) => ({
 								id: r.id,
 								name: r.name,
-								description: r.description,
+								background: r.background,
 								status: r.status,
 							})),
 						}),
@@ -135,10 +135,9 @@ export function createLobbyAgentMcpServer(config: LobbyAgentToolsConfig) {
 								room: {
 									id: room.id,
 									name: room.name,
-									description: room.description,
+									background: room.background,
 									status: room.status,
 									instructions: room.instructions,
-									background: room.background,
 									allowedPaths: room.allowedPaths,
 									defaultPath: room.defaultPath,
 								},
