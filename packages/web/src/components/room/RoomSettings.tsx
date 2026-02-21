@@ -8,11 +8,12 @@
  */
 
 import { useSignal } from '@preact/signals';
-import { useEffect } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { Room, WorkspacePath } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
+import { ConfirmModal } from '../ui/ConfirmModal';
 import { toast } from '../../lib/toast';
 
 export interface RoomSettingsProps {
@@ -24,6 +25,8 @@ export interface RoomSettingsProps {
 		defaultModel?: string;
 		allowedModels?: string[];
 	}) => Promise<void>;
+	onArchive?: () => Promise<void>;
+	onDelete?: () => Promise<void>;
 	isLoading?: boolean;
 }
 
@@ -33,7 +36,13 @@ interface ModelInfo {
 	display_name?: string;
 }
 
-export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsProps) {
+export function RoomSettings({
+	room,
+	onSave,
+	onArchive,
+	onDelete,
+	isLoading = false,
+}: RoomSettingsProps) {
 	const name = useSignal(room.name);
 	const defaultModel = useSignal(room.defaultModel || '');
 	const allowedPaths = useSignal<WorkspacePath[]>([...room.allowedPaths]);
@@ -41,6 +50,10 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 	// null = all allowed (no restriction); array = explicit set
 	const allowedModels = useSignal<string[] | null>(room.allowedModels ?? null);
 	const isSaving = useSignal(false);
+	const [showArchiveModal, setShowArchiveModal] = useState(false);
+	const [isArchiving, setIsArchiving] = useState(false);
+	const [showDeleteModal, setShowDeleteModal] = useState(false);
+	const [isDeleting, setIsDeleting] = useState(false);
 	const isLoadingModels = useSignal(false);
 	const availableModels = useSignal<ModelInfo[]>([]);
 	const newPath = useSignal('');
@@ -418,6 +431,54 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 						</Button>
 					</div>
 				</div>
+
+				{/* Danger Zone */}
+				{(onArchive ?? onDelete) && (
+					<div class="border border-red-900/50 rounded-lg overflow-hidden">
+						<div class="px-4 py-2.5 bg-red-950/30">
+							<h3 class="text-sm font-semibold text-red-400">Danger Zone</h3>
+						</div>
+						<div class="divide-y divide-red-900/30">
+							{onArchive && (
+								<div class="px-4 py-3 flex items-center justify-between gap-4">
+									<div class="min-w-0">
+										<p class="text-sm font-medium text-gray-200">Archive room</p>
+										<p class="text-xs text-gray-500 mt-0.5">
+											Hide from the active list. All data is preserved and can be restored later.
+										</p>
+									</div>
+									<button
+										type="button"
+										onClick={() => setShowArchiveModal(true)}
+										disabled={disabled}
+										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										Archive
+									</button>
+								</div>
+							)}
+							{onDelete && (
+								<div class="px-4 py-3 flex items-center justify-between gap-4">
+									<div class="min-w-0">
+										<p class="text-sm font-medium text-gray-200">Delete this room</p>
+										<p class="text-xs text-gray-500 mt-0.5">
+											Permanently remove this room and all sessions, tasks, goals, and messages.
+											Cannot be undone.
+										</p>
+									</div>
+									<button
+										type="button"
+										onClick={() => setShowDeleteModal(true)}
+										disabled={disabled}
+										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-red-700/60 text-red-400 hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										Delete
+									</button>
+								</div>
+							)}
+						</div>
+					</div>
+				)}
 			</div>
 
 			{/* Footer */}
@@ -432,6 +493,44 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 					Save Changes
 				</Button>
 			</div>
+
+			{/* Danger zone modals */}
+			<ConfirmModal
+				isOpen={showArchiveModal}
+				onClose={() => setShowArchiveModal(false)}
+				onConfirm={async () => {
+					setIsArchiving(true);
+					try {
+						await onArchive?.();
+					} finally {
+						setIsArchiving(false);
+						setShowArchiveModal(false);
+					}
+				}}
+				title="Archive Room"
+				message={`Are you sure you want to archive "${room.name}"? The room will be hidden from the active list but all data will be preserved. You can restore it later.`}
+				confirmText="Archive Room"
+				confirmButtonVariant="primary"
+				isLoading={isArchiving}
+			/>
+			<ConfirmModal
+				isOpen={showDeleteModal}
+				onClose={() => setShowDeleteModal(false)}
+				onConfirm={async () => {
+					setIsDeleting(true);
+					try {
+						await onDelete?.();
+					} finally {
+						setIsDeleting(false);
+						setShowDeleteModal(false);
+					}
+				}}
+				title="Delete Room Permanently"
+				message={`Are you sure you want to PERMANENTLY DELETE "${room.name}"? This action CANNOT be undone. All sessions, tasks, messages, and data will be permanently removed.`}
+				confirmText="Delete Permanently"
+				confirmButtonVariant="danger"
+				isLoading={isDeleting}
+			/>
 		</div>
 	);
 }
