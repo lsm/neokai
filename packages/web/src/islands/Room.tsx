@@ -21,7 +21,7 @@ import { Button } from '../components/ui/Button';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'dashboard' | 'context' | 'goals' | 'jobs' | 'settings';
+type RoomTab = 'overview' | 'context' | 'goals' | 'jobs' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -29,7 +29,7 @@ interface RoomProps {
 
 export default function Room({ roomId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const [activeTab, setActiveTab] = useState<RoomTab>('dashboard');
+	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
 	const [showArchiveModal, setShowArchiveModal] = useState(false);
 	const [isArchiving, setIsArchiving] = useState(false);
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -202,13 +202,13 @@ export default function Room({ roomId }: RoomProps) {
 				<div class="flex border-b border-dark-700 bg-dark-850">
 					<button
 						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'dashboard'
+							activeTab === 'overview'
 								? 'text-blue-400 border-b-2 border-blue-400'
 								: 'text-gray-400 hover:text-gray-200'
 						}`}
-						onClick={() => setActiveTab('dashboard')}
+						onClick={() => setActiveTab('overview')}
 					>
-						Dashboard
+						Overview
 					</button>
 					<button
 						class={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -254,7 +254,7 @@ export default function Room({ roomId }: RoomProps) {
 
 				{/* Tab content */}
 				<div class="flex-1 overflow-hidden">
-					{activeTab === 'dashboard' && (
+					{activeTab === 'overview' && (
 						<div class="h-full overflow-y-auto">
 							<RoomDashboard />
 						</div>

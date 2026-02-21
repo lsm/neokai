@@ -1,0 +1,230 @@
+/**
+ * RoomContextPanel
+ *
+ * Context panel content shown when viewing a specific room.
+ * Replaces the generic RoomList with room-specific information:
+ * - Back navigation to rooms list
+ * - Agent status + quick Start/Pause/Resume control
+ * - Task stats strip
+ * - Room Agent session pinned at top
+ * - Worker sessions list below
+ */
+
+import { useMemo } from 'preact/hooks';
+import type { RoomAgentLifecycleState } from '@neokai/shared';
+import { roomStore } from '../lib/room-store';
+import { navigateToRooms, navigateToRoom, navigateToSession } from '../lib/router';
+import { cn } from '../lib/utils';
+
+const STATE_COLORS: Record<RoomAgentLifecycleState, { dot: string; text: string }> = {
+	idle: { dot: 'bg-gray-400', text: 'text-gray-400' },
+	planning: { dot: 'bg-blue-400', text: 'text-blue-400' },
+	executing: { dot: 'bg-green-400', text: 'text-green-400' },
+	waiting: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
+	reviewing: { dot: 'bg-purple-400', text: 'text-purple-400' },
+	error: { dot: 'bg-red-400', text: 'text-red-400' },
+	paused: { dot: 'bg-orange-400', text: 'text-orange-400' },
+};
+
+const STATE_LABELS: Record<RoomAgentLifecycleState, string> = {
+	idle: 'Idle',
+	planning: 'Planning',
+	executing: 'Executing',
+	waiting: 'Waiting',
+	reviewing: 'Reviewing',
+	error: 'Error',
+	paused: 'Paused',
+};
+
+function formatRelativeTime(timestamp: number): string {
+	const seconds = Math.floor((Date.now() - timestamp) / 1000);
+	if (seconds < 60) return 'now';
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+	return `${Math.floor(seconds / 86400)}d`;
+}
+
+function StatusDot({ status }: { status: string }) {
+	const colors: Record<string, string> = {
+		idle: 'bg-gray-500',
+		active: 'bg-green-500',
+		processing: 'bg-blue-500 animate-pulse',
+		waiting: 'bg-yellow-500',
+		error: 'bg-red-500',
+		archived: 'bg-gray-600',
+	};
+	return <div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors[status] ?? colors.idle)} />;
+}
+
+interface RoomContextPanelProps {
+	roomId: string;
+	onNavigate?: () => void;
+}
+
+export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) {
+	const agentState = roomStore.agentState.value;
+	const sessions = roomStore.sessions.value;
+	const tasks = roomStore.tasks.value;
+
+	const pendingCount = useMemo(() => tasks.filter((t) => t.status === 'pending').length, [tasks]);
+	const activeCount = useMemo(
+		() => tasks.filter((t) => t.status === 'in_progress').length,
+		[tasks]
+	);
+	const doneCount = useMemo(() => tasks.filter((t) => t.status === 'completed').length, [tasks]);
+
+	const lifecycleState = agentState?.lifecycleState ?? 'idle';
+	const colors = STATE_COLORS[lifecycleState];
+	const stateLabel = STATE_LABELS[lifecycleState];
+
+	const isIdle = lifecycleState === 'idle';
+	const isPaused = lifecycleState === 'paused';
+	const isRunning = !isIdle && !isPaused && lifecycleState !== 'error';
+
+	const handleAgentAction = async () => {
+		try {
+			if (isIdle) await roomStore.startAgent();
+			else if (isPaused) await roomStore.resumeAgent();
+			else if (isRunning) await roomStore.pauseAgent();
+		} catch {
+			// errors handled in roomStore
+		}
+	};
+
+	const handleRoomAgentClick = () => {
+		navigateToRoom(roomId);
+		onNavigate?.();
+	};
+
+	const handleSessionClick = (sessionId: string) => {
+		navigateToSession(sessionId);
+		onNavigate?.();
+	};
+
+	const hasTasks = pendingCount > 0 || activeCount > 0 || doneCount > 0;
+
+	return (
+		<div class="flex-1 flex flex-col overflow-hidden">
+			{/* Back button */}
+			<div class="px-3 pt-2 pb-1">
+				<button
+					onClick={() => navigateToRooms()}
+					class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
+				>
+					<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M15 19l-7-7 7-7"
+						/>
+					</svg>
+					All Rooms
+				</button>
+			</div>
+
+			{/* Agent status + quick action */}
+			<div class="px-3 py-2">
+				<div class="flex items-center justify-between gap-2">
+					<div class="flex items-center gap-1.5 min-w-0">
+						<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
+						<span class={cn('text-xs font-medium', colors.text)}>{stateLabel}</span>
+						{agentState?.errorCount != null && agentState.errorCount > 0 && (
+							<span
+								class="text-xs text-red-400 ml-1"
+								title={agentState.lastError ?? 'Errors occurred'}
+							>
+								{agentState.errorCount} err
+							</span>
+						)}
+					</div>
+					{(isIdle || isPaused || isRunning) && (
+						<button
+							onClick={handleAgentAction}
+							class={cn(
+								'text-xs px-2 py-0.5 rounded transition-colors flex-shrink-0',
+								isIdle || isPaused
+									? 'bg-green-700/70 hover:bg-green-600/70 text-green-100'
+									: 'bg-orange-700/60 hover:bg-orange-600/60 text-orange-200'
+							)}
+						>
+							{isIdle ? 'Start' : isPaused ? 'Resume' : 'Pause'}
+						</button>
+					)}
+				</div>
+
+				{/* Task stats */}
+				<div class="mt-1.5">
+					{hasTasks ? (
+						<span class="text-xs text-gray-500">
+							{pendingCount > 0 && <span class="text-yellow-500/80">{pendingCount} pending</span>}
+							{pendingCount > 0 && activeCount > 0 && <span class="text-gray-600"> · </span>}
+							{activeCount > 0 && <span class="text-green-500/80">{activeCount} active</span>}
+							{(pendingCount > 0 || activeCount > 0) && doneCount > 0 && (
+								<span class="text-gray-600"> · </span>
+							)}
+							{doneCount > 0 && <span>{doneCount} done</span>}
+						</span>
+					) : (
+						<span class="text-xs text-gray-600">No tasks</span>
+					)}
+				</div>
+			</div>
+
+			{/* Divider */}
+			<div class="border-t border-dark-700 mx-3 mb-1" />
+
+			{/* Sessions */}
+			<div class="flex-1 overflow-y-auto">
+				{/* Pinned: Room Agent session */}
+				<button
+					onClick={handleRoomAgentClick}
+					class="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-dark-800 transition-colors border-b border-dark-700/40"
+				>
+					<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-blue-900/40 rounded">
+						<svg
+							class="w-3.5 h-3.5 text-blue-400"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+							/>
+						</svg>
+					</div>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">Room Agent</span>
+					<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
+				</button>
+
+				{/* Worker sessions */}
+				{sessions.length === 0 ? (
+					<div class="px-4 py-5 text-center">
+						<p class="text-xs text-gray-500">No worker sessions yet</p>
+					</div>
+				) : (
+					sessions.map((session) => (
+						<button
+							key={session.id}
+							onClick={() => handleSessionClick(session.id)}
+							class="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-dark-800 transition-colors"
+						>
+							<StatusDot status={session.status} />
+							<span class="flex-1 text-sm text-gray-300 truncate text-left">
+								{session.title || session.id.slice(0, 8)}
+							</span>
+							{session.lastActiveAt != null && (
+								<span class="text-xs text-gray-500 flex-shrink-0 tabular-nums">
+									{formatRelativeTime(session.lastActiveAt)}
+								</span>
+							)}
+						</button>
+					))
+				)}
+			</div>
+		</div>
+	);
+}

@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import {
 	navSectionSignal,
 	contextPanelOpenSignal,
+	currentRoomIdSignal,
 	settingsSectionSignal,
 	type SettingsSection,
 } from '../lib/signals.ts';
@@ -10,11 +11,13 @@ import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { navigateToSession, navigateToRoom } from '../lib/router.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
+import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 import { Button } from '../components/ui/Button.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
+import { RoomContextPanel } from './RoomContextPanel.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 
 // Settings section configuration
@@ -82,6 +85,10 @@ export function ContextPanel() {
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
 	const activeSettingsSection = settingsSectionSignal.value;
+	const currentRoomId = currentRoomIdSignal.value;
+
+	// When a specific room is selected in the rooms section, show room-specific panel
+	const isRoomDetail = navSection === 'rooms' && currentRoomId !== null;
 
 	// Section config
 	const sectionConfig = {
@@ -116,6 +123,7 @@ export function ContextPanel() {
 	};
 
 	const config = sectionConfig[navSection];
+	const headerTitle = isRoomDetail ? (roomStore.room.value?.name ?? 'Room') : config.title;
 
 	const handleCreateSession = async () => {
 		if (connectionState.value !== 'connected') {
@@ -221,11 +229,11 @@ export function ContextPanel() {
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
 					<div class="flex items-center justify-between mb-3">
-						<h2 class="text-lg font-semibold text-gray-100">{config.title}</h2>
+						<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
 						{/* Close button for mobile */}
 						<button
 							onClick={handlePanelClose}
-							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100"
+							class="md:hidden p-1.5 hover:bg-dark-800 rounded-lg transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0"
 							title="Close panel"
 						>
 							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -239,7 +247,7 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'chats' || navSection === 'rooms') && (
+					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}
@@ -265,7 +273,13 @@ export function ContextPanel() {
 				{navSection === 'chats' && (
 					<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}
-				{navSection === 'rooms' && (
+				{navSection === 'rooms' && isRoomDetail && (
+					<RoomContextPanel
+						roomId={currentRoomId!}
+						onNavigate={() => (contextPanelOpenSignal.value = false)}
+					/>
+				)}
+				{navSection === 'rooms' && !isRoomDetail && (
 					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}
 				{navSection === 'projects' && (
