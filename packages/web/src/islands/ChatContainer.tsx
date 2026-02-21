@@ -301,10 +301,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setHasMoreMessages(sessionStore.hasMoreMessages.value);
 	});
 
-	// Track initial load state - set to false once messages have loaded
+	// Track initial load state - set to false once session state RPC has returned
 	useSignalEffect(() => {
 		const hasMessages = sessionStore.sdkMessages.value.length > 0;
-		if (hasMessages) {
+		const sessionStateLoaded = sessionStore.sessionState.value !== null;
+		if (hasMessages || sessionStateLoaded) {
 			setIsInitialLoad(false);
 		}
 	});
@@ -679,8 +680,10 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Combined error (local + store)
 	const error = localError || storeError?.message || null;
 
-	// Derive loading state from sessionStore (session is null means still loading)
-	const loading = session === null && !error;
+	// Derive loading state from sessionStore
+	// sessionState being null means the RPC hasn't returned yet (truly loading)
+	// session (sessionInfo) can be null even after RPC returns for room sessions
+	const loading = sessionStore.sessionState.value === null && !error;
 
 	// Render loading state
 	if (loading) {

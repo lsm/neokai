@@ -178,6 +178,12 @@ class LobbyStore {
 				}
 			});
 			this.cleanupFunctions.push(unsubRoomArchived);
+
+			// Subscribe to room delete events
+			const unsubRoomDeleted = hub.onEvent<{ roomId: string }>('room.deleted', (data) => {
+				this.rooms.value = this.rooms.value.filter((r) => r.id !== data.roomId);
+			});
+			this.cleanupFunctions.push(unsubRoomDeleted);
 		} catch (err) {
 			logger.error('Failed to start lobby subscriptions:', err);
 		}
