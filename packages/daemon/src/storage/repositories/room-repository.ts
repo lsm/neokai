@@ -50,9 +50,9 @@ export class RoomRepository {
 			id,
 			params.name,
 			params.background ?? null,
-			JSON.stringify([]), // allowedPaths - set via settings after creation
-			null, // defaultPath
-			null, // defaultModel
+			JSON.stringify(params.allowedPaths ?? []),
+			params.defaultPath ?? null,
+			params.defaultModel ?? null,
 			'[]',
 			'active',
 			null,

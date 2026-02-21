@@ -88,7 +88,7 @@ describe('SessionPairManager', () => {
 			// Create a room with workspace path
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -135,7 +135,7 @@ describe('SessionPairManager', () => {
 		it('should create pair with custom workspace path', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/default', '/workspace/custom'],
+				allowedPaths: [{ path: '/workspace/default' }, { path: '/workspace/custom' }],
 				defaultPath: '/workspace/default',
 			});
 
@@ -155,7 +155,7 @@ describe('SessionPairManager', () => {
 		it('should create pair with custom model', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 				defaultModel: 'claude-sonnet-4-20250514',
 			});
@@ -175,7 +175,7 @@ describe('SessionPairManager', () => {
 		it('should use room default path when workspacePath not provided', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -193,7 +193,7 @@ describe('SessionPairManager', () => {
 		it('should use first allowed path when no default path', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/first', '/workspace/second'],
+				allowedPaths: [{ path: '/workspace/first' }, { path: '/workspace/second' }],
 			});
 
 			const params: CreateSessionPairParams = {
@@ -239,7 +239,7 @@ describe('SessionPairManager', () => {
 		it('should create task with default empty description', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -258,7 +258,7 @@ describe('SessionPairManager', () => {
 		it('should create sessions with correct titles', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -286,7 +286,7 @@ describe('SessionPairManager', () => {
 		it('should link sessions correctly', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -314,7 +314,7 @@ describe('SessionPairManager', () => {
 		it('should update worker session with manager pairedSessionId', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -335,7 +335,7 @@ describe('SessionPairManager', () => {
 		it('should return pair by ID', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -363,7 +363,7 @@ describe('SessionPairManager', () => {
 		it('should return all pairs for a room', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -396,13 +396,13 @@ describe('SessionPairManager', () => {
 		it('should not return pairs from other rooms', async () => {
 			const room1 = roomManager.createRoom({
 				name: 'Room 1',
-				allowedPaths: ['/workspace/1'],
+				allowedPaths: [{ path: '/workspace/1' }],
 				defaultPath: '/workspace/1',
 			});
 
 			const room2 = roomManager.createRoom({
 				name: 'Room 2',
-				allowedPaths: ['/workspace/2'],
+				allowedPaths: [{ path: '/workspace/2' }],
 				defaultPath: '/workspace/2',
 			});
 
@@ -430,7 +430,7 @@ describe('SessionPairManager', () => {
 		it('should return pair by manager session ID', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -449,7 +449,7 @@ describe('SessionPairManager', () => {
 		it('should return pair by worker session ID', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -476,7 +476,7 @@ describe('SessionPairManager', () => {
 		it('should update pair status to idle', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -497,7 +497,7 @@ describe('SessionPairManager', () => {
 		it('should update pair status to crashed', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -515,7 +515,7 @@ describe('SessionPairManager', () => {
 		it('should update pair status to completed', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -539,7 +539,7 @@ describe('SessionPairManager', () => {
 		it('should update updatedAt timestamp', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -564,7 +564,7 @@ describe('SessionPairManager', () => {
 		it('should archive an active pair', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -594,7 +594,7 @@ describe('SessionPairManager', () => {
 		it('should be idempotent - archiving already archived pair', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -618,7 +618,7 @@ describe('SessionPairManager', () => {
 		it('should delete a pair', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -645,7 +645,7 @@ describe('SessionPairManager', () => {
 		it('should not delete other pairs', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 
@@ -672,7 +672,7 @@ describe('SessionPairManager', () => {
 		it('should persist pairs to database', async () => {
 			const room = roomManager.createRoom({
 				name: 'Test Room',
-				allowedPaths: ['/workspace/test'],
+				allowedPaths: [{ path: '/workspace/test' }],
 				defaultPath: '/workspace/test',
 			});
 

@@ -105,6 +105,12 @@ export interface CreateRoomParams {
 	name: string;
 	/** Background context for the room - describes project, goals, constraints */
 	background?: string;
+	/** Workspace paths that can be accessed in this room */
+	allowedPaths?: WorkspacePath[];
+	/** Default workspace path for new sessions */
+	defaultPath?: string;
+	/** Default model for new sessions */
+	defaultModel?: string;
 }
 
 /**
