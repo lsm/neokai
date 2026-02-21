@@ -27,29 +27,47 @@ import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
 import type { SessionBridge } from '../room/session-bridge';
+import type { RoomAgentManager } from './room-agent-handlers';
 
 export function setupRoomHandlers(
 	messageHub: MessageHub,
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	sessionPairManager?: SessionPairManager,
-	sessionBridge?: SessionBridge
+	sessionBridge?: SessionBridge,
+	roomAgentManager?: RoomAgentManager,
+	workspaceRoot?: string
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
 		const params = data as {
 			name: string;
 			background?: string;
+			allowedPaths?: WorkspacePath[];
+			defaultPath?: string;
 		};
 
 		if (!params.name) {
 			throw new Error('Room name is required');
 		}
 
+		// Auto-populate workspace paths from workspaceRoot if not provided
+		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
+		const defaultPath = params.defaultPath ?? (workspaceRoot ? workspaceRoot : undefined);
+
 		const room = roomManager.createRoom({
 			name: params.name,
 			background: params.background,
+			allowedPaths,
+			defaultPath,
 		});
+
+		// Start the room agent immediately so the session is ready
+		if (roomAgentManager) {
+			roomAgentManager.startAgent(room.id).catch(() => {
+				// Agent start failure is non-critical for room creation response
+			});
+		}
 
 		// Broadcast room creation event
 		daemonHub
@@ -96,6 +114,7 @@ export function setupRoomHandlers(
 			allowedPaths?: WorkspacePath[];
 			defaultPath?: string;
 			defaultModel?: string;
+			allowedModels?: string[];
 			background?: string;
 			instructions?: string;
 		};
@@ -109,6 +128,7 @@ export function setupRoomHandlers(
 			allowedPaths: params.allowedPaths,
 			defaultPath: params.defaultPath,
 			defaultModel: params.defaultModel,
+			allowedModels: params.allowedModels,
 			background: params.background,
 			instructions: params.instructions,
 		});
@@ -168,6 +188,12 @@ export function setupRoomHandlers(
 		const room = roomManager.getRoom(params.roomId);
 		if (!room) {
 			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		// Stop and remove the room agent before deleting
+		if (roomAgentManager) {
+			await roomAgentManager.stopAgent(params.roomId).catch(() => {});
+			roomAgentManager.removeAgent(params.roomId);
 		}
 
 		// Broadcast room deletion event before deleting
