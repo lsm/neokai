@@ -223,6 +223,11 @@ export class RoomAgentService {
 				this.ctx.room.defaultModel ?? DEFAULT_MODEL
 			);
 
+			// Start the SDK streaming query loop so it's ready to consume injected messages.
+			// Without this, messageQueue.enqueue() blocks until timeout because no
+			// messageGenerator is iterating the queue.
+			await this.agentSession.startStreamingQuery();
+
 			log.info('Room agent session started with AgentSession');
 		} else {
 			log.info('Room agent running in legacy mode (no AgentSession)');
@@ -249,7 +254,9 @@ export class RoomAgentService {
 		log.info(`Stopping room agent for room: ${this.ctx.room.id}`);
 
 		if (this.agentSession) {
-			// AgentSession doesn't have a stop method, but we can clean up
+			// Stop the SDK query loop cleanly before releasing the session
+			this.agentSession.messageQueue.clear();
+			this.agentSession.messageQueue.stop();
 			this.agentSession = null;
 		}
 
