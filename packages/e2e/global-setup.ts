@@ -5,13 +5,40 @@
 
 import { execSync } from 'child_process';
 import { join, dirname } from 'path';
-import { existsSync, rmSync, readdirSync } from 'fs';
+import { existsSync, rmSync, readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 async function globalSetup() {
+	// Safety check: Prevent running E2E tests when a dev server is running
+	// This prevents accidentally killing the development server
+	// (Moved here from playwright.config.ts so tools like knip don't trigger it)
+	if (!process.env.PLAYWRIGHT_BASE_URL) {
+		let currentDir = __dirname;
+		for (let i = 0; i < 5; i++) {
+			const lockFile = join(currentDir, 'tmp', '.dev-server-running');
+			if (existsSync(lockFile)) {
+				const port = readFileSync(lockFile, 'utf-8').trim();
+				console.error(`
+ERROR: A development server appears to be running (lock file found).
+
+To run E2E tests against your dev server, use one of:
+  make self-test TEST=tests/your-test.e2e.ts     (for 'make self' on port 9983)
+  make run-test PORT=${port || 'YOUR_PORT'} TEST=tests/your-test.e2e.ts
+
+Or set PLAYWRIGHT_BASE_URL explicitly:
+  PLAYWRIGHT_BASE_URL=http://localhost:${port || 'YOUR_PORT'} bunx playwright test tests/your-test.e2e.ts
+`);
+				process.exit(1);
+			}
+			const parentDir = dirname(currentDir);
+			if (parentDir === currentDir) break;
+			currentDir = parentDir;
+		}
+	}
+
 	// Skip cleanup in CI - handled by fresh checkout each time
 	if (process.env.CI) {
 		console.log('\n🔵 CI environment detected - skipping worktree cleanup\n');

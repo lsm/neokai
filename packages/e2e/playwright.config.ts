@@ -1,36 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import type { CoverageReportOptions } from 'monocart-reporter';
 import { tmpdir } from 'os';
-import { join, dirname } from 'path';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
 import { randomUUID } from 'crypto';
-
-// Safety check: Prevent running E2E tests when a dev server is running
-// This prevents accidentally killing the development server
-if (!process.env.PLAYWRIGHT_BASE_URL) {
-	// Look for dev server lock file by traversing up to repo root
-	let currentDir = __dirname;
-	for (let i = 0; i < 5; i++) {
-		const lockFile = join(currentDir, 'tmp', '.dev-server-running');
-		if (existsSync(lockFile)) {
-			const port = readFileSync(lockFile, 'utf-8').trim();
-			console.error(`
-ERROR: A development server appears to be running (lock file found).
-
-To run E2E tests against your dev server, use one of:
-  make self-test TEST=tests/your-test.e2e.ts     (for 'make self' on port 9983)
-  make run-test PORT=${port || 'YOUR_PORT'} TEST=tests/your-test.e2e.ts
-
-Or set PLAYWRIGHT_BASE_URL explicitly:
-  PLAYWRIGHT_BASE_URL=http://localhost:${port || 'YOUR_PORT'} bunx playwright test tests/your-test.e2e.ts
-`);
-			process.exit(1);
-		}
-		const parentDir = dirname(currentDir);
-		if (parentDir === currentDir) break;
-		currentDir = parentDir;
-	}
-}
 
 // Create isolated temp directories for this test run
 // This ensures e2e tests NEVER affect production databases or workspaces
