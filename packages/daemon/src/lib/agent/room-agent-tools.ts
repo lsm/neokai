@@ -83,6 +83,41 @@ export interface RoomUpdatePromptsParams {
 }
 
 /**
+ * Goal summary returned by room_list_goals
+ */
+export interface RoomGoalSummary {
+	id: string;
+	title: string;
+	description: string;
+	status: string;
+	priority: string;
+	progress: number;
+}
+
+/**
+ * Job summary returned by room_list_jobs
+ */
+export interface RoomJobSummary {
+	id: string;
+	name: string;
+	description?: string;
+	enabled: boolean;
+	schedule: string;
+}
+
+/**
+ * Task summary returned by room_list_tasks
+ */
+export interface RoomTaskSummary {
+	id: string;
+	title: string;
+	description: string;
+	status: string;
+	priority: string;
+	progress: number;
+}
+
+/**
  * Configuration for creating the Room Agent Tools MCP server
  */
 export interface RoomAgentToolsConfig {
@@ -110,6 +145,12 @@ export interface RoomAgentToolsConfig {
 	onCancelJob?: (jobId: string) => Promise<void>;
 	/** Callback to update room prompts */
 	onUpdatePrompts?: (params: RoomUpdatePromptsParams) => Promise<void>;
+	/** Callback to list goals */
+	onListGoals: (status?: string) => Promise<RoomGoalSummary[]>;
+	/** Callback to list recurring jobs */
+	onListJobs: () => Promise<RoomJobSummary[]>;
+	/** Callback to list tasks */
+	onListTasks: (status?: string) => Promise<RoomTaskSummary[]>;
 }
 
 /**
@@ -292,6 +333,62 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 								success: true,
 								message: 'Goal progress updated',
 							}),
+						},
+					],
+				};
+			}
+		),
+
+		tool(
+			'room_list_goals',
+			'List current goals for this room',
+			{
+				status: z
+					.enum(['pending', 'in_progress', 'completed', 'cancelled'])
+					.optional()
+					.describe('Filter goals by status (omit for all goals)'),
+			},
+			async (args) => {
+				const goals = await config.onListGoals(args.status);
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify({ goals }),
+						},
+					],
+				};
+			}
+		),
+
+		tool('room_list_jobs', 'List recurring jobs configured for this room', {}, async () => {
+			const jobs = await config.onListJobs();
+			return {
+				content: [
+					{
+						type: 'text',
+						text: JSON.stringify({ jobs }),
+					},
+				],
+			};
+		}),
+
+		tool(
+			'room_list_tasks',
+			'List tasks for this room',
+			{
+				status: z
+					.enum(['pending', 'in_progress', 'completed', 'failed'])
+					.optional()
+					.describe('Filter tasks by status (omit for all tasks)'),
+			},
+			async (args) => {
+				const tasks = await config.onListTasks(args.status);
+				return {
+					content: [
+						{
+							type: 'text',
+							text: JSON.stringify({ tasks }),
 						},
 					],
 				};

@@ -231,6 +231,13 @@ export class RoomAgentService {
 		this.subscribeToEvents();
 		this.startIdleCheck();
 
+		// Trigger an immediate idle check instead of waiting for the first interval
+		setTimeout(() => {
+			this.checkIdleState().catch((error) => {
+				log.error('Error in immediate idle check:', error);
+			});
+		}, 0);
+
 		if (this.state.lifecycleState === 'error') {
 			await this.transitionTo('idle', 'Agent restarted');
 		}
@@ -1166,6 +1173,42 @@ export class RoomAgentService {
 				log.info(`Recurring job scheduled: ${result.id}`);
 				return { jobId: result.id };
 			},
+			onListGoals: async (status?: string) => {
+				const goals = await this.goalManager.listGoals(
+					status as import('@neokai/shared').GoalStatus | undefined
+				);
+				return goals.map((g) => ({
+					id: g.id,
+					title: g.title,
+					description: g.description,
+					status: g.status,
+					priority: g.priority,
+					progress: g.progress,
+				}));
+			},
+			onListJobs: async () => {
+				const jobs = this.ctx.recurringJobScheduler.listJobs(this.ctx.room.id);
+				return jobs.map((j) => ({
+					id: j.id,
+					name: j.name,
+					description: j.description,
+					enabled: j.enabled,
+					schedule: JSON.stringify(j.schedule),
+				}));
+			},
+			onListTasks: async (status?: string) => {
+				const tasks = await this.taskManager.listTasks(
+					status ? { status: status as import('@neokai/shared').TaskStatus } : undefined
+				);
+				return tasks.map((t) => ({
+					id: t.id,
+					title: t.title,
+					description: t.description,
+					status: t.status,
+					priority: t.priority,
+					progress: t.progress ?? 0,
+				}));
+			},
 		};
 
 		return createRoomAgentMcpServer(config);
@@ -1189,8 +1232,19 @@ export class RoomAgentService {
 	}
 
 	private getDefaultSystemPrompt(): string {
-		return `You are a Room Agent for the "${this.ctx.room.name}" room.
+		const { background, instructions } = this.ctx.room;
 
+		let prompt = `You are a Room Agent for the "${this.ctx.room.name}" room.\n`;
+
+		if (background) {
+			prompt += `\n## Room Background\n${background}\n`;
+		}
+
+		if (instructions) {
+			prompt += `\n## Instructions\n${instructions}\n`;
+		}
+
+		prompt += `
 Your responsibilities:
 1. Process incoming events and create appropriate tasks
 2. Monitor goal progress and update goals as needed
@@ -1205,8 +1259,11 @@ You have access to room-level tools for:
 - Escalating issues
 - Updating goal progress
 - Scheduling recurring jobs
+- Listing current goals, jobs, and tasks on demand
 
 Always consider the room's goals and priorities when making decisions.
 Maximum concurrent workers: ${this.config.maxConcurrentPairs}`;
+
+		return prompt;
 	}
 }
