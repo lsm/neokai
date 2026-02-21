@@ -86,6 +86,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 25: Add type and context columns to sessions table
 	runMigration25(db);
+
+	// Migration 26: Add allowed_models column to rooms table
+	runMigration26(db);
 }
 
 /**
@@ -1217,4 +1220,16 @@ function runMigration25(db: BunDatabase): void {
 		ON sessions(json_extract(session_context, '$.lobbyId'))
 		WHERE type = 'lobby'
 	`);
+}
+
+/**
+ * Migration 26: Add allowed_models column to rooms table
+ */
+function runMigration26(db: BunDatabase): void {
+	if (!tableExists(db, 'rooms')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'rooms', 'allowed_models')) {
+		db.exec(`ALTER TABLE rooms ADD COLUMN allowed_models TEXT DEFAULT '[]'`);
+	}
 }

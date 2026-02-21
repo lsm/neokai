@@ -879,6 +879,7 @@ class RoomStore {
 		allowedPaths?: WorkspacePath[];
 		defaultPath?: string;
 		defaultModel?: string;
+		allowedModels?: string[];
 	}): Promise<void> {
 		const roomId = this.roomId.value;
 		if (!roomId) {

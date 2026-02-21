@@ -42,8 +42,8 @@ export class RoomRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO rooms (id, name, background_context, allowed_paths, default_path, default_model, session_ids, status, context_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO rooms (id, name, background_context, allowed_paths, default_path, default_model, allowed_models, session_ids, status, context_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -53,6 +53,7 @@ export class RoomRepository {
 			JSON.stringify(params.allowedPaths ?? []),
 			params.defaultPath ?? null,
 			params.defaultModel ?? null,
+			JSON.stringify(params.allowedModels ?? []),
 			'[]',
 			'active',
 			null,
@@ -112,6 +113,10 @@ export class RoomRepository {
 		if (params.defaultModel !== undefined) {
 			fields.push('default_model = ?');
 			values.push(params.defaultModel ?? null);
+		}
+		if (params.allowedModels !== undefined) {
+			fields.push('allowed_models = ?');
+			values.push(JSON.stringify(params.allowedModels));
 		}
 		if (params.background !== undefined) {
 			fields.push('background_context = ?');
@@ -372,12 +377,15 @@ export class RoomRepository {
 			typeof p === 'string' ? { path: p } : p
 		);
 
+		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
+
 		return {
 			id: row.id as string,
 			name: row.name as string,
 			allowedPaths,
 			defaultPath: (row.default_path as string | null) ?? undefined,
 			defaultModel: (row.default_model as string | null) ?? undefined,
+			allowedModels: rawModels.length > 0 ? rawModels : undefined,
 			sessionIds: JSON.parse(row.session_ids as string) as string[],
 			status: row.status as 'active' | 'archived',
 			contextId: (row.context_id as string | null) ?? undefined,

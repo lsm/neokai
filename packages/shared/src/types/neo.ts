@@ -39,6 +39,8 @@ export interface Room {
 	defaultPath?: string;
 	/** Default model for sessions created in this room */
 	defaultModel?: string;
+	/** Allowed models for this room (empty/undefined = all models allowed) */
+	allowedModels?: string[];
 	/** IDs of sessions associated with this room */
 	sessionIds: string[];
 	/** Current status of the room */
@@ -111,6 +113,8 @@ export interface CreateRoomParams {
 	defaultPath?: string;
 	/** Default model for new sessions */
 	defaultModel?: string;
+	/** Allowed models for this room (empty/undefined = all models allowed) */
+	allowedModels?: string[];
 }
 
 /**
@@ -121,6 +125,8 @@ export interface UpdateRoomParams {
 	allowedPaths?: WorkspacePath[];
 	defaultPath?: string;
 	defaultModel?: string;
+	/** Allowed models for this room (empty/undefined = all models allowed) */
+	allowedModels?: string[];
 	/** Background context for the room */
 	background?: string;
 	/** Custom instructions for the room agent */

@@ -3,7 +3,7 @@
  *
  * Provides editing for room configuration:
  * - Room name
- * - Default model (dropdown)
+ * - Allowed models (checkboxes) + default model (dropdown filtered to allowed)
  * - Workspace paths with descriptions (folder picker)
  */
 
@@ -22,6 +22,7 @@ export interface RoomSettingsProps {
 		allowedPaths?: WorkspacePath[];
 		defaultPath?: string;
 		defaultModel?: string;
+		allowedModels?: string[];
 	}) => Promise<void>;
 	isLoading?: boolean;
 }
@@ -37,6 +38,8 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 	const defaultModel = useSignal(room.defaultModel || '');
 	const allowedPaths = useSignal<WorkspacePath[]>([...room.allowedPaths]);
 	const defaultPath = useSignal(room.defaultPath || '');
+	// null = all allowed (no restriction); array = explicit set
+	const allowedModels = useSignal<string[] | null>(room.allowedModels ?? null);
 	const isSaving = useSignal(false);
 	const isLoadingModels = useSignal(false);
 	const availableModels = useSignal<ModelInfo[]>([]);
@@ -55,7 +58,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 					name: m.display_name ?? m.name ?? m.id,
 				}));
 			} catch {
-				// Silently fail - models dropdown will just be empty
+				// Silently fail - models list will just be empty
 			} finally {
 				isLoadingModels.value = false;
 			}
@@ -69,14 +72,58 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 		defaultModel.value = room.defaultModel || '';
 		allowedPaths.value = [...room.allowedPaths];
 		defaultPath.value = room.defaultPath || '';
+		allowedModels.value = room.allowedModels ?? null;
 	}, [room]);
 
+	// Models visible in the default model dropdown (only allowed ones, or all if no restriction)
+	const selectableModels = () => {
+		const allowed = allowedModels.value;
+		if (!allowed || allowed.length === 0) return availableModels.value;
+		return availableModels.value.filter((m) => allowed.includes(m.id));
+	};
+
+	const isModelAllowed = (modelId: string) => {
+		const allowed = allowedModels.value;
+		if (!allowed) return true; // all allowed
+		return allowed.includes(modelId);
+	};
+
+	const handleToggleModel = (modelId: string) => {
+		const current = allowedModels.value;
+		// If currently unrestricted, switching on means "all except this one" — instead
+		// start an explicit set with all checked except this one unchecked.
+		const base = current ?? availableModels.value.map((m) => m.id);
+		const next = base.includes(modelId) ? base.filter((id) => id !== modelId) : [...base, modelId];
+		// If every model is checked, go back to unrestricted (null)
+		allowedModels.value =
+			next.length === availableModels.value.length ? null : next.length === 0 ? [] : next;
+
+		// Clear default model if it's no longer selectable
+		if (defaultModel.value && !next.includes(defaultModel.value)) {
+			defaultModel.value = '';
+		}
+	};
+
+	const handleSelectAllModels = () => {
+		allowedModels.value = null; // unrestricted
+	};
+
+	const handleDeselectAllModels = () => {
+		allowedModels.value = [];
+	};
+
 	const hasChanges = () => {
+		const origAllowed = room.allowedModels ?? null;
+		const currAllowed = allowedModels.value;
+		const modelsChanged =
+			JSON.stringify(origAllowed?.slice().sort()) !== JSON.stringify(currAllowed?.slice().sort());
+
 		return (
 			name.value !== room.name ||
 			defaultModel.value !== (room.defaultModel || '') ||
 			JSON.stringify(allowedPaths.value) !== JSON.stringify(room.allowedPaths) ||
-			defaultPath.value !== (room.defaultPath || '')
+			defaultPath.value !== (room.defaultPath || '') ||
+			modelsChanged
 		);
 	};
 
@@ -90,6 +137,8 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 				defaultModel: defaultModel.value || undefined,
 				allowedPaths: allowedPaths.value.length > 0 ? allowedPaths.value : undefined,
 				defaultPath: defaultPath.value || undefined,
+				// null → send empty array to mean "all allowed"; explicit list → send list
+				allowedModels: allowedModels.value ?? [],
 			});
 			toast.success('Settings saved');
 		} catch (err) {
@@ -140,6 +189,8 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 		}
 	};
 
+	const disabled = isLoading || isSaving.value;
+
 	return (
 		<div class="flex flex-col h-full">
 			{/* Header */}
@@ -161,8 +212,65 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 						onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
 						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
               placeholder-gray-500 focus:outline-none focus:border-blue-500"
-						disabled={isLoading || isSaving.value}
+						disabled={disabled}
 					/>
+				</div>
+
+				{/* Allowed Models */}
+				<div>
+					<div class="flex items-center justify-between mb-1.5">
+						<label class="block text-sm font-medium text-gray-300">Allowed Models</label>
+						{!isLoadingModels.value && availableModels.value.length > 0 && (
+							<div class="flex gap-2">
+								<button
+									type="button"
+									onClick={handleSelectAllModels}
+									class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+									disabled={disabled || allowedModels.value === null}
+								>
+									All
+								</button>
+								<span class="text-xs text-gray-600">·</span>
+								<button
+									type="button"
+									onClick={handleDeselectAllModels}
+									class="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-40"
+									disabled={disabled}
+								>
+									None
+								</button>
+							</div>
+						)}
+					</div>
+					<p class="text-xs text-gray-500 mb-2">
+						Enable the models available in this room. The default model is restricted to this list.
+					</p>
+					{isLoadingModels.value ? (
+						<p class="text-xs text-gray-500">Loading models...</p>
+					) : availableModels.value.length === 0 ? (
+						<p class="text-xs text-gray-500 italic">No models available</p>
+					) : (
+						<div class="space-y-1.5">
+							{availableModels.value.map((model) => (
+								<label key={model.id} class="flex items-center gap-2.5 cursor-pointer group">
+									<input
+										type="checkbox"
+										checked={isModelAllowed(model.id)}
+										onChange={() => handleToggleModel(model.id)}
+										disabled={disabled}
+										class="w-4 h-4 rounded border-dark-500 bg-dark-800 text-blue-500
+                      focus:ring-blue-500 focus:ring-offset-dark-900 cursor-pointer"
+									/>
+									<span class="text-sm text-gray-300 group-hover:text-gray-100 transition-colors">
+										{model.name}
+									</span>
+									{model.id === defaultModel.value && (
+										<span class="text-xs text-blue-400 ml-auto">default</span>
+									)}
+								</label>
+							))}
+						</div>
+					)}
 				</div>
 
 				{/* Default Model */}
@@ -179,18 +287,15 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 						onChange={(e) => (defaultModel.value = (e.target as HTMLSelectElement).value)}
 						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
               focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
-						disabled={isLoading || isSaving.value || isLoadingModels.value}
+						disabled={disabled || isLoadingModels.value}
 					>
 						<option value="">Use system default</option>
-						{availableModels.value.map((model) => (
+						{selectableModels().map((model) => (
 							<option key={model.id} value={model.id}>
 								{model.name}
 							</option>
 						))}
 					</select>
-					{isLoadingModels.value && (
-						<p class="text-xs text-gray-500 mt-1">Loading available models...</p>
-					)}
 				</div>
 
 				{/* Workspace Paths */}
@@ -244,7 +349,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 									placeholder="Add description (optional)"
 									class="w-full mt-2 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs
                       text-gray-400 placeholder-gray-600 focus:outline-none focus:border-gray-500"
-									disabled={isLoading || isSaving.value}
+									disabled={disabled}
 								/>
 							</div>
 						))}
@@ -263,7 +368,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 								placeholder="/path/to/workspace"
 								class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
                     placeholder-gray-500 focus:outline-none focus:border-blue-500 font-mono"
-								disabled={isLoading || isSaving.value}
+								disabled={disabled}
 								onKeyDown={(e) => {
 									if (e.key === 'Enter') {
 										e.preventDefault();
@@ -275,7 +380,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 								variant="secondary"
 								size="sm"
 								onClick={handleFolderPick}
-								disabled={isLoading || isSaving.value}
+								disabled={disabled}
 								title="Browse folders"
 							>
 								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -295,7 +400,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 							placeholder="Description for this path (optional)"
 							class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
                   placeholder-gray-500 focus:outline-none focus:border-blue-500"
-							disabled={isLoading || isSaving.value}
+							disabled={disabled}
 							onKeyDown={(e) => {
 								if (e.key === 'Enter') {
 									e.preventDefault();
@@ -307,7 +412,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 							variant="secondary"
 							size="sm"
 							onClick={handleAddPath}
-							disabled={!newPath.value.trim() || isLoading || isSaving.value}
+							disabled={!newPath.value.trim() || disabled}
 						>
 							Add Path
 						</Button>
@@ -323,11 +428,7 @@ export function RoomSettings({ room, onSave, isLoading = false }: RoomSettingsPr
 						Saving...
 					</span>
 				)}
-				<Button
-					onClick={handleSave}
-					disabled={!hasChanges() || isLoading || isSaving.value}
-					loading={isSaving.value}
-				>
+				<Button onClick={handleSave} disabled={!hasChanges() || disabled} loading={isSaving.value}>
 					Save Changes
 				</Button>
 			</div>
