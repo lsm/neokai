@@ -29,6 +29,7 @@ import type {
 	CreateRecurringJobParams,
 	RoomContextVersion,
 	WorkspacePath,
+	RoomAgentState,
 } from '@neokai/shared';
 
 /**
@@ -124,6 +125,13 @@ class RoomStore {
 	readonly jobsLoading = signal<boolean>(false);
 
 	// ========================================
+	// Room Agent Signals
+	// ========================================
+
+	/** Room agent state (null if agent is not running) */
+	readonly agentState = signal<RoomAgentState | null>(null);
+
+	// ========================================
 	// Computed Accessors
 	// ========================================
 
@@ -206,6 +214,7 @@ class RoomStore {
 		this.error.value = null;
 		this.goals.value = [];
 		this.recurringJobs.value = [];
+		this.agentState.value = null;
 
 		// 3. Update active room
 		this.roomId.value = roomId;
@@ -353,7 +362,20 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubJobTriggered);
 
-			// 5. Fetch initial state via RPC
+			// 5. Room agent state changes
+			const unsubAgentState = hub.onEvent<{
+				roomId: string;
+				newState: RoomAgentState['lifecycleState'];
+				previousState: RoomAgentState['lifecycleState'];
+			}>('roomAgent.stateChanged', (event) => {
+				if (event.roomId === roomId) {
+					// Refresh full agent state on any state change
+					this.fetchAgentState().catch(() => {});
+				}
+			});
+			this.cleanupFunctions.push(unsubAgentState);
+
+			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -381,7 +403,7 @@ class RoomStore {
 			}
 
 			// Fetch additional data for new features
-			await Promise.all([this.fetchGoals(), this.fetchRecurringJobs()]);
+			await Promise.all([this.fetchGoals(), this.fetchRecurringJobs(), this.fetchAgentState()]);
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -763,6 +785,86 @@ class RoomStore {
 			logger.error('Failed to rollback context:', err);
 			throw err;
 		}
+	}
+
+	// ========================================
+	// Room Agent Methods
+	// ========================================
+
+	/**
+	 * Fetch the current agent state from the daemon
+	 */
+	async fetchAgentState(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) return;
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		try {
+			const response = await hub.request<{ state: RoomAgentState | null }>('roomAgent.getState', {
+				roomId,
+			});
+			this.agentState.value = response.state ?? null;
+		} catch (err) {
+			logger.error('Failed to fetch agent state:', err);
+		}
+	}
+
+	/**
+	 * Start the room agent
+	 */
+	async startAgent(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('roomAgent.start', { roomId });
+		await this.fetchAgentState();
+	}
+
+	/**
+	 * Stop the room agent
+	 */
+	async stopAgent(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('roomAgent.stop', { roomId });
+		await this.fetchAgentState();
+	}
+
+	/**
+	 * Pause the room agent
+	 */
+	async pauseAgent(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('roomAgent.pause', { roomId });
+		await this.fetchAgentState();
+	}
+
+	/**
+	 * Resume the room agent
+	 */
+	async resumeAgent(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		await hub.request('roomAgent.resume', { roomId });
+		await this.fetchAgentState();
 	}
 
 	// ========================================
