@@ -465,6 +465,20 @@ export class StateManager {
 	private async getSessionState(sessionId: string): Promise<SessionState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
+			// Special handling for room sessions that haven't been started yet
+			// Room sessions (ID format: "room:{roomId}") are created when the room agent starts,
+			// but the UI may try to load the session before the agent is started.
+			if (sessionId.startsWith('room:')) {
+				// Return a placeholder state for not-yet-started room agents
+				return {
+					sessionInfo: null,
+					agentState: { status: 'idle' },
+					commandsData: { availableCommands: [] },
+					contextInfo: null,
+					error: null,
+					timestamp: Date.now(),
+				};
+			}
 			throw new Error('Session not found');
 		}
 
@@ -494,6 +508,17 @@ export class StateManager {
 	private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
+			// Special handling for room sessions that haven't been started yet
+			// Room sessions (ID format: "room:{roomId}") are created when the room agent starts,
+			// but the UI may try to load messages before the agent is started.
+			if (sessionId.startsWith('room:')) {
+				// Return empty state for not-yet-started room agents
+				return {
+					sdkMessages: [],
+					hasMore: false,
+					timestamp: Date.now(),
+				};
+			}
 			throw new Error('Session not found');
 		}
 
