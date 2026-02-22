@@ -452,6 +452,19 @@ export class RoomSelfService {
 		);
 		this.unsubscribers.push(unsubWorkerReviewRequested);
 
+		// Worker failure handling
+		const unsubWorkerFailed = this.ctx.daemonHub.on(
+			'worker.failed',
+			async (event: { sessionId: string; taskId: string; error: string }) => {
+				const worker = this.ctx.workerManager?.getWorkerBySessionId(event.sessionId);
+				if (worker && worker.roomId === this.ctx.room.id) {
+					await this.handleWorkerFailed(event.sessionId, event.taskId, event.error);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubWorkerFailed);
+
 		const unsubRecurringJob = this.ctx.daemonHub.on(
 			'recurringJob.triggered',
 			async (event: { roomId: string; jobId: string; taskId: string; timestamp: number }) => {
@@ -481,6 +494,22 @@ export class RoomSelfService {
 			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRecurringJob);
+
+		// Subscribe to session errors to detect worker failures
+		const unsubSessionError = this.ctx.daemonHub.on(
+			'session.error',
+			async (event: { sessionId: string; error: string; details?: unknown }) => {
+				// Check if this is a worker session for our room
+				const worker = this.ctx.workerManager?.getWorkerBySessionId(event.sessionId);
+				if (worker && worker.roomId === this.ctx.room.id) {
+					// Mark the worker as failed - this will emit worker.failed event
+					// which we'll handle via our worker.failed subscription
+					await this.ctx.workerManager.markWorkerFailed(event.sessionId, event.error);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubSessionError);
 	}
 
 	getState(): RoomSelfState {
@@ -803,6 +832,47 @@ export class RoomSelfService {
 		}
 
 		await this.maybeSpawnWorker(task);
+	}
+
+	/**
+	 * Handle worker failure events
+	 */
+	private async handleWorkerFailed(
+		workerSessionId: string,
+		taskId: string,
+		error: string
+	): Promise<void> {
+		log.error(`Worker ${workerSessionId} failed for task ${taskId}: ${error}`);
+
+		// Remove worker from active sessions
+		if (this.lifecycleManager) {
+			this.lifecycleManager.removeActiveWorkerSession(workerSessionId);
+			this.state = this.lifecycleManager.getState();
+		} else {
+			this.state =
+				this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
+		}
+
+		// Inject review message for the agent to handle the failure
+		const task = await this.taskManager.getTask(taskId);
+		if (task && this.agentSession) {
+			await this.injectReviewMessage({
+				task,
+				summary: `Worker failed: ${error}`,
+				success: false,
+				error,
+			});
+		}
+
+		// Check if all workers are done
+		if (this.state.activeWorkerSessionIds.length === 0) {
+			if (this.lifecycleManager) {
+				await this.lifecycleManager.finishExecution();
+				this.state = this.lifecycleManager.getState();
+			} else {
+				await this.transitionTo('idle', 'All workers finished (last one failed)');
+			}
+		}
 	}
 
 	private async recordError(error: string): Promise<void> {
