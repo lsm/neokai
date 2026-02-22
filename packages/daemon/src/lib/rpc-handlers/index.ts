@@ -129,20 +129,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		workspaceRoot: deps.config.workspaceRoot,
 	});
 
-	// Start RoomAgentService for all active rooms
-	// This ensures room chat sessions are available when humans access them
-	const activeRooms = roomManager.listRooms(false); // Only active rooms
-	for (const room of activeRooms) {
-		try {
-			const agent = roomAgentManager.getOrCreateAgent(room.id);
-			agent.start().catch((error) => {
-				log.error(`Failed to start RoomAgentService for room ${room.id}:`, error);
-			});
-		} catch (error) {
-			log.error(`Failed to create RoomAgentService for room ${room.id}:`, error);
-		}
-	}
-
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);

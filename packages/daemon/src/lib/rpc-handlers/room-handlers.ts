@@ -62,13 +62,6 @@ export function setupRoomHandlers(
 			defaultPath,
 		});
 
-		// Start the room agent immediately so the session is ready
-		if (roomAgentManager) {
-			roomAgentManager.startAgent(room.id).catch(() => {
-				// Agent start failure is non-critical for room creation response
-			});
-		}
-
 		// Broadcast room creation event
 		daemonHub
 			.emit('room.created', {
