@@ -95,6 +95,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// - Add 'room_self' (autonomous orchestration)
 	// - Add 'manager' (manager in manager-worker pair)
 	runMigration27(db);
+
+	// Migration 28: Create worker_sessions table (Manager-less Architecture)
+	runMigration28(db);
 }
 
 /**
@@ -1341,4 +1344,136 @@ function runMigration27(db: BunDatabase): void {
 			ON sessions(json_extract(session_context, '$.lobbyId'))
 			WHERE type = 'lobby'
 	`);
+}
+
+/**
+ * Migration 28: Create worker_sessions table (Manager-less Architecture)
+ *
+ * Creates a table for tracking worker sessions created by room agents.
+ * This is part of removing the Manager agent layer.
+ *
+ * CRITICAL FIXES APPLIED (v1.0):
+ * - FIX 1: task_id NOT NULL with ON DELETE RESTRICT (was contradictory SET NULL)
+ * - FIX 2: room_session_id is mode-agnostic (supports both room:chat and room:self)
+ * - FIX 3: session_id column for direct agent session lookup
+ * - FIX 4: Preserves orphaned session_pairs (pairs without tasks)
+ *
+ * Data migration strategy:
+ * - Migrates session_pairs with tasks to worker_sessions
+ * - Preserves session_pairs without tasks in worker_sessions_orphaned
+ * - Sets room_session_type to 'room_self' for historical data
+ */
+function runMigration28(db: BunDatabase): void {
+	// Skip if worker_sessions table already exists
+	if (tableExists(db, 'worker_sessions')) {
+		return;
+	}
+
+	// Step 1: Create worker_sessions table with CORRECTED schema
+	db.exec(`
+		CREATE TABLE worker_sessions (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL UNIQUE,
+			room_id TEXT NOT NULL,
+			room_session_id TEXT NOT NULL,
+			room_session_type TEXT NOT NULL DEFAULT 'room_self'
+				CHECK(room_session_type IN ('room_chat', 'room_self')),
+			task_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'starting'
+				CHECK(status IN ('starting', 'running', 'waiting_for_review', 'completed', 'failed', 'cancelled')),
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+			FOREIGN KEY (room_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
+		);
+
+		CREATE INDEX idx_worker_sessions_room ON worker_sessions(room_id);
+		CREATE INDEX idx_worker_sessions_task ON worker_sessions(task_id);
+		CREATE INDEX idx_worker_sessions_status ON worker_sessions(status);
+		CREATE INDEX idx_worker_sessions_session ON worker_sessions(session_id);
+		CREATE INDEX idx_worker_sessions_room_session ON worker_sessions(room_session_id);
+	`);
+
+	// Step 2: Migrate pairs WITH tasks (only if session_pairs table exists)
+	if (tableExists(db, 'session_pairs') && tableExists(db, 'tasks')) {
+		db.exec(`
+			INSERT INTO worker_sessions (
+				id, session_id, room_id, room_session_id, room_session_type,
+				task_id, status, created_at, updated_at, completed_at
+			)
+			SELECT
+				lower(hex(randomblob(16))),
+				spp.worker_session_id,
+				spp.room_id,
+				spp.room_session_id,
+				'room_self',
+				spp.current_task_id,
+				CASE spp.status
+					WHEN 'completed' THEN 'completed'
+					WHEN 'crashed' THEN 'failed'
+					WHEN 'idle' THEN 'starting'
+					ELSE 'running'
+				END,
+				spp.created_at,
+				spp.updated_at,
+				CASE WHEN spp.status = 'completed' THEN spp.updated_at ELSE NULL END
+			FROM session_pairs spp
+			WHERE spp.current_task_id IS NOT NULL
+		`);
+	}
+
+	// Step 3: Preserve orphaned pairs (FIX 4: No data loss)
+	if (tableExists(db, 'session_pairs')) {
+		db.exec(`
+			CREATE TABLE IF NOT EXISTS worker_sessions_orphaned (
+				id TEXT PRIMARY KEY,
+				original_pair_id TEXT NOT NULL,
+				room_id TEXT NOT NULL,
+				room_session_id TEXT NOT NULL,
+				manager_session_id TEXT NOT NULL,
+				worker_session_id TEXT NOT NULL,
+				original_status TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				migrated_at INTEGER NOT NULL,
+				notes TEXT
+			);
+
+			INSERT INTO worker_sessions_orphaned (
+				id, original_pair_id, room_id, room_session_id,
+				manager_session_id, worker_session_id, original_status,
+				created_at, updated_at, migrated_at, notes
+			)
+			SELECT
+				lower(hex(randomblob(16))),
+				spp.id,
+				spp.room_id,
+				spp.room_session_id,
+				spp.manager_session_id,
+				spp.worker_session_id,
+				spp.status,
+				spp.created_at,
+				spp.updated_at,
+				strftime('%s', 'now') * 1000,
+				'Migrated during Migration 28: original pair had no task_id'
+			FROM session_pairs spp
+			WHERE spp.current_task_id IS NULL
+		`);
+	}
+
+	// Step 4: Rename column in room_agent_states table (active_session_pair_ids → active_worker_session_ids)
+	if (
+		tableExists(db, 'room_agent_states') &&
+		tableHasColumn(db, 'room_agent_states', 'active_session_pair_ids')
+	) {
+		db.exec(
+			`ALTER TABLE room_agent_states RENAME COLUMN active_session_pair_ids TO active_worker_session_ids`
+		);
+	}
+
+	// Note: We keep session_pairs table for now for backward compatibility
+	// Can be dropped in Migration 29 after verification period
 }

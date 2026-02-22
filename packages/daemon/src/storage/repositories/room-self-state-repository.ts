@@ -18,7 +18,7 @@ export interface UpdateRoomSelfStateParams {
 	lifecycleState?: RoomSelfLifecycleState;
 	currentGoalId?: string | null;
 	currentTaskId?: string | null;
-	activeSessionPairIds?: string[];
+	activeWorkerSessionIds?: string[]; // MANAGER REMOVAL v1.0: Renamed from activeSessionPairIds
 	lastActivityAt?: number;
 	errorCount?: number;
 	lastError?: string | null;
@@ -83,9 +83,9 @@ export class RoomSelfStateRepository {
 			fields.push('current_task_id = ?');
 			values.push(params.currentTaskId);
 		}
-		if (params.activeSessionPairIds !== undefined) {
-			fields.push('active_session_pair_ids = ?');
-			values.push(JSON.stringify(params.activeSessionPairIds));
+		if (params.activeWorkerSessionIds !== undefined) {
+			fields.push('active_worker_session_ids = ?');
+			values.push(JSON.stringify(params.activeWorkerSessionIds));
 		}
 		if (params.lastActivityAt !== undefined) {
 			fields.push('last_activity_at = ?');
@@ -153,29 +153,29 @@ export class RoomSelfStateRepository {
 	}
 
 	/**
-	 * Add a session pair to active pairs
+	 * Add a session pair to active pairs - MANAGER REMOVAL v1.0: Renamed to addActiveWorkerSession
 	 */
-	addActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
+	addActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
-		const activePairs = [...new Set([...current.activeSessionPairIds, pairId])];
+		const activeWorkers = [...new Set([...current.activeWorkerSessionIds, workerSessionId])];
 		return this.updateState(roomId, {
-			activeSessionPairIds: activePairs,
+			activeWorkerSessionIds: activeWorkers,
 			lastActivityAt: Date.now(),
 		});
 	}
 
 	/**
-	 * Remove a session pair from active pairs
+	 * Remove a session pair from active pairs - MANAGER REMOVAL v1.0: Renamed to removeActiveWorkerSession
 	 */
-	removeActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
+	removeActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
-		const activePairs = current.activeSessionPairIds.filter((id) => id !== pairId);
+		const activeWorkers = current.activeWorkerSessionIds.filter((id) => id !== workerSessionId);
 		return this.updateState(roomId, {
-			activeSessionPairIds: activePairs,
+			activeWorkerSessionIds: activeWorkers,
 			lastActivityAt: Date.now(),
 		});
 	}
@@ -247,11 +247,25 @@ export class RoomSelfStateRepository {
 			lifecycleState: row.lifecycle_state as RoomSelfLifecycleState,
 			currentGoalId: row.current_goal_id as string | undefined,
 			currentTaskId: row.current_task_id as string | undefined,
-			activeSessionPairIds: JSON.parse(row.active_session_pair_ids as string) as string[],
+			activeWorkerSessionIds: JSON.parse(row.active_worker_session_ids as string) as string[], // MANAGER REMOVAL v1.0
 			lastActivityAt: row.last_activity_at as number,
 			errorCount: row.error_count as number,
 			lastError: row.last_error as string | undefined,
 			pendingActions: JSON.parse(row.pending_actions as string) as string[],
 		};
+	}
+
+	/**
+	 * MANAGER REMOVAL v1.0: Backward compatibility aliases
+	 * These methods are deprecated but kept for compatibility during transition
+	 */
+	/** @deprecated Use addActiveWorkerSession instead */
+	addActiveSessionPair(roomId: string, workerSessionId: string): RoomSelfState | null {
+		return this.addActiveWorkerSession(roomId, workerSessionId);
+	}
+
+	/** @deprecated Use removeActiveWorkerSession instead */
+	removeActiveSessionPair(roomId: string, workerSessionId: string): RoomSelfState | null {
+		return this.removeActiveWorkerSession(roomId, workerSessionId);
 	}
 }

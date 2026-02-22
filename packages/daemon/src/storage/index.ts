@@ -449,12 +449,23 @@ export class Database {
 		return this.roomSelfStateRepo.clearError(roomId);
 	}
 
-	addActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.addActiveSessionPair(roomId, pairId);
+	// MANAGER REMOVAL v1.0: Updated method names (old names kept as deprecated aliases)
+	addActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.addActiveWorkerSession(roomId, workerSessionId);
 	}
 
-	removeActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.removeActiveSessionPair(roomId, pairId);
+	removeActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.removeActiveWorkerSession(roomId, workerSessionId);
+	}
+
+	/** @deprecated Use addActiveWorkerSession instead */
+	addActiveSessionPair(roomId: string, workerSessionId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.addActiveWorkerSession(roomId, workerSessionId);
+	}
+
+	/** @deprecated Use removeActiveWorkerSession instead */
+	removeActiveSessionPair(roomId: string, workerSessionId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.removeActiveWorkerSession(roomId, workerSessionId);
 	}
 
 	deleteRoomSelfState(roomId: string): boolean {
