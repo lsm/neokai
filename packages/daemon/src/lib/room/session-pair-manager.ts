@@ -61,12 +61,17 @@ export class SessionPairManager {
 			throw new Error(`Room not found: ${params.roomId}`);
 		}
 
-		// 2. Create room-level task
-		const task = this.taskRepo.createTask({
-			roomId: params.roomId,
-			title: params.taskTitle,
-			description: params.taskDescription ?? '',
-		});
+		// 2. Resolve task (reuse existing task when provided)
+		const task = params.taskId
+			? this.taskRepo.getTask(params.taskId)
+			: this.taskRepo.createTask({
+					roomId: params.roomId,
+					title: params.taskTitle,
+					description: params.taskDescription ?? '',
+				});
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
 
 		// 3. Determine workspace path and model
 		const workspacePath = params.workspacePath ?? room.defaultPath ?? room.allowedPaths[0]?.path;
@@ -171,7 +176,7 @@ export class SessionPairManager {
 			// Start the SDK streaming query loop so it's ready to consume injected messages.
 			await managerSession.startStreamingQuery();
 
-			const managerPrompt = `You are managing the execution of the following task:\n\n**${task.title}** (Task ID: \`${task.id}\`)\n\n${task.description ?? ''}\n\nWorker session ID: \`${workerSessionId}\`\n\nMonitor the worker's progress. When the task is complete, use the \`manager_complete_task\` tool to signal completion with a clear summary of what was accomplished.`;
+			const managerPrompt = `You are the manager for this task. You must coordinate and review; do not implement code changes directly.\n\n**Task:** ${task.title} (Task ID: \`${task.id}\`)\n\n${task.description ?? ''}\n\nWorker session ID: \`${workerSessionId}\`\n\nInstructions:\n1. Delegate concrete implementation to the worker session.\n2. Review worker updates and request corrections when needed.\n3. Do NOT run direct code-editing or shell execution yourself.\n4. When work is complete, call \`manager_complete_task\` with a concise summary and changed files.`;
 			await managerSession.messageQueue.enqueue(managerPrompt, true);
 		}
 

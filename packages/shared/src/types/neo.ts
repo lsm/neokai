@@ -619,6 +619,7 @@ export interface SessionPairSummary {
 export interface CreateSessionPairParams {
 	roomId: string;
 	roomSessionId: string;
+	taskId?: string;
 	taskTitle: string;
 	taskDescription?: string;
 	workspacePath?: string;

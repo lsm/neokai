@@ -67,11 +67,17 @@ export function RoomDashboard() {
 				</div>
 			</div>
 
-			{/* Sessions list */}
-			<RoomSessions sessions={sessions} />
-
 			{/* Tasks list */}
-			<RoomTasks tasks={tasks} />
+			<div class="space-y-2">
+				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
+				<RoomTasks tasks={tasks} />
+			</div>
+
+			{/* Sessions list */}
+			<div class="space-y-2">
+				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Sessions</h2>
+				<RoomSessions sessions={sessions} />
+			</div>
 		</div>
 	);
 }

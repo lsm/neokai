@@ -191,34 +191,40 @@ export class QueryOptionsBuilder {
 		// Room agents are orchestrators only — they must not have access to built-in
 		// file/shell tools or user-configured MCP servers (e.g. chrome-devtools).
 		if (this.ctx.session.type === 'room') {
-			const builtinTools = [
+			const restrictedBuiltinTools = [
 				'Task',
 				'TaskOutput',
 				'TaskStop',
 				'Bash',
-				'Read',
 				'Edit',
 				'Write',
-				'Glob',
-				'Grep',
 				'NotebookEdit',
-				'WebFetch',
-				'WebSearch',
-				'TodoWrite',
-				'AskUserQuestion',
-				'EnterPlanMode',
-				'ExitPlanMode',
-				'Skill',
-				'ToolSearch',
 			];
 			queryOptions.disallowedTools = [
-				...new Set([...(queryOptions.disallowedTools ?? []), ...builtinTools]),
+				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
 			];
 			// Prevent user-configured MCP servers (from ~/.claude/settings.json) from
 			// being merged in — the room agent only needs its own room-agent-tools MCP.
 			queryOptions.strictMcpConfig = true;
 			// Skip settings file loading so user's settings.json doesn't inject extra tools.
 			queryOptions.settingSources = [];
+		}
+
+		// Manager sessions coordinate worker sessions and complete tasks; they should not
+		// execute concrete implementation directly.
+		if (this.ctx.session.metadata?.sessionType === 'manager') {
+			const managerDisallowedTools = [
+				'Task',
+				'TaskOutput',
+				'TaskStop',
+				'Bash',
+				'Edit',
+				'Write',
+				'NotebookEdit',
+			];
+			queryOptions.disallowedTools = [
+				...new Set([...(queryOptions.disallowedTools ?? []), ...managerDisallowedTools]),
+			];
 		}
 
 		// ============ Coordinator Mode ============

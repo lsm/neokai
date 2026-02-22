@@ -345,6 +345,37 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
+	describe('room session restrictions', () => {
+		it('should preserve room MCP servers while enforcing strict MCP config', async () => {
+			mockSession.type = 'room';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'test-command' },
+			};
+
+			const options = await builder.build();
+			expect(options.mcpServers).toEqual({
+				'room-agent-tools': { command: 'test-command' },
+			});
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+		});
+
+		it('should only block high-risk built-in tools for room sessions', async () => {
+			mockSession.type = 'room';
+			const options = await builder.build();
+			const disallowed = options.disallowedTools ?? [];
+
+			expect(disallowed).toContain('Bash');
+			expect(disallowed).toContain('Edit');
+			expect(disallowed).toContain('Write');
+			expect(disallowed).not.toContain('Read');
+			expect(disallowed).not.toContain('TodoWrite');
+			expect(disallowed).not.toContain('EnterPlanMode');
+			expect(disallowed).not.toContain('ExitPlanMode');
+			expect(disallowed).not.toContain('ToolSearch');
+		});
+	});
+
 	describe('additional directories configuration', () => {
 		it('should allow temp directories for shell operations when worktree exists', async () => {
 			mockSession.worktree = {

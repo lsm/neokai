@@ -655,6 +655,7 @@ export class RoomAgentService {
 			const result = await this.ctx.sessionPairManager.createPair({
 				roomId: this.ctx.room.id,
 				roomSessionId: this.sessionId,
+				taskId: task.id,
 				taskTitle: task.title,
 				taskDescription: task.description,
 				workspacePath:
@@ -1136,6 +1137,7 @@ export class RoomAgentService {
 				const result = await this.ctx.sessionPairManager.createPair({
 					roomId: this.ctx.room.id,
 					roomSessionId: this.sessionId,
+					taskId: task.id,
 					taskTitle: task.title,
 					taskDescription: task.description,
 					workspacePath:
@@ -1243,7 +1245,7 @@ export class RoomAgentService {
 			},
 			// Session management tools
 			onCancelTask: async (params) => {
-				await this.taskManager.cancelTask(params.taskId);
+				await this.taskManager.cancelTask(params.taskId, params.reason);
 				// Also archive associated session pair if it exists
 				const pair = this.ctx.sessionPairManager.getPairByTask(params.taskId);
 				if (pair) {
