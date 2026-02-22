@@ -37,6 +37,8 @@ export interface RoomCreateTaskParams {
 export interface RoomSpawnWorkerParams {
 	taskId: string;
 	mode?: 'single' | 'parallel' | 'serial';
+	/** PHASE 2: Use direct worker orchestration instead of manager-worker pair */
+	useWorkerOnly?: boolean;
 }
 
 /**
@@ -290,11 +292,17 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.default('single')
 					.describe('Execution mode for the worker'),
+				use_worker_only: z
+					.boolean()
+					.optional()
+					.default(false)
+					.describe('Use direct worker orchestration (no manager)'),
 			},
 			async (args) => {
 				const result = await config.onSpawnWorker({
 					taskId: args.task_id,
 					mode: args.mode,
+					useWorkerOnly: args.use_worker_only,
 				});
 
 				return {
