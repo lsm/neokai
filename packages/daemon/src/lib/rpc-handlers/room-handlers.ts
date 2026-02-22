@@ -174,6 +174,176 @@ export function getRoomMcpServer(
 }
 
 /**
+ * PHASE 5: Create or update the room agent MCP server with WorkerManager support
+ *
+ * This allows room:chat sessions to spawn workers via room agent tools.
+ *
+ * @param roomId - Room ID
+ * @param db - Database instance
+ * @param workerManager - WorkerManager for spawning workers (PHASE 5)
+ * @returns The MCP server instance
+ */
+export function createOrUpdateRoomMcpServer(
+	roomId: string,
+	db: Database,
+	workerManager?: WorkerManager,
+	daemonHub?: DaemonHub
+): ReturnType<typeof createRoomAgentMcpServer> {
+	let server = roomMcpServerRegistry.get(roomId);
+	if (!server) {
+		// Import dynamically to avoid circular dependency
+		const { GoalRepository } = require('../../storage/repositories/goal-repository');
+		const { TaskRepository } = require('../../storage/repositories/task-repository');
+		const {
+			RecurringJobRepository,
+		} = require('../../storage/repositories/recurring-job-repository');
+
+		const goalRepo = new GoalRepository(db.getDatabase());
+		const taskRepo = new TaskRepository(db.getDatabase());
+		const jobRepo = new RecurringJobRepository(db.getDatabase());
+
+		// Create the MCP server with actual callbacks
+		server = createRoomAgentMcpServer({
+			roomId,
+			sessionId: `room:mcp:${roomId}`, // Internal MCP session ID
+			onCompleteGoal: async (params) => {
+				// Room self session will handle this
+				const goal = goalRepo.getGoal(params.goalId);
+				if (goal) {
+					goalRepo.updateGoal(params.goalId, { status: 'completed' });
+				}
+			},
+			onCreateTask: async (params) => {
+				// Room self session will handle this
+				const task = taskRepo.createTask({
+					roomId,
+					title: params.title,
+					description: params.description ?? '',
+					priority: params.priority ?? 'normal',
+					goalId: params.goalId,
+				});
+				return { taskId: task.id };
+			},
+			onSpawnWorker: async (params) => {
+				// PHASE 5: Connect to WorkerManager to spawn workers (if provided)
+				// This allows room:chat users to manually spawn workers
+				if (workerManager) {
+					// Fetch task details from repository
+					const task = taskRepo.getTask(params.taskId);
+					if (!task) {
+						throw new Error(`Task not found: ${params.taskId}`);
+					}
+					const workerSessionId = await workerManager.spawnWorker({
+						roomId,
+						roomSessionId: `room:${roomId}`, // room:chat session
+						roomSessionType: 'room_chat',
+						taskId: params.taskId,
+						taskTitle: task.title,
+						taskDescription: task.description ?? undefined,
+					});
+					return { pairId: workerSessionId, workerSessionId };
+				}
+				// Fallback: Return empty response if WorkerManager not available
+				return { pairId: '', workerSessionId: '' };
+			},
+			onRequestReview: async (taskId, reason) => {
+				// PHASE 5: Emit review request event for room:self to handle (if daemonHub provided)
+				if (daemonHub) {
+					await daemonHub.emit('roomAgent.reviewRequested', {
+						sessionId: `room:${roomId}`,
+						roomId,
+						taskId,
+						reason,
+					} as unknown as Parameters<typeof daemonHub.emit>[1]);
+				}
+			},
+			onEscalate: async (taskId, reason) => {
+				// PHASE 5: Emit escalation event for room:self to handle (if daemonHub provided)
+				if (daemonHub) {
+					await daemonHub.emit('roomAgent.escalated', {
+						sessionId: `room:${roomId}`,
+						roomId,
+						taskId,
+						reason,
+					} as unknown as Parameters<typeof daemonHub.emit>[1]);
+				}
+			},
+			onUpdateGoalProgress: async (params) => {
+				const goal = goalRepo.getGoal(params.goalId);
+				if (goal) {
+					goalRepo.updateGoal(params.goalId, { progress: params.progress });
+				}
+			},
+			onListGoals: async (status) => {
+				const goals = goalRepo.getGoalsByRoom(roomId);
+				return goals
+					.filter((g: { status: string }) => !status || g.status === status)
+					.map(
+						(g: {
+							id: string;
+							title: string;
+							description?: string;
+							status: string;
+							priority: string;
+							progress: number;
+						}) => ({
+							id: g.id,
+							title: g.title,
+							description: g.description ?? '',
+							status: g.status,
+							priority: g.priority,
+							progress: g.progress,
+						})
+					);
+			},
+			onListJobs: async () => {
+				const jobs = jobRepo.getJobsByRoom(roomId);
+				return jobs.map(
+					(j: {
+						id: string;
+						name: string;
+						description?: string;
+						scheduleType: string;
+						intervalMinutes?: number | null;
+						enabled: boolean;
+					}) => ({
+						id: j.id,
+						name: j.name,
+						description: j.description ?? '',
+						schedule: `${j.scheduleType}@${j.intervalMinutes ?? 'once'}`,
+						enabled: j.enabled,
+					})
+				);
+			},
+			onListTasks: async (status) => {
+				const tasks = taskRepo.getTasksByRoom(roomId);
+				return tasks
+					.filter((t: { status: string }) => !status || t.status === status)
+					.map(
+						(t: {
+							id: string;
+							title: string;
+							description?: string;
+							status: string;
+							priority: string;
+							progress: number;
+						}) => ({
+							id: t.id,
+							title: t.title,
+							description: t.description ?? '',
+							status: t.status,
+							priority: t.priority,
+							progress: t.progress,
+						})
+					);
+			},
+		});
+		roomMcpServerRegistry.set(roomId, server);
+	}
+	return server;
+}
+
+/**
  * Delete the MCP server for a room (when room is deleted)
  *
  * @public Exported for use by room-self-handlers.ts
@@ -225,9 +395,10 @@ export function setupRoomHandlers(
 		if (sessionManager) {
 			const roomChatSessionId = `room:chat:${room.id}`;
 			try {
-				// Create the MCP server for this room (shared by room chat and room self)
+				// Create the MCP server for this room with WorkerManager support (PHASE 5)
+				// This is shared by room chat and room self sessions
 				if (db) {
-					getOrCreateRoomMcpServer(room.id, db);
+					createOrUpdateRoomMcpServer(room.id, db, workerManager, daemonHub);
 				}
 
 				await sessionManager.createSession({

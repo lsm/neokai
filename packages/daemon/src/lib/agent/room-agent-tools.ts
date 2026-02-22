@@ -1,13 +1,17 @@
 /**
- * Room Agent Tools - MCP tools for RoomAgent orchestration
+ * Room Agent Tools - MCP tools for Room orchestration
  *
- * These tools are exposed to the RoomAgent when it runs as an active agent,
- * allowing it to:
+ * PHASE 5: These tools are shared by both room:chat and room:self modes.
+ *
+ * Both room modes can:
  * - Complete goals
  * - Create and manage tasks
- * - Spawn worker sessions
+ * - Spawn worker sessions directly (via WorkerManager)
  * - Request reviews
  * - Escalate issues
+ *
+ * This unified approach ensures consistent worker orchestration regardless
+ * of whether the room is being used interactively (room:chat) or autonomously (room:self).
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
