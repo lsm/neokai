@@ -1309,31 +1309,40 @@ function runMigration27(db: BunDatabase): void {
 		)
 	`);
 
-	// 2. Copy data, renaming 'room' → 'room_chat' and updating session_context
-	db.exec(`
-		INSERT INTO sessions_new (
-			id, title, workspace_path, created_at, last_active_at, status,
-			config, metadata, is_worktree, worktree_path, main_repo_path,
-			worktree_branch, git_branch, sdk_session_id, available_commands,
-			processing_state, archived_at, parent_id, labels, sub_session_order,
-			type, session_context
-		)
-		SELECT
-			id, title, workspace_path, created_at, last_active_at, status,
-			config, metadata, is_worktree, worktree_path, main_repo_path,
-			worktree_branch, git_branch, sdk_session_id, available_commands,
-			processing_state, archived_at, parent_id, labels, sub_session_order,
-			CASE
-				WHEN type = 'room' THEN 'room_chat'
-				ELSE type
-			END,
-			session_context
-		FROM sessions
-	`);
+	// CRITICAL: Disable foreign keys during table recreation to prevent
+	// CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
+	db.exec('PRAGMA foreign_keys = OFF');
 
-	// 3. Drop old table and rename new table
-	db.exec(`DROP TABLE sessions`);
-	db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+	try {
+		// 2. Copy data, renaming 'room' → 'room_chat' and updating session_context
+		db.exec(`
+			INSERT INTO sessions_new (
+				id, title, workspace_path, created_at, last_active_at, status,
+				config, metadata, is_worktree, worktree_path, main_repo_path,
+				worktree_branch, git_branch, sdk_session_id, available_commands,
+				processing_state, archived_at, parent_id, labels, sub_session_order,
+				type, session_context
+			)
+			SELECT
+				id, title, workspace_path, created_at, last_active_at, status,
+				config, metadata, is_worktree, worktree_path, main_repo_path,
+				worktree_branch, git_branch, sdk_session_id, available_commands,
+				processing_state, archived_at, parent_id, labels, sub_session_order,
+				CASE
+					WHEN type = 'room' THEN 'room_chat'
+					ELSE type
+				END,
+				session_context
+			FROM sessions
+		`);
+
+		// 3. Drop old table and rename new table (safe now that foreign_keys is OFF)
+		db.exec(`DROP TABLE sessions`);
+		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+	} finally {
+		// Re-enable foreign keys
+		db.exec('PRAGMA foreign_keys = ON');
+	}
 
 	// 4. Recreate indexes
 	db.exec(`
