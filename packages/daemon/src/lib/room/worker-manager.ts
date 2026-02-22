@@ -208,6 +208,8 @@ export class WorkerManager {
 	 */
 	completeWorker(workerSessionId: string): void {
 		this.workerSessionRepo.completeWorkerSessionBySessionId(workerSessionId);
+		// Clean up worker tools map to prevent memory leak
+		this.workerTools.delete(workerSessionId);
 	}
 
 	/**

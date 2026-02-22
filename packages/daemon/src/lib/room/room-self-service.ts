@@ -166,7 +166,17 @@ export class RoomSelfService {
 	private idleCheckTimer: Timer | null = null;
 	private unsubscribers: Array<() => void> = [];
 	private config: RoomSelfConfig;
-	private lifecycleState: RoomSelfLifecycleState = 'idle';
+
+	/**
+	 * Get the current lifecycle state from the canonical source
+	 * Uses lifecycle manager if available, otherwise falls back to state
+	 */
+	private get lifecycleState(): RoomSelfLifecycleState {
+		if (this.lifecycleManager) {
+			return this.lifecycleManager.getLifecycleState();
+		}
+		return this.state.lifecycleState;
+	}
 
 	private lifecycleManager: RoomSelfLifecycleManager | null = null;
 	private agentSession: AgentSession | null = null;
@@ -552,7 +562,8 @@ export class RoomSelfService {
 			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
 		}
 
-		this.lifecycleState = newState;
+		// Note: lifecycleState is now a getter that reads from this.state.lifecycleState
+		// so no explicit assignment needed here
 
 		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
 			sessionId: this.sessionId,
@@ -567,15 +578,8 @@ export class RoomSelfService {
 		const previousState = this.lifecycleState;
 		if (previousState === state) return;
 
-		this.lifecycleState = state;
-		log.debug(`Lifecycle state: ${previousState} -> ${state}`);
-
-		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-			sessionId: this.sessionId,
-			roomId: this.ctx.room.id,
-			previousState,
-			newState: state,
-		});
+		// Use transitionTo which properly updates lifecycle manager and emits events
+		await this.transitionTo(state);
 	}
 
 	private async handleRoomMessage(event: {
@@ -781,7 +785,14 @@ export class RoomSelfService {
 
 			log.info(`Spawned worker ${workerSessionId} for task ${task.id}`);
 		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Worker spawn failed';
 			log.error(`Failed to spawn worker for task ${task.id}:`, error);
+
+			// Mark task as failed so it doesn't remain stuck in 'pending'
+			await this.taskManager.failTask(task.id, errorMessage);
+
+			// Record error and potentially transition to error state
+			await this.recordError(errorMessage);
 		}
 	}
 
@@ -1034,6 +1045,37 @@ export class RoomSelfService {
 					`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
 					true
 				);
+			} else if (input.type === 'escalation_response' && this.lifecycleState === 'waiting') {
+				// Handle escalation response in agentSession path
+				this.waitingContext = null;
+				await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
+					sessionId: this.sessionId,
+					roomId: this.ctx.room.id,
+					escalationId: (input as { escalationId: string }).escalationId,
+					response: (input as { response: string }).response,
+				});
+				await this.agentSession.messageQueue.enqueue(
+					`Escalation resolved: ${(input as { response: string }).response}`,
+					true
+				);
+			} else if (input.type === 'question_response' && this.lifecycleState === 'waiting') {
+				// Handle question response in agentSession path
+				this.waitingContext = null;
+				const questionInput = input as {
+					questionId: string;
+					responses: Record<string, string | string[]>;
+				};
+				await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
+					sessionId: this.sessionId,
+					roomId: this.ctx.room.id,
+					questionId: questionInput.questionId,
+					responses: questionInput.responses,
+				});
+				// Format responses for the message
+				const responseSummary = Object.entries(questionInput.responses)
+					.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+					.join('; ');
+				await this.agentSession.messageQueue.enqueue(`Question answered: ${responseSummary}`, true);
 			}
 			return;
 		}
