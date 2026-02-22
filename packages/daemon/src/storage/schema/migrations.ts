@@ -98,6 +98,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 28: Create worker_sessions table (Manager-less Architecture)
 	runMigration28(db);
+
+	// Migration 29: Cleanup after manager removal (Phase 6)
+	runMigration29(db);
 }
 
 /**
@@ -1476,4 +1479,39 @@ function runMigration28(db: BunDatabase): void {
 
 	// Note: We keep session_pairs table for now for backward compatibility
 	// Can be dropped in Migration 29 after verification period
+}
+
+/**
+ * Migration 29: Cleanup after manager removal (Phase 6)
+ *
+ * Drops deprecated tables and columns after manager-worker architecture has been fully removed.
+ *
+ * This migration can only be run after:
+ * - Migration 28 has been applied (worker_sessions table created)
+ * - All session_pairs have been migrated to worker_sessions
+ * - All code using SessionPairManager has been removed
+ */
+function runMigration29(db: BunDatabase): void {
+	// Drop deprecated session_pairs table (PHASE 6)
+	if (tableExists(db, 'session_pairs')) {
+		// Safety check: ensure no active pairs exist
+		const activePairs = db
+			.prepare(
+				`SELECT COUNT(*) as count FROM session_pairs WHERE status NOT IN ('completed', 'crashed')`
+			)
+			.get() as { count: number } | undefined;
+
+		if (activePairs && activePairs.count > 0) {
+			// Skip migration if there are active pairs
+			return;
+		}
+
+		// Drop the table
+		db.exec(`DROP TABLE IF EXISTS session_pairs`);
+
+		// Note: We keep worker_sessions_orphaned for audit purposes
+		// It contains historical data about session_pairs that had no task_id
+
+		// Note: active_worker_session_ids column was already renamed in Migration 28
+	}
 }
