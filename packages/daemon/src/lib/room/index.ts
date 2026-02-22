@@ -6,10 +6,12 @@
  * - ContextManager for conversation context
  * - MemoryManager for memory storage and retrieval
  * - TaskManager for task management
- * - SessionPairManager for manager-worker session pairs
+ * - WorkerManager for manager-less worker orchestration (PHASE 2)
  * - GoalManager for goal management with progress tracking
  * - RecurringJobScheduler for scheduled recurring jobs
  * - RoomSelfService for room self lifecycle management
+ *
+ * PHASE 4: Removed SessionPairManager and SessionBridge
  *
  * Unified Session Architecture:
  * - RoomSelfService uses AgentSession.fromInit() for AI orchestration
@@ -20,8 +22,8 @@ export { RoomManager } from './room-manager';
 export { ContextManager } from './context-manager';
 export { MemoryManager } from './memory-manager';
 export { TaskManager } from './task-manager';
-export { SessionPairManager } from './session-pair-manager';
-export { SessionBridge } from './session-bridge';
+// PHASE 2 & 4: Manager-less architecture - WorkerManager replaces SessionPairManager
+export { WorkerManager } from './worker-manager';
 // @public - Library export
 export { GoalManager } from './goal-manager';
 // @public - Library export

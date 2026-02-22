@@ -16,7 +16,7 @@ import { TaskRepository } from '../../storage/repositories/task-repository';
 import { MemoryRepository } from '../../storage/repositories/memory-repository';
 import { ContextRepository } from '../../storage/repositories/context-repository';
 import { SessionRepository } from '../../storage/repositories/session-repository';
-import { SessionPairRepository } from '../../storage/repositories/session-pair-repository';
+// PHASE 4: Removed SessionPairRepository import
 import type {
 	Room,
 	CreateRoomParams,
@@ -24,9 +24,9 @@ import type {
 	RoomOverview,
 	TaskSummary,
 	ContextChangedBy,
-	TaskSession,
-	TaskStatus,
-	SessionStatus,
+	// TaskSession, // PHASE 4: Unused after removing session pairs
+	// TaskStatus, // PHASE 4: Unused after removing session pairs
+	// SessionStatus, // PHASE 4: Unused after removing session pairs
 } from '@neokai/shared';
 import type { RoomContextVersion } from '@neokai/shared';
 
@@ -37,7 +37,7 @@ export class RoomManager {
 	private memoryRepo: MemoryRepository;
 	private contextRepo: ContextRepository;
 	private sessionRepo: SessionRepository;
-	private sessionPairRepo: SessionPairRepository;
+	// PHASE 4: Removed sessionPairRepo
 
 	constructor(db: BunDatabase) {
 		this.db = db;
@@ -46,7 +46,7 @@ export class RoomManager {
 		this.memoryRepo = new MemoryRepository(db);
 		this.contextRepo = new ContextRepository(db);
 		this.sessionRepo = new SessionRepository(db);
-		this.sessionPairRepo = new SessionPairRepository(db);
+		// PHASE 4: Removed sessionPairRepo initialization
 	}
 
 	/**
@@ -187,29 +187,17 @@ export class RoomManager {
 		const room = this.roomRepo.getRoom(roomId);
 		if (!room) return null;
 
-		// Get tasks and session pairs
+		// PHASE 4: Get tasks (no more session pairs)
 		const tasks = this.taskRepo.listTasks(roomId);
-		const pairsByTaskId = new Map(
-			this.sessionPairRepo
-				.getPairsByRoom(roomId)
-				.filter((pair) => pair.currentTaskId)
-				.map((pair) => [pair.currentTaskId!, pair])
-		);
 		const taskSummaries: TaskSummary[] = tasks.map((task) => {
-			const pair = pairsByTaskId.get(task.id);
-			const sessions =
-				task.sessions ?? (pair ? this.buildSessionsFromPair(pair, task.status) : undefined);
-
 			return {
 				id: task.id,
 				title: task.title,
 				status: task.status,
 				priority: task.priority,
 				progress: task.progress,
-				sessions,
-				executionMode:
-					task.executionMode ??
-					(sessions && sessions.length > 1 ? 'parallel_then_merge' : 'single'),
+				sessions: task.sessions, // Use sessions from task directly
+				executionMode: task.executionMode ?? 'single',
 			};
 		});
 
@@ -244,63 +232,6 @@ export class RoomManager {
 			activeTasks: taskSummaries,
 			contextStatus: context?.status,
 		};
-	}
-
-	private buildSessionsFromPair(
-		pair: {
-			managerSessionId: string;
-			workerSessionId: string;
-			status: 'active' | 'idle' | 'crashed' | 'completed';
-			createdAt: number;
-			updatedAt: number;
-		},
-		taskStatus: TaskStatus
-	): TaskSession[] {
-		const manager = this.sessionRepo.getSession(pair.managerSessionId);
-		const worker = this.sessionRepo.getSession(pair.workerSessionId);
-		const completedAt = pair.status === 'completed' ? pair.updatedAt : undefined;
-
-		return [
-			{
-				sessionId: pair.managerSessionId,
-				role: 'reviewer',
-				status: this.mapTaskSessionStatus(pair.status, manager?.status, taskStatus, 'manager'),
-				startedAt: pair.createdAt,
-				completedAt,
-			},
-			{
-				sessionId: pair.workerSessionId,
-				role: 'primary',
-				status: this.mapTaskSessionStatus(pair.status, worker?.status, taskStatus, 'worker'),
-				startedAt: pair.createdAt,
-				completedAt,
-			},
-		];
-	}
-
-	private mapTaskSessionStatus(
-		pairStatus: 'active' | 'idle' | 'crashed' | 'completed',
-		sessionStatus: SessionStatus | undefined,
-		taskStatus: TaskStatus,
-		role: 'manager' | 'worker'
-	): TaskSession['status'] {
-		if (taskStatus === 'failed' || (pairStatus === 'crashed' && role === 'worker')) {
-			return 'failed';
-		}
-		if (taskStatus === 'completed' || pairStatus === 'completed') {
-			return 'completed';
-		}
-		if (
-			taskStatus === 'pending' ||
-			sessionStatus === 'pending_worktree_choice' ||
-			sessionStatus === 'paused'
-		) {
-			return 'pending';
-		}
-		if (sessionStatus === 'ended' || sessionStatus === 'archived') {
-			return 'completed';
-		}
-		return 'active';
 	}
 
 	/**

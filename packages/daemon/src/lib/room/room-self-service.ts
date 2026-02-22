@@ -37,7 +37,7 @@ import { RoomSelfStateRepository } from '../../storage/repositories/room-self-st
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
-import { SessionPairManager } from './session-pair-manager';
+import { WorkerManager } from './worker-manager'; // PHASE 4: WorkerManager replaces SessionPairManager
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
 import { RecurringJobScheduler } from './recurring-job-scheduler';
@@ -60,7 +60,7 @@ import type {
 	RoomSelfHumanInput,
 	RoomSelfWaitingContext,
 	NeoTask,
-	SessionPair,
+	// SessionPair, // PHASE 4: Removed - no longer using manager-worker pairs
 	RoomGoal,
 	McpServerConfig,
 } from '@neokai/shared';
@@ -82,10 +82,10 @@ export interface RoomSelfPlanningContext {
 
 /**
  * Context for review phase messages
+ * PHASE 4: Removed sessionPair parameter - using worker sessions directly
  */
 export interface RoomSelfReviewContext {
 	task: NeoTask;
-	sessionPair?: SessionPair;
 	summary: string;
 	success: boolean;
 	error?: string;
@@ -110,8 +110,9 @@ export interface RoomSelfContext {
 	db: Database | BunDatabase;
 	daemonHub: DaemonHub;
 	messageHub: MessageHub;
-	sessionPairManager: SessionPairManager;
 	roomManager: import('./room-manager').RoomManager;
+	/** PHASE 4: WorkerManager is now required (replaces SessionPairManager) */
+	workerManager: WorkerManager;
 	/** API key provider function */
 	getApiKey: () => Promise<string | null>;
 	/** Prompt template manager */
@@ -124,6 +125,8 @@ export interface RoomSelfContext {
 	maxConcurrentWorkers?: number;
 	/** Default workspace root from server config (fallback when room has no paths) */
 	workspaceRoot?: string;
+	/** Feature flag: Use worker-only orchestration instead of manager-worker pairs - PHASE 2 */
+	useWorkerOnly?: boolean;
 }
 
 /**
@@ -400,19 +403,25 @@ export class RoomSelfService {
 		);
 		this.unsubscribers.push(unsubContextUpdated);
 
-		const unsubTaskComplete = this.ctx.daemonHub.on(
-			'pair.task_completed',
-			async (event: { pairId: string; taskId: string; summary: string; error?: string }) => {
-				const pair = this.ctx.sessionPairManager.getPair(event.pairId);
-				if (pair && pair.roomId === this.ctx.room.id) {
+		// PHASE 4: Worker events for manager-less architecture (removed pair.task_completed subscription)
+		const unsubWorkerCompleted = this.ctx.daemonHub.on(
+			'worker.task_completed',
+			async (event: {
+				sessionId: string;
+				taskId: string;
+				summary: string;
+				filesChanged?: string[];
+				nextSteps?: string[];
+			}) => {
+				// Check if this worker belongs to our room
+				const worker = this.ctx.workerManager.getWorkerBySessionId(event.sessionId);
+				if (worker && worker.roomId === this.ctx.room.id) {
 					const task = await this.taskManager.getTask(event.taskId);
 					if (task && this.agentSession) {
 						await this.injectReviewMessage({
 							task,
-							sessionPair: pair,
 							summary: event.summary,
-							success: !event.error,
-							error: event.error,
+							success: true,
 						});
 					} else if (!this.agentSession) {
 						await this.handleTaskCompleted(event.taskId, event.summary);
@@ -421,7 +430,27 @@ export class RoomSelfService {
 			},
 			{ sessionId: this.sessionId }
 		);
-		this.unsubscribers.push(unsubTaskComplete);
+		this.unsubscribers.push(unsubWorkerCompleted);
+
+		const unsubWorkerReviewRequested = this.ctx.daemonHub.on(
+			'worker.review_requested',
+			async (event: { sessionId: string; taskId: string; reason: string }) => {
+				const worker = this.ctx.workerManager?.getWorkerBySessionId(event.sessionId);
+				if (worker && worker.roomId === this.ctx.room.id) {
+					const task = await this.taskManager.getTask(event.taskId);
+					if (task) {
+						await this.setWaiting({
+							type: 'review',
+							taskId: event.taskId,
+							reason: event.reason,
+							since: Date.now(),
+						});
+					}
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubWorkerReviewRequested);
 
 		const unsubRecurringJob = this.ctx.daemonHub.on(
 			'recurringJob.triggered',
@@ -543,9 +572,9 @@ export class RoomSelfService {
 				await this.handleUserMessage(event.message.content, event.sender);
 			}
 
-			const activePairs = this.state.activeSessionPairIds.length;
-			if (activePairs > 0) {
-				await this.transitionTo('executing', `Working on ${activePairs} tasks`);
+			const activeWorkers = this.state.activeWorkerSessionIds.length;
+			if (activeWorkers > 0) {
+				await this.transitionTo('executing', `Working on ${activeWorkers} tasks`);
 			} else {
 				await this.transitionTo('idle', 'No tasks to execute');
 			}
@@ -645,7 +674,7 @@ export class RoomSelfService {
 					message: {
 						id: `status-${Date.now()}`,
 						role: 'assistant',
-						content: `Agent Status: ${this.state.lifecycleState}\nActive pairs: ${this.state.activeSessionPairIds.length}\nErrors: ${this.state.errorCount}`,
+						content: `Agent Status: ${this.state.lifecycleState}\nActive pairs: ${this.state.activeWorkerSessionIds.length}\nErrors: ${this.state.errorCount}`,
 						timestamp: Date.now(),
 					},
 					sender: 'Neo',
@@ -683,25 +712,27 @@ export class RoomSelfService {
 		}
 	}
 
-	private async maybeSpawnWorker(task: NeoTask): Promise<SessionPair | null> {
-		if (this.state.activeSessionPairIds.length >= this.config.maxConcurrentPairs) {
+	private async maybeSpawnWorker(task: NeoTask): Promise<void> {
+		if (this.state.activeWorkerSessionIds.length >= this.config.maxConcurrentPairs) {
 			log.info(`At capacity, queuing task ${task.id}`);
-			return null;
+			return;
 		}
 
 		if (this.lifecycleManager && !this.lifecycleManager.canSpawnWorker()) {
 			log.info(
 				`Cannot spawn worker in current state: ${this.lifecycleManager.getLifecycleState()}`
 			);
-			return null;
+			return;
 		}
 
 		log.info(`Spawning worker for task ${task.id}`);
 
 		try {
-			const result = await this.ctx.sessionPairManager.createPair({
+			// PHASE 4: Always use WorkerManager (manager-worker pairs removed)
+			const workerSessionId = await this.ctx.workerManager.spawnWorker({
 				roomId: this.ctx.room.id,
 				roomSessionId: this.sessionId,
+				roomSessionType: 'room_self',
 				taskId: task.id,
 				taskTitle: task.title,
 				taskDescription: task.description,
@@ -711,21 +742,20 @@ export class RoomSelfService {
 					this.ctx.workspaceRoot,
 			});
 
+			// Track worker session ID in room agent state
 			if (this.lifecycleManager) {
-				this.lifecycleManager.addActiveSessionPair(result.pair.id);
+				this.lifecycleManager.addActiveSessionPair(workerSessionId);
 				this.state = this.lifecycleManager.getState();
 			} else {
 				this.state =
-					this.stateRepo.addActiveSessionPair(this.ctx.room.id, result.pair.id) ?? this.state;
+					this.stateRepo.addActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
 			}
 
-			await this.taskManager.startTask(task.id, result.pair.workerSessionId);
+			await this.taskManager.startTask(task.id, workerSessionId);
 
-			log.info(`Spawned session pair ${result.pair.id} for task ${task.id}`);
-			return result.pair;
+			log.info(`Spawned worker ${workerSessionId} for task ${task.id}`);
 		} catch (error) {
 			log.error(`Failed to spawn worker for task ${task.id}:`, error);
-			return null;
 		}
 	}
 
@@ -735,19 +765,20 @@ export class RoomSelfService {
 		await this.taskManager.completeTask(taskId, summary);
 		await this.goalManager.updateGoalsForTask(taskId);
 
-		const pairs = this.ctx.sessionPairManager.getPairsByRoom(this.ctx.room.id);
-		const completedPair = pairs.find((p) => p.currentTaskId === taskId);
-		if (completedPair) {
+		// PHASE 4: Handle worker sessions only (manager-worker pairs removed)
+		const worker = this.ctx.workerManager.getWorkerByTask(taskId);
+		if (worker) {
 			if (this.lifecycleManager) {
-				this.lifecycleManager.removeActiveSessionPair(completedPair.id);
+				this.lifecycleManager.removeActiveSessionPair(worker.sessionId);
 				this.state = this.lifecycleManager.getState();
 			} else {
 				this.state =
-					this.stateRepo.removeActiveSessionPair(this.ctx.room.id, completedPair.id) ?? this.state;
+					this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, worker.sessionId) ??
+					this.state;
 			}
 		}
 
-		if (this.state.activeSessionPairIds.length === 0) {
+		if (this.state.activeWorkerSessionIds.length === 0) {
 			if (this.lifecycleManager) {
 				await this.lifecycleManager.finishExecution();
 				this.state = this.lifecycleManager.getState();
@@ -1198,22 +1229,18 @@ export class RoomSelfService {
 					throw new Error(`Task not found: ${params.taskId}`);
 				}
 
-				// Check if a session pair already exists for this task
-				const existingPair = this.ctx.sessionPairManager.getPairByTask(params.taskId);
-				if (existingPair) {
-					log.info(`Task ${params.taskId} already has a session pair, reusing it`);
-					// Try to wake up the stuck sessions by sending a message to the manager
-					await this.ctx.messageHub.request('message.send', {
-						sessionId: existingPair.managerSessionId,
-						content: `The room agent has re-engaged with your task. Please continue working on: ${task.title}\n\n${task.description}`,
-					});
-					return { pairId: existingPair.id, workerSessionId: existingPair.workerSessionId };
+				// PHASE 4: Always use WorkerManager (manager-worker pairs removed)
+				const existingWorker = this.ctx.workerManager.getWorkerByTask(params.taskId);
+				if (existingWorker) {
+					log.info(`Task ${params.taskId} already has a worker, reusing it`);
+					// TODO: Wake up stuck worker session
+					return { pairId: existingWorker.id, workerSessionId: existingWorker.sessionId };
 				}
 
-				// No existing pair, create a new one
-				const result = await this.ctx.sessionPairManager.createPair({
+				const workerSessionId = await this.ctx.workerManager.spawnWorker({
 					roomId: this.ctx.room.id,
 					roomSessionId: this.sessionId,
+					roomSessionType: 'room_self',
 					taskId: task.id,
 					taskTitle: task.title,
 					taskDescription: task.description,
@@ -1223,10 +1250,9 @@ export class RoomSelfService {
 						this.ctx.workspaceRoot,
 				});
 
-				await this.taskManager.startTask(params.taskId, result.pair.workerSessionId);
-
-				log.info(`Worker spawned: ${result.pair.workerSessionId} for task ${params.taskId}`);
-				return { pairId: result.pair.id, workerSessionId: result.pair.workerSessionId };
+				await this.taskManager.startTask(params.taskId, workerSessionId);
+				log.info(`Worker spawned: ${workerSessionId} for task ${params.taskId}`);
+				return { pairId: workerSessionId, workerSessionId };
 			},
 			onRequestReview: async (taskId: string, reason: string) => {
 				await this.setWaiting({ type: 'review', taskId, reason, since: Date.now() });
@@ -1323,12 +1349,12 @@ export class RoomSelfService {
 			// Session management tools
 			onCancelTask: async (params) => {
 				await this.taskManager.cancelTask(params.taskId, params.reason);
-				// Also archive associated session pair if it exists
-				const pair = this.ctx.sessionPairManager.getPairByTask(params.taskId);
-				if (pair) {
-					await this.archiveSession(pair.managerSessionId);
-					await this.archiveSession(pair.workerSessionId);
-					this.ctx.sessionPairManager.deletePair(pair.id);
+				// PHASE 4: Also archive associated worker session if it exists
+				const worker = this.ctx.workerManager.getWorkerByTask(params.taskId);
+				if (worker) {
+					await this.archiveSession(worker.sessionId);
+					// Worker sessions are managed differently now
+					log.info(`Archived worker session for task ${params.taskId}`);
 				}
 				log.info(`Task cancelled: ${params.taskId}`);
 			},
@@ -1344,40 +1370,27 @@ export class RoomSelfService {
 				log.info(`Session interrupted: ${params.sessionId}`);
 			},
 			onListSessions: async (_params) => {
-				// Get session IDs from room and session pairs
+				// PHASE 4: Get session IDs from room and worker sessions
 				const roomSessionIds = this.ctx.room.sessionIds;
-				const pairs = this.ctx.sessionPairManager.getPairsByRoom(this.ctx.room.id);
+				const workers = this.ctx.workerManager.getWorkersByRoom(this.ctx.room.id);
 
-				// Combine room sessions and paired sessions
+				// Combine room sessions and worker sessions
 				const allSessionIds = new Set(roomSessionIds);
-				for (const pair of pairs) {
-					allSessionIds.add(pair.managerSessionId);
-					allSessionIds.add(pair.workerSessionId);
+				for (const worker of workers) {
+					allSessionIds.add(worker.sessionId);
 				}
 
 				// Return basic session info
 				return Array.from(allSessionIds).map((sessionId) => {
-					// Try to find the pair to get task info
-					const pair = pairs.find(
-						(p) => p.managerSessionId === sessionId || p.workerSessionId === sessionId
-					);
+					// Try to find the worker to get task info
+					const worker = workers.find((w) => w.sessionId === sessionId);
 					return {
 						id: sessionId,
 						title: sessionId.slice(0, 8), // Placeholder - full session data would need session repo access
 						status: 'active',
-						sessionType:
-							pair?.managerSessionId === sessionId
-								? 'manager'
-								: pair?.workerSessionId === sessionId
-									? 'worker'
-									: undefined,
-						currentTaskId: pair?.currentTaskId,
-						pairedSessionId:
-							pair?.managerSessionId === sessionId
-								? pair.workerSessionId
-								: pair?.workerSessionId === sessionId
-									? pair.managerSessionId
-									: undefined,
+						sessionType: worker ? 'worker' : undefined,
+						currentTaskId: worker?.taskId,
+						pairedSessionId: undefined, // PHASE 4: No more paired sessions
 					};
 				});
 			},
