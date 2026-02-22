@@ -107,6 +107,7 @@ export interface RoomAgentContext {
 	daemonHub: DaemonHub;
 	messageHub: MessageHub;
 	sessionPairManager: SessionPairManager;
+	roomManager: import('./room-manager').RoomManager;
 	/** API key provider function */
 	getApiKey: () => Promise<string | null>;
 	/** Prompt template manager */
@@ -1119,6 +1120,19 @@ export class RoomAgentService {
 					throw new Error(`Task not found: ${params.taskId}`);
 				}
 
+				// Check if a session pair already exists for this task
+				const existingPair = this.ctx.sessionPairManager.getPairByTask(params.taskId);
+				if (existingPair) {
+					log.info(`Task ${params.taskId} already has a session pair, reusing it`);
+					// Try to wake up the stuck sessions by sending a message to the manager
+					await this.ctx.messageHub.request('message.send', {
+						sessionId: existingPair.managerSessionId,
+						content: `The room agent has re-engaged with your task. Please continue working on: ${task.title}\n\n${task.description}`,
+					});
+					return { pairId: existingPair.id, workerSessionId: existingPair.workerSessionId };
+				}
+
+				// No existing pair, create a new one
 				const result = await this.ctx.sessionPairManager.createPair({
 					roomId: this.ctx.room.id,
 					roomSessionId: this.sessionId,
@@ -1227,6 +1241,67 @@ export class RoomAgentService {
 					progress: t.progress ?? 0,
 				}));
 			},
+			// Session management tools
+			onCancelTask: async (params) => {
+				await this.taskManager.cancelTask(params.taskId);
+				// Also archive associated session pair if it exists
+				const pair = this.ctx.sessionPairManager.getPairByTask(params.taskId);
+				if (pair) {
+					await this.archiveSession(pair.managerSessionId);
+					await this.archiveSession(pair.workerSessionId);
+					this.ctx.sessionPairManager.deletePair(pair.id);
+				}
+				log.info(`Task cancelled: ${params.taskId}`);
+			},
+			onArchiveSession: async (params) => {
+				await this.archiveSession(params.sessionId);
+				log.info(`Session archived: ${params.sessionId}`);
+			},
+			onInterruptSession: async (params) => {
+				// Use messageHub to call client.interrupt RPC
+				await this.ctx.messageHub.request('client.interrupt', {
+					sessionId: params.sessionId,
+				});
+				log.info(`Session interrupted: ${params.sessionId}`);
+			},
+			onListSessions: async (_params) => {
+				// Get session IDs from room and session pairs
+				const roomSessionIds = this.ctx.room.sessionIds;
+				const pairs = this.ctx.sessionPairManager.getPairsByRoom(this.ctx.room.id);
+
+				// Combine room sessions and paired sessions
+				const allSessionIds = new Set(roomSessionIds);
+				for (const pair of pairs) {
+					allSessionIds.add(pair.managerSessionId);
+					allSessionIds.add(pair.workerSessionId);
+				}
+
+				// Return basic session info
+				return Array.from(allSessionIds).map((sessionId) => {
+					// Try to find the pair to get task info
+					const pair = pairs.find(
+						(p) => p.managerSessionId === sessionId || p.workerSessionId === sessionId
+					);
+					return {
+						id: sessionId,
+						title: sessionId.slice(0, 8), // Placeholder - full session data would need session repo access
+						status: 'active',
+						sessionType:
+							pair?.managerSessionId === sessionId
+								? 'manager'
+								: pair?.workerSessionId === sessionId
+									? 'worker'
+									: undefined,
+						currentTaskId: pair?.currentTaskId,
+						pairedSessionId:
+							pair?.managerSessionId === sessionId
+								? pair.workerSessionId
+								: pair?.workerSessionId === sessionId
+									? pair.managerSessionId
+									: undefined,
+					};
+				});
+			},
 		};
 
 		return createRoomAgentMcpServer(config);
@@ -1235,6 +1310,17 @@ export class RoomAgentService {
 	// ========================
 	// System Prompt
 	// ========================
+
+	/**
+	 * Archive a session (worker or manager)
+	 */
+	private async archiveSession(sessionId: string): Promise<void> {
+		// Use messageHub to call session.archive RPC
+		await this.ctx.messageHub.request('session.archive', {
+			sessionId,
+			confirmed: true,
+		});
+	}
 
 	private async getSystemPrompt(): Promise<string> {
 		const rendered = this.ctx.promptTemplateManager.getRenderedPrompt(

@@ -206,6 +206,7 @@ export class RoomAgentManager {
 			daemonHub: this.deps.daemonHub,
 			messageHub: this.deps.messageHub,
 			sessionPairManager: this.deps.sessionPairManager,
+			roomManager: this.deps.roomManager,
 			getApiKey: this.deps.getApiKey,
 			promptTemplateManager: this.deps.promptTemplateManager,
 			recurringJobScheduler: this.deps.scheduler as RecurringJobScheduler,

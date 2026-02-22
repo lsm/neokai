@@ -223,7 +223,13 @@ export interface CreateMemoryParams {
 /**
  * Task status
  */
-export type TaskStatus = 'pending' | 'in_progress' | 'blocked' | 'completed' | 'failed';
+export type TaskStatus =
+	| 'pending'
+	| 'in_progress'
+	| 'blocked'
+	| 'completed'
+	| 'failed'
+	| 'cancelled';
 
 /**
  * Task priority

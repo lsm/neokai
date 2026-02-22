@@ -90,6 +90,15 @@ export class SessionPairRepository {
 	}
 
 	/**
+	 * Get a session pair by task ID
+	 */
+	getPairByTask(taskId: string): SessionPair | null {
+		const stmt = this.db.prepare(`SELECT * FROM session_pairs WHERE current_task_id = ?`);
+		const row = stmt.get(taskId) as Record<string, unknown> | undefined;
+		return row ? this.rowToPair(row) : null;
+	}
+
+	/**
 	 * Update the status of a session pair
 	 */
 	updatePairStatus(id: string, status: SessionPairStatus): SessionPair | null {

@@ -200,6 +200,13 @@ export class SessionPairManager {
 	}
 
 	/**
+	 * Get a session pair by task ID
+	 */
+	getPairByTask(taskId: string): SessionPair | null {
+		return this.sessionPairRepo.getPairByTask(taskId);
+	}
+
+	/**
 	 * Update the status of a session pair
 	 */
 	updatePairStatus(id: string, status: SessionPairStatus): SessionPair | null {

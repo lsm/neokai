@@ -211,6 +211,18 @@ export class TaskManager {
 	}
 
 	/**
+	 * Cancel a task (mark as cancelled)
+	 */
+	async cancelTask(taskId: string): Promise<void> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		this.taskRepo.updateTask(taskId, { status: 'cancelled' });
+	}
+
+	/**
 	 * Get next pending task (by priority)
 	 */
 	async getNextPendingTask(): Promise<NeoTask | null> {

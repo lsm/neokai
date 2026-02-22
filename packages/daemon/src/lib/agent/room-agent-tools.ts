@@ -118,6 +118,49 @@ export interface RoomTaskSummary {
 }
 
 /**
+ * Parameters for room_cancel_task tool
+ */
+export interface RoomCancelTaskParams {
+	taskId: string;
+	reason: string;
+}
+
+/**
+ * Parameters for room_archive_session tool
+ */
+export interface RoomArchiveSessionParams {
+	sessionId: string;
+	reason?: string;
+}
+
+/**
+ * Parameters for room_interrupt_session tool
+ */
+export interface RoomInterruptSessionParams {
+	sessionId: string;
+	reason?: string;
+}
+
+/**
+ * Parameters for room_list_sessions tool
+ */
+export interface RoomListSessionsParams {
+	status?: string;
+}
+
+/**
+ * Session summary returned by room_list_sessions
+ */
+export interface RoomSessionSummary {
+	id: string;
+	title: string;
+	status: string;
+	sessionType?: string;
+	currentTaskId?: string;
+	pairedSessionId?: string;
+}
+
+/**
  * Configuration for creating the Room Agent Tools MCP server
  */
 export interface RoomAgentToolsConfig {
@@ -133,6 +176,14 @@ export interface RoomAgentToolsConfig {
 	onSpawnWorker: (
 		params: RoomSpawnWorkerParams
 	) => Promise<{ pairId: string; workerSessionId: string }>;
+	/** Callback to cancel a task */
+	onCancelTask?: (params: RoomCancelTaskParams) => Promise<void>;
+	/** Callback to archive a session */
+	onArchiveSession?: (params: RoomArchiveSessionParams) => Promise<void>;
+	/** Callback to interrupt a session */
+	onInterruptSession?: (params: RoomInterruptSessionParams) => Promise<void>;
+	/** Callback to list sessions */
+	onListSessions?: (params: RoomListSessionsParams) => Promise<RoomSessionSummary[]>;
 	/** Callback to request human review */
 	onRequestReview: (taskId: string, reason: string) => Promise<void>;
 	/** Callback to escalate an issue */
@@ -396,6 +447,124 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 	];
 
+	// Build session management tools (optional, depending on config)
+	const sessionManagementTools = [
+		...(config.onCancelTask
+			? [
+					tool(
+						'room_cancel_task',
+						'Cancel a task and optionally its associated worker sessions',
+						{
+							task_id: z.string().describe('ID of the task to cancel'),
+							reason: z.string().describe('Reason for cancellation'),
+						},
+						async (args) => {
+							await config.onCancelTask!({
+								taskId: args.task_id,
+								reason: args.reason,
+							});
+							return {
+								content: [
+									{
+										type: 'text',
+										text: JSON.stringify({
+											success: true,
+											message: 'Task cancelled successfully',
+										}),
+									},
+								],
+							};
+						}
+					),
+				]
+			: []),
+		...(config.onArchiveSession
+			? [
+					tool(
+						'room_archive_session',
+						'Archive a worker or manager session when it is no longer needed',
+						{
+							session_id: z.string().describe('ID of the session to archive'),
+							reason: z.string().optional().describe('Why this session is being archived'),
+						},
+						async (args) => {
+							await config.onArchiveSession!({
+								sessionId: args.session_id,
+								reason: args.reason,
+							});
+							return {
+								content: [
+									{
+										type: 'text',
+										text: JSON.stringify({
+											success: true,
+											message: 'Session archived successfully',
+										}),
+									},
+								],
+							};
+						}
+					),
+				]
+			: []),
+		...(config.onInterruptSession
+			? [
+					tool(
+						'room_interrupt_session',
+						'Interrupt a stuck or unresponsive session',
+						{
+							session_id: z.string().describe('ID of the session to interrupt'),
+							reason: z.string().optional().describe('Why interruption is needed'),
+						},
+						async (args) => {
+							await config.onInterruptSession!({
+								sessionId: args.session_id,
+								reason: args.reason,
+							});
+							return {
+								content: [
+									{
+										type: 'text',
+										text: JSON.stringify({
+											success: true,
+											message: 'Session interrupted successfully',
+										}),
+									},
+								],
+							};
+						}
+					),
+				]
+			: []),
+		...(config.onListSessions
+			? [
+					tool(
+						'room_list_sessions',
+						'List worker and manager sessions for this room',
+						{
+							status: z.string().optional().describe('Filter sessions by status'),
+						},
+						async (args) => {
+							const sessions = await config.onListSessions!({
+								status: args.status,
+							});
+							return {
+								content: [
+									{
+										type: 'text',
+										text: JSON.stringify({ sessions }),
+									},
+								],
+							};
+						}
+					),
+				]
+			: []),
+	];
+
+	// Combine all base tools
+	const allBaseTools = [...baseTools, ...sessionManagementTools];
+
 	// Build optional tools arrays
 	const scheduleJobTool = config.onScheduleJob
 		? [
@@ -528,7 +697,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		: [];
 
 	// Combine all tools
-	const tools = [...baseTools, ...scheduleJobTool, ...cancelJobTool, ...updatePromptsTool];
+	const tools = [...allBaseTools, ...scheduleJobTool, ...cancelJobTool, ...updatePromptsTool];
 
 	return createSdkMcpServer({
 		name: `room-agent-${config.roomId.slice(0, 8)}`,
