@@ -10,8 +10,8 @@
 
 import type { AgentProcessingState, PendingUserQuestion } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { SDKMessage } from '@neokai/shared/sdk';
-import { isSDKAssistantMessage, isToolUseBlock } from '@neokai/shared/sdk/type-guards';
+import type { SDKAssistantMessage, SDKMessage } from '@neokai/shared/sdk';
+import { isToolUseBlock } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
 
@@ -289,9 +289,10 @@ export class ProcessingStateManager {
 			if (this.streamingPhase !== 'streaming') {
 				await this.updatePhase('streaming');
 			}
-		} else if (isSDKAssistantMessage(message)) {
+		} else if (message.type === 'assistant' || message.type === 'partial_assistant') {
 			// Assistant message indicates thinking/tool use phase
-			const hasToolUse = message.message.content.some(isToolUseBlock);
+			const content = (message as SDKAssistantMessage).message.content;
+			const hasToolUse = content.some(isToolUseBlock);
 
 			if (hasToolUse && this.streamingPhase === 'initializing') {
 				// Transition from initializing to thinking when we see tool use
@@ -299,7 +300,7 @@ export class ProcessingStateManager {
 			} else if (
 				!hasToolUse &&
 				this.streamingPhase === 'initializing' &&
-				message.message.content.some(
+				content.some(
 					(block: unknown) =>
 						typeof block === 'object' && block !== null && 'type' in block && block.type === 'text'
 				)

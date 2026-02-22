@@ -4,7 +4,19 @@
  * These type guards enable type-safe discrimination of SDK message union types.
  */
 
-import type { SDKMessage } from "./sdk.d.ts";
+import type {
+  SDKMessage,
+  SDKAssistantMessage,
+  SDKAuthStatusMessage,
+  SDKCompactBoundaryMessage,
+  SDKHookResponseMessage,
+  SDKResultError,
+  SDKResultMessage,
+  SDKResultSuccess,
+  SDKStatusMessage,
+  SDKSystemMessage,
+  SDKToolProgressMessage,
+} from "./sdk.d.ts";
 
 // ============================================================================
 // Message Type Guards
@@ -56,7 +68,7 @@ export function isSDKResultMessage(
 export function isSDKResultSuccess(
   msg: SDKMessage,
 ): msg is Extract<SDKMessage, { type: "result"; subtype: "success" }> {
-  return msg.type === "result" && msg.subtype === "success";
+  return msg.type === "result" && (msg as SDKResultMessage).subtype === "success";
 }
 
 /**
@@ -73,7 +85,7 @@ export function isSDKResultError(msg: SDKMessage): msg is Extract<
       | "error_max_structured_output_retries";
   }
 > {
-  return msg.type === "result" && msg.subtype !== "success";
+  return msg.type === "result" && (msg as SDKResultMessage).subtype !== "success";
 }
 
 /**
@@ -90,8 +102,8 @@ export function isSDKSystemMessage(
  */
 export function isSDKSystemInit(
   msg: SDKMessage,
-): msg is Extract<SDKMessage, { type: "system"; subtype: "init" }> {
-  return msg.type === "system" && msg.subtype === "init";
+): msg is SDKSystemMessage {
+  return msg.type === "system" && (msg as SDKSystemMessage).subtype === "init";
 }
 
 /**
@@ -99,8 +111,8 @@ export function isSDKSystemInit(
  */
 export function isSDKCompactBoundary(
   msg: SDKMessage,
-): msg is Extract<SDKMessage, { type: "system"; subtype: "compact_boundary" }> {
-  return msg.type === "system" && msg.subtype === "compact_boundary";
+): msg is SDKCompactBoundaryMessage {
+  return msg.type === "system" && (msg as SDKCompactBoundaryMessage).subtype === "compact_boundary";
 }
 
 /**
@@ -108,8 +120,8 @@ export function isSDKCompactBoundary(
  */
 export function isSDKStatusMessage(
   msg: SDKMessage,
-): msg is Extract<SDKMessage, { type: "system"; subtype: "status" }> {
-  return msg.type === "system" && msg.subtype === "status";
+): msg is SDKStatusMessage {
+  return msg.type === "system" && (msg as SDKStatusMessage).subtype === "status";
 }
 
 /**
@@ -117,8 +129,8 @@ export function isSDKStatusMessage(
  */
 export function isSDKHookResponse(
   msg: SDKMessage,
-): msg is Extract<SDKMessage, { type: "system"; subtype: "hook_response" }> {
-  return msg.type === "system" && msg.subtype === "hook_response";
+): msg is SDKHookResponseMessage {
+  return msg.type === "system" && (msg as SDKHookResponseMessage).subtype === "hook_response";
 }
 
 /**
@@ -271,7 +283,8 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
     return "Query Success";
   }
   if (isSDKResultError(msg)) {
-    return `Query Error: ${msg.subtype.replace("error_", "")}`;
+    const resultMsg = msg as SDKResultMessage;
+    return `Query Error: ${(resultMsg.subtype).replace("error_", "")}`;
   }
   if (isSDKSystemInit(msg)) {
     return "Session Initialized";
@@ -280,16 +293,19 @@ export function getMessageTypeDescription(msg: SDKMessage): string {
     return "Compaction Boundary";
   }
   if (isSDKStatusMessage(msg)) {
-    return `Status: ${msg.status || "unknown"}`;
+    const statusMsg = msg as SDKStatusMessage;
+    return `Status: ${statusMsg.status || "unknown"}`;
   }
   if (isSDKHookResponse(msg)) {
-    return `Hook Response: ${msg.hook_name}`;
+    const hookMsg = msg as SDKHookResponseMessage;
+    return `Hook Response: ${hookMsg.hook_name}`;
   }
   if (isSDKStreamEvent(msg)) {
     return "Streaming Event";
   }
   if (isSDKToolProgressMessage(msg)) {
-    return `Tool Progress: ${msg.tool_name}`;
+    const toolMsg = msg as SDKToolProgressMessage;
+    return `Tool Progress: ${toolMsg.tool_name}`;
   }
   if (isSDKAuthStatusMessage(msg)) {
     return "Authentication Status";

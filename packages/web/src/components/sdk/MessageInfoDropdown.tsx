@@ -79,7 +79,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						Tools ({displayTools.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
-						{displayTools.map((tool) => (
+						{displayTools.map((tool: string) => (
 							<span
 								key={tool}
 								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs"
@@ -98,7 +98,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						MCP Servers ({sessionInfo.mcp_servers.length})
 					</div>
 					<div class="space-y-1">
-						{sessionInfo.mcp_servers.map((server) => (
+						{sessionInfo.mcp_servers.map((server: { name: string; status: string }) => (
 							<div key={server.name} class="flex items-center gap-2">
 								<div
 									class={`w-1.5 h-1.5 rounded-full ${
@@ -121,7 +121,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						Slash Commands ({sessionInfo.slash_commands.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
-						{sessionInfo.slash_commands.map((cmd) => (
+						{sessionInfo.slash_commands.map((cmd: string) => (
 							<span
 								key={cmd}
 								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-mono"
@@ -140,7 +140,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						Agents ({sessionInfo.agents.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
-						{sessionInfo.agents.map((agent) => (
+						{sessionInfo.agents.map((agent: string) => (
 							<span
 								key={agent}
 								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs"

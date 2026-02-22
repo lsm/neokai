@@ -9,7 +9,11 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type {
+	SDKHookResponseMessage,
+	SDKMessage,
+	SDKStatusMessage,
+} from '@neokai/shared/sdk/sdk.d.ts';
 import {
 	isSDKSystemInit,
 	isSDKCompactBoundary,
@@ -37,7 +41,8 @@ export function SDKSystemMessage({ message }: Props) {
 
 	// Status message
 	if (isSDKStatusMessage(message)) {
-		if (message.status === 'compacting') {
+		const statusMessage = message as SDKStatusMessage;
+		if (statusMessage.status === 'compacting') {
 			return (
 				<div class="flex items-center gap-3 py-4">
 					<div
@@ -59,24 +64,25 @@ export function SDKSystemMessage({ message }: Props) {
 
 	// Hook response
 	if (isSDKHookResponse(message)) {
+		const hookMessage = message as SDKHookResponseMessage;
 		return (
 			<div class="py-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
 				<div class="text-sm font-medium text-purple-900 dark:text-purple-100 mb-1">
-					Hook: {message.hook_name} ({message.hook_event})
+					Hook: {hookMessage.hook_name} ({hookMessage.hook_event})
 				</div>
-				{message.stdout && (
+				{hookMessage.stdout && (
 					<pre class="text-xs text-purple-700 dark:text-purple-300 whitespace-pre-wrap">
-						{message.stdout}
+						{hookMessage.stdout}
 					</pre>
 				)}
-				{message.stderr && (
+				{hookMessage.stderr && (
 					<pre class="text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap mt-1">
-						{message.stderr}
+						{hookMessage.stderr}
 					</pre>
 				)}
-				{message.exit_code !== undefined && (
+				{hookMessage.exit_code !== undefined && (
 					<div class="text-xs text-purple-600 dark:text-purple-400 mt-1">
-						Exit code: {message.exit_code}
+						Exit code: {hookMessage.exit_code}
 					</div>
 				)}
 			</div>
@@ -145,7 +151,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 							Tools ({message.tools.length})
 						</div>
 						<div class="flex flex-wrap gap-1">
-							{message.tools.map((tool) => (
+							{message.tools.map((tool: string) => (
 								<span
 									key={tool}
 									class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-0.5 rounded font-mono"
@@ -162,7 +168,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 								MCP Servers ({message.mcp_servers.length})
 							</div>
 							<div class="space-y-1">
-								{message.mcp_servers.map((server) => (
+								{message.mcp_servers.map((server: { name: string; status: string }) => (
 									<div
 										key={server.name}
 										class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-1 rounded flex items-center justify-between"
@@ -185,7 +191,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 								Slash Commands ({message.slash_commands.length})
 							</div>
 							<div class="flex flex-wrap gap-1">
-								{message.slash_commands.map((cmd) => (
+								{message.slash_commands.map((cmd: string) => (
 									<span
 										key={cmd}
 										class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-0.5 rounded font-mono"
@@ -203,7 +209,7 @@ function SystemInitMessage({ message }: { message: Extract<SystemMessage, { subt
 								Agents ({message.agents.length})
 							</div>
 							<div class="flex flex-wrap gap-1">
-								{message.agents.map((agent) => (
+								{message.agents.map((agent: string) => (
 									<span
 										key={agent}
 										class="text-xs bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-200 px-2 py-0.5 rounded"

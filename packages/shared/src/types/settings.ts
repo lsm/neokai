@@ -10,13 +10,7 @@ import type { ThinkingLevel } from '../types.ts';
 
 export type SettingSource = 'user' | 'project' | 'local';
 
-export type PermissionMode =
-	| 'default'
-	| 'acceptEdits'
-	| 'bypassPermissions'
-	| 'plan'
-	| 'delegate'
-	| 'dontAsk';
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
 
 /**
  * Settings that can be passed to the SDK via query options

@@ -3,7 +3,11 @@
  */
 
 import type { JSX } from 'preact';
-import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
+import type {
+	SDKAuthStatusMessage,
+	SDKMessage,
+	SDKToolProgressMessage as SDKToolProgressMessageType,
+} from '@neokai/shared/sdk/sdk.d.ts';
 import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
 import {
 	isSDKAssistantMessage,
@@ -146,14 +150,15 @@ export function SDKMessageRenderer({
 	} else if (isSDKSystemMessage(message)) {
 		renderedMessage = <SDKSystemMessage message={message} />;
 	} else if (isSDKToolProgressMessage(message)) {
-		const toolInput = toolInputsMap?.get(message.tool_use_id);
+		const toolInput = toolInputsMap?.get((message as SDKToolProgressMessageType).tool_use_id);
 		renderedMessage = <SDKToolProgressMessage message={message} toolInput={toolInput} />;
 	} else if (isSDKAuthStatusMessage(message)) {
+		const authMessage = message as SDKAuthStatusMessage;
 		renderedMessage = (
 			<AuthStatusCard
-				isAuthenticating={message.isAuthenticating}
-				output={message.output}
-				error={message.error}
+				isAuthenticating={authMessage.isAuthenticating}
+				output={authMessage.output}
+				error={authMessage.error}
 				variant="default"
 			/>
 		);
@@ -162,7 +167,7 @@ export function SDKMessageRenderer({
 		renderedMessage = (
 			<div class="p-3 bg-gray-100 dark:bg-gray-800 rounded">
 				<div class="text-xs text-gray-600 dark:text-gray-400 mb-1">
-					Unknown message type: {message.type}
+					Unknown message type: {(message as SDKMessage).type}
 				</div>
 				<details>
 					<summary class="text-xs cursor-pointer text-gray-500">Show raw data</summary>
