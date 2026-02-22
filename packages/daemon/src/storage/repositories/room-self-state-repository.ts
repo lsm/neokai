@@ -35,7 +35,7 @@ export class RoomSelfStateRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO room_agent_states (room_id, lifecycle_state, active_session_pair_ids, last_activity_at, error_count, pending_actions)
+			`INSERT INTO room_agent_states (room_id, lifecycle_state, active_worker_session_ids, last_activity_at, error_count, pending_actions)
        VALUES (?, ?, ?, ?, ?, ?)`
 		);
 
