@@ -151,8 +151,13 @@ export class SessionPairManager {
 		// 9. Auto-start worker and manager sessions with initial prompts
 		const workerSession = this.sessionLifecycle.getAgentSession(workerSessionId);
 		if (workerSession) {
+			// Start the SDK streaming query loop so it's ready to consume injected messages.
+			// Without this, messageQueue.enqueue() blocks until timeout because no
+			// messageGenerator is iterating the queue.
+			await workerSession.startStreamingQuery();
+
 			const workerPrompt = `You have been assigned the following task:\n\n**${task.title}**\n\n${task.description ?? ''}\n\nPlease complete this task using the available tools. When finished, summarize what you accomplished.`;
-			workerSession.messageQueue.enqueue(workerPrompt, true);
+			await workerSession.messageQueue.enqueue(workerPrompt, true);
 		}
 
 		const managerSession = this.sessionLifecycle.getAgentSession(managerSessionId);
@@ -163,8 +168,11 @@ export class SessionPairManager {
 				'manager-tools': managerToolsMcp as unknown as McpServerConfig,
 			};
 
+			// Start the SDK streaming query loop so it's ready to consume injected messages.
+			await managerSession.startStreamingQuery();
+
 			const managerPrompt = `You are managing the execution of the following task:\n\n**${task.title}** (Task ID: \`${task.id}\`)\n\n${task.description ?? ''}\n\nWorker session ID: \`${workerSessionId}\`\n\nMonitor the worker's progress. When the task is complete, use the \`manager_complete_task\` tool to signal completion with a clear summary of what was accomplished.`;
-			managerSession.messageQueue.enqueue(managerPrompt, true);
+			await managerSession.messageQueue.enqueue(managerPrompt, true);
 		}
 
 		return { pair, task };
