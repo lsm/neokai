@@ -22,13 +22,165 @@
  * Renamed from neo.room.* to room.* for cleaner API.
  */
 
-import type { MessageHub, WorkspacePath } from '@neokai/shared';
+import type { MessageHub, WorkspacePath, McpServerConfig } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
 import type { SessionBridge } from '../room/session-bridge';
 import type { RoomSelfManager } from './room-self-handlers';
 import type { SessionManager } from '../session-manager';
+import { createRoomAgentMcpServer } from '../agent/room-agent-tools';
+import type { Database } from '../../storage/index';
+
+/**
+ * Global registry for in-process MCP servers for rooms
+ * Maps roomId -> MCP server instance
+ * These servers are created when a room is created and can be used by both
+ * room chat and room self sessions
+ */
+const roomMcpServerRegistry = new Map<string, ReturnType<typeof createRoomAgentMcpServer>>();
+
+/**
+ * Get or create the MCP server for a room
+ * The MCP server is created when the room is created and shared by both room chat and room self sessions
+ */
+export function getOrCreateRoomMcpServer(
+	roomId: string,
+	db: Database
+): ReturnType<typeof createRoomAgentMcpServer> {
+	let server = roomMcpServerRegistry.get(roomId);
+	if (!server) {
+		// Import dynamically to avoid circular dependency
+		const { GoalRepository } = require('../../storage/repositories/goal-repository');
+		const { TaskRepository } = require('../../storage/repositories/task-repository');
+		const {
+			RecurringJobRepository,
+		} = require('../../storage/repositories/recurring-job-repository');
+
+		const goalRepo = new GoalRepository(db.getDatabase());
+		const taskRepo = new TaskRepository(db.getDatabase());
+		const jobRepo = new RecurringJobRepository(db.getDatabase());
+
+		// Create the MCP server with actual callbacks
+		server = createRoomAgentMcpServer({
+			roomId,
+			sessionId: `room:mcp:${roomId}`, // Internal MCP session ID
+			onCompleteGoal: async (params) => {
+				// Room self session will handle this
+				const goal = goalRepo.getGoal(params.goalId);
+				if (goal) {
+					goalRepo.updateGoal(params.goalId, { status: 'completed' });
+				}
+			},
+			onCreateTask: async (params) => {
+				// Room self session will handle this
+				const task = taskRepo.createTask({
+					roomId,
+					title: params.title,
+					description: params.description ?? '',
+					priority: params.priority ?? 'normal',
+					goalId: params.goalId,
+				});
+				return { taskId: task.id };
+			},
+			onSpawnWorker: async (_params) => {
+				// This is handled by the room self session
+				return { pairId: '', workerSessionId: '', managerSessionId: '' };
+			},
+			onRequestReview: async (_taskId, _reason) => {
+				// This is handled by the room self session
+			},
+			onEscalate: async (_taskId, _reason) => {
+				// This is handled by the room self session
+			},
+			onUpdateGoalProgress: async (params) => {
+				const goal = goalRepo.getGoal(params.goalId);
+				if (goal) {
+					goalRepo.updateGoal(params.goalId, { progress: params.progress });
+				}
+			},
+			onListGoals: async (status) => {
+				const goals = goalRepo.listGoals(roomId, status);
+				return goals.map(
+					(g: {
+						id: string;
+						title: string;
+						description?: string;
+						status: string;
+						priority: string;
+						progress?: number;
+					}) => ({
+						id: g.id,
+						title: g.title,
+						description: g.description ?? '',
+						status: g.status,
+						priority: g.priority,
+						progress: g.progress ?? 0,
+					})
+				);
+			},
+			onListTasks: async (status) => {
+				const tasks = taskRepo.listTasks(roomId, status);
+				return tasks.map(
+					(t: {
+						id: string;
+						title: string;
+						description?: string;
+						status: string;
+						priority: string;
+					}) => ({
+						id: t.id,
+						title: t.title,
+						description: t.description ?? '',
+						status: t.status,
+						priority: t.priority,
+					})
+				);
+			},
+			onListJobs: async () => {
+				const jobs = jobRepo.listJobs(roomId);
+				return jobs.map(
+					(j: {
+						id: string;
+						name: string;
+						description?: string;
+						scheduleType: string;
+						enabled: boolean;
+						nextRunAt?: number;
+					}) => ({
+						id: j.id,
+						name: j.name,
+						description: j.description ?? '',
+						scheduleType: j.scheduleType,
+						enabled: j.enabled,
+						nextRunAt: j.nextRunAt,
+					})
+				);
+			},
+		});
+		roomMcpServerRegistry.set(roomId, server);
+	}
+	return server;
+}
+
+/**
+ * Get an existing MCP server for a room (returns undefined if not created)
+ */
+export function getRoomMcpServer(
+	roomId: string
+): ReturnType<typeof createRoomAgentMcpServer> | undefined {
+	return roomMcpServerRegistry.get(roomId);
+}
+
+/**
+ * Delete the MCP server for a room (when room is deleted)
+ */
+export function deleteRoomMcpServer(roomId: string): void {
+	const server = roomMcpServerRegistry.get(roomId);
+	if (server) {
+		roomMcpServerRegistry.delete(roomId);
+	}
+}
 
 export function setupRoomHandlers(
 	messageHub: MessageHub,
@@ -38,7 +190,8 @@ export function setupRoomHandlers(
 	sessionBridge?: SessionBridge,
 	roomSelfManager?: RoomSelfManager,
 	workspaceRoot?: string,
-	sessionManager?: SessionManager
+	sessionManager?: SessionManager,
+	db?: Database
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
@@ -70,11 +223,25 @@ export function setupRoomHandlers(
 		if (sessionManager) {
 			const roomChatSessionId = `room:chat:${room.id}`;
 			try {
+				// Create the MCP server for this room (shared by room chat and room self)
+				if (db) {
+					getOrCreateRoomMcpServer(room.id, db);
+				}
+
 				await sessionManager.createSession({
 					sessionId: roomChatSessionId,
 					title: room.name,
 					workspacePath: defaultPath ?? allowedPaths[0]?.path,
-					config: { model: room.defaultModel },
+					config: {
+						model: room.defaultModel,
+						// Inject the room-agent-tools MCP server marker
+						mcpServers: {
+							'room-agent-tools': {
+								type: '__IN_PROCESS_ROOM_AGENT_TOOLS__',
+								roomId: room.id,
+							} as unknown as McpServerConfig,
+						},
+					},
 					sessionType: 'room_chat',
 					roomId: room.id,
 				});
@@ -209,6 +376,9 @@ export function setupRoomHandlers(
 			await roomSelfManager.stopAgent(params.roomId).catch(() => {});
 			roomSelfManager.removeAgent(params.roomId);
 		}
+
+		// Delete the MCP server for this room
+		deleteRoomMcpServer(params.roomId);
 
 		// Broadcast room deletion event before deleting
 		await daemonHub

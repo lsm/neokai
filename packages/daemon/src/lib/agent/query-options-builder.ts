@@ -19,20 +19,18 @@
  */
 
 /**
- * Import the MCP server getter function from room-agent-handlers
+ * Import the MCP server getter function from room-handlers
  * This is a dynamic import to avoid circular dependencies
  */
 let getRoomMcpServer:
 	| ((
 			roomId: string
-	  ) =>
-			| ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
-			| undefined)
+	  ) => ReturnType<typeof import('./room-agent-tools').createRoomAgentMcpServer> | undefined)
 	| undefined;
 try {
 	// eslint-disable-next-line @typescript-eslint/no-var-requires
-	const roomAgentHandlers = require('../rpc-handlers/room-agent-handlers');
-	getRoomMcpServer = roomAgentHandlers.getRoomMcpServer;
+	const roomHandlers = require('../rpc-handlers/room-handlers');
+	getRoomMcpServer = roomHandlers.getRoomMcpServer;
 } catch {
 	// Module not available (e.g., in tests)
 }

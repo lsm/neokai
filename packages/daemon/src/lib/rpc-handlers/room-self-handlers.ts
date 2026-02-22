@@ -26,41 +26,15 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type { SessionManager } from '../session-manager';
+// Re-export MCP server functions from room-handlers for backward compatibility
+export { getRoomMcpServer } from './room-handlers';
+export { deleteRoomMcpServer as unregisterRoomMcpServer } from './room-handlers';
 
 /**
- * Global registry for in-process MCP servers
- * This allows QueryOptionsBuilder to access MCP servers created by RoomSelfManager
+ * Register an in-process MCP server for a room (alias for getOrCreateRoomMcpServer)
+ * This is kept for compatibility but delegates to the room-handlers registry
  */
-const globalMcpServerRegistry = new Map<
-	string,
-	ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
->();
-
-/**
- * Register an in-process MCP server for a room
- */
-export function registerRoomMcpServer(
-	roomId: string,
-	mcpServer: ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
-): void {
-	globalMcpServerRegistry.set(roomId, mcpServer);
-}
-
-/**
- * Get an in-process MCP server for a room
- */
-export function getRoomMcpServer(
-	roomId: string
-): ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer> | undefined {
-	return globalMcpServerRegistry.get(roomId);
-}
-
-/**
- * Unregister an in-process MCP server for a room
- */
-export function unregisterRoomMcpServer(roomId: string): void {
-	globalMcpServerRegistry.delete(roomId);
-}
+export { getOrCreateRoomMcpServer as registerRoomMcpServer } from './room-handlers';
 
 /**
  * Factory types for creating per-room managers
@@ -235,6 +209,7 @@ export class RoomSelfManager {
 	 */
 	removeAgent(roomId: string): boolean {
 		this.roomMcpServers.delete(roomId);
+		const { unregisterRoomMcpServer } = require('./room-handlers');
 		unregisterRoomMcpServer(roomId);
 		return this.agents.delete(roomId);
 	}
@@ -268,6 +243,7 @@ export class RoomSelfManager {
 		// Store the MCP server reference in runtime-only mapping
 		this.roomMcpServers.set(roomId, mcpServer);
 		// Register globally so QueryOptionsBuilder can access it
+		const { registerRoomMcpServer } = require('./room-handlers');
 		registerRoomMcpServer(roomId, mcpServer);
 
 		const sessionId = `room:${roomId}`;
