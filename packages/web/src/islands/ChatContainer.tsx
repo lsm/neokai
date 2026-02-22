@@ -490,10 +490,12 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		}
 		// Cleanup: deselect session when component unmounts
 		return () => {
-			// Only clear if we're the ones who selected this session
-			if (sessionStore.activeSessionId.value === sessionId) {
-				sessionStore.select(null);
-			}
+			// Defer cleanup so a newly-mounted ChatContainer can claim selection first.
+			setTimeout(() => {
+				if (sessionStore.activeSessionId.value === sessionId) {
+					sessionStore.select(null);
+				}
+			}, 0);
 		};
 	}, [sessionId]);
 
