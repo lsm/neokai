@@ -2,6 +2,7 @@
  * RoomDashboard Component
  *
  * Dashboard showing room overview with:
+ * - Agent status and escalated issues
  * - Stats overview (sessions, pending, active, completed tasks)
  * - Sessions list
  * - Tasks list grouped by status
@@ -11,11 +12,13 @@ import { roomStore } from '../../lib/room-store';
 import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
 import { RoomAgentStatus } from './RoomAgentStatus';
+import { RoomEscalations } from './RoomEscalations';
 
 export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
 	const sessions = roomStore.sessions.value;
 	const agentState = roomStore.agentState.value;
+	const waitingContext = roomStore.waitingContext.value;
 	const roomId = roomStore.roomId.value;
 	const pendingTasks = tasks.filter((t) => t.status === 'pending');
 	const activeTasks = tasks.filter((t) => t.status === 'in_progress');
@@ -37,6 +40,11 @@ export function RoomDashboard() {
 			{/* Agent status */}
 			{roomId && (
 				<RoomAgentStatus roomId={roomId} state={agentState} onAction={handleAgentAction} />
+			)}
+
+			{/* Escalated issues - show prominently when waiting */}
+			{roomId && (waitingContext || agentState?.lifecycleState === 'waiting') && (
+				<RoomEscalations roomId={roomId} agentState={agentState} waitingContext={waitingContext} />
 			)}
 
 			{/* Stats overview */}

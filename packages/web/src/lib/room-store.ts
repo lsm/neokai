@@ -30,6 +30,7 @@ import type {
 	RoomContextVersion,
 	WorkspacePath,
 	RoomAgentState,
+	RoomAgentWaitingContext,
 } from '@neokai/shared';
 
 /**
@@ -130,6 +131,9 @@ class RoomStore {
 
 	/** Room agent state (null if agent is not running) */
 	readonly agentState = signal<RoomAgentState | null>(null);
+
+	/** Waiting context when agent is waiting for human input */
+	readonly waitingContext = signal<RoomAgentWaitingContext | null>(null);
 
 	// ========================================
 	// Computed Accessors
@@ -374,6 +378,44 @@ class RoomStore {
 				}
 			});
 			this.cleanupFunctions.push(unsubAgentState);
+
+			// 5.1. Room agent escalation events
+			const unsubEscalated = hub.onEvent<{
+				roomId: string;
+				sessionId: string;
+				taskId: string;
+				reason: string;
+			}>('roomAgent.escalated', (event) => {
+				if (event.roomId === roomId) {
+					// Set waiting context when agent escalates
+					this.waitingContext.value = {
+						type: 'escalation',
+						taskId: event.taskId,
+						reason: event.reason,
+						since: Date.now(),
+					};
+				}
+			});
+			this.cleanupFunctions.push(unsubEscalated);
+
+			// 5.2. Room agent review requested events
+			const unsubReviewRequested = hub.onEvent<{
+				roomId: string;
+				sessionId: string;
+				taskId: string;
+				reason: string;
+			}>('roomAgent.reviewRequested', (event) => {
+				if (event.roomId === roomId) {
+					// Set waiting context when agent requests review
+					this.waitingContext.value = {
+						type: 'review',
+						taskId: event.taskId,
+						reason: event.reason,
+						since: Date.now(),
+					};
+				}
+			});
+			this.cleanupFunctions.push(unsubReviewRequested);
 
 			// 6. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
@@ -855,6 +897,13 @@ class RoomStore {
 				roomId,
 			});
 			this.agentState.value = response.state ?? null;
+
+			// If agent is in waiting state, also fetch waiting context
+			if (response.state?.lifecycleState === 'waiting') {
+				await this.fetchWaitingContext();
+			} else {
+				this.waitingContext.value = null;
+			}
 		} catch (err) {
 			logger.error('Failed to fetch agent state:', err);
 		}
@@ -914,6 +963,102 @@ class RoomStore {
 
 		await hub.request('roomAgent.resume', { roomId });
 		await this.fetchAgentState();
+	}
+
+	/**
+	 * Fetch the current waiting context (escalations, reviews, questions)
+	 */
+	async fetchWaitingContext(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) return;
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		try {
+			const response = await hub.request<{ waitingContext: RoomAgentWaitingContext | null }>(
+				'roomAgent.getWaitingContext',
+				{ roomId }
+			);
+			this.waitingContext.value = response.waitingContext;
+		} catch (err) {
+			logger.error('Failed to fetch waiting context:', err);
+		}
+	}
+
+	/**
+	 * Send a human message to the room agent (responds to escalations, questions, etc.)
+	 */
+	async sendHumanInput(message: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		try {
+			await hub.request('roomAgent.humanInput', {
+				roomId,
+				type: 'message',
+				content: message,
+			});
+			// Clear waiting context after sending input
+			this.waitingContext.value = null;
+		} catch (err) {
+			logger.error('Failed to send human input:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Respond to a review request
+	 */
+	async respondToReview(taskId: string, approved: boolean, response?: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		try {
+			await hub.request('roomAgent.humanInput', {
+				roomId,
+				type: 'review_response',
+				taskId,
+				approved,
+				response,
+			});
+			// Clear waiting context after responding
+			this.waitingContext.value = null;
+		} catch (err) {
+			logger.error('Failed to respond to review:', err);
+			throw err;
+		}
+	}
+
+	/**
+	 * Respond to an escalation
+	 */
+	async respondToEscalation(escalationId: string, response: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+
+		try {
+			await hub.request('roomAgent.humanInput', {
+				roomId,
+				type: 'escalation_response',
+				escalationId,
+				response,
+			});
+			// Clear waiting context after responding
+			this.waitingContext.value = null;
+		} catch (err) {
+			logger.error('Failed to respond to escalation:', err);
+			throw err;
+		}
 	}
 
 	// ========================================

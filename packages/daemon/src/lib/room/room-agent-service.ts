@@ -1136,7 +1136,7 @@ export class RoomAgentService {
 				return { pairId: result.pair.id, workerSessionId: result.pair.workerSessionId };
 			},
 			onRequestReview: async (taskId: string, reason: string) => {
-				await this.setLifecycleState('waiting');
+				await this.setWaiting({ type: 'review', taskId, reason, since: Date.now() });
 				await this.ctx.daemonHub.emit('roomAgent.reviewRequested', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
@@ -1146,7 +1146,7 @@ export class RoomAgentService {
 				log.info(`Review requested for task ${taskId}: ${reason}`);
 			},
 			onEscalate: async (taskId: string, reason: string) => {
-				await this.setLifecycleState('waiting');
+				await this.setWaiting({ type: 'escalation', taskId, reason, since: Date.now() });
 				await this.ctx.daemonHub.emit('roomAgent.escalated', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,

@@ -10,6 +10,8 @@
 
 // @public - Library export
 export { RoomAgentStatus } from './RoomAgentStatus';
+export { RoomEscalations } from './RoomEscalations';
+export type { RoomEscalationsProps } from './RoomEscalations';
 export { TaskSessionView } from './TaskSessionView';
 export { GoalsEditor } from './GoalsEditor';
 export { RecurringJobsConfig } from './RecurringJobsConfig';
