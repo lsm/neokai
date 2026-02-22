@@ -65,6 +65,8 @@ export function getProviderContextManager(): ProviderContextManager {
  *
  * MUST be called alongside resetProviderRegistry() to fully reset
  * the provider system. This is typically only needed in tests.
+ *
+ * @public Exported for testing purposes
  */
 export function resetProviderFactory(): void {
 	initialized = false;

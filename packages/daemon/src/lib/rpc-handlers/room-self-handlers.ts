@@ -26,15 +26,9 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type { SessionManager } from '../session-manager';
-// Re-export MCP server functions from room-handlers for backward compatibility
-export { getRoomMcpServer } from './room-handlers';
-export { deleteRoomMcpServer as unregisterRoomMcpServer } from './room-handlers';
 
-/**
- * Register an in-process MCP server for a room (alias for getOrCreateRoomMcpServer)
- * This is kept for compatibility but delegates to the room-handlers registry
- */
-export { getOrCreateRoomMcpServer as registerRoomMcpServer } from './room-handlers';
+// MCP server functions are accessed via dynamic require from room-handlers
+// to avoid circular dependencies. Not re-exporting here to avoid knip issues.
 
 /**
  * Factory types for creating per-room managers
@@ -209,8 +203,9 @@ export class RoomSelfManager {
 	 */
 	removeAgent(roomId: string): boolean {
 		this.roomMcpServers.delete(roomId);
-		const { unregisterRoomMcpServer } = require('./room-handlers');
-		unregisterRoomMcpServer(roomId);
+		// Dynamically require to avoid circular dependency
+		const { deleteRoomMcpServer } = require('./room-handlers');
+		deleteRoomMcpServer(roomId);
 		return this.agents.delete(roomId);
 	}
 
@@ -243,8 +238,8 @@ export class RoomSelfManager {
 		// Store the MCP server reference in runtime-only mapping
 		this.roomMcpServers.set(roomId, mcpServer);
 		// Register globally so QueryOptionsBuilder can access it
-		const { registerRoomMcpServer } = require('./room-handlers');
-		registerRoomMcpServer(roomId, mcpServer);
+		const { getOrCreateRoomMcpServer } = require('./room-handlers');
+		getOrCreateRoomMcpServer(roomId, this.deps.db);
 
 		const sessionId = `room:${roomId}`;
 

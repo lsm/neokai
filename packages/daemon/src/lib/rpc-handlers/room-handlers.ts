@@ -43,6 +43,8 @@ const roomMcpServerRegistry = new Map<string, ReturnType<typeof createRoomAgentM
 /**
  * Get or create the MCP server for a room
  * The MCP server is created when the room is created and shared by both room chat and room self sessions
+ *
+ * @public Exported for use by query-options-builder.ts via dynamic require
  */
 export function getOrCreateRoomMcpServer(
 	roomId: string,
@@ -165,6 +167,8 @@ export function getOrCreateRoomMcpServer(
 
 /**
  * Get an existing MCP server for a room (returns undefined if not created)
+ *
+ * @public Exported for use by query-options-builder.ts via dynamic require
  */
 export function getRoomMcpServer(
 	roomId: string
@@ -174,6 +178,8 @@ export function getRoomMcpServer(
 
 /**
  * Delete the MCP server for a room (when room is deleted)
+ *
+ * @public Exported for use by room-self-handlers.ts
  */
 export function deleteRoomMcpServer(roomId: string): void {
 	const server = roomMcpServerRegistry.get(roomId);

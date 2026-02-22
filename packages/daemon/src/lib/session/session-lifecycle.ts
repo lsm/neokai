@@ -177,6 +177,8 @@ export class SessionLifecycle {
 				// Global settings provide balanced security: filesystem isolation + dev domains allowed
 				// If user provides partial sandbox config (e.g., just enabled: false), respect that
 				sandbox: params.config?.sandbox ?? globalSettings.sandbox,
+				// MCP servers: Allow room chat sessions to include room-agent-tools
+				mcpServers: params.config?.mcpServers,
 			},
 			metadata: {
 				messageCount: 0,

@@ -314,6 +314,8 @@ export function clearModelsCache(cacheKey?: string): void {
 /**
  * Get current models cache (for testing)
  * @returns Map of cached models
+ *
+ * @public Exported for testing purposes
  */
 export function getModelsCache(): Map<string, ModelInfo[]> {
 	return new Map(modelsCache);
@@ -322,6 +324,8 @@ export function getModelsCache(): Map<string, ModelInfo[]> {
 /**
  * Set models cache (for testing - allows reusing cached models)
  * @param cache Map of cached models to restore
+ *
+ * @public Exported for testing purposes
  */
 export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: number): void {
 	modelsCache.clear();
