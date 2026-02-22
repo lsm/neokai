@@ -403,8 +403,8 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'roomAgent.stateChanged': {
 		sessionId: string;
 		roomId: string;
-		previousState: import('@neokai/shared').RoomAgentLifecycleState;
-		newState: import('@neokai/shared').RoomAgentLifecycleState;
+		previousState: import('@neokai/shared').RoomSelfLifecycleState;
+		newState: import('@neokai/shared').RoomSelfLifecycleState;
 		reason?: string;
 	};
 	'roomAgent.hook': {

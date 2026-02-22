@@ -27,7 +27,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
 import type { SessionBridge } from '../room/session-bridge';
-import type { RoomAgentManager } from './room-agent-handlers';
+import type { RoomSelfManager } from './room-self-handlers';
 import type { SessionManager } from '../session-manager';
 
 export function setupRoomHandlers(
@@ -36,7 +36,7 @@ export function setupRoomHandlers(
 	daemonHub: DaemonHub,
 	sessionPairManager?: SessionPairManager,
 	sessionBridge?: SessionBridge,
-	roomAgentManager?: RoomAgentManager,
+	roomSelfManager?: RoomSelfManager,
 	workspaceRoot?: string,
 	sessionManager?: SessionManager
 ): void {
@@ -205,9 +205,9 @@ export function setupRoomHandlers(
 		}
 
 		// Stop and remove the room agent before deleting
-		if (roomAgentManager) {
-			await roomAgentManager.stopAgent(params.roomId).catch(() => {});
-			roomAgentManager.removeAgent(params.roomId);
+		if (roomSelfManager) {
+			await roomSelfManager.stopAgent(params.roomId).catch(() => {});
+			roomSelfManager.removeAgent(params.roomId);
 		}
 
 		// Broadcast room deletion event before deleting

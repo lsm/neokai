@@ -10,15 +10,15 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { RoomAgentWaitingContext, RoomAgentState } from '@neokai/shared';
+import type { RoomSelfWaitingContext, RoomSelfState } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { roomStore } from '../../lib/room-store';
 
 export interface RoomEscalationsProps {
 	roomId: string;
-	agentState: RoomAgentState | null;
-	waitingContext: RoomAgentWaitingContext | null;
+	agentState: RoomSelfState | null;
+	waitingContext: RoomSelfWaitingContext | null;
 }
 
 function formatRelativeTime(timestamp: number): string {

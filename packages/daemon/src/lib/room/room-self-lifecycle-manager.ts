@@ -1,5 +1,5 @@
 /**
- * RoomAgentLifecycleManager - Manages room-level agent lifecycle
+ * RoomSelfLifecycleManager - Manages room-level agent lifecycle
  *
  * States:
  * - idle: No active work, waiting for events
@@ -25,17 +25,17 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { RoomAgentState, RoomAgentLifecycleState } from '@neokai/shared';
+import type { RoomSelfState, RoomSelfLifecycleState } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/index';
-import { RoomAgentStateRepository } from '../../storage/repositories/room-agent-state-repository';
+import { RoomSelfStateRepository } from '../../storage/repositories/room-self-state-repository';
 import { Logger } from '../logger';
 
 /**
  * Valid state transitions map
  * Defines which states can transition to which other states
  */
-const VALID_TRANSITIONS: Record<RoomAgentLifecycleState, Set<RoomAgentLifecycleState>> = {
+const VALID_TRANSITIONS: Record<RoomSelfLifecycleState, Set<RoomSelfLifecycleState>> = {
 	idle: new Set(['planning', 'error', 'paused']),
 	planning: new Set(['executing', 'idle', 'waiting', 'error', 'paused']),
 	executing: new Set(['reviewing', 'idle', 'waiting', 'error', 'paused']),
@@ -48,7 +48,7 @@ const VALID_TRANSITIONS: Record<RoomAgentLifecycleState, Set<RoomAgentLifecycleS
 /**
  * States where event processing is allowed
  */
-const EVENT_PROCESSING_STATES: Set<RoomAgentLifecycleState> = new Set([
+const EVENT_PROCESSING_STATES: Set<RoomSelfLifecycleState> = new Set([
 	'idle',
 	'planning',
 	'executing',
@@ -57,17 +57,17 @@ const EVENT_PROCESSING_STATES: Set<RoomAgentLifecycleState> = new Set([
 /**
  * States where planning can be started
  */
-const PLANNING_ALLOWED_STATES: Set<RoomAgentLifecycleState> = new Set(['idle', 'reviewing']);
+const PLANNING_ALLOWED_STATES: Set<RoomSelfLifecycleState> = new Set(['idle', 'reviewing']);
 
 /**
  * States where worker spawning is allowed
  */
-const WORKER_SPAWN_STATES: Set<RoomAgentLifecycleState> = new Set(['planning', 'executing']);
+const WORKER_SPAWN_STATES: Set<RoomSelfLifecycleState> = new Set(['planning', 'executing']);
 
-export class RoomAgentLifecycleManager {
+export class RoomSelfLifecycleManager {
 	private logger: Logger;
-	private currentState: RoomAgentState | null = null;
-	private stateRepository: RoomAgentStateRepository;
+	private currentState: RoomSelfState | null = null;
+	private stateRepository: RoomSelfStateRepository;
 
 	constructor(
 		private roomId: string,
@@ -77,14 +77,14 @@ export class RoomAgentLifecycleManager {
 		this.logger = new Logger(`RoomAgentLifecycle ${roomId}`);
 		// Handle both Database wrapper and raw BunDatabase
 		const rawDb = 'getDatabase' in db ? db.getDatabase() : db;
-		this.stateRepository = new RoomAgentStateRepository(rawDb);
+		this.stateRepository = new RoomSelfStateRepository(rawDb);
 	}
 
 	/**
 	 * Initialize or restore state from database
 	 * Should be called when the room agent starts
 	 */
-	initialize(): RoomAgentState {
+	initialize(): RoomSelfState {
 		this.currentState = this.stateRepository.getOrCreateState(this.roomId);
 		this.logger.info(`Initialized with state: ${this.currentState.lifecycleState}`);
 		return this.currentState;
@@ -93,7 +93,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Get current state
 	 */
-	getState(): RoomAgentState {
+	getState(): RoomSelfState {
 		if (!this.currentState) {
 			this.currentState = this.stateRepository.getOrCreateState(this.roomId);
 		}
@@ -103,7 +103,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Get current lifecycle state
 	 */
-	getLifecycleState(): RoomAgentLifecycleState {
+	getLifecycleState(): RoomSelfLifecycleState {
 		return this.getState().lifecycleState;
 	}
 
@@ -114,9 +114,9 @@ export class RoomAgentLifecycleManager {
 	 * @returns The new state, or null if transition was invalid
 	 */
 	async transitionTo(
-		newState: RoomAgentLifecycleState,
+		newState: RoomSelfLifecycleState,
 		reason?: string
-	): Promise<RoomAgentState | null> {
+	): Promise<RoomSelfState | null> {
 		const current = this.getState();
 		const previousState = current.lifecycleState;
 
@@ -249,7 +249,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Clear error state and return to idle
 	 */
-	async clearError(): Promise<RoomAgentState | null> {
+	async clearError(): Promise<RoomSelfState | null> {
 		if (this.getLifecycleState() !== 'error') {
 			this.logger.warn('clearError called but not in error state');
 			return null;
@@ -263,7 +263,7 @@ export class RoomAgentLifecycleManager {
 	 * Pause the agent
 	 * Can be called from any state
 	 */
-	async pause(): Promise<RoomAgentState | null> {
+	async pause(): Promise<RoomSelfState | null> {
 		const current = this.getLifecycleState();
 		if (current === 'paused') {
 			this.logger.warn('pause called but already paused');
@@ -276,7 +276,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Resume from paused state
 	 */
-	async resume(): Promise<RoomAgentState | null> {
+	async resume(): Promise<RoomSelfState | null> {
 		if (this.getLifecycleState() !== 'paused') {
 			this.logger.warn('resume called but not in paused state');
 			return null;
@@ -288,7 +288,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Start planning phase
 	 */
-	async startPlanning(reason?: string): Promise<RoomAgentState | null> {
+	async startPlanning(reason?: string): Promise<RoomSelfState | null> {
 		if (!this.canStartPlanning()) {
 			this.logger.warn(`Cannot start planning from state: ${this.getLifecycleState()}`);
 			return null;
@@ -300,7 +300,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Start executing phase
 	 */
-	async startExecuting(): Promise<RoomAgentState | null> {
+	async startExecuting(): Promise<RoomSelfState | null> {
 		const current = this.getLifecycleState();
 		if (current !== 'planning') {
 			this.logger.warn(`Cannot start executing from state: ${current}`);
@@ -313,7 +313,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Transition to waiting state
 	 */
-	async waitForInput(reason?: string): Promise<RoomAgentState | null> {
+	async waitForInput(reason?: string): Promise<RoomSelfState | null> {
 		const current = this.getLifecycleState();
 		if (current === 'paused') {
 			this.logger.warn('Cannot wait for input while paused');
@@ -326,7 +326,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Resume from waiting after receiving input
 	 */
-	async receiveInput(): Promise<RoomAgentState | null> {
+	async receiveInput(): Promise<RoomSelfState | null> {
 		if (!this.isWaitingForInput()) {
 			this.logger.warn('receiveInput called but not in waiting state');
 			return null;
@@ -338,7 +338,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Start reviewing phase
 	 */
-	async startReviewing(): Promise<RoomAgentState | null> {
+	async startReviewing(): Promise<RoomSelfState | null> {
 		const current = this.getLifecycleState();
 		if (current !== 'executing') {
 			this.logger.warn(`Cannot start reviewing from state: ${current}`);
@@ -351,7 +351,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Complete reviewing and return to appropriate state
 	 */
-	async completeReviewing(hasMoreWork: boolean): Promise<RoomAgentState | null> {
+	async completeReviewing(hasMoreWork: boolean): Promise<RoomSelfState | null> {
 		const current = this.getLifecycleState();
 		if (current !== 'reviewing') {
 			this.logger.warn(`Cannot complete reviewing from state: ${current}`);
@@ -367,7 +367,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Finish execution and return to idle
 	 */
-	async finishExecution(): Promise<RoomAgentState | null> {
+	async finishExecution(): Promise<RoomSelfState | null> {
 		const current = this.getLifecycleState();
 		if (current !== 'executing') {
 			this.logger.warn(`Cannot finish execution from state: ${current}`);
@@ -380,7 +380,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Validate if a state transition is allowed
 	 */
-	private isValidTransition(from: RoomAgentLifecycleState, to: RoomAgentLifecycleState): boolean {
+	private isValidTransition(from: RoomSelfLifecycleState, to: RoomSelfLifecycleState): boolean {
 		// Same state is always valid (no-op)
 		if (from === to) {
 			return true;
@@ -469,7 +469,7 @@ export class RoomAgentLifecycleManager {
 	/**
 	 * Force state without validation (for testing)
 	 */
-	forceState(newState: RoomAgentLifecycleState): RoomAgentState {
+	forceState(newState: RoomSelfLifecycleState): RoomSelfState {
 		this.currentState = this.stateRepository.transitionTo(this.roomId, newState);
 		return this.getState();
 	}

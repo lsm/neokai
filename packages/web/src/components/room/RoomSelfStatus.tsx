@@ -1,5 +1,5 @@
 /**
- * RoomAgentStatus Component
+ * RoomSelfStatus Component
  *
  * Displays the current state of a room agent and its activity.
  * Shows lifecycle state with color-coded badge, current activity,
@@ -7,13 +7,13 @@
  */
 
 import { useMemo } from 'preact/hooks';
-import type { RoomAgentState, RoomAgentLifecycleState } from '@neokai/shared';
+import type { RoomSelfState, RoomSelfLifecycleState } from '@neokai/shared';
 import { cn } from '../../lib/utils.ts';
 
 /**
  * Color mapping for lifecycle states
  */
-const STATE_COLORS: Record<RoomAgentLifecycleState, { bg: string; text: string; dot: string }> = {
+const STATE_COLORS: Record<RoomSelfLifecycleState, { bg: string; text: string; dot: string }> = {
 	idle: { bg: 'bg-gray-700', text: 'text-gray-300', dot: 'bg-gray-400' },
 	planning: { bg: 'bg-blue-900/50', text: 'text-blue-300', dot: 'bg-blue-400' },
 	executing: { bg: 'bg-green-900/50', text: 'text-green-300', dot: 'bg-green-400' },
@@ -26,7 +26,7 @@ const STATE_COLORS: Record<RoomAgentLifecycleState, { bg: string; text: string; 
 /**
  * Label mapping for lifecycle states
  */
-const STATE_LABELS: Record<RoomAgentLifecycleState, string> = {
+const STATE_LABELS: Record<RoomSelfLifecycleState, string> = {
 	idle: 'Idle',
 	planning: 'Planning',
 	executing: 'Executing',
@@ -62,13 +62,13 @@ function formatRelativeTime(timestamp: number): string {
 	}
 }
 
-export interface RoomAgentStatusProps {
+export interface RoomSelfStatusProps {
 	roomId: string;
-	state: RoomAgentState | null;
+	state: RoomSelfState | null;
 	onAction?: (action: 'pause' | 'resume' | 'start' | 'stop') => void;
 }
 
-export function RoomAgentStatus({ roomId: _roomId, state, onAction }: RoomAgentStatusProps) {
+export function RoomSelfStatus({ roomId: _roomId, state, onAction }: RoomSelfStatusProps) {
 	// Determine current activity description
 	const activityDescription = useMemo(() => {
 		if (!state) return null;

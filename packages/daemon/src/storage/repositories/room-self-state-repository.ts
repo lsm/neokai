@@ -6,16 +6,16 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { RoomAgentState, RoomAgentLifecycleState } from '@neokai/shared';
+import type { RoomSelfState, RoomSelfLifecycleState } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
-export interface CreateRoomAgentStateParams {
+export interface CreateRoomSelfStateParams {
 	roomId: string;
-	lifecycleState?: RoomAgentLifecycleState;
+	lifecycleState?: RoomSelfLifecycleState;
 }
 
-export interface UpdateRoomAgentStateParams {
-	lifecycleState?: RoomAgentLifecycleState;
+export interface UpdateRoomSelfStateParams {
+	lifecycleState?: RoomSelfLifecycleState;
 	currentGoalId?: string | null;
 	currentTaskId?: string | null;
 	activeSessionPairIds?: string[];
@@ -25,13 +25,13 @@ export interface UpdateRoomAgentStateParams {
 	pendingActions?: string[];
 }
 
-export class RoomAgentStateRepository {
+export class RoomSelfStateRepository {
 	constructor(private db: BunDatabase) {}
 
 	/**
 	 * Create initial state for a room agent
 	 */
-	createState(params: CreateRoomAgentStateParams): RoomAgentState {
+	createState(params: CreateRoomSelfStateParams): RoomSelfState {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
@@ -47,7 +47,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Get state for a room agent
 	 */
-	getState(roomId: string): RoomAgentState | null {
+	getState(roomId: string): RoomSelfState | null {
 		const stmt = this.db.prepare(`SELECT * FROM room_agent_states WHERE room_id = ?`);
 		const row = stmt.get(roomId) as Record<string, unknown> | undefined;
 
@@ -58,7 +58,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Get or create state for a room agent
 	 */
-	getOrCreateState(roomId: string): RoomAgentState {
+	getOrCreateState(roomId: string): RoomSelfState {
 		const existing = this.getState(roomId);
 		if (existing) return existing;
 		return this.createState({ roomId });
@@ -67,7 +67,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Update state for a room agent
 	 */
-	updateState(roomId: string, params: UpdateRoomAgentStateParams): RoomAgentState | null {
+	updateState(roomId: string, params: UpdateRoomSelfStateParams): RoomSelfState | null {
 		const fields: string[] = [];
 		const values: SQLiteValue[] = [];
 
@@ -121,7 +121,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Transition to a new lifecycle state
 	 */
-	transitionTo(roomId: string, newState: RoomAgentLifecycleState): RoomAgentState | null {
+	transitionTo(roomId: string, newState: RoomSelfLifecycleState): RoomSelfState | null {
 		return this.updateState(roomId, {
 			lifecycleState: newState,
 			lastActivityAt: Date.now(),
@@ -131,7 +131,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Record an error
 	 */
-	recordError(roomId: string, error: string): RoomAgentState | null {
+	recordError(roomId: string, error: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
@@ -145,7 +145,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Clear error state
 	 */
-	clearError(roomId: string): RoomAgentState | null {
+	clearError(roomId: string): RoomSelfState | null {
 		return this.updateState(roomId, {
 			errorCount: 0,
 			lastError: null,
@@ -155,7 +155,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Add a session pair to active pairs
 	 */
-	addActiveSessionPair(roomId: string, pairId: string): RoomAgentState | null {
+	addActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
@@ -169,7 +169,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Remove a session pair from active pairs
 	 */
-	removeActiveSessionPair(roomId: string, pairId: string): RoomAgentState | null {
+	removeActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
@@ -183,7 +183,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Add a pending action
 	 */
-	addPendingAction(roomId: string, action: string): RoomAgentState | null {
+	addPendingAction(roomId: string, action: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
@@ -194,7 +194,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Remove a pending action
 	 */
-	removePendingAction(roomId: string, action: string): RoomAgentState | null {
+	removePendingAction(roomId: string, action: string): RoomSelfState | null {
 		const current = this.getState(roomId);
 		if (!current) return null;
 
@@ -205,7 +205,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Clear all pending actions
 	 */
-	clearPendingActions(roomId: string): RoomAgentState | null {
+	clearPendingActions(roomId: string): RoomSelfState | null {
 		return this.updateState(roomId, { pendingActions: [] });
 	}
 
@@ -221,7 +221,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Get all room agent states (for monitoring)
 	 */
-	getAllStates(): RoomAgentState[] {
+	getAllStates(): RoomSelfState[] {
 		const stmt = this.db.prepare(`SELECT * FROM room_agent_states ORDER BY last_activity_at DESC`);
 		const rows = stmt.all() as Record<string, unknown>[];
 		return rows.map((r) => this.rowToState(r));
@@ -230,7 +230,7 @@ export class RoomAgentStateRepository {
 	/**
 	 * Get agents in a specific state
 	 */
-	getStatesByLifecycle(lifecycleState: RoomAgentLifecycleState): RoomAgentState[] {
+	getStatesByLifecycle(lifecycleState: RoomSelfLifecycleState): RoomSelfState[] {
 		const stmt = this.db.prepare(
 			`SELECT * FROM room_agent_states WHERE lifecycle_state = ? ORDER BY last_activity_at DESC`
 		);
@@ -239,12 +239,12 @@ export class RoomAgentStateRepository {
 	}
 
 	/**
-	 * Convert a database row to a RoomAgentState object
+	 * Convert a database row to a RoomSelfState object
 	 */
-	private rowToState(row: Record<string, unknown>): RoomAgentState {
+	private rowToState(row: Record<string, unknown>): RoomSelfState {
 		return {
 			roomId: row.room_id as string,
-			lifecycleState: row.lifecycle_state as RoomAgentLifecycleState,
+			lifecycleState: row.lifecycle_state as RoomSelfLifecycleState,
 			currentGoalId: row.current_goal_id as string | undefined,
 			currentTaskId: row.current_task_id as string | undefined,
 			activeSessionPairIds: JSON.parse(row.active_session_pair_ids as string) as string[],

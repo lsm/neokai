@@ -29,8 +29,8 @@ import type {
 	CreateRecurringJobParams,
 	RoomContextVersion,
 	WorkspacePath,
-	RoomAgentState,
-	RoomAgentWaitingContext,
+	RoomSelfState,
+	RoomSelfWaitingContext,
 } from '@neokai/shared';
 
 /**
@@ -130,10 +130,10 @@ class RoomStore {
 	// ========================================
 
 	/** Room agent state (null if agent is not running) */
-	readonly agentState = signal<RoomAgentState | null>(null);
+	readonly agentState = signal<RoomSelfState | null>(null);
 
 	/** Waiting context when agent is waiting for human input */
-	readonly waitingContext = signal<RoomAgentWaitingContext | null>(null);
+	readonly waitingContext = signal<RoomSelfWaitingContext | null>(null);
 
 	// ========================================
 	// Computed Accessors
@@ -369,8 +369,8 @@ class RoomStore {
 			// 5. Room agent state changes
 			const unsubAgentState = hub.onEvent<{
 				roomId: string;
-				newState: RoomAgentState['lifecycleState'];
-				previousState: RoomAgentState['lifecycleState'];
+				newState: RoomSelfState['lifecycleState'];
+				previousState: RoomSelfState['lifecycleState'];
 			}>('roomAgent.stateChanged', (event) => {
 				if (event.roomId === roomId) {
 					// Refresh full agent state on any state change
@@ -893,7 +893,7 @@ class RoomStore {
 		if (!hub) return;
 
 		try {
-			const response = await hub.request<{ state: RoomAgentState | null }>('roomAgent.getState', {
+			const response = await hub.request<{ state: RoomSelfState | null }>('roomAgent.getState', {
 				roomId,
 			});
 			this.agentState.value = response.state ?? null;
@@ -976,7 +976,7 @@ class RoomStore {
 		if (!hub) return;
 
 		try {
-			const response = await hub.request<{ waitingContext: RoomAgentWaitingContext | null }>(
+			const response = await hub.request<{ waitingContext: RoomSelfWaitingContext | null }>(
 				'roomAgent.getWaitingContext',
 				{ roomId }
 			);

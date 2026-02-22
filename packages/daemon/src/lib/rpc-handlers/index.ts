@@ -41,11 +41,11 @@ import { createGitHubAdapter } from '../lobby/adapters/github-adapter';
 import { LobbyAgentService } from '../lobby/lobby-agent-service';
 import { Logger } from '../logger';
 import {
-	setupRoomAgentHandlers,
-	RoomAgentManager,
+	setupRoomSelfHandlers,
+	RoomSelfManager,
 	type TaskManagerFactory,
 	type GoalManagerFactory,
-} from './room-agent-handlers';
+} from './room-self-handlers';
 import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
@@ -113,8 +113,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Create PromptTemplateManager singleton
 	const promptTemplateManager = new PromptTemplateManager(deps.db.getDatabase(), deps.daemonHub);
 
-	// Create RoomAgentManager to track active room agents
-	const roomAgentManager = new RoomAgentManager({
+	// Create RoomSelfManager to track active room agents
+	const roomSelfManager = new RoomSelfManager({
 		db: deps.db,
 		daemonHub: deps.daemonHub,
 		messageHub: deps.messageHub,
@@ -150,7 +150,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.daemonHub,
 		sessionPairManager,
 		sessionBridge,
-		roomAgentManager,
+		roomSelfManager,
 		deps.config.workspaceRoot,
 		deps.sessionManager
 	);
@@ -165,7 +165,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	setupRecurringJobHandlers(deps.messageHub, deps.daemonHub, recurringJobScheduler);
 
 	// Room agent handlers
-	setupRoomAgentHandlers(deps.messageHub, deps.daemonHub, roomAgentManager);
+	setupRoomSelfHandlers(deps.messageHub, deps.daemonHub, roomSelfManager);
 
 	// Create LobbyAgentService if authenticated
 	let lobbyAgentService: LobbyAgentService | undefined = deps.lobbyAgentService;

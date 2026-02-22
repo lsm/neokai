@@ -9,7 +9,7 @@
  */
 
 // @public - Library export
-export { RoomAgentStatus } from './RoomAgentStatus';
+export { RoomSelfStatus } from './RoomSelfStatus';
 export { RoomEscalations } from './RoomEscalations';
 export type { RoomEscalationsProps } from './RoomEscalations';
 export { TaskSessionView } from './TaskSessionView';

@@ -10,15 +10,15 @@
  * - roomAgent.forceState - Force agent to a specific state
  * - roomAgent.list - List all active agents with their states
  *
- * Includes RoomAgentManager class to track active RoomAgentService instances.
+ * Includes RoomSelfManager class to track active RoomSelfService instances.
  */
 
 import type { MessageHub, McpServerConfig } from '@neokai/shared';
-import type { RoomAgentState, RoomAgentLifecycleState, RoomAgentHumanInput } from '@neokai/shared';
+import type { RoomSelfState, RoomSelfLifecycleState, RoomSelfHumanInput } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/index';
-import { RoomAgentService, type RoomAgentContext } from '../room/room-agent-service';
+import { RoomSelfService, type RoomSelfContext } from '../room/room-self-service';
 import { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
 import { TaskManager } from '../room/task-manager';
@@ -29,7 +29,7 @@ import type { SessionManager } from '../session-manager';
 
 /**
  * Global registry for in-process MCP servers
- * This allows QueryOptionsBuilder to access MCP servers created by RoomAgentManager
+ * This allows QueryOptionsBuilder to access MCP servers created by RoomSelfManager
  */
 const globalMcpServerRegistry = new Map<
 	string,
@@ -87,9 +87,9 @@ export type RecurringJobSchedulerLike = Pick<
 >;
 
 /**
- * Dependencies for RoomAgentManager
+ * Dependencies for RoomSelfManager
  */
-export interface RoomAgentManagerDeps {
+export interface RoomSelfManagerDeps {
 	db: Database;
 	daemonHub: DaemonHub;
 	messageHub: MessageHub;
@@ -111,26 +111,26 @@ export interface RoomAgentManagerDeps {
 }
 
 /**
- * RoomAgentManager - Tracks active RoomAgentService instances
+ * RoomSelfManager - Tracks active RoomSelfService instances
  *
  * Manages the lifecycle of room agents across all rooms.
- * Each room can have at most one active RoomAgentService.
+ * Each room can have at most one active RoomSelfService.
  */
-export class RoomAgentManager {
-	private agents: Map<string, RoomAgentService> = new Map();
+export class RoomSelfManager {
+	private agents: Map<string, RoomSelfService> = new Map();
 	/** Runtime-only mapping of room IDs to their MCP servers */
 	private roomMcpServers: Map<
 		string,
 		ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
 	> = new Map();
 
-	constructor(private deps: RoomAgentManagerDeps) {}
+	constructor(private deps: RoomSelfManagerDeps) {}
 
 	/**
-	 * Get or create a RoomAgentService for a room
+	 * Get or create a RoomSelfService for a room
 	 * Creates the agent if it doesn't exist
 	 */
-	getOrCreateAgent(roomId: string): RoomAgentService {
+	getOrCreateAgent(roomId: string): RoomSelfService {
 		let agent = this.agents.get(roomId);
 		if (!agent) {
 			agent = this.createAgent(roomId);
@@ -140,9 +140,9 @@ export class RoomAgentManager {
 	}
 
 	/**
-	 * Get an existing RoomAgentService (returns undefined if not created)
+	 * Get an existing RoomSelfService (returns undefined if not created)
 	 */
-	getAgent(roomId: string): RoomAgentService | undefined {
+	getAgent(roomId: string): RoomSelfService | undefined {
 		return this.agents.get(roomId);
 	}
 
@@ -193,7 +193,7 @@ export class RoomAgentManager {
 	 * Get the state of an agent
 	 * Returns null if agent doesn't exist
 	 */
-	getState(roomId: string): RoomAgentState | null {
+	getState(roomId: string): RoomSelfState | null {
 		const agent = this.agents.get(roomId);
 		return agent ? agent.getState() : null;
 	}
@@ -201,7 +201,7 @@ export class RoomAgentManager {
 	/**
 	 * Force the agent to a specific state
 	 */
-	async forceState(roomId: string, newState: RoomAgentLifecycleState): Promise<void> {
+	async forceState(roomId: string, newState: RoomSelfLifecycleState): Promise<void> {
 		const agent = this.agents.get(roomId);
 		if (agent) {
 			await agent.forceState(newState);
@@ -219,8 +219,8 @@ export class RoomAgentManager {
 	/**
 	 * List all agents with their states
 	 */
-	listAgents(): Array<{ roomId: string; state: RoomAgentState }> {
-		const result: Array<{ roomId: string; state: RoomAgentState }> = [];
+	listAgents(): Array<{ roomId: string; state: RoomSelfState }> {
+		const result: Array<{ roomId: string; state: RoomSelfState }> = [];
 		for (const [roomId, agent] of this.agents) {
 			result.push({
 				roomId,
@@ -304,15 +304,15 @@ export class RoomAgentManager {
 	}
 
 	/**
-	 * Create a new RoomAgentService for a room
+	 * Create a new RoomSelfService for a room
 	 */
-	private createAgent(roomId: string): RoomAgentService {
+	private createAgent(roomId: string): RoomSelfService {
 		const room = this.deps.roomManager.getRoom(roomId);
 		if (!room) {
 			throw new Error(`Room not found: ${roomId}`);
 		}
 
-		const context: RoomAgentContext = {
+		const context: RoomSelfContext = {
 			room,
 			db: this.deps.db,
 			daemonHub: this.deps.daemonHub,
@@ -326,27 +326,27 @@ export class RoomAgentManager {
 		};
 
 		const settings = this.deps.settingsManager.getGlobalSettings();
-		return new RoomAgentService(context, {
+		return new RoomSelfService(context, {
 			maxConcurrentPairs: settings.maxConcurrentWorkers ?? 3,
 		});
 	}
 }
 
 /**
- * Setup room agent RPC handlers
+ * Setup room self RPC handlers
  */
-export function setupRoomAgentHandlers(
+export function setupRoomSelfHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
-	roomAgentManager: RoomAgentManager
+	roomSelfManager: RoomSelfManager
 ): void {
 	/**
 	 * Emit roomAgent.stateChanged event to notify UI clients
 	 */
 	const emitStateChange = (
 		roomId: string,
-		previousState: RoomAgentLifecycleState,
-		newState: RoomAgentLifecycleState,
+		previousState: RoomSelfLifecycleState,
+		newState: RoomSelfLifecycleState,
 		reason?: string
 	) => {
 		daemonHub
@@ -370,9 +370,9 @@ export function setupRoomAgentHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const previousState = roomAgentManager.getState(params.roomId)?.lifecycleState;
-		await roomAgentManager.startAgent(params.roomId);
-		const newState = roomAgentManager.getState(params.roomId)?.lifecycleState;
+		const previousState = roomSelfManager.getState(params.roomId)?.lifecycleState;
+		await roomSelfManager.startAgent(params.roomId);
+		const newState = roomSelfManager.getState(params.roomId)?.lifecycleState;
 
 		if (previousState && newState && previousState !== newState) {
 			emitStateChange(params.roomId, previousState, newState, 'Agent started');
@@ -389,9 +389,9 @@ export function setupRoomAgentHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const previousState = roomAgentManager.getState(params.roomId)?.lifecycleState;
-		await roomAgentManager.stopAgent(params.roomId);
-		const newState = roomAgentManager.getState(params.roomId)?.lifecycleState;
+		const previousState = roomSelfManager.getState(params.roomId)?.lifecycleState;
+		await roomSelfManager.stopAgent(params.roomId);
+		const newState = roomSelfManager.getState(params.roomId)?.lifecycleState;
 
 		if (previousState && newState && previousState !== newState) {
 			emitStateChange(params.roomId, previousState, newState, 'Agent stopped');
@@ -408,7 +408,7 @@ export function setupRoomAgentHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const state = roomAgentManager.getState(params.roomId);
+		const state = roomSelfManager.getState(params.roomId);
 		return { state };
 	});
 
@@ -420,9 +420,9 @@ export function setupRoomAgentHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const previousState = roomAgentManager.getState(params.roomId)?.lifecycleState;
-		await roomAgentManager.pauseAgent(params.roomId);
-		const newState = roomAgentManager.getState(params.roomId)?.lifecycleState;
+		const previousState = roomSelfManager.getState(params.roomId)?.lifecycleState;
+		await roomSelfManager.pauseAgent(params.roomId);
+		const newState = roomSelfManager.getState(params.roomId)?.lifecycleState;
 
 		if (previousState && newState && previousState !== newState) {
 			emitStateChange(params.roomId, previousState, newState, 'Agent paused');
@@ -439,9 +439,9 @@ export function setupRoomAgentHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const previousState = roomAgentManager.getState(params.roomId)?.lifecycleState;
-		await roomAgentManager.resumeAgent(params.roomId);
-		const newState = roomAgentManager.getState(params.roomId)?.lifecycleState;
+		const previousState = roomSelfManager.getState(params.roomId)?.lifecycleState;
+		await roomSelfManager.resumeAgent(params.roomId);
+		const newState = roomSelfManager.getState(params.roomId)?.lifecycleState;
 
 		if (previousState && newState && previousState !== newState) {
 			emitStateChange(params.roomId, previousState, newState, 'Agent resumed');
@@ -452,7 +452,7 @@ export function setupRoomAgentHandlers(
 
 	// roomAgent.forceState - Force agent to a specific state
 	messageHub.onRequest('roomAgent.forceState', async (data) => {
-		const params = data as { roomId: string; newState: RoomAgentLifecycleState };
+		const params = data as { roomId: string; newState: RoomSelfLifecycleState };
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
@@ -461,8 +461,8 @@ export function setupRoomAgentHandlers(
 			throw new Error('New state is required');
 		}
 
-		const previousState = roomAgentManager.getState(params.roomId)?.lifecycleState;
-		await roomAgentManager.forceState(params.roomId, params.newState);
+		const previousState = roomSelfManager.getState(params.roomId)?.lifecycleState;
+		await roomSelfManager.forceState(params.roomId, params.newState);
 
 		if (previousState && previousState !== params.newState) {
 			emitStateChange(params.roomId, previousState, params.newState, 'Forced state change');
@@ -473,19 +473,19 @@ export function setupRoomAgentHandlers(
 
 	// roomAgent.list - List all active agents with their states
 	messageHub.onRequest('roomAgent.list', async () => {
-		const agents = roomAgentManager.listAgents();
+		const agents = roomSelfManager.listAgents();
 		return { agents };
 	});
 
 	// roomAgent.humanInput - Unified human input endpoint for room agent
 	messageHub.onRequest('roomAgent.humanInput', async (data) => {
-		const params = data as { roomId: string } & RoomAgentHumanInput;
+		const params = data as { roomId: string } & RoomSelfHumanInput;
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
 		}
 
-		const agent = roomAgentManager.getAgent(params.roomId);
+		const agent = roomSelfManager.getAgent(params.roomId);
 		if (!agent) {
 			throw new Error('Room agent not found');
 		}
@@ -551,7 +551,7 @@ export function setupRoomAgentHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		const agent = roomAgentManager.getAgent(params.roomId);
+		const agent = roomSelfManager.getAgent(params.roomId);
 		if (!agent) {
 			throw new Error('Room agent not found');
 		}
@@ -581,7 +581,7 @@ export function setupRoomAgentHandlers(
 			throw new Error('Escalation ID is required');
 		}
 
-		const agent = roomAgentManager.getAgent(params.roomId);
+		const agent = roomSelfManager.getAgent(params.roomId);
 		if (!agent) {
 			throw new Error('Room agent not found');
 		}
@@ -609,7 +609,7 @@ export function setupRoomAgentHandlers(
 			throw new Error('Message is required');
 		}
 
-		const agent = roomAgentManager.getAgent(params.roomId);
+		const agent = roomSelfManager.getAgent(params.roomId);
 		if (!agent) {
 			throw new Error('Room agent not found');
 		}
@@ -630,7 +630,7 @@ export function setupRoomAgentHandlers(
 			throw new Error('Room ID is required');
 		}
 
-		const agent = roomAgentManager.getAgent(params.roomId);
+		const agent = roomSelfManager.getAgent(params.roomId);
 		if (!agent) {
 			return { waitingContext: null };
 		}

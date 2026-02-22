@@ -11,7 +11,7 @@
 import { roomStore } from '../../lib/room-store';
 import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
-import { RoomAgentStatus } from './RoomAgentStatus';
+import { RoomSelfStatus } from './RoomSelfStatus';
 import { RoomEscalations } from './RoomEscalations';
 
 export function RoomDashboard() {
@@ -38,9 +38,7 @@ export function RoomDashboard() {
 	return (
 		<div class="p-4 space-y-6">
 			{/* Agent status */}
-			{roomId && (
-				<RoomAgentStatus roomId={roomId} state={agentState} onAction={handleAgentAction} />
-			)}
+			{roomId && <RoomSelfStatus roomId={roomId} state={agentState} onAction={handleAgentAction} />}
 
 			{/* Escalated issues - show prominently when waiting */}
 			{roomId && (waitingContext || agentState?.lifecycleState === 'waiting') && (

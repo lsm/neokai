@@ -1,5 +1,5 @@
 /**
- * RoomAgentService - Room agent lifecycle management
+ * RoomSelfService - Room agent lifecycle management
  *
  * THE CRITICAL PIECE for self-building automation.
  *
@@ -30,14 +30,14 @@ import type { DaemonHub } from '../daemon-hub';
 import type { MessageHub, SessionFeatures, TaskPriority } from '@neokai/shared';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { Database } from '../../storage/index';
-import { RoomAgentStateRepository } from '../../storage/repositories/room-agent-state-repository';
+import { RoomSelfStateRepository } from '../../storage/repositories/room-self-state-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';
 import { SessionPairManager } from './session-pair-manager';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
 import { RecurringJobScheduler } from './recurring-job-scheduler';
-import { RoomAgentLifecycleManager } from './room-agent-lifecycle-manager';
+import { RoomSelfLifecycleManager } from './room-self-lifecycle-manager';
 import { AgentSession, type AgentSessionInit } from '../agent/agent-session';
 import {
 	createRoomAgentMcpServer,
@@ -51,10 +51,10 @@ import {
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type {
 	Room,
-	RoomAgentState,
-	RoomAgentLifecycleState,
-	RoomAgentHumanInput,
-	RoomAgentWaitingContext,
+	RoomSelfState,
+	RoomSelfLifecycleState,
+	RoomSelfHumanInput,
+	RoomSelfWaitingContext,
 	NeoTask,
 	SessionPair,
 	RoomGoal,
@@ -63,12 +63,12 @@ import type {
 import { DEFAULT_ROOM_SELF_FEATURES, buildRoomAgentSystemPrompt } from '@neokai/shared';
 import { Logger } from '../logger';
 
-const log = new Logger('room-agent-service');
+const log = new Logger('room-self-service');
 
 /**
  * Context for planning phase messages
  */
-export interface RoomAgentPlanningContext {
+export interface RoomSelfPlanningContext {
 	activeGoals: RoomGoal[];
 	pendingTasks: NeoTask[];
 	inProgressTasks: NeoTask[];
@@ -79,7 +79,7 @@ export interface RoomAgentPlanningContext {
 /**
  * Context for review phase messages
  */
-export interface RoomAgentReviewContext {
+export interface RoomSelfReviewContext {
 	task: NeoTask;
 	sessionPair?: SessionPair;
 	summary: string;
@@ -99,9 +99,9 @@ export interface RoomMessageEvent {
 }
 
 /**
- * Context passed to RoomAgentService
+ * Context passed to RoomSelfService
  */
-export interface RoomAgentContext {
+export interface RoomSelfContext {
 	room: Room;
 	db: Database | BunDatabase;
 	daemonHub: DaemonHub;
@@ -125,14 +125,14 @@ export interface RoomAgentContext {
 /**
  * Configuration for room agent behavior
  */
-export interface RoomAgentConfig {
+export interface RoomSelfConfig {
 	maxConcurrentPairs: number;
 	idleCheckIntervalMs: number;
 	maxErrorCount: number;
 	autoRetryTasks: boolean;
 }
 
-const DEFAULT_CONFIG: RoomAgentConfig = {
+const DEFAULT_CONFIG: RoomSelfConfig = {
 	maxConcurrentPairs: 3,
 	idleCheckIntervalMs: 60000,
 	maxErrorCount: 5,
@@ -147,28 +147,28 @@ const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
  * Manages the lifecycle of a room's automation agent.
  * Uses AgentSession for AI orchestration with room-specific configuration.
  */
-export class RoomAgentService {
+export class RoomSelfService {
 	readonly sessionId: string;
 
-	private stateRepo: RoomAgentStateRepository;
+	private stateRepo: RoomSelfStateRepository;
 	private taskRepo: TaskRepository;
 	private goalRepo: GoalRepository;
 	private taskManager: TaskManager;
 	private goalManager: GoalManager;
-	private state: RoomAgentState;
-	private waitingContext: RoomAgentWaitingContext | null = null;
+	private state: RoomSelfState;
+	private waitingContext: RoomSelfWaitingContext | null = null;
 	private idleCheckTimer: Timer | null = null;
 	private unsubscribers: Array<() => void> = [];
-	private config: RoomAgentConfig;
-	private lifecycleState: RoomAgentLifecycleState = 'idle';
+	private config: RoomSelfConfig;
+	private lifecycleState: RoomSelfLifecycleState = 'idle';
 
-	private lifecycleManager: RoomAgentLifecycleManager | null = null;
+	private lifecycleManager: RoomSelfLifecycleManager | null = null;
 	private agentSession: AgentSession | null = null;
 	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
 
 	constructor(
-		private ctx: RoomAgentContext,
-		config?: Partial<RoomAgentConfig>
+		private ctx: RoomSelfContext,
+		config?: Partial<RoomSelfConfig>
 	) {
 		this.config = { ...DEFAULT_CONFIG, ...config };
 		// Room self session ID (autonomous orchestration)
@@ -176,7 +176,7 @@ export class RoomAgentService {
 		this.sessionId = `room:self:${ctx.room.id}`;
 
 		const rawDb = 'getDatabase' in ctx.db ? ctx.db.getDatabase() : ctx.db;
-		this.stateRepo = new RoomAgentStateRepository(rawDb);
+		this.stateRepo = new RoomSelfStateRepository(rawDb);
 		this.taskRepo = new TaskRepository(rawDb);
 		this.goalRepo = new GoalRepository(rawDb);
 		this.taskManager = new TaskManager(rawDb, ctx.room.id);
@@ -188,7 +188,7 @@ export class RoomAgentService {
 	async start(): Promise<void> {
 		log.info(`Starting room agent for room: ${this.ctx.room.name} (${this.ctx.room.id})`);
 
-		this.lifecycleManager = new RoomAgentLifecycleManager(
+		this.lifecycleManager = new RoomSelfLifecycleManager(
 			this.ctx.room.id,
 			this.ctx.db,
 			this.ctx.daemonHub
@@ -303,7 +303,7 @@ export class RoomAgentService {
 	/**
 	 * Inject a planning message to trigger agent reasoning
 	 */
-	async injectPlanningMessage(context: RoomAgentPlanningContext): Promise<void> {
+	async injectPlanningMessage(context: RoomSelfPlanningContext): Promise<void> {
 		if (!this.agentSession) {
 			log.warn('No agent session available for planning message');
 			return;
@@ -319,7 +319,7 @@ export class RoomAgentService {
 	/**
 	 * Inject a review message for completed work
 	 */
-	async injectReviewMessage(context: RoomAgentReviewContext): Promise<void> {
+	async injectReviewMessage(context: RoomSelfReviewContext): Promise<void> {
 		if (!this.agentSession) {
 			log.warn('No agent session available for review message');
 			return;
@@ -448,7 +448,7 @@ export class RoomAgentService {
 		this.unsubscribers.push(unsubRecurringJob);
 	}
 
-	getState(): RoomAgentState {
+	getState(): RoomSelfState {
 		if (this.lifecycleManager) {
 			return this.lifecycleManager.getState();
 		}
@@ -475,7 +475,7 @@ export class RoomAgentService {
 		this.startIdleCheck();
 	}
 
-	private async transitionTo(newState: RoomAgentLifecycleState, reason?: string): Promise<void> {
+	private async transitionTo(newState: RoomSelfLifecycleState, reason?: string): Promise<void> {
 		const previousState = this.state.lifecycleState;
 		if (previousState === newState) return;
 
@@ -501,7 +501,7 @@ export class RoomAgentService {
 		});
 	}
 
-	private async setLifecycleState(state: RoomAgentLifecycleState): Promise<void> {
+	private async setLifecycleState(state: RoomSelfLifecycleState): Promise<void> {
 		const previousState = this.lifecycleState;
 		if (previousState === state) return;
 
@@ -829,7 +829,7 @@ export class RoomAgentService {
 		}
 	}
 
-	async forceState(newState: RoomAgentLifecycleState): Promise<void> {
+	async forceState(newState: RoomSelfLifecycleState): Promise<void> {
 		const previousState = this.state.lifecycleState;
 		if (previousState === newState) return;
 
@@ -850,12 +850,12 @@ export class RoomAgentService {
 		});
 	}
 
-	getWaitingContext(): RoomAgentWaitingContext | null {
+	getWaitingContext(): RoomSelfWaitingContext | null {
 		if (this.state.lifecycleState !== 'waiting') return null;
 		return this.waitingContext;
 	}
 
-	async handleHumanInput(input: RoomAgentHumanInput): Promise<void> {
+	async handleHumanInput(input: RoomSelfHumanInput): Promise<void> {
 		log.info(`Handling human input: ${input.type}`);
 
 		if (this.agentSession) {
@@ -895,7 +895,7 @@ export class RoomAgentService {
 	}
 
 	private async handleReviewResponse(
-		input: Extract<RoomAgentHumanInput, { type: 'review_response' }>
+		input: Extract<RoomSelfHumanInput, { type: 'review_response' }>
 	): Promise<void> {
 		log.info(
 			`Review response for task ${input.taskId}: ${input.approved ? 'approved' : 'rejected'}`
@@ -921,7 +921,7 @@ export class RoomAgentService {
 	}
 
 	private async handleEscalationResponse(
-		input: Extract<RoomAgentHumanInput, { type: 'escalation_response' }>
+		input: Extract<RoomSelfHumanInput, { type: 'escalation_response' }>
 	): Promise<void> {
 		log.info(`Escalation response for ${input.escalationId}: ${input.response}`);
 
@@ -938,7 +938,7 @@ export class RoomAgentService {
 	}
 
 	private async handleQuestionResponse(
-		input: Extract<RoomAgentHumanInput, { type: 'question_response' }>
+		input: Extract<RoomSelfHumanInput, { type: 'question_response' }>
 	): Promise<void> {
 		log.info(`Question response for ${input.questionId}`);
 
@@ -954,7 +954,7 @@ export class RoomAgentService {
 		await this.transitionTo('planning', 'Processing question response');
 	}
 
-	async setWaiting(context: RoomAgentWaitingContext): Promise<void> {
+	async setWaiting(context: RoomSelfWaitingContext): Promise<void> {
 		this.waitingContext = context;
 		if (this.lifecycleManager) {
 			await this.lifecycleManager.waitForInput(`Waiting for ${context.type}`);
@@ -968,7 +968,7 @@ export class RoomAgentService {
 		return this.agentSession;
 	}
 
-	getLifecycleManager(): RoomAgentLifecycleManager | null {
+	getLifecycleManager(): RoomSelfLifecycleManager | null {
 		return this.lifecycleManager;
 	}
 
@@ -976,7 +976,7 @@ export class RoomAgentService {
 	// Prompt Building Methods
 	// ========================
 
-	private buildPlanningPrompt(context: RoomAgentPlanningContext): string {
+	private buildPlanningPrompt(context: RoomSelfPlanningContext): string {
 		const parts: string[] = [];
 
 		parts.push('# Room Agent Planning Phase\n');
@@ -1027,7 +1027,7 @@ export class RoomAgentService {
 		return parts.join('\n');
 	}
 
-	private buildReviewPrompt(context: RoomAgentReviewContext): string {
+	private buildReviewPrompt(context: RoomSelfReviewContext): string {
 		const parts: string[] = [];
 
 		parts.push('# Task Review\n');

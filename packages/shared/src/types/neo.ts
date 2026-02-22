@@ -627,13 +627,13 @@ export interface CreateSessionPairParams {
 }
 
 // ============================================================================
-// Room Agent Types
+// Room Self Types
 // ============================================================================
 
 /**
- * Room agent lifecycle states
+ * Room self lifecycle states
  */
-export type RoomAgentLifecycleState =
+export type RoomSelfLifecycleState =
 	| 'idle'
 	| 'planning'
 	| 'executing'
@@ -643,13 +643,13 @@ export type RoomAgentLifecycleState =
 	| 'paused';
 
 /**
- * State of a room's agent
+ * State of a room's self agent
  */
-export interface RoomAgentState {
+export interface RoomSelfState {
 	/** Room this agent manages */
 	roomId: string;
 	/** Current lifecycle state */
-	lifecycleState: RoomAgentLifecycleState;
+	lifecycleState: RoomSelfLifecycleState;
 	/** Current goal being worked on */
 	currentGoalId?: string;
 	/** Current task being executed */
@@ -667,12 +667,12 @@ export interface RoomAgentState {
 }
 
 /**
- * Room agent session metadata (stored in sessions table)
+ * Room self session metadata (stored in sessions table)
  */
-export interface RoomAgentSessionMetadata {
-	sessionType: 'room';
+export interface RoomSelfSessionMetadata {
+	sessionType: 'room_self';
 	roomId: string;
-	lifecycleState: RoomAgentLifecycleState;
+	lifecycleState: RoomSelfLifecycleState;
 	waitingFor?: 'review' | 'escalation' | 'question';
 	waitingContext?: {
 		taskId?: string;
@@ -682,9 +682,9 @@ export interface RoomAgentSessionMetadata {
 }
 
 /**
- * Context passed to room agent for planning decisions
+ * Context passed to room self for planning decisions
  */
-export interface RoomAgentPlanningContext {
+export interface RoomSelfPlanningContext {
 	type: 'idle_check' | 'event_triggered' | 'goal_review' | 'context_update';
 	activeGoals: RoomGoal[];
 	pendingTasks: NeoTask[];
@@ -700,7 +700,7 @@ export interface RoomAgentPlanningContext {
 /**
  * Context for reviewing completed work
  */
-export interface RoomAgentReviewContext {
+export interface RoomSelfReviewContext {
 	taskId: string;
 	summary: string;
 	filesChanged?: string[];
@@ -713,18 +713,18 @@ export interface RoomAgentReviewContext {
 }
 
 /**
- * Human input types for room agent
+ * Human input types for room self
  */
-export type RoomAgentHumanInput =
+export type RoomSelfHumanInput =
 	| { type: 'review_response'; taskId: string; response: string; approved: boolean }
 	| { type: 'escalation_response'; escalationId: string; response: string }
 	| { type: 'question_response'; questionId: string; responses: Record<string, string | string[]> }
 	| { type: 'message'; content: string };
 
 /**
- * Room agent waiting context
+ * Room self waiting context
  */
-export interface RoomAgentWaitingContext {
+export interface RoomSelfWaitingContext {
 	type: 'review' | 'escalation' | 'question';
 	taskId?: string;
 	escalationId?: string;
@@ -734,9 +734,9 @@ export interface RoomAgentWaitingContext {
 }
 
 /**
- * Room agent configuration
+ * Room self configuration
  */
-export interface RoomAgentConfig {
+export interface RoomSelfConfig {
 	maxConcurrentPairs: number;
 	idleCheckIntervalMs: number;
 	planningTimeoutMs: number;
@@ -745,10 +745,10 @@ export interface RoomAgentConfig {
 }
 
 /**
- * Default configuration for room agents.
+ * Default configuration for room self.
  * @public
  */
-export const DEFAULT_ROOM_AGENT_CONFIG: RoomAgentConfig = {
+export const DEFAULT_ROOM_SELF_CONFIG: RoomSelfConfig = {
 	maxConcurrentPairs: 3,
 	idleCheckIntervalMs: 60000, // 1 minute
 	planningTimeoutMs: 300000, // 5 minutes

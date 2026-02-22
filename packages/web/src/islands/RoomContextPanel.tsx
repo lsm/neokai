@@ -11,13 +11,13 @@
  */
 
 import { useMemo } from 'preact/hooks';
-import type { RoomAgentLifecycleState } from '@neokai/shared';
+import type { RoomSelfLifecycleState } from '@neokai/shared';
 import { roomStore } from '../lib/room-store';
 import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
-const STATE_COLORS: Record<RoomAgentLifecycleState, { dot: string; text: string }> = {
+const STATE_COLORS: Record<RoomSelfLifecycleState, { dot: string; text: string }> = {
 	idle: { dot: 'bg-gray-400', text: 'text-gray-400' },
 	planning: { dot: 'bg-blue-400', text: 'text-blue-400' },
 	executing: { dot: 'bg-green-400', text: 'text-green-400' },
@@ -27,7 +27,7 @@ const STATE_COLORS: Record<RoomAgentLifecycleState, { dot: string; text: string 
 	paused: { dot: 'bg-orange-400', text: 'text-orange-400' },
 };
 
-const STATE_LABELS: Record<RoomAgentLifecycleState, string> = {
+const STATE_LABELS: Record<RoomSelfLifecycleState, string> = {
 	idle: 'Idle',
 	planning: 'Planning',
 	executing: 'Executing',

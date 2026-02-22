@@ -14,7 +14,7 @@ import type {
 	InboxItem,
 	RoomGoal,
 	RecurringJob,
-	RoomAgentState,
+	RoomSelfState,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
@@ -38,10 +38,10 @@ import {
 	type UpdateRecurringJobParams,
 } from './repositories/recurring-job-repository';
 import {
-	RoomAgentStateRepository,
-	type CreateRoomAgentStateParams,
-	type UpdateRoomAgentStateParams,
-} from './repositories/room-agent-state-repository';
+	RoomSelfStateRepository,
+	type CreateRoomSelfStateParams,
+	type UpdateRoomSelfStateParams,
+} from './repositories/room-self-state-repository';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
@@ -52,9 +52,9 @@ export type {
 	UpdateRecurringJobParams,
 } from './repositories/recurring-job-repository';
 export type {
-	CreateRoomAgentStateParams,
-	UpdateRoomAgentStateParams,
-} from './repositories/room-agent-state-repository';
+	CreateRoomSelfStateParams,
+	UpdateRoomSelfStateParams,
+} from './repositories/room-self-state-repository';
 
 // @public - Library export
 // Re-export repository classes for direct use
@@ -62,7 +62,7 @@ export { GoalRepository } from './repositories/goal-repository';
 // @public - Library export
 export { RecurringJobRepository } from './repositories/recurring-job-repository';
 // @public - Library export
-export { RoomAgentStateRepository } from './repositories/room-agent-state-repository';
+export { RoomSelfStateRepository } from './repositories/room-self-state-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -79,7 +79,7 @@ export class Database {
 	private inboxItemRepo!: InboxItemRepository;
 	private goalRepo!: GoalRepository;
 	private recurringJobRepo!: RecurringJobRepository;
-	private roomAgentStateRepo!: RoomAgentStateRepository;
+	private roomSelfStateRepo!: RoomSelfStateRepository;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -97,7 +97,7 @@ export class Database {
 		this.inboxItemRepo = new InboxItemRepository(db);
 		this.goalRepo = new GoalRepository(db);
 		this.recurringJobRepo = new RecurringJobRepository(db);
-		this.roomAgentStateRepo = new RoomAgentStateRepository(db);
+		this.roomSelfStateRepo = new RoomSelfStateRepository(db);
 	}
 
 	// ============================================================================
@@ -415,60 +415,60 @@ export class Database {
 	}
 
 	// ============================================================================
-	// Room Agent State operations (delegated to RoomAgentStateRepository)
+	// Room Agent State operations (delegated to RoomSelfStateRepository)
 	// ============================================================================
 
-	createRoomAgentState(params: CreateRoomAgentStateParams): RoomAgentState {
-		return this.roomAgentStateRepo.createState(params);
+	createRoomSelfState(params: CreateRoomSelfStateParams): RoomSelfState {
+		return this.roomSelfStateRepo.createState(params);
 	}
 
-	getRoomAgentState(roomId: string): RoomAgentState | null {
-		return this.roomAgentStateRepo.getState(roomId);
+	getRoomSelfState(roomId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.getState(roomId);
 	}
 
-	getOrCreateRoomAgentState(roomId: string): RoomAgentState {
-		return this.roomAgentStateRepo.getOrCreateState(roomId);
+	getOrCreateRoomSelfState(roomId: string): RoomSelfState {
+		return this.roomSelfStateRepo.getOrCreateState(roomId);
 	}
 
-	updateRoomAgentState(roomId: string, params: UpdateRoomAgentStateParams): RoomAgentState | null {
-		return this.roomAgentStateRepo.updateState(roomId, params);
+	updateRoomSelfState(roomId: string, params: UpdateRoomSelfStateParams): RoomSelfState | null {
+		return this.roomSelfStateRepo.updateState(roomId, params);
 	}
 
-	transitionRoomAgentState(
+	transitionRoomSelfState(
 		roomId: string,
-		newState: import('@neokai/shared').RoomAgentLifecycleState
-	): RoomAgentState | null {
-		return this.roomAgentStateRepo.transitionTo(roomId, newState);
+		newState: import('@neokai/shared').RoomSelfLifecycleState
+	): RoomSelfState | null {
+		return this.roomSelfStateRepo.transitionTo(roomId, newState);
 	}
 
-	recordRoomAgentError(roomId: string, error: string): RoomAgentState | null {
-		return this.roomAgentStateRepo.recordError(roomId, error);
+	recordRoomSelfError(roomId: string, error: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.recordError(roomId, error);
 	}
 
-	clearRoomAgentError(roomId: string): RoomAgentState | null {
-		return this.roomAgentStateRepo.clearError(roomId);
+	clearRoomSelfError(roomId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.clearError(roomId);
 	}
 
-	addActiveSessionPair(roomId: string, pairId: string): RoomAgentState | null {
-		return this.roomAgentStateRepo.addActiveSessionPair(roomId, pairId);
+	addActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.addActiveSessionPair(roomId, pairId);
 	}
 
-	removeActiveSessionPair(roomId: string, pairId: string): RoomAgentState | null {
-		return this.roomAgentStateRepo.removeActiveSessionPair(roomId, pairId);
+	removeActiveSessionPair(roomId: string, pairId: string): RoomSelfState | null {
+		return this.roomSelfStateRepo.removeActiveSessionPair(roomId, pairId);
 	}
 
-	deleteRoomAgentState(roomId: string): boolean {
-		return this.roomAgentStateRepo.deleteState(roomId);
+	deleteRoomSelfState(roomId: string): boolean {
+		return this.roomSelfStateRepo.deleteState(roomId);
 	}
 
-	getAllRoomAgentStates(): RoomAgentState[] {
-		return this.roomAgentStateRepo.getAllStates();
+	getAllRoomSelfStates(): RoomSelfState[] {
+		return this.roomSelfStateRepo.getAllStates();
 	}
 
-	getRoomAgentStatesByLifecycle(
-		lifecycleState: import('@neokai/shared').RoomAgentLifecycleState
-	): RoomAgentState[] {
-		return this.roomAgentStateRepo.getStatesByLifecycle(lifecycleState);
+	getRoomSelfStatesByLifecycle(
+		lifecycleState: import('@neokai/shared').RoomSelfLifecycleState
+	): RoomSelfState[] {
+		return this.roomSelfStateRepo.getStatesByLifecycle(lifecycleState);
 	}
 
 	// ============================================================================
@@ -511,8 +511,8 @@ export class Database {
 	 * Get the room agent state repository
 	 * Used by RoomAgentService for direct access to agent states
 	 */
-	getRoomAgentStateRepo(): RoomAgentStateRepository {
-		return this.roomAgentStateRepo;
+	getRoomSelfStateRepo(): RoomSelfStateRepository {
+		return this.roomSelfStateRepo;
 	}
 
 	/**

@@ -9,11 +9,11 @@
  * - SessionPairManager for manager-worker session pairs
  * - GoalManager for goal management with progress tracking
  * - RecurringJobScheduler for scheduled recurring jobs
- * - RoomAgentService for room agent lifecycle management
+ * - RoomSelfService for room self lifecycle management
  *
  * Unified Session Architecture:
- * - RoomAgentService uses AgentSession.fromInit() for AI orchestration
- * - Session ID format: room:{roomId}
+ * - RoomSelfService uses AgentSession.fromInit() for AI orchestration
+ * - Session ID format: room:self:${roomId}
  */
 
 export { RoomManager } from './room-manager';
@@ -28,17 +28,17 @@ export { GoalManager } from './goal-manager';
 export { RecurringJobScheduler } from './recurring-job-scheduler';
 // @public - Library export
 export {
-	RoomAgentService,
-	type RoomAgentContext,
-	type RoomAgentConfig,
-	type RoomAgentPlanningContext,
-	type RoomAgentReviewContext,
+	RoomSelfService,
+	type RoomSelfContext,
+	type RoomSelfConfig,
+	type RoomSelfPlanningContext,
+	type RoomSelfReviewContext,
 	type RoomMessageEvent,
-} from './room-agent-service';
+} from './room-self-service';
 
 // @public - Library export
-// Room Agent Lifecycle
-export { RoomAgentLifecycleManager } from './room-agent-lifecycle-manager';
+// Room Self Lifecycle
+export { RoomSelfLifecycleManager } from './room-self-lifecycle-manager';
 
 // Types - re-exported from @neokai/shared for convenience
 export type {
@@ -80,16 +80,16 @@ export type {
 	RecurringTaskTemplate,
 	TaskExecutionMode,
 	TaskSession,
-	RoomAgentState,
-	RoomAgentLifecycleState,
-	RoomAgentSessionMetadata,
-	// Note: RoomAgentPlanningContext and RoomAgentReviewContext are exported from RoomAgentService
-	RoomAgentHumanInput,
-	RoomAgentWaitingContext,
+	RoomSelfState,
+	RoomSelfLifecycleState,
+	RoomSelfSessionMetadata,
+	// Note: RoomSelfPlanningContext and RoomSelfReviewContext are exported from RoomSelfService
+	RoomSelfHumanInput,
+	RoomSelfWaitingContext,
 	ManagerHookEvent,
 	ManagerHookPayload,
 } from '@neokai/shared';
 
 // @public - Library export
 // Constants - re-exported from @neokai/shared
-export { DEFAULT_ROOM_AGENT_CONFIG } from '@neokai/shared';
+export { DEFAULT_ROOM_SELF_CONFIG } from '@neokai/shared';
