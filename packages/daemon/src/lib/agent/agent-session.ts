@@ -333,6 +333,13 @@ export class AgentSession
 			// Create new session from init
 			session = AgentSession.createSessionFromInit(init, defaultModel);
 			db.createSession(session);
+		} else if (init.workspacePath && session.workspacePath !== init.workspacePath) {
+			// Keep deterministic workspace for long-lived room/lobby session IDs across restarts.
+			db.updateSession(init.sessionId, { workspacePath: init.workspacePath });
+			session = {
+				...session,
+				workspacePath: init.workspacePath,
+			};
 		}
 
 		// Merge runtime-only config (mcpServers with non-serializable instances)

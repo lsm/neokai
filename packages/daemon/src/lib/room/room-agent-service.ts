@@ -205,9 +205,9 @@ export class RoomAgentService {
 			const init: AgentSessionInit = {
 				sessionId: this.sessionId,
 				workspacePath:
+					this.ctx.workspaceRoot ??
 					this.ctx.room.defaultPath ??
 					this.ctx.room.allowedPaths[0]?.path ??
-					this.ctx.workspaceRoot ??
 					process.cwd(),
 				systemPrompt,
 				mcpServers: {

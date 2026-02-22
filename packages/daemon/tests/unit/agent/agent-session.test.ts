@@ -1918,6 +1918,68 @@ describe('AgentSession', () => {
 			const persistedSession = createSessionCall[0] as Session;
 			expect(persistedSession.config.mcpServers).toBeUndefined();
 		});
+
+		it('should update workspacePath for existing init sessions', () => {
+			const existingSession = {
+				id: 'room:test',
+				title: 'Room Agent',
+				workspacePath: '/old/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active' as const,
+				config: {
+					model: 'default',
+					maxTokens: 8192,
+					temperature: 1,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+				type: 'room' as const,
+				context: { roomId: 'test' },
+			} as Session;
+
+			const init = {
+				sessionId: 'room:test',
+				workspacePath: '/new/workspace',
+				type: 'room' as const,
+				model: 'default',
+			};
+
+			const mockDb = {
+				getSession: mock(() => existingSession),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-key');
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'default'
+			);
+
+			expect(
+				(mockDb as unknown as { updateSession: ReturnType<typeof mock> }).updateSession.mock
+					.calls[0]
+			).toEqual(['room:test', { workspacePath: '/new/workspace' }]);
+			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
+		});
 	});
 
 	describe('startupTimeoutTimer', () => {
