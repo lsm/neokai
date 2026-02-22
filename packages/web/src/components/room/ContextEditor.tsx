@@ -9,8 +9,7 @@
  * - Auto-save draft to localStorage
  */
 
-import { signal, computed } from '@preact/signals';
-import { useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useMemo } from 'preact/hooks';
 import type { Room, RoomContextVersion } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -114,138 +113,130 @@ export function ContextEditor({
 	onFetchVersions,
 	isLoading = false,
 }: ContextEditorProps) {
-	// Signals for state management
-	const background = signal(room.background || '');
-	const instructions = signal(room.instructions || '');
-	const isSaving = signal(false);
-	const isRollingBack = signal(false);
-	const showVersionHistory = signal(false);
-	const versions = signal<RoomContextVersion[]>([]);
-	const isLoadingVersions = signal(false);
-	const hasUnsavedChanges = signal(false);
-	const draftLoaded = signal(false);
+	// State management with useState instead of signals
+	const [background, setBackground] = useState(room.background || '');
+	const [instructions, setInstructions] = useState(room.instructions || '');
+	const [isSaving, setIsSaving] = useState(false);
+	const [isRollingBack, setIsRollingBack] = useState(false);
+	const [showVersionHistory, setShowVersionHistory] = useState(false);
+	const [versions, setVersions] = useState<RoomContextVersion[]>([]);
+	const [isLoadingVersions, setIsLoadingVersions] = useState(false);
+	const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+	const [draftLoaded, setDraftLoaded] = useState(false);
 
 	// Computed values
-	const hasChanges = computed(() => {
-		const backgroundChanged = background.value !== (room.background || '');
-		const instructionsChanged = instructions.value !== (room.instructions || '');
+	const hasChanges = useMemo(() => {
+		const backgroundChanged = background !== (room.background || '');
+		const instructionsChanged = instructions !== (room.instructions || '');
 		return backgroundChanged || instructionsChanged;
-	});
+	}, [background, instructions, room.background, room.instructions]);
 
-	const isBackgroundOverLimit = computed(() => background.value.length > MAX_BACKGROUND_LENGTH);
-	const isInstructionsOverLimit = computed(
-		() => instructions.value.length > MAX_INSTRUCTIONS_LENGTH
-	);
-	const canSave = computed(
-		() =>
-			hasChanges.value &&
-			!isSaving.value &&
-			!isLoading &&
-			!isBackgroundOverLimit.value &&
-			!isInstructionsOverLimit.value
-	);
+	const isBackgroundOverLimit = background.length > MAX_BACKGROUND_LENGTH;
+	const isInstructionsOverLimit = instructions.length > MAX_INSTRUCTIONS_LENGTH;
+	const canSave =
+		hasChanges && !isSaving && !isLoading && !isBackgroundOverLimit && !isInstructionsOverLimit;
 
 	// Load draft from localStorage on mount
 	useEffect(() => {
-		if (!draftLoaded.value) {
+		if (!draftLoaded) {
 			try {
 				const draftKey = getDraftKey(room.id);
 				const savedDraft = localStorage.getItem(draftKey);
 				if (savedDraft) {
 					const { background: savedBg, instructions: savedInstr } = JSON.parse(savedDraft);
 					// Only restore if different from current
-					if (savedBg !== background.value || savedInstr !== instructions.value) {
-						background.value = savedBg;
-						instructions.value = savedInstr;
-						hasUnsavedChanges.value = true;
+					if (savedBg !== background || savedInstr !== instructions) {
+						setBackground(savedBg);
+						setInstructions(savedInstr);
+						setHasUnsavedChanges(true);
 					}
 				}
 			} catch {
 				// Ignore parse errors
 			}
-			draftLoaded.value = true;
+			setDraftLoaded(true);
 		}
-	}, [room.id]);
+	}, [room.id, background, instructions, draftLoaded]);
 
 	// Auto-save draft to localStorage
 	useEffect(() => {
-		if (!draftLoaded.value) return;
+		if (!draftLoaded) return;
 
 		const draftKey = getDraftKey(room.id);
-		if (hasChanges.value) {
+		if (hasChanges) {
 			localStorage.setItem(
 				draftKey,
 				JSON.stringify({
-					background: background.value,
-					instructions: instructions.value,
+					background,
+					instructions,
 				})
 			);
-			hasUnsavedChanges.value = true;
+			setHasUnsavedChanges(true);
 		} else {
 			localStorage.removeItem(draftKey);
-			hasUnsavedChanges.value = false;
+			setHasUnsavedChanges(false);
 		}
-	}, [background.value, instructions.value, hasChanges.value, room.id, draftLoaded.value]);
+	}, [background, instructions, hasChanges, room.id, draftLoaded]);
 
 	// Sync with room props when they change
 	useEffect(() => {
-		if (!hasUnsavedChanges.value) {
-			background.value = room.background || '';
-			instructions.value = room.instructions || '';
+		if (!hasUnsavedChanges) {
+			setBackground(room.background || '');
+			setInstructions(room.instructions || '');
 		}
-	}, [room.background, room.instructions, hasUnsavedChanges.value]);
+	}, [room.background, room.instructions, hasUnsavedChanges]);
 
 	// Fetch versions when showing history
 	useEffect(() => {
-		if (showVersionHistory.value && onFetchVersions && versions.value.length === 0) {
-			isLoadingVersions.value = true;
+		if (showVersionHistory && onFetchVersions && versions.length === 0) {
+			setIsLoadingVersions(true);
 			onFetchVersions(room.id)
 				.then((fetchedVersions) => {
-					versions.value = fetchedVersions;
+					setVersions(fetchedVersions);
 				})
 				.finally(() => {
-					isLoadingVersions.value = false;
+					setIsLoadingVersions(false);
 				});
 		}
-	}, [showVersionHistory.value, room.id, onFetchVersions]);
+	}, [showVersionHistory, room.id, onFetchVersions, versions.length]);
 
 	const handleSave = async () => {
-		if (!canSave.value) return;
+		if (!canSave) return;
 
-		isSaving.value = true;
+		setIsSaving(true);
 		try {
-			await onSave(background.value || undefined, instructions.value || undefined);
+			await onSave(background || undefined, instructions || undefined);
 			// Clear draft on successful save
 			localStorage.removeItem(getDraftKey(room.id));
-			hasUnsavedChanges.value = false;
+			setHasUnsavedChanges(false);
 		} finally {
-			isSaving.value = false;
+			setIsSaving(false);
 		}
 	};
 
 	const handleRollback = async (version: number) => {
-		isRollingBack.value = true;
+		setIsRollingBack(true);
 		try {
 			await onRollback(version);
 			// Refresh versions after rollback
 			if (onFetchVersions) {
 				const fetchedVersions = await onFetchVersions(room.id);
-				versions.value = fetchedVersions;
+				setVersions(fetchedVersions);
 			}
 		} finally {
-			isRollingBack.value = false;
+			setIsRollingBack(false);
 		}
 	};
 
 	const handleDiscardDraft = () => {
-		background.value = room.background || '';
-		instructions.value = room.instructions || '';
+		setBackground(room.background || '');
+		setInstructions(room.instructions || '');
 		localStorage.removeItem(getDraftKey(room.id));
-		hasUnsavedChanges.value = false;
+		setHasUnsavedChanges(false);
 	};
 
 	return (
-		<div class="flex flex-col h-full">
+		<div class="flex flex-col h-full max-w-full">
 			{/* Header */}
 			<div class="flex items-center justify-between pb-4 border-b border-dark-700">
 				<div class="flex items-center gap-3">
@@ -260,8 +251,8 @@ export function ContextEditor({
 					<Button
 						variant="ghost"
 						size="sm"
-						onClick={() => (showVersionHistory.value = !showVersionHistory.value)}
-						disabled={isLoading || isSaving.value}
+						onClick={() => setShowVersionHistory(!showVersionHistory)}
+						disabled={isLoading || isSaving}
 					>
 						<svg class="w-4 h-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
@@ -281,12 +272,12 @@ export function ContextEditor({
 				{/* Editor panel */}
 				<div
 					class={cn(
-						'flex-1 flex flex-col gap-4 overflow-y-auto',
-						showVersionHistory.value && 'pr-4'
+						'flex-1 flex flex-col gap-4 overflow-y-auto min-w-0',
+						showVersionHistory && 'pr-4'
 					)}
 				>
 					{/* Draft indicator */}
-					{hasUnsavedChanges.value && (
+					{hasUnsavedChanges && (
 						<div class="flex items-center justify-between px-3 py-2 bg-yellow-900/20 border border-yellow-800/50 rounded-lg">
 							<span class="text-sm text-yellow-300">You have unsaved changes</span>
 							<Button variant="ghost" size="sm" onClick={handleDiscardDraft}>
@@ -296,12 +287,12 @@ export function ContextEditor({
 					)}
 
 					{/* Background section */}
-					<div>
+					<div class="min-w-0">
 						<div class="flex items-center justify-between mb-2">
 							<label for="context-background" class="block text-sm font-medium text-gray-300">
 								Background
 							</label>
-							<CharacterCount current={background.value.length} max={MAX_BACKGROUND_LENGTH} />
+							<CharacterCount current={background.length} max={MAX_BACKGROUND_LENGTH} />
 						</div>
 						<p class="text-xs text-gray-500 mb-2">
 							Describe the project, its goals, constraints, and any important context for the room
@@ -309,21 +300,21 @@ export function ContextEditor({
 						</p>
 						<AutoResizeTextarea
 							id="context-background"
-							value={background.value}
-							onChange={(val) => (background.value = val)}
+							value={background}
+							onChange={setBackground}
 							placeholder="This room is focused on..."
 							maxLength={MAX_BACKGROUND_LENGTH}
-							disabled={isLoading || isSaving.value}
+							disabled={isLoading || isSaving}
 						/>
 					</div>
 
 					{/* Instructions section */}
-					<div>
+					<div class="min-w-0">
 						<div class="flex items-center justify-between mb-2">
 							<label for="context-instructions" class="block text-sm font-medium text-gray-300">
 								Instructions
 							</label>
-							<CharacterCount current={instructions.value.length} max={MAX_INSTRUCTIONS_LENGTH} />
+							<CharacterCount current={instructions.length} max={MAX_INSTRUCTIONS_LENGTH} />
 						</div>
 						<p class="text-xs text-gray-500 mb-2">
 							Custom instructions for how the room agent should behave, including preferences,
@@ -331,17 +322,17 @@ export function ContextEditor({
 						</p>
 						<AutoResizeTextarea
 							id="context-instructions"
-							value={instructions.value}
-							onChange={(val) => (instructions.value = val)}
+							value={instructions}
+							onChange={setInstructions}
 							placeholder="When working in this room..."
 							maxLength={MAX_INSTRUCTIONS_LENGTH}
-							disabled={isLoading || isSaving.value}
+							disabled={isLoading || isSaving}
 						/>
 					</div>
 
 					{/* Save button */}
 					<div class="flex items-center justify-end gap-3 pt-4 border-t border-dark-700">
-						{isSaving.value && (
+						{isSaving && (
 							<span class="text-sm text-gray-400 flex items-center gap-2">
 								<Spinner size="sm" />
 								Saving...
@@ -350,31 +341,31 @@ export function ContextEditor({
 						<Button
 							variant="ghost"
 							onClick={handleDiscardDraft}
-							disabled={!hasChanges.value || isLoading || isSaving.value}
+							disabled={!hasChanges || isLoading || isSaving}
 						>
 							Reset
 						</Button>
-						<Button onClick={handleSave} disabled={!canSave.value} loading={isSaving.value}>
+						<Button onClick={handleSave} disabled={!canSave} loading={isSaving}>
 							Save Changes
 						</Button>
 					</div>
 				</div>
 
 				{/* Version history sidebar */}
-				{showVersionHistory.value && (
+				{showVersionHistory && (
 					<div class="w-80 flex-shrink-0 border-l border-dark-700 pl-4 overflow-y-auto">
 						<ContextVersionHistory
 							roomId={room.id}
 							currentVersion={room.contextVersion || 1}
-							versions={versions.value}
+							versions={versions}
 							onRollback={handleRollback}
 							onViewVersion={(version) => {
 								// For now, just populate the editor with the version content
 								// A more sophisticated implementation would show a modal
-								background.value = version.background || '';
-								instructions.value = version.instructions || '';
+								setBackground(version.background || '');
+								setInstructions(version.instructions || '');
 							}}
-							isLoading={isLoadingVersions.value || isRollingBack.value}
+							isLoading={isLoadingVersions || isRollingBack}
 						/>
 					</div>
 				)}
