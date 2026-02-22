@@ -424,6 +424,16 @@ export class RoomSelfService {
 				// Check if this worker belongs to our room
 				const worker = this.ctx.workerManager.getWorkerBySessionId(event.sessionId);
 				if (worker && worker.roomId === this.ctx.room.id) {
+					// Remove worker from active sessions
+					if (this.lifecycleManager) {
+						this.lifecycleManager.removeActiveWorkerSession(event.sessionId);
+						this.state = this.lifecycleManager.getState();
+					} else {
+						this.state =
+							this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, event.sessionId) ??
+							this.state;
+					}
+
 					const task = await this.taskManager.getTask(event.taskId);
 					if (task && this.agentSession) {
 						await this.injectReviewMessage({
@@ -432,7 +442,22 @@ export class RoomSelfService {
 							success: true,
 						});
 					}
-					// Note: Legacy path removed - if no agentSession, event is skipped
+
+					// Check if all workers are done
+					if (this.state.activeWorkerSessionIds.length === 0) {
+						if (this.lifecycleManager) {
+							const result = await this.lifecycleManager.finishExecution();
+							if (result) {
+								this.state = result;
+							} else {
+								log.warn('finishExecution() returned null, forcing transition to idle');
+								await this.transitionTo('idle', 'All tasks completed (forced)');
+								this.state = this.lifecycleManager.getState();
+							}
+						} else {
+							await this.transitionTo('idle', 'All tasks completed');
+						}
+					}
 				}
 			},
 			{ sessionId: this.sessionId }

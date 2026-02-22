@@ -211,9 +211,17 @@ export class WorkerManager {
 	 * Complete a worker session
 	 */
 	completeWorker(workerSessionId: string): void {
+		// Get worker to find roomId for session unassignment
+		const worker = this.getWorkerBySessionId(workerSessionId);
+
 		this.workerSessionRepo.completeWorkerSessionBySessionId(workerSessionId);
 		// Clean up worker tools map to prevent memory leak
 		this.workerTools.delete(workerSessionId);
+
+		// Unassign session from room to prevent session_ids accumulation
+		if (worker) {
+			this.roomManager.unassignSession(worker.roomId, workerSessionId);
+		}
 	}
 
 	/**
@@ -287,6 +295,9 @@ export class WorkerManager {
 
 		// Remove from active worker tools
 		this.workerTools.delete(workerSessionId);
+
+		// Unassign session from room to prevent session_ids accumulation
+		this.roomManager.unassignSession(worker.roomId, workerSessionId);
 
 		// Emit failure event for room agents to handle
 		await this.daemonHub.emit('worker.failed', {
