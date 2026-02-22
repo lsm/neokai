@@ -3,15 +3,28 @@
 ## Executive Summary
 
 **Current State**: 3-tier architecture (Room Self → Manager → Worker)
-**Proposed State**: 2-tier architecture (Room Self → Worker)
+**Proposed State**: 2-tier architecture (Room Agent → Worker)
 
 **Key Changes**:
 1. Remove Manager agent layer completely
-2. Workers directly signal task completion to Room Self
+2. Workers directly signal task completion to Room Agent
 3. Remove `SessionPair` abstraction
 4. Simplify session types and lifecycle
 5. **Unify `room:chat` and `room:self` orchestration capabilities** - they differ only in trigger mode (human vs autonomous)
 6. **Single-source ownership**: Shared tools (`room-agent-tools.ts`) and prompts (`room-agent.ts`) for both room modes
+
+**Status**: v1.1 (Critical Fixes Applied)
+**Related Documents**:
+- [Room Autonomy Manager Removal Plan](./room-autonomy-manager-removal-plan.md) - Original plan with focus on unifying room agents
+- [Manager Removal Implementation Plan](./manager-removal-implementation-plan.md) - v2.0 with all critical fixes applied
+- [Critical Fixes Applied](./manager-removal-critical-fixes.md) - Detailed breakdown of all 7 fixes
+
+**Changes in v1.1**:
+- Fixed schema contradictions (task_id FK, room_session_id naming)
+- Added session_id column for direct lookup
+- Complete migration strategy (orphaned pairs preserved)
+- Harmonized phase sequence with implementation plan (6 phases)
+- Shared WorkerEventHandler architecture
 
 **Status**: Design phase - awaiting approval
 
@@ -169,28 +182,56 @@ The key insight from the original plan is that **both `room:chat` and `room:self
 
 ### Architecture Diagram (Simplified)
 
-### Database Schema
+### Database Schema (WITH CRITICAL FIXES APPLIED)
 
 ```sql
--- worker_sessions table (new)
+-- worker_sessions table (new) - ALL FIXES APPLIED
 CREATE TABLE worker_sessions (
     id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,                    -- FIX 3: Added for direct session lookup
     room_id TEXT NOT NULL,
-    room_self_session_id TEXT NOT NULL,
+    room_session_id TEXT NOT NULL,                      -- FIX 2: Mode-agnostic (was room_self_session_id)
+    room_session_type TEXT NOT NULL DEFAULT 'room_self' -- FIX 2: Discriminator for room mode
+        CHECK(room_session_type IN ('room_chat', 'room_self')),
     task_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'starting'
         CHECK(status IN ('starting', 'running', 'waiting_for_review', 'completed', 'failed', 'cancelled')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     completed_at INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+    FOREIGN KEY (room_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT -- FIX 1: Was SET NULL (contradiction)
 );
 
 CREATE INDEX idx_worker_sessions_room ON worker_sessions(room_id);
 CREATE INDEX idx_worker_sessions_task ON worker_sessions(task_id);
 CREATE INDEX idx_worker_sessions_status ON worker_sessions(status);
+CREATE INDEX idx_worker_sessions_session ON worker_sessions(session_id);     -- FIX 3
+CREATE INDEX idx_worker_sessions_room_session ON worker_sessions(room_session_id); -- FIX 2
+
+-- FIX 4: Orphaned pairs preservation (prevents data loss)
+CREATE TABLE worker_sessions_orphaned (
+    id TEXT PRIMARY KEY,
+    original_pair_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    room_session_id TEXT NOT NULL,
+    manager_session_id TEXT NOT NULL,
+    worker_session_id TEXT NOT NULL,
+    original_status TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    migrated_at INTEGER NOT NULL,
+    notes TEXT
+);
 ```
+
+**Schema Fixes Applied**:
+1. **FIX 1**: `task_id NOT NULL` with `ON DELETE RESTRICT` (was contradictory SET NULL)
+2. **FIX 2**: `room_session_id` is mode-agnostic (supports both room:chat and room:self)
+3. **FIX 3**: `session_id` column added for direct agent session lookup
+4. **FIX 4**: `worker_sessions_orphaned` table preserves session_pairs without tasks
 
 ### Key Components
 
@@ -463,8 +504,12 @@ export interface WorkerSession {
     id: string;
     /** Room this worker belongs to */
     roomId: string;
-    /** Room Self session that created this worker */
-    roomSelfSessionId: string;
+    /** Room agent session that created this worker (mode-agnostic) - FIX 2 */
+    roomSessionId: string;  // Changed from: roomSelfSessionId
+    /** The actual agent session ID - FIX 3 */
+    sessionId: string;
+    /** Room agent type (discriminator) - FIX 2 */
+    roomSessionType: 'room_chat' | 'room_self';
     /** Task this worker is executing */
     taskId: string;
     /** Current status of the worker */
@@ -670,7 +715,7 @@ export class WorkerManager {
      * Returns the worker session ID
      */
     async spawnWorker(params: CreateWorkerParams): Promise<string> {
-        const { roomId, roomSelfSessionId, taskId, taskTitle, taskDescription, workspacePath, model } = params;
+        const { roomId, roomSessionId, taskId, taskTitle, taskDescription, workspacePath, model } = params;  // FIX 2: roomSessionId
 
         // 1. Validate room exists
         const room = this.roomManager.getRoom(roomId);
@@ -987,7 +1032,9 @@ import type { WorkerSession, WorkerStatus } from '@neokai/shared';
 export interface CreateWorkerSessionData {
     id: string;
     roomId: string;
-    roomSelfSessionId: string;
+    roomSessionId: string;      // FIX 2: Mode-agnostic (was roomSelfSessionId)
+    sessionId: string;          // FIX 3: Added actual agent session ID
+    roomSessionType: 'room_chat' | 'room_self';  // FIX 2: Discriminator
     taskId: string;
     status: WorkerStatus;
     createdAt: number;
@@ -1002,13 +1049,15 @@ export class WorkerSessionRepository {
      */
     createWorkerSession(data: CreateWorkerSessionData): WorkerSession {
         const stmt = this.db.prepare(`
-            INSERT INTO worker_sessions (id, room_id, room_self_session_id, task_id, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO worker_sessions (id, session_id, room_id, room_session_id, room_session_type, task_id, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
         stmt.run(
             data.id,
+            data.sessionId,       // FIX 3
             data.roomId,
-            data.roomSelfSessionId,
+            data.roomSessionId,   // FIX 2
+            data.roomSessionType,  // FIX 2
             data.taskId,
             data.status,
             data.createdAt,
@@ -1027,11 +1076,13 @@ export class WorkerSessionRepository {
     }
 
     /**
-     * Get a worker session by session ID (not tracking ID)
+     * Get a worker session by agent session ID - FIX 3: Fully implemented
      */
     getWorkerBySessionId(sessionId: string): WorkerSession | null {
-        // We need to find by matching against a derived pattern or add a session_id column
-        // For now, return null - this would need schema adjustment
+        const stmt = this.db.prepare(`SELECT * FROM worker_sessions WHERE session_id = ?`);
+        const row = stmt.get(sessionId) as Record<string, unknown> | undefined;
+        return row ? this.rowToWorker(row) : null;
+    }
         return null;
     }
 
@@ -1056,14 +1107,40 @@ export class WorkerSessionRepository {
     }
 
     /**
-     * Get all worker sessions for a specific room self session
+     * Get all worker sessions for a specific room agent session - FIX 2
      */
-    getWorkersByRoomSelf(roomSelfSessionId: string): WorkerSession[] {
+    getWorkersByRoomSession(roomSessionId: string): WorkerSession[] {
         const stmt = this.db.prepare(
-            `SELECT * FROM worker_sessions WHERE room_self_session_id = ? ORDER BY created_at DESC`
+            `SELECT * FROM worker_sessions WHERE room_session_id = ? ORDER BY created_at DESC`
         );
-        const rows = stmt.all(roomSelfSessionId) as Record<string, unknown>[];
+        const rows = stmt.all(roomSessionId) as Record<string, unknown>[];
         return rows.map((row) => this.rowToWorker(row));
+    }
+
+    /**
+     * Update worker status by session ID - FIX 3
+     */
+    updateWorkerStatusBySessionId(sessionId: string, status: WorkerStatus): WorkerSession | null {
+        const now = Date.now();
+        const stmt = this.db.prepare(
+            `UPDATE worker_sessions SET status = ?, updated_at = ? WHERE session_id = ?`
+        );
+        const result = stmt.run(status, now, sessionId);
+        if (result.changes === 0) return null;
+        return this.getWorkerBySessionId(sessionId);
+    }
+
+    /**
+     * Complete worker session by session ID - FIX 3
+     */
+    completeWorkerSessionBySessionId(sessionId: string): WorkerSession | null {
+        const now = Date.now();
+        const stmt = this.db.prepare(
+            `UPDATE worker_sessions SET status = 'completed', updated_at = ?, completed_at = ? WHERE session_id = ?`
+        );
+        const result = stmt.run(now, now, sessionId);
+        if (result.changes === 0) return null;
+        return this.getWorkerBySessionId(sessionId);
     }
 
     /**
@@ -1101,13 +1178,15 @@ export class WorkerSessionRepository {
     }
 
     /**
-     * Convert a database row to a WorkerSession object
+     * Convert a database row to a WorkerSession object - FIX 2 & 3 applied
      */
     private rowToWorker(row: Record<string, unknown>): WorkerSession {
         return {
             id: row.id as string,
             roomId: row.room_id as string,
-            roomSelfSessionId: row.room_self_session_id as string,
+            roomSessionId: row.room_session_id as string,      // FIX 2
+            sessionId: row.session_id as string,             // FIX 3
+            roomSessionType: row.room_session_type as 'room_chat' | 'room_self',  // FIX 2
             taskId: row.task_id as string,
             status: row.status as WorkerStatus,
             createdAt: row.created_at as number,

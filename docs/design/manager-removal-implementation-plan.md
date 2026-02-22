@@ -1,11 +1,20 @@
 # Manager Agent Removal - Implementation Plan
 
-**Version**: 1.0
+**Version**: 2.0 (Critical Fixes Applied)
 **Date**: 2025-02-22
 **Status**: Ready for Implementation
 **Related Documents**:
-- [Manager-less Architecture Design](./manager-less-architecture.md)
+- [Manager-less Architecture Design](./manager-less-architecture.md) (v1.1)
 - [Room Autonomy Manager Removal Plan](./room-autonomy-manager-removal-plan.md)
+- [Critical Fixes Applied](./manager-removal-critical-fixes.md) (THIS DOCUMENT)
+
+**Changes in v2.0**:
+- Fixed schema contradictions (task_id FK, room_session_id naming)
+- Added session_id column for direct lookup
+- Complete migration strategy (orphaned pairs preserved)
+- API compatibility/deprecation plan
+- Harmonized phase sequence (6 phases, clear dependencies)
+- Shared WorkerEventHandler architecture
 
 ---
 
@@ -18,7 +27,7 @@ This document provides the complete implementation plan for removing the Manager
 3. **Unify room agents**: `room:chat` and `room:self` share orchestration capabilities
 4. **Remove complexity**: ~1,060 lines of code eliminated
 
-**Estimated Effort**: 2-3 weeks across 5 phases
+**Estimated Effort**: 2-3 weeks across 6 phases
 **Risk Level**: Medium (mitigated by phased approach with feature flags)
 
 ---
@@ -145,27 +154,57 @@ This document provides the complete implementation plan for removing the Manager
 
 ```sql
 -- REMOVE: session_pairs table (Migration 16)
--- Will be deprecated after data migration
+-- Will be deprecated after data migration (Migration 19)
 
--- ADD: worker_sessions table (Migration 18)
+-- ADD: worker_sessions table (Migration 18) - WITH CRITICAL FIXES APPLIED
 CREATE TABLE worker_sessions (
     id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL UNIQUE,                    -- FIX 3: Added for direct session lookup
     room_id TEXT NOT NULL,
-    room_self_session_id TEXT NOT NULL,
+    room_session_id TEXT NOT NULL,                      -- FIX 2: Mode-agnostic (was room_self_session_id)
+    room_session_type TEXT NOT NULL DEFAULT 'room_self' -- FIX 2: Discriminator for room mode
+        CHECK(room_session_type IN ('room_chat', 'room_self')),
     task_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'starting'
         CHECK(status IN ('starting', 'running', 'waiting_for_review', 'completed', 'failed', 'cancelled')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     completed_at INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+    FOREIGN KEY (room_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT -- FIX 1: Changed from SET NULL
 );
 
+-- Indexes for all query patterns
 CREATE INDEX idx_worker_sessions_room ON worker_sessions(room_id);
 CREATE INDEX idx_worker_sessions_task ON worker_sessions(task_id);
 CREATE INDEX idx_worker_sessions_status ON worker_sessions(status);
+CREATE INDEX idx_worker_sessions_session ON worker_sessions(session_id);     -- FIX 3
+CREATE INDEX idx_worker_sessions_room_session ON worker_sessions(room_session_id); -- FIX 2
+
+-- FIX 4: Orphaned pairs preservation table
+CREATE TABLE worker_sessions_orphaned (
+    id TEXT PRIMARY KEY,
+    original_pair_id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    room_session_id TEXT NOT NULL,
+    manager_session_id TEXT NOT NULL,
+    worker_session_id TEXT NOT NULL,
+    original_status TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    migrated_at INTEGER NOT NULL,
+    notes TEXT
+);
 ```
+
+**Schema Fixes Applied**:
+1. **task_id**: `NOT NULL` with `ON DELETE RESTRICT` (was contradictory SET NULL)
+2. **room_session_id**: Mode-agnostic column name (was hardcoded room_self_session_id)
+3. **session_id**: Added for direct agent session lookup
+4. **room_session_type**: Discriminator to track which room mode created the worker
+5. **worker_sessions_orphaned**: Preserves session_pairs without tasks (prevents data loss)
 
 ---
 
@@ -201,19 +240,24 @@ CREATE INDEX idx_worker_sessions_status ON worker_sessions(status);
 ```typescript
 class WorkerSessionRepository {
     createWorkerSession(data: CreateWorkerSessionData): WorkerSession
-    getWorkerSession(id: string): WorkerSession | null
+    getWorkerSession(id: string): WorkerSession | null           // By tracking ID
+    getWorkerBySessionId(sessionId: string): WorkerSession | null  // FIX 3: By agent session ID
     getWorkerByTask(taskId: string): WorkerSession | null
     getWorkersByRoom(roomId: string): WorkerSession[]
+    getWorkersByRoomSession(roomSessionId: string): WorkerSession[]  // FIX 2: By room agent
     updateWorkerStatus(id: string, status: WorkerStatus): WorkerSession | null
+    updateWorkerStatusBySessionId(sessionId: string, status: WorkerStatus): WorkerSession | null  // FIX 3
     completeWorkerSession(id: string): WorkerSession | null
+    completeWorkerSessionBySessionId(sessionId: string): WorkerSession | null  // FIX 3
     deleteWorkerSession(id: string): boolean
 }
 ```
 
 **Validation**:
-- [ ] All methods implemented
+- [ ] All methods implemented including FIX 3 methods
 - [ ] Repository compiles
 - [ ] SQLite queries are valid
+- [ ] getWorkerBySessionId() works correctly (not null placeholder)
 
 ##### 1.3 Create WorkerManager
 
@@ -239,14 +283,16 @@ class WorkerManager {
 
 **File**: `packages/shared/src/types/neo.ts` (MODIFY)
 
-**Add**:
+**Add** (WITH FIXES 2 & 3 APPLIED):
 ```typescript
 export type WorkerStatus = 'starting' | 'running' | 'waiting_for_review' | 'completed' | 'failed' | 'cancelled';
 
 export interface WorkerSession {
-    id: string;
+    id: string;                                          // Tracking record ID
+    sessionId: string;                                   // FIX 3: Actual agent session ID
     roomId: string;
-    roomSelfSessionId: string;
+    roomSessionId: string;                               // FIX 2: Mode-agnostic (was roomSelfSessionId)
+    roomSessionType: 'room_chat' | 'room_self';         // FIX 2: Discriminator
     taskId: string;
     status: WorkerStatus;
     createdAt: number;
@@ -256,7 +302,8 @@ export interface WorkerSession {
 
 export interface CreateWorkerParams {
     roomId: string;
-    roomSelfSessionId: string;
+    roomSessionId: string;                               // FIX 2: Mode-agnostic (was roomSelfSessionId)
+    roomSessionType?: 'room_chat' | 'room_self';         // FIX 2: Optional, defaults to room_self
     taskId: string;
     taskTitle: string;
     taskDescription?: string;
@@ -270,23 +317,137 @@ export interface CreateWorkerParams {
 - [ ] No duplicate definitions
 - [ ] Export statements correct
 
-##### 1.5 Database Migration
+##### 1.5 Database Migration (WITH FIX 4: Complete Data Migration)
 
 **File**: `packages/daemon/src/storage/schema/migrations.ts` (MODIFY)
 
-**Add Migration 18**:
+**Add Migration 18** (Complete implementation with all fixes):
 ```typescript
 function runMigration18(db: BunDatabase): void {
-    // Create worker_sessions table
-    // Migrate existing session_pairs data
-    // Keep session_pairs for backward compatibility
+    // Skip if worker_sessions table already exists
+    if (tableExists(db, 'worker_sessions')) {
+        return;
+    }
+
+    // Step 1: Create worker_sessions table with CORRECTED schema
+    db.exec(`
+        CREATE TABLE worker_sessions (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL UNIQUE,
+            room_id TEXT NOT NULL,
+            room_session_id TEXT NOT NULL,
+            room_session_type TEXT NOT NULL DEFAULT 'room_self'
+                CHECK(room_session_type IN ('room_chat', 'room_self')),
+            task_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'starting'
+                CHECK(status IN ('starting', 'running', 'waiting_for_review', 'completed', 'failed', 'cancelled')),
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+            FOREIGN KEY (room_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX idx_worker_sessions_room ON worker_sessions(room_id);
+        CREATE INDEX idx_worker_sessions_task ON worker_sessions(task_id);
+        CREATE INDEX idx_worker_sessions_status ON worker_sessions(status);
+        CREATE INDEX idx_worker_sessions_session ON worker_sessions(session_id);
+        CREATE INDEX idx_worker_sessions_room_session ON worker_sessions(room_session_id);
+    `);
+
+    // Step 2: Migrate pairs WITH tasks
+    db.exec(`
+        INSERT INTO worker_sessions (
+            id, session_id, room_id, room_session_id, room_session_type,
+            task_id, status, created_at, updated_at, completed_at
+        )
+        SELECT
+            lower(hex(randomblob(16))),
+            spp.worker_session_id,
+            spp.room_id,
+            spp.room_session_id,
+            'room_self',
+            spp.current_task_id,
+            CASE spp.status
+                WHEN 'completed' THEN 'completed'
+                WHEN 'crashed' THEN 'failed'
+                WHEN 'idle' THEN 'starting'
+                ELSE 'running'
+            END,
+            spp.created_at,
+            spp.updated_at,
+            CASE WHEN spp.status = 'completed' THEN spp.updated_at ELSE NULL END
+        FROM session_pairs spp
+        WHERE spp.current_task_id IS NOT NULL
+    `);
+
+    // Step 3: Preserve orphaned pairs (FIX 4: No data loss)
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS worker_sessions_orphaned (
+            id TEXT PRIMARY KEY,
+            original_pair_id TEXT NOT NULL,
+            room_id TEXT NOT NULL,
+            room_session_id TEXT NOT NULL,
+            manager_session_id TEXT NOT NULL,
+            worker_session_id TEXT NOT NULL,
+            original_status TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            migrated_at INTEGER NOT NULL,
+            notes TEXT
+        );
+
+        INSERT INTO worker_sessions_orphaned (
+            id, original_pair_id, room_id, room_session_id,
+            manager_session_id, worker_session_id, original_status,
+            created_at, updated_at, migrated_at, notes
+        )
+        SELECT
+            lower(hex(randomblob(16))),
+            spp.id,
+            spp.room_id,
+            spp.room_session_id,
+            spp.manager_session_id,
+            spp.worker_session_id,
+            spp.status,
+            spp.created_at,
+            spp.updated_at,
+            strftime('%s', 'now') * 1000,
+            'Migrated during Migration 18: original pair had no task_id'
+        FROM session_pairs spp
+        WHERE spp.current_task_id IS NULL
+    `);
+
+    // Step 4: Validation queries (run manually to verify)
+    // See: manager-removal-critical-fixes.md for complete validation SQL
+}
+```
+
+**Rollback Script** (included in migration):
+```typescript
+// To rollback Migration 18:
+function rollbackMigration18(db: BunDatabase): void {
+    db.exec(`
+        DROP INDEX IF EXISTS idx_worker_sessions_room_session;
+        DROP INDEX IF EXISTS idx_worker_sessions_session;
+        DROP INDEX IF EXISTS idx_worker_sessions_status;
+        DROP INDEX IF EXISTS idx_worker_sessions_task;
+        DROP INDEX IF EXISTS idx_worker_sessions_room;
+        DROP TABLE IF EXISTS worker_sessions;
+        DROP TABLE IF EXISTS worker_sessions_orphaned;
+    `);
 }
 ```
 
 **Validation**:
 - [ ] Migration runs successfully
-- [ ] Data migrates correctly
+- [ ] All pairs with tasks migrated
+- [ ] Orphaned pairs preserved in separate table
+- [ ] Validation queries pass (see critical-fixes.md)
 - [ ] Rollback script works
+- [ ] No data loss
 
 ##### 1.6 Event Definitions
 
@@ -303,6 +464,35 @@ function runMigration18(db: BunDatabase): void {
 **Validation**:
 - [ ] Event types are defined
 - [ ] No conflicts with existing events
+
+##### 1.7 Create Shared WorkerEventHandler (FIX 7: Architecture)
+
+**File**: `packages/daemon/src/lib/room/worker-event-handler.ts` (NEW)
+
+```typescript
+/**
+ * Shared worker event handling for both room:chat and room:self
+ *
+ * Handles all worker-related events and delegates to appropriate services.
+ * Both room modes use this shared handler to ensure consistent worker lifecycle management.
+ */
+class WorkerEventHandler {
+    handleTaskCompleted(event: WorkerTaskCompletedEvent): Promise<void>
+    handleReviewRequested(event: WorkerReviewRequestedEvent): Promise<void>
+    handleWorkerFailed(event: WorkerFailedEvent): Promise<void>
+}
+```
+
+**Purpose**:
+- Prevents duplication of event handling logic
+- Ensures consistent worker lifecycle management across both room modes
+- Separates concerns: room-manager.ts handles room lifecycle only
+
+**Validation**:
+- [ ] WorkerEventHandler compiles
+- [ ] All worker events handled
+- [ ] Delegates to TaskManager, GoalManager correctly
+- [ ] RoomManager NOT modified (keeps room lifecycle responsibility only)
 
 #### Phase 1 Exit Criteria
 
@@ -330,26 +520,39 @@ function runMigration18(db: BunDatabase): void {
 ```typescript
 // Add to RoomSelfContext
 workerManager: WorkerManager;
+workerEventHandler: WorkerEventHandler;  // FIX 7: Shared event handling
 
-// Update constructor to accept WorkerManager
-// Add to room-self-service.ts initialization
+// Update constructor to accept both
+// Initialize WorkerEventHandler with dependencies
 ```
 
 **Validation**:
 - [ ] RoomSelfService compiles
 - [ ] WorkerManager is accessible
+- [ ] WorkerEventHandler initialized correctly
 - [ ] No runtime errors
 
-##### 2.2 Add New Event Handlers
+##### 2.2 Add New Event Handlers (Using WorkerEventHandler)
 
 **File**: `packages/daemon/src/lib/room/room-self-service.ts` (MODIFY)
 
-**Add handlers**:
+**Add handlers** (FIX 7: Using shared WorkerEventHandler):
 ```typescript
 // In subscribeToEvents()
+// Worker events - delegated to shared event handler
 const unsubWorkerComplete = this.ctx.daemonHub.on(
     'worker.task_completed',
-    async (event) => { /* handle completion */ }
+    async (event) => await this.workerEventHandler.handleTaskCompleted(event)
+);
+
+const unsubWorkerReview = this.ctx.daemonHub.on(
+    'worker.review_requested',
+    async (event) => await this.workerEventHandler.handleReviewRequested(event)
+);
+
+const unsubWorkerFailed = this.ctx.daemonHub.on(
+    'worker.failed',
+    async (event) => await this.workerEventHandler.handleWorkerFailed(event)
 );
 
 const unsubWorkerReview = this.ctx.daemonHub.on(
@@ -608,20 +811,53 @@ export type SessionType = 'worker' | 'room_chat' | 'room_self' | 'lobby';
 - [ ] No RPC calls fail
 - [ ] API compatibility maintained
 
-##### 4.7 Update Room Agent Tools
+##### 4.7 Update Room Agent Tools (WITH FIX 5: API Compatibility)
 
 **Files**:
 - `packages/daemon/src/lib/agent/room-agent-tools.ts` (MODIFY)
 
-**Update** `room_spawn_worker`:
+**Phase 2-3 (Transitional)** - FIX 5: Backward compatibility:
 ```typescript
-// Return workerSessionId only, not pairId
-return { workerSessionId: result.workerSessionId };
+tool('room_spawn_worker', 'Spawn a worker session to execute a task', {
+    task_id: z.string().describe('ID of the task to work on'),
+}, async (args) => {
+    const workerSessionId = await config.onSpawnWorker({
+        taskId: args.task_id,
+    });
+
+    // FIX 5: Transitional response - supports both old and new callers
+    return {
+        workerSessionId: workerSessionId,
+        pairId: workerSessionId,  // DEPRECATED: Equals workerSessionId for compatibility
+        _apiVersion: 'v2-transitional',
+        _deprecated: 'pairId is deprecated and will be removed in Phase 4. Use workerSessionId only.'
+    };
+})
 ```
 
+**Phase 4 (Final)** - Remove deprecated field:
+```typescript
+tool('room_spawn_worker', 'Spawn a worker session to execute a task', {
+    task_id: z.string().describe('ID of the task to work on'),
+}, async (args) => {
+    const workerSessionId = await config.onSpawnWorker({
+        taskId: args.task_id,
+    });
+
+    // Clean response - only workerSessionId
+    return { workerSessionId };
+})
+```
+
+**Caller Migration**:
+- **Before**: `const { pairId, workerSessionId } = await spawnWorker(...)`
+- **After**: `const { workerSessionId } = await spawnWorker(...)`
+
 **Validation**:
-- [ ] Tool works correctly
-- [ ] All callers updated
+- [ ] Tool works correctly in both phases
+- [ ] Transitional response includes deprecation warning
+- [ ] All callers updated before Phase 4
+- [ ] Deprecated field removed in Phase 4
 
 ##### 4.8 Update Room Self State
 
@@ -812,9 +1048,9 @@ const systemPrompt = buildRoomAgentSystemPrompt({
 
 ---
 
-### Phase 6: Database Cleanup
+### Phase 6: Database & API Cleanup
 
-**Goal**: Remove deprecated database artifacts.
+**Goal**: Remove all deprecated database artifacts and API compatibility code.
 
 **Duration**: 1-2 days
 
@@ -824,38 +1060,116 @@ const systemPrompt = buildRoomAgentSystemPrompt({
 
 **File**: `packages/daemon/src/storage/schema/migrations.ts` (MODIFY)
 
-**Add Migration 19**:
+**Add Migration 19** (Complete cleanup):
 ```typescript
 function runMigration19(db: BunDatabase): void {
-    // Backup session_pairs table
-    // Drop session_pairs table
-    // Drop indexes on session_pairs
+    // Step 1: Final backup of session_pairs table
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS session_pairs_backup_${Date.now()} AS
+        SELECT * FROM session_pairs
+    `);
+
+    // Step 2: Archive orphaned pairs older than retention period
+    db.exec(`
+        DELETE FROM worker_sessions_orphaned
+        WHERE migrated_at < strftime('%s', 'now') * 1000 - (30 * 24 * 60 * 60 * 1000)
+    `);
+
+    // Step 3: Drop session_pairs table and indexes
+    db.exec(`
+        DROP INDEX IF EXISTS idx_session_pairs_room;
+        DROP INDEX IF EXISTS idx_session_pairs_manager;
+        DROP INDEX IF EXISTS idx_session_pairs_worker;
+        DROP TABLE IF EXISTS session_pairs;
+    `);
+
+    // Step 4: Optional - drop orphaned table if empty
+    // Only if retention period has passed and table is empty
+}
+```
+
+**Rollback** (if needed):
+```typescript
+function rollbackMigration19(db: BunDatabase): void {
+    // Restore from backup (if backup table exists)
+    // This is emergency-only - normally we don't rollback dropped tables
 }
 ```
 
 **Validation**:
 - [ ] Migration runs successfully
-- [ ] Data is backed up first
-- [ ] Rollback script exists
+- [ ] session_pairs table dropped
+- [ ] Indexes dropped
+- [ ] Backup created (with timestamp)
 
-##### 6.2 Verify No References
+##### 6.2 Remove All Deprecated Response Fields
 
-**Search**:
+**Files**:
+- `packages/daemon/src/lib/agent/room-agent-tools.ts` (MODIFY)
+
+**Remove** (FIX 5: Final cleanup):
+```typescript
+// Remove all deprecated fields from room_spawn_worker response
+// Remove _apiVersion and _deprecated fields
+// Clean up any deprecation logging
+```
+
+**Validation**:
+- [ ] No deprecated fields remain
+- [ ] Response is clean: { workerSessionId }
+- [ ] All callers updated
+
+##### 6.3 Verify No References
+
+**Search and remove**:
 - `session_pairs` in codebase
 - `SessionPair` in codebase
 - `manager` session type in codebase
+- `pairId` in tool responses
+- `room_self_session_id` (should be `room_session_id`)
+- `activeSessionPairIds` (should be `activeWorkerSessionIds`)
 
 **Validation**:
 - [ ] No references remain
 - [ ] Database queries work
 - [ ] No performance regression
+- [ ] Code search returns 0 results for deprecated symbols
+
+##### 6.4 Final Verification
+
+**Run complete audit**:
+```bash
+# Verify no manager symbols
+grep -r "manager" packages/daemon/src/lib/ packages/shared/src/ --exclude-dir=node_modules
+
+# Verify no pair symbols
+grep -r "SessionPair" packages/ --exclude-dir=node_modules
+
+# Verify schema is clean
+sqlite3 neokai.db ".schema"
+# Should show worker_sessions, NOT session_pairs
+
+# Run full test suite
+bun test
+```
+
+**Validation**:
+- [ ] No manager symbols found
+- [ ] No pair symbols found
+- [ ] Schema shows only worker_sessions
+- [ ] All tests pass
+- [ ] Integration tests pass
+- [ ] E2E tests pass
 
 #### Phase 6 Exit Criteria
 
 - [ ] `session_pairs` table dropped
+- [ ] `worker_sessions_orphaned` optionally dropped (after retention)
 - [ ] No references to old schema
+- [ ] No deprecated API response fields
 - [ ] Database is clean
-- [ ] Migration is reversible
+- [ ] All tests pass
+- [ ] Documentation complete
 
 ---
 
