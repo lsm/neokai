@@ -50,12 +50,13 @@ export type {
 /**
  * Session type for unified session architecture
  * - 'worker': Standard coding session with full Claude Code system prompt
- * - 'manager': Manager session in manager-worker pair (orchestrates worker)
  * - 'room_chat': User-facing room chat interface (room:chat:${roomId})
  * - 'room_self': Autonomous room orchestration (room:self:${roomId})
  * - 'lobby': Instance-level agent session
+ *
+ * MANAGER REMOVAL (v1.0): 'manager' type removed as part of manager agent elimination
  */
-export type SessionType = 'worker' | 'manager' | 'room_chat' | 'room_self' | 'lobby';
+export type SessionType = 'worker' | 'room_chat' | 'room_self' | 'lobby';
 
 /**
  * Context for room/lobby sessions

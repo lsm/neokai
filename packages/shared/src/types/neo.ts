@@ -569,15 +569,97 @@ export interface GlobalStatus {
 }
 
 // ============================================================================
-// Session Pair Types (Dual-Session Architecture)
+// Worker Session Types (Manager-less Architecture)
 // ============================================================================
 
 /**
+ * Worker session status
+ */
+export type WorkerStatus =
+	| 'starting'
+	| 'running'
+	| 'waiting_for_review'
+	| 'completed'
+	| 'failed'
+	| 'cancelled';
+
+/**
+ * Worker session tracking record
+ *
+ * Tracks worker sessions created by room agents. Supports both room:chat and room:self modes.
+ *
+ * MANAGER REMOVAL (v1.0): Replaces SessionPair with simplified worker-only tracking.
+ * CRITICAL FIXES APPLIED:
+ * - FIX 2: roomSessionId is mode-agnostic (not hardcoded to room_self)
+ * - FIX 3: sessionId is the actual agent session ID (not just tracking ID)
+ */
+export interface WorkerSession {
+	/** Unique tracking record ID */
+	id: string;
+	/** The actual agent session ID (for direct lookup) - FIX 3 */
+	sessionId: string;
+	/** Room this worker belongs to */
+	roomId: string;
+	/** Room agent session that created this worker (mode-agnostic) - FIX 2 */
+	roomSessionId: string;
+	/** Room agent type (discriminator) - FIX 2 */
+	roomSessionType: 'room_chat' | 'room_self';
+	/** Task this worker is executing */
+	taskId: string;
+	/** Current status of the worker */
+	status: WorkerStatus;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+	/** Completion timestamp (milliseconds since epoch) */
+	completedAt?: number;
+}
+
+/**
+ * Parameters for spawning a new worker
+ *
+ * MANAGER REMOVAL (v1.0): Replaces CreateSessionPairParams.
+ * CRITICAL FIXES APPLIED:
+ * - FIX 2: roomSessionId is mode-agnostic (not roomSelfSessionId)
+ */
+export interface CreateWorkerParams {
+	roomId: string;
+	roomSessionId: string; // FIX 2: Mode-agnostic (was roomSelfSessionId)
+	roomSessionType?: 'room_chat' | 'room_self'; // FIX 2: Optional, defaults to room_self
+	taskId: string;
+	taskTitle: string;
+	taskDescription?: string;
+	workspacePath?: string;
+	model?: string;
+}
+
+/**
+ * Parameters for worker_complete_task tool
+ *
+ * MANAGER REMOVAL (v1.0): Worker calls this to signal task completion.
+ */
+export interface WorkerCompleteTaskParams {
+	taskId: string;
+	summary: string;
+	filesChanged?: string[];
+	nextSteps?: string[];
+}
+
+// ============================================================================
+// Session Pair Types (Dual-Session Architecture) - DEPRECATED
+// ============================================================================
+
+/**
+ * @deprecated Manager agent removed. Use WorkerSession instead.
+ *
  * Status of a session pair
  */
 export type SessionPairStatus = 'active' | 'idle' | 'crashed' | 'completed';
 
 /**
+ * @deprecated Manager agent removed. Use WorkerSession instead.
+ *
  * Represents a paired Manager + Worker session within a Room.
  * Created when RoomAgent delegates work to be executed.
  */
@@ -603,6 +685,8 @@ export interface SessionPair {
 }
 
 /**
+ * @deprecated Manager agent removed.
+ *
  * Summary view of a session pair for listings.
  */
 export interface SessionPairSummary {
@@ -614,6 +698,8 @@ export interface SessionPairSummary {
 }
 
 /**
+ * @deprecated Manager agent removed. Use CreateWorkerParams instead.
+ *
  * Parameters for creating a new session pair.
  */
 export interface CreateSessionPairParams {
@@ -644,6 +730,8 @@ export type RoomSelfLifecycleState =
 
 /**
  * State of a room's self agent
+ *
+ * MANAGER REMOVAL (v1.0): Updated to track workers instead of pairs.
  */
 export interface RoomSelfState {
 	/** Room this agent manages */
@@ -654,8 +742,8 @@ export interface RoomSelfState {
 	currentGoalId?: string;
 	/** Current task being executed */
 	currentTaskId?: string;
-	/** Active session pair IDs */
-	activeSessionPairIds: string[];
+	/** Active worker session IDs - MANAGER REMOVAL: was activeSessionPairIds */
+	activeWorkerSessionIds: string[];
 	/** Last activity timestamp */
 	lastActivityAt: number;
 	/** Error count for health monitoring */
