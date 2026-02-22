@@ -150,7 +150,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		sessionPairManager,
 		sessionBridge,
 		roomAgentManager,
-		deps.config.workspaceRoot
+		deps.config.workspaceRoot,
+		deps.sessionManager
 	);
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);

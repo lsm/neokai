@@ -35,6 +35,7 @@ export interface CreateSessionParams {
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
+	sessionId?: string; // Optional custom session ID (for room chat sessions)
 	roomId?: string; // Optional room ID to assign session to
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 	// Dual-session architecture
@@ -64,7 +65,8 @@ export class SessionLifecycle {
 	 * Create a new session
 	 */
 	async create(params: CreateSessionParams): Promise<string> {
-		const sessionId = generateUUID();
+		// Use provided sessionId or generate a new one (for room chat sessions)
+		const sessionId = params.sessionId || generateUUID();
 
 		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 

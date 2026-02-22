@@ -28,6 +28,7 @@ import type { RoomManager } from '../room/room-manager';
 import type { SessionPairManager } from '../room/session-pair-manager';
 import type { SessionBridge } from '../room/session-bridge';
 import type { RoomAgentManager } from './room-agent-handlers';
+import type { SessionManager } from '../session-manager';
 
 export function setupRoomHandlers(
 	messageHub: MessageHub,
@@ -36,7 +37,8 @@ export function setupRoomHandlers(
 	sessionPairManager?: SessionPairManager,
 	sessionBridge?: SessionBridge,
 	roomAgentManager?: RoomAgentManager,
-	workspaceRoot?: string
+	workspaceRoot?: string,
+	sessionManager?: SessionManager
 ): void {
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
@@ -61,6 +63,24 @@ export function setupRoomHandlers(
 			allowedPaths,
 			defaultPath,
 		});
+
+		// Create a room chat session (sessionId = room:${roomId})
+		// This is a normal session but with room-specific tools, settings and prompts
+		if (sessionManager) {
+			const roomChatSessionId = `room:${room.id}`;
+			try {
+				await sessionManager.createSession({
+					sessionId: roomChatSessionId,
+					title: room.name,
+					workspacePath: defaultPath ?? allowedPaths[0]?.path,
+					config: { model: room.defaultModel },
+					sessionType: 'room',
+					roomId: room.id,
+				});
+			} catch {
+				// Error creating room chat session - non-critical, continue without failing room creation
+			}
+		}
 
 		// Broadcast room creation event
 		daemonHub
