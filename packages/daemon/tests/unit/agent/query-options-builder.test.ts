@@ -185,6 +185,24 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.resume).toBeUndefined();
 		});
 
+		it('should not add resume for room sessions even when SDK session ID exists', async () => {
+			mockSession.type = 'room';
+			mockSession.sdkSessionId = 'sdk-session-123';
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.resume).toBeUndefined();
+		});
+
+		it('should not add resume for manager/worker orchestration sessions', async () => {
+			mockSession.sdkSessionId = 'sdk-session-123';
+			mockSession.metadata.sessionType = 'manager';
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.resume).toBeUndefined();
+		});
+
 		it('should add thinking tokens based on thinkingLevel', async () => {
 			// Use 'ultrathink' which is a known valid thinking level
 			mockSession.config.thinkingLevel = 'ultrathink';
