@@ -6,14 +6,14 @@
  * Responsibilities:
  * 1. Subscribe to room.message events (from GitHub integration)
  * 2. Parse GitHub events and create tasks
- * 3. Spawn Manager-Worker session pairs to execute work
+ * 3. Spawn worker sessions to execute work
  * 4. Monitor progress and report status
  * 5. Proactive scheduling (check for incomplete goals when idle)
  *
  * Lifecycle States:
  * - idle: No active work, waiting for events
  * - planning: Analyzing events/goals, deciding next actions
- * - executing: Work in progress (session pairs active)
+ * - executing: Work in progress (workers active)
  * - waiting: Waiting for external input (review, user response)
  * - reviewing: Reviewing completed work
  * - error: Error state, needs intervention
@@ -125,8 +125,6 @@ export interface RoomSelfContext {
 	maxConcurrentWorkers?: number;
 	/** Default workspace root from server config (fallback when room has no paths) */
 	workspaceRoot?: string;
-	/** Feature flag: Use worker-only orchestration instead of manager-worker pairs - PHASE 2 */
-	useWorkerOnly?: boolean;
 }
 
 /**
@@ -403,7 +401,7 @@ export class RoomSelfService {
 		);
 		this.unsubscribers.push(unsubContextUpdated);
 
-		// PHASE 4: Worker events for manager-less architecture (removed pair.task_completed subscription)
+		// Worker events
 		const unsubWorkerCompleted = this.ctx.daemonHub.on(
 			'worker.task_completed',
 			async (event: {
@@ -757,7 +755,6 @@ export class RoomSelfService {
 		log.info(`Spawning worker for task ${task.id}`);
 
 		try {
-			// PHASE 4: Always use WorkerManager (manager-worker pairs removed)
 			const workerSessionId = await this.ctx.workerManager.spawnWorker({
 				roomId: this.ctx.room.id,
 				roomSessionId: this.sessionId,
@@ -794,7 +791,7 @@ export class RoomSelfService {
 		await this.taskManager.completeTask(taskId, summary);
 		await this.goalManager.updateGoalsForTask(taskId);
 
-		// PHASE 4: Handle worker sessions only (manager-worker pairs removed)
+		// Handle worker sessions
 		const worker = this.ctx.workerManager.getWorkerByTask(taskId);
 		if (worker) {
 			if (this.lifecycleManager) {
