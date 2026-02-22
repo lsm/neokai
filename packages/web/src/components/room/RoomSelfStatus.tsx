@@ -79,8 +79,8 @@ export function RoomSelfStatus({ roomId: _roomId, state, onAction }: RoomSelfSta
 		if (state.currentGoalId) {
 			return `Pursuing goal: ${state.currentGoalId.slice(0, 8)}`;
 		}
-		if (state.activeSessionPairIds.length > 0) {
-			return `${state.activeSessionPairIds.length} active session${state.activeSessionPairIds.length > 1 ? 's' : ''}`;
+		if (state.activeWorkerSessionIds.length > 0) {
+			return `${state.activeWorkerSessionIds.length} active session${state.activeWorkerSessionIds.length > 1 ? 's' : ''}`;
 		}
 		if (state.pendingActions.length > 0) {
 			return `${state.pendingActions.length} pending action${state.pendingActions.length > 1 ? 's' : ''}`;
