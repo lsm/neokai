@@ -12,11 +12,17 @@
  * - Clean URLs: Uses History API for clean URLs without hash
  */
 
-import { currentSessionIdSignal, currentRoomIdSignal, navSectionSignal } from './signals.ts';
+import {
+	currentSessionIdSignal,
+	currentRoomIdSignal,
+	currentRoomSessionIdSignal,
+	navSectionSignal,
+} from './signals.ts';
 
 /** Route patterns */
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
 const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
+const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
 
 /**
  * Router state and configuration
@@ -46,7 +52,23 @@ export function getSessionIdFromPath(path: string): string | null {
  */
 export function getRoomIdFromPath(path: string): string | null {
 	const match = path.match(ROOM_ROUTE_PATTERN);
-	return match ? match[1] : null;
+	if (match) return match[1];
+
+	// Also check room session pattern
+	const roomSessionMatch = path.match(ROOM_SESSION_ROUTE_PATTERN);
+	return roomSessionMatch ? roomSessionMatch[1] : null;
+}
+
+/**
+ * Extract room session ID from current URL path
+ * Returns null if not on a room session route
+ */
+export function getRoomSessionIdFromPath(
+	path: string
+): { roomId: string; sessionId: string } | null {
+	const match = path.match(ROOM_SESSION_ROUTE_PATTERN);
+	if (!match) return null;
+	return { roomId: match[1], sessionId: match[2] };
 }
 
 /**
@@ -68,6 +90,13 @@ export function createSessionPath(sessionId: string): string {
  */
 export function createRoomPath(roomId: string): string {
 	return `/room/${roomId}`;
+}
+
+/**
+ * Create room session URL path (session viewed within room layout)
+ */
+export function createRoomSessionPath(roomId: string, sessionId: string): string {
+	return `/room/${roomId}/session/${sessionId}`;
 }
 
 /**
@@ -191,6 +220,55 @@ export function navigateToRoom(roomId: string, replace = false): void {
 }
 
 /**
+ * Navigate to a session within a room layout
+ * Shows the session content while keeping the room context panel
+ *
+ * @param roomId - The room ID
+ * @param sessionId - The session ID to show within the room
+ * @param replace - Whether to replace current history entry (default: false)
+ */
+export function navigateToRoomSession(roomId: string, sessionId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return; // Prevent recursive navigation
+	}
+
+	const targetPath = createRoomSessionPath(roomId, sessionId);
+	const currentPath = getCurrentPath();
+
+	// Only navigate if the path is different
+	if (currentPath === targetPath) {
+		// Still update the signal in case it's out of sync
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = sessionId;
+		currentSessionIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		// Update URL using History API
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod](
+			{ roomId, sessionId, path: targetPath },
+			'', // title - ignored by most browsers
+			targetPath
+		);
+
+		// Update the signals
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = sessionId;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
+	} finally {
+		// Use setTimeout to break the synchronous cycle
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Navigate to Chats section
  * Sets nav section to 'chats' and navigates home if needed
  */
@@ -232,14 +310,23 @@ function handlePopState(_event: PopStateEvent): void {
 	const path = getCurrentPath();
 	const sessionId = getSessionIdFromPath(path);
 	const roomId = getRoomIdFromPath(path);
+	const roomSession = getRoomSessionIdFromPath(path);
 
 	// Update the signals to match the URL
-	// Room takes priority - if we're on a room route, clear session
-	if (roomId) {
-		currentRoomIdSignal.value = roomId;
+	// Room session route takes priority, then room, then session
+	if (roomSession) {
+		currentRoomIdSignal.value = roomSession.roomId;
+		currentRoomSessionIdSignal.value = roomSession.sessionId;
 		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
+	} else if (roomId) {
+		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 	} else {
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
 	}
 }
@@ -261,13 +348,22 @@ export function initializeRouter(): string | null {
 	const initialPath = getCurrentPath();
 	const initialSessionId = getSessionIdFromPath(initialPath);
 	const initialRoomId = getRoomIdFromPath(initialPath);
+	const initialRoomSession = getRoomSessionIdFromPath(initialPath);
 
-	// Set initial signals - room takes priority
-	if (initialRoomId) {
+	// Set initial signals - room session takes priority, then room, then session
+	if (initialRoomSession) {
+		currentRoomIdSignal.value = initialRoomSession.roomId;
+		currentRoomSessionIdSignal.value = initialRoomSession.sessionId;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
+	} else if (initialRoomId) {
 		currentRoomIdSignal.value = initialRoomId;
+		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else {
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = initialSessionId;
 		if (initialSessionId) {
 			navSectionSignal.value = 'chats';

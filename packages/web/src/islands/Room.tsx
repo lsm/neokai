@@ -24,9 +24,10 @@ type RoomTab = 'overview' | 'context' | 'goals' | 'jobs' | 'settings';
 
 interface RoomProps {
 	roomId: string;
+	sessionViewId?: string | null; // When set, show this session content instead of room tabs
 }
 
-export default function Room({ roomId }: RoomProps) {
+export default function Room({ roomId, sessionViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
 
@@ -150,121 +151,128 @@ export default function Room({ roomId }: RoomProps) {
 		<div class="flex-1 flex bg-dark-900 overflow-hidden">
 			{/* Main content area */}
 			<div class="flex-1 flex flex-col overflow-hidden">
-				{/* Header */}
-				<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
-					<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
-				</div>
+				{/* If viewing a session within the room, show session content */}
+				{sessionViewId ? (
+					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
+				) : (
+					<>
+						{/* Header */}
+						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+							<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
+						</div>
 
-				{/* Tab bar */}
-				<div class="flex border-b border-dark-700 bg-dark-850">
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'overview'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('overview')}
-					>
-						Overview
-					</button>
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'context'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('context')}
-					>
-						Context
-					</button>
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'goals'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('goals')}
-					>
-						Goals
-					</button>
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'jobs'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('jobs')}
-					>
-						Jobs
-					</button>
-					<button
-						class={`px-4 py-2 text-sm font-medium transition-colors ${
-							activeTab === 'settings'
-								? 'text-blue-400 border-b-2 border-blue-400'
-								: 'text-gray-400 hover:text-gray-200'
-						}`}
-						onClick={() => setActiveTab('settings')}
-					>
-						Settings
-					</button>
-				</div>
+						{/* Tab bar */}
+						<div class="flex border-b border-dark-700 bg-dark-850">
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'overview'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('overview')}
+							>
+								Overview
+							</button>
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'context'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('context')}
+							>
+								Context
+							</button>
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'goals'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('goals')}
+							>
+								Goals
+							</button>
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'jobs'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('jobs')}
+							>
+								Jobs
+							</button>
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'settings'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('settings')}
+							>
+								Settings
+							</button>
+						</div>
 
-				{/* Tab content */}
-				<div class="flex-1 overflow-hidden">
-					{activeTab === 'overview' && (
-						<div class="h-full overflow-y-auto">
-							<RoomDashboard />
+						{/* Tab content */}
+						<div class="flex-1 overflow-hidden">
+							{activeTab === 'overview' && (
+								<div class="h-full overflow-y-auto">
+									<RoomDashboard />
+								</div>
+							)}
+							{activeTab === 'context' && (
+								<div class="h-full overflow-y-auto p-4">
+									<ContextEditor
+										room={room}
+										onSave={handleSaveContext}
+										onRollback={handleRollbackContext}
+										onFetchVersions={handleFetchContextVersions}
+										isLoading={roomStore.loading.value}
+									/>
+								</div>
+							)}
+							{activeTab === 'goals' && (
+								<div class="h-full overflow-y-auto p-4">
+									<GoalsEditor
+										roomId={roomId}
+										goals={roomStore.goals.value}
+										onCreateGoal={handleCreateGoal}
+										onUpdateGoal={handleUpdateGoal}
+										onDeleteGoal={handleDeleteGoal}
+										onLinkTask={handleLinkTaskToGoal}
+										isLoading={roomStore.goalsLoading.value}
+									/>
+								</div>
+							)}
+							{activeTab === 'jobs' && (
+								<div class="h-full overflow-y-auto p-4">
+									<RecurringJobsConfig
+										roomId={roomId}
+										jobs={roomStore.recurringJobs.value}
+										onCreateJob={handleCreateJob}
+										onUpdateJob={handleUpdateJob}
+										onDeleteJob={handleDeleteJob}
+										onTriggerJob={handleTriggerJob}
+										isLoading={roomStore.jobsLoading.value}
+									/>
+								</div>
+							)}
+							{activeTab === 'settings' && (
+								<div class="h-full overflow-y-auto p-4">
+									<RoomSettings
+										room={room}
+										onSave={(params) => roomStore.updateSettings(params)}
+										onArchive={handleArchiveRoom}
+										onDelete={handleDeleteRoom}
+										isLoading={roomStore.loading.value}
+									/>
+								</div>
+							)}
 						</div>
-					)}
-					{activeTab === 'context' && (
-						<div class="h-full overflow-y-auto p-4">
-							<ContextEditor
-								room={room}
-								onSave={handleSaveContext}
-								onRollback={handleRollbackContext}
-								onFetchVersions={handleFetchContextVersions}
-								isLoading={roomStore.loading.value}
-							/>
-						</div>
-					)}
-					{activeTab === 'goals' && (
-						<div class="h-full overflow-y-auto p-4">
-							<GoalsEditor
-								roomId={roomId}
-								goals={roomStore.goals.value}
-								onCreateGoal={handleCreateGoal}
-								onUpdateGoal={handleUpdateGoal}
-								onDeleteGoal={handleDeleteGoal}
-								onLinkTask={handleLinkTaskToGoal}
-								isLoading={roomStore.goalsLoading.value}
-							/>
-						</div>
-					)}
-					{activeTab === 'jobs' && (
-						<div class="h-full overflow-y-auto p-4">
-							<RecurringJobsConfig
-								roomId={roomId}
-								jobs={roomStore.recurringJobs.value}
-								onCreateJob={handleCreateJob}
-								onUpdateJob={handleUpdateJob}
-								onDeleteJob={handleDeleteJob}
-								onTriggerJob={handleTriggerJob}
-								isLoading={roomStore.jobsLoading.value}
-							/>
-						</div>
-					)}
-					{activeTab === 'settings' && (
-						<div class="h-full overflow-y-auto p-4">
-							<RoomSettings
-								room={room}
-								onSave={(params) => roomStore.updateSettings(params)}
-								onArchive={handleArchiveRoom}
-								onDelete={handleDeleteRoom}
-								isLoading={roomStore.loading.value}
-							/>
-						</div>
-					)}
-				</div>
+					</>
+				)}
 			</div>
 
 			{/* Room Chat Panel - uses unified session architecture */}

@@ -13,7 +13,7 @@
 import { useMemo } from 'preact/hooks';
 import type { RoomAgentLifecycleState } from '@neokai/shared';
 import { roomStore } from '../lib/room-store';
-import { navigateToRooms, navigateToRoom, navigateToSession } from '../lib/router';
+import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { cn } from '../lib/utils';
 
 const STATE_COLORS: Record<RoomAgentLifecycleState, { dot: string; text: string }> = {
@@ -77,27 +77,13 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	const colors = STATE_COLORS[lifecycleState];
 	const stateLabel = STATE_LABELS[lifecycleState];
 
-	const isIdle = lifecycleState === 'idle';
-	const isPaused = lifecycleState === 'paused';
-	const isRunning = !isIdle && !isPaused && lifecycleState !== 'error';
-
-	const handleAgentAction = async () => {
-		try {
-			if (isIdle) await roomStore.startAgent();
-			else if (isPaused) await roomStore.resumeAgent();
-			else if (isRunning) await roomStore.pauseAgent();
-		} catch {
-			// errors handled in roomStore
-		}
-	};
-
 	const handleRoomAgentClick = () => {
 		navigateToRoom(roomId);
 		onNavigate?.();
 	};
 
 	const handleSessionClick = (sessionId: string) => {
-		navigateToSession(sessionId);
+		navigateToRoomSession(roomId, sessionId);
 		onNavigate?.();
 	};
 
@@ -128,7 +114,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				<button
 					onClick={async () => {
 						const sessionId = await roomStore.createSession('New Session');
-						navigateToSession(sessionId);
+						navigateToRoomSession(roomId, sessionId);
 						onNavigate?.();
 					}}
 					class="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-blue-400 bg-blue-900/20 hover:bg-blue-900/30 border border-blue-700/50 rounded-md transition-colors"
@@ -145,33 +131,18 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				</button>
 			</div>
 
-			{/* Agent status + quick action */}
+			{/* Agent status */}
 			<div class="px-3 py-2">
-				<div class="flex items-center justify-between gap-2">
-					<div class="flex items-center gap-1.5 min-w-0">
-						<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
-						<span class={cn('text-xs font-medium', colors.text)}>{stateLabel}</span>
-						{agentState?.errorCount != null && agentState.errorCount > 0 && (
-							<span
-								class="text-xs text-red-400 ml-1"
-								title={agentState.lastError ?? 'Errors occurred'}
-							>
-								{agentState.errorCount} err
-							</span>
-						)}
-					</div>
-					{(isIdle || isPaused || isRunning) && (
-						<button
-							onClick={handleAgentAction}
-							class={cn(
-								'text-xs px-2 py-0.5 rounded transition-colors flex-shrink-0',
-								isIdle || isPaused
-									? 'bg-green-700/70 hover:bg-green-600/70 text-green-100'
-									: 'bg-orange-700/60 hover:bg-orange-600/60 text-orange-200'
-							)}
+				<div class="flex items-center gap-1.5 min-w-0">
+					<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
+					<span class={cn('text-xs font-medium', colors.text)}>{stateLabel}</span>
+					{agentState?.errorCount != null && agentState.errorCount > 0 && (
+						<span
+							class="text-xs text-red-400 ml-1"
+							title={agentState.lastError ?? 'Errors occurred'}
 						>
-							{isIdle ? 'Start' : isPaused ? 'Resume' : 'Pause'}
-						</button>
+							{agentState.errorCount} err
+						</span>
 					)}
 				</div>
 

@@ -9,6 +9,10 @@ export const currentSessionIdSignal = signal<string | null>(null);
 // When set, takes priority over session signal
 export const currentRoomIdSignal = signal<string | null>(null);
 
+// Shared signal for the current room's inner session ID
+// When viewing a room and clicking a session, this shows that session within the room layout
+export const currentRoomSessionIdSignal = signal<string | null>(null);
+
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 

@@ -7,7 +7,12 @@ import ToastContainer from './islands/ToastContainer.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { currentSessionIdSignal, currentRoomIdSignal, navRailOpenSignal } from './lib/signals.ts';
+import {
+	currentSessionIdSignal,
+	currentRoomIdSignal,
+	currentRoomSessionIdSignal,
+	navRailOpenSignal,
+} from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
@@ -15,9 +20,11 @@ import {
 	initializeRouter,
 	navigateToSession,
 	navigateToRoom,
+	navigateToRoomSession,
 	navigateToHome,
 	createSessionPath,
 	createRoomPath,
+	createRoomSessionPath,
 } from './lib/router.ts';
 
 export function App() {
@@ -70,18 +77,23 @@ export function App() {
 		return effect(() => {
 			const sessionId = currentSessionIdSignal.value;
 			const roomId = currentRoomIdSignal.value;
+			const roomSessionId = currentRoomSessionIdSignal.value;
 			const currentPath = window.location.pathname;
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
-				: roomId
-					? createRoomPath(roomId)
-					: '/';
+				: roomSessionId && roomId
+					? createRoomSessionPath(roomId, roomSessionId)
+					: roomId
+						? createRoomPath(roomId)
+						: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
 			if (currentPath !== expectedPath) {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
+				} else if (roomSessionId && roomId) {
+					navigateToRoomSession(roomId, roomSessionId, true);
 				} else if (roomId) {
 					navigateToRoom(roomId, true);
 				} else {
