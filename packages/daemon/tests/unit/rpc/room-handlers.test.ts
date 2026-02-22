@@ -13,10 +13,6 @@
  * - room.unassignSession - Unassign a session from a room
  * - room.addPath - Add an allowed path to a room
  * - room.removePath - Remove an allowed path from a room
- * - room.createPair - Create a manager+worker session pair
- * - room.getPairs - List pairs for a room
- * - room.getPair - Get single pair details
- * - room.archivePair - Archive a pair
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
@@ -25,9 +21,8 @@ import { setupRoomHandlers } from '../../../src/lib/rpc-handlers/room-handlers';
 import type { SessionManager } from '../../../src/lib/session-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { RoomManager } from '../../../src/lib/room/room-manager';
-import type { SessionPairManager } from '../../../src/lib/room/session-pair-manager';
-import type { SessionBridge } from '../../../src/lib/room/session-bridge';
-import type { Room, RoomOverview, RoomStatus, SessionPair } from '@neokai/shared';
+import type { WorkerManager } from '../../../src/lib/room/worker-manager';
+import type { Room, RoomOverview, RoomStatus } from '@neokai/shared';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -134,58 +129,25 @@ function createMockRoomManager(): {
 	};
 }
 
-// Helper to create mock SessionPairManager
-function createMockSessionPairManager(): {
-	sessionPairManager: SessionPairManager;
+// Helper to create mock WorkerManager (PHASE 5)
+function createMockWorkerManager(): {
+	workerManager: WorkerManager;
 	mocks: {
-		createPair: ReturnType<typeof mock>;
-		getPairsByRoom: ReturnType<typeof mock>;
-		getPair: ReturnType<typeof mock>;
-		archivePair: ReturnType<typeof mock>;
-	};
-} {
-	const mockPair: SessionPair = {
-		id: 'pair-123',
-		roomId: 'room-123',
-		managerSessionId: 'manager-session-123',
-		workerSessionId: 'worker-session-123',
-		status: 'active',
-		taskTitle: 'Test Task',
-		createdAt: new Date().toISOString(),
-	};
-
-	const mocks = {
-		createPair: mock(async () => ({ pair: mockPair })),
-		getPairsByRoom: mock(() => [mockPair]),
-		getPair: mock(() => mockPair),
-		archivePair: mock(async () => true),
-	};
-
-	return {
-		sessionPairManager: {
-			...mocks,
-		} as unknown as SessionPairManager,
-		mocks,
-	};
-}
-
-// Helper to create mock SessionBridge
-function createMockSessionBridge(): {
-	sessionBridge: SessionBridge;
-	mocks: {
-		startBridge: ReturnType<typeof mock>;
-		stopBridge: ReturnType<typeof mock>;
+		spawnWorker: ReturnType<typeof mock>;
+		getWorkerByTask: ReturnType<typeof mock>;
+		getWorkersByRoom: ReturnType<typeof mock>;
 	};
 } {
 	const mocks = {
-		startBridge: mock(async () => {}),
-		stopBridge: mock(() => {}),
+		spawnWorker: mock(async () => 'worker-session-123'),
+		getWorkerByTask: mock(() => null),
+		getWorkersByRoom: mock(() => []),
 	};
 
 	return {
-		sessionBridge: {
+		workerManager: {
 			...mocks,
-		} as unknown as SessionBridge,
+		} as unknown as WorkerManager,
 		mocks,
 	};
 }
@@ -194,14 +156,21 @@ describe('Room RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
 	let roomManagerData: ReturnType<typeof createMockRoomManager>;
+	let workerManagerData: ReturnType<typeof createMockWorkerManager>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
 		roomManagerData = createMockRoomManager();
+		workerManagerData = createMockWorkerManager();
 
 		// Setup handlers with mocked dependencies
-		setupRoomHandlers(messageHubData.hub, roomManagerData.roomManager, daemonHubData.daemonHub);
+		setupRoomHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			workerManagerData.workerManager
+		);
 	});
 
 	afterEach(() => {
@@ -236,6 +205,8 @@ describe('Room RPC Handlers', () => {
 			expect(roomManagerData.mocks.createRoom).toHaveBeenCalledWith({
 				name: 'Full Room',
 				background: 'A full featured room',
+				allowedPaths: [],
+				defaultPath: undefined,
 			});
 		});
 
@@ -636,271 +607,6 @@ describe('Room RPC Handlers', () => {
 
 			await expect(handler!({ roomId: 'non-existent', path: '/old/path' }, {})).rejects.toThrow(
 				'Room not found: non-existent'
-			);
-		});
-	});
-
-	describe('room.createPair', () => {
-		it('throws error when sessionPairManager not available', async () => {
-			const handler = messageHubData.handlers.get('room.createPair');
-			expect(handler).toBeDefined();
-
-			await expect(
-				handler!({ roomId: 'room-123', roomSessionId: 'session-123', taskTitle: 'Task' }, {})
-			).rejects.toThrow('Session pair functionality not yet available');
-		});
-
-		it('creates pair when sessionPairManager is available', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const bridgeData = createMockSessionBridge();
-
-			// Setup handlers with session pair manager
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager,
-				bridgeData.sessionBridge
-			);
-
-			const handler = newHubData.handlers.get('room.createPair');
-
-			await handler!(
-				{
-					roomId: 'room-123',
-					roomSessionId: 'manager-session-123',
-					taskTitle: 'Test Task',
-					taskDescription: 'Description',
-					workspacePath: '/workspace',
-					model: 'claude-sonnet',
-				},
-				{}
-			);
-
-			expect(pairManagerData.mocks.createPair).toHaveBeenCalled();
-			expect(bridgeData.mocks.startBridge).toHaveBeenCalledWith('pair-123');
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.createPair');
-
-			await expect(
-				handler!({ roomSessionId: 'session-123', taskTitle: 'Task' }, {})
-			).rejects.toThrow('Room ID is required');
-		});
-
-		it('throws error when roomSessionId is missing', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.createPair');
-
-			await expect(handler!({ roomId: 'room-123', taskTitle: 'Task' }, {})).rejects.toThrow(
-				'Room session ID is required'
-			);
-		});
-
-		it('throws error when taskTitle is missing', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.createPair');
-
-			await expect(
-				handler!({ roomId: 'room-123', roomSessionId: 'session-123' }, {})
-			).rejects.toThrow('Task title is required');
-		});
-	});
-
-	describe('room.getPairs', () => {
-		it('throws error when sessionPairManager not available', async () => {
-			const handler = messageHubData.handlers.get('room.getPairs');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow(
-				'Session pair functionality not yet available'
-			);
-		});
-
-		it('returns pairs for a room when manager available', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.getPairs');
-
-			const result = (await handler!({ roomId: 'room-123' }, {})) as { pairs: SessionPair[] };
-
-			expect(result.pairs).toBeDefined();
-			expect(pairManagerData.mocks.getPairsByRoom).toHaveBeenCalledWith('room-123');
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.getPairs');
-
-			await expect(handler!({}, {})).rejects.toThrow('Room ID is required');
-		});
-	});
-
-	describe('room.getPair', () => {
-		it('throws error when sessionPairManager not available', async () => {
-			const handler = messageHubData.handlers.get('room.getPair');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ pairId: 'pair-123' }, {})).rejects.toThrow(
-				'Session pair functionality not yet available'
-			);
-		});
-
-		it('returns pair when manager available', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.getPair');
-
-			const result = (await handler!({ pairId: 'pair-123' }, {})) as { pair: SessionPair };
-
-			expect(result.pair).toBeDefined();
-			expect(pairManagerData.mocks.getPair).toHaveBeenCalledWith('pair-123');
-		});
-
-		it('throws error when pairId is missing', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.getPair');
-
-			await expect(handler!({}, {})).rejects.toThrow('Pair ID is required');
-		});
-
-		it('throws error when pair not found', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			pairManagerData.mocks.getPair.mockReturnValueOnce(null);
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.getPair');
-
-			await expect(handler!({ pairId: 'non-existent' }, {})).rejects.toThrow(
-				'Session pair not found: non-existent'
-			);
-		});
-	});
-
-	describe('room.archivePair', () => {
-		it('throws error when sessionPairManager not available', async () => {
-			const handler = messageHubData.handlers.get('room.archivePair');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ pairId: 'pair-123' }, {})).rejects.toThrow(
-				'Session pair functionality not yet available'
-			);
-		});
-
-		it('archives pair when manager available', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const bridgeData = createMockSessionBridge();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager,
-				bridgeData.sessionBridge
-			);
-
-			const handler = newHubData.handlers.get('room.archivePair');
-
-			const result = (await handler!({ pairId: 'pair-123' }, {})) as { success: boolean };
-
-			expect(result.success).toBe(true);
-			expect(bridgeData.mocks.stopBridge).toHaveBeenCalledWith('pair-123');
-			expect(pairManagerData.mocks.archivePair).toHaveBeenCalledWith('pair-123');
-		});
-
-		it('throws error when pairId is missing', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.archivePair');
-
-			await expect(handler!({}, {})).rejects.toThrow('Pair ID is required');
-		});
-
-		it('throws error when pair not found', async () => {
-			const pairManagerData = createMockSessionPairManager();
-			pairManagerData.mocks.archivePair.mockResolvedValueOnce(false);
-			const newHubData = createMockMessageHub();
-			setupRoomHandlers(
-				newHubData.hub,
-				roomManagerData.roomManager,
-				daemonHubData.daemonHub,
-				pairManagerData.sessionPairManager
-			);
-
-			const handler = newHubData.handlers.get('room.archivePair');
-
-			await expect(handler!({ pairId: 'non-existent' }, {})).rejects.toThrow(
-				'Session pair not found: non-existent'
 			);
 		});
 	});
