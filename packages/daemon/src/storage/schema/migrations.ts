@@ -1502,7 +1502,12 @@ function runMigration29(db: BunDatabase): void {
 			.get() as { count: number } | undefined;
 
 		if (activePairs && activePairs.count > 0) {
-			// Skip migration if there are active pairs
+			// Skip migration if there are active pairs - log warning for visibility
+			// oxlint-disable-next-line no-console
+			console.warn(
+				`[Migration 29] Skipping session_pairs table drop: ${activePairs.count} active pairs still exist. ` +
+					`Complete or cancel these pairs and restart to complete migration.`
+			);
 			return;
 		}
 
