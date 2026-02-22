@@ -213,7 +213,7 @@ export class TaskManager {
 	/**
 	 * Cancel a task (mark as cancelled)
 	 */
-	async cancelTask(taskId: string): Promise<void> {
+	async cancelTask(taskId: string, _reason?: string): Promise<void> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);

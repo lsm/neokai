@@ -14,7 +14,7 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { RoomAgentState, RoomAgentLifecycleState } from '@neokai/shared';
+import type { RoomAgentState, RoomAgentLifecycleState, RoomAgentHumanInput } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/index';
@@ -363,6 +363,64 @@ export function setupRoomAgentHandlers(
 	messageHub.onRequest('roomAgent.list', async () => {
 		const agents = roomAgentManager.listAgents();
 		return { agents };
+	});
+
+	// roomAgent.humanInput - Unified human input endpoint for room agent
+	messageHub.onRequest('roomAgent.humanInput', async (data) => {
+		const params = data as { roomId: string } & RoomAgentHumanInput;
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const agent = roomAgentManager.getAgent(params.roomId);
+		if (!agent) {
+			throw new Error('Room agent not found');
+		}
+
+		switch (params.type) {
+			case 'message':
+				if (!params.content) {
+					throw new Error('Message content is required');
+				}
+				await agent.handleHumanInput({ type: 'message', content: params.content });
+				break;
+			case 'review_response':
+				if (!params.taskId) {
+					throw new Error('Task ID is required');
+				}
+				await agent.handleHumanInput({
+					type: 'review_response',
+					taskId: params.taskId,
+					approved: params.approved,
+					response: params.response ?? '',
+				});
+				break;
+			case 'escalation_response':
+				if (!params.escalationId) {
+					throw new Error('Escalation ID is required');
+				}
+				await agent.handleHumanInput({
+					type: 'escalation_response',
+					escalationId: params.escalationId,
+					response: params.response,
+				});
+				break;
+			case 'question_response':
+				if (!params.questionId) {
+					throw new Error('Question ID is required');
+				}
+				await agent.handleHumanInput({
+					type: 'question_response',
+					questionId: params.questionId,
+					responses: params.responses,
+				});
+				break;
+			default:
+				throw new Error(`Unsupported input type: ${(params as { type: string }).type}`);
+		}
+
+		return { success: true };
 	});
 
 	// roomAgent.submitReview - Submit a review response (approve/reject)

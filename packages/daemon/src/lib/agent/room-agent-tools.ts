@@ -429,7 +429,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'List tasks for this room',
 			{
 				status: z
-					.enum(['pending', 'in_progress', 'completed', 'failed'])
+					.enum(['pending', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled'])
 					.optional()
 					.describe('Filter tasks by status (omit for all tasks)'),
 			},
