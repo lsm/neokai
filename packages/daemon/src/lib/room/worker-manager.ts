@@ -36,6 +36,9 @@ import { WorkerSessionRepository } from '../../storage/repositories/worker-sessi
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { createWorkerToolsMcpServer, type WorkerToolsConfig } from '../agent/worker-tools';
 import type { RoomManager } from './room-manager';
+import { Logger } from '../logger';
+
+const log = new Logger('worker-manager');
 
 /**
  * Configuration for spawning a worker
@@ -121,10 +124,8 @@ export class WorkerManager {
 			parentSessionId: roomSessionId,
 		});
 
-		// Assign to room
-		this.roomManager.assignSession(roomId, workerSessionId);
-
-		// Track worker session
+		// Track worker session FIRST (before assigning to room)
+		// This ensures events can always find the worker via getWorkerBySessionId()
 		this.workerSessionRepo.createWorkerSession({
 			id: generateUUID(),
 			roomId,
@@ -136,6 +137,9 @@ export class WorkerManager {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});
+
+		// Assign to room (after tracking record is created)
+		this.roomManager.assignSession(roomId, workerSessionId);
 
 		// Create worker tools MCP server
 		const workerToolsMcp = this.createWorkerToolsMcp(workerSessionId, taskId);
@@ -210,6 +214,42 @@ export class WorkerManager {
 		this.workerSessionRepo.completeWorkerSessionBySessionId(workerSessionId);
 		// Clean up worker tools map to prevent memory leak
 		this.workerTools.delete(workerSessionId);
+	}
+
+	/**
+	 * Terminate all workers for a room (used during room deletion)
+	 *
+	 * This ensures running worker sessions are properly stopped before
+	 * the room and its data are deleted from the database.
+	 *
+	 * @param roomId - The room ID to terminate workers for
+	 */
+	async terminateWorkersForRoom(roomId: string): Promise<void> {
+		const workers = this.getWorkersByRoom(roomId);
+
+		for (const worker of workers) {
+			// Skip already completed/failed workers
+			if (worker.status === 'completed' || worker.status === 'failed') {
+				continue;
+			}
+
+			// Get the agent session and cleanup (stops SDK query)
+			const agentSession = this.sessionLifecycle.getAgentSession(worker.sessionId);
+			if (agentSession) {
+				try {
+					await agentSession.cleanup();
+				} catch (error) {
+					// Log but continue - we still need to mark as failed
+					log.error(`Error cleaning up worker ${worker.sessionId}:`, error);
+				}
+			}
+
+			// Clean up worker tools
+			this.workerTools.delete(worker.sessionId);
+
+			// Mark worker as failed in database
+			this.updateWorkerStatus(worker.sessionId, 'failed');
+		}
 	}
 
 	/**

@@ -28,6 +28,9 @@ import type { RoomSelfManager } from './room-self-handlers';
 import type { SessionManager } from '../session-manager';
 import { createRoomAgentMcpServer } from '../agent/room-agent-tools';
 import type { Database } from '../../storage/index';
+import { Logger } from '../logger';
+
+const log = new Logger('room-handlers');
 
 /**
  * Global registry for in-process MCP servers for rooms
@@ -549,6 +552,12 @@ export function setupRoomHandlers(
 			await roomSelfManager.stopAgent(params.roomId).catch(() => {});
 			roomSelfManager.removeAgent(params.roomId);
 		}
+
+		// Terminate all active workers for this room before deleting
+		await workerManager.terminateWorkersForRoom(params.roomId).catch((error) => {
+			// Log but continue - we still want to delete the room
+			log.error(`Error terminating workers for room ${params.roomId}:`, error);
+		});
 
 		// Delete the MCP server for this room
 		deleteRoomMcpServer(params.roomId);

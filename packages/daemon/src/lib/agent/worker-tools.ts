@@ -6,13 +6,18 @@
  * - Request human review when needed
  *
  * Replaces manager-tools with direct completion signaling.
+ *
+ * SECURITY NOTE: The task_id is bound at worker creation time (config.taskId)
+ * and cannot be overridden by the worker. This prevents a worker from marking
+ * arbitrary tasks as complete.
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 /**
- * Parameters for the worker_complete_task tool
+ * Parameters for the worker_complete_task tool (internal use)
+ * Task ID is bound at creation time, not accepted as a parameter
  */
 export interface WorkerCompleteTaskParams {
 	taskId: string;
@@ -27,7 +32,7 @@ export interface WorkerCompleteTaskParams {
 export interface WorkerToolsConfig {
 	/** ID of the worker session using these tools */
 	sessionId: string;
-	/** Task ID this worker is executing */
+	/** Task ID this worker is executing (bound at creation time) */
 	taskId: string;
 	/** Callback when task is completed */
 	onCompleteTask: (params: WorkerCompleteTaskParams) => Promise<void>;
@@ -50,7 +55,8 @@ export function createWorkerToolsMcpServer(config: WorkerToolsConfig) {
 				'worker_complete_task',
 				'Complete your task and report results to the Room Agent. Call this when you have successfully completed your assigned work.',
 				{
-					task_id: z.string().describe('ID of the task you completed'),
+					// NOTE: task_id is NOT accepted as a parameter for security
+					// The task ID is bound at worker creation time and cannot be changed
 					summary: z.string().describe('Summary of what you accomplished'),
 					files_changed: z
 						.array(z.string())
@@ -59,8 +65,9 @@ export function createWorkerToolsMcpServer(config: WorkerToolsConfig) {
 					next_steps: z.array(z.string()).optional().describe('Suggested follow-up actions'),
 				},
 				async (args) => {
+					// Always use config.taskId (bound at creation time) for security
 					await config.onCompleteTask({
-						taskId: args.task_id,
+						taskId: config.taskId,
 						summary: args.summary,
 						filesChanged: args.files_changed,
 						nextSteps: args.next_steps,

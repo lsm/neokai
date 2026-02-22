@@ -258,7 +258,8 @@ export class RoomSelfService {
 
 			log.info('Room agent session started with AgentSession');
 		} else {
-			log.info('Room agent running in legacy mode (no AgentSession)');
+			// agentSession should always be created in modern mode
+			throw new Error('Failed to create AgentSession for room agent');
 		}
 
 		this.subscribeToEvents();
@@ -380,9 +381,8 @@ export class RoomSelfService {
 							content: event.message.content,
 							timestamp: event.message.timestamp,
 						});
-					} else {
-						await this.handleRoomMessage(event);
 					}
+					// Note: Legacy path removed - if no agentSession, event is skipped
 				}
 			},
 			{ sessionId: this.sessionId }
@@ -431,9 +431,8 @@ export class RoomSelfService {
 							summary: event.summary,
 							success: true,
 						});
-					} else if (!this.agentSession) {
-						await this.handleTaskCompleted(event.taskId, event.summary);
 					}
+					// Note: Legacy path removed - if no agentSession, event is skipped
 				}
 			},
 			{ sessionId: this.sessionId }
@@ -495,9 +494,8 @@ export class RoomSelfService {
 						],
 						availableCapacity: this.config.maxConcurrentPairs,
 					});
-				} else {
-					await this.handleRecurringJobTriggered(event.taskId, event.jobId);
 				}
+				// Note: Legacy path removed - if no agentSession, event is skipped
 			},
 			{ sessionId: this.sessionId }
 		);
@@ -580,39 +578,6 @@ export class RoomSelfService {
 
 		// Use transitionTo which properly updates lifecycle manager and emits events
 		await this.transitionTo(state);
-	}
-
-	private async handleRoomMessage(event: {
-		roomId: string;
-		message: { id: string; role: string; content: string; timestamp: number };
-		sender?: string;
-	}): Promise<void> {
-		log.debug(`Room message received:`, event.message.role);
-
-		if (this.state.lifecycleState === 'paused') {
-			log.debug('Ignoring message - agent is paused');
-			return;
-		}
-
-		await this.transitionTo('planning', `Processing ${event.message.role} message`);
-
-		try {
-			if (event.message.role === 'github_event') {
-				await this.handleGitHubEvent(event.message.content);
-			} else if (event.message.role === 'user') {
-				await this.handleUserMessage(event.message.content, event.sender);
-			}
-
-			const activeWorkers = this.state.activeWorkerSessionIds.length;
-			if (activeWorkers > 0) {
-				await this.transitionTo('executing', `Working on ${activeWorkers} tasks`);
-			} else {
-				await this.transitionTo('idle', 'No tasks to execute');
-			}
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			await this.recordError(errorMessage);
-		}
 	}
 
 	private async handleGitHubEvent(content: string): Promise<void> {
@@ -796,52 +761,6 @@ export class RoomSelfService {
 		}
 	}
 
-	private async handleTaskCompleted(taskId: string, summary: string): Promise<void> {
-		log.info(`Task ${taskId} completed`);
-
-		await this.taskManager.completeTask(taskId, summary);
-		await this.goalManager.updateGoalsForTask(taskId);
-
-		// Handle worker sessions
-		const worker = this.ctx.workerManager.getWorkerByTask(taskId);
-		if (worker) {
-			if (this.lifecycleManager) {
-				this.lifecycleManager.removeActiveWorkerSession(worker.sessionId);
-				this.state = this.lifecycleManager.getState();
-			} else {
-				this.state =
-					this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, worker.sessionId) ??
-					this.state;
-			}
-		}
-
-		if (this.state.activeWorkerSessionIds.length === 0) {
-			if (this.lifecycleManager) {
-				await this.lifecycleManager.finishExecution();
-				this.state = this.lifecycleManager.getState();
-			} else {
-				await this.transitionTo('idle', 'All tasks completed');
-			}
-		}
-	}
-
-	private async handleRecurringJobTriggered(taskId: string, jobId: string): Promise<void> {
-		log.info(`Recurring job ${jobId} triggered, created task ${taskId}`);
-
-		if (this.state.lifecycleState === 'paused') {
-			log.debug('Ignoring job trigger - agent is paused');
-			return;
-		}
-
-		const task = await this.taskManager.getTask(taskId);
-		if (!task) {
-			log.warn(`Task ${taskId} not found for triggered job ${jobId}`);
-			return;
-		}
-
-		await this.maybeSpawnWorker(task);
-	}
-
 	/**
 	 * Handle worker failure events
 	 */
@@ -875,8 +794,15 @@ export class RoomSelfService {
 		// Check if all workers are done
 		if (this.state.activeWorkerSessionIds.length === 0) {
 			if (this.lifecycleManager) {
-				await this.lifecycleManager.finishExecution();
-				this.state = this.lifecycleManager.getState();
+				const result = await this.lifecycleManager.finishExecution();
+				if (result) {
+					this.state = result;
+				} else {
+					// Transition failed - force to idle as fallback
+					log.warn('finishExecution() returned null, forcing transition to idle');
+					await this.transitionTo('idle', 'All workers finished (forced)');
+					this.state = this.lifecycleManager.getState();
+				}
 			} else {
 				await this.transitionTo('idle', 'All workers finished (last one failed)');
 			}
