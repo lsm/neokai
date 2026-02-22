@@ -157,26 +157,6 @@ export class WorkerTelemetry {
 			},
 			{ sessionId: 'telemetry' }
 		);
-
-		// Manager-worker mode events (for comparison)
-		this.daemonHub.on(
-			'pair.task_completed',
-			(event) => {
-				// Note: We don't have workerSessionId in this event, but we can still track the task
-				this.recordTaskCompletion({
-					taskId: event.taskId,
-					roomId: '',
-					mode: 'manager-worker',
-					startTime: 0,
-					endTime: Date.now(),
-					durationMs: 0,
-					success: true,
-					filesChanged: event.filesChanged,
-					nextSteps: event.nextSteps,
-				});
-			},
-			{ sessionId: 'telemetry' }
-		);
 	}
 
 	/**
