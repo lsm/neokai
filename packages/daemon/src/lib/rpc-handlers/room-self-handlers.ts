@@ -20,7 +20,7 @@ import type { SettingsManager } from '../settings-manager';
 import type { Database } from '../../storage/index';
 import { RoomSelfService, type RoomSelfContext } from '../room/room-self-service';
 import { RoomManager } from '../room/room-manager';
-import type { SessionPairManager } from '../room/session-pair-manager';
+import type { WorkerManager } from '../room/worker-manager';
 import { TaskManager } from '../room/task-manager';
 import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
@@ -56,13 +56,14 @@ export type RecurringJobSchedulerLike = Pick<
 
 /**
  * Dependencies for RoomSelfManager
+ * PHASE 4: Replaced SessionPairManager with WorkerManager
  */
 export interface RoomSelfManagerDeps {
 	db: Database;
 	daemonHub: DaemonHub;
 	messageHub: MessageHub;
 	roomManager: RoomManager;
-	sessionPairManager: SessionPairManager;
+	workerManager: WorkerManager;
 	taskManagerFactory: TaskManagerFactory;
 	goalManagerFactory: GoalManagerFactory;
 	scheduler: RecurringJobSchedulerLike;
@@ -288,12 +289,13 @@ export class RoomSelfManager {
 			db: this.deps.db,
 			daemonHub: this.deps.daemonHub,
 			messageHub: this.deps.messageHub,
-			sessionPairManager: this.deps.sessionPairManager,
+			workerManager: this.deps.workerManager, // PHASE 4: Use WorkerManager instead of SessionPairManager
 			roomManager: this.deps.roomManager,
 			getApiKey: this.deps.getApiKey,
 			promptTemplateManager: this.deps.promptTemplateManager,
 			recurringJobScheduler: this.deps.scheduler as RecurringJobScheduler,
 			workspaceRoot: this.deps.workspaceRoot,
+			useWorkerOnly: true, // PHASE 4: Enable worker-only mode by default
 		};
 
 		const settings = this.deps.settingsManager.getGlobalSettings();

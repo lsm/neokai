@@ -25,7 +25,7 @@ import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
-import { RoomManager, SessionBridge, SessionPairManager } from '../room';
+import { RoomManager, WorkerManager } from '../room';
 // New split handlers for Neo functionality
 import { setupRoomHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
@@ -51,6 +51,10 @@ import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import { TaskManager } from '../room/task-manager';
 import { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import { setupDialogHandlers } from './dialog-handlers';
+// PHASE 3: Telemetry and feature flags
+import { registerTelemetryHandlers } from './telemetry-handlers';
+import { getFeatureFlagService } from '../config';
+import { WorkerTelemetry } from '../telemetry';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -80,21 +84,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Room handlers (create roomManager first as session handlers depend on it)
 	const roomManager = new RoomManager(deps.db.getDatabase());
 
-	// Create SessionPairManager with required dependencies
-	const sessionPairManager = new SessionPairManager(
+	// PHASE 4: Create WorkerManager for manager-less architecture
+	const workerManager = new WorkerManager(
 		deps.db.getDatabase(),
-		deps.sessionManager.getSessionLifecycle(),
-		roomManager,
-		deps.daemonHub
-	);
-
-	// Create SessionBridge for Worker-Manager session coordination
-	const sessionBridge = new SessionBridge(
-		deps.messageHub,
 		deps.daemonHub,
-		sessionPairManager,
-		deps.sessionManager,
-		deps.db.getSDKMessageRepo()
+		deps.sessionManager.getSessionLifecycle(),
+		roomManager
 	);
 
 	// Create factory functions for per-room managers
@@ -119,7 +114,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		daemonHub: deps.daemonHub,
 		messageHub: deps.messageHub,
 		roomManager,
-		sessionPairManager,
+		workerManager, // PHASE 4: Use WorkerManager instead of SessionPairManager
 		taskManagerFactory,
 		goalManagerFactory,
 		scheduler: recurringJobScheduler,
@@ -148,8 +143,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.messageHub,
 		roomManager,
 		deps.daemonHub,
-		sessionPairManager,
-		sessionBridge,
+		workerManager, // PHASE 4: Use WorkerManager
 		roomSelfManager,
 		deps.config.workspaceRoot,
 		deps.sessionManager,
@@ -228,8 +222,23 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
+	// PHASE 3: Initialize feature flag service
+	const featureFlagService = getFeatureFlagService(deps.db);
+
+	// PHASE 3: Initialize worker telemetry
+	const workerTelemetry = new WorkerTelemetry(deps.daemonHub);
+
+	// PHASE 3: Register telemetry and feature flag RPC handlers
+	registerTelemetryHandlers({
+		messageHub: deps.messageHub,
+		daemonHub: deps.daemonHub,
+		featureFlagService,
+		workerTelemetry,
+	});
+
 	// Return cleanup function to stop background services
 	return () => {
 		recurringJobScheduler.stop();
+		// TODO: Cleanup telemetry services if needed
 	};
 }
