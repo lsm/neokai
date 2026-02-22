@@ -1299,12 +1299,12 @@ export class RoomSelfService {
 					throw new Error(`Task not found: ${params.taskId}`);
 				}
 
-				// PHASE 4: Always use WorkerManager (manager-worker pairs removed)
+				// Check if task already has a worker
 				const existingWorker = this.ctx.workerManager.getWorkerByTask(params.taskId);
 				if (existingWorker) {
 					log.info(`Task ${params.taskId} already has a worker, reusing it`);
 					// TODO: Wake up stuck worker session
-					return { pairId: existingWorker.id, workerSessionId: existingWorker.sessionId };
+					return { workerSessionId: existingWorker.sessionId };
 				}
 
 				const workerSessionId = await this.ctx.workerManager.spawnWorker({
@@ -1322,7 +1322,7 @@ export class RoomSelfService {
 
 				await this.taskManager.startTask(params.taskId, workerSessionId);
 				log.info(`Worker spawned: ${workerSessionId} for task ${params.taskId}`);
-				return { pairId: workerSessionId, workerSessionId };
+				return { workerSessionId };
 			},
 			onRequestReview: async (taskId: string, reason: string) => {
 				await this.setWaiting({ type: 'review', taskId, reason, since: Date.now() });

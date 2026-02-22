@@ -84,7 +84,7 @@ export function getOrCreateRoomMcpServer(
 			},
 			onSpawnWorker: async (_params) => {
 				// This is handled by the room self session
-				return { pairId: '', workerSessionId: '', managerSessionId: '' };
+				return { workerSessionId: '' };
 			},
 			onRequestReview: async (_taskId, _reason) => {
 				// This is handled by the room self session
@@ -241,10 +241,10 @@ export function createOrUpdateRoomMcpServer(
 						taskTitle: task.title,
 						taskDescription: task.description ?? undefined,
 					});
-					return { pairId: workerSessionId, workerSessionId };
+					return { workerSessionId };
 				}
 				// Fallback: Return empty response if WorkerManager not available
-				return { pairId: '', workerSessionId: '' };
+				return { workerSessionId: '' };
 			},
 			onRequestReview: async (taskId, reason) => {
 				// PHASE 5: Emit review request event for room:self to handle (if daemonHub provided)
