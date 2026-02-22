@@ -6,14 +6,14 @@
  * Responsibilities:
  * 1. Subscribe to room.message events (from GitHub integration)
  * 2. Parse GitHub events and create tasks
- * 3. Spawn Manager-Worker session pairs to execute work
+ * 3. Spawn worker sessions to execute work
  * 4. Monitor progress and report status
  * 5. Proactive scheduling (check for incomplete goals when idle)
  *
  * Lifecycle States:
  * - idle: No active work, waiting for events
  * - planning: Analyzing events/goals, deciding next actions
- * - executing: Work in progress (session pairs active)
+ * - executing: Work in progress (workers active)
  * - waiting: Waiting for external input (review, user response)
  * - reviewing: Reviewing completed work
  * - error: Error state, needs intervention
@@ -125,8 +125,6 @@ export interface RoomSelfContext {
 	maxConcurrentWorkers?: number;
 	/** Default workspace root from server config (fallback when room has no paths) */
 	workspaceRoot?: string;
-	/** Feature flag: Use worker-only orchestration instead of manager-worker pairs - PHASE 2 */
-	useWorkerOnly?: boolean;
 }
 
 /**
@@ -403,7 +401,7 @@ export class RoomSelfService {
 		);
 		this.unsubscribers.push(unsubContextUpdated);
 
-		// PHASE 4: Worker events for manager-less architecture (removed pair.task_completed subscription)
+		// Worker events
 		const unsubWorkerCompleted = this.ctx.daemonHub.on(
 			'worker.task_completed',
 			async (event: {
@@ -452,6 +450,19 @@ export class RoomSelfService {
 		);
 		this.unsubscribers.push(unsubWorkerReviewRequested);
 
+		// Worker failure handling
+		const unsubWorkerFailed = this.ctx.daemonHub.on(
+			'worker.failed',
+			async (event: { sessionId: string; taskId: string; error: string }) => {
+				const worker = this.ctx.workerManager?.getWorkerBySessionId(event.sessionId);
+				if (worker && worker.roomId === this.ctx.room.id) {
+					await this.handleWorkerFailed(event.sessionId, event.taskId, event.error);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubWorkerFailed);
+
 		const unsubRecurringJob = this.ctx.daemonHub.on(
 			'recurringJob.triggered',
 			async (event: { roomId: string; jobId: string; taskId: string; timestamp: number }) => {
@@ -481,6 +492,22 @@ export class RoomSelfService {
 			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRecurringJob);
+
+		// Subscribe to session errors to detect worker failures
+		const unsubSessionError = this.ctx.daemonHub.on(
+			'session.error',
+			async (event: { sessionId: string; error: string; details?: unknown }) => {
+				// Check if this is a worker session for our room
+				const worker = this.ctx.workerManager?.getWorkerBySessionId(event.sessionId);
+				if (worker && worker.roomId === this.ctx.room.id) {
+					// Mark the worker as failed - this will emit worker.failed event
+					// which we'll handle via our worker.failed subscription
+					await this.ctx.workerManager.markWorkerFailed(event.sessionId, event.error);
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubSessionError);
 	}
 
 	getState(): RoomSelfState {
@@ -728,7 +755,6 @@ export class RoomSelfService {
 		log.info(`Spawning worker for task ${task.id}`);
 
 		try {
-			// PHASE 4: Always use WorkerManager (manager-worker pairs removed)
 			const workerSessionId = await this.ctx.workerManager.spawnWorker({
 				roomId: this.ctx.room.id,
 				roomSessionId: this.sessionId,
@@ -765,7 +791,7 @@ export class RoomSelfService {
 		await this.taskManager.completeTask(taskId, summary);
 		await this.goalManager.updateGoalsForTask(taskId);
 
-		// PHASE 4: Handle worker sessions only (manager-worker pairs removed)
+		// Handle worker sessions
 		const worker = this.ctx.workerManager.getWorkerByTask(taskId);
 		if (worker) {
 			if (this.lifecycleManager) {
@@ -803,6 +829,47 @@ export class RoomSelfService {
 		}
 
 		await this.maybeSpawnWorker(task);
+	}
+
+	/**
+	 * Handle worker failure events
+	 */
+	private async handleWorkerFailed(
+		workerSessionId: string,
+		taskId: string,
+		error: string
+	): Promise<void> {
+		log.error(`Worker ${workerSessionId} failed for task ${taskId}: ${error}`);
+
+		// Remove worker from active sessions
+		if (this.lifecycleManager) {
+			this.lifecycleManager.removeActiveWorkerSession(workerSessionId);
+			this.state = this.lifecycleManager.getState();
+		} else {
+			this.state =
+				this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
+		}
+
+		// Inject review message for the agent to handle the failure
+		const task = await this.taskManager.getTask(taskId);
+		if (task && this.agentSession) {
+			await this.injectReviewMessage({
+				task,
+				summary: `Worker failed: ${error}`,
+				success: false,
+				error,
+			});
+		}
+
+		// Check if all workers are done
+		if (this.state.activeWorkerSessionIds.length === 0) {
+			if (this.lifecycleManager) {
+				await this.lifecycleManager.finishExecution();
+				this.state = this.lifecycleManager.getState();
+			} else {
+				await this.transitionTo('idle', 'All workers finished (last one failed)');
+			}
+		}
 	}
 
 	private async recordError(error: string): Promise<void> {
@@ -1229,12 +1296,12 @@ export class RoomSelfService {
 					throw new Error(`Task not found: ${params.taskId}`);
 				}
 
-				// PHASE 4: Always use WorkerManager (manager-worker pairs removed)
+				// Check if task already has a worker
 				const existingWorker = this.ctx.workerManager.getWorkerByTask(params.taskId);
 				if (existingWorker) {
 					log.info(`Task ${params.taskId} already has a worker, reusing it`);
 					// TODO: Wake up stuck worker session
-					return { pairId: existingWorker.id, workerSessionId: existingWorker.sessionId };
+					return { workerSessionId: existingWorker.sessionId };
 				}
 
 				const workerSessionId = await this.ctx.workerManager.spawnWorker({
@@ -1252,7 +1319,7 @@ export class RoomSelfService {
 
 				await this.taskManager.startTask(params.taskId, workerSessionId);
 				log.info(`Worker spawned: ${workerSessionId} for task ${params.taskId}`);
-				return { pairId: workerSessionId, workerSessionId };
+				return { workerSessionId };
 			},
 			onRequestReview: async (taskId: string, reason: string) => {
 				await this.setWaiting({ type: 'review', taskId, reason, since: Date.now() });

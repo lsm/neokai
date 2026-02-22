@@ -289,13 +289,12 @@ export class RoomSelfManager {
 			db: this.deps.db,
 			daemonHub: this.deps.daemonHub,
 			messageHub: this.deps.messageHub,
-			workerManager: this.deps.workerManager, // PHASE 4: Use WorkerManager instead of SessionPairManager
+			workerManager: this.deps.workerManager,
 			roomManager: this.deps.roomManager,
 			getApiKey: this.deps.getApiKey,
 			promptTemplateManager: this.deps.promptTemplateManager,
 			recurringJobScheduler: this.deps.scheduler as RecurringJobScheduler,
 			workspaceRoot: this.deps.workspaceRoot,
-			useWorkerOnly: true, // PHASE 4: Enable worker-only mode by default
 		};
 
 		const settings = this.deps.settingsManager.getGlobalSettings();

@@ -218,6 +218,43 @@ export class WorkerManager {
 	}
 
 	/**
+	 * Mark a worker as failed and emit the failure event
+	 *
+	 * This should be called when:
+	 * - The worker's SDK session crashes
+	 * - The worker encounters an unrecoverable error
+	 * - The worker times out
+	 *
+	 * @param workerSessionId - The worker's session ID
+	 * @param error - The error message describing the failure
+	 */
+	async markWorkerFailed(workerSessionId: string, error: string): Promise<void> {
+		const worker = this.getWorkerBySessionId(workerSessionId);
+		if (!worker) {
+			return;
+		}
+
+		// Update worker status
+		this.updateWorkerStatus(workerSessionId, 'failed');
+
+		// Update task status
+		this.taskRepo.updateTask(worker.taskId, {
+			status: 'failed',
+			error,
+		});
+
+		// Remove from active worker tools
+		this.workerTools.delete(workerSessionId);
+
+		// Emit failure event for room agents to handle
+		await this.daemonHub.emit('worker.failed', {
+			sessionId: workerSessionId,
+			taskId: worker.taskId,
+			error,
+		});
+	}
+
+	/**
 	 * Build the initial prompt for a worker session
 	 */
 	private buildWorkerPrompt(taskTitle: string, taskDescription?: string): string {

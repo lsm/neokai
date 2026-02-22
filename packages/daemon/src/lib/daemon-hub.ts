@@ -234,34 +234,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sender?: string;
 	};
 
-	// Session bridge events (for dual-session architecture)
-	'bridge.workerTerminal': {
-		sessionId: string;
-		pairId: string;
-		agentState: AgentProcessingState;
-	};
-	'bridge.managerTerminal': {
-		sessionId: string;
-		pairId: string;
-		agentState: AgentProcessingState;
-	};
-	'bridge.messagesForwarded': {
-		sessionId: string;
-		pairId: string;
-		direction: 'worker-to-manager' | 'manager-to-worker';
-		count: number;
-	};
-
-	// Session pair events (for manager-worker coordination) - DEPRECATED
-	'pair.task_completed': {
-		sessionId: string;
-		pairId: string;
-		taskId: string;
-		summary: string;
-		filesChanged?: string[];
-		nextSteps?: string[];
-	};
-
 	// Worker events (Manager-less Architecture v1.0)
 	'worker.started': {
 		sessionId: string;

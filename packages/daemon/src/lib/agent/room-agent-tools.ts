@@ -40,9 +40,6 @@ export interface RoomCreateTaskParams {
  */
 export interface RoomSpawnWorkerParams {
 	taskId: string;
-	mode?: 'single' | 'parallel' | 'serial';
-	/** PHASE 2: Use direct worker orchestration instead of manager-worker pair */
-	useWorkerOnly?: boolean;
 }
 
 /**
@@ -179,9 +176,7 @@ export interface RoomAgentToolsConfig {
 	/** Callback to create a new task */
 	onCreateTask: (params: RoomCreateTaskParams) => Promise<{ taskId: string }>;
 	/** Callback to spawn a worker for a task */
-	onSpawnWorker: (
-		params: RoomSpawnWorkerParams
-	) => Promise<{ pairId: string; workerSessionId: string }>;
+	onSpawnWorker: (params: RoomSpawnWorkerParams) => Promise<{ workerSessionId: string }>;
 	/** Callback to cancel a task */
 	onCancelTask?: (params: RoomCancelTaskParams) => Promise<void>;
 	/** Callback to archive a session */
@@ -291,22 +286,10 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Spawn a worker session to execute a task',
 			{
 				task_id: z.string().describe('ID of the task to work on'),
-				mode: z
-					.enum(['single', 'parallel', 'serial'])
-					.optional()
-					.default('single')
-					.describe('Execution mode for the worker'),
-				use_worker_only: z
-					.boolean()
-					.optional()
-					.default(false)
-					.describe('Use direct worker orchestration (no manager)'),
 			},
 			async (args) => {
 				const result = await config.onSpawnWorker({
 					taskId: args.task_id,
-					mode: args.mode,
-					useWorkerOnly: args.use_worker_only,
 				});
 
 				return {
@@ -315,7 +298,6 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 							type: 'text',
 							text: JSON.stringify({
 								success: true,
-								pairId: result.pairId,
 								workerSessionId: result.workerSessionId,
 								message: 'Worker spawned successfully',
 							}),
