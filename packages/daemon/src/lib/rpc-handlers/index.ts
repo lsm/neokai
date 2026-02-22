@@ -127,6 +127,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		promptTemplateManager,
 		settingsManager: deps.settingsManager,
 		workspaceRoot: deps.config.workspaceRoot,
+		sessionManager: deps.sessionManager,
 	});
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);

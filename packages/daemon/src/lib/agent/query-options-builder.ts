@@ -18,6 +18,25 @@
  * - Hooks (output limiter)
  */
 
+/**
+ * Import the MCP server getter function from room-agent-handlers
+ * This is a dynamic import to avoid circular dependencies
+ */
+let getRoomMcpServer:
+	| ((
+			roomId: string
+	  ) =>
+			| ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
+			| undefined)
+	| undefined;
+try {
+	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	const roomAgentHandlers = require('../rpc-handlers/room-agent-handlers');
+	getRoomMcpServer = roomAgentHandlers.getRoomMcpServer;
+} catch {
+	// Module not available (e.g., in tests)
+}
+
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
 	Session,
@@ -526,12 +545,37 @@ CRITICAL RULES:
 	 * 1. SDKConfig mcpServers (programmatic configuration)
 	 * 2. Undefined to let SDK auto-load from settings files
 	 *
+	 * Special handling for in-process MCP servers (e.g., room-agent-tools):
+	 * If the config contains a marker like { type: '__IN_PROCESS_ROOM_AGENT_TOOLS__', roomId },
+	 * we replace it with the actual MCP server instance from the global registry.
+	 *
 	 */
 	private getMcpServers(): Record<string, unknown> | undefined {
 		// Use SDKConfig mcpServers if explicitly set
 		const config = this.ctx.session.config;
 		if (config.mcpServers !== undefined) {
-			return config.mcpServers;
+			const mcpServers: Record<string, unknown> = {};
+			for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
+				// Check if this is a marker for an in-process MCP server
+				if (
+					typeof serverConfig === 'object' &&
+					serverConfig !== null &&
+					'type' in serverConfig &&
+					(serverConfig as { type: string }).type === '__IN_PROCESS_ROOM_AGENT_TOOLS__' &&
+					'roomId' in serverConfig &&
+					getRoomMcpServer
+				) {
+					// Replace marker with actual MCP server instance
+					const roomId = (serverConfig as { roomId: string }).roomId;
+					const mcpServer = getRoomMcpServer(roomId);
+					if (mcpServer) {
+						mcpServers[name] = mcpServer;
+					}
+				} else {
+					mcpServers[name] = serverConfig;
+				}
+			}
+			return mcpServers;
 		}
 
 		// Let SDK auto-load from settings files

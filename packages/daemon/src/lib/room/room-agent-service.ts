@@ -288,6 +288,14 @@ export class RoomAgentService {
 	}
 
 	/**
+	 * Get the room-agent-tools MCP server
+	 * Returns null if the agent hasn't been started yet
+	 */
+	getMcpServer(): ReturnType<typeof createRoomAgentMcpServer> | null {
+		return this.roomMcpServer;
+	}
+
+	/**
 	 * Inject a planning message to trigger agent reasoning
 	 */
 	async injectPlanningMessage(context: RoomAgentPlanningContext): Promise<void> {

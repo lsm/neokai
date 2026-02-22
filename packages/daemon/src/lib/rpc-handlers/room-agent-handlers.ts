@@ -13,7 +13,7 @@
  * Includes RoomAgentManager class to track active RoomAgentService instances.
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, McpServerConfig } from '@neokai/shared';
 import type { RoomAgentState, RoomAgentLifecycleState, RoomAgentHumanInput } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SettingsManager } from '../settings-manager';
@@ -25,6 +25,42 @@ import { TaskManager } from '../room/task-manager';
 import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
+import type { SessionManager } from '../session-manager';
+
+/**
+ * Global registry for in-process MCP servers
+ * This allows QueryOptionsBuilder to access MCP servers created by RoomAgentManager
+ */
+const globalMcpServerRegistry = new Map<
+	string,
+	ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
+>();
+
+/**
+ * Register an in-process MCP server for a room
+ */
+export function registerRoomMcpServer(
+	roomId: string,
+	mcpServer: ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
+): void {
+	globalMcpServerRegistry.set(roomId, mcpServer);
+}
+
+/**
+ * Get an in-process MCP server for a room
+ */
+export function getRoomMcpServer(
+	roomId: string
+): ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer> | undefined {
+	return globalMcpServerRegistry.get(roomId);
+}
+
+/**
+ * Unregister an in-process MCP server for a room
+ */
+export function unregisterRoomMcpServer(roomId: string): void {
+	globalMcpServerRegistry.delete(roomId);
+}
 
 /**
  * Factory types for creating per-room managers
@@ -70,6 +106,8 @@ export interface RoomAgentManagerDeps {
 	settingsManager: SettingsManager;
 	/** Default workspace root from server config */
 	workspaceRoot?: string;
+	/** Session manager for updating room chat sessions */
+	sessionManager?: SessionManager;
 }
 
 /**
@@ -80,6 +118,11 @@ export interface RoomAgentManagerDeps {
  */
 export class RoomAgentManager {
 	private agents: Map<string, RoomAgentService> = new Map();
+	/** Runtime-only mapping of room IDs to their MCP servers */
+	private roomMcpServers: Map<
+		string,
+		ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
+	> = new Map();
 
 	constructor(private deps: RoomAgentManagerDeps) {}
 
@@ -110,6 +153,9 @@ export class RoomAgentManager {
 	async startAgent(roomId: string): Promise<void> {
 		const agent = this.getOrCreateAgent(roomId);
 		await agent.start();
+
+		// After the agent starts, update the room chat session with the MCP server
+		await this.updateRoomChatSessionWithMcpServer(roomId);
 	}
 
 	/**
@@ -188,7 +234,73 @@ export class RoomAgentManager {
 	 * Remove an agent from tracking (does not stop it)
 	 */
 	removeAgent(roomId: string): boolean {
+		this.roomMcpServers.delete(roomId);
+		unregisterRoomMcpServer(roomId);
 		return this.agents.delete(roomId);
+	}
+
+	/**
+	 * Get the MCP server for a room (runtime only)
+	 */
+	getRoomMcpServer(
+		roomId: string
+	): ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer> | undefined {
+		return this.roomMcpServers.get(roomId);
+	}
+
+	/**
+	 * Update the room chat session with the room-agent-tools MCP server marker
+	 * This should be called after the room agent starts to ensure the MCP server is available
+	 */
+	async updateRoomChatSessionWithMcpServer(roomId: string): Promise<void> {
+		const agent = this.agents.get(roomId);
+		if (!agent) {
+			// Agent hasn't been created yet
+			return;
+		}
+
+		const mcpServer = agent.getMcpServer();
+		if (!mcpServer) {
+			// MCP server hasn't been created yet (agent not started)
+			return;
+		}
+
+		// Store the MCP server reference in runtime-only mapping
+		this.roomMcpServers.set(roomId, mcpServer);
+		// Register globally so QueryOptionsBuilder can access it
+		registerRoomMcpServer(roomId, mcpServer);
+
+		const sessionId = `room:${roomId}`;
+
+		// Get the session from the database
+		const session = this.deps.db.getSession(sessionId);
+		if (!session) {
+			// Session doesn't exist yet
+			return;
+		}
+
+		// Store a marker in the config to indicate that this session should use
+		// the room-agent-tools MCP server. The actual MCP server will be injected
+		// at query time by QueryOptionsBuilder.
+		this.deps.db.updateSession(sessionId, {
+			config: {
+				...session.config,
+				mcpServers: {
+					...session.config.mcpServers,
+					'room-agent-tools': {
+						type: '__IN_PROCESS_ROOM_AGENT_TOOLS__',
+						roomId,
+					} as unknown as McpServerConfig,
+				},
+			},
+		});
+
+		// Emit event to notify that session was updated
+		await this.deps.daemonHub.emit('session.updated', {
+			sessionId,
+			source: 'mcp_config',
+			session: {},
+		});
 	}
 
 	/**
