@@ -28,11 +28,15 @@
 
 import type { DaemonHub } from '../daemon-hub';
 import type { MessageHub, SessionFeatures, TaskPriority } from '@neokai/shared';
+import type { SDKMessage } from '@neokai/shared/sdk';
+import type { UUID } from 'crypto';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import type { Database } from '../../storage/index';
+import { generateUUID } from '@neokai/shared';
 import { RoomSelfStateRepository } from '../../storage/repositories/room-self-state-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { GoalRepository } from '../../storage/repositories/goal-repository';
+import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 import { SessionPairManager } from './session-pair-manager';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
@@ -153,6 +157,7 @@ export class RoomSelfService {
 	private stateRepo: RoomSelfStateRepository;
 	private taskRepo: TaskRepository;
 	private goalRepo: GoalRepository;
+	private sdkMessageRepo: SDKMessageRepository;
 	private taskManager: TaskManager;
 	private goalManager: GoalManager;
 	private state: RoomSelfState;
@@ -179,6 +184,7 @@ export class RoomSelfService {
 		this.stateRepo = new RoomSelfStateRepository(rawDb);
 		this.taskRepo = new TaskRepository(rawDb);
 		this.goalRepo = new GoalRepository(rawDb);
+		this.sdkMessageRepo = new SDKMessageRepository(rawDb);
 		this.taskManager = new TaskManager(rawDb, ctx.room.id);
 		this.goalManager = new GoalManager(rawDb, ctx.room.id, ctx.daemonHub);
 
@@ -590,6 +596,34 @@ export class RoomSelfService {
 			return;
 		}
 
+		// FIX: Save user message to room:self session DB before processing
+		// This ensures the message appears in the chat history
+		const userMessage: SDKMessage = {
+			type: 'user' as const,
+			uuid: generateUUID() as UUID,
+			session_id: this.sessionId,
+			parent_tool_use_id: null,
+			message: {
+				role: 'user' as const,
+				content: [{ type: 'text' as const, text: content }],
+			},
+		};
+
+		// Save to DB (repository will add timestamp)
+		this.sdkMessageRepo.saveSDKMessage(this.sessionId, userMessage);
+
+		// Broadcast to UI
+		try {
+			this.ctx.messageHub.event(
+				'state.sdkMessages.delta',
+				{ added: [userMessage], timestamp: Date.now() },
+				{ channel: `session:${this.sessionId}` }
+			);
+		} catch {
+			/* ignore broadcast errors */
+		}
+
+		// Create task and spawn worker
 		const task = await this.taskManager.createTask({
 			title: content.slice(0, 100),
 			description: `User request from ${sender ?? 'unknown'}:\n\n${content}`,
@@ -860,10 +894,40 @@ export class RoomSelfService {
 
 		if (this.agentSession) {
 			if (input.type === 'message') {
+				const content = (input as { content: string }).content;
+
+				// FIX: Save user message to DB before injecting into agent queue
+				// This ensures the message appears in the chat UI and is persisted
+				const userMessage: SDKMessage = {
+					type: 'user' as const,
+					uuid: generateUUID() as UUID,
+					session_id: this.sessionId,
+					parent_tool_use_id: null,
+					message: {
+						role: 'user' as const,
+						content: [{ type: 'text' as const, text: content }],
+					},
+				};
+
+				// Save to DB (repository will add timestamp)
+				this.sdkMessageRepo.saveSDKMessage(this.sessionId, userMessage);
+
+				// Broadcast to UI
+				try {
+					this.ctx.messageHub.event(
+						'state.sdkMessages.delta',
+						{ added: [userMessage], timestamp: Date.now() },
+						{ channel: `session:${this.sessionId}` }
+					);
+				} catch {
+					/* ignore broadcast errors */
+				}
+
+				// Then inject into agent queue
 				await this.injectEventMessage({
 					type: 'user_message',
 					source: 'human',
-					content: (input as { content: string }).content,
+					content,
 					timestamp: Date.now(),
 				});
 			} else if (input.type === 'review_response' && this.lifecycleState === 'waiting') {
