@@ -113,6 +113,7 @@ export function RoomSelfStatus({ roomId: _roomId, state, onAction }: RoomSelfSta
 	const isPaused = state.lifecycleState === 'paused';
 	const isIdle = state.lifecycleState === 'idle';
 	const isRunning = !isPaused && !isIdle;
+	const isRunningOrPaused = !isIdle;
 
 	return (
 		<div class="flex items-center justify-between p-3 bg-dark-800 border border-gray-700 rounded-lg">
@@ -177,6 +178,14 @@ export function RoomSelfStatus({ roomId: _roomId, state, onAction }: RoomSelfSta
 								Pause
 							</button>
 						) : null}
+						{isRunningOrPaused && (
+							<button
+								class="px-3 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+								onClick={() => onAction('stop')}
+							>
+								Stop
+							</button>
+						)}
 					</div>
 				)}
 			</div>

@@ -61,9 +61,10 @@ import { contextPanelOpenSignal } from '../lib/signals.ts';
 
 interface ChatContainerProps {
 	sessionId: string;
+	readonly?: boolean;
 }
 
-export default function ChatContainer({ sessionId }: ChatContainerProps) {
+export default function ChatContainer({ sessionId, readonly = false }: ChatContainerProps) {
 	// ========================================
 	// Refs
 	// ========================================
@@ -777,6 +778,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				onDeleteClick={deleteModal.open}
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
+				readonly={readonly}
 			/>
 
 			{/* Messages */}
@@ -1014,17 +1016,19 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							</div>
 						</div>
 					) : (
-						<MessageInput
-							sessionId={sessionId}
-							onSend={handleSendMessage}
-							disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
-							autoScroll={autoScroll}
-							onAutoScrollChange={handleAutoScrollChange}
-							onOpenTools={toolsModal.open}
-							onEnterRewindMode={handleEnterRewindMode}
-							rewindMode={rewindMode}
-							onExitRewindMode={handleExitRewindMode}
-						/>
+						!readonly && (
+							<MessageInput
+								sessionId={sessionId}
+								onSend={handleSendMessage}
+								disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
+								autoScroll={autoScroll}
+								onAutoScrollChange={handleAutoScrollChange}
+								onOpenTools={toolsModal.open}
+								onEnterRewindMode={handleEnterRewindMode}
+								rewindMode={rewindMode}
+								onExitRewindMode={handleExitRewindMode}
+							/>
+						)
 					)}
 				</div>
 			</div>

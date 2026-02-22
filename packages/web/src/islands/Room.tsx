@@ -21,6 +21,7 @@ import { Button } from '../components/ui/Button';
 import { toast } from '../lib/toast';
 
 type RoomTab = 'overview' | 'context' | 'goals' | 'jobs' | 'settings';
+type RoomChatTab = 'chat' | 'self';
 
 interface RoomProps {
 	roomId: string;
@@ -30,6 +31,7 @@ interface RoomProps {
 export default function Room({ roomId, sessionViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
+	const [activeChatTab, setActiveChatTab] = useState<RoomChatTab>('chat');
 
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => setInitialLoad(false));
@@ -278,7 +280,41 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 			{/* Room Chat Panel - only show when NOT viewing a session within the room */}
 			{!sessionViewId && (
 				<div class="w-96 border-l border-dark-700 flex flex-col bg-dark-950">
-					<ChatContainer sessionId={`room:chat:${roomId}`} />
+					{/* Chat Tabs */}
+					<div class="flex border-b border-dark-700 bg-dark-850">
+						<button
+							class={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+								activeChatTab === 'chat'
+									? 'text-blue-400 border-b-2 border-blue-400'
+									: 'text-gray-400 hover:text-gray-200'
+							}`}
+							onClick={() => setActiveChatTab('chat')}
+						>
+							Chat
+						</button>
+						<button
+							class={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+								activeChatTab === 'self'
+									? 'text-blue-400 border-b-2 border-blue-400'
+									: 'text-gray-400 hover:text-gray-200'
+							}`}
+							onClick={() => setActiveChatTab('self')}
+						>
+							Self
+						</button>
+					</div>
+
+					{/* Chat Content */}
+					{activeChatTab === 'chat' && (
+						<div class="flex-1 flex flex-col">
+							<ChatContainer sessionId={`room:chat:${roomId}`} />
+						</div>
+					)}
+					{activeChatTab === 'self' && (
+						<div class="flex-1 flex flex-col">
+							<ChatContainer sessionId={`room:self:${roomId}`} readonly />
+						</div>
+					)}
 				</div>
 			)}
 		</div>
