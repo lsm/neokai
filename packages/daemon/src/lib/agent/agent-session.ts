@@ -333,13 +333,42 @@ export class AgentSession
 			// Create new session from init
 			session = AgentSession.createSessionFromInit(init, defaultModel);
 			db.createSession(session);
-		} else if (init.workspacePath && session.workspacePath !== init.workspacePath) {
+		} else {
+			const updates: Partial<Session> = {};
+			let hasUpdates = false;
+
 			// Keep deterministic workspace for long-lived room/lobby session IDs across restarts.
-			db.updateSession(init.sessionId, { workspacePath: init.workspacePath });
-			session = {
-				...session,
-				workspacePath: init.workspacePath,
-			};
+			if (init.workspacePath && session.workspacePath !== init.workspacePath) {
+				updates.workspacePath = init.workspacePath;
+				session = { ...session, workspacePath: init.workspacePath };
+				hasUpdates = true;
+			}
+
+			if (init.type && session.type !== init.type) {
+				updates.type = init.type;
+				session = { ...session, type: init.type };
+				hasUpdates = true;
+			}
+
+			if (
+				init.context &&
+				JSON.stringify(session.context ?? null) !== JSON.stringify(init.context)
+			) {
+				updates.context = init.context;
+				session = { ...session, context: init.context };
+				hasUpdates = true;
+			}
+
+			// Room/lobby sessions should never run with a worktree path from stale persisted state.
+			if (init.type && init.type !== 'worker' && session.worktree) {
+				updates.worktree = undefined;
+				session = { ...session, worktree: undefined };
+				hasUpdates = true;
+			}
+
+			if (hasUpdates) {
+				db.updateSession(init.sessionId, updates);
+			}
 		}
 
 		// Merge runtime-only config (mcpServers with non-serializable instances)

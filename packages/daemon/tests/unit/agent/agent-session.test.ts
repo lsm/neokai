@@ -1980,6 +1980,84 @@ describe('AgentSession', () => {
 			).toEqual(['room:test', { workspacePath: '/new/workspace' }]);
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 		});
+
+		it('should clear stale worktree when loading existing room session', () => {
+			const existingSession = {
+				id: 'room:test',
+				title: 'Room Agent',
+				workspacePath: '/old/workspace',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active' as const,
+				config: {
+					model: 'default',
+					maxTokens: 8192,
+					temperature: 1,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+				type: 'worker' as const,
+				worktree: {
+					isWorktree: true,
+					worktreePath: '/stale/worktree',
+					mainRepoPath: '/stale/repo',
+					branch: 'session/stale',
+				},
+			} as Session;
+
+			const init = {
+				sessionId: 'room:test',
+				workspacePath: '/new/workspace',
+				type: 'room' as const,
+				context: { roomId: 'test' },
+				model: 'default',
+			};
+
+			const mockDb = {
+				getSession: mock(() => existingSession),
+				createSession: mock(() => {}),
+				updateSession: mock(() => {}),
+				getMessagesByStatus: mock(() => []),
+			} as unknown as Database;
+
+			const mockMessageHub = {} as MessageHub;
+			const mockDaemonHub = {
+				emit: mock(async () => {}),
+				on: mock(() => mock(() => {})),
+			} as unknown as DaemonHub;
+			const mockGetApiKey = mock(async () => 'test-key');
+
+			const agentSession = AgentSession.fromInit(
+				init,
+				mockDb,
+				mockMessageHub,
+				mockDaemonHub,
+				mockGetApiKey,
+				'default'
+			);
+
+			expect(
+				(mockDb as unknown as { updateSession: ReturnType<typeof mock> }).updateSession.mock
+					.calls[0]
+			).toEqual([
+				'room:test',
+				{
+					workspacePath: '/new/workspace',
+					type: 'room',
+					context: { roomId: 'test' },
+					worktree: undefined,
+				},
+			]);
+			expect(agentSession.getSessionData().worktree).toBeUndefined();
+			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
+			expect(agentSession.getSessionData().type).toBe('room');
+		});
 	});
 
 	describe('startupTimeoutTimer', () => {
