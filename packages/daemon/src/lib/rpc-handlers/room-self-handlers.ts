@@ -380,7 +380,8 @@ export function setupRoomSelfHandlers(
 		}
 
 		const state = roomSelfManager.getState(params.roomId);
-		return { state };
+		// Ensure state is plain JSON-serializable object (no circular references)
+		return { state: state ? JSON.parse(JSON.stringify(state)) : null };
 	});
 
 	// roomAgent.pause - Pause agent for a room
@@ -445,7 +446,12 @@ export function setupRoomSelfHandlers(
 	// roomAgent.list - List all active agents with their states
 	messageHub.onRequest('roomAgent.list', async () => {
 		const agents = roomSelfManager.listAgents();
-		return { agents };
+		// Ensure states are plain JSON-serializable objects (no circular references)
+		const safeAgents = agents.map((agent) => ({
+			roomId: agent.roomId,
+			state: agent.state ? JSON.parse(JSON.stringify(agent.state)) : null,
+		}));
+		return { agents: safeAgents };
 	});
 
 	// roomAgent.humanInput - Unified human input endpoint for room agent

@@ -183,6 +183,34 @@ export class MessageHubRouter {
 				`[MessageHubRouter] Failed to serialize message for client ${clientId}:`,
 				error
 			);
+			// Log message type for debugging
+			const messageType = message?.type ?? 'unknown';
+			const messageId = message?.id ?? 'unknown';
+			this.logger.error(
+				`[MessageHubRouter] Failed message details - type: ${messageType}, id: ${messageId}`
+			);
+			// Try to log a safe version of the message
+			try {
+				const safeMessage = JSON.parse(
+					JSON.stringify(message, (key, value) => {
+						if (typeof value === 'object' && value !== null) {
+							if (value.constructor?.name === 'AgentSession') {
+								return `[AgentSession: ${value.constructor.name}]`;
+							}
+							if (value.constructor?.name === 'RoomSelfService') {
+								return `[RoomSelfService: ${value.constructor.name}]`;
+							}
+						}
+						return value;
+					})
+				);
+				this.logger.error(
+					`[MessageHubRouter] Message (sanitized):`,
+					JSON.stringify(safeMessage).slice(0, 500)
+				);
+			} catch {
+				this.logger.error(`[MessageHubRouter] Could not sanitize message for logging`);
+			}
 			return false;
 		}
 
@@ -211,6 +239,12 @@ export class MessageHubRouter {
 			json = JSON.stringify(message);
 		} catch (error) {
 			this.logger.error(`[MessageHubRouter] Failed to serialize broadcast message:`, error);
+			// Log message type for debugging
+			const messageType = message?.type ?? 'unknown';
+			const messageId = message?.id ?? 'unknown';
+			this.logger.error(
+				`[MessageHubRouter] Failed broadcast message details - type: ${messageType}, id: ${messageId}`
+			);
 			return { sent: 0, failed: this.clients.size, skipped: 0 };
 		}
 
