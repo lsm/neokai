@@ -96,6 +96,39 @@ export class MessageHubRouter {
 	}
 
 	/**
+	 * Safely stringify an object, handling circular references
+	 * Converts circular references to [Circular] placeholders
+	 */
+	private safeStringify(obj: unknown): string {
+		const seen = new WeakSet();
+
+		return JSON.stringify(obj, (_key, value) => {
+			// Handle primitive types
+			if (typeof value !== 'object' || value === null) {
+				return value;
+			}
+
+			// Detect circular references
+			if (seen.has(value)) {
+				return '[Circular]';
+			}
+
+			// Track this object
+			seen.add(value);
+
+			// Handle specific types that may contain non-serializable data
+			if (value.constructor?.name === 'AgentSession') {
+				return `[AgentSession]`;
+			}
+			if (value.constructor?.name === 'RoomSelfService') {
+				return `[RoomSelfService]`;
+			}
+
+			return value;
+		});
+	}
+
+	/**
 	 * Register a client connection
 	 * Prevents duplicate registration
 	 */
@@ -160,7 +193,7 @@ export class MessageHubRouter {
 
 	/**
 	 * Send a message to a specific client
-	 * FIX P2.1: Handle serialization errors
+	 * FIX P2.1: Handle serialization errors and circular references
 	 */
 	sendToClient(clientId: string, message: HubMessage): boolean {
 		const client = this.getClientById(clientId);
@@ -174,10 +207,10 @@ export class MessageHubRouter {
 			return false;
 		}
 
-		// FIX P2.1: Handle serialization errors
+		// FIX P2.1: Handle serialization errors with circular reference detection
 		let json: string;
 		try {
-			json = JSON.stringify(message);
+			json = this.safeStringify(message);
 		} catch (error) {
 			this.logger.error(
 				`[MessageHubRouter] Failed to serialize message for client ${clientId}:`,
@@ -189,28 +222,6 @@ export class MessageHubRouter {
 			this.logger.error(
 				`[MessageHubRouter] Failed message details - type: ${messageType}, id: ${messageId}`
 			);
-			// Try to log a safe version of the message
-			try {
-				const safeMessage = JSON.parse(
-					JSON.stringify(message, (key, value) => {
-						if (typeof value === 'object' && value !== null) {
-							if (value.constructor?.name === 'AgentSession') {
-								return `[AgentSession: ${value.constructor.name}]`;
-							}
-							if (value.constructor?.name === 'RoomSelfService') {
-								return `[RoomSelfService: ${value.constructor.name}]`;
-							}
-						}
-						return value;
-					})
-				);
-				this.logger.error(
-					`[MessageHubRouter] Message (sanitized):`,
-					JSON.stringify(safeMessage).slice(0, 500)
-				);
-			} catch {
-				this.logger.error(`[MessageHubRouter] Could not sanitize message for logging`);
-			}
 			return false;
 		}
 
@@ -233,10 +244,10 @@ export class MessageHubRouter {
 		failed: number;
 		skipped?: number;
 	} {
-		// FIX P2.1: Handle serialization errors
+		// FIX P2.1: Handle serialization errors with circular reference detection
 		let json: string;
 		try {
-			json = JSON.stringify(message);
+			json = this.safeStringify(message);
 		} catch (error) {
 			this.logger.error(`[MessageHubRouter] Failed to serialize broadcast message:`, error);
 			// Log message type for debugging
@@ -346,10 +357,10 @@ export class MessageHubRouter {
 			};
 		}
 
-		// Serialize once
+		// Serialize once with circular reference handling
 		let json: string;
 		try {
-			json = JSON.stringify(message);
+			json = this.safeStringify(message);
 		} catch (error) {
 			this.logger.error(`[MessageHubRouter] Failed to serialize channel event:`, error);
 			return {
