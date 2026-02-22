@@ -9,7 +9,7 @@
 	},
 	"dependencies": {
 		"@neokai/shared": "workspace:*",
-		"@anthropic-ai/claude-agent-sdk": "^0.2.39",
+		"@anthropic-ai/claude-agent-sdk": "0.2.39",
 		"zod": "^4.0.17"
 	},
 	"devDependencies": {

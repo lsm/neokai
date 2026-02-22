@@ -289,7 +289,7 @@ export class ProcessingStateManager {
 			if (this.streamingPhase !== 'streaming') {
 				await this.updatePhase('streaming');
 			}
-		} else if (message.type === 'assistant' || message.type === 'partial_assistant') {
+		} else if (message.type === 'assistant') {
 			// Assistant message indicates thinking/tool use phase
 			const content = (message as SDKAssistantMessage).message.content;
 			const hasToolUse = content.some(isToolUseBlock);
