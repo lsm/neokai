@@ -336,6 +336,7 @@ export class AgentSession
 		} else {
 			const updates: Partial<Session> = {};
 			let hasUpdates = false;
+			const runtimeInitFingerprint = AgentSession.buildRuntimeInitFingerprint(init);
 
 			// Keep deterministic workspace for long-lived room/lobby session IDs across restarts.
 			if (init.workspacePath && session.workspacePath !== init.workspacePath) {
@@ -363,6 +364,25 @@ export class AgentSession
 			if (init.type && init.type !== 'worker' && session.worktree) {
 				updates.worktree = undefined;
 				session = { ...session, worktree: undefined };
+				hasUpdates = true;
+			}
+
+			if (
+				runtimeInitFingerprint &&
+				session.metadata.runtimeInitFingerprint !== runtimeInitFingerprint
+			) {
+				const nextMetadata: SessionMetadata = {
+					...session.metadata,
+					runtimeInitFingerprint,
+				};
+				updates.metadata = nextMetadata;
+				// Invalidate stale SDK resume chain when runtime init surface changes.
+				updates.sdkSessionId = undefined;
+				session = {
+					...session,
+					sdkSessionId: undefined,
+					metadata: nextMetadata,
+				};
 				hasUpdates = true;
 			}
 
@@ -396,6 +416,7 @@ export class AgentSession
 		const now = new Date().toISOString();
 		const type = init.type ?? 'worker';
 		const features = init.features ?? WORKER_FEATURES;
+		const runtimeInitFingerprint = AgentSession.buildRuntimeInitFingerprint(init);
 
 		const config: SessionConfig = {
 			model: init.model ?? defaultModel,
@@ -419,6 +440,7 @@ export class AgentSession
 			outputTokens: 0,
 			totalCost: 0,
 			toolCallCount: 0,
+			...(runtimeInitFingerprint ? { runtimeInitFingerprint } : {}),
 		};
 
 		return {
@@ -433,6 +455,19 @@ export class AgentSession
 			type,
 			context: init.context,
 		};
+	}
+
+	private static buildRuntimeInitFingerprint(init: AgentSessionInit): string | undefined {
+		if (!init.type || init.type === 'worker') {
+			return undefined;
+		}
+
+		return JSON.stringify({
+			type: init.type,
+			workspacePath: init.workspacePath,
+			context: init.context ?? null,
+			mcpServers: Object.keys(init.mcpServers ?? {}).sort(),
+		});
 	}
 
 	// ============================================================================

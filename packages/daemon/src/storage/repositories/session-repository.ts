@@ -114,7 +114,7 @@ export class SessionRepository {
 			fields.push('config = ?');
 			values.push(JSON.stringify(mergedConfig));
 		}
-		if (updates.sdkSessionId !== undefined) {
+		if ('sdkSessionId' in updates) {
 			fields.push('sdk_session_id = ?');
 			values.push(updates.sdkSessionId ?? null);
 		}

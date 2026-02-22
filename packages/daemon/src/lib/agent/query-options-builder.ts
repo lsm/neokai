@@ -306,15 +306,9 @@ export class QueryOptionsBuilder {
 	 */
 	addSessionStateOptions(options: Options): Options {
 		const result = { ...options } as Options & { thinking?: ThinkingConfig };
-		const isRoomOrLobbySession =
-			this.ctx.session.type === 'room' ||
-			this.ctx.session.type === 'lobby' ||
-			(this.ctx.session.metadata?.sessionType !== undefined &&
-				this.ctx.session.metadata.sessionType !== 'standalone');
 
-		// Add resume parameter only for standalone worker sessions.
-		// Room/manager/lobby sessions must start from deterministic runtime config.
-		if (!isRoomOrLobbySession && this.ctx.session.sdkSessionId) {
+		// Add resume parameter if SDK session ID exists (session resumption)
+		if (this.ctx.session.sdkSessionId) {
 			result.resume = this.ctx.session.sdkSessionId;
 		}
 

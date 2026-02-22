@@ -1977,7 +1977,16 @@ describe('AgentSession', () => {
 			expect(
 				(mockDb as unknown as { updateSession: ReturnType<typeof mock> }).updateSession.mock
 					.calls[0]
-			).toEqual(['room:test', { workspacePath: '/new/workspace' }]);
+			).toEqual([
+				'room:test',
+				expect.objectContaining({
+					workspacePath: '/new/workspace',
+					sdkSessionId: undefined,
+					metadata: expect.objectContaining({
+						runtimeInitFingerprint: expect.any(String),
+					}),
+				}),
+			]);
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
 		});
 
@@ -2047,12 +2056,16 @@ describe('AgentSession', () => {
 					.calls[0]
 			).toEqual([
 				'room:test',
-				{
+				expect.objectContaining({
 					workspacePath: '/new/workspace',
 					type: 'room',
 					context: { roomId: 'test' },
 					worktree: undefined,
-				},
+					sdkSessionId: undefined,
+					metadata: expect.objectContaining({
+						runtimeInitFingerprint: expect.any(String),
+					}),
+				}),
 			]);
 			expect(agentSession.getSessionData().worktree).toBeUndefined();
 			expect(agentSession.getSessionData().workspacePath).toBe('/new/workspace');
