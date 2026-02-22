@@ -318,8 +318,13 @@ function GoalItem({
 					initialDescription={goal.description}
 					initialPriority={goal.priority}
 					onSubmit={async (data) => {
-						await onUpdate(data);
-						setIsEditing(false);
+						setIsUpdating(true);
+						try {
+							await onUpdate(data);
+							setIsEditing(false);
+						} finally {
+							setIsUpdating(false);
+						}
 					}}
 					onCancel={() => setIsEditing(false)}
 					isLoading={isUpdating}

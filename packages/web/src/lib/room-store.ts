@@ -554,6 +554,8 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.create', { ...goal, roomId });
+			// Refetch goals to ensure UI is up to date
+			await this.fetchGoals();
 		} catch (err) {
 			logger.error('Failed to create goal:', err);
 			throw err;
@@ -576,6 +578,8 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.update', { roomId, goalId, updates });
+			// Refetch goals to ensure UI is up to date
+			await this.fetchGoals();
 		} catch (err) {
 			logger.error('Failed to update goal:', err);
 			throw err;
@@ -598,6 +602,8 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.delete', { roomId, goalId });
+			// Refetch goals to ensure UI is up to date
+			await this.fetchGoals();
 		} catch (err) {
 			logger.error('Failed to delete goal:', err);
 			throw err;
@@ -673,6 +679,8 @@ class RoomStore {
 
 		try {
 			await hub.request('recurringJob.create', { ...params, roomId });
+			// Refetch jobs to ensure UI is up to date
+			await this.fetchRecurringJobs();
 		} catch (err) {
 			logger.error('Failed to create recurring job:', err);
 			throw err;
@@ -695,6 +703,8 @@ class RoomStore {
 
 		try {
 			await hub.request('recurringJob.update', { roomId, jobId, updates });
+			// Refetch jobs to ensure UI is up to date
+			await this.fetchRecurringJobs();
 		} catch (err) {
 			logger.error('Failed to update recurring job:', err);
 			throw err;
@@ -717,6 +727,8 @@ class RoomStore {
 
 		try {
 			await hub.request('recurringJob.delete', { roomId, jobId });
+			// Refetch jobs to ensure UI is up to date
+			await this.fetchRecurringJobs();
 		} catch (err) {
 			logger.error('Failed to delete recurring job:', err);
 			throw err;
@@ -765,6 +777,11 @@ class RoomStore {
 
 		try {
 			await hub.request('room.updateContext', { roomId, background, instructions });
+			// Fetch updated room data to ensure UI is up to date
+			const overview = await hub.request<RoomOverview>('room.get', { roomId });
+			if (overview) {
+				this.room.value = overview.room;
+			}
 		} catch (err) {
 			logger.error('Failed to update context:', err);
 			throw err;
@@ -925,6 +942,11 @@ class RoomStore {
 
 		try {
 			await hub.request('room.update', { roomId, ...params });
+			// Fetch updated room data to ensure UI is up to date
+			const overview = await hub.request<RoomOverview>('room.get', { roomId });
+			if (overview) {
+				this.room.value = overview.room;
+			}
 		} catch (err) {
 			logger.error('Failed to update room settings:', err);
 			throw err;
