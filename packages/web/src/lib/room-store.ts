@@ -478,6 +478,38 @@ class RoomStore {
 	}
 
 	// ========================================
+	// Session Methods
+	// ========================================
+
+	/**
+	 * Create a new session in the room
+	 */
+	async createSession(title?: string): Promise<string> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const room = this.room.value;
+		if (!room) {
+			throw new Error('Room not loaded');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		const { sessionId } = await hub.request<{ sessionId: string }>('session.create', {
+			roomId,
+			title,
+			workspacePath: room.defaultPath ?? room.allowedPaths[0]?.path,
+		});
+
+		return sessionId;
+	}
+
+	// ========================================
 	// Goals Methods
 	// ========================================
 
