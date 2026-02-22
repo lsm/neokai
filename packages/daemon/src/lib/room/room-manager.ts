@@ -217,23 +217,26 @@ export class RoomManager {
 		const context = room.contextId ? this.contextRepo.getContext(room.contextId) : null;
 
 		// Build session summaries from actual session data
-		const sessions = room.sessionIds.map((id) => {
-			const session = this.sessionRepo.getSession(id);
-			if (!session) {
+		// Filter out room_chat and room_self sessions (they're not counted as room sessions)
+		const sessions = room.sessionIds
+			.filter((id) => !id.startsWith('room:chat:') && !id.startsWith('room:self:'))
+			.map((id) => {
+				const session = this.sessionRepo.getSession(id);
+				if (!session) {
+					return {
+						id,
+						title: `Session ${id.slice(0, 8)}`,
+						status: 'ended' as const,
+						lastActiveAt: 0,
+					};
+				}
 				return {
-					id,
-					title: `Session ${id.slice(0, 8)}`,
-					status: 'ended' as const,
-					lastActiveAt: 0,
+					id: session.id,
+					title: session.title,
+					status: session.status,
+					lastActiveAt: new Date(session.lastActiveAt).getTime(),
 				};
-			}
-			return {
-				id: session.id,
-				title: session.title,
-				status: session.status,
-				lastActiveAt: new Date(session.lastActiveAt).getTime(),
-			};
-		});
+			});
 
 		return {
 			room,
