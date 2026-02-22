@@ -49,18 +49,28 @@ export type {
 
 /**
  * Session type for unified session architecture
- * - 'worker': Standard coding session
- * - 'room': Room-level agent session
+ * - 'worker': Standard coding session with full Claude Code system prompt
+ * - 'manager': Manager session in manager-worker pair (orchestrates worker)
+ * - 'room_chat': User-facing room chat interface (room:chat:${roomId})
+ * - 'room_self': Autonomous room orchestration (room:self:${roomId})
  * - 'lobby': Instance-level agent session
  */
-export type SessionType = 'worker' | 'room' | 'lobby';
+export type SessionType = 'worker' | 'manager' | 'room_chat' | 'room_self' | 'lobby';
 
 /**
  * Context for room/lobby sessions
+ *
+ * For room sessions, includes links between chat and self sessions:
+ * - room:chat:${roomId} has selfSessionId pointing to room:self:${roomId}
+ * - room:self:${roomId} has chatSessionId pointing to room:chat:${roomId}
  */
 export interface SessionContext {
 	roomId?: string;
 	lobbyId?: string;
+	/** Link to the paired room self session (for room_chat) */
+	selfSessionId?: string;
+	/** Link to the paired room chat session (for room_self) */
+	chatSessionId?: string;
 }
 
 /**
@@ -82,6 +92,7 @@ export interface SessionFeatures {
 
 /**
  * Default features for worker sessions (all enabled)
+ * Workers use full Claude Code system prompt for coding tasks
  */
 export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
 	rewind: true,
@@ -92,9 +103,22 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
 };
 
 /**
- * Default features for room sessions (all disabled)
+ * Default features for room chat sessions (all disabled)
+ * Room chat sessions do NOT use Claude Code system prompt - they are for user interaction
  */
-export const DEFAULT_ROOM_FEATURES: SessionFeatures = {
+export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
+/**
+ * Default features for room self sessions (all disabled)
+ * Room self sessions do NOT use Claude Code system prompt - they are for orchestration
+ */
+export const DEFAULT_ROOM_SELF_FEATURES: SessionFeatures = {
 	rewind: false,
 	worktree: false,
 	coordinator: false,
@@ -510,7 +534,7 @@ export interface SessionMetadata {
 	};
 	// Dual-session architecture fields
 	/** Type of session in dual-architecture context */
-	sessionType?: 'room' | 'manager' | 'worker' | 'standalone';
+	sessionType?: 'room_chat' | 'room_self' | 'manager' | 'worker' | 'lobby';
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */

@@ -89,6 +89,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 26: Add allowed_models column to rooms table
 	runMigration26(db);
+
+	// Migration 27: Rename session types for room architecture
+	// - 'room' → 'room_chat' (user-facing)
+	// - Add 'room_self' (autonomous orchestration)
+	// - Add 'manager' (manager in manager-worker pair)
+	runMigration27(db);
 }
 
 /**
@@ -1232,4 +1238,107 @@ function runMigration26(db: BunDatabase): void {
 	if (!tableHasColumn(db, 'rooms', 'allowed_models')) {
 		db.exec(`ALTER TABLE rooms ADD COLUMN allowed_models TEXT DEFAULT '[]'`);
 	}
+}
+
+/**
+ * Migration 27: Rename session types for room architecture and add manager type
+ *
+ * Changes:
+ * - 'room' → 'room_chat' (user-facing room chat interface)
+ * - Add 'room_self' (autonomous room orchestration)
+ * - Add 'manager' (manager in manager-worker pair)
+ *
+ * Also updates session_context to include links between chat and self sessions.
+ */
+function runMigration27(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
+
+	// Check if migration is already applied by looking for 'manager' type in the constraint
+	try {
+		const pragma = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{
+			name: string;
+			dflt_value: string | null;
+		}>;
+		const typeColumn = pragma.find((col) => col.name === 'type');
+		if (typeColumn?.dflt_value?.includes('manager')) {
+			// Migration already applied
+			return;
+		}
+	} catch {
+		// Table doesn't have expected structure, skip migration
+		return;
+	}
+
+	// SQLite doesn't support direct ALTER of CHECK constraint with DROP/ALTER
+	// We need to recreate the table with the new constraint
+
+	// 1. Create new table with updated CHECK constraint
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS sessions_new (
+		  id TEXT PRIMARY KEY,
+		  title TEXT NOT NULL,
+		  workspace_path TEXT NOT NULL,
+		  created_at TEXT NOT NULL,
+		  last_active_at TEXT NOT NULL,
+		  status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+		  config TEXT NOT NULL,
+		  metadata TEXT NOT NULL,
+		  is_worktree INTEGER DEFAULT 0,
+		  worktree_path TEXT,
+		  main_repo_path TEXT,
+		  worktree_branch TEXT,
+		  git_branch TEXT,
+		  sdk_session_id TEXT,
+		  available_commands TEXT,
+		  processing_state TEXT,
+		  archived_at TEXT,
+		  parent_id TEXT,
+		  labels TEXT,
+		  sub_session_order INTEGER DEFAULT 0,
+		  type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'manager', 'room_chat', 'room_self', 'lobby')),
+		  session_context TEXT
+		)
+	`);
+
+	// 2. Copy data, renaming 'room' → 'room_chat' and updating session_context
+	db.exec(`
+		INSERT INTO sessions_new (
+			id, title, workspace_path, created_at, last_active_at, status,
+			config, metadata, is_worktree, worktree_path, main_repo_path,
+			worktree_branch, git_branch, sdk_session_id, available_commands,
+			processing_state, archived_at, parent_id, labels, sub_session_order,
+			type, session_context
+		)
+		SELECT
+			id, title, workspace_path, created_at, last_active_at, status,
+			config, metadata, is_worktree, worktree_path, main_repo_path,
+			worktree_branch, git_branch, sdk_session_id, available_commands,
+			processing_state, archived_at, parent_id, labels, sub_session_order,
+			CASE
+				WHEN type = 'room' THEN 'room_chat'
+				ELSE type
+			END,
+			session_context
+		FROM sessions
+	`);
+
+	// 3. Drop old table and rename new table
+	db.exec(`DROP TABLE sessions`);
+	db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+
+	// 4. Recreate indexes
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_sessions_room
+			ON sessions(json_extract(session_context, '$.roomId'))
+			WHERE type = 'room_chat'
+	`);
+
+	db.exec(`
+		CREATE INDEX IF NOT EXISTS idx_sessions_lobby
+			ON sessions(json_extract(session_context, '$.lobbyId'))
+			WHERE type = 'lobby'
+	`);
 }

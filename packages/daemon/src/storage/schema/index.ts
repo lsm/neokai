@@ -43,7 +43,7 @@ export function createTables(db: BunDatabase): void {
         parent_id TEXT,
         labels TEXT,
         sub_session_order INTEGER DEFAULT 0,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'manager', 'room_chat', 'room_self', 'lobby')),
         session_context TEXT
       )
     `);

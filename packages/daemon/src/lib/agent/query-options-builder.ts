@@ -207,9 +207,9 @@ export class QueryOptionsBuilder {
 		};
 
 		// ============ Room Session Restrictions ============
-		// Room agents are orchestrators only — they must not have access to built-in
-		// file/shell tools or user-configured MCP servers (e.g. chrome-devtools).
-		if (this.ctx.session.type === 'room') {
+		// Room sessions (both chat and self) are orchestrators only — they must not
+		// have access to built-in file/shell tools or user-configured MCP servers.
+		if (this.ctx.session.type === 'room_chat' || this.ctx.session.type === 'room_self') {
 			const restrictedBuiltinTools = [
 				'Task',
 				'TaskOutput',

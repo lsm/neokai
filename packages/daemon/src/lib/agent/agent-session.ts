@@ -445,7 +445,14 @@ export class AgentSession
 
 		return {
 			id: init.sessionId,
-			title: type === 'room' ? 'Room Agent' : type === 'lobby' ? 'Lobby Agent' : 'New Session',
+			title:
+				type === 'room_chat'
+					? 'Room Chat'
+					: type === 'room_self'
+						? 'Room Self'
+						: type === 'lobby'
+							? 'Lobby Agent'
+							: 'New Session',
 			workspacePath: init.workspacePath,
 			createdAt: now,
 			lastActiveAt: now,

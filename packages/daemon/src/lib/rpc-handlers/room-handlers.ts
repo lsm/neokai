@@ -64,17 +64,18 @@ export function setupRoomHandlers(
 			defaultPath,
 		});
 
-		// Create a room chat session (sessionId = room:${roomId})
-		// This is a normal session but with room-specific tools, settings and prompts
+		// Create the room's user-facing chat session
+		// Session ID format: room:chat:${roomId}
+		// This is the interactive interface where users chat with the room
 		if (sessionManager) {
-			const roomChatSessionId = `room:${room.id}`;
+			const roomChatSessionId = `room:chat:${room.id}`;
 			try {
 				await sessionManager.createSession({
 					sessionId: roomChatSessionId,
 					title: room.name,
 					workspacePath: defaultPath ?? allowedPaths[0]?.path,
 					config: { model: room.defaultModel },
-					sessionType: 'room',
+					sessionType: 'room_chat',
 					roomId: room.id,
 				});
 			} catch {

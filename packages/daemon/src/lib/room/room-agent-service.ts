@@ -60,7 +60,7 @@ import type {
 	RoomGoal,
 	McpServerConfig,
 } from '@neokai/shared';
-import { DEFAULT_ROOM_FEATURES, buildRoomAgentSystemPrompt } from '@neokai/shared';
+import { DEFAULT_ROOM_SELF_FEATURES, buildRoomAgentSystemPrompt } from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('room-agent-service');
@@ -171,7 +171,9 @@ export class RoomAgentService {
 		config?: Partial<RoomAgentConfig>
 	) {
 		this.config = { ...DEFAULT_CONFIG, ...config };
-		this.sessionId = `room:${ctx.room.id}`;
+		// Room self session ID (autonomous orchestration)
+		// Session ID format: room:self:${roomId}
+		this.sessionId = `room:self:${ctx.room.id}`;
 
 		const rawDb = 'getDatabase' in ctx.db ? ctx.db.getDatabase() : ctx.db;
 		this.stateRepo = new RoomAgentStateRepository(rawDb);
@@ -213,9 +215,12 @@ export class RoomAgentService {
 				mcpServers: {
 					'room-agent-tools': this.roomMcpServer as unknown as McpServerConfig,
 				},
-				features: DEFAULT_ROOM_FEATURES,
-				context: { roomId: this.ctx.room.id },
-				type: 'room',
+				features: DEFAULT_ROOM_SELF_FEATURES,
+				context: {
+					roomId: this.ctx.room.id,
+					chatSessionId: `room:chat:${this.ctx.room.id}`, // Link to room chat session
+				},
+				type: 'room_self',
 				model: this.ctx.room.defaultModel ?? DEFAULT_MODEL,
 			};
 
@@ -284,7 +289,7 @@ export class RoomAgentService {
 	}
 
 	getFeatures(): SessionFeatures {
-		return DEFAULT_ROOM_FEATURES;
+		return DEFAULT_ROOM_SELF_FEATURES;
 	}
 
 	/**

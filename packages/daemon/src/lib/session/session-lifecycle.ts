@@ -35,11 +35,17 @@ export interface CreateSessionParams {
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
-	sessionId?: string; // Optional custom session ID (for room chat sessions)
+	sessionId?: string; // Optional custom session ID (for room chat/self sessions)
 	roomId?: string; // Optional room ID to assign session to
+	lobbyId?: string; // Optional lobby ID to assign session to
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
-	// Dual-session architecture
-	sessionType?: 'room' | 'manager' | 'worker' | 'standalone';
+	// Dual-session architecture: session types
+	// - 'worker': Standard coding session with Claude Code system prompt
+	// - 'manager': Manager session in manager-worker pair (orchestrates worker)
+	// - 'room_chat': User-facing room chat interface (room:chat:${roomId})
+	// - 'room_self': Autonomous room orchestration (room:self:${roomId})
+	// - 'lobby': Instance-level agent session
+	sessionType?: 'room_chat' | 'room_self' | 'manager' | 'worker' | 'lobby';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -150,6 +156,8 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
+			// Session type: defaults to 'worker', can be set to 'manager', 'room_chat', 'room_self', or 'lobby'
+			type: params.sessionType ?? 'worker',
 			config: {
 				model: modelId, // Use validated model ID
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
@@ -197,6 +205,14 @@ export class SessionLifecycle {
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
+			// Context for room/lobby sessions (includes links between chat and self sessions)
+			context:
+				params.roomId || params.lobbyId
+					? {
+							...(params.roomId && { roomId: params.roomId }),
+							...(params.lobbyId && { lobbyId: params.lobbyId }),
+						}
+					: undefined,
 		};
 
 		// Save to database
