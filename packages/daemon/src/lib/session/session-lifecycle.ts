@@ -45,7 +45,7 @@ export interface CreateSessionParams {
 	// - 'room_chat': User-facing room chat interface (room:chat:${roomId})
 	// - 'room_self': Autonomous room orchestration (room:self:${roomId})
 	// - 'lobby': Instance-level agent session
-	sessionType?: 'room_chat' | 'room_self' | 'manager' | 'worker' | 'lobby';
+	sessionType?: 'room_chat' | 'room_self' | 'worker' | 'lobby'; // MANAGER REMOVAL v1.0: 'manager' removed
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -156,7 +156,8 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'manager', 'room_chat', 'room_self', or 'lobby'
+			// Session type: defaults to 'worker', can be set to 'room_chat', 'room_self', or 'lobby'
+			// MANAGER REMOVAL (v1.0): 'manager' type removed
 			type: params.sessionType ?? 'worker',
 			config: {
 				model: modelId, // Use validated model ID

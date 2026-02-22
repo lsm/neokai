@@ -252,7 +252,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		count: number;
 	};
 
-	// Session pair events (for manager-worker coordination)
+	// Session pair events (for manager-worker coordination) - DEPRECATED
 	'pair.task_completed': {
 		sessionId: string;
 		pairId: string;
@@ -260,6 +260,30 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		summary: string;
 		filesChanged?: string[];
 		nextSteps?: string[];
+	};
+
+	// Worker events (Manager-less Architecture v1.0)
+	'worker.started': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+	};
+	'worker.task_completed': {
+		sessionId: string;
+		taskId: string;
+		summary: string;
+		filesChanged?: string[];
+		nextSteps?: string[];
+	};
+	'worker.review_requested': {
+		sessionId: string;
+		taskId: string;
+		reason: string;
+	};
+	'worker.failed': {
+		sessionId: string;
+		taskId: string;
+		error: string;
 	};
 
 	// Lobby events (for lobby manager chat)
@@ -509,6 +533,28 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string;
 		roomId: string;
 		templateId: string;
+	};
+
+	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)
+	'featureFlag.updated': {
+		sessionId: string;
+		flagName: string;
+		updates: { enabled?: boolean; rolloutPercentage?: number };
+	};
+	'featureFlag.rolloutChanged': {
+		sessionId: string;
+		flagName: string;
+		percentage: number;
+	};
+	'featureFlag.roomWhitelisted': {
+		sessionId: string;
+		flagName: string;
+		roomId: string;
+	};
+	'featureFlag.roomBlacklisted': {
+		sessionId: string;
+		flagName: string;
+		roomId: string;
 	};
 }
 
