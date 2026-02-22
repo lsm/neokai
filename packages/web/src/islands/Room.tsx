@@ -275,10 +275,12 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 				)}
 			</div>
 
-			{/* Room Chat Panel - uses unified session architecture */}
-			<div class="w-96 border-l border-dark-700 flex flex-col bg-dark-950">
-				<ChatContainer sessionId={`room:${roomId}`} />
-			</div>
+			{/* Room Chat Panel - only show when NOT viewing a session within the room */}
+			{!sessionViewId && (
+				<div class="w-96 border-l border-dark-700 flex flex-col bg-dark-950">
+					<ChatContainer sessionId={`room:${roomId}`} />
+				</div>
+			)}
 		</div>
 	);
 }

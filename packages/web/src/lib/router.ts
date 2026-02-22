@@ -192,6 +192,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		return;
 	}
@@ -207,8 +208,9 @@ export function navigateToRoom(roomId: string, replace = false): void {
 			targetPath
 		);
 
-		// Update the signals - room takes priority, clear session
+		// Update the signals - room takes priority, clear session and room session
 		currentRoomIdSignal.value = roomId;
+		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} finally {

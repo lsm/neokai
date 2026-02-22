@@ -14,6 +14,7 @@ import { useMemo } from 'preact/hooks';
 import type { RoomAgentLifecycleState } from '@neokai/shared';
 import { roomStore } from '../lib/room-store';
 import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
+import { currentRoomSessionIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
 const STATE_COLORS: Record<RoomAgentLifecycleState, { dot: string; text: string }> = {
@@ -78,6 +79,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	const stateLabel = STATE_LABELS[lifecycleState];
 
 	const handleRoomAgentClick = () => {
+		// Navigate to room without a session selected (shows dashboard + room chat)
 		navigateToRoom(roomId);
 		onNavigate?.();
 	};
@@ -88,6 +90,10 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 	};
 
 	const hasTasks = pendingCount > 0 || activeCount > 0 || doneCount > 0;
+
+	// Check if currently viewing the dashboard (no session selected) or a specific session
+	const selectedSessionId = currentRoomSessionIdSignal.value;
+	const isDashboardSelected = selectedSessionId === null;
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
@@ -169,10 +175,13 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 
 			{/* Sessions */}
 			<div class="flex-1 overflow-y-auto">
-				{/* Pinned: Room Agent session */}
+				{/* Pinned: Room Dashboard */}
 				<button
 					onClick={handleRoomAgentClick}
-					class="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-dark-800 transition-colors border-b border-dark-700/40"
+					class={cn(
+						'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors border-b border-dark-700/40',
+						isDashboardSelected ? 'bg-dark-700' : 'hover:bg-dark-800'
+					)}
 				>
 					<div class="w-6 h-6 flex-shrink-0 flex items-center justify-center bg-blue-900/40 rounded">
 						<svg
@@ -185,11 +194,11 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 								stroke-linecap="round"
 								stroke-linejoin="round"
 								stroke-width={2}
-								d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+								d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"
 							/>
 						</svg>
 					</div>
-					<span class="flex-1 text-sm text-gray-200 text-left truncate">Room Agent</span>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">Room Dashboard</span>
 					<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
 				</button>
 
@@ -203,7 +212,10 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 						<button
 							key={session.id}
 							onClick={() => handleSessionClick(session.id)}
-							class="w-full px-3 py-2.5 flex items-center gap-2.5 hover:bg-dark-800 transition-colors"
+							class={cn(
+								'w-full px-3 py-2.5 flex items-center gap-2.5 transition-colors',
+								selectedSessionId === session.id ? 'bg-dark-700' : 'hover:bg-dark-800'
+							)}
 						>
 							<StatusDot status={session.status} />
 							<span class="flex-1 text-sm text-gray-300 truncate text-left">
