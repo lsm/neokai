@@ -1,16 +1,21 @@
 /**
  * WorkerManager - Direct worker session creation and lifecycle
  *
- * Replaces SessionPairManager with simpler worker-only approach.
- * Room agents create workers directly; workers signal completion back.
+ * PHASE 4-5: Replaces SessionPairManager with simpler worker-only approach.
+ * Room agents (both room:chat and room:self) create workers directly; workers signal completion back.
  *
- * This class is used by both room:chat and room:self agents.
+ * This unified approach ensures:
+ * - room:chat users can manually spawn workers via room agent tools
+ * - room:self agents automatically spawn workers for task execution
+ * - Both modes use the same WorkerManager interface
+ * - Workers have direct access to worker_complete_task and worker_request_review tools
  *
  * Key responsibilities:
  * - Spawn worker sessions for tasks
  * - Create worker-tools MCP server for each worker
  * - Track worker session status
  * - Handle task completion events
+ * - Support both room:chat and room:self spawning
  *
  * CRITICAL FIXES APPLIED (v1.0):
  * - FIX 2: Uses mode-agnostic roomSessionId (supports both room:chat and room:self)
