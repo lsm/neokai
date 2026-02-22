@@ -37,9 +37,14 @@ export interface FeatureFlag {
  */
 export const FeatureFlags = {
 	/**
-	 * Manager-less Architecture: Use direct worker orchestration
-	 * - false: Use SessionPairManager (manager-worker pairs)
-	 * - true: Use WorkerManager (worker-only)
+	 * Manager-less Architecture: Direct worker orchestration (PHASE 6 COMPLETE)
+	 *
+	 * Manager-worker pairs have been removed. WorkerManager is now the only mode.
+	 * This flag is kept for historical reference but is always enabled.
+	 *
+	 * Previous behavior:
+	 * - false: Use SessionPairManager (manager-worker pairs) [REMOVED]
+	 * - true: Use WorkerManager (worker-only) [CURRENT]
 	 */
 	WORKER_ONLY_ORCHESTRATION: 'worker_only_orchestration',
 
@@ -49,7 +54,10 @@ export const FeatureFlags = {
 	ENHANCED_WORKER_TELEMETRY: 'enhanced_worker_telemetry',
 
 	/**
-	 * Enable room:chat agent to use worker orchestration
+	 * Enable room:chat agent to use worker orchestration (PHASE 5 COMPLETE)
+	 *
+	 * Both room:chat and room:self now use the same WorkerManager orchestration.
+	 * This flag is kept for historical reference but is always enabled.
 	 */
 	ROOM_CHAT_WORKER_SPAWNING: 'room_chat_worker_spawning',
 } as const;
@@ -71,15 +79,16 @@ export class FeatureFlagService {
 	 * Initialize default feature flags
 	 */
 	private initializeFlags(): void {
-		// Worker-only orchestration - OFF by default, gradual rollout
+		// PHASE 6: Worker-only orchestration - Now the default (manager removed)
 		this.flags.set(FeatureFlags.WORKER_ONLY_ORCHESTRATION, {
 			name: FeatureFlags.WORKER_ONLY_ORCHESTRATION,
-			description: 'Use direct worker orchestration instead of manager-worker pairs',
-			enabled: false,
-			rolloutPercentage: 0, // Start at 0%, increase gradually
+			description:
+				'Use direct worker orchestration (PHASE 6: Manager removed, this is now the only mode)',
+			enabled: true, // PHASE 6: Always enabled
+			rolloutPercentage: 100, // PHASE 6: Fully rolled out
 			whitelistedRooms: new Set(),
 			blacklistedRooms: new Set(),
-			type: 'rollout',
+			type: 'boolean', // PHASE 6: Changed from 'rollout' to 'boolean'
 		});
 
 		// Enhanced telemetry - ON by default for data collection
@@ -93,15 +102,16 @@ export class FeatureFlagService {
 			type: 'boolean',
 		});
 
-		// Room:chat worker spawning - OFF by default
+		// Room:chat worker spawning - Now always enabled (PHASE 5: Unified architecture)
 		this.flags.set(FeatureFlags.ROOM_CHAT_WORKER_SPAWNING, {
 			name: FeatureFlags.ROOM_CHAT_WORKER_SPAWNING,
-			description: 'Enable room:chat agent to spawn workers directly',
-			enabled: false,
-			rolloutPercentage: 0,
+			description:
+				'Enable room:chat to spawn workers directly (PHASE 5: Both room modes use same orchestration)',
+			enabled: true, // PHASE 5: Always enabled after unification
+			rolloutPercentage: 100,
 			whitelistedRooms: new Set(),
 			blacklistedRooms: new Set(),
-			type: 'rollout',
+			type: 'boolean', // PHASE 5: Changed from 'rollout' to 'boolean'
 		});
 	}
 

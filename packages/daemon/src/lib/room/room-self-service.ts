@@ -744,7 +744,7 @@ export class RoomSelfService {
 
 			// Track worker session ID in room agent state
 			if (this.lifecycleManager) {
-				this.lifecycleManager.addActiveSessionPair(workerSessionId);
+				this.lifecycleManager.addActiveWorkerSession(workerSessionId);
 				this.state = this.lifecycleManager.getState();
 			} else {
 				this.state =
@@ -769,7 +769,7 @@ export class RoomSelfService {
 		const worker = this.ctx.workerManager.getWorkerByTask(taskId);
 		if (worker) {
 			if (this.lifecycleManager) {
-				this.lifecycleManager.removeActiveSessionPair(worker.sessionId);
+				this.lifecycleManager.removeActiveWorkerSession(worker.sessionId);
 				this.state = this.lifecycleManager.getState();
 			} else {
 				this.state =

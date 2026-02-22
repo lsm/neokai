@@ -429,17 +429,17 @@ export class RoomSelfLifecycleManager {
 	}
 
 	/**
-	 * Add an active session pair
+	 * Add an active worker session (PHASE 6: renamed from addActiveSessionPair)
 	 */
-	addActiveSessionPair(pairId: string): void {
-		this.currentState = this.stateRepository.addActiveSessionPair(this.roomId, pairId);
+	addActiveWorkerSession(workerSessionId: string): void {
+		this.currentState = this.stateRepository.addActiveSessionPair(this.roomId, workerSessionId);
 	}
 
 	/**
-	 * Remove an active session pair
+	 * Remove an active worker session (PHASE 6: renamed from removeActiveSessionPair)
 	 */
-	removeActiveSessionPair(pairId: string): void {
-		this.currentState = this.stateRepository.removeActiveSessionPair(this.roomId, pairId);
+	removeActiveWorkerSession(workerSessionId: string): void {
+		this.currentState = this.stateRepository.removeActiveSessionPair(this.roomId, workerSessionId);
 	}
 
 	/**
