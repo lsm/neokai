@@ -215,6 +215,11 @@ export class RoomSelfService {
 	}
 
 	async start(): Promise<void> {
+		if (this.agentSession) {
+			log.warn('start() called while agent session already exists; ignoring (call stop() first)');
+			return;
+		}
+
 		log.info(`Starting room agent for room: ${this.ctx.room.name} (${this.ctx.room.id})`);
 
 		this.lifecycleManager = new RoomSelfLifecycleManager(
@@ -301,7 +306,7 @@ export class RoomSelfService {
 			});
 		}, 0);
 
-		if (this.state.lifecycleState === 'error') {
+		if (this.state.lifecycleState === 'error' || this.state.lifecycleState === 'paused') {
 			await this.transitionTo('idle', 'Agent restarted');
 		}
 
@@ -1560,10 +1565,42 @@ export class RoomSelfService {
 				log.info(`Task cancelled: ${params.taskId}`);
 			},
 			onArchiveSession: async (params) => {
+				// SECURITY: Verify the session belongs to this room before archiving
+				const workerForArchive = this.ctx.workerManager?.getWorkerBySessionId(params.sessionId);
+				if (workerForArchive) {
+					if (workerForArchive.roomId !== this.ctx.room.id) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				} else {
+					const room = this.ctx.roomManager.getRoom(this.ctx.room.id);
+					if (!room || !room.sessionIds.includes(params.sessionId)) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				}
 				await this.archiveSession(params.sessionId);
 				log.info(`Session archived: ${params.sessionId}`);
 			},
 			onInterruptSession: async (params) => {
+				// SECURITY: Verify the session belongs to this room before interrupting
+				const workerForInterrupt = this.ctx.workerManager?.getWorkerBySessionId(params.sessionId);
+				if (workerForInterrupt) {
+					if (workerForInterrupt.roomId !== this.ctx.room.id) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				} else {
+					const room = this.ctx.roomManager.getRoom(this.ctx.room.id);
+					if (!room || !room.sessionIds.includes(params.sessionId)) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				}
 				// Use messageHub to call client.interrupt RPC
 				await this.ctx.messageHub.request('client.interrupt', {
 					sessionId: params.sessionId,

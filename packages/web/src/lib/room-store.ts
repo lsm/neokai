@@ -397,6 +397,7 @@ class RoomStore {
 				roomId: string;
 				sessionId: string;
 				taskId: string;
+				escalationId: string;
 				reason: string;
 			}>('roomAgent.escalated', (event) => {
 				if (event.roomId === roomId) {
@@ -404,6 +405,7 @@ class RoomStore {
 					this.waitingContext.value = {
 						type: 'escalation',
 						taskId: event.taskId,
+						escalationId: event.escalationId,
 						reason: event.reason,
 						since: Date.now(),
 					};

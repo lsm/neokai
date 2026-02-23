@@ -40,7 +40,7 @@ const VALID_TRANSITIONS: Record<RoomSelfLifecycleState, Set<RoomSelfLifecycleSta
 	planning: new Set(['executing', 'idle', 'waiting', 'error', 'paused']),
 	executing: new Set(['reviewing', 'idle', 'waiting', 'error', 'paused']),
 	waiting: new Set(['planning', 'error', 'paused']),
-	reviewing: new Set(['planning', 'idle', 'error', 'paused']),
+	reviewing: new Set(['planning', 'idle', 'waiting', 'error', 'paused']),
 	error: new Set(['idle', 'paused']),
 	paused: new Set(['idle']),
 };
