@@ -227,7 +227,7 @@ export class RoomSelfManager {
 		const { setRoomMcpServer } = require('./room-handlers');
 		setRoomMcpServer(roomId, mcpServer);
 
-		const sessionId = `room:${roomId}`;
+		const sessionId = `room:chat:${roomId}`;
 
 		// Get the session from the database
 		const session = this.deps.db.getSession(sessionId);
