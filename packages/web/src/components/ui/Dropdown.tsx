@@ -199,6 +199,8 @@ export function Dropdown({
 					(menuItems[currentIndex] as HTMLElement).focus();
 					break;
 				case 'Enter':
+				case 'Space':
+				case 'Spacebar':
 				case ' ':
 					event.preventDefault();
 					(menuItems[currentIndex] as HTMLElement).click();
@@ -256,6 +258,19 @@ export function Dropdown({
 										key={index}
 										role="menuitem"
 										disabled={menuItem.disabled}
+										onKeyDown={(e) => {
+											if (menuItem.disabled) return;
+											if (
+												e.key === 'Enter' ||
+												e.key === ' ' ||
+												e.key === 'Space' ||
+												e.key === 'Spacebar'
+											) {
+												e.preventDefault();
+												e.stopPropagation();
+												(e.currentTarget as HTMLButtonElement).click();
+											}
+										}}
 										onClick={async (e) => {
 											if (!menuItem.disabled) {
 												// Stop propagation to prevent handleClickOutside from closing dropdown prematurely
