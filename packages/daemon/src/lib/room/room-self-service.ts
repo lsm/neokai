@@ -258,6 +258,10 @@ export class RoomSelfService {
 			// messageGenerator is iterating the queue.
 			await this.agentSession.startStreamingQuery();
 
+			// Assign the room:self session to the room for proper tracking
+			// This ensures room.sessionIds includes the self session for cleanup
+			this.ctx.roomManager.assignSession(this.ctx.room.id, this.sessionId);
+
 			log.info('Room agent session started with AgentSession');
 		} else {
 			// agentSession should always be created in modern mode
@@ -288,6 +292,8 @@ export class RoomSelfService {
 			// Stop the SDK query loop cleanly before releasing the session
 			this.agentSession.messageQueue.clear();
 			this.agentSession.messageQueue.stop();
+			// Clean up event subscriptions and resources
+			await this.agentSession.cleanup();
 			this.agentSession = null;
 		}
 
@@ -579,24 +585,24 @@ export class RoomSelfService {
 		log.info(`Room agent transitioning: ${previousState} -> ${newState}`, { reason });
 
 		if (this.lifecycleManager) {
+			// Lifecycle manager handles both state persistence AND event emission
+			// No need to emit again here - that would be a duplicate
 			const result = await this.lifecycleManager.transitionTo(newState, reason);
 			if (result) {
 				this.state = result;
 			}
 		} else {
+			// Legacy path without lifecycle manager - emit event here
 			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
+
+			await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
+				sessionId: this.sessionId,
+				roomId: this.ctx.room.id,
+				previousState,
+				newState,
+				reason,
+			});
 		}
-
-		// Note: lifecycleState is now a getter that reads from this.state.lifecycleState
-		// so no explicit assignment needed here
-
-		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-			sessionId: this.sessionId,
-			roomId: this.ctx.room.id,
-			previousState,
-			newState,
-			reason,
-		});
 	}
 
 	private async setLifecycleState(state: RoomSelfLifecycleState): Promise<void> {
@@ -1334,10 +1340,15 @@ export class RoomSelfService {
 					throw new Error(`Task not found: ${params.taskId}`);
 				}
 
-				// Check if task already has a worker
-				const existingWorker = this.ctx.workerManager.getWorkerByTask(params.taskId);
+				// SECURITY: Validate task belongs to this room
+				if (task.roomId !== this.ctx.room.id) {
+					throw new Error(`Task ${params.taskId} does not belong to this room`);
+				}
+
+				// Check if task already has an ACTIVE worker (not completed/failed)
+				const existingWorker = this.ctx.workerManager.getActiveWorkerByTask(params.taskId);
 				if (existingWorker) {
-					log.info(`Task ${params.taskId} already has a worker, reusing it`);
+					log.info(`Task ${params.taskId} already has an active worker, reusing it`);
 					// TODO: Wake up stuck worker session
 					return { workerSessionId: existingWorker.sessionId };
 				}
@@ -1366,7 +1377,7 @@ export class RoomSelfService {
 					roomId: this.ctx.room.id,
 					taskId,
 					reason,
-				} as unknown as Parameters<typeof this.ctx.daemonHub.emit>[1]);
+				});
 				log.info(`Review requested for task ${taskId}: ${reason}`);
 			},
 			onEscalate: async (taskId: string, reason: string) => {

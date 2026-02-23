@@ -421,6 +421,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		hasPendingTasks: boolean;
 		hasIncompleteGoals: boolean;
 	};
+	'roomAgent.reviewRequested': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+		reason: string;
+	};
 	'roomAgent.reviewReceived': {
 		sessionId: string;
 		roomId: string;

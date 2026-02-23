@@ -84,6 +84,19 @@ export class WorkerSessionRepository {
 	}
 
 	/**
+	 * Get an active worker session by task ID (not completed/failed)
+	 * Returns null if no active worker exists for the task
+	 */
+	getActiveWorkerByTask(taskId: string): WorkerSession | null {
+		const stmt = this.db.prepare(`
+			SELECT * FROM worker_sessions
+			WHERE task_id = ? AND status IN ('starting', 'running', 'waiting_for_review')
+		`);
+		const row = stmt.get(taskId) as Record<string, unknown> | undefined;
+		return row ? this.rowToWorker(row) : null;
+	}
+
+	/**
 	 * Get all worker sessions for a room
 	 */
 	getWorkersByRoom(roomId: string): WorkerSession[] {

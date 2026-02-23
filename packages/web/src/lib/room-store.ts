@@ -53,14 +53,6 @@ interface GoalEventPayload {
 }
 
 /**
- * Event payload for goal deletion
- */
-interface GoalDeletedEventPayload {
-	roomId: string;
-	goalId: string;
-}
-
-/**
  * Event payload for recurring job events
  */
 interface RecurringJobEventPayload {
@@ -282,15 +274,32 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
 
-			// 3. Goal events
-			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('room.goalCreated', (event) => {
+			// 3. Goal events (daemon emits goal.created, goal.updated, goal.completed)
+			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('goal.created', (event) => {
 				if (event.roomId === roomId) {
 					this.goals.value = [...this.goals.value, event.goal];
 				}
 			});
 			this.cleanupFunctions.push(unsubGoalCreated);
 
-			const unsubGoalUpdated = hub.onEvent<GoalEventPayload>('room.goalUpdated', (event) => {
+			const unsubGoalUpdated = hub.onEvent<GoalEventPayload>('goal.updated', (event) => {
+				if (event.roomId === roomId) {
+					// goal.updated may have partial goal data
+					if (event.goal) {
+						const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
+						if (idx >= 0) {
+							this.goals.value = [
+								...this.goals.value.slice(0, idx),
+								{ ...this.goals.value[idx], ...event.goal },
+								...this.goals.value.slice(idx + 1),
+							];
+						}
+					}
+				}
+			});
+			this.cleanupFunctions.push(unsubGoalUpdated);
+
+			const unsubGoalCompleted = hub.onEvent<GoalEventPayload>('goal.completed', (event) => {
 				if (event.roomId === roomId) {
 					const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
 					if (idx >= 0) {
@@ -302,14 +311,7 @@ class RoomStore {
 					}
 				}
 			});
-			this.cleanupFunctions.push(unsubGoalUpdated);
-
-			const unsubGoalDeleted = hub.onEvent<GoalDeletedEventPayload>('room.goalDeleted', (event) => {
-				if (event.roomId === roomId) {
-					this.goals.value = this.goals.value.filter((g) => g.id !== event.goalId);
-				}
-			});
-			this.cleanupFunctions.push(unsubGoalDeleted);
+			this.cleanupFunctions.push(unsubGoalCompleted);
 
 			// 4. Recurring job events
 			const unsubJobCreated = hub.onEvent<RecurringJobEventPayload>(

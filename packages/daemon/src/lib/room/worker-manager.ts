@@ -157,6 +157,9 @@ export class WorkerManager {
 			// Start streaming query
 			await agentSession.startStreamingQuery();
 
+			// Update worker status to 'running' after successful query start
+			this.workerSessionRepo.updateWorkerStatusBySessionId(workerSessionId, 'running');
+
 			// Send initial task prompt
 			const workerPrompt = this.buildWorkerPrompt(taskTitle, taskDescription);
 			await agentSession.messageQueue.enqueue(workerPrompt, true);
@@ -177,6 +180,14 @@ export class WorkerManager {
 	 */
 	getWorkerByTask(taskId: string): WorkerSession | null {
 		return this.workerSessionRepo.getWorkerByTask(taskId);
+	}
+
+	/**
+	 * Get active worker session by task ID (not completed/failed)
+	 * Use this to check if a task already has an active worker before spawning
+	 */
+	getActiveWorkerByTask(taskId: string): WorkerSession | null {
+		return this.workerSessionRepo.getActiveWorkerByTask(taskId);
 	}
 
 	/**

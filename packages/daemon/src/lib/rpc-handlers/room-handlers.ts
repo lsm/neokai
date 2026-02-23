@@ -70,8 +70,9 @@ export function getOrCreateRoomMcpServer(
 			sessionId: `room:mcp:${roomId}`, // Internal MCP session ID
 			onCompleteGoal: async (params) => {
 				// Room self session will handle this
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { status: 'completed' });
 				}
 			},
@@ -97,8 +98,9 @@ export function getOrCreateRoomMcpServer(
 				// This is handled by the room self session
 			},
 			onUpdateGoalProgress: async (params) => {
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { progress: params.progress });
 				}
 			},
@@ -185,13 +187,18 @@ export function getRoomMcpServer(
  * @param roomId - Room ID
  * @param db - Database instance
  * @param workerManager - WorkerManager for spawning workers (PHASE 5)
+ * @param daemonHub - DaemonHub for event emission
+ * @param messageHub - MessageHub for RPC calls (optional, enables session management tools)
+ * @param roomManager - RoomManager for session listing (optional, enables onListSessions)
  * @returns The MCP server instance
  */
 export function createOrUpdateRoomMcpServer(
 	roomId: string,
 	db: Database,
 	workerManager?: WorkerManager,
-	daemonHub?: DaemonHub
+	daemonHub?: DaemonHub,
+	messageHub?: MessageHub,
+	roomManager?: RoomManager
 ): ReturnType<typeof createRoomAgentMcpServer> {
 	let server = roomMcpServerRegistry.get(roomId);
 	if (!server) {
@@ -212,8 +219,9 @@ export function createOrUpdateRoomMcpServer(
 			sessionId: `room:mcp:${roomId}`, // Internal MCP session ID
 			onCompleteGoal: async (params) => {
 				// Room self session will handle this
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { status: 'completed' });
 				}
 			},
@@ -237,9 +245,13 @@ export function createOrUpdateRoomMcpServer(
 					if (!task) {
 						throw new Error(`Task not found: ${params.taskId}`);
 					}
+					// SECURITY: Validate task belongs to this room before spawning worker
+					if (task.roomId !== roomId) {
+						throw new Error(`Task ${params.taskId} does not belong to room ${roomId}`);
+					}
 					const workerSessionId = await workerManager.spawnWorker({
 						roomId,
-						roomSessionId: `room:${roomId}`, // room:chat session
+						roomSessionId: `room:chat:${roomId}`, // Actual room:chat session ID (FK valid)
 						roomSessionType: 'room_chat',
 						taskId: params.taskId,
 						taskTitle: task.title,
@@ -258,7 +270,7 @@ export function createOrUpdateRoomMcpServer(
 						roomId,
 						taskId,
 						reason,
-					} as unknown as Parameters<typeof daemonHub.emit>[1]);
+					});
 				}
 			},
 			onEscalate: async (taskId, reason) => {
@@ -275,8 +287,9 @@ export function createOrUpdateRoomMcpServer(
 				}
 			},
 			onUpdateGoalProgress: async (params) => {
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { progress: params.progress });
 				}
 			},
@@ -343,6 +356,66 @@ export function createOrUpdateRoomMcpServer(
 						})
 					);
 			},
+			// Session management tools (optional - require messageHub)
+			onCancelTask: messageHub
+				? async (params) => {
+						// SECURITY: Validate task belongs to this room before cancellation
+						const task = taskRepo.getTask(params.taskId);
+						if (!task) {
+							throw new Error(`Task not found: ${params.taskId}`);
+						}
+						if (task.roomId !== roomId) {
+							throw new Error(`Task ${params.taskId} does not belong to room ${roomId}`);
+						}
+						taskRepo.updateTask(params.taskId, { status: 'cancelled', error: params.reason });
+						// Archive associated worker session if exists
+						if (workerManager) {
+							const worker = workerManager.getWorkerByTask(params.taskId);
+							if (worker) {
+								await messageHub.request('session.archive', {
+									sessionId: worker.sessionId,
+									confirmed: true,
+								});
+							}
+						}
+					}
+				: undefined,
+			onArchiveSession: messageHub
+				? async (params) => {
+						await messageHub.request('session.archive', {
+							sessionId: params.sessionId,
+							confirmed: true,
+						});
+					}
+				: undefined,
+			onInterruptSession: messageHub
+				? async (params) => {
+						await messageHub.request('client.interrupt', {
+							sessionId: params.sessionId,
+						});
+					}
+				: undefined,
+			onListSessions: roomManager
+				? async (_params) => {
+						const room = roomManager.getRoom(roomId);
+						if (!room) return [];
+						const workers = workerManager?.getWorkersByRoom(roomId) ?? [];
+						const allSessionIds = new Set(room.sessionIds);
+						for (const worker of workers) {
+							allSessionIds.add(worker.sessionId);
+						}
+						return Array.from(allSessionIds).map((sessionId) => {
+							const worker = workers.find((w) => w.sessionId === sessionId);
+							return {
+								id: sessionId,
+								title: sessionId.slice(0, 8),
+								status: 'active',
+								sessionType: worker ? 'worker' : undefined,
+								currentTaskId: worker?.taskId,
+							};
+						});
+					}
+				: undefined,
 		});
 		roomMcpServerRegistry.set(roomId, server);
 	}
@@ -404,7 +477,14 @@ export function setupRoomHandlers(
 				// Create the MCP server for this room with WorkerManager support (PHASE 5)
 				// This is shared by room chat and room self sessions
 				if (db) {
-					createOrUpdateRoomMcpServer(room.id, db, workerManager, daemonHub);
+					createOrUpdateRoomMcpServer(
+						room.id,
+						db,
+						workerManager,
+						daemonHub,
+						messageHub,
+						roomManager
+					);
 				}
 
 				await sessionManager.createSession({
@@ -424,6 +504,10 @@ export function setupRoomHandlers(
 					sessionType: 'room_chat',
 					roomId: room.id,
 				});
+
+				// Explicitly assign the room chat session to the room
+				// This ensures room.sessionIds includes the chat session
+				roomManager.assignSession(room.id, roomChatSessionId);
 			} catch {
 				// Error creating room chat session - non-critical, continue without failing room creation
 			}
@@ -807,4 +891,16 @@ export function setupRoomHandlers(
 	// - room.getPairs (use worker_sessions table via WorkerManager)
 	// - room.getPair (use WorkerManager.getWorkerByTask or getWorkerBySessionId)
 	// - room.archivePair (use session.archive RPC for worker sessions)
+
+	// REHYDRATION: Create MCP servers for all existing rooms on daemon restart
+	// This ensures room:chat sessions can use room-agent-tools after restart
+	if (db) {
+		const rooms = roomManager.listRooms();
+		for (const room of rooms) {
+			// Only create if not already in registry (idempotent)
+			if (!roomMcpServerRegistry.has(room.id)) {
+				createOrUpdateRoomMcpServer(room.id, db, workerManager, daemonHub, messageHub, roomManager);
+			}
+		}
+	}
 }
