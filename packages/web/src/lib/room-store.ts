@@ -299,6 +299,8 @@ class RoomStore {
 						} else if (event.goalId) {
 							// goal.updated with no goal object signals deletion
 							this.goals.value = this.goals.value.filter((g) => g.id !== event.goalId);
+						} else {
+							logger.warn('goal.updated received with neither goal nor goalId', event);
 						}
 					}
 				}
