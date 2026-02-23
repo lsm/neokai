@@ -1083,10 +1083,12 @@ export class RoomSelfService {
 					if (input.type === 'review_response') {
 						this.updateWaitingContext(null);
 						await this.setLifecycleState('planning');
-						await this.enqueueAgentMessage(
-							`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
-							'human_input:review_response'
-						);
+						const ri = input as { response: string; approved: boolean };
+						const verdict = ri.approved ? 'APPROVED' : 'REJECTED';
+						const reviewMsg = ri.response
+							? `Review ${verdict}: ${ri.response}`
+							: `Review ${verdict}`;
+						await this.enqueueAgentMessage(reviewMsg, 'human_input:review_response');
 					} else if (input.type === 'escalation_response') {
 						// Handle escalation response in agentSession path
 						const escalationInput = input as { escalationId: string; response: string };
@@ -1643,9 +1645,13 @@ export class RoomSelfService {
 			onFinishReview: async (hasMoreWork: boolean) => {
 				const lifecycleManager = this.requireLifecycleManager();
 				const result = await lifecycleManager.completeReviewing(hasMoreWork);
-				if (result) {
-					this.state = result;
+				if (!result) {
+					const current = lifecycleManager.getLifecycleState();
+					throw new Error(
+						`room_finish_review failed: not in reviewing state (current: ${current})`
+					);
 				}
+				this.state = result;
 				log.info(`Review complete (hasMoreWork: ${hasMoreWork})`);
 			},
 			onCancelJob: async (jobId: string) => {
