@@ -151,12 +151,13 @@ describe('Selective Rewind Feature', () => {
 			expect(result.success).toBe(true);
 			expect(result.messagesDeleted).toBeGreaterThan(0);
 
-			// Verify messages were deleted
+			// Verify selected conversation messages were deleted.
+			// Total message count is not stable because query restart can add fresh system messages.
 			const messagesAfterRewind = await listMessages(sessionId);
-			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
 
 			// Verify the second user message and all after it are gone
 			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			expect(userMessagesAfter.length).toBeLessThan(userMessages.length);
 			const hasSecondMessage = userMessagesAfter.some((m) => getMessageText(m).includes('2+2'));
 			const hasThirdMessage = userMessagesAfter.some((m) => getMessageText(m).includes('3+3'));
 			expect(hasSecondMessage).toBe(false);
@@ -214,9 +215,13 @@ describe('Selective Rewind Feature', () => {
 				expect(typeof result.rewindCase).toBe('string');
 			}
 
-			// Verify messages were deleted
+			// Verify selected conversation messages were deleted.
+			// Total message count is not stable because query restart can add fresh system messages.
 			const messagesAfterRewind = await listMessages(sessionId);
-			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
+			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			expect(userMessagesAfter.length).toBeLessThan(userMessages.length);
+			const hasSecondMessage = userMessagesAfter.some((m) => getMessageText(m).includes('2+2'));
+			expect(hasSecondMessage).toBe(false);
 		}, 300000);
 	});
 
@@ -360,12 +365,13 @@ describe('Selective Rewind Feature', () => {
 			expect(result.success).toBe(true);
 			expect(result.messagesDeleted).toBeGreaterThan(0);
 
-			// Verify messages were deleted from the earliest selected message onward
+			// Verify selected conversation messages were deleted from the earliest selected message onward.
+			// Total message count is not stable because query restart can add fresh system messages.
 			const messagesAfterRewind = await listMessages(sessionId);
-			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
 
 			// First message should still be there
 			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			expect(userMessagesAfter.length).toBeLessThan(userMessages.length);
 			const hasFirstMessage = userMessagesAfter.some((m) => getMessageText(m).includes('1+1'));
 			expect(hasFirstMessage).toBe(true);
 

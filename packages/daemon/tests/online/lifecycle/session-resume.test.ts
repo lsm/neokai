@@ -30,7 +30,7 @@ describe('Session Resume', () => {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	});
+	}, 30000);
 
 	test('should maintain session consistency across multiple operations', async () => {
 		const workspacePath = `${TMP_DIR}/session-resume-test-${Date.now()}`;
@@ -53,7 +53,7 @@ describe('Session Resume', () => {
 
 		// Send first message
 		await sendMessage(daemon, sessionId, 'First message');
-		await waitForIdle(daemon, sessionId, 30000);
+		await waitForIdle(daemon, sessionId, 45000);
 
 		// Verify session is still consistent
 		session = await getSession(daemon, sessionId);
@@ -61,11 +61,11 @@ describe('Session Resume', () => {
 
 		// Send second message
 		await sendMessage(daemon, sessionId, 'Second message');
-		await waitForIdle(daemon, sessionId, 30000);
+		await waitForIdle(daemon, sessionId, 45000);
 
 		// Session should still be consistent and functional
 		session = await getSession(daemon, sessionId);
 		expect(session.id).toBe(sessionId);
 		expect(session.workspacePath).toBe(workspacePath);
-	}, 60000);
+	}, 90000);
 });

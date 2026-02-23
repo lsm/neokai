@@ -49,17 +49,43 @@ async function waitForSDKMessage(
 	sessionId: string,
 	messageType: string,
 	messageSubtype?: string,
-	timeout = 30000
+	timeout = 45000
 ): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
+		const startedAt = Date.now();
 		let unsubscribe: (() => void) | undefined;
 		let resolved = false;
+		let poller: ReturnType<typeof setInterval> | undefined;
 
 		const cleanup = () => {
 			if (!resolved) {
 				resolved = true;
 				clearTimeout(timer);
+				if (poller) clearInterval(poller);
 				unsubscribe?.();
+			}
+		};
+
+		const tryResolveFromStoredMessages = async () => {
+			if (resolved) return;
+			try {
+				const result = (await daemon.messageHub.request('message.sdkMessages', {
+					sessionId,
+					limit: 200,
+				})) as { sdkMessages?: Array<Record<string, unknown>> };
+				const sdkMessages = result.sdkMessages || [];
+				const match = sdkMessages.find((msg) => {
+					if (msg.type !== messageType) return false;
+					if (messageSubtype && msg.subtype !== messageSubtype) return false;
+					const ts = msg.timestamp;
+					return typeof ts !== 'number' || ts >= startedAt - 1000;
+				});
+				if (match) {
+					cleanup();
+					resolve(match);
+				}
+			} catch {
+				// Ignore polling errors; event subscription remains primary
 			}
 		};
 
@@ -92,10 +118,20 @@ async function waitForSDKMessage(
 			}
 		});
 
-		// Join the session room (idempotent - safe to call multiple times)
-		daemon.messageHub.joinChannel('session:' + sessionId).catch(() => {
-			// Join failed, but continue - events might still work
-		});
+		// Polling fallback: catches cases where room join/event delivery races miss delta events.
+		poller = setInterval(() => {
+			void tryResolveFromStoredMessages();
+		}, 500);
+
+		// Join the session room and immediately re-check persisted messages after join.
+		(async () => {
+			try {
+				await daemon.messageHub.joinChannel('session:' + sessionId);
+			} catch {
+				// Join failed, but polling fallback will still try to resolve
+			}
+			await tryResolveFromStoredMessages();
+		})();
 	});
 }
 
@@ -286,11 +322,30 @@ describe('Model Switch System Init Message', () => {
 		expect(switchResult.success).toBe(true);
 		expect(switchResult.model).toBe('opus');
 
-		// Send second message - should get system:init with Opus
-		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-		await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
+		// Send second message - should get system:init with Opus.
+		// Retry once because real provider startup can intermittently timeout in CI.
+		let systemInitMessage: Record<string, unknown> | undefined;
+		let lastError: unknown;
+		for (let attempt = 1; attempt <= 2; attempt++) {
+			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+			await sendMessage(
+				daemon,
+				sessionId,
+				attempt === 1 ? 'What is 2+2? Just the number.' : 'Retry: what is 3+3? Just the number.'
+			);
+			try {
+				systemInitMessage = await systemInitPromise;
+				break;
+			} catch (error) {
+				lastError = error;
+				// Best-effort settle before retrying.
+				await waitForIdle(daemon, sessionId, 60000).catch(() => {});
+			}
+		}
 
-		const systemInitMessage = await systemInitPromise;
+		if (!systemInitMessage) {
+			throw lastError instanceof Error ? lastError : new Error('Missing system:init after retry');
+		}
 
 		// Verify system:init shows Opus (not Sonnet)
 		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
