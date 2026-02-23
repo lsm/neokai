@@ -12,10 +12,33 @@
  * to not trigger AI check, or by mocking.
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { SecurityAgent } from '../../../src/lib/github/security-agent';
 
 describe('SecurityAgent', () => {
+	let aiCheckSpy: ReturnType<typeof spyOn> | undefined;
+
+	beforeEach(() => {
+		// Unit tests should not call the real SDK/network path.
+		// Force deterministic fallback behavior for any path that would invoke aiCheck().
+		aiCheckSpy = spyOn(
+			SecurityAgent.prototype as unknown as {
+				aiCheck: (
+					content: string,
+					context?: { title?: string; author?: string }
+				) => Promise<unknown>;
+			},
+			'aiCheck'
+		).mockImplementation(async () => {
+			throw new Error('AI check unavailable in unit tests');
+		});
+	});
+
+	afterEach(() => {
+		aiCheckSpy?.mockRestore();
+		aiCheckSpy = undefined;
+	});
+
 	describe('Pattern-Based Detection - High Risk Patterns', () => {
 		test('should block "ignore previous instructions" pattern', async () => {
 			const agent = new SecurityAgent({ apiKey: 'test-key' });
