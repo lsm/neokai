@@ -53,30 +53,64 @@ describe('Auto-Title Generation', () => {
 	 * We need to poll until titleGenerated is true or timeout
 	 */
 	async function waitForTitleGeneration(sessionId: string, timeoutMs = 30000): Promise<void> {
+		const startedAt = Date.now();
+		const deadline = startedAt + timeoutMs;
+		const remainingMs = () => Math.max(0, deadline - Date.now());
+		const isSessionNotFoundError = (error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			return message.includes('Session not found');
+		};
+
 		// First wait for agent to be idle
 		try {
-			await waitForIdle(daemon, sessionId, Math.max(timeoutMs, 45000));
+			// Keep this bounded so total helper time never exceeds timeoutMs.
+			const idleBudget = Math.min(remainingMs(), Math.max(5000, Math.floor(timeoutMs * 0.6)));
+			if (idleBudget > 0) {
+				await waitForIdle(daemon, sessionId, idleBudget);
+			}
 		} catch (error) {
 			console.warn('waitForIdle timed out during title generation wait:', error);
 		}
 
 		// Then poll for title generation (runs in parallel, may take longer)
-		const startTime = Date.now();
-		while (Date.now() - startTime < timeoutMs) {
-			const session = await getSession(daemon, sessionId);
+		while (remainingMs() > 0) {
+			let session: Record<string, unknown>;
+			try {
+				session = await getSession(daemon, sessionId);
+			} catch (error) {
+				// Test timeout/teardown can race with polling and delete the session.
+				// Treat this as terminal for the helper to avoid unhandled rejections.
+				if (isSessionNotFoundError(error)) {
+					return;
+				}
+				throw error;
+			}
+
 			const metadata = session.metadata as { titleGenerated?: boolean } | undefined;
 			if (metadata?.titleGenerated) {
 				return; // Title generated successfully
 			}
+
+			// Some providers may update title without setting titleGenerated immediately.
+			if ((session.title as string) !== 'New Session') {
+				return;
+			}
+
 			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 
 		// Check if we timed out
-		const session = await getSession(daemon, sessionId);
-		const metadata = session.metadata as { titleGenerated?: boolean } | undefined;
-		const title = session.title as string;
-		if (!metadata?.titleGenerated && title === 'New Session') {
-			console.warn('Title not generated after timeout');
+		try {
+			const session = await getSession(daemon, sessionId);
+			const metadata = session.metadata as { titleGenerated?: boolean } | undefined;
+			const title = session.title as string;
+			if (!metadata?.titleGenerated && title === 'New Session') {
+				console.warn('Title not generated after timeout');
+			}
+		} catch (error) {
+			if (!isSessionNotFoundError(error)) {
+				throw error;
+			}
 		}
 	}
 
