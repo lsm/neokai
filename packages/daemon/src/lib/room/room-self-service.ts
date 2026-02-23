@@ -1024,7 +1024,8 @@ export class RoomSelfService {
 					timestamp: Date.now(),
 				});
 			} else if (input.type === 'review_response' && this.lifecycleState === 'waiting') {
-				await this.setLifecycleState('reviewing');
+				this.updateWaitingContext(null);
+				await this.setLifecycleState('planning');
 				await this.enqueueAgentMessage(
 					`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
 					'human_input:review_response'
@@ -1046,6 +1047,7 @@ export class RoomSelfService {
 				}
 
 				this.updateWaitingContext(null);
+				await this.setLifecycleState('planning');
 				await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
@@ -1059,6 +1061,7 @@ export class RoomSelfService {
 			} else if (input.type === 'question_response' && this.lifecycleState === 'waiting') {
 				// Handle question response in agentSession path
 				this.updateWaitingContext(null);
+				await this.setLifecycleState('planning');
 				const questionInput = input as {
 					questionId: string;
 					responses: Record<string, string | string[]>;
