@@ -37,6 +37,14 @@ export interface WorkerReportProgressParams {
 }
 
 /**
+ * Parameters for worker_fail_task tool (internal use)
+ */
+export interface WorkerFailTaskParams {
+	taskId: string;
+	reason: string;
+}
+
+/**
  * Configuration for creating the Worker Tools MCP server
  */
 export interface WorkerToolsConfig {
@@ -50,6 +58,8 @@ export interface WorkerToolsConfig {
 	onReportProgress: (params: WorkerReportProgressParams) => Promise<void>;
 	/** Callback to request human review */
 	onRequestReview: (reason: string) => Promise<void>;
+	/** Callback when worker explicitly determines the task cannot be completed */
+	onFailTask: (params: WorkerFailTaskParams) => Promise<void>;
 }
 
 /**
@@ -148,6 +158,31 @@ export function createWorkerToolsMcpServer(config: WorkerToolsConfig) {
 								text: JSON.stringify({
 									success: true,
 									message: 'Review requested. Waiting for human input.',
+								}),
+							},
+						],
+					};
+				}
+			),
+			tool(
+				'worker_fail_task',
+				'Signal that you cannot complete your assigned task. Use this when the task is impossible, blocked by unresolvable external factors, or clearly out of scope. Do NOT use this for temporary problems — try to solve problems before giving up.',
+				{
+					reason: z.string().describe('Specific reason why the task cannot be completed'),
+				},
+				async (args) => {
+					await config.onFailTask({
+						taskId: config.taskId,
+						reason: args.reason,
+					});
+
+					return {
+						content: [
+							{
+								type: 'text',
+								text: JSON.stringify({
+									success: true,
+									message: 'Task marked as failed. The room agent will be notified.',
 								}),
 							},
 						],

@@ -345,12 +345,16 @@ export class WorkerManager {
 		parts.push('When you have finished:\n');
 		parts.push('1. Call `worker_complete_task` with a summary of what you accomplished\n');
 		parts.push(
-			'2. If you need human review or approval at any point, call `worker_request_review`\n\n'
+			'2. If you need human review or approval at any point, call `worker_request_review`\n'
+		);
+		parts.push(
+			'3. If the task is impossible or blocked by factors you cannot resolve, call `worker_fail_task`\n\n'
 		);
 		parts.push('Available worker-specific tools:\n');
 		parts.push('- `worker_report_progress`: Share incremental progress updates\n');
 		parts.push('- `worker_complete_task`: Mark your task as complete\n');
-		parts.push('- `worker_request_review`: Request human review before proceeding');
+		parts.push('- `worker_request_review`: Request human review before proceeding\n');
+		parts.push('- `worker_fail_task`: Mark the task as failed when completion is impossible');
 
 		return parts.join('');
 	}
@@ -410,6 +414,12 @@ export class WorkerManager {
 					taskId,
 					reason,
 				});
+			},
+			onFailTask: async (params) => {
+				await this.markWorkerFailed(
+					workerSessionId,
+					`Worker explicitly failed task: ${params.reason}`
+				);
 			},
 		};
 
