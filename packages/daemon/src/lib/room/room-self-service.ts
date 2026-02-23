@@ -178,6 +178,13 @@ export class RoomSelfService {
 		return this.state.lifecycleState;
 	}
 
+	private requireLifecycleManager(): RoomSelfLifecycleManager {
+		if (!this.lifecycleManager) {
+			throw new Error('Lifecycle manager not initialized for room agent');
+		}
+		return this.lifecycleManager;
+	}
+
 	private lifecycleManager: RoomSelfLifecycleManager | null = null;
 	private agentSession: AgentSession | null = null;
 	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
@@ -213,6 +220,19 @@ export class RoomSelfService {
 			this.ctx.daemonHub
 		);
 		this.state = this.lifecycleManager.initialize();
+		const persistedWaitingContext = this.stateRepo.getWaitingContext(this.ctx.room.id);
+		if (this.state.lifecycleState === 'waiting') {
+			this.waitingContext = persistedWaitingContext;
+			if (!this.waitingContext) {
+				log.warn(
+					'Room agent restored in waiting state without persisted waiting context; input validation may reject stale responses'
+				);
+			}
+		} else if (persistedWaitingContext) {
+			// Keep persisted waiting context aligned with lifecycle state.
+			this.stateRepo.clearWaitingContext(this.ctx.room.id);
+			this.waitingContext = null;
+		}
 
 		const dbWrapper = 'getDatabase' in this.ctx.db ? this.ctx.db : null;
 		if (dbWrapper && this.ctx.getApiKey && this.ctx.promptTemplateManager) {
@@ -300,16 +320,20 @@ export class RoomSelfService {
 		this.stopIdleCheck();
 
 		for (const unsubscribe of this.unsubscribers) {
-			unsubscribe();
+			try {
+				unsubscribe();
+			} catch (error) {
+				log.warn(
+					`Error while unsubscribing room agent event handlers for ${this.ctx.room.id}:`,
+					error
+				);
+			}
 		}
 		this.unsubscribers = [];
 
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.pause();
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('paused', 'Agent stopped');
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.pause();
+		this.state = lifecycleManager.getState();
 
 		log.info('Room agent stopped');
 	}
@@ -339,7 +363,7 @@ export class RoomSelfService {
 		const prompt = this.buildPlanningPrompt(context);
 
 		await this.setLifecycleState('planning');
-		await this.agentSession.messageQueue.enqueue(prompt, true);
+		await this.enqueueAgentMessage(prompt, 'planning');
 	}
 
 	/**
@@ -355,7 +379,7 @@ export class RoomSelfService {
 		const prompt = this.buildReviewPrompt(context);
 
 		await this.setLifecycleState('reviewing');
-		await this.agentSession.messageQueue.enqueue(prompt, true);
+		await this.enqueueAgentMessage(prompt, 'review');
 	}
 
 	/**
@@ -374,7 +398,22 @@ export class RoomSelfService {
 			await this.setLifecycleState('planning');
 		}
 
-		await this.agentSession.messageQueue.enqueue(prompt, true);
+		await this.enqueueAgentMessage(prompt, `event:${event.type}`);
+	}
+
+	private async enqueueAgentMessage(message: string, context: string): Promise<void> {
+		if (!this.agentSession) {
+			log.warn(`No agent session available for enqueue context: ${context}`);
+			return;
+		}
+
+		try {
+			await this.agentSession.messageQueue.enqueue(message, true);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Queue enqueue failed';
+			log.error(`Failed to enqueue agent message (${context}):`, error);
+			await this.recordError(`Queue enqueue failed (${context}): ${errorMessage}`);
+		}
 	}
 
 	private subscribeToEvents(): void {
@@ -433,14 +472,9 @@ export class RoomSelfService {
 				const worker = this.ctx.workerManager.getWorkerBySessionId(event.sessionId);
 				if (worker && worker.roomId === this.ctx.room.id) {
 					// Remove worker from active sessions
-					if (this.lifecycleManager) {
-						this.lifecycleManager.removeActiveWorkerSession(event.sessionId);
-						this.state = this.lifecycleManager.getState();
-					} else {
-						this.state =
-							this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, event.sessionId) ??
-							this.state;
-					}
+					const lifecycleManager = this.requireLifecycleManager();
+					lifecycleManager.removeActiveWorkerSession(event.sessionId);
+					this.state = lifecycleManager.getState();
 
 					const task = await this.taskManager.getTask(event.taskId);
 					if (task && this.agentSession) {
@@ -453,17 +487,13 @@ export class RoomSelfService {
 
 					// Check if all workers are done
 					if (this.state.activeWorkerSessionIds.length === 0) {
-						if (this.lifecycleManager) {
-							const result = await this.lifecycleManager.finishExecution();
-							if (result) {
-								this.state = result;
-							} else {
-								log.warn('finishExecution() returned null, forcing transition to idle');
-								await this.transitionTo('idle', 'All tasks completed (forced)');
-								this.state = this.lifecycleManager.getState();
-							}
+						const result = await lifecycleManager.finishExecution();
+						if (result) {
+							this.state = result;
 						} else {
-							await this.transitionTo('idle', 'All tasks completed');
+							log.warn('finishExecution() returned null, forcing transition to idle');
+							await this.transitionTo('idle', 'All tasks completed (forced)');
+							this.state = lifecycleManager.getState();
 						}
 					}
 				}
@@ -559,22 +589,16 @@ export class RoomSelfService {
 	}
 
 	async pause(): Promise<void> {
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.pause();
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('paused', 'Manually paused');
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.pause();
+		this.state = lifecycleManager.getState();
 		this.stopIdleCheck();
 	}
 
 	async resume(): Promise<void> {
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.resume();
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('idle', 'Manually resumed');
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.resume();
+		this.state = lifecycleManager.getState();
 		this.startIdleCheck();
 	}
 
@@ -584,24 +608,11 @@ export class RoomSelfService {
 
 		log.info(`Room agent transitioning: ${previousState} -> ${newState}`, { reason });
 
-		if (this.lifecycleManager) {
-			// Lifecycle manager handles both state persistence AND event emission
-			// No need to emit again here - that would be a duplicate
-			const result = await this.lifecycleManager.transitionTo(newState, reason);
-			if (result) {
-				this.state = result;
-			}
-		} else {
-			// Legacy path without lifecycle manager - emit event here
-			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
-
-			await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-				sessionId: this.sessionId,
-				roomId: this.ctx.room.id,
-				previousState,
-				newState,
-				reason,
-			});
+		// Lifecycle manager handles both state persistence AND event emission.
+		const lifecycleManager = this.requireLifecycleManager();
+		const result = await lifecycleManager.transitionTo(newState, reason);
+		if (result) {
+			this.state = result;
 		}
 	}
 
@@ -742,30 +753,51 @@ export class RoomSelfService {
 	}
 
 	private async maybeSpawnWorker(task: NeoTask): Promise<void> {
-		// Prevent concurrent spawning - check lock first
+		await this.spawnWorkerForTask(task, { throwOnBlocked: false });
+	}
+
+	/**
+	 * Spawn worker with a shared lock/validation path for both autonomous
+	 * spawning and explicit MCP tool spawning.
+	 */
+	private async spawnWorkerForTask(
+		task: NeoTask,
+		options: { throwOnBlocked: boolean }
+	): Promise<string | null> {
 		if (this.spawnLock) {
-			log.debug(`Spawn in progress, skipping task ${task.id}`);
-			return;
+			const message = `Spawn already in progress, skipping task ${task.id}`;
+			log.debug(message);
+			if (options.throwOnBlocked) {
+				throw new Error(message);
+			}
+			return null;
 		}
 
 		if (this.state.activeWorkerSessionIds.length >= this.config.maxConcurrentPairs) {
-			log.info(`At capacity, queuing task ${task.id}`);
-			return;
+			const message = `At capacity (${this.config.maxConcurrentPairs}), cannot spawn task ${task.id}`;
+			log.info(message);
+			if (options.throwOnBlocked) {
+				throw new Error(message);
+			}
+			return null;
 		}
 
-		if (this.lifecycleManager && !this.lifecycleManager.canSpawnWorker()) {
-			log.info(
-				`Cannot spawn worker in current state: ${this.lifecycleManager.getLifecycleState()}`
-			);
-			return;
+		const lifecycleManager = this.requireLifecycleManager();
+		if (!lifecycleManager.canSpawnWorker()) {
+			const message = `Cannot spawn worker in current state: ${lifecycleManager.getLifecycleState()}`;
+			log.info(message);
+			if (options.throwOnBlocked) {
+				throw new Error(message);
+			}
+			return null;
 		}
 
-		// Acquire lock
 		this.spawnLock = true;
 		log.info(`Spawning worker for task ${task.id}`);
 
+		let workerSessionId: string | null = null;
 		try {
-			const workerSessionId = await this.ctx.workerManager.spawnWorker({
+			workerSessionId = await this.ctx.workerManager.spawnWorker({
 				roomId: this.ctx.room.id,
 				roomSessionId: this.sessionId,
 				roomSessionType: 'room_self',
@@ -778,29 +810,35 @@ export class RoomSelfService {
 					this.ctx.workspaceRoot,
 			});
 
-			// Track worker session ID in room agent state
-			if (this.lifecycleManager) {
-				this.lifecycleManager.addActiveWorkerSession(workerSessionId);
-				this.state = this.lifecycleManager.getState();
-			} else {
-				this.state =
-					this.stateRepo.addActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
-			}
-
+			// Bind task + session before advertising active worker in lifecycle state.
 			await this.taskManager.startTask(task.id, workerSessionId);
 
+			lifecycleManager.addActiveWorkerSession(workerSessionId);
+			this.state = lifecycleManager.getState();
+
 			log.info(`Spawned worker ${workerSessionId} for task ${task.id}`);
+			return workerSessionId;
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Worker spawn failed';
 			log.error(`Failed to spawn worker for task ${task.id}:`, error);
 
-			// Mark task as failed so it doesn't remain stuck in 'pending'
-			await this.taskManager.failTask(task.id, errorMessage);
+			if (workerSessionId) {
+				// Worker exists but startup/assignment failed, fail and cleanup consistently.
+				await this.ctx.workerManager.markWorkerFailed(
+					workerSessionId,
+					`Worker startup failed: ${errorMessage}`
+				);
+			} else {
+				await this.taskManager.failTask(task.id, errorMessage);
+			}
 
-			// Record error and potentially transition to error state
 			await this.recordError(errorMessage);
+
+			if (options.throwOnBlocked) {
+				throw error;
+			}
+			return null;
 		} finally {
-			// Release lock
 			this.spawnLock = false;
 		}
 	}
@@ -816,13 +854,9 @@ export class RoomSelfService {
 		log.error(`Worker ${workerSessionId} failed for task ${taskId}: ${error}`);
 
 		// Remove worker from active sessions
-		if (this.lifecycleManager) {
-			this.lifecycleManager.removeActiveWorkerSession(workerSessionId);
-			this.state = this.lifecycleManager.getState();
-		} else {
-			this.state =
-				this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		lifecycleManager.removeActiveWorkerSession(workerSessionId);
+		this.state = lifecycleManager.getState();
 
 		// Inject review message for the agent to handle the failure
 		const task = await this.taskManager.getTask(taskId);
@@ -837,57 +871,34 @@ export class RoomSelfService {
 
 		// Check if all workers are done
 		if (this.state.activeWorkerSessionIds.length === 0) {
-			if (this.lifecycleManager) {
-				const result = await this.lifecycleManager.finishExecution();
-				if (result) {
-					this.state = result;
-				} else {
-					// Transition failed - force to idle as fallback
-					log.warn('finishExecution() returned null, forcing transition to idle');
-					await this.transitionTo('idle', 'All workers finished (forced)');
-					this.state = this.lifecycleManager.getState();
-				}
+			const result = await lifecycleManager.finishExecution();
+			if (result) {
+				this.state = result;
 			} else {
-				await this.transitionTo('idle', 'All workers finished (last one failed)');
+				// Transition failed - force to idle as fallback
+				log.warn('finishExecution() returned null, forcing transition to idle');
+				await this.transitionTo('idle', 'All workers finished (forced)');
+				this.state = lifecycleManager.getState();
 			}
 		}
 	}
 
 	private async recordError(error: string): Promise<void> {
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.recordError(new Error(error), false);
-			this.state = this.lifecycleManager.getState();
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.recordError(new Error(error), false);
+		this.state = lifecycleManager.getState();
 
-			if (this.state.errorCount >= this.config.maxErrorCount) {
-				await this.lifecycleManager.recordError(
-					new Error(`Max errors reached (${this.state.errorCount})`),
-					true
-				);
-				this.state = this.lifecycleManager.getState();
-				this.stopIdleCheck();
+		if (this.state.errorCount >= this.config.maxErrorCount) {
+			await lifecycleManager.recordError(
+				new Error(`Max errors reached (${this.state.errorCount})`),
+				true
+			);
+			this.state = lifecycleManager.getState();
+			this.stopIdleCheck();
 
-				// Terminate active workers when max errors reached
-				await this.ctx.workerManager.terminateWorkersForRoom(this.ctx.room.id);
-				log.info(`Terminated all workers for room due to max errors reached`);
-			}
-		} else {
-			this.state = this.stateRepo.recordError(this.ctx.room.id, error) ?? this.state;
-
-			await this.ctx.daemonHub.emit('roomAgent.error', {
-				sessionId: this.sessionId,
-				roomId: this.ctx.room.id,
-				error,
-				errorCount: this.state.errorCount,
-			});
-
-			if (this.state.errorCount >= this.config.maxErrorCount) {
-				await this.transitionTo('error', `Max errors reached (${this.state.errorCount})`);
-				this.stopIdleCheck();
-
-				// Terminate active workers when max errors reached
-				await this.ctx.workerManager.terminateWorkersForRoom(this.ctx.room.id);
-				log.info(`Terminated all workers for room due to max errors reached`);
-			}
+			// Terminate active workers when max errors reached
+			await this.ctx.workerManager.terminateWorkersForRoom(this.ctx.room.id);
+			log.info(`Terminated all workers for room due to max errors reached`);
 		}
 	}
 
@@ -929,6 +940,10 @@ export class RoomSelfService {
 		if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
 			if (activeGoals.length > 0 || pendingTasks.length > 0) {
 				const availableCapacity = this.config.maxConcurrentPairs - inProgressTasks.length;
+				if (availableCapacity <= 0) {
+					log.debug('Skipping planning injection: no available worker capacity');
+					return;
+				}
 
 				await this.injectPlanningMessage({
 					activeGoals,
@@ -954,13 +969,8 @@ export class RoomSelfService {
 		const previousState = this.state.lifecycleState;
 		if (previousState === newState) return;
 
-		if (this.lifecycleManager) {
-			this.state = this.lifecycleManager.forceState(newState);
-		} else {
-			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
-			this.state =
-				this.stateRepo.updateState(this.ctx.room.id, { lastActivityAt: Date.now() }) ?? this.state;
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		this.state = lifecycleManager.forceState(newState);
 
 		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
 			sessionId: this.sessionId,
@@ -1019,9 +1029,9 @@ export class RoomSelfService {
 				});
 			} else if (input.type === 'review_response' && this.lifecycleState === 'waiting') {
 				await this.setLifecycleState('reviewing');
-				await this.agentSession.messageQueue.enqueue(
+				await this.enqueueAgentMessage(
 					`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
-					true
+					'human_input:review_response'
 				);
 			} else if (input.type === 'escalation_response' && this.lifecycleState === 'waiting') {
 				// Handle escalation response in agentSession path
@@ -1039,20 +1049,20 @@ export class RoomSelfService {
 					return;
 				}
 
-				this.waitingContext = null;
+				this.updateWaitingContext(null);
 				await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
 					escalationId: escalationInput.escalationId,
 					response: escalationInput.response,
 				});
-				await this.agentSession.messageQueue.enqueue(
+				await this.enqueueAgentMessage(
 					`Escalation resolved: ${escalationInput.response}`,
-					true
+					'human_input:escalation_response'
 				);
 			} else if (input.type === 'question_response' && this.lifecycleState === 'waiting') {
 				// Handle question response in agentSession path
-				this.waitingContext = null;
+				this.updateWaitingContext(null);
 				const questionInput = input as {
 					questionId: string;
 					responses: Record<string, string | string[]>;
@@ -1067,7 +1077,10 @@ export class RoomSelfService {
 				const responseSummary = Object.entries(questionInput.responses)
 					.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
 					.join('; ');
-				await this.agentSession.messageQueue.enqueue(`Question answered: ${responseSummary}`, true);
+				await this.enqueueAgentMessage(
+					`Question answered: ${responseSummary}`,
+					'human_input:question_response'
+				);
 			}
 			return;
 		}
@@ -1097,7 +1110,7 @@ export class RoomSelfService {
 			`Review response for task ${input.taskId}: ${input.approved ? 'approved' : 'rejected'}`
 		);
 
-		this.waitingContext = null;
+		this.updateWaitingContext(null);
 
 		await this.ctx.daemonHub.emit('roomAgent.reviewReceived', {
 			sessionId: this.sessionId,
@@ -1131,7 +1144,7 @@ export class RoomSelfService {
 
 		log.info(`Escalation response for ${input.escalationId}: ${input.response}`);
 
-		this.waitingContext = null;
+		this.updateWaitingContext(null);
 
 		await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
 			sessionId: this.sessionId,
@@ -1148,7 +1161,7 @@ export class RoomSelfService {
 	): Promise<void> {
 		log.info(`Question response for ${input.questionId}`);
 
-		this.waitingContext = null;
+		this.updateWaitingContext(null);
 
 		await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
 			sessionId: this.sessionId,
@@ -1161,12 +1174,18 @@ export class RoomSelfService {
 	}
 
 	async setWaiting(context: RoomSelfWaitingContext): Promise<void> {
+		this.updateWaitingContext(context);
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.waitForInput(`Waiting for ${context.type}`);
+		this.state = lifecycleManager.getState();
+	}
+
+	private updateWaitingContext(context: RoomSelfWaitingContext | null): void {
 		this.waitingContext = context;
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.waitForInput(`Waiting for ${context.type}`);
-			this.state = this.lifecycleManager.getState();
+		if (context) {
+			this.stateRepo.setWaitingContext(this.ctx.room.id, context);
 		} else {
-			await this.transitionTo('waiting', `Waiting for ${context.type}`);
+			this.stateRepo.clearWaitingContext(this.ctx.room.id);
 		}
 	}
 
@@ -1353,20 +1372,13 @@ export class RoomSelfService {
 					return { workerSessionId: existingWorker.sessionId };
 				}
 
-				const workerSessionId = await this.ctx.workerManager.spawnWorker({
-					roomId: this.ctx.room.id,
-					roomSessionId: this.sessionId,
-					roomSessionType: 'room_self',
-					taskId: task.id,
-					taskTitle: task.title,
-					taskDescription: task.description,
-					workspacePath:
-						this.ctx.room.defaultPath ??
-						this.ctx.room.allowedPaths[0]?.path ??
-						this.ctx.workspaceRoot,
+				const workerSessionId = await this.spawnWorkerForTask(task, {
+					throwOnBlocked: true,
 				});
+				if (!workerSessionId) {
+					throw new Error(`Failed to spawn worker for task ${params.taskId}`);
+				}
 
-				await this.taskManager.startTask(params.taskId, workerSessionId);
 				log.info(`Worker spawned: ${workerSessionId} for task ${params.taskId}`);
 				return { workerSessionId };
 			},
@@ -1494,9 +1506,17 @@ export class RoomSelfService {
 				log.info(`Session interrupted: ${params.sessionId}`);
 			},
 			onListSessions: async (_params) => {
-				// PHASE 4: Get session IDs from room and worker sessions
-				const roomSessionIds = this.ctx.room.sessionIds;
-				const workers = this.ctx.workerManager.getWorkersByRoom(this.ctx.room.id);
+				// Fetch latest room record to avoid stale cached session IDs.
+				const latestRoom = this.ctx.roomManager.getRoom(this.ctx.room.id);
+				const roomSessionIds = latestRoom?.sessionIds ?? this.ctx.room.sessionIds;
+				const workers = this.ctx.workerManager
+					.getWorkersByRoom(this.ctx.room.id)
+					.filter(
+						(worker) =>
+							worker.status === 'starting' ||
+							worker.status === 'running' ||
+							worker.status === 'waiting_for_review'
+					);
 
 				// Combine room sessions and worker sessions
 				const allSessionIds = new Set(roomSessionIds);
@@ -1545,10 +1565,17 @@ export class RoomSelfService {
 		);
 
 		const base = rendered ? rendered.content : this.buildFallbackSystemPrompt();
+		const currentDate = new Date().toISOString();
 
+		// Append dynamic runtime values so they're always current even when
+		// rendered prompt templates were generated earlier.
+		// Keep current date explicit because template rendering may not have run.
 		// Append the current concurrency limit dynamically so it stays accurate
 		// even if the setting changes after the rendered template was stored.
-		return base + `\n\nMaximum concurrent workers: ${this.config.maxConcurrentPairs}`;
+		return (
+			base +
+			`\n\nCurrent date: ${currentDate}\nMaximum concurrent workers: ${this.config.maxConcurrentPairs}`
+		);
 	}
 
 	private buildFallbackSystemPrompt(): string {

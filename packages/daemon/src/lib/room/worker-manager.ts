@@ -263,11 +263,21 @@ export class WorkerManager {
 				}
 			}
 
-			// Clean up worker tools
-			this.workerTools.delete(worker.sessionId);
-
-			// Mark worker as failed in database
-			this.updateWorkerStatus(worker.sessionId, 'failed');
+			try {
+				// Reuse canonical failure handling so task status and worker.failed
+				// events are emitted consistently for terminated workers.
+				await this.markWorkerFailed(worker.sessionId, 'Worker terminated due to room shutdown');
+			} catch (error) {
+				log.error(`Error marking worker ${worker.sessionId} as failed:`, error);
+				// Fallback: keep persistence consistent even if event emission fails.
+				this.updateWorkerStatus(worker.sessionId, 'failed');
+				this.taskRepo.updateTask(worker.taskId, {
+					status: 'failed',
+					error: 'Worker terminated due to room shutdown',
+				});
+				this.workerTools.delete(worker.sessionId);
+				this.roomManager.unassignSession(worker.roomId, worker.sessionId);
+			}
 		}
 	}
 
@@ -338,6 +348,7 @@ export class WorkerManager {
 			'2. If you need human review or approval at any point, call `worker_request_review`\n\n'
 		);
 		parts.push('Available worker-specific tools:\n');
+		parts.push('- `worker_report_progress`: Share incremental progress updates\n');
 		parts.push('- `worker_complete_task`: Mark your task as complete\n');
 		parts.push('- `worker_request_review`: Request human review before proceeding');
 
@@ -370,6 +381,24 @@ export class WorkerManager {
 					filesChanged: params.filesChanged,
 					nextSteps: params.nextSteps,
 				});
+			},
+			onReportProgress: async (params) => {
+				const existingTask = this.taskRepo.getTask(params.taskId);
+				const updatedTask = this.taskRepo.updateTask(params.taskId, {
+					progress: Math.max(0, Math.min(100, params.progress)),
+					currentStep: params.currentStep,
+					status: existingTask?.status === 'pending' ? 'in_progress' : undefined,
+				});
+
+				const worker = this.getWorkerBySessionId(workerSessionId);
+				if (worker && updatedTask) {
+					// Broadcast task progress updates to room subscribers.
+					await this.daemonHub.emit('room.task.update', {
+						sessionId: `room:${worker.roomId}`,
+						roomId: worker.roomId,
+						task: updatedTask,
+					});
+				}
 			},
 			onRequestReview: async (reason: string) => {
 				// Update worker status

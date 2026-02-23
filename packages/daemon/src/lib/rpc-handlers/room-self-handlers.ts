@@ -26,9 +26,11 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type { SessionManager } from '../session-manager';
+import { Logger } from '../logger';
 
 // MCP server functions are accessed via dynamic require from room-handlers
 // to avoid circular dependencies. Not re-exporting here to avoid knip issues.
+const log = new Logger('room-self-handlers');
 
 /**
  * Factory types for creating per-room managers
@@ -87,11 +89,6 @@ export interface RoomSelfManagerDeps {
  */
 export class RoomSelfManager {
 	private agents: Map<string, RoomSelfService> = new Map();
-	/** Runtime-only mapping of room IDs to their MCP servers */
-	private roomMcpServers: Map<
-		string,
-		ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
-	> = new Map();
 
 	constructor(private deps: RoomSelfManagerDeps) {}
 
@@ -203,20 +200,10 @@ export class RoomSelfManager {
 	 * Remove an agent from tracking (does not stop it)
 	 */
 	removeAgent(roomId: string): boolean {
-		this.roomMcpServers.delete(roomId);
 		// Dynamically require to avoid circular dependency
 		const { deleteRoomMcpServer } = require('./room-handlers');
 		deleteRoomMcpServer(roomId);
 		return this.agents.delete(roomId);
-	}
-
-	/**
-	 * Get the MCP server for a room (runtime only)
-	 */
-	getRoomMcpServer(
-		roomId: string
-	): ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer> | undefined {
-		return this.roomMcpServers.get(roomId);
 	}
 
 	/**
@@ -236,11 +223,9 @@ export class RoomSelfManager {
 			return;
 		}
 
-		// Store the MCP server reference in runtime-only mapping
-		this.roomMcpServers.set(roomId, mcpServer);
-		// Register globally so QueryOptionsBuilder can access it
-		const { getOrCreateRoomMcpServer } = require('./room-handlers');
-		getOrCreateRoomMcpServer(roomId, this.deps.db);
+		// Register globally so QueryOptionsBuilder resolves the live room:self MCP server.
+		const { setRoomMcpServer } = require('./room-handlers');
+		setRoomMcpServer(roomId, mcpServer);
 
 		const sessionId = `room:${roomId}`;
 
@@ -329,8 +314,8 @@ export function setupRoomSelfHandlers(
 				newState,
 				reason,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit roomAgent.stateChanged for room ${roomId}:`, error);
 			});
 	};
 

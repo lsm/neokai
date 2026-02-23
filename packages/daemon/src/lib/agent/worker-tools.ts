@@ -27,6 +27,16 @@ export interface WorkerCompleteTaskParams {
 }
 
 /**
+ * Parameters for worker_report_progress tool (internal use)
+ */
+export interface WorkerReportProgressParams {
+	taskId: string;
+	progress: number;
+	currentStep?: string;
+	details?: string;
+}
+
+/**
  * Configuration for creating the Worker Tools MCP server
  */
 export interface WorkerToolsConfig {
@@ -36,6 +46,8 @@ export interface WorkerToolsConfig {
 	taskId: string;
 	/** Callback when task is completed */
 	onCompleteTask: (params: WorkerCompleteTaskParams) => Promise<void>;
+	/** Callback to report task progress */
+	onReportProgress: (params: WorkerReportProgressParams) => Promise<void>;
 	/** Callback to request human review */
 	onRequestReview: (reason: string) => Promise<void>;
 }
@@ -80,6 +92,38 @@ export function createWorkerToolsMcpServer(config: WorkerToolsConfig) {
 								text: JSON.stringify({
 									success: true,
 									message: 'Task completed successfully',
+								}),
+							},
+						],
+					};
+				}
+			),
+			tool(
+				'worker_report_progress',
+				'Report incremental progress for your assigned task. Use this as you complete meaningful milestones.',
+				{
+					progress: z.number().min(0).max(100).describe('Task progress percentage (0-100)'),
+					current_step: z
+						.string()
+						.optional()
+						.describe('Short description of the current step or milestone'),
+					details: z.string().optional().describe('Optional details about recent progress'),
+				},
+				async (args) => {
+					await config.onReportProgress({
+						taskId: config.taskId,
+						progress: args.progress,
+						currentStep: args.current_step,
+						details: args.details,
+					});
+
+					return {
+						content: [
+							{
+								type: 'text',
+								text: JSON.stringify({
+									success: true,
+									message: 'Progress reported successfully',
 								}),
 							},
 						],

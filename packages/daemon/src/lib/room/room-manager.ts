@@ -131,10 +131,10 @@ export class RoomManager {
 	 * - All context versions (via CASCADE)
 	 * - The room itself
 	 */
-	deleteRoom(id: string): void {
+	deleteRoom(id: string): boolean {
 		const room = this.roomRepo.getRoom(id);
 		if (!room) {
-			return;
+			return false;
 		}
 
 		const tx = this.db.transaction(() => {
@@ -146,10 +146,10 @@ export class RoomManager {
 
 			// Delete the room - CASCADE will handle:
 			// - session_pairs, tasks, goals, recurring_jobs, proposals, memories, context_versions
-			this.roomRepo.deleteRoom(id);
+			return this.roomRepo.deleteRoom(id);
 		});
 
-		tx();
+		return tx() as boolean;
 	}
 
 	/**

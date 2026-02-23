@@ -180,6 +180,19 @@ export function getRoomMcpServer(
 }
 
 /**
+ * Set/replace the MCP server instance for a room.
+ *
+ * Used by room self manager to register the live room:self MCP server so
+ * room chat sessions and QueryOptionsBuilder resolve a single authoritative instance.
+ */
+export function setRoomMcpServer(
+	roomId: string,
+	server: ReturnType<typeof createRoomAgentMcpServer>
+): void {
+	roomMcpServerRegistry.set(roomId, server);
+}
+
+/**
  * PHASE 5: Create or update the room agent MCP server with WorkerManager support
  *
  * This allows room:chat sessions to spawn workers via room agent tools.
@@ -508,8 +521,8 @@ export function setupRoomHandlers(
 				// Explicitly assign the room chat session to the room
 				// This ensures room.sessionIds includes the chat session
 				roomManager.assignSession(room.id, roomChatSessionId);
-			} catch {
-				// Error creating room chat session - non-critical, continue without failing room creation
+			} catch (error) {
+				log.warn(`Failed to create room chat session for room ${room.id}:`, error);
 			}
 		}
 
@@ -520,8 +533,8 @@ export function setupRoomHandlers(
 				roomId: room.id,
 				room,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.created for room ${room.id}:`, error);
 			});
 
 		return { room };
@@ -588,8 +601,8 @@ export function setupRoomHandlers(
 				roomId: room.id,
 				room,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.updated for room ${room.id}:`, error);
 			});
 
 		return { room };
@@ -614,8 +627,8 @@ export function setupRoomHandlers(
 				sessionId: 'global',
 				roomId: room.id,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.archived for room ${room.id}:`, error);
 			});
 
 		return { room };
@@ -636,7 +649,9 @@ export function setupRoomHandlers(
 
 		// Stop and remove the room agent before deleting
 		if (roomSelfManager) {
-			await roomSelfManager.stopAgent(params.roomId).catch(() => {});
+			await roomSelfManager.stopAgent(params.roomId).catch((error) => {
+				log.error(`Failed to stop room agent for room ${params.roomId}:`, error);
+			});
 			roomSelfManager.removeAgent(params.roomId);
 		}
 
@@ -655,12 +670,15 @@ export function setupRoomHandlers(
 				sessionId: 'global',
 				roomId: room.id,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.deleted for room ${room.id}:`, error);
 			});
 
 		// Permanently delete the room (CASCADE will delete related data)
-		roomManager.deleteRoom(params.roomId);
+		const deleted = roomManager.deleteRoom(params.roomId);
+		if (!deleted) {
+			throw new Error(`Failed to delete room: ${params.roomId}`);
+		}
 
 		return { success: true };
 	});

@@ -101,6 +101,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 29: Cleanup after manager removal (Phase 6)
 	runMigration29(db);
+
+	// Migration 30: Persist room agent waiting context for restart-safe escalations
+	runMigration30(db);
 }
 
 /**
@@ -1527,5 +1530,21 @@ function runMigration29(db: BunDatabase): void {
 		// It contains historical data about session_pairs that had no task_id
 
 		// Note: active_worker_session_ids column was already renamed in Migration 28
+	}
+}
+
+/**
+ * Migration 30: Add waiting_context to room_agent_states
+ *
+ * Persists review/escalation/question waiting context so room agents can resume
+ * pending human-input flows after process restart.
+ */
+function runMigration30(db: BunDatabase): void {
+	if (!tableExists(db, 'room_agent_states')) {
+		return;
+	}
+
+	if (!tableHasColumn(db, 'room_agent_states', 'waiting_context')) {
+		db.exec(`ALTER TABLE room_agent_states ADD COLUMN waiting_context TEXT`);
 	}
 }

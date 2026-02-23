@@ -69,6 +69,19 @@ export class RoomSelfLifecycleManager {
 	private currentState: RoomSelfState | null = null;
 	private stateRepository: RoomSelfStateRepository;
 
+	private setCurrentStateOrRecover(
+		nextState: RoomSelfState | null,
+		operation: string
+	): RoomSelfState {
+		if (nextState) {
+			this.currentState = nextState;
+			return nextState;
+		}
+
+		this.logger.error(`State repository returned null during ${operation}; keeping previous state`);
+		return this.getState();
+	}
+
 	constructor(
 		private roomId: string,
 		db: Database | BunDatabase,
@@ -226,14 +239,17 @@ export class RoomSelfLifecycleManager {
 		this.logger.error(`Recording error: ${errorMessage}`);
 
 		// Update error state in repository
-		this.currentState = this.stateRepository.recordError(this.roomId, errorMessage);
+		this.setCurrentStateOrRecover(
+			this.stateRepository.recordError(this.roomId, errorMessage),
+			'recordError'
+		);
 
 		// Emit error event
 		await this.daemonHub.emit('roomAgent.error', {
 			sessionId: `room:${this.roomId}`,
 			roomId: this.roomId,
 			error: errorMessage,
-			errorCount: this.currentState?.errorCount ?? 1,
+			errorCount: this.getState().errorCount,
 		});
 
 		// Transition to error state if requested and not already in error/paused
@@ -255,7 +271,7 @@ export class RoomSelfLifecycleManager {
 			return null;
 		}
 
-		this.currentState = this.stateRepository.clearError(this.roomId);
+		this.setCurrentStateOrRecover(this.stateRepository.clearError(this.roomId), 'clearError');
 		return this.transitionTo('idle', 'Error cleared');
 	}
 
@@ -412,34 +428,46 @@ export class RoomSelfLifecycleManager {
 	 * Update current goal
 	 */
 	setCurrentGoal(goalId: string | null): void {
-		this.currentState = this.stateRepository.updateState(this.roomId, {
-			currentGoalId: goalId,
-			lastActivityAt: Date.now(),
-		});
+		this.setCurrentStateOrRecover(
+			this.stateRepository.updateState(this.roomId, {
+				currentGoalId: goalId,
+				lastActivityAt: Date.now(),
+			}),
+			'setCurrentGoal'
+		);
 	}
 
 	/**
 	 * Update current task
 	 */
 	setCurrentTask(taskId: string | null): void {
-		this.currentState = this.stateRepository.updateState(this.roomId, {
-			currentTaskId: taskId,
-			lastActivityAt: Date.now(),
-		});
+		this.setCurrentStateOrRecover(
+			this.stateRepository.updateState(this.roomId, {
+				currentTaskId: taskId,
+				lastActivityAt: Date.now(),
+			}),
+			'setCurrentTask'
+		);
 	}
 
 	/**
 	 * Add an active worker session (PHASE 6: renamed from addActiveSessionPair)
 	 */
 	addActiveWorkerSession(workerSessionId: string): void {
-		this.currentState = this.stateRepository.addActiveSessionPair(this.roomId, workerSessionId);
+		this.setCurrentStateOrRecover(
+			this.stateRepository.addActiveSessionPair(this.roomId, workerSessionId),
+			'addActiveWorkerSession'
+		);
 	}
 
 	/**
 	 * Remove an active worker session (PHASE 6: renamed from removeActiveSessionPair)
 	 */
 	removeActiveWorkerSession(workerSessionId: string): void {
-		this.currentState = this.stateRepository.removeActiveSessionPair(this.roomId, workerSessionId);
+		this.setCurrentStateOrRecover(
+			this.stateRepository.removeActiveSessionPair(this.roomId, workerSessionId),
+			'removeActiveWorkerSession'
+		);
 	}
 
 	/**
@@ -447,7 +475,7 @@ export class RoomSelfLifecycleManager {
 	 */
 	addPendingAction(action: string): void {
 		this.stateRepository.addPendingAction(this.roomId, action);
-		this.currentState = this.stateRepository.getState(this.roomId);
+		this.setCurrentStateOrRecover(this.stateRepository.getState(this.roomId), 'addPendingAction');
 	}
 
 	/**
@@ -455,7 +483,10 @@ export class RoomSelfLifecycleManager {
 	 */
 	removePendingAction(action: string): void {
 		this.stateRepository.removePendingAction(this.roomId, action);
-		this.currentState = this.stateRepository.getState(this.roomId);
+		this.setCurrentStateOrRecover(
+			this.stateRepository.getState(this.roomId),
+			'removePendingAction'
+		);
 	}
 
 	/**
@@ -463,14 +494,19 @@ export class RoomSelfLifecycleManager {
 	 */
 	clearPendingActions(): void {
 		this.stateRepository.clearPendingActions(this.roomId);
-		this.currentState = this.stateRepository.getState(this.roomId);
+		this.setCurrentStateOrRecover(
+			this.stateRepository.getState(this.roomId),
+			'clearPendingActions'
+		);
 	}
 
 	/**
 	 * Force state without validation (for testing)
 	 */
 	forceState(newState: RoomSelfLifecycleState): RoomSelfState {
-		this.currentState = this.stateRepository.transitionTo(this.roomId, newState);
-		return this.getState();
+		return this.setCurrentStateOrRecover(
+			this.stateRepository.transitionTo(this.roomId, newState),
+			'forceState'
+		);
 	}
 }
