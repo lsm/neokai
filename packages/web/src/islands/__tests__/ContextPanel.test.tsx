@@ -38,19 +38,22 @@ let mockSessionsSignal: ReturnType<typeof signal<any[]>>;
 let mockHasArchivedSessionsSignal: ReturnType<typeof signal<boolean>>;
 let mockGlobalSettingsSignal: ReturnType<typeof signal<any>>;
 let mockSettingsSectionSignal: ReturnType<typeof signal<string>>;
-
-// Mock the signals module
-vi.mock('../../lib/signals.ts', () => ({
-	get navSectionSignal() {
-		return mockNavSectionSignal;
-	},
-	get contextPanelOpenSignal() {
-		return mockContextPanelOpenSignal;
-	},
-	get settingsSectionSignal() {
-		return mockSettingsSectionSignal;
-	},
-}));
+// Mock the signals module - use importOriginal to pass through signals not under test
+vi.mock('../../lib/signals.ts', async (importOriginal) => {
+	const actual = await importOriginal();
+	return {
+		...actual,
+		get navSectionSignal() {
+			return mockNavSectionSignal;
+		},
+		get contextPanelOpenSignal() {
+			return mockContextPanelOpenSignal;
+		},
+		get settingsSectionSignal() {
+			return mockSettingsSectionSignal;
+		},
+	};
+});
 
 // Mock the state module - include all exports needed by SessionList and ContextPanel
 vi.mock('../../lib/state.ts', () => ({

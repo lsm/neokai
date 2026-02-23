@@ -196,7 +196,7 @@ describe('PromptTemplateManager', () => {
 			);
 
 			expect(roomAgentTemplate?.name).toBe('Overridden');
-			expect(roomAgentTemplate?.version).toBe(2);
+			expect(roomAgentTemplate?.version).toBe(3);
 		});
 	});
 
@@ -360,8 +360,8 @@ describe('PromptTemplateManager', () => {
 				updatedAt: Date.now(),
 			});
 
-			// Built-in has version 1, so custom should be version 2
-			expect(template.version).toBe(2);
+			// Built-in has version 2, so custom should be version 3
+			expect(template.version).toBe(3);
 		});
 	});
 
@@ -424,7 +424,7 @@ describe('PromptTemplateManager', () => {
 
 			expect(rendered).not.toBeNull();
 			expect(rendered?.content).toContain('Development Room');
-			expect(rendered?.content).toContain('Current Date: 2026-02-18');
+			expect(rendered?.content).toContain('Current date: 2026-02-18');
 		});
 
 		it('should return null for non-existent template', () => {
@@ -453,7 +453,7 @@ describe('PromptTemplateManager', () => {
 
 			const rendered = manager.renderTemplate(BUILTIN_TEMPLATE_IDS.ROOM_AGENT_SYSTEM, context);
 
-			expect(rendered?.templateVersion).toBe(1); // Built-in has version 1
+			expect(rendered?.templateVersion).toBe(2); // Built-in has version 2
 		});
 
 		it('should handle optional variables (falsy/missing)', () => {
@@ -466,8 +466,8 @@ describe('PromptTemplateManager', () => {
 
 			expect(rendered).not.toBeNull();
 			// The #if blocks should be empty when variables are missing
-			expect(rendered?.content).not.toContain('## Room Description');
-			expect(rendered?.content).not.toContain('## Background Context');
+			expect(rendered?.content).not.toContain('## Purpose');
+			expect(rendered?.content).not.toContain('## Room Background');
 		});
 
 		it('should handle optional variables (truthy)', () => {
@@ -479,9 +479,9 @@ describe('PromptTemplateManager', () => {
 			const rendered = manager.renderTemplate(BUILTIN_TEMPLATE_IDS.ROOM_AGENT_SYSTEM, context);
 
 			expect(rendered).not.toBeNull();
-			expect(rendered?.content).toContain('## Room Description');
+			expect(rendered?.content).toContain('## Purpose');
 			expect(rendered?.content).toContain('A test room for development');
-			expect(rendered?.content).toContain('## Background Context');
+			expect(rendered?.content).toContain('## Room Background');
 			expect(rendered?.content).toContain('This is background info');
 		});
 
@@ -522,8 +522,8 @@ describe('PromptTemplateManager', () => {
 
 			const rendered = manager.renderTemplate(BUILTIN_TEMPLATE_IDS.ROOM_AGENT_SYSTEM, context);
 
-			expect(rendered?.content).toContain('- Goal 1 (in_progress, 50% complete)');
-			expect(rendered?.content).toContain('- Goal 2 (completed, 100% complete)');
+			expect(rendered?.content).toContain('- **Goal 1** — in_progress, 50% complete');
+			expect(rendered?.content).toContain('- **Goal 2** — completed, 100% complete');
 		});
 
 		it('should set renderedAt timestamp', () => {
@@ -748,7 +748,7 @@ describe('PromptTemplateManager', () => {
 			// Render with original template (version 1)
 			manager.renderTemplate(BUILTIN_TEMPLATE_IDS.ROOM_AGENT_SYSTEM, context);
 
-			// Update the custom template (version 2)
+			// Update the custom template (version 3)
 			await manager.saveCustomTemplate({
 				id: BUILTIN_TEMPLATE_IDS.ROOM_AGENT_SYSTEM,
 				category: 'room_agent',
@@ -756,7 +756,7 @@ describe('PromptTemplateManager', () => {
 				description: 'Updated',
 				template: 'Updated content',
 				variables: [],
-				version: 1, // Will be incremented to 2
+				version: 1, // Will be incremented to 3 (built-in is version 2, so +1=3)
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			});
@@ -765,8 +765,8 @@ describe('PromptTemplateManager', () => {
 
 			expect(updates.length).toBe(1);
 			expect(updates[0].templateId).toBe(BUILTIN_TEMPLATE_IDS.ROOM_AGENT_SYSTEM);
-			expect(updates[0].currentVersion).toBe(1);
-			expect(updates[0].latestVersion).toBe(2);
+			expect(updates[0].currentVersion).toBe(2);
+			expect(updates[0].latestVersion).toBe(3);
 		});
 
 		it('should return empty array for room with no rendered prompts', () => {
