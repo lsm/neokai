@@ -80,9 +80,11 @@ function createMockRoomManager(): {
 	mocks: {
 		createRoom: ReturnType<typeof mock>;
 		listRooms: ReturnType<typeof mock>;
+		getRoom: ReturnType<typeof mock>;
 		getRoomOverview: ReturnType<typeof mock>;
 		updateRoom: ReturnType<typeof mock>;
 		archiveRoom: ReturnType<typeof mock>;
+		deleteRoom: ReturnType<typeof mock>;
 		getRoomStatus: ReturnType<typeof mock>;
 		assignSession: ReturnType<typeof mock>;
 		unassignSession: ReturnType<typeof mock>;
@@ -111,9 +113,11 @@ function createMockRoomManager(): {
 	const mocks = {
 		createRoom: mock(() => mockRoom),
 		listRooms: mock(() => [mockRoom]),
+		getRoom: mock(() => mockRoom),
 		getRoomOverview: mock(() => mockRoomOverview),
 		updateRoom: mock(() => mockRoom),
 		archiveRoom: mock(() => ({ ...mockRoom, archivedAt: new Date().toISOString() })),
+		deleteRoom: mock(() => true),
 		getRoomStatus: mock(() => 'idle' as RoomStatus),
 		assignSession: mock(() => mockRoom),
 		unassignSession: mock(() => mockRoom),
@@ -136,12 +140,14 @@ function createMockWorkerManager(): {
 		spawnWorker: ReturnType<typeof mock>;
 		getWorkerByTask: ReturnType<typeof mock>;
 		getWorkersByRoom: ReturnType<typeof mock>;
+		terminateWorkersForRoom: ReturnType<typeof mock>;
 	};
 } {
 	const mocks = {
 		spawnWorker: mock(async () => 'worker-session-123'),
 		getWorkerByTask: mock(() => null),
 		getWorkersByRoom: mock(() => []),
+		terminateWorkersForRoom: mock(async () => {}),
 	};
 
 	return {
@@ -396,6 +402,30 @@ describe('Room RPC Handlers', () => {
 					sessionId: 'global',
 					roomId: 'room-123',
 				})
+			);
+		});
+	});
+
+	describe('room.delete', () => {
+		it('deletes an existing room', async () => {
+			const handler = messageHubData.handlers.get('room.delete');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ roomId: 'room-123' }, {})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(roomManagerData.mocks.getRoom).toHaveBeenCalledWith('room-123');
+			expect(roomManagerData.mocks.deleteRoom).toHaveBeenCalledWith('room-123');
+		});
+
+		it('throws when room deletion fails', async () => {
+			const handler = messageHubData.handlers.get('room.delete');
+			expect(handler).toBeDefined();
+
+			roomManagerData.mocks.deleteRoom.mockReturnValueOnce(false);
+
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow(
+				'Failed to delete room: room-123'
 			);
 		});
 	});

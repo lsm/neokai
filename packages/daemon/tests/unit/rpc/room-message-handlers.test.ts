@@ -13,6 +13,7 @@ import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub, type NeoContextMessage } from '@neokai/shared';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
+import type { RoomManager } from '../../../src/lib/room/room-manager';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -122,27 +123,62 @@ function createMockDatabase(): {
 	};
 }
 
+function createMockRoomManager(): {
+	roomManager: RoomManager;
+	mocks: {
+		getRoom: ReturnType<typeof mock>;
+	};
+} {
+	const mocks = {
+		getRoom: mock((roomId: string) => {
+			if (roomId === 'room-123') {
+				return { id: 'room-123', name: 'Test Room' };
+			}
+			return null;
+		}),
+	};
+
+	return {
+		roomManager: {
+			getRoom: mocks.getRoom,
+		} as unknown as RoomManager,
+		mocks,
+	};
+}
+
 // Import handlers after setting up mocks
-async function setupHandlersWithMocks(messageHub: MessageHub, daemonHub: DaemonHub, db: Database) {
+async function setupHandlersWithMocks(
+	messageHub: MessageHub,
+	daemonHub: DaemonHub,
+	db: Database,
+	roomManager: RoomManager
+) {
 	// Dynamic import to ensure module is loaded fresh
 	const { setupRoomMessageHandlers } = await import(
 		'../../../src/lib/rpc-handlers/room-message-handlers'
 	);
-	setupRoomMessageHandlers(messageHub, null, daemonHub, db);
+	setupRoomMessageHandlers(messageHub, roomManager, daemonHub, db);
 }
 
 describe('Room Message RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
 	let dbData: ReturnType<typeof createMockDatabase>;
+	let roomManagerData: ReturnType<typeof createMockRoomManager>;
 
 	beforeEach(async () => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
 		dbData = createMockDatabase();
+		roomManagerData = createMockRoomManager();
 
 		// Setup handlers with mocked dependencies
-		await setupHandlersWithMocks(messageHubData.hub, daemonHubData.daemonHub, dbData.db);
+		await setupHandlersWithMocks(
+			messageHubData.hub,
+			daemonHubData.daemonHub,
+			dbData.db,
+			roomManagerData.roomManager
+		);
 	});
 
 	afterEach(() => {
@@ -187,6 +223,15 @@ describe('Room Message RPC Handlers', () => {
 				handler!({ roomId: 'room-123', content: 'Hello', role: 'invalid' }, {})
 			).rejects.toThrow("Role must be 'user' or 'assistant'");
 		});
+
+		it('throws error when room does not exist', async () => {
+			const handler = messageHubData.handlers.get('room.message.send');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ roomId: 'room-missing', content: 'Hello', role: 'user' }, {})
+			).rejects.toThrow('Room not found: room-missing');
+		});
 	});
 
 	describe('room.message.history', () => {
@@ -196,20 +241,39 @@ describe('Room Message RPC Handlers', () => {
 
 			await expect(handler!({}, {})).rejects.toThrow('Room ID is required');
 		});
+
+		it('throws error when room does not exist', async () => {
+			const handler = messageHubData.handlers.get('room.message.history');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-missing' }, {})).rejects.toThrow(
+				'Room not found: room-missing'
+			);
+		});
 	});
 
 	describe('handler registration', () => {
 		it('registers room.message.send handler', async () => {
 			// Re-setup handlers for this test
 			const newHubData = createMockMessageHub();
-			await setupHandlersWithMocks(newHubData.hub, daemonHubData.daemonHub, dbData.db);
+			await setupHandlersWithMocks(
+				newHubData.hub,
+				daemonHubData.daemonHub,
+				dbData.db,
+				roomManagerData.roomManager
+			);
 			expect(newHubData.handlers.has('room.message.send')).toBe(true);
 		});
 
 		it('registers room.message.history handler', async () => {
 			// Re-setup handlers for this test
 			const newHubData = createMockMessageHub();
-			await setupHandlersWithMocks(newHubData.hub, daemonHubData.daemonHub, dbData.db);
+			await setupHandlersWithMocks(
+				newHubData.hub,
+				daemonHubData.daemonHub,
+				dbData.db,
+				roomManagerData.roomManager
+			);
 			expect(newHubData.handlers.has('room.message.history')).toBe(true);
 		});
 	});
