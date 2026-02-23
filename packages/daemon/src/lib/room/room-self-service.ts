@@ -371,6 +371,12 @@ export class RoomSelfService {
 		const prompt = this.buildPlanningPrompt(context);
 
 		await this.setLifecycleState('planning');
+		if (this.lifecycleState !== 'planning') {
+			log.warn(
+				`Skipping planning message enqueue: failed to transition to planning (current: ${this.lifecycleState})`
+			);
+			return;
+		}
 		await this.enqueueAgentMessage(prompt, 'planning');
 	}
 
@@ -567,7 +573,7 @@ export class RoomSelfService {
 				const task = await this.taskManager.getTask(event.taskId);
 				if (!task) return;
 
-				if (this.agentSession) {
+				if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
 					await this.injectPlanningMessage({
 						activeGoals: [],
 						pendingTasks: [task],
@@ -581,6 +587,10 @@ export class RoomSelfService {
 						],
 						availableCapacity: this.config.maxConcurrentPairs,
 					});
+				} else {
+					log.debug(
+						`Skipping recurring job planning injection in state ${this.lifecycleState} for task ${event.taskId}`
+					);
 				}
 				// Note: Legacy path removed - if no agentSession, event is skipped
 			},

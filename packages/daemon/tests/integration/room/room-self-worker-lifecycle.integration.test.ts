@@ -417,6 +417,66 @@ describe('RoomSelf worker lifecycle integration', () => {
 		expect(fixture.stateRepo.getWaitingContext(fixture.room.id)?.escalationId).toBe('esc-expected');
 	});
 
+	test('injectPlanningMessage skips enqueue when transition to planning is invalid', async () => {
+		await fixture.service.forceState('executing');
+		const enqueueMock = mock(async () => {});
+		(
+			fixture.service as unknown as {
+				agentSession: {
+					messageQueue: { enqueue: (message: string, highPriority: boolean) => Promise<void> };
+				};
+			}
+		).agentSession = {
+			messageQueue: {
+				enqueue: enqueueMock,
+			},
+		};
+
+		await fixture.service.injectPlanningMessage({
+			activeGoals: [],
+			pendingTasks: [],
+			inProgressTasks: [],
+			recentEvents: [],
+			availableCapacity: 1,
+		});
+
+		expect(enqueueMock).not.toHaveBeenCalled();
+		expect(fixture.service.getState().lifecycleState).toBe('executing');
+	});
+
+	test('recurringJob.triggered does not inject planning while already executing', async () => {
+		await fixture.service.forceState('executing');
+		const roomAgentQueueEnqueueMock = mock(async () => {});
+		(
+			fixture.service as unknown as {
+				agentSession: {
+					messageQueue: { enqueue: (message: string, highPriority: boolean) => Promise<void> };
+				};
+			}
+		).agentSession = {
+			messageQueue: {
+				enqueue: roomAgentQueueEnqueueMock,
+			},
+		};
+
+		const task = await fixture.taskManager.createTask({
+			title: 'Scheduled task',
+			description: 'Created by recurring job',
+			priority: 'normal',
+		});
+
+		await fixture.daemonHub.emit('recurringJob.triggered', {
+			sessionId: fixture.service.sessionId,
+			roomId: fixture.room.id,
+			jobId: 'job-1',
+			taskId: task.id,
+			timestamp: Date.now(),
+		});
+
+		expect(roomAgentQueueEnqueueMock).not.toHaveBeenCalled();
+		expect(fixture.service.getState().lifecycleState).toBe('executing');
+	});
+
 	test('waiting context persists and supports human-input resume after restart', async () => {
 		const questionId = 'question-restart-1';
 		await fixture.service.forceState('executing');
