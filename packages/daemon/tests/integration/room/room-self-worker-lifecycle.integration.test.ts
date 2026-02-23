@@ -342,6 +342,81 @@ describe('RoomSelf worker lifecycle integration', () => {
 		);
 	});
 
+	test('setWaiting throws and clears context when lifecycle cannot transition to waiting', async () => {
+		await fixture.service.forceState('paused');
+
+		await expect(
+			fixture.service.setWaiting({
+				type: 'question',
+				taskId: 'task-paused',
+				questionId: 'q-paused',
+				reason: 'Should fail while paused',
+				since: Date.now(),
+			})
+		).rejects.toThrow('Failed to enter waiting state');
+
+		expect(fixture.service.getState().lifecycleState).toBe('paused');
+		expect(fixture.stateRepo.getWaitingContext(fixture.room.id)).toBeNull();
+	});
+
+	test('agent-session human input rejects non-message responses when not waiting', async () => {
+		(
+			fixture.service as unknown as {
+				agentSession: {
+					messageQueue: { enqueue: (message: string, highPriority: boolean) => Promise<void> };
+				};
+			}
+		).agentSession = {
+			messageQueue: {
+				enqueue: mock(async () => {}),
+			},
+		};
+
+		await fixture.service.forceState('planning');
+
+		await expect(
+			fixture.service.handleHumanInput({
+				type: 'escalation_response',
+				escalationId: 'esc-not-waiting',
+				response: 'Proceed',
+			})
+		).rejects.toThrow('not waiting for human input');
+	});
+
+	test('agent-session escalation response rejects stale escalation IDs and keeps waiting context', async () => {
+		(
+			fixture.service as unknown as {
+				agentSession: {
+					messageQueue: { enqueue: (message: string, highPriority: boolean) => Promise<void> };
+				};
+			}
+		).agentSession = {
+			messageQueue: {
+				enqueue: mock(async () => {}),
+			},
+		};
+
+		await fixture.service.forceState('executing');
+		await fixture.service.setWaiting({
+			type: 'escalation',
+			taskId: 'task-esc',
+			escalationId: 'esc-expected',
+			reason: 'Need human escalation response',
+			since: Date.now(),
+		});
+
+		await expect(
+			fixture.service.handleHumanInput({
+				type: 'escalation_response',
+				escalationId: 'esc-stale',
+				response: 'Resolve',
+			})
+		).rejects.toThrow('unknown/stale escalation');
+
+		expect(fixture.service.getState().lifecycleState).toBe('waiting');
+		expect(fixture.stateRepo.getWaitingContext(fixture.room.id)?.escalationId).toBe('esc-expected');
+	});
+
 	test('waiting context persists and supports human-input resume after restart', async () => {
 		const questionId = 'question-restart-1';
 		await fixture.service.forceState('executing');

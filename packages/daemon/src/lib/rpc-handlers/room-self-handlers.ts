@@ -493,6 +493,12 @@ export function setupRoomSelfHandlers(
 		if (!agent) {
 			throw new Error('Room agent not found');
 		}
+		const lifecycleState = agent.getState().lifecycleState;
+		if (params.type !== 'message' && lifecycleState !== 'waiting') {
+			throw new Error(
+				`Room agent is not waiting for input (current state: ${lifecycleState}, input type: ${params.type})`
+			);
+		}
 
 		switch (params.type) {
 			case 'message':

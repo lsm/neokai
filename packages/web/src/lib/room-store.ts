@@ -419,6 +419,7 @@ class RoomStore {
 				sessionId: string;
 				taskId: string;
 				reason: string;
+				workerSessionId?: string;
 			}>('roomAgent.reviewRequested', (event) => {
 				if (event.roomId === roomId) {
 					// Set waiting context when agent requests review

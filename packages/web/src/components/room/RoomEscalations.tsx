@@ -85,10 +85,10 @@ export function RoomEscalations({
 
 		setIsSubmitting(true);
 		try {
-			await roomStore.respondToEscalation(
-				waitingContext.escalationId || waitingContext.taskId || 'unknown',
-				inputValue.trim()
-			);
+			if (!waitingContext.escalationId) {
+				throw new Error('Missing escalation ID. Refresh and try again.');
+			}
+			await roomStore.respondToEscalation(waitingContext.escalationId, inputValue.trim());
 			setInputValue('');
 			setResponseMessage('Response sent. Agent is processing...');
 			setTimeout(() => setResponseMessage(''), 3000);

@@ -1089,22 +1089,23 @@ export class RoomSelfService {
 				// Serialize all waiting-state responses to prevent duplicate transitions
 				// and duplicate agent message enqueues from concurrent calls.
 				if (this.humanInputLock) {
-					log.warn(`Concurrent human input dropped (${input.type}): already processing another`);
-					return;
+					throw new Error(
+						`Cannot process ${input.type}: another waiting-state human input is already in progress`
+					);
 				}
 				this.humanInputLock = true;
 				try {
 					if (input.type === 'review_response') {
 						const reviewInput = input as { taskId: string; response: string; approved: boolean };
 						if (!this.waitingContext || this.waitingContext.type !== 'review') {
-							log.warn('Review response received while not waiting for review input');
-							return;
+							throw new Error(
+								`Cannot process review response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+							);
 						}
 						if (this.waitingContext.taskId && this.waitingContext.taskId !== reviewInput.taskId) {
-							log.warn(
+							throw new Error(
 								`Review response task mismatch: waiting for ${this.waitingContext.taskId}, got ${reviewInput.taskId}`
 							);
-							return;
 						}
 
 						const verdict = reviewInput.approved ? 'APPROVED' : 'REJECTED';
@@ -1147,10 +1148,9 @@ export class RoomSelfService {
 							this.waitingContext.type !== 'escalation' ||
 							this.waitingContext.escalationId !== escalationInput.escalationId
 						) {
-							log.warn(
-								`Escalation response received for unknown/stale escalation: ${escalationInput.escalationId}`
+							throw new Error(
+								`Escalation response rejected for unknown/stale escalation: ${escalationInput.escalationId}`
 							);
-							return;
 						}
 
 						this.updateWaitingContext(null);
@@ -1167,12 +1167,26 @@ export class RoomSelfService {
 						);
 					} else if (input.type === 'question_response') {
 						// Handle question response in agentSession path
-						this.updateWaitingContext(null);
-						await this.setLifecycleState('planning');
 						const questionInput = input as {
 							questionId: string;
 							responses: Record<string, string | string[]>;
 						};
+						if (!this.waitingContext || this.waitingContext.type !== 'question') {
+							throw new Error(
+								`Cannot process question response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+							);
+						}
+						if (
+							this.waitingContext.questionId &&
+							this.waitingContext.questionId !== questionInput.questionId
+						) {
+							throw new Error(
+								`Question response mismatch: waiting for ${this.waitingContext.questionId}, got ${questionInput.questionId}`
+							);
+						}
+
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
 						await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
 							sessionId: this.sessionId,
 							roomId: this.ctx.room.id,
@@ -1191,6 +1205,10 @@ export class RoomSelfService {
 				} finally {
 					this.humanInputLock = false;
 				}
+			} else {
+				throw new Error(
+					`Cannot process ${input.type}: room agent is not waiting for human input (current state: ${this.lifecycleState})`
+				);
 			}
 			return;
 		}
@@ -1286,8 +1304,12 @@ export class RoomSelfService {
 	async setWaiting(context: RoomSelfWaitingContext): Promise<void> {
 		this.updateWaitingContext(context);
 		const lifecycleManager = this.requireLifecycleManager();
-		await lifecycleManager.waitForInput(`Waiting for ${context.type}`);
-		this.state = lifecycleManager.getState();
+		const nextState = await lifecycleManager.waitForInput(`Waiting for ${context.type}`);
+		if (!nextState) {
+			this.updateWaitingContext(null);
+			throw new Error(`Failed to enter waiting state from ${lifecycleManager.getLifecycleState()}`);
+		}
+		this.state = nextState;
 	}
 
 	private updateWaitingContext(context: RoomSelfWaitingContext | null): void {
