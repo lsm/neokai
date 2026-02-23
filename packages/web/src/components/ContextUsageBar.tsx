@@ -218,8 +218,8 @@ export default function ContextUsageBar({
 			<div
 				ref={indicatorRef}
 				class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-				onClick={() => totalTokens > 0 && setShowContextDetails(!showContextDetails)}
-				title={totalTokens > 0 ? 'Click for context details' : 'Context data loading...'}
+				onClick={() => setShowContextDetails(!showContextDetails)}
+				title="Click for context details"
 			>
 				{/* Compact: Pie Chart only (container width < threshold) */}
 				{useCompactLayout && (
