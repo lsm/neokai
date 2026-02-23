@@ -395,6 +395,18 @@ export function createOrUpdateRoomMcpServer(
 				: undefined,
 			onArchiveSession: messageHub
 				? async (params) => {
+						// SECURITY: Verify the session belongs to this room before archiving
+						const workerSession = workerManager?.getWorkerBySessionId(params.sessionId);
+						if (workerSession) {
+							if (workerSession.roomId !== roomId) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						} else {
+							const room = roomManager?.getRoom(roomId);
+							if (!room || !room.sessionIds.includes(params.sessionId)) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						}
 						await messageHub.request('session.archive', {
 							sessionId: params.sessionId,
 							confirmed: true,
@@ -403,6 +415,18 @@ export function createOrUpdateRoomMcpServer(
 				: undefined,
 			onInterruptSession: messageHub
 				? async (params) => {
+						// SECURITY: Verify the session belongs to this room before interrupting
+						const workerSession = workerManager?.getWorkerBySessionId(params.sessionId);
+						if (workerSession) {
+							if (workerSession.roomId !== roomId) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						} else {
+							const room = roomManager?.getRoom(roomId);
+							if (!room || !room.sessionIds.includes(params.sessionId)) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						}
 						await messageHub.request('client.interrupt', {
 							sessionId: params.sessionId,
 						});
