@@ -190,6 +190,8 @@ export class RoomSelfService {
 	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
 	/** Lock to prevent concurrent worker spawning */
 	private spawnLock = false;
+	/** Lock to prevent concurrent handling of waiting-state human inputs */
+	private humanInputLock = false;
 
 	constructor(
 		private ctx: RoomSelfContext,
@@ -1023,63 +1025,76 @@ export class RoomSelfService {
 					content,
 					timestamp: Date.now(),
 				});
-			} else if (input.type === 'review_response' && this.lifecycleState === 'waiting') {
-				this.updateWaitingContext(null);
-				await this.setLifecycleState('planning');
-				await this.enqueueAgentMessage(
-					`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
-					'human_input:review_response'
-				);
-			} else if (input.type === 'escalation_response' && this.lifecycleState === 'waiting') {
-				// Handle escalation response in agentSession path
-				const escalationInput = input as { escalationId: string; response: string };
-
-				// Validate escalation ID matches current waiting context
-				if (
-					!this.waitingContext ||
-					this.waitingContext.type !== 'escalation' ||
-					this.waitingContext.escalationId !== escalationInput.escalationId
-				) {
-					log.warn(
-						`Escalation response received for unknown/stale escalation: ${escalationInput.escalationId}`
-					);
+			} else if (this.lifecycleState === 'waiting') {
+				// Serialize all waiting-state responses to prevent duplicate transitions
+				// and duplicate agent message enqueues from concurrent calls.
+				if (this.humanInputLock) {
+					log.warn(`Concurrent human input dropped (${input.type}): already processing another`);
 					return;
 				}
+				this.humanInputLock = true;
+				try {
+					if (input.type === 'review_response') {
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
+						await this.enqueueAgentMessage(
+							`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
+							'human_input:review_response'
+						);
+					} else if (input.type === 'escalation_response') {
+						// Handle escalation response in agentSession path
+						const escalationInput = input as { escalationId: string; response: string };
 
-				this.updateWaitingContext(null);
-				await this.setLifecycleState('planning');
-				await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
-					sessionId: this.sessionId,
-					roomId: this.ctx.room.id,
-					escalationId: escalationInput.escalationId,
-					response: escalationInput.response,
-				});
-				await this.enqueueAgentMessage(
-					`Escalation resolved: ${escalationInput.response}`,
-					'human_input:escalation_response'
-				);
-			} else if (input.type === 'question_response' && this.lifecycleState === 'waiting') {
-				// Handle question response in agentSession path
-				this.updateWaitingContext(null);
-				await this.setLifecycleState('planning');
-				const questionInput = input as {
-					questionId: string;
-					responses: Record<string, string | string[]>;
-				};
-				await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
-					sessionId: this.sessionId,
-					roomId: this.ctx.room.id,
-					questionId: questionInput.questionId,
-					responses: questionInput.responses,
-				});
-				// Format responses for the message
-				const responseSummary = Object.entries(questionInput.responses)
-					.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
-					.join('; ');
-				await this.enqueueAgentMessage(
-					`Question answered: ${responseSummary}`,
-					'human_input:question_response'
-				);
+						// Validate escalation ID matches current waiting context
+						if (
+							!this.waitingContext ||
+							this.waitingContext.type !== 'escalation' ||
+							this.waitingContext.escalationId !== escalationInput.escalationId
+						) {
+							log.warn(
+								`Escalation response received for unknown/stale escalation: ${escalationInput.escalationId}`
+							);
+							return;
+						}
+
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
+						await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							escalationId: escalationInput.escalationId,
+							response: escalationInput.response,
+						});
+						await this.enqueueAgentMessage(
+							`Escalation resolved: ${escalationInput.response}`,
+							'human_input:escalation_response'
+						);
+					} else if (input.type === 'question_response') {
+						// Handle question response in agentSession path
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
+						const questionInput = input as {
+							questionId: string;
+							responses: Record<string, string | string[]>;
+						};
+						await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							questionId: questionInput.questionId,
+							responses: questionInput.responses,
+						});
+						// Format responses for the message
+						const responseSummary = Object.entries(questionInput.responses)
+							.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+							.join('; ');
+						await this.enqueueAgentMessage(
+							`Question answered: ${responseSummary}`,
+							'human_input:question_response'
+						);
+					}
+				} finally {
+					this.humanInputLock = false;
+				}
 			}
 			return;
 		}
@@ -1180,12 +1195,14 @@ export class RoomSelfService {
 	}
 
 	private updateWaitingContext(context: RoomSelfWaitingContext | null): void {
-		this.waitingContext = context;
+		// Persist to DB first so that a thrown exception doesn't leave in-memory
+		// state out of sync with the database.
 		if (context) {
 			this.stateRepo.setWaitingContext(this.ctx.room.id, context);
 		} else {
 			this.stateRepo.clearWaitingContext(this.ctx.room.id);
 		}
+		this.waitingContext = context;
 	}
 
 	getAgentSession(): AgentSession | null {
