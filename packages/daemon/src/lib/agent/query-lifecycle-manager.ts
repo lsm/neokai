@@ -292,7 +292,9 @@ export class QueryLifecycleManager {
 			}
 		});
 
-		daemonHub.emit('message.sent', { sessionId: session.id }).catch(() => {});
+		daemonHub.emit('message.sent', { sessionId: session.id }).catch((error) => {
+			this.logger.warn('Failed to emit message.sent event', error);
+		});
 	}
 
 	/**

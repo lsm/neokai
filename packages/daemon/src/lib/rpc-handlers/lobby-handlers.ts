@@ -12,6 +12,9 @@ import type { MessageHub } from '@neokai/shared';
 import type { MessageImage } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { LobbyAgentService } from '../lobby/lobby-agent-service';
+import { Logger } from '../logger';
+
+const log = new Logger('lobby-handlers');
 
 /**
  * Lobby message type
@@ -104,8 +107,8 @@ export function setupLobbyHandlers(
 					sessionId: 'lobby',
 					message: assistantMessage,
 				})
-				.catch(() => {
-					// Event emission error - non-critical, continue
+				.catch((error) => {
+					log.warn('Failed to emit lobby.message:', error);
 				});
 
 			return { message: assistantMessage };

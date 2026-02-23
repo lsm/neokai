@@ -19,6 +19,9 @@ import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/room-manager';
 import { TaskManager } from '../room';
+import { Logger } from '../logger';
+
+const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
@@ -60,8 +63,8 @@ export function setupTaskHandlers(
 				roomId,
 				task,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.task.update for room ${roomId}:`, error);
 			});
 	};
 
@@ -78,8 +81,8 @@ export function setupTaskHandlers(
 					sessions: overview.sessions,
 					activeTasks: overview.activeTasks,
 				})
-				.catch(() => {
-					// Event emission error - non-critical, continue
+				.catch((error) => {
+					log.warn(`Failed to emit room.overview for room ${roomId}:`, error);
 				});
 		}
 	};

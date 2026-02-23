@@ -21,6 +21,9 @@ import type {
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RecurringJobScheduler } from '../room/recurring-job-scheduler';
+import { Logger } from '../logger';
+
+const log = new Logger('recurring-job-handlers');
 
 /**
  * Type alias for testability - allows injecting mock schedulers
@@ -64,8 +67,8 @@ export function setupRecurringJobHandlers(
 				roomId,
 				jobId,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit ${eventName} for room ${roomId}:`, error);
 			});
 	};
 
@@ -80,8 +83,8 @@ export function setupRecurringJobHandlers(
 				jobId,
 				job,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit recurringJob.updated for room ${roomId}:`, error);
 			});
 	};
 

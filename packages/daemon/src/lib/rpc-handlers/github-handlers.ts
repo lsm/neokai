@@ -26,6 +26,9 @@ import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { GitHubService } from '../github/github-service';
 import type { RoomManager } from '../room/room-manager';
+import { Logger } from '../logger';
+
+const log = new Logger('github-handlers');
 
 export function setupGitHubHandlers(
 	messageHub: MessageHub,
@@ -99,8 +102,8 @@ export function setupGitHubHandlers(
 				roomId: params.roomId,
 				mapping,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit github.roomMappingUpdated for room ${params.roomId}:`, error);
 			});
 
 		return { mapping };
@@ -140,8 +143,8 @@ export function setupGitHubHandlers(
 				sessionId: 'global',
 				roomId: params.roomId,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit github.roomMappingDeleted for room ${params.roomId}:`, error);
 			});
 
 		return { success: true };
@@ -219,8 +222,8 @@ export function setupGitHubHandlers(
 				item: updatedItem,
 				roomId: params.roomId,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit github.inboxItemRouted for room ${params.roomId}:`, error);
 			});
 
 		// Also emit to the specific room channel
@@ -236,8 +239,8 @@ export function setupGitHubHandlers(
 				},
 				sender: 'system',
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.message for routed inbox item ${params.itemId}:`, error);
 			});
 
 		return { success: true, item: updatedItem };
@@ -270,8 +273,8 @@ export function setupGitHubHandlers(
 				sessionId: 'global',
 				itemId: params.itemId,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit github.inboxItemDismissed for item ${params.itemId}:`, error);
 			});
 
 		return { success: true };
@@ -323,8 +326,11 @@ export function setupGitHubHandlers(
 				repository: params.repository,
 				config,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(
+					`Failed to emit github.filterConfigUpdated for ${params.repository ?? 'global'}:`,
+					error
+				);
 			});
 
 		return { config };

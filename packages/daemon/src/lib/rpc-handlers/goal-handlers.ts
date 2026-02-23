@@ -22,6 +22,9 @@
 import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { GoalManager } from '../room/goal-manager';
+import { Logger } from '../logger';
+
+const log = new Logger('goal-handlers');
 
 export type GoalManagerLike = Pick<
 	GoalManager,
@@ -60,8 +63,8 @@ export function setupGoalHandlers(
 				goalId: goal.id,
 				goal,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit goal.created for room ${roomId}:`, error);
 			});
 	};
 
@@ -76,8 +79,8 @@ export function setupGoalHandlers(
 				goalId,
 				goal,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit goal.updated for room ${roomId}:`, error);
 			});
 	};
 
@@ -92,8 +95,8 @@ export function setupGoalHandlers(
 				goalId,
 				progress,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit goal.progressUpdated for room ${roomId}:`, error);
 			});
 	};
 
@@ -108,8 +111,8 @@ export function setupGoalHandlers(
 				goalId: goal.id,
 				goal,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit goal.completed for room ${roomId}:`, error);
 			});
 	};
 
