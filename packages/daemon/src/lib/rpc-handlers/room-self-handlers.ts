@@ -122,8 +122,12 @@ export class RoomSelfManager {
 	 */
 	async startAgent(roomId: string, options?: { persistRunIntent?: boolean }): Promise<void> {
 		const persistRunIntent = options?.persistRunIntent ?? true;
-		if (!this.deps.roomManager.getRoom(roomId)) {
+		const room = this.deps.roomManager.getRoom(roomId);
+		if (!room) {
 			throw new Error(`Room not found: ${roomId}`);
+		}
+		if (room.status !== 'active') {
+			throw new Error(`Cannot start room agent for archived room: ${roomId}`);
 		}
 		if (persistRunIntent) {
 			this.stateRepo.setRunIntent(roomId, true, { createIfMissing: true });
@@ -163,8 +167,14 @@ export class RoomSelfManager {
 
 		log.info(`Autostarting ${roomIds.length} room agent(s) from persisted run intent`);
 		for (const roomId of roomIds) {
-			if (!this.deps.roomManager.getRoom(roomId)) {
+			const room = this.deps.roomManager.getRoom(roomId);
+			if (!room) {
 				log.warn(`Skipping room agent autostart for missing room: ${roomId}`);
+				continue;
+			}
+			if (room.status !== 'active') {
+				log.info(`Skipping room agent autostart for archived room: ${roomId}`);
+				this.stateRepo.setRunIntent(roomId, false);
 				continue;
 			}
 

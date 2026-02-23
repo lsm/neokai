@@ -1564,5 +1564,22 @@ function runMigration31(db: BunDatabase): void {
 
 	if (!tableHasColumn(db, 'room_agent_states', 'run_intent')) {
 		db.exec(`ALTER TABLE room_agent_states ADD COLUMN run_intent INTEGER NOT NULL DEFAULT 0`);
+
+		// Backfill run intent for agents that were effectively "running" before
+		// run_intent existed. Paused agents stay opted out.
+		if (tableExists(db, 'rooms')) {
+			db.exec(`
+				UPDATE room_agent_states
+				SET run_intent = 1
+				WHERE lifecycle_state != 'paused'
+					AND room_id IN (SELECT id FROM rooms WHERE status = 'active')
+			`);
+		} else {
+			db.exec(`
+				UPDATE room_agent_states
+				SET run_intent = 1
+				WHERE lifecycle_state != 'paused'
+			`);
+		}
 	}
 }

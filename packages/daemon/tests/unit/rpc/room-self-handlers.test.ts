@@ -93,4 +93,40 @@ describe('RoomSelfManager run intent autostart', () => {
 
 		expect(startAgentMock).not.toHaveBeenCalled();
 	});
+
+	it('does not autostart archived rooms and clears persisted run intent', async () => {
+		const room = roomManager.createRoom({
+			name: 'Archived Room',
+			allowedPaths: [{ path: '/tmp' }],
+			defaultPath: '/tmp',
+		});
+		roomManager.archiveRoom(room.id);
+
+		const stateRepo = new RoomSelfStateRepository(db.getDatabase());
+		stateRepo.setRunIntent(room.id, true, { createIfMissing: true });
+
+		const manager = createManager();
+		const startAgentMock = mock(async () => {});
+		(manager as unknown as { startAgent: typeof startAgentMock }).startAgent = startAgentMock;
+
+		await manager.startAgentsWithRunIntent();
+
+		expect(startAgentMock).not.toHaveBeenCalled();
+		expect(stateRepo.getRunIntent(room.id)).toBe(false);
+	});
+
+	it('rejects manual start for archived rooms', async () => {
+		const room = roomManager.createRoom({
+			name: 'Archived Start',
+			allowedPaths: [{ path: '/tmp' }],
+			defaultPath: '/tmp',
+		});
+		roomManager.archiveRoom(room.id);
+
+		const manager = createManager();
+
+		await expect(manager.startAgent(room.id)).rejects.toThrow(
+			`Cannot start room agent for archived room: ${room.id}`
+		);
+	});
 });

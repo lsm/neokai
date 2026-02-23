@@ -233,10 +233,11 @@ export class WorkerManager {
 			);
 		}
 
-		const agentSession = this.sessionLifecycle.getAgentSession(workerSessionId);
+		const agentSession = await this.sessionLifecycle.getAgentSessionAsync(workerSessionId);
 		if (!agentSession) {
 			throw new Error(`Worker session unavailable for resume: ${workerSessionId}`);
 		}
+		await agentSession.startStreamingQuery();
 
 		// Move worker back to running before injecting the reviewer decision.
 		this.updateWorkerStatus(workerSessionId, 'running');

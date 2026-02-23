@@ -297,6 +297,7 @@ export class RoomSelfService {
 		}
 
 		this.subscribeToEvents();
+		await this.reconcileRestoredLifecycleState();
 		this.startIdleCheck();
 
 		// Trigger an immediate idle check instead of waiting for the first interval
@@ -344,6 +345,60 @@ export class RoomSelfService {
 		this.state = lifecycleManager.getState();
 
 		log.info('Room agent stopped');
+	}
+
+	private async reconcileRestoredLifecycleState(): Promise<void> {
+		if (this.lifecycleState !== 'executing') {
+			return;
+		}
+
+		const lifecycleManager = this.requireLifecycleManager();
+		const activeWorkers = this.ctx.workerManager
+			.getWorkersByRoom(this.ctx.room.id)
+			.filter(
+				(worker) =>
+					worker.status === 'starting' ||
+					worker.status === 'running' ||
+					worker.status === 'waiting_for_review'
+			);
+
+		const activeWorkerIds = new Set(activeWorkers.map((worker) => worker.sessionId));
+		const persistedActiveIds = this.state.activeWorkerSessionIds;
+		if (
+			persistedActiveIds.length !== activeWorkerIds.size ||
+			persistedActiveIds.some((id) => !activeWorkerIds.has(id))
+		) {
+			const repairedState = this.stateRepo.updateState(this.ctx.room.id, {
+				activeWorkerSessionIds: [...activeWorkerIds],
+			});
+			if (repairedState) {
+				this.state = repairedState;
+			}
+		}
+
+		if (activeWorkers.length === 0) {
+			log.warn(
+				'Recovered stale executing state with no active workers; transitioning room agent to idle'
+			);
+			await this.transitionTo('idle', 'Recovered stale executing state after daemon restart');
+			return;
+		}
+
+		const restartFailureReason = 'Worker interrupted by daemon restart';
+		for (const worker of activeWorkers) {
+			this.ctx.workerManager.updateWorkerStatus(worker.sessionId, 'failed');
+			await this.taskManager.failTask(worker.taskId, restartFailureReason).catch((error) => {
+				log.warn(
+					`Failed to mark task ${worker.taskId} as failed during startup reconciliation:`,
+					error
+				);
+			});
+			this.ctx.roomManager.unassignSession(this.ctx.room.id, worker.sessionId);
+			lifecycleManager.removeActiveWorkerSession(worker.sessionId);
+		}
+		this.state = lifecycleManager.getState();
+
+		await this.transitionTo('idle', 'Recovered interrupted workers after daemon restart');
 	}
 
 	getFeatures(): SessionFeatures {
@@ -1057,6 +1112,12 @@ export class RoomSelfService {
 	async handleHumanInput(input: RoomSelfHumanInput): Promise<void> {
 		log.info(`Handling human input: ${input.type}`);
 
+		if (input.type !== 'message' && this.lifecycleState !== 'waiting') {
+			throw new Error(
+				`Cannot process ${input.type}: room agent is not waiting for human input (current state: ${this.lifecycleState})`
+			);
+		}
+
 		if (this.agentSession) {
 			if (input.type === 'message') {
 				const content = (input as { content: string }).content;
@@ -1095,7 +1156,7 @@ export class RoomSelfService {
 					content,
 					timestamp: Date.now(),
 				});
-			} else if (this.lifecycleState === 'waiting') {
+			} else {
 				// Serialize all waiting-state responses to prevent duplicate transitions
 				// and duplicate agent message enqueues from concurrent calls.
 				if (this.humanInputLock) {
@@ -1215,10 +1276,6 @@ export class RoomSelfService {
 				} finally {
 					this.humanInputLock = false;
 				}
-			} else {
-				throw new Error(
-					`Cannot process ${input.type}: room agent is not waiting for human input (current state: ${this.lifecycleState})`
-				);
 			}
 			return;
 		}
@@ -1244,6 +1301,17 @@ export class RoomSelfService {
 	private async handleReviewResponse(
 		input: Extract<RoomSelfHumanInput, { type: 'review_response' }>
 	): Promise<void> {
+		if (!this.waitingContext || this.waitingContext.type !== 'review') {
+			throw new Error(
+				`Cannot process review response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+			);
+		}
+		if (this.waitingContext.taskId && this.waitingContext.taskId !== input.taskId) {
+			throw new Error(
+				`Review response task mismatch: waiting for ${this.waitingContext.taskId}, got ${input.taskId}`
+			);
+		}
+
 		log.info(
 			`Review response for task ${input.taskId}: ${input.approved ? 'approved' : 'rejected'}`
 		);
@@ -1276,8 +1344,9 @@ export class RoomSelfService {
 			this.waitingContext.type !== 'escalation' ||
 			this.waitingContext.escalationId !== input.escalationId
 		) {
-			log.warn(`Escalation response received for unknown/stale escalation: ${input.escalationId}`);
-			return;
+			throw new Error(
+				`Escalation response rejected for unknown/stale escalation: ${input.escalationId}`
+			);
 		}
 
 		log.info(`Escalation response for ${input.escalationId}: ${input.response}`);
@@ -1297,6 +1366,17 @@ export class RoomSelfService {
 	private async handleQuestionResponse(
 		input: Extract<RoomSelfHumanInput, { type: 'question_response' }>
 	): Promise<void> {
+		if (!this.waitingContext || this.waitingContext.type !== 'question') {
+			throw new Error(
+				`Cannot process question response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+			);
+		}
+		if (this.waitingContext.questionId && this.waitingContext.questionId !== input.questionId) {
+			throw new Error(
+				`Question response mismatch: waiting for ${this.waitingContext.questionId}, got ${input.questionId}`
+			);
+		}
+
 		log.info(`Question response for ${input.questionId}`);
 
 		this.updateWaitingContext(null);

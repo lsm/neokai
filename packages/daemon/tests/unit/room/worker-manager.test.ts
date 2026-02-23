@@ -165,11 +165,13 @@ describe('WorkerManager', () => {
 
 	it('resumeWorker sets worker back to running and enqueues reviewer feedback', async () => {
 		const enqueueMock = mock(async () => {});
+		const startStreamingQueryMock = mock(async () => {});
 		const daemonHub = {
 			emit: mock(async () => {}),
 		} as unknown as import('../../../src/lib/daemon-hub').DaemonHub;
 		const sessionLifecycle = {
-			getAgentSession: mock(() => ({
+			getAgentSessionAsync: mock(async () => ({
+				startStreamingQuery: startStreamingQueryMock,
 				messageQueue: { enqueue: enqueueMock },
 			})),
 		} as unknown as import('../../../src/lib/session/session-lifecycle').SessionLifecycle;
@@ -219,6 +221,7 @@ describe('WorkerManager', () => {
 			.prepare(`SELECT status FROM worker_sessions WHERE session_id = ?`)
 			.get('worker-session-resume') as { status: string } | null;
 		expect(workerRow?.status).toBe('running');
+		expect(startStreamingQueryMock).toHaveBeenCalledTimes(1);
 		expect(enqueueMock).toHaveBeenCalledWith('Human review: APPROVED', true);
 	});
 
@@ -226,11 +229,13 @@ describe('WorkerManager', () => {
 		const enqueueMock = mock(async () => {
 			throw new Error('queue down');
 		});
+		const startStreamingQueryMock = mock(async () => {});
 		const daemonHub = {
 			emit: mock(async () => {}),
 		} as unknown as import('../../../src/lib/daemon-hub').DaemonHub;
 		const sessionLifecycle = {
-			getAgentSession: mock(() => ({
+			getAgentSessionAsync: mock(async () => ({
+				startStreamingQuery: startStreamingQueryMock,
 				messageQueue: { enqueue: enqueueMock },
 			})),
 		} as unknown as import('../../../src/lib/session/session-lifecycle').SessionLifecycle;
@@ -282,5 +287,6 @@ describe('WorkerManager', () => {
 			.prepare(`SELECT status FROM worker_sessions WHERE session_id = ?`)
 			.get('worker-session-resume-fail') as { status: string } | null;
 		expect(workerRow?.status).toBe('waiting_for_review');
+		expect(startStreamingQueryMock).toHaveBeenCalledTimes(1);
 	});
 });

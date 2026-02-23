@@ -79,6 +79,7 @@ async function createFixture(): Promise<Fixture> {
 			return workerSessionId;
 		}),
 		getAgentSession: mock(() => workerAgentSession),
+		getAgentSessionAsync: mock(async () => workerAgentSession),
 	} as unknown as SessionLifecycle;
 
 	const workerManager = new WorkerManager(db, daemonHub, sessionLifecycle, roomManager);
@@ -417,6 +418,20 @@ describe('RoomSelf worker lifecycle integration', () => {
 		expect(fixture.stateRepo.getWaitingContext(fixture.room.id)?.escalationId).toBe('esc-expected');
 	});
 
+	test('legacy human input rejects non-message responses when not waiting', async () => {
+		await fixture.service.forceState('planning');
+		(fixture.service as unknown as { agentSession: unknown }).agentSession = null;
+
+		await expect(
+			fixture.service.handleHumanInput({
+				type: 'review_response',
+				taskId: 'task-not-waiting',
+				approved: true,
+				response: 'approve',
+			})
+		).rejects.toThrow('not waiting for human input');
+	});
+
 	test('injectPlanningMessage skips enqueue when transition to planning is invalid', async () => {
 		await fixture.service.forceState('executing');
 		const enqueueMock = mock(async () => {});
@@ -475,6 +490,49 @@ describe('RoomSelf worker lifecycle integration', () => {
 
 		expect(roomAgentQueueEnqueueMock).not.toHaveBeenCalled();
 		expect(fixture.service.getState().lifecycleState).toBe('executing');
+	});
+
+	test('startup reconciliation moves stale executing state with no active workers to idle', async () => {
+		await fixture.service.forceState('executing');
+		(fixture.service as unknown as { agentSession: unknown }).agentSession = null;
+
+		await (
+			fixture.service as unknown as { reconcileRestoredLifecycleState: () => Promise<void> }
+		).reconcileRestoredLifecycleState();
+
+		expect(fixture.service.getState().lifecycleState).toBe('idle');
+		expect(fixture.service.getState().activeWorkerSessionIds).toEqual([]);
+	});
+
+	test('startup reconciliation fails stale active workers and clears executing lifecycle', async () => {
+		await fixture.service.forceState('executing');
+		(fixture.service as unknown as { agentSession: unknown }).agentSession = null;
+
+		const task = await fixture.taskManager.createTask({
+			title: 'Interrupted worker',
+			description: 'Should be reconciled on restart',
+			priority: 'normal',
+		});
+		const workerSessionId = await (
+			fixture.service as unknown as {
+				spawnWorkerForTask: (
+					taskArg: typeof task,
+					options: { throwOnBlocked: boolean }
+				) => Promise<string | null>;
+			}
+		).spawnWorkerForTask(task, { throwOnBlocked: true });
+		expect(workerSessionId).toBeString();
+		expect(fixture.workerManager.getWorkerBySessionId(workerSessionId!)?.status).toBe('running');
+		expect(fixture.service.getState().activeWorkerSessionIds).toContain(workerSessionId!);
+
+		await (
+			fixture.service as unknown as { reconcileRestoredLifecycleState: () => Promise<void> }
+		).reconcileRestoredLifecycleState();
+
+		expect(fixture.workerManager.getWorkerBySessionId(workerSessionId!)?.status).toBe('failed');
+		expect((await fixture.taskManager.getTask(task.id))?.status).toBe('failed');
+		expect(fixture.service.getState().lifecycleState).toBe('idle');
+		expect(fixture.service.getState().activeWorkerSessionIds).toEqual([]);
 	});
 
 	test('waiting context persists and supports human-input resume after restart', async () => {
