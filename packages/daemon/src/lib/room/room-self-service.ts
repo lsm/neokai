@@ -497,8 +497,7 @@ export class RoomSelfService {
 						}
 					}
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubWorkerCompleted);
 
@@ -517,8 +516,7 @@ export class RoomSelfService {
 						});
 					}
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubWorkerReviewRequested);
 
@@ -530,8 +528,7 @@ export class RoomSelfService {
 				if (worker && worker.roomId === this.ctx.room.id) {
 					await this.handleWorkerFailed(event.sessionId, event.taskId, event.error);
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubWorkerFailed);
 
@@ -575,8 +572,7 @@ export class RoomSelfService {
 					// which we'll handle via our worker.failed subscription
 					await this.ctx.workerManager.markWorkerFailed(event.sessionId, event.error);
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubSessionError);
 	}
