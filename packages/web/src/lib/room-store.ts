@@ -282,21 +282,27 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubGoalCreated);
 
-			const unsubGoalUpdated = hub.onEvent<GoalEventPayload>('goal.updated', (event) => {
-				if (event.roomId === roomId) {
-					// goal.updated may have partial goal data
-					if (event.goal) {
-						const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
-						if (idx >= 0) {
-							this.goals.value = [
-								...this.goals.value.slice(0, idx),
-								{ ...this.goals.value[idx], ...event.goal },
-								...this.goals.value.slice(idx + 1),
-							];
+			const unsubGoalUpdated = hub.onEvent<GoalEventPayload & { goalId?: string }>(
+				'goal.updated',
+				(event) => {
+					if (event.roomId === roomId) {
+						if (event.goal) {
+							// Partial update
+							const idx = this.goals.value.findIndex((g) => g.id === event.goal.id);
+							if (idx >= 0) {
+								this.goals.value = [
+									...this.goals.value.slice(0, idx),
+									{ ...this.goals.value[idx], ...event.goal },
+									...this.goals.value.slice(idx + 1),
+								];
+							}
+						} else if (event.goalId) {
+							// goal.updated with no goal object signals deletion
+							this.goals.value = this.goals.value.filter((g) => g.id !== event.goalId);
 						}
 					}
 				}
-			});
+			);
 			this.cleanupFunctions.push(unsubGoalUpdated);
 
 			const unsubGoalCompleted = hub.onEvent<GoalEventPayload>('goal.completed', (event) => {
@@ -351,21 +357,24 @@ class RoomStore {
 			);
 			this.cleanupFunctions.push(unsubJobDeleted);
 
-			const unsubJobTriggered = hub.onEvent<RecurringJobEventPayload>(
-				'recurringJob.triggered',
-				(event) => {
-					if (event.roomId === roomId) {
-						const idx = this.recurringJobs.value.findIndex((j) => j.id === event.job.id);
-						if (idx >= 0) {
-							this.recurringJobs.value = [
-								...this.recurringJobs.value.slice(0, idx),
-								event.job,
-								...this.recurringJobs.value.slice(idx + 1),
-							];
-						}
+			const unsubJobTriggered = hub.onEvent<{
+				roomId: string;
+				jobId: string;
+				taskId: string;
+				timestamp: number;
+			}>('recurringJob.triggered', (event) => {
+				if (event.roomId === roomId) {
+					// Update lastRunAt for the triggered job; no full job object in this event
+					const idx = this.recurringJobs.value.findIndex((j) => j.id === event.jobId);
+					if (idx >= 0) {
+						this.recurringJobs.value = [
+							...this.recurringJobs.value.slice(0, idx),
+							{ ...this.recurringJobs.value[idx], lastRunAt: event.timestamp },
+							...this.recurringJobs.value.slice(idx + 1),
+						];
 					}
 				}
-			);
+			});
 			this.cleanupFunctions.push(unsubJobTriggered);
 
 			// 5. Room agent state changes
