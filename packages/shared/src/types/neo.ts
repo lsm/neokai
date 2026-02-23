@@ -815,6 +815,7 @@ export type RoomSelfHumanInput =
 export interface RoomSelfWaitingContext {
 	type: 'review' | 'escalation' | 'question';
 	taskId?: string;
+	workerSessionId?: string;
 	escalationId?: string;
 	questionId?: string;
 	reason?: string;

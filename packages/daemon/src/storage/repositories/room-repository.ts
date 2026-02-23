@@ -314,9 +314,10 @@ export class RoomRepository {
 	/**
 	 * Delete a room by ID
 	 */
-	deleteRoom(id: string): void {
+	deleteRoom(id: string): boolean {
 		const stmt = this.db.prepare(`DELETE FROM rooms WHERE id = ?`);
-		stmt.run(id);
+		const result = stmt.run(id);
+		return result.changes > 0;
 	}
 
 	/**

@@ -105,6 +105,7 @@ describe('SettingsManager', () => {
 				model: 'claude-opus-4-5-20251101',
 				permissionMode: 'acceptEdits',
 				maxThinkingTokens: 10000,
+				maxConcurrentWorkers: 3,
 				disabledMcpServers: ['server1'],
 				showArchived: false,
 				autoScroll: false,

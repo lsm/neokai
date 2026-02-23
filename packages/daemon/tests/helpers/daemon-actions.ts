@@ -25,6 +25,23 @@ export async function sendMessage(
 		content,
 		...options,
 	})) as { messageId: string };
+
+	// message.send acknowledges persistence, not query start.
+	// Wait briefly for agent to leave idle so downstream waitForIdle() calls don't
+	// resolve against the pre-send idle state.
+	const start = Date.now();
+	while (Date.now() - start < 5000) {
+		try {
+			const state = await getProcessingState(daemon, sessionId);
+			if (state.status !== 'idle' && state.status !== 'unknown') {
+				break;
+			}
+		} catch {
+			// Ignore transient RPC failures while query bootstraps
+		}
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+
 	return result;
 }
 
@@ -99,7 +116,7 @@ async function waitForProcessingState(
 			} catch {
 				// Ignore polling errors
 			}
-		}, 2000);
+		}, 500);
 
 		// Join room, then re-check state to close the primary race window.
 		// The re-check AFTER joinRoom ensures: if state changed before join completed,

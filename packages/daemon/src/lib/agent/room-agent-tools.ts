@@ -197,6 +197,8 @@ export interface RoomAgentToolsConfig {
 	onCancelJob?: (jobId: string) => Promise<void>;
 	/** Callback to update room prompts */
 	onUpdatePrompts?: (params: RoomUpdatePromptsParams) => Promise<void>;
+	/** Callback when reviewing is complete — transitions out of reviewing state */
+	onFinishReview?: (hasMoreWork: boolean) => Promise<void>;
 	/** Callback to list goals */
 	onListGoals: (status?: string) => Promise<RoomGoalSummary[]>;
 	/** Callback to list recurring jobs */
@@ -690,8 +692,47 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			]
 		: [];
 
+	const finishReviewTool = config.onFinishReview
+		? [
+				tool(
+					'room_finish_review',
+					'Signal that you have finished reviewing completed work and are ready to proceed. Call this at the end of every review phase after updating goals, tasks, or spawning follow-up workers.',
+					{
+						has_more_work: z
+							.boolean()
+							.describe(
+								'true if there are pending goals or tasks to work on, false if all work is complete'
+							),
+					},
+					async (args) => {
+						await config.onFinishReview!(args.has_more_work);
+
+						return {
+							content: [
+								{
+									type: 'text',
+									text: JSON.stringify({
+										success: true,
+										message: args.has_more_work
+											? 'Review complete. Returning to planning phase.'
+											: 'Review complete. Returning to idle.',
+									}),
+								},
+							],
+						};
+					}
+				),
+			]
+		: [];
+
 	// Combine all tools
-	const tools = [...allBaseTools, ...scheduleJobTool, ...cancelJobTool, ...updatePromptsTool];
+	const tools = [
+		...allBaseTools,
+		...scheduleJobTool,
+		...cancelJobTool,
+		...updatePromptsTool,
+		...finishReviewTool,
+	];
 
 	return createSdkMcpServer({
 		name: `room-agent-${config.roomId.slice(0, 8)}`,

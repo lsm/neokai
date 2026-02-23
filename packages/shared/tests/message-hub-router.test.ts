@@ -475,7 +475,7 @@ describe('MessageHubRouter', () => {
 			}).not.toThrow();
 		});
 
-		test('should handle serialization errors gracefully', () => {
+		test('should handle circular references by converting to [Circular]', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const clientId = router.registerConnection(conn1);
 
@@ -494,10 +494,10 @@ describe('MessageHubRouter', () => {
 
 			const success = router.sendToClient(clientId, message);
 
-			expect(success).toBe(false);
+			expect(success).toBe(true);
 		});
 
-		test('should handle broadcast serialization errors gracefully', () => {
+		test('should handle broadcast circular references by converting to [Circular]', () => {
 			const conn1 = createMockConnection(mockWs1);
 			const conn2 = createMockConnection(mockWs2);
 			router.registerConnection(conn1);
@@ -518,8 +518,8 @@ describe('MessageHubRouter', () => {
 
 			const result = router.broadcast(message);
 
-			expect(result.sent).toBe(0);
-			expect(result.failed).toBe(2);
+			expect(result.sent).toBe(2);
+			expect(result.failed).toBe(0);
 		});
 	});
 

@@ -277,19 +277,6 @@ describe('RecurringJobScheduler', () => {
 			expect(weeklySchedule.hour).toBe(10);
 		});
 
-		it('should create job with cron schedule', async () => {
-			const job = await scheduler.createJob({
-				roomId,
-				name: 'Cron Job',
-				description: '',
-				schedule: createCronSchedule('0 9 * * 1-5'),
-				taskTemplate: createTestTemplate(),
-			});
-
-			expect(job.schedule.type).toBe('cron');
-			expect((job.schedule as { expression: string }).expression).toBe('0 9 * * 1-5');
-		});
-
 		it('should calculate nextRunAt when creating job', async () => {
 			const before = Date.now();
 			await scheduler.createJob({
@@ -827,11 +814,10 @@ describe('RecurringJobScheduler', () => {
 
 		it('should calculate next run for weekly schedule (same day, past time -> next week)', () => {
 			const now = new Date();
-			const pastHour = (now.getHours() - 2 + 24) % 24;
 			const schedule: RecurringJobSchedule = {
 				type: 'weekly',
 				dayOfWeek: now.getDay(),
-				hour: pastHour,
+				hour: 0,
 				minute: 0,
 			};
 
@@ -842,22 +828,6 @@ describe('RecurringJobScheduler', () => {
 			const diffDays = (nextRun - now.getTime()) / (24 * 60 * 60 * 1000);
 			expect(diffDays).toBeGreaterThanOrEqual(6);
 			expect(nextRunDate.getDay()).toBe(now.getDay());
-		});
-
-		it('should calculate next run for cron schedule (falls back to daily)', () => {
-			const now = Date.now();
-			const schedule: RecurringJobSchedule = {
-				type: 'cron',
-				expression: '0 9 * * *',
-			};
-
-			const nextRun = scheduler.calculateNextRun(schedule);
-
-			// Cron falls back to daily (next day at midnight)
-			const nextRunDate = new Date(nextRun);
-			expect(nextRunDate.getHours()).toBe(0);
-			expect(nextRunDate.getMinutes()).toBe(0);
-			expect(nextRun).toBeGreaterThan(now);
 		});
 	});
 

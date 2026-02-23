@@ -36,6 +36,9 @@ import { WorkerSessionRepository } from '../../storage/repositories/worker-sessi
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import { createWorkerToolsMcpServer, type WorkerToolsConfig } from '../agent/worker-tools';
 import type { RoomManager } from './room-manager';
+import { Logger } from '../logger';
+
+const log = new Logger('worker-manager');
 
 /**
  * Configuration for spawning a worker
@@ -121,10 +124,8 @@ export class WorkerManager {
 			parentSessionId: roomSessionId,
 		});
 
-		// Assign to room
-		this.roomManager.assignSession(roomId, workerSessionId);
-
-		// Track worker session
+		// Track worker session FIRST (before assigning to room)
+		// This ensures events can always find the worker via getWorkerBySessionId()
 		this.workerSessionRepo.createWorkerSession({
 			id: generateUUID(),
 			roomId,
@@ -136,6 +137,9 @@ export class WorkerManager {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});
+
+		// Assign to room (after tracking record is created)
+		this.roomManager.assignSession(roomId, workerSessionId);
 
 		// Create worker tools MCP server
 		const workerToolsMcp = this.createWorkerToolsMcp(workerSessionId, taskId);
@@ -152,6 +156,9 @@ export class WorkerManager {
 
 			// Start streaming query
 			await agentSession.startStreamingQuery();
+
+			// Update worker status to 'running' after successful query start
+			this.workerSessionRepo.updateWorkerStatusBySessionId(workerSessionId, 'running');
 
 			// Send initial task prompt
 			const workerPrompt = this.buildWorkerPrompt(taskTitle, taskDescription);
@@ -173,6 +180,14 @@ export class WorkerManager {
 	 */
 	getWorkerByTask(taskId: string): WorkerSession | null {
 		return this.workerSessionRepo.getWorkerByTask(taskId);
+	}
+
+	/**
+	 * Get active worker session by task ID (not completed/failed)
+	 * Use this to check if a task already has an active worker before spawning
+	 */
+	getActiveWorkerByTask(taskId: string): WorkerSession | null {
+		return this.workerSessionRepo.getActiveWorkerByTask(taskId);
 	}
 
 	/**
@@ -204,10 +219,98 @@ export class WorkerManager {
 	}
 
 	/**
+	 * Resume a worker that is blocked on human review.
+	 */
+	async resumeWorker(workerSessionId: string, message: string): Promise<void> {
+		const worker = this.getWorkerBySessionId(workerSessionId);
+		if (!worker) {
+			throw new Error(`Worker not found: ${workerSessionId}`);
+		}
+
+		if (worker.status !== 'waiting_for_review') {
+			throw new Error(
+				`Worker ${workerSessionId} is not waiting for review (status: ${worker.status})`
+			);
+		}
+
+		const agentSession = await this.sessionLifecycle.getAgentSessionAsync(workerSessionId);
+		if (!agentSession) {
+			throw new Error(`Worker session unavailable for resume: ${workerSessionId}`);
+		}
+		await agentSession.startStreamingQuery();
+
+		// Move worker back to running before injecting the reviewer decision.
+		this.updateWorkerStatus(workerSessionId, 'running');
+		try {
+			await agentSession.messageQueue.enqueue(message, true);
+		} catch (error) {
+			// Keep state consistent if message delivery fails.
+			this.updateWorkerStatus(workerSessionId, 'waiting_for_review');
+			throw error;
+		}
+	}
+
+	/**
 	 * Complete a worker session
 	 */
 	completeWorker(workerSessionId: string): void {
+		// Get worker to find roomId for session unassignment
+		const worker = this.getWorkerBySessionId(workerSessionId);
+
 		this.workerSessionRepo.completeWorkerSessionBySessionId(workerSessionId);
+		// Clean up worker tools map to prevent memory leak
+		this.workerTools.delete(workerSessionId);
+
+		// Unassign session from room to prevent session_ids accumulation
+		if (worker) {
+			this.roomManager.unassignSession(worker.roomId, workerSessionId);
+		}
+	}
+
+	/**
+	 * Terminate all workers for a room (used during room deletion)
+	 *
+	 * This ensures running worker sessions are properly stopped before
+	 * the room and its data are deleted from the database.
+	 *
+	 * @param roomId - The room ID to terminate workers for
+	 */
+	async terminateWorkersForRoom(roomId: string): Promise<void> {
+		const workers = this.getWorkersByRoom(roomId);
+
+		for (const worker of workers) {
+			// Skip already completed/failed workers
+			if (worker.status === 'completed' || worker.status === 'failed') {
+				continue;
+			}
+
+			// Get the agent session and cleanup (stops SDK query)
+			const agentSession = this.sessionLifecycle.getAgentSession(worker.sessionId);
+			if (agentSession) {
+				try {
+					await agentSession.cleanup();
+				} catch (error) {
+					// Log but continue - we still need to mark as failed
+					log.error(`Error cleaning up worker ${worker.sessionId}:`, error);
+				}
+			}
+
+			try {
+				// Reuse canonical failure handling so task status and worker.failed
+				// events are emitted consistently for terminated workers.
+				await this.markWorkerFailed(worker.sessionId, 'Worker terminated due to room shutdown');
+			} catch (error) {
+				log.error(`Error marking worker ${worker.sessionId} as failed:`, error);
+				// Fallback: keep persistence consistent even if event emission fails.
+				this.updateWorkerStatus(worker.sessionId, 'failed');
+				this.taskRepo.updateTask(worker.taskId, {
+					status: 'failed',
+					error: 'Worker terminated due to room shutdown',
+				});
+				this.workerTools.delete(worker.sessionId);
+				this.roomManager.unassignSession(worker.roomId, worker.sessionId);
+			}
+		}
 	}
 
 	/**
@@ -246,6 +349,9 @@ export class WorkerManager {
 		// Remove from active worker tools
 		this.workerTools.delete(workerSessionId);
 
+		// Unassign session from room to prevent session_ids accumulation
+		this.roomManager.unassignSession(worker.roomId, workerSessionId);
+
 		// Emit failure event for room agents to handle
 		await this.daemonHub.emit('worker.failed', {
 			sessionId: workerSessionId,
@@ -271,11 +377,16 @@ export class WorkerManager {
 		parts.push('When you have finished:\n');
 		parts.push('1. Call `worker_complete_task` with a summary of what you accomplished\n');
 		parts.push(
-			'2. If you need human review or approval at any point, call `worker_request_review`\n\n'
+			'2. If you need human review or approval at any point, call `worker_request_review`\n'
+		);
+		parts.push(
+			'3. If the task is impossible or blocked by factors you cannot resolve, call `worker_fail_task`\n\n'
 		);
 		parts.push('Available worker-specific tools:\n');
+		parts.push('- `worker_report_progress`: Share incremental progress updates\n');
 		parts.push('- `worker_complete_task`: Mark your task as complete\n');
-		parts.push('- `worker_request_review`: Request human review before proceeding');
+		parts.push('- `worker_request_review`: Request human review before proceeding\n');
+		parts.push('- `worker_fail_task`: Mark the task as failed when completion is impossible');
 
 		return parts.join('');
 	}
@@ -307,6 +418,24 @@ export class WorkerManager {
 					nextSteps: params.nextSteps,
 				});
 			},
+			onReportProgress: async (params) => {
+				const existingTask = this.taskRepo.getTask(params.taskId);
+				const updatedTask = this.taskRepo.updateTask(params.taskId, {
+					progress: Math.max(0, Math.min(100, params.progress)),
+					currentStep: params.currentStep,
+					status: existingTask?.status === 'pending' ? 'in_progress' : undefined,
+				});
+
+				const worker = this.getWorkerBySessionId(workerSessionId);
+				if (worker && updatedTask) {
+					// Broadcast task progress updates to room subscribers.
+					await this.daemonHub.emit('room.task.update', {
+						sessionId: `room:${worker.roomId}`,
+						roomId: worker.roomId,
+						task: updatedTask,
+					});
+				}
+			},
 			onRequestReview: async (reason: string) => {
 				// Update worker status
 				this.updateWorkerStatus(workerSessionId, 'waiting_for_review');
@@ -317,6 +446,12 @@ export class WorkerManager {
 					taskId,
 					reason,
 				});
+			},
+			onFailTask: async (params) => {
+				await this.markWorkerFailed(
+					workerSessionId,
+					`Worker explicitly failed task: ${params.reason}`
+				);
 			},
 		};
 

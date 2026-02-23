@@ -20,6 +20,9 @@ import {
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
 import type { RoomManager } from '../room';
+import { Logger } from '../logger';
+
+const log = new Logger('session-handlers');
 
 export function setupSessionHandlers(
 	messageHub: MessageHub,
@@ -287,8 +290,8 @@ export function setupSessionHandlers(
 				content,
 				images,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit message.sendRequest for session ${targetSessionId}:`, error);
 			});
 
 		// Return immediately with messageId
@@ -308,8 +311,8 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch(() => {
-			// Interrupt event emission error - non-critical, continue
+		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((error) => {
+			log.warn(`Failed to emit agent.interruptRequest for session ${targetSessionId}:`, error);
 		});
 
 		return { accepted: true };

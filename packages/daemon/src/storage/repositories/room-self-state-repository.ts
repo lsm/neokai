@@ -6,7 +6,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { RoomSelfState, RoomSelfLifecycleState } from '@neokai/shared';
+import type { RoomSelfState, RoomSelfLifecycleState, RoomSelfWaitingContext } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
 export interface CreateRoomSelfStateParams {
@@ -23,6 +23,7 @@ export interface UpdateRoomSelfStateParams {
 	errorCount?: number;
 	lastError?: string | null;
 	pendingActions?: string[];
+	waitingContext?: RoomSelfWaitingContext | null;
 }
 
 export class RoomSelfStateRepository {
@@ -103,6 +104,10 @@ export class RoomSelfStateRepository {
 			fields.push('pending_actions = ?');
 			values.push(JSON.stringify(params.pendingActions));
 		}
+		if (params.waitingContext !== undefined) {
+			fields.push('waiting_context = ?');
+			values.push(params.waitingContext ? JSON.stringify(params.waitingContext) : null);
+		}
 
 		if (fields.length === 0) {
 			return this.getState(roomId);
@@ -132,14 +137,17 @@ export class RoomSelfStateRepository {
 	 * Record an error
 	 */
 	recordError(roomId: string, error: string): RoomSelfState | null {
-		const current = this.getState(roomId);
-		if (!current) return null;
+		const tx = this.db.transaction(() => {
+			const current = this.getState(roomId);
+			if (!current) return null;
 
-		return this.updateState(roomId, {
-			errorCount: current.errorCount + 1,
-			lastError: error,
-			lastActivityAt: Date.now(),
+			return this.updateState(roomId, {
+				errorCount: current.errorCount + 1,
+				lastError: error,
+				lastActivityAt: Date.now(),
+			});
 		});
+		return tx() as RoomSelfState | null;
 	}
 
 	/**
@@ -156,57 +164,152 @@ export class RoomSelfStateRepository {
 	 * Add a session pair to active pairs - MANAGER REMOVAL v1.0: Renamed to addActiveWorkerSession
 	 */
 	addActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
-		const current = this.getState(roomId);
-		if (!current) return null;
+		const tx = this.db.transaction(() => {
+			const current = this.getState(roomId);
+			if (!current) return null;
 
-		const activeWorkers = [...new Set([...current.activeWorkerSessionIds, workerSessionId])];
-		return this.updateState(roomId, {
-			activeWorkerSessionIds: activeWorkers,
-			lastActivityAt: Date.now(),
+			const activeWorkers = [...new Set([...current.activeWorkerSessionIds, workerSessionId])];
+			return this.updateState(roomId, {
+				activeWorkerSessionIds: activeWorkers,
+				lastActivityAt: Date.now(),
+			});
 		});
+		return tx() as RoomSelfState | null;
 	}
 
 	/**
 	 * Remove a session pair from active pairs - MANAGER REMOVAL v1.0: Renamed to removeActiveWorkerSession
 	 */
 	removeActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
-		const current = this.getState(roomId);
-		if (!current) return null;
+		const tx = this.db.transaction(() => {
+			const current = this.getState(roomId);
+			if (!current) return null;
 
-		const activeWorkers = current.activeWorkerSessionIds.filter((id) => id !== workerSessionId);
-		return this.updateState(roomId, {
-			activeWorkerSessionIds: activeWorkers,
-			lastActivityAt: Date.now(),
+			const activeWorkers = current.activeWorkerSessionIds.filter((id) => id !== workerSessionId);
+			return this.updateState(roomId, {
+				activeWorkerSessionIds: activeWorkers,
+				lastActivityAt: Date.now(),
+			});
 		});
+		return tx() as RoomSelfState | null;
 	}
 
 	/**
 	 * Add a pending action
 	 */
 	addPendingAction(roomId: string, action: string): RoomSelfState | null {
-		const current = this.getState(roomId);
-		if (!current) return null;
+		const tx = this.db.transaction(() => {
+			const current = this.getState(roomId);
+			if (!current) return null;
 
-		const actions = [...current.pendingActions, action];
-		return this.updateState(roomId, { pendingActions: actions });
+			const actions = [...current.pendingActions, action];
+			return this.updateState(roomId, { pendingActions: actions });
+		});
+		return tx() as RoomSelfState | null;
 	}
 
 	/**
 	 * Remove a pending action
 	 */
 	removePendingAction(roomId: string, action: string): RoomSelfState | null {
-		const current = this.getState(roomId);
-		if (!current) return null;
+		const tx = this.db.transaction(() => {
+			const current = this.getState(roomId);
+			if (!current) return null;
 
-		const actions = current.pendingActions.filter((a) => a !== action);
-		return this.updateState(roomId, { pendingActions: actions });
+			const actions = current.pendingActions.filter((a) => a !== action);
+			return this.updateState(roomId, { pendingActions: actions });
+		});
+		return tx() as RoomSelfState | null;
 	}
 
 	/**
 	 * Clear all pending actions
 	 */
 	clearPendingActions(roomId: string): RoomSelfState | null {
-		return this.updateState(roomId, { pendingActions: [] });
+		const tx = this.db.transaction(() => this.updateState(roomId, { pendingActions: [] }));
+		return tx() as RoomSelfState | null;
+	}
+
+	/**
+	 * Persist waiting context for restart-safe waiting state handling.
+	 */
+	setWaitingContext(roomId: string, waitingContext: RoomSelfWaitingContext): RoomSelfState | null {
+		return this.updateState(roomId, {
+			waitingContext,
+			lastActivityAt: Date.now(),
+		});
+	}
+
+	/**
+	 * Clear persisted waiting context.
+	 */
+	clearWaitingContext(roomId: string): RoomSelfState | null {
+		return this.updateState(roomId, {
+			waitingContext: null,
+			lastActivityAt: Date.now(),
+		});
+	}
+
+	/**
+	 * Get waiting context for a room agent.
+	 */
+	getWaitingContext(roomId: string): RoomSelfWaitingContext | null {
+		const stmt = this.db.prepare(`SELECT waiting_context FROM room_agent_states WHERE room_id = ?`);
+		const row = stmt.get(roomId) as { waiting_context?: string | null } | undefined;
+		if (!row?.waiting_context) {
+			return null;
+		}
+
+		try {
+			return JSON.parse(row.waiting_context) as RoomSelfWaitingContext;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Persist whether this room agent should auto-start on daemon boot.
+	 */
+	setRunIntent(
+		roomId: string,
+		shouldRun: boolean,
+		options?: { createIfMissing?: boolean }
+	): RoomSelfState | null {
+		if (options?.createIfMissing && !this.getState(roomId)) {
+			this.createState({ roomId });
+		}
+
+		const stmt = this.db.prepare(
+			`UPDATE room_agent_states
+			 SET run_intent = ?, last_activity_at = ?
+			 WHERE room_id = ?`
+		);
+		const result = stmt.run(shouldRun ? 1 : 0, Date.now(), roomId);
+		if (result.changes === 0) {
+			return null;
+		}
+
+		return this.getState(roomId);
+	}
+
+	/**
+	 * Returns true if this room agent is marked to auto-start on daemon boot.
+	 */
+	getRunIntent(roomId: string): boolean {
+		const stmt = this.db.prepare(`SELECT run_intent FROM room_agent_states WHERE room_id = ?`);
+		const row = stmt.get(roomId) as { run_intent?: number | null } | undefined;
+		return Boolean(row?.run_intent);
+	}
+
+	/**
+	 * List room IDs whose room agents should auto-start on daemon boot.
+	 */
+	getRoomsWithRunIntent(): string[] {
+		const stmt = this.db.prepare(
+			`SELECT room_id FROM room_agent_states WHERE run_intent = 1 ORDER BY last_activity_at DESC`
+		);
+		const rows = stmt.all() as Array<{ room_id: string }>;
+		return rows.map((row) => row.room_id);
 	}
 
 	/**

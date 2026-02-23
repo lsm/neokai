@@ -25,7 +25,16 @@ import type { ProcessingStateManager } from './processing-state-manager';
 import type { QueryOptionsBuilder } from './query-options-builder';
 import type { AskUserQuestionHandler } from './ask-user-question-handler';
 
-const STARTUP_TIMEOUT_MS = 15000; // 15 seconds - enough for CI load
+const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
+
+function getStartupTimeoutMs(): number {
+	const raw = process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS;
+	if (!raw) return DEFAULT_STARTUP_TIMEOUT_MS;
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
+const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
 
 /**
  * Original environment variables for restoration after SDK query
@@ -179,8 +188,13 @@ export class QueryRunner {
 							`Model: ${queryOptions.model}, Workspace: ${session.workspacePath}` +
 							(session.worktree ? ` (worktree: ${session.worktree.worktreePath})` : '')
 					);
-					this.ctx.queryPromise = null;
-					stateManager.setIdle().catch((e) => logger.warn('Failed to set idle:', e));
+
+					// Actively abort a stuck startup so finally{} cleanup runs and the
+					// session can recover without requiring manual reset.
+					const abortController = this.ctx.queryAbortController;
+					if (abortController && !abortController.signal.aborted) {
+						abortController.abort();
+					}
 				}
 			}, STARTUP_TIMEOUT_MS);
 			this.ctx.startupTimeoutTimer = startupTimer;
@@ -238,6 +252,12 @@ export class QueryRunner {
 					);
 				}
 			}
+
+			// If startup timed out before first message, surface as timeout error
+			// (after abort-driven iterator shutdown) so error state is visible.
+			if (startupTimeoutReached && messageCount === 0) {
+				throw new Error('SDK startup timeout - query aborted');
+			}
 		} catch (error) {
 			logger.error('Streaming query error:', error);
 			messageQueue.clear();
@@ -292,6 +312,13 @@ export class QueryRunner {
 				await stateManager.setIdle();
 			}
 		} finally {
+			// Always clear startup timer to avoid late timeout callbacks affecting later queries.
+			const timer = this.ctx.startupTimeoutTimer;
+			if (timer) {
+				clearTimeout(timer);
+				this.ctx.startupTimeoutTimer = null;
+			}
+
 			// Cleanup abort controller
 			const abortController = this.ctx.queryAbortController;
 			if (abortController) {

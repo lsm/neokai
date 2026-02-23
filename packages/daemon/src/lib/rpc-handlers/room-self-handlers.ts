@@ -26,9 +26,12 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type { SessionManager } from '../session-manager';
+import { RoomSelfStateRepository } from '../../storage/repositories/room-self-state-repository';
+import { Logger } from '../logger';
 
 // MCP server functions are accessed via dynamic require from room-handlers
 // to avoid circular dependencies. Not re-exporting here to avoid knip issues.
+const log = new Logger('room-self-handlers');
 
 /**
  * Factory types for creating per-room managers
@@ -87,13 +90,11 @@ export interface RoomSelfManagerDeps {
  */
 export class RoomSelfManager {
 	private agents: Map<string, RoomSelfService> = new Map();
-	/** Runtime-only mapping of room IDs to their MCP servers */
-	private roomMcpServers: Map<
-		string,
-		ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer>
-	> = new Map();
+	private stateRepo: RoomSelfStateRepository;
 
-	constructor(private deps: RoomSelfManagerDeps) {}
+	constructor(private deps: RoomSelfManagerDeps) {
+		this.stateRepo = new RoomSelfStateRepository(this.deps.db.getDatabase());
+	}
 
 	/**
 	 * Get or create a RoomSelfService for a room
@@ -119,7 +120,19 @@ export class RoomSelfManager {
 	 * Start the agent for a room
 	 * Creates the agent if it doesn't exist, then starts it
 	 */
-	async startAgent(roomId: string): Promise<void> {
+	async startAgent(roomId: string, options?: { persistRunIntent?: boolean }): Promise<void> {
+		const persistRunIntent = options?.persistRunIntent ?? true;
+		const room = this.deps.roomManager.getRoom(roomId);
+		if (!room) {
+			throw new Error(`Room not found: ${roomId}`);
+		}
+		if (room.status !== 'active') {
+			throw new Error(`Cannot start room agent for archived room: ${roomId}`);
+		}
+		if (persistRunIntent) {
+			this.stateRepo.setRunIntent(roomId, true, { createIfMissing: true });
+		}
+
 		const agent = this.getOrCreateAgent(roomId);
 		await agent.start();
 
@@ -131,10 +144,45 @@ export class RoomSelfManager {
 	 * Stop the agent for a room
 	 * The agent remains in memory but is stopped
 	 */
-	async stopAgent(roomId: string): Promise<void> {
+	async stopAgent(roomId: string, options?: { persistRunIntent?: boolean }): Promise<void> {
+		const persistRunIntent = options?.persistRunIntent ?? true;
+		if (persistRunIntent && this.stateRepo.getState(roomId)) {
+			this.stateRepo.setRunIntent(roomId, false);
+		}
+
 		const agent = this.agents.get(roomId);
 		if (agent) {
 			await agent.stop();
+		}
+	}
+
+	/**
+	 * Autostart room agents that were previously marked as running.
+	 */
+	async startAgentsWithRunIntent(): Promise<void> {
+		const roomIds = this.stateRepo.getRoomsWithRunIntent();
+		if (roomIds.length === 0) {
+			return;
+		}
+
+		log.info(`Autostarting ${roomIds.length} room agent(s) from persisted run intent`);
+		for (const roomId of roomIds) {
+			const room = this.deps.roomManager.getRoom(roomId);
+			if (!room) {
+				log.warn(`Skipping room agent autostart for missing room: ${roomId}`);
+				continue;
+			}
+			if (room.status !== 'active') {
+				log.info(`Skipping room agent autostart for archived room: ${roomId}`);
+				this.stateRepo.setRunIntent(roomId, false);
+				continue;
+			}
+
+			try {
+				await this.startAgent(roomId, { persistRunIntent: false });
+			} catch (error) {
+				log.error(`Failed to autostart room agent for room ${roomId}:`, error);
+			}
 		}
 	}
 
@@ -203,20 +251,10 @@ export class RoomSelfManager {
 	 * Remove an agent from tracking (does not stop it)
 	 */
 	removeAgent(roomId: string): boolean {
-		this.roomMcpServers.delete(roomId);
 		// Dynamically require to avoid circular dependency
 		const { deleteRoomMcpServer } = require('./room-handlers');
 		deleteRoomMcpServer(roomId);
 		return this.agents.delete(roomId);
-	}
-
-	/**
-	 * Get the MCP server for a room (runtime only)
-	 */
-	getRoomMcpServer(
-		roomId: string
-	): ReturnType<typeof import('../agent/room-agent-tools').createRoomAgentMcpServer> | undefined {
-		return this.roomMcpServers.get(roomId);
 	}
 
 	/**
@@ -236,13 +274,11 @@ export class RoomSelfManager {
 			return;
 		}
 
-		// Store the MCP server reference in runtime-only mapping
-		this.roomMcpServers.set(roomId, mcpServer);
-		// Register globally so QueryOptionsBuilder can access it
-		const { getOrCreateRoomMcpServer } = require('./room-handlers');
-		getOrCreateRoomMcpServer(roomId, this.deps.db);
+		// Register globally so QueryOptionsBuilder resolves the live room:self MCP server.
+		const { setRoomMcpServer } = require('./room-handlers');
+		setRoomMcpServer(roomId, mcpServer);
 
-		const sessionId = `room:${roomId}`;
+		const sessionId = `room:chat:${roomId}`;
 
 		// Get the session from the database
 		const session = this.deps.db.getSession(sessionId);
@@ -329,8 +365,8 @@ export function setupRoomSelfHandlers(
 				newState,
 				reason,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit roomAgent.stateChanged for room ${roomId}:`, error);
 			});
 	};
 
@@ -466,6 +502,12 @@ export function setupRoomSelfHandlers(
 		const agent = roomSelfManager.getAgent(params.roomId);
 		if (!agent) {
 			throw new Error('Room agent not found');
+		}
+		const lifecycleState = agent.getState().lifecycleState;
+		if (params.type !== 'message' && lifecycleState !== 'waiting') {
+			throw new Error(
+				`Room agent is not waiting for input (current state: ${lifecycleState}, input type: ${params.type})`
+			);
 		}
 
 		switch (params.type) {

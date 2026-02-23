@@ -51,6 +51,7 @@ import {
 	type RoomSpawnWorkerParams,
 	type RoomUpdateGoalProgressParams,
 	type RoomScheduleJobParams,
+	type RoomUpdatePromptsParams,
 } from '../agent/room-agent-tools';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type {
@@ -166,11 +167,32 @@ export class RoomSelfService {
 	private idleCheckTimer: Timer | null = null;
 	private unsubscribers: Array<() => void> = [];
 	private config: RoomSelfConfig;
-	private lifecycleState: RoomSelfLifecycleState = 'idle';
+
+	/**
+	 * Get the current lifecycle state from the canonical source
+	 * Uses lifecycle manager if available, otherwise falls back to state
+	 */
+	private get lifecycleState(): RoomSelfLifecycleState {
+		if (this.lifecycleManager) {
+			return this.lifecycleManager.getLifecycleState();
+		}
+		return this.state.lifecycleState;
+	}
+
+	private requireLifecycleManager(): RoomSelfLifecycleManager {
+		if (!this.lifecycleManager) {
+			throw new Error('Lifecycle manager not initialized for room agent');
+		}
+		return this.lifecycleManager;
+	}
 
 	private lifecycleManager: RoomSelfLifecycleManager | null = null;
 	private agentSession: AgentSession | null = null;
 	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
+	/** Lock to prevent concurrent worker spawning */
+	private spawnLock = false;
+	/** Lock to prevent concurrent handling of waiting-state human inputs */
+	private humanInputLock = false;
 
 	constructor(
 		private ctx: RoomSelfContext,
@@ -193,6 +215,11 @@ export class RoomSelfService {
 	}
 
 	async start(): Promise<void> {
+		if (this.agentSession) {
+			log.warn('start() called while agent session already exists; ignoring (call stop() first)');
+			return;
+		}
+
 		log.info(`Starting room agent for room: ${this.ctx.room.name} (${this.ctx.room.id})`);
 
 		this.lifecycleManager = new RoomSelfLifecycleManager(
@@ -201,6 +228,19 @@ export class RoomSelfService {
 			this.ctx.daemonHub
 		);
 		this.state = this.lifecycleManager.initialize();
+		const persistedWaitingContext = this.stateRepo.getWaitingContext(this.ctx.room.id);
+		if (this.state.lifecycleState === 'waiting') {
+			this.waitingContext = persistedWaitingContext;
+			if (!this.waitingContext) {
+				log.warn(
+					'Room agent restored in waiting state without persisted waiting context; input validation may reject stale responses'
+				);
+			}
+		} else if (persistedWaitingContext) {
+			// Keep persisted waiting context aligned with lifecycle state.
+			this.stateRepo.clearWaitingContext(this.ctx.room.id);
+			this.waitingContext = null;
+		}
 
 		const dbWrapper = 'getDatabase' in this.ctx.db ? this.ctx.db : null;
 		if (dbWrapper && this.ctx.getApiKey && this.ctx.promptTemplateManager) {
@@ -246,12 +286,18 @@ export class RoomSelfService {
 			// messageGenerator is iterating the queue.
 			await this.agentSession.startStreamingQuery();
 
+			// Assign the room:self session to the room for proper tracking
+			// This ensures room.sessionIds includes the self session for cleanup
+			this.ctx.roomManager.assignSession(this.ctx.room.id, this.sessionId);
+
 			log.info('Room agent session started with AgentSession');
 		} else {
-			log.info('Room agent running in legacy mode (no AgentSession)');
+			// agentSession should always be created in modern mode
+			throw new Error('Failed to create AgentSession for room agent');
 		}
 
 		this.subscribeToEvents();
+		await this.reconcileRestoredLifecycleState();
 		this.startIdleCheck();
 
 		// Trigger an immediate idle check instead of waiting for the first interval
@@ -261,7 +307,7 @@ export class RoomSelfService {
 			});
 		}, 0);
 
-		if (this.state.lifecycleState === 'error') {
+		if (this.state.lifecycleState === 'error' || this.state.lifecycleState === 'paused') {
 			await this.transitionTo('idle', 'Agent restarted');
 		}
 
@@ -275,24 +321,84 @@ export class RoomSelfService {
 			// Stop the SDK query loop cleanly before releasing the session
 			this.agentSession.messageQueue.clear();
 			this.agentSession.messageQueue.stop();
+			// Clean up event subscriptions and resources
+			await this.agentSession.cleanup();
 			this.agentSession = null;
 		}
 
 		this.stopIdleCheck();
 
 		for (const unsubscribe of this.unsubscribers) {
-			unsubscribe();
+			try {
+				unsubscribe();
+			} catch (error) {
+				log.warn(
+					`Error while unsubscribing room agent event handlers for ${this.ctx.room.id}:`,
+					error
+				);
+			}
 		}
 		this.unsubscribers = [];
 
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.pause();
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('paused', 'Agent stopped');
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.pause();
+		this.state = lifecycleManager.getState();
 
 		log.info('Room agent stopped');
+	}
+
+	private async reconcileRestoredLifecycleState(): Promise<void> {
+		if (this.lifecycleState !== 'executing') {
+			return;
+		}
+
+		const lifecycleManager = this.requireLifecycleManager();
+		const activeWorkers = this.ctx.workerManager
+			.getWorkersByRoom(this.ctx.room.id)
+			.filter(
+				(worker) =>
+					worker.status === 'starting' ||
+					worker.status === 'running' ||
+					worker.status === 'waiting_for_review'
+			);
+
+		const activeWorkerIds = new Set(activeWorkers.map((worker) => worker.sessionId));
+		const persistedActiveIds = this.state.activeWorkerSessionIds;
+		if (
+			persistedActiveIds.length !== activeWorkerIds.size ||
+			persistedActiveIds.some((id) => !activeWorkerIds.has(id))
+		) {
+			const repairedState = this.stateRepo.updateState(this.ctx.room.id, {
+				activeWorkerSessionIds: [...activeWorkerIds],
+			});
+			if (repairedState) {
+				this.state = repairedState;
+			}
+		}
+
+		if (activeWorkers.length === 0) {
+			log.warn(
+				'Recovered stale executing state with no active workers; transitioning room agent to idle'
+			);
+			await this.transitionTo('idle', 'Recovered stale executing state after daemon restart');
+			return;
+		}
+
+		const restartFailureReason = 'Worker interrupted by daemon restart';
+		for (const worker of activeWorkers) {
+			this.ctx.workerManager.updateWorkerStatus(worker.sessionId, 'failed');
+			await this.taskManager.failTask(worker.taskId, restartFailureReason).catch((error) => {
+				log.warn(
+					`Failed to mark task ${worker.taskId} as failed during startup reconciliation:`,
+					error
+				);
+			});
+			this.ctx.roomManager.unassignSession(this.ctx.room.id, worker.sessionId);
+			lifecycleManager.removeActiveWorkerSession(worker.sessionId);
+		}
+		this.state = lifecycleManager.getState();
+
+		await this.transitionTo('idle', 'Recovered interrupted workers after daemon restart');
 	}
 
 	getFeatures(): SessionFeatures {
@@ -320,7 +426,13 @@ export class RoomSelfService {
 		const prompt = this.buildPlanningPrompt(context);
 
 		await this.setLifecycleState('planning');
-		await this.agentSession.messageQueue.enqueue(prompt, true);
+		if (this.lifecycleState !== 'planning') {
+			log.warn(
+				`Skipping planning message enqueue: failed to transition to planning (current: ${this.lifecycleState})`
+			);
+			return;
+		}
+		await this.enqueueAgentMessage(prompt, 'planning');
 	}
 
 	/**
@@ -336,7 +448,13 @@ export class RoomSelfService {
 		const prompt = this.buildReviewPrompt(context);
 
 		await this.setLifecycleState('reviewing');
-		await this.agentSession.messageQueue.enqueue(prompt, true);
+		if (this.lifecycleState !== 'reviewing') {
+			log.warn(
+				`Skipping review message enqueue: failed to transition to reviewing (current: ${this.lifecycleState})`
+			);
+			return;
+		}
+		await this.enqueueAgentMessage(prompt, 'review');
 	}
 
 	/**
@@ -355,7 +473,22 @@ export class RoomSelfService {
 			await this.setLifecycleState('planning');
 		}
 
-		await this.agentSession.messageQueue.enqueue(prompt, true);
+		await this.enqueueAgentMessage(prompt, `event:${event.type}`);
+	}
+
+	private async enqueueAgentMessage(message: string, context: string): Promise<void> {
+		if (!this.agentSession) {
+			log.warn(`No agent session available for enqueue context: ${context}`);
+			return;
+		}
+
+		try {
+			await this.agentSession.messageQueue.enqueue(message, true);
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Queue enqueue failed';
+			log.error(`Failed to enqueue agent message (${context}):`, error);
+			await this.recordError(`Queue enqueue failed (${context}): ${errorMessage}`);
+		}
 	}
 
 	private subscribeToEvents(): void {
@@ -370,9 +503,8 @@ export class RoomSelfService {
 							content: event.message.content,
 							timestamp: event.message.timestamp,
 						});
-					} else {
-						await this.handleRoomMessage(event);
 					}
+					// Note: Legacy path removed - if no agentSession, event is skipped
 				}
 			},
 			{ sessionId: this.sessionId }
@@ -414,6 +546,11 @@ export class RoomSelfService {
 				// Check if this worker belongs to our room
 				const worker = this.ctx.workerManager.getWorkerBySessionId(event.sessionId);
 				if (worker && worker.roomId === this.ctx.room.id) {
+					// Remove worker from active sessions
+					const lifecycleManager = this.requireLifecycleManager();
+					lifecycleManager.removeActiveWorkerSession(event.sessionId);
+					this.state = lifecycleManager.getState();
+
 					const task = await this.taskManager.getTask(event.taskId);
 					if (task && this.agentSession) {
 						await this.injectReviewMessage({
@@ -421,12 +558,26 @@ export class RoomSelfService {
 							summary: event.summary,
 							success: true,
 						});
-					} else if (!this.agentSession) {
-						await this.handleTaskCompleted(event.taskId, event.summary);
+					}
+
+					// Check if all workers are done. Only call finishExecution() when not
+					// already in reviewing state — injectReviewMessage() may have already
+					// transitioned us there, and completeReviewing() handles that exit.
+					if (
+						this.state.activeWorkerSessionIds.length === 0 &&
+						this.lifecycleState !== 'reviewing'
+					) {
+						const result = await lifecycleManager.finishExecution();
+						if (result) {
+							this.state = result;
+						} else {
+							log.warn('finishExecution() returned null, forcing transition to idle');
+							await this.transitionTo('idle', 'All tasks completed (forced)');
+							this.state = lifecycleManager.getState();
+						}
 					}
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubWorkerCompleted);
 
@@ -440,13 +591,20 @@ export class RoomSelfService {
 						await this.setWaiting({
 							type: 'review',
 							taskId: event.taskId,
+							workerSessionId: event.sessionId,
 							reason: event.reason,
 							since: Date.now(),
 						});
+						await this.ctx.daemonHub.emit('roomAgent.reviewRequested', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							taskId: event.taskId,
+							reason: event.reason,
+							workerSessionId: event.sessionId,
+						});
 					}
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubWorkerReviewRequested);
 
@@ -458,8 +616,7 @@ export class RoomSelfService {
 				if (worker && worker.roomId === this.ctx.room.id) {
 					await this.handleWorkerFailed(event.sessionId, event.taskId, event.error);
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubWorkerFailed);
 
@@ -471,7 +628,7 @@ export class RoomSelfService {
 				const task = await this.taskManager.getTask(event.taskId);
 				if (!task) return;
 
-				if (this.agentSession) {
+				if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
 					await this.injectPlanningMessage({
 						activeGoals: [],
 						pendingTasks: [task],
@@ -486,12 +643,42 @@ export class RoomSelfService {
 						availableCapacity: this.config.maxConcurrentPairs,
 					});
 				} else {
-					await this.handleRecurringJobTriggered(event.taskId, event.jobId);
+					log.debug(
+						`Skipping recurring job planning injection in state ${this.lifecycleState} for task ${event.taskId}`
+					);
 				}
+				// Note: Legacy path removed - if no agentSession, event is skipped
 			},
 			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRecurringJob);
+
+		// React immediately when a new goal is created instead of waiting for
+		// the 60-second idle check timer.
+		const unsubGoalCreated = this.ctx.daemonHub.on(
+			'goal.created',
+			async (event: { roomId: string; goalId: string; goal: RoomGoal }) => {
+				if (event.roomId !== this.ctx.room.id) return;
+
+				if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
+					await this.injectPlanningMessage({
+						activeGoals: [event.goal],
+						pendingTasks: [],
+						inProgressTasks: [],
+						recentEvents: [
+							{
+								type: 'goal_created',
+								summary: `New goal created: "${event.goal.title}"`,
+								timestamp: Date.now(),
+							},
+						],
+						availableCapacity: this.config.maxConcurrentPairs,
+					});
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubGoalCreated);
 
 		// Subscribe to session errors to detect worker failures
 		const unsubSessionError = this.ctx.daemonHub.on(
@@ -504,8 +691,7 @@ export class RoomSelfService {
 					// which we'll handle via our worker.failed subscription
 					await this.ctx.workerManager.markWorkerFailed(event.sessionId, event.error);
 				}
-			},
-			{ sessionId: this.sessionId }
+			}
 		);
 		this.unsubscribers.push(unsubSessionError);
 	}
@@ -518,22 +704,16 @@ export class RoomSelfService {
 	}
 
 	async pause(): Promise<void> {
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.pause();
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('paused', 'Manually paused');
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.pause();
+		this.state = lifecycleManager.getState();
 		this.stopIdleCheck();
 	}
 
 	async resume(): Promise<void> {
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.resume();
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('idle', 'Manually resumed');
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.resume();
+		this.state = lifecycleManager.getState();
 		this.startIdleCheck();
 	}
 
@@ -543,72 +723,20 @@ export class RoomSelfService {
 
 		log.info(`Room agent transitioning: ${previousState} -> ${newState}`, { reason });
 
-		if (this.lifecycleManager) {
-			const result = await this.lifecycleManager.transitionTo(newState, reason);
-			if (result) {
-				this.state = result;
-			}
-		} else {
-			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
+		// Lifecycle manager handles both state persistence AND event emission.
+		const lifecycleManager = this.requireLifecycleManager();
+		const result = await lifecycleManager.transitionTo(newState, reason);
+		if (result) {
+			this.state = result;
 		}
-
-		this.lifecycleState = newState;
-
-		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-			sessionId: this.sessionId,
-			roomId: this.ctx.room.id,
-			previousState,
-			newState,
-			reason,
-		});
 	}
 
 	private async setLifecycleState(state: RoomSelfLifecycleState): Promise<void> {
 		const previousState = this.lifecycleState;
 		if (previousState === state) return;
 
-		this.lifecycleState = state;
-		log.debug(`Lifecycle state: ${previousState} -> ${state}`);
-
-		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
-			sessionId: this.sessionId,
-			roomId: this.ctx.room.id,
-			previousState,
-			newState: state,
-		});
-	}
-
-	private async handleRoomMessage(event: {
-		roomId: string;
-		message: { id: string; role: string; content: string; timestamp: number };
-		sender?: string;
-	}): Promise<void> {
-		log.debug(`Room message received:`, event.message.role);
-
-		if (this.state.lifecycleState === 'paused') {
-			log.debug('Ignoring message - agent is paused');
-			return;
-		}
-
-		await this.transitionTo('planning', `Processing ${event.message.role} message`);
-
-		try {
-			if (event.message.role === 'github_event') {
-				await this.handleGitHubEvent(event.message.content);
-			} else if (event.message.role === 'user') {
-				await this.handleUserMessage(event.message.content, event.sender);
-			}
-
-			const activeWorkers = this.state.activeWorkerSessionIds.length;
-			if (activeWorkers > 0) {
-				await this.transitionTo('executing', `Working on ${activeWorkers} tasks`);
-			} else {
-				await this.transitionTo('idle', 'No tasks to execute');
-			}
-		} catch (error) {
-			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-			await this.recordError(errorMessage);
-		}
+		// Use transitionTo which properly updates lifecycle manager and emits events
+		await this.transitionTo(state);
 	}
 
 	private async handleGitHubEvent(content: string): Promise<void> {
@@ -740,22 +868,51 @@ export class RoomSelfService {
 	}
 
 	private async maybeSpawnWorker(task: NeoTask): Promise<void> {
+		await this.spawnWorkerForTask(task, { throwOnBlocked: false });
+	}
+
+	/**
+	 * Spawn worker with a shared lock/validation path for both autonomous
+	 * spawning and explicit MCP tool spawning.
+	 */
+	private async spawnWorkerForTask(
+		task: NeoTask,
+		options: { throwOnBlocked: boolean }
+	): Promise<string | null> {
+		if (this.spawnLock) {
+			const message = `Spawn already in progress, skipping task ${task.id}`;
+			log.debug(message);
+			if (options.throwOnBlocked) {
+				throw new Error(message);
+			}
+			return null;
+		}
+
 		if (this.state.activeWorkerSessionIds.length >= this.config.maxConcurrentPairs) {
-			log.info(`At capacity, queuing task ${task.id}`);
-			return;
+			const message = `At capacity (${this.config.maxConcurrentPairs}), cannot spawn task ${task.id}`;
+			log.info(message);
+			if (options.throwOnBlocked) {
+				throw new Error(message);
+			}
+			return null;
 		}
 
-		if (this.lifecycleManager && !this.lifecycleManager.canSpawnWorker()) {
-			log.info(
-				`Cannot spawn worker in current state: ${this.lifecycleManager.getLifecycleState()}`
-			);
-			return;
+		const lifecycleManager = this.requireLifecycleManager();
+		if (!lifecycleManager.canSpawnWorker()) {
+			const message = `Cannot spawn worker in current state: ${lifecycleManager.getLifecycleState()}`;
+			log.info(message);
+			if (options.throwOnBlocked) {
+				throw new Error(message);
+			}
+			return null;
 		}
 
+		this.spawnLock = true;
 		log.info(`Spawning worker for task ${task.id}`);
 
+		let workerSessionId: string | null = null;
 		try {
-			const workerSessionId = await this.ctx.workerManager.spawnWorker({
+			workerSessionId = await this.ctx.workerManager.spawnWorker({
 				roomId: this.ctx.room.id,
 				roomSessionId: this.sessionId,
 				roomSessionType: 'room_self',
@@ -768,67 +925,43 @@ export class RoomSelfService {
 					this.ctx.workspaceRoot,
 			});
 
-			// Track worker session ID in room agent state
-			if (this.lifecycleManager) {
-				this.lifecycleManager.addActiveWorkerSession(workerSessionId);
-				this.state = this.lifecycleManager.getState();
-			} else {
-				this.state =
-					this.stateRepo.addActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
-			}
-
+			// Bind task + session before advertising active worker in lifecycle state.
 			await this.taskManager.startTask(task.id, workerSessionId);
 
+			lifecycleManager.addActiveWorkerSession(workerSessionId);
+			// Transition planning → executing when the first worker is spawned.
+			if (lifecycleManager.getLifecycleState() === 'planning') {
+				const execResult = await lifecycleManager.startExecuting();
+				this.state = execResult ?? lifecycleManager.getState();
+			} else {
+				this.state = lifecycleManager.getState();
+			}
+
 			log.info(`Spawned worker ${workerSessionId} for task ${task.id}`);
+			return workerSessionId;
 		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : 'Worker spawn failed';
 			log.error(`Failed to spawn worker for task ${task.id}:`, error);
-		}
-	}
 
-	private async handleTaskCompleted(taskId: string, summary: string): Promise<void> {
-		log.info(`Task ${taskId} completed`);
-
-		await this.taskManager.completeTask(taskId, summary);
-		await this.goalManager.updateGoalsForTask(taskId);
-
-		// Handle worker sessions
-		const worker = this.ctx.workerManager.getWorkerByTask(taskId);
-		if (worker) {
-			if (this.lifecycleManager) {
-				this.lifecycleManager.removeActiveWorkerSession(worker.sessionId);
-				this.state = this.lifecycleManager.getState();
+			if (workerSessionId) {
+				// Worker exists but startup/assignment failed, fail and cleanup consistently.
+				await this.ctx.workerManager.markWorkerFailed(
+					workerSessionId,
+					`Worker startup failed: ${errorMessage}`
+				);
 			} else {
-				this.state =
-					this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, worker.sessionId) ??
-					this.state;
+				await this.taskManager.failTask(task.id, errorMessage);
 			}
-		}
 
-		if (this.state.activeWorkerSessionIds.length === 0) {
-			if (this.lifecycleManager) {
-				await this.lifecycleManager.finishExecution();
-				this.state = this.lifecycleManager.getState();
-			} else {
-				await this.transitionTo('idle', 'All tasks completed');
+			await this.recordError(errorMessage);
+
+			if (options.throwOnBlocked) {
+				throw error;
 			}
+			return null;
+		} finally {
+			this.spawnLock = false;
 		}
-	}
-
-	private async handleRecurringJobTriggered(taskId: string, jobId: string): Promise<void> {
-		log.info(`Recurring job ${jobId} triggered, created task ${taskId}`);
-
-		if (this.state.lifecycleState === 'paused') {
-			log.debug('Ignoring job trigger - agent is paused');
-			return;
-		}
-
-		const task = await this.taskManager.getTask(taskId);
-		if (!task) {
-			log.warn(`Task ${taskId} not found for triggered job ${jobId}`);
-			return;
-		}
-
-		await this.maybeSpawnWorker(task);
 	}
 
 	/**
@@ -842,13 +975,9 @@ export class RoomSelfService {
 		log.error(`Worker ${workerSessionId} failed for task ${taskId}: ${error}`);
 
 		// Remove worker from active sessions
-		if (this.lifecycleManager) {
-			this.lifecycleManager.removeActiveWorkerSession(workerSessionId);
-			this.state = this.lifecycleManager.getState();
-		} else {
-			this.state =
-				this.stateRepo.removeActiveWorkerSession(this.ctx.room.id, workerSessionId) ?? this.state;
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		lifecycleManager.removeActiveWorkerSession(workerSessionId);
+		this.state = lifecycleManager.getState();
 
 		// Inject review message for the agent to handle the failure
 		const task = await this.taskManager.getTask(taskId);
@@ -861,44 +990,38 @@ export class RoomSelfService {
 			});
 		}
 
-		// Check if all workers are done
-		if (this.state.activeWorkerSessionIds.length === 0) {
-			if (this.lifecycleManager) {
-				await this.lifecycleManager.finishExecution();
-				this.state = this.lifecycleManager.getState();
+		// Check if all workers are done. Guard finishExecution() — if
+		// injectReviewMessage() already moved us to reviewing, completeReviewing()
+		// handles the exit instead.
+		if (this.state.activeWorkerSessionIds.length === 0 && this.lifecycleState !== 'reviewing') {
+			const result = await lifecycleManager.finishExecution();
+			if (result) {
+				this.state = result;
 			} else {
-				await this.transitionTo('idle', 'All workers finished (last one failed)');
+				// Transition failed - force to idle as fallback
+				log.warn('finishExecution() returned null, forcing transition to idle');
+				await this.transitionTo('idle', 'All workers finished (forced)');
+				this.state = lifecycleManager.getState();
 			}
 		}
 	}
 
 	private async recordError(error: string): Promise<void> {
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.recordError(new Error(error), false);
-			this.state = this.lifecycleManager.getState();
+		const lifecycleManager = this.requireLifecycleManager();
+		await lifecycleManager.recordError(new Error(error), false);
+		this.state = lifecycleManager.getState();
 
-			if (this.state.errorCount >= this.config.maxErrorCount) {
-				await this.lifecycleManager.recordError(
-					new Error(`Max errors reached (${this.state.errorCount})`),
-					true
-				);
-				this.state = this.lifecycleManager.getState();
-				this.stopIdleCheck();
-			}
-		} else {
-			this.state = this.stateRepo.recordError(this.ctx.room.id, error) ?? this.state;
+		if (this.state.errorCount >= this.config.maxErrorCount) {
+			await lifecycleManager.recordError(
+				new Error(`Max errors reached (${this.state.errorCount})`),
+				true
+			);
+			this.state = lifecycleManager.getState();
+			this.stopIdleCheck();
 
-			await this.ctx.daemonHub.emit('roomAgent.error', {
-				sessionId: this.sessionId,
-				roomId: this.ctx.room.id,
-				error,
-				errorCount: this.state.errorCount,
-			});
-
-			if (this.state.errorCount >= this.config.maxErrorCount) {
-				await this.transitionTo('error', `Max errors reached (${this.state.errorCount})`);
-				this.stopIdleCheck();
-			}
+			// Terminate active workers when max errors reached
+			await this.ctx.workerManager.terminateWorkersForRoom(this.ctx.room.id);
+			log.info(`Terminated all workers for room due to max errors reached`);
 		}
 	}
 
@@ -940,6 +1063,10 @@ export class RoomSelfService {
 		if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
 			if (activeGoals.length > 0 || pendingTasks.length > 0) {
 				const availableCapacity = this.config.maxConcurrentPairs - inProgressTasks.length;
+				if (availableCapacity <= 0) {
+					log.debug('Skipping planning injection: no available worker capacity');
+					return;
+				}
 
 				await this.injectPlanningMessage({
 					activeGoals,
@@ -965,13 +1092,8 @@ export class RoomSelfService {
 		const previousState = this.state.lifecycleState;
 		if (previousState === newState) return;
 
-		if (this.lifecycleManager) {
-			this.state = this.lifecycleManager.forceState(newState);
-		} else {
-			this.state = this.stateRepo.transitionTo(this.ctx.room.id, newState) ?? this.state;
-			this.state =
-				this.stateRepo.updateState(this.ctx.room.id, { lastActivityAt: Date.now() }) ?? this.state;
-		}
+		const lifecycleManager = this.requireLifecycleManager();
+		this.state = lifecycleManager.forceState(newState);
 
 		await this.ctx.daemonHub.emit('roomAgent.stateChanged', {
 			sessionId: this.sessionId,
@@ -989,6 +1111,12 @@ export class RoomSelfService {
 
 	async handleHumanInput(input: RoomSelfHumanInput): Promise<void> {
 		log.info(`Handling human input: ${input.type}`);
+
+		if (input.type !== 'message' && this.lifecycleState !== 'waiting') {
+			throw new Error(
+				`Cannot process ${input.type}: room agent is not waiting for human input (current state: ${this.lifecycleState})`
+			);
+		}
 
 		if (this.agentSession) {
 			if (input.type === 'message') {
@@ -1028,12 +1156,126 @@ export class RoomSelfService {
 					content,
 					timestamp: Date.now(),
 				});
-			} else if (input.type === 'review_response' && this.lifecycleState === 'waiting') {
-				await this.setLifecycleState('reviewing');
-				await this.agentSession.messageQueue.enqueue(
-					`Review response received: ${(input as { response?: string }).response ?? 'approved'}`,
-					true
-				);
+			} else {
+				// Serialize all waiting-state responses to prevent duplicate transitions
+				// and duplicate agent message enqueues from concurrent calls.
+				if (this.humanInputLock) {
+					throw new Error(
+						`Cannot process ${input.type}: another waiting-state human input is already in progress`
+					);
+				}
+				this.humanInputLock = true;
+				try {
+					if (input.type === 'review_response') {
+						const reviewInput = input as { taskId: string; response: string; approved: boolean };
+						if (!this.waitingContext || this.waitingContext.type !== 'review') {
+							throw new Error(
+								`Cannot process review response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+							);
+						}
+						if (this.waitingContext.taskId && this.waitingContext.taskId !== reviewInput.taskId) {
+							throw new Error(
+								`Review response task mismatch: waiting for ${this.waitingContext.taskId}, got ${reviewInput.taskId}`
+							);
+						}
+
+						const verdict = reviewInput.approved ? 'APPROVED' : 'REJECTED';
+						const reviewMsg = reviewInput.response
+							? `Review ${verdict}: ${reviewInput.response}`
+							: `Review ${verdict}`;
+
+						if (this.waitingContext.workerSessionId) {
+							const workerMessage = reviewInput.response
+								? `Human review decision for task ${reviewInput.taskId}: ${verdict}. ${reviewInput.response}`
+								: `Human review decision for task ${reviewInput.taskId}: ${verdict}.`;
+							await this.ctx.workerManager.resumeWorker(
+								this.waitingContext.workerSessionId,
+								workerMessage
+							);
+							await this.enqueueAgentMessage(
+								`Worker review resolved for task ${reviewInput.taskId}: ${verdict}`,
+								'human_input:review_response:worker_resume'
+							);
+						} else {
+							await this.enqueueAgentMessage(reviewMsg, 'human_input:review_response');
+						}
+
+						await this.ctx.daemonHub.emit('roomAgent.reviewReceived', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							taskId: reviewInput.taskId,
+							approved: reviewInput.approved,
+							response: reviewInput.response,
+						});
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
+					} else if (input.type === 'escalation_response') {
+						// Handle escalation response in agentSession path
+						const escalationInput = input as { escalationId: string; response: string };
+
+						// Validate escalation ID matches current waiting context
+						if (
+							!this.waitingContext ||
+							this.waitingContext.type !== 'escalation' ||
+							this.waitingContext.escalationId !== escalationInput.escalationId
+						) {
+							throw new Error(
+								`Escalation response rejected for unknown/stale escalation: ${escalationInput.escalationId}`
+							);
+						}
+
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
+						await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							escalationId: escalationInput.escalationId,
+							response: escalationInput.response,
+						});
+						await this.enqueueAgentMessage(
+							`Escalation resolved: ${escalationInput.response}`,
+							'human_input:escalation_response'
+						);
+					} else if (input.type === 'question_response') {
+						// Handle question response in agentSession path
+						const questionInput = input as {
+							questionId: string;
+							responses: Record<string, string | string[]>;
+						};
+						if (!this.waitingContext || this.waitingContext.type !== 'question') {
+							throw new Error(
+								`Cannot process question response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+							);
+						}
+						if (
+							this.waitingContext.questionId &&
+							this.waitingContext.questionId !== questionInput.questionId
+						) {
+							throw new Error(
+								`Question response mismatch: waiting for ${this.waitingContext.questionId}, got ${questionInput.questionId}`
+							);
+						}
+
+						this.updateWaitingContext(null);
+						await this.setLifecycleState('planning');
+						await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							questionId: questionInput.questionId,
+							responses: questionInput.responses,
+						});
+						// Format responses for the message
+						const responseSummary = Object.entries(questionInput.responses)
+							.map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`)
+							.join('; ');
+						await this.enqueueAgentMessage(
+							`Question answered: ${responseSummary}`,
+							'human_input:question_response'
+						);
+					}
+				} finally {
+					this.humanInputLock = false;
+				}
 			}
 			return;
 		}
@@ -1059,11 +1301,22 @@ export class RoomSelfService {
 	private async handleReviewResponse(
 		input: Extract<RoomSelfHumanInput, { type: 'review_response' }>
 	): Promise<void> {
+		if (!this.waitingContext || this.waitingContext.type !== 'review') {
+			throw new Error(
+				`Cannot process review response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+			);
+		}
+		if (this.waitingContext.taskId && this.waitingContext.taskId !== input.taskId) {
+			throw new Error(
+				`Review response task mismatch: waiting for ${this.waitingContext.taskId}, got ${input.taskId}`
+			);
+		}
+
 		log.info(
 			`Review response for task ${input.taskId}: ${input.approved ? 'approved' : 'rejected'}`
 		);
 
-		this.waitingContext = null;
+		this.updateWaitingContext(null);
 
 		await this.ctx.daemonHub.emit('roomAgent.reviewReceived', {
 			sessionId: this.sessionId,
@@ -1085,9 +1338,20 @@ export class RoomSelfService {
 	private async handleEscalationResponse(
 		input: Extract<RoomSelfHumanInput, { type: 'escalation_response' }>
 	): Promise<void> {
+		// Validate escalation ID matches current waiting context
+		if (
+			!this.waitingContext ||
+			this.waitingContext.type !== 'escalation' ||
+			this.waitingContext.escalationId !== input.escalationId
+		) {
+			throw new Error(
+				`Escalation response rejected for unknown/stale escalation: ${input.escalationId}`
+			);
+		}
+
 		log.info(`Escalation response for ${input.escalationId}: ${input.response}`);
 
-		this.waitingContext = null;
+		this.updateWaitingContext(null);
 
 		await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
 			sessionId: this.sessionId,
@@ -1102,9 +1366,20 @@ export class RoomSelfService {
 	private async handleQuestionResponse(
 		input: Extract<RoomSelfHumanInput, { type: 'question_response' }>
 	): Promise<void> {
+		if (!this.waitingContext || this.waitingContext.type !== 'question') {
+			throw new Error(
+				`Cannot process question response: agent is waiting for ${this.waitingContext?.type ?? 'nothing'}`
+			);
+		}
+		if (this.waitingContext.questionId && this.waitingContext.questionId !== input.questionId) {
+			throw new Error(
+				`Question response mismatch: waiting for ${this.waitingContext.questionId}, got ${input.questionId}`
+			);
+		}
+
 		log.info(`Question response for ${input.questionId}`);
 
-		this.waitingContext = null;
+		this.updateWaitingContext(null);
 
 		await this.ctx.daemonHub.emit('roomAgent.questionAnswered', {
 			sessionId: this.sessionId,
@@ -1117,13 +1392,25 @@ export class RoomSelfService {
 	}
 
 	async setWaiting(context: RoomSelfWaitingContext): Promise<void> {
-		this.waitingContext = context;
-		if (this.lifecycleManager) {
-			await this.lifecycleManager.waitForInput(`Waiting for ${context.type}`);
-			this.state = this.lifecycleManager.getState();
-		} else {
-			await this.transitionTo('waiting', `Waiting for ${context.type}`);
+		this.updateWaitingContext(context);
+		const lifecycleManager = this.requireLifecycleManager();
+		const nextState = await lifecycleManager.waitForInput(`Waiting for ${context.type}`);
+		if (!nextState) {
+			this.updateWaitingContext(null);
+			throw new Error(`Failed to enter waiting state from ${lifecycleManager.getLifecycleState()}`);
 		}
+		this.state = nextState;
+	}
+
+	private updateWaitingContext(context: RoomSelfWaitingContext | null): void {
+		// Persist to DB first so that a thrown exception doesn't leave in-memory
+		// state out of sync with the database.
+		if (context) {
+			this.stateRepo.setWaitingContext(this.ctx.room.id, context);
+		} else {
+			this.stateRepo.clearWaitingContext(this.ctx.room.id);
+		}
+		this.waitingContext = context;
 	}
 
 	getAgentSession(): AgentSession | null {
@@ -1203,9 +1490,17 @@ export class RoomSelfService {
 
 		parts.push('\n## Instructions');
 		parts.push('Review this task completion and:');
-		parts.push('1. If successful, should any goals be updated?');
-		parts.push('2. If failed, should the task be retried or escalated?');
-		parts.push('3. Are there follow-up tasks to create?');
+		parts.push(
+			'1. If successful, update goal progress with `room_update_goal_progress` if applicable.'
+		);
+		parts.push('2. If failed, decide whether to retry (create a new task) or escalate.');
+		parts.push('3. Create any follow-up tasks needed.');
+		parts.push(
+			'4. Check pending work with `room_list_tasks` (the `progress` field reflects worker progress).'
+		);
+		parts.push(
+			'5. When done reviewing, call `room_finish_review` with `has_more_work: true` if there are pending goals/tasks, or `false` if everything is complete.'
+		);
 
 		return parts.join('\n');
 	}
@@ -1296,28 +1591,26 @@ export class RoomSelfService {
 					throw new Error(`Task not found: ${params.taskId}`);
 				}
 
-				// Check if task already has a worker
-				const existingWorker = this.ctx.workerManager.getWorkerByTask(params.taskId);
+				// SECURITY: Validate task belongs to this room
+				if (task.roomId !== this.ctx.room.id) {
+					throw new Error(`Task ${params.taskId} does not belong to this room`);
+				}
+
+				// Check if task already has an ACTIVE worker (not completed/failed)
+				const existingWorker = this.ctx.workerManager.getActiveWorkerByTask(params.taskId);
 				if (existingWorker) {
-					log.info(`Task ${params.taskId} already has a worker, reusing it`);
+					log.info(`Task ${params.taskId} already has an active worker, reusing it`);
 					// TODO: Wake up stuck worker session
 					return { workerSessionId: existingWorker.sessionId };
 				}
 
-				const workerSessionId = await this.ctx.workerManager.spawnWorker({
-					roomId: this.ctx.room.id,
-					roomSessionId: this.sessionId,
-					roomSessionType: 'room_self',
-					taskId: task.id,
-					taskTitle: task.title,
-					taskDescription: task.description,
-					workspacePath:
-						this.ctx.room.defaultPath ??
-						this.ctx.room.allowedPaths[0]?.path ??
-						this.ctx.workspaceRoot,
+				const workerSessionId = await this.spawnWorkerForTask(task, {
+					throwOnBlocked: true,
 				});
+				if (!workerSessionId) {
+					throw new Error(`Failed to spawn worker for task ${params.taskId}`);
+				}
 
-				await this.taskManager.startTask(params.taskId, workerSessionId);
 				log.info(`Worker spawned: ${workerSessionId} for task ${params.taskId}`);
 				return { workerSessionId };
 			},
@@ -1328,18 +1621,26 @@ export class RoomSelfService {
 					roomId: this.ctx.room.id,
 					taskId,
 					reason,
-				} as unknown as Parameters<typeof this.ctx.daemonHub.emit>[1]);
+				});
 				log.info(`Review requested for task ${taskId}: ${reason}`);
 			},
 			onEscalate: async (taskId: string, reason: string) => {
-				await this.setWaiting({ type: 'escalation', taskId, reason, since: Date.now() });
+				const escalationId = generateUUID();
+				await this.setWaiting({
+					type: 'escalation',
+					taskId,
+					escalationId,
+					reason,
+					since: Date.now(),
+				});
 				await this.ctx.daemonHub.emit('roomAgent.escalated', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
 					taskId,
+					escalationId,
 					reason,
-				} as unknown as Parameters<typeof this.ctx.daemonHub.emit>[1]);
-				log.warn(`Task ${taskId} escalated: ${reason}`);
+				});
+				log.warn(`Task ${taskId} escalated (${escalationId}): ${reason}`);
 			},
 			onUpdateGoalProgress: async (params: RoomUpdateGoalProgressParams) => {
 				await this.goalManager.updateGoalProgress(params.goalId, params.progress, params.metrics);
@@ -1426,10 +1727,42 @@ export class RoomSelfService {
 				log.info(`Task cancelled: ${params.taskId}`);
 			},
 			onArchiveSession: async (params) => {
+				// SECURITY: Verify the session belongs to this room before archiving
+				const workerForArchive = this.ctx.workerManager?.getWorkerBySessionId(params.sessionId);
+				if (workerForArchive) {
+					if (workerForArchive.roomId !== this.ctx.room.id) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				} else {
+					const room = this.ctx.roomManager.getRoom(this.ctx.room.id);
+					if (!room || !room.sessionIds.includes(params.sessionId)) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				}
 				await this.archiveSession(params.sessionId);
 				log.info(`Session archived: ${params.sessionId}`);
 			},
 			onInterruptSession: async (params) => {
+				// SECURITY: Verify the session belongs to this room before interrupting
+				const workerForInterrupt = this.ctx.workerManager?.getWorkerBySessionId(params.sessionId);
+				if (workerForInterrupt) {
+					if (workerForInterrupt.roomId !== this.ctx.room.id) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				} else {
+					const room = this.ctx.roomManager.getRoom(this.ctx.room.id);
+					if (!room || !room.sessionIds.includes(params.sessionId)) {
+						throw new Error(
+							`Session ${params.sessionId} does not belong to room ${this.ctx.room.id}`
+						);
+					}
+				}
 				// Use messageHub to call client.interrupt RPC
 				await this.ctx.messageHub.request('client.interrupt', {
 					sessionId: params.sessionId,
@@ -1437,9 +1770,17 @@ export class RoomSelfService {
 				log.info(`Session interrupted: ${params.sessionId}`);
 			},
 			onListSessions: async (_params) => {
-				// PHASE 4: Get session IDs from room and worker sessions
-				const roomSessionIds = this.ctx.room.sessionIds;
-				const workers = this.ctx.workerManager.getWorkersByRoom(this.ctx.room.id);
+				// Fetch latest room record to avoid stale cached session IDs.
+				const latestRoom = this.ctx.roomManager.getRoom(this.ctx.room.id);
+				const roomSessionIds = latestRoom?.sessionIds ?? this.ctx.room.sessionIds;
+				const workers = this.ctx.workerManager
+					.getWorkersByRoom(this.ctx.room.id)
+					.filter(
+						(worker) =>
+							worker.status === 'starting' ||
+							worker.status === 'running' ||
+							worker.status === 'waiting_for_review'
+					);
 
 				// Combine room sessions and worker sessions
 				const allSessionIds = new Set(roomSessionIds);
@@ -1460,6 +1801,60 @@ export class RoomSelfService {
 						pairedSessionId: undefined, // PHASE 4: No more paired sessions
 					};
 				});
+			},
+			onFinishReview: async (hasMoreWork: boolean) => {
+				const lifecycleManager = this.requireLifecycleManager();
+				const result = await lifecycleManager.completeReviewing(hasMoreWork);
+				if (!result) {
+					const current = lifecycleManager.getLifecycleState();
+					throw new Error(
+						`room_finish_review failed: not in reviewing state (current: ${current})`
+					);
+				}
+				this.state = result;
+				log.info(`Review complete (hasMoreWork: ${hasMoreWork})`);
+
+				if (hasMoreWork) {
+					const activeGoals = await this.goalManager.getActiveGoals();
+					const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
+					const inProgressTasks = await this.taskManager.listTasks({ status: 'in_progress' });
+					const availableCapacity = Math.max(
+						0,
+						this.config.maxConcurrentPairs - inProgressTasks.length
+					);
+					await this.injectPlanningMessage({
+						activeGoals,
+						pendingTasks,
+						inProgressTasks,
+						recentEvents: [
+							{
+								type: 'review_complete',
+								summary: 'Review finished with remaining work. Re-plan and continue execution.',
+								timestamp: Date.now(),
+							},
+						],
+						availableCapacity,
+					});
+				}
+			},
+			onCancelJob: async (jobId: string) => {
+				await this.ctx.recurringJobScheduler.deleteJob(jobId);
+				log.info(`Recurring job cancelled: ${jobId}`);
+			},
+			onUpdatePrompts: async (params: RoomUpdatePromptsParams) => {
+				const existing = this.ctx.promptTemplateManager.getTemplate(params.templateId);
+				await this.ctx.promptTemplateManager.saveCustomTemplate({
+					id: params.templateId,
+					name: existing?.name ?? params.templateId,
+					description: params.reason,
+					category: existing?.category ?? 'room_agent',
+					template: params.customContent,
+					variables: existing?.variables ?? [],
+					version: existing?.version ?? 0,
+					createdAt: existing?.createdAt ?? Date.now(),
+					updatedAt: Date.now(),
+				});
+				log.info(`Room prompts updated: ${params.templateId}`);
 			},
 		};
 
@@ -1488,10 +1883,17 @@ export class RoomSelfService {
 		);
 
 		const base = rendered ? rendered.content : this.buildFallbackSystemPrompt();
+		const currentDate = new Date().toISOString();
 
+		// Append dynamic runtime values so they're always current even when
+		// rendered prompt templates were generated earlier.
+		// Keep current date explicit because template rendering may not have run.
 		// Append the current concurrency limit dynamically so it stays accurate
 		// even if the setting changes after the rendered template was stored.
-		return base + `\n\nMaximum concurrent workers: ${this.config.maxConcurrentPairs}`;
+		return (
+			base +
+			`\n\nCurrent date: ${currentDate}\nMaximum concurrent workers: ${this.config.maxConcurrentPairs}`
+		);
 	}
 
 	private buildFallbackSystemPrompt(): string {

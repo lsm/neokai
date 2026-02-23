@@ -21,6 +21,7 @@
  */
 
 import type { MessageHub, WorkspacePath, McpServerConfig } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { WorkerManager } from '../room/worker-manager';
@@ -28,6 +29,9 @@ import type { RoomSelfManager } from './room-self-handlers';
 import type { SessionManager } from '../session-manager';
 import { createRoomAgentMcpServer } from '../agent/room-agent-tools';
 import type { Database } from '../../storage/index';
+import { Logger } from '../logger';
+
+const log = new Logger('room-handlers');
 
 /**
  * Global registry for in-process MCP servers for rooms
@@ -66,8 +70,9 @@ export function getOrCreateRoomMcpServer(
 			sessionId: `room:mcp:${roomId}`, // Internal MCP session ID
 			onCompleteGoal: async (params) => {
 				// Room self session will handle this
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { status: 'completed' });
 				}
 			},
@@ -93,8 +98,9 @@ export function getOrCreateRoomMcpServer(
 				// This is handled by the room self session
 			},
 			onUpdateGoalProgress: async (params) => {
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { progress: params.progress });
 				}
 			},
@@ -174,6 +180,19 @@ export function getRoomMcpServer(
 }
 
 /**
+ * Set/replace the MCP server instance for a room.
+ *
+ * Used by room self manager to register the live room:self MCP server so
+ * room chat sessions and QueryOptionsBuilder resolve a single authoritative instance.
+ */
+export function setRoomMcpServer(
+	roomId: string,
+	server: ReturnType<typeof createRoomAgentMcpServer>
+): void {
+	roomMcpServerRegistry.set(roomId, server);
+}
+
+/**
  * PHASE 5: Create or update the room agent MCP server with WorkerManager support
  *
  * This allows room:chat sessions to spawn workers via room agent tools.
@@ -181,13 +200,18 @@ export function getRoomMcpServer(
  * @param roomId - Room ID
  * @param db - Database instance
  * @param workerManager - WorkerManager for spawning workers (PHASE 5)
+ * @param daemonHub - DaemonHub for event emission
+ * @param messageHub - MessageHub for RPC calls (optional, enables session management tools)
+ * @param roomManager - RoomManager for session listing (optional, enables onListSessions)
  * @returns The MCP server instance
  */
 export function createOrUpdateRoomMcpServer(
 	roomId: string,
 	db: Database,
 	workerManager?: WorkerManager,
-	daemonHub?: DaemonHub
+	daemonHub?: DaemonHub,
+	messageHub?: MessageHub,
+	roomManager?: RoomManager
 ): ReturnType<typeof createRoomAgentMcpServer> {
 	let server = roomMcpServerRegistry.get(roomId);
 	if (!server) {
@@ -208,8 +232,9 @@ export function createOrUpdateRoomMcpServer(
 			sessionId: `room:mcp:${roomId}`, // Internal MCP session ID
 			onCompleteGoal: async (params) => {
 				// Room self session will handle this
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { status: 'completed' });
 				}
 			},
@@ -233,9 +258,13 @@ export function createOrUpdateRoomMcpServer(
 					if (!task) {
 						throw new Error(`Task not found: ${params.taskId}`);
 					}
+					// SECURITY: Validate task belongs to this room before spawning worker
+					if (task.roomId !== roomId) {
+						throw new Error(`Task ${params.taskId} does not belong to room ${roomId}`);
+					}
 					const workerSessionId = await workerManager.spawnWorker({
 						roomId,
-						roomSessionId: `room:${roomId}`, // room:chat session
+						roomSessionId: `room:chat:${roomId}`, // Actual room:chat session ID (FK valid)
 						roomSessionType: 'room_chat',
 						taskId: params.taskId,
 						taskTitle: task.title,
@@ -254,23 +283,26 @@ export function createOrUpdateRoomMcpServer(
 						roomId,
 						taskId,
 						reason,
-					} as unknown as Parameters<typeof daemonHub.emit>[1]);
+					});
 				}
 			},
 			onEscalate: async (taskId, reason) => {
 				// PHASE 5: Emit escalation event for room:self to handle (if daemonHub provided)
 				if (daemonHub) {
+					const escalationId = generateUUID();
 					await daemonHub.emit('roomAgent.escalated', {
 						sessionId: `room:${roomId}`,
 						roomId,
 						taskId,
+						escalationId,
 						reason,
-					} as unknown as Parameters<typeof daemonHub.emit>[1]);
+					});
 				}
 			},
 			onUpdateGoalProgress: async (params) => {
+				// SECURITY: Validate goal belongs to this room before mutation
 				const goal = goalRepo.getGoal(params.goalId);
-				if (goal) {
+				if (goal && goal.roomId === roomId) {
 					goalRepo.updateGoal(params.goalId, { progress: params.progress });
 				}
 			},
@@ -337,6 +369,90 @@ export function createOrUpdateRoomMcpServer(
 						})
 					);
 			},
+			// Session management tools (optional - require messageHub)
+			onCancelTask: messageHub
+				? async (params) => {
+						// SECURITY: Validate task belongs to this room before cancellation
+						const task = taskRepo.getTask(params.taskId);
+						if (!task) {
+							throw new Error(`Task not found: ${params.taskId}`);
+						}
+						if (task.roomId !== roomId) {
+							throw new Error(`Task ${params.taskId} does not belong to room ${roomId}`);
+						}
+						taskRepo.updateTask(params.taskId, { status: 'cancelled', error: params.reason });
+						// Archive associated worker session if exists
+						if (workerManager) {
+							const worker = workerManager.getWorkerByTask(params.taskId);
+							if (worker) {
+								await messageHub.request('session.archive', {
+									sessionId: worker.sessionId,
+									confirmed: true,
+								});
+							}
+						}
+					}
+				: undefined,
+			onArchiveSession: messageHub
+				? async (params) => {
+						// SECURITY: Verify the session belongs to this room before archiving
+						const workerSession = workerManager?.getWorkerBySessionId(params.sessionId);
+						if (workerSession) {
+							if (workerSession.roomId !== roomId) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						} else {
+							const room = roomManager?.getRoom(roomId);
+							if (!room || !room.sessionIds.includes(params.sessionId)) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						}
+						await messageHub.request('session.archive', {
+							sessionId: params.sessionId,
+							confirmed: true,
+						});
+					}
+				: undefined,
+			onInterruptSession: messageHub
+				? async (params) => {
+						// SECURITY: Verify the session belongs to this room before interrupting
+						const workerSession = workerManager?.getWorkerBySessionId(params.sessionId);
+						if (workerSession) {
+							if (workerSession.roomId !== roomId) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						} else {
+							const room = roomManager?.getRoom(roomId);
+							if (!room || !room.sessionIds.includes(params.sessionId)) {
+								throw new Error(`Session ${params.sessionId} does not belong to room ${roomId}`);
+							}
+						}
+						await messageHub.request('client.interrupt', {
+							sessionId: params.sessionId,
+						});
+					}
+				: undefined,
+			onListSessions: roomManager
+				? async (_params) => {
+						const room = roomManager.getRoom(roomId);
+						if (!room) return [];
+						const workers = workerManager?.getWorkersByRoom(roomId) ?? [];
+						const allSessionIds = new Set(room.sessionIds);
+						for (const worker of workers) {
+							allSessionIds.add(worker.sessionId);
+						}
+						return Array.from(allSessionIds).map((sessionId) => {
+							const worker = workers.find((w) => w.sessionId === sessionId);
+							return {
+								id: sessionId,
+								title: sessionId.slice(0, 8),
+								status: 'active',
+								sessionType: worker ? 'worker' : undefined,
+								currentTaskId: worker?.taskId,
+							};
+						});
+					}
+				: undefined,
 		});
 		roomMcpServerRegistry.set(roomId, server);
 	}
@@ -398,7 +514,14 @@ export function setupRoomHandlers(
 				// Create the MCP server for this room with WorkerManager support (PHASE 5)
 				// This is shared by room chat and room self sessions
 				if (db) {
-					createOrUpdateRoomMcpServer(room.id, db, workerManager, daemonHub);
+					createOrUpdateRoomMcpServer(
+						room.id,
+						db,
+						workerManager,
+						daemonHub,
+						messageHub,
+						roomManager
+					);
 				}
 
 				await sessionManager.createSession({
@@ -418,8 +541,12 @@ export function setupRoomHandlers(
 					sessionType: 'room_chat',
 					roomId: room.id,
 				});
-			} catch {
-				// Error creating room chat session - non-critical, continue without failing room creation
+
+				// Explicitly assign the room chat session to the room
+				// This ensures room.sessionIds includes the chat session
+				roomManager.assignSession(room.id, roomChatSessionId);
+			} catch (error) {
+				log.warn(`Failed to create room chat session for room ${room.id}:`, error);
 			}
 		}
 
@@ -430,8 +557,8 @@ export function setupRoomHandlers(
 				roomId: room.id,
 				room,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.created for room ${room.id}:`, error);
 			});
 
 		return { room };
@@ -498,8 +625,8 @@ export function setupRoomHandlers(
 				roomId: room.id,
 				room,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.updated for room ${room.id}:`, error);
 			});
 
 		return { room };
@@ -524,8 +651,8 @@ export function setupRoomHandlers(
 				sessionId: 'global',
 				roomId: room.id,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.archived for room ${room.id}:`, error);
 			});
 
 		return { room };
@@ -546,9 +673,17 @@ export function setupRoomHandlers(
 
 		// Stop and remove the room agent before deleting
 		if (roomSelfManager) {
-			await roomSelfManager.stopAgent(params.roomId).catch(() => {});
+			await roomSelfManager.stopAgent(params.roomId).catch((error) => {
+				log.error(`Failed to stop room agent for room ${params.roomId}:`, error);
+			});
 			roomSelfManager.removeAgent(params.roomId);
 		}
+
+		// Terminate all active workers for this room before deleting
+		await workerManager.terminateWorkersForRoom(params.roomId).catch((error) => {
+			// Log but continue - we still want to delete the room
+			log.error(`Error terminating workers for room ${params.roomId}:`, error);
+		});
 
 		// Delete the MCP server for this room
 		deleteRoomMcpServer(params.roomId);
@@ -559,12 +694,15 @@ export function setupRoomHandlers(
 				sessionId: 'global',
 				roomId: room.id,
 			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
+			.catch((error) => {
+				log.warn(`Failed to emit room.deleted for room ${room.id}:`, error);
 			});
 
 		// Permanently delete the room (CASCADE will delete related data)
-		roomManager.deleteRoom(params.roomId);
+		const deleted = roomManager.deleteRoom(params.roomId);
+		if (!deleted) {
+			throw new Error(`Failed to delete room: ${params.roomId}`);
+		}
 
 		return { success: true };
 	});
@@ -795,4 +933,16 @@ export function setupRoomHandlers(
 	// - room.getPairs (use worker_sessions table via WorkerManager)
 	// - room.getPair (use WorkerManager.getWorkerByTask or getWorkerBySessionId)
 	// - room.archivePair (use session.archive RPC for worker sessions)
+
+	// REHYDRATION: Create MCP servers for all existing rooms on daemon restart
+	// This ensures room:chat sessions can use room-agent-tools after restart
+	if (db) {
+		const rooms = roomManager.listRooms();
+		for (const room of rooms) {
+			// Only create if not already in registry (idempotent)
+			if (!roomMcpServerRegistry.has(room.id)) {
+				createOrUpdateRoomMcpServer(room.id, db, workerManager, daemonHub, messageHub, roomManager);
+			}
+		}
+	}
 }

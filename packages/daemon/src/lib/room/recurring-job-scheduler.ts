@@ -20,6 +20,7 @@ import type { RecurringJob, RecurringJobSchedule } from '@neokai/shared';
 import { Logger } from '../logger';
 
 const log = new Logger('recurring-job-scheduler');
+const MAX_SET_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * Internal scheduled job state
@@ -94,6 +95,10 @@ export class RecurringJobScheduler {
 	 * Create a new recurring job
 	 */
 	async createJob(params: CreateRecurringJobParams): Promise<RecurringJob> {
+		if (params.schedule.type === 'cron') {
+			throw new Error('Cron schedules are not supported. Use interval, daily, or weekly.');
+		}
+
 		const job = this.jobRepo.createJob(params);
 
 		// Calculate next run time
@@ -137,6 +142,10 @@ export class RecurringJobScheduler {
 	 * Update a job
 	 */
 	async updateJob(jobId: string, params: UpdateRecurringJobParams): Promise<RecurringJob | null> {
+		if (params.schedule?.type === 'cron') {
+			throw new Error('Cron schedules are not supported. Use interval, daily, or weekly.');
+		}
+
 		const job = this.jobRepo.updateJob(jobId, params);
 		if (!job) return null;
 
@@ -213,7 +222,14 @@ export class RecurringJobScheduler {
 		// Calculate next run time if not set
 		let nextRunAt = job.nextRunAt;
 		if (!nextRunAt) {
-			nextRunAt = this.calculateNextRun(job.schedule);
+			try {
+				nextRunAt = this.calculateNextRun(job.schedule);
+			} catch (error) {
+				log.error(`Cannot schedule job ${job.id}:`, error);
+				this.jobRepo.disableJob(job.id);
+				this.unscheduleJob(job.id);
+				return;
+			}
 			this.jobRepo.updateJob(job.id, { nextRunAt });
 		}
 
@@ -228,10 +244,21 @@ export class RecurringJobScheduler {
 			clearTimeout(existing.timerId);
 		}
 
-		// Set timer for execution
-		const timerId = setTimeout(() => {
-			this.executeJobIfDue(job.id);
-		}, delay);
+		let timerId: Timer;
+		if (delay > MAX_SET_TIMEOUT_MS) {
+			// Chunk long delays to avoid setTimeout overflow for very distant runs.
+			timerId = setTimeout(() => {
+				const latestJob = this.jobRepo.getJob(job.id);
+				if (latestJob && latestJob.enabled) {
+					this.scheduleJob(latestJob);
+				}
+			}, MAX_SET_TIMEOUT_MS);
+		} else {
+			// Set timer for execution
+			timerId = setTimeout(() => {
+				this.executeJobIfDue(job.id);
+			}, delay);
+		}
 
 		this.scheduledJobs.set(job.id, {
 			jobId: job.id,
@@ -295,8 +322,16 @@ export class RecurringJobScheduler {
 		} catch (error) {
 			log.error(`Failed to execute job ${jobId}:`, error);
 
-			// Still reschedule on error
-			const nextRunAt = this.calculateNextRun(job.schedule);
+			// Still reschedule on error unless schedule type is unsupported.
+			let nextRunAt: number;
+			try {
+				nextRunAt = this.calculateNextRun(job.schedule);
+			} catch (scheduleError) {
+				log.error(`Cannot reschedule job ${jobId}:`, scheduleError);
+				this.jobRepo.disableJob(jobId);
+				this.unscheduleJob(jobId);
+				return;
+			}
 			this.jobRepo.updateJob(jobId, { nextRunAt });
 
 			const updatedJob = this.jobRepo.getJob(jobId);
@@ -384,16 +419,9 @@ export class RecurringJobScheduler {
 			}
 
 			case 'cron': {
-				// Simple cron parsing - just support basic patterns for now
-				// For full cron support, use a library like cron-parser
-				// For now, default to daily if cron expression provided
-				log.warn(
-					`Cron expression '${schedule.expression}' not fully supported, defaulting to daily`
+				throw new Error(
+					`Unsupported schedule type 'cron' for expression '${schedule.expression}'.`
 				);
-				const target = new Date(now);
-				target.setDate(target.getDate() + 1);
-				target.setHours(0, 0, 0, 0);
-				return target.getTime();
 			}
 
 			default:

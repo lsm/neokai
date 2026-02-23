@@ -233,6 +233,7 @@ jobs:
             test_path: tests/online/convo
           - module: features
             test_path: tests/online/features
+            default_provider: anthropic
           - module: lifecycle
             test_path: tests/online/lifecycle
           - module: rewind
@@ -260,7 +261,9 @@ jobs:
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_PROVIDER: glm
+          ANTHROPIC_API_KEY: ${{ matrix.module == 'features' && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.module == 'features' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          DEFAULT_PROVIDER: ${{ matrix.default_provider || 'glm' }}
 
       - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon

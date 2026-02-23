@@ -533,6 +533,15 @@ export class SessionLifecycle {
 	}
 
 	/**
+	 * Get AgentSession for a session ID, loading it from DB-backed cache if needed.
+	 */
+	async getAgentSessionAsync(
+		sessionId: string
+	): Promise<import('../agent/agent-session').AgentSession | null> {
+		return this.sessionCache.getAsync(sessionId);
+	}
+
+	/**
 	 * Mark a message's tool output as removed from SDK session file
 	 * This updates the session metadata to track which outputs were deleted
 	 */

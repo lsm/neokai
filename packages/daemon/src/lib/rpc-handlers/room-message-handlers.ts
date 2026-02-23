@@ -12,6 +12,10 @@ import type { MessageHub } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
 import { ContextManager } from '../room';
+import type { RoomManager } from '../room/room-manager';
+import { Logger } from '../logger';
+
+const log = new Logger('room-message-handlers');
 
 /**
  * Create a ContextManager instance for a room
@@ -23,7 +27,7 @@ function createContextManager(db: Database, roomId: string): ContextManager {
 
 export function setupRoomMessageHandlers(
 	messageHub: MessageHub,
-	_roomManager: unknown,
+	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	db: Database
 ): void {
@@ -48,6 +52,9 @@ export function setupRoomMessageHandlers(
 		if (!params.role || !['user', 'assistant'].includes(params.role)) {
 			throw new Error("Role must be 'user' or 'assistant'");
 		}
+		if (!roomManager.getRoom(params.roomId)) {
+			throw new Error(`Room not found: ${params.roomId}`);
+		}
 
 		const contextManager = createContextManager(db, params.roomId);
 
@@ -71,7 +78,9 @@ export function setupRoomMessageHandlers(
 				},
 				sender: params.sender,
 			})
-			.catch(() => {});
+			.catch((error) => {
+				log.warn(`Failed to emit room.message for room ${params.roomId}:`, error);
+			});
 
 		return { success: true, messageId: savedMessage.id };
 	});
@@ -82,6 +91,9 @@ export function setupRoomMessageHandlers(
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
+		}
+		if (!roomManager.getRoom(params.roomId)) {
+			throw new Error(`Room not found: ${params.roomId}`);
 		}
 
 		const contextManager = createContextManager(db, params.roomId);

@@ -161,6 +161,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Room agent handlers
 	setupRoomSelfHandlers(deps.messageHub, deps.daemonHub, roomSelfManager);
+	roomSelfManager.startAgentsWithRunIntent().catch((error) => {
+		log.error('Failed to autostart room agents from persisted run intent:', error);
+	});
 
 	// Create LobbyAgentService if authenticated
 	let lobbyAgentService: LobbyAgentService | undefined = deps.lobbyAgentService;
@@ -239,6 +242,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Return cleanup function to stop background services
 	return () => {
 		recurringJobScheduler.stop();
+		roomSelfManager.stopAll().catch((error) => {
+			log.warn('Failed to stop room self agents during RPC cleanup:', error);
+		});
 		// TODO: Cleanup telemetry services if needed
 	};
 }

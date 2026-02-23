@@ -81,6 +81,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 			...process.env,
 			PORT: userPort.toString(),
 			NODE_ENV: 'test',
+			NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
 			...customEnv,
 		},
 		stdio: 'pipe',
@@ -199,6 +200,12 @@ async function createInProcessDaemonServer(
 	// Apply custom env vars
 	for (const [key, value] of Object.entries(customEnv)) {
 		process.env[key] = value;
+	}
+
+	// Online tests do real provider calls and often need longer startup windows in CI.
+	// Keep production default unchanged; override only in test daemon helper.
+	if (!process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS) {
+		process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS = '30000';
 	}
 
 	// Create temp workspace for this test
