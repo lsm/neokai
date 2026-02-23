@@ -162,4 +162,125 @@ describe('WorkerManager', () => {
 		expect(cleanupMock).not.toHaveBeenCalled();
 		expect(emitMock).not.toHaveBeenCalled();
 	});
+
+	it('resumeWorker sets worker back to running and enqueues reviewer feedback', async () => {
+		const enqueueMock = mock(async () => {});
+		const daemonHub = {
+			emit: mock(async () => {}),
+		} as unknown as import('../../../src/lib/daemon-hub').DaemonHub;
+		const sessionLifecycle = {
+			getAgentSession: mock(() => ({
+				messageQueue: { enqueue: enqueueMock },
+			})),
+		} as unknown as import('../../../src/lib/session/session-lifecycle').SessionLifecycle;
+		const roomManager = {
+			getRoom: mock(() => null),
+			assignSession: mock(() => null),
+			unassignSession: mock(() => null),
+		} as unknown as import('../../../src/lib/room/room-manager').RoomManager;
+
+		const workerManager = new WorkerManager(db, daemonHub, sessionLifecycle, roomManager);
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO tasks (
+				id, room_id, title, description, session_id, status, priority, depends_on, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			'task-resume',
+			'room-1',
+			'Task',
+			'Task description',
+			null,
+			'in_progress',
+			'normal',
+			'[]',
+			now
+		);
+		db.prepare(
+			`INSERT INTO worker_sessions (
+				id, session_id, room_id, room_session_id, room_session_type,
+				task_id, status, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			'worker-row-resume',
+			'worker-session-resume',
+			'room-1',
+			'room:self:room-1',
+			'room_self',
+			'task-resume',
+			'waiting_for_review',
+			now,
+			now
+		);
+
+		await workerManager.resumeWorker('worker-session-resume', 'Human review: APPROVED');
+
+		const workerRow = db
+			.prepare(`SELECT status FROM worker_sessions WHERE session_id = ?`)
+			.get('worker-session-resume') as { status: string } | null;
+		expect(workerRow?.status).toBe('running');
+		expect(enqueueMock).toHaveBeenCalledWith('Human review: APPROVED', true);
+	});
+
+	it('resumeWorker restores waiting status if enqueue fails', async () => {
+		const enqueueMock = mock(async () => {
+			throw new Error('queue down');
+		});
+		const daemonHub = {
+			emit: mock(async () => {}),
+		} as unknown as import('../../../src/lib/daemon-hub').DaemonHub;
+		const sessionLifecycle = {
+			getAgentSession: mock(() => ({
+				messageQueue: { enqueue: enqueueMock },
+			})),
+		} as unknown as import('../../../src/lib/session/session-lifecycle').SessionLifecycle;
+		const roomManager = {
+			getRoom: mock(() => null),
+			assignSession: mock(() => null),
+			unassignSession: mock(() => null),
+		} as unknown as import('../../../src/lib/room/room-manager').RoomManager;
+
+		const workerManager = new WorkerManager(db, daemonHub, sessionLifecycle, roomManager);
+		const now = Date.now();
+		db.prepare(
+			`INSERT INTO tasks (
+				id, room_id, title, description, session_id, status, priority, depends_on, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			'task-resume-fail',
+			'room-1',
+			'Task',
+			'Task description',
+			null,
+			'in_progress',
+			'normal',
+			'[]',
+			now
+		);
+		db.prepare(
+			`INSERT INTO worker_sessions (
+				id, session_id, room_id, room_session_id, room_session_type,
+				task_id, status, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		).run(
+			'worker-row-resume-fail',
+			'worker-session-resume-fail',
+			'room-1',
+			'room:self:room-1',
+			'room_self',
+			'task-resume-fail',
+			'waiting_for_review',
+			now,
+			now
+		);
+
+		await expect(
+			workerManager.resumeWorker('worker-session-resume-fail', 'Human review: REJECTED')
+		).rejects.toThrow('queue down');
+
+		const workerRow = db
+			.prepare(`SELECT status FROM worker_sessions WHERE session_id = ?`)
+			.get('worker-session-resume-fail') as { status: string } | null;
+		expect(workerRow?.status).toBe('waiting_for_review');
+	});
 });

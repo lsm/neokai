@@ -387,6 +387,12 @@ export class RoomSelfService {
 		const prompt = this.buildReviewPrompt(context);
 
 		await this.setLifecycleState('reviewing');
+		if (this.lifecycleState !== 'reviewing') {
+			log.warn(
+				`Skipping review message enqueue: failed to transition to reviewing (current: ${this.lifecycleState})`
+			);
+			return;
+		}
 		await this.enqueueAgentMessage(prompt, 'review');
 	}
 
@@ -524,8 +530,16 @@ export class RoomSelfService {
 						await this.setWaiting({
 							type: 'review',
 							taskId: event.taskId,
+							workerSessionId: event.sessionId,
 							reason: event.reason,
 							since: Date.now(),
+						});
+						await this.ctx.daemonHub.emit('roomAgent.reviewRequested', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							taskId: event.taskId,
+							reason: event.reason,
+							workerSessionId: event.sessionId,
 						});
 					}
 				}
@@ -1081,14 +1095,48 @@ export class RoomSelfService {
 				this.humanInputLock = true;
 				try {
 					if (input.type === 'review_response') {
+						const reviewInput = input as { taskId: string; response: string; approved: boolean };
+						if (!this.waitingContext || this.waitingContext.type !== 'review') {
+							log.warn('Review response received while not waiting for review input');
+							return;
+						}
+						if (this.waitingContext.taskId && this.waitingContext.taskId !== reviewInput.taskId) {
+							log.warn(
+								`Review response task mismatch: waiting for ${this.waitingContext.taskId}, got ${reviewInput.taskId}`
+							);
+							return;
+						}
+
+						const verdict = reviewInput.approved ? 'APPROVED' : 'REJECTED';
+						const reviewMsg = reviewInput.response
+							? `Review ${verdict}: ${reviewInput.response}`
+							: `Review ${verdict}`;
+
+						if (this.waitingContext.workerSessionId) {
+							const workerMessage = reviewInput.response
+								? `Human review decision for task ${reviewInput.taskId}: ${verdict}. ${reviewInput.response}`
+								: `Human review decision for task ${reviewInput.taskId}: ${verdict}.`;
+							await this.ctx.workerManager.resumeWorker(
+								this.waitingContext.workerSessionId,
+								workerMessage
+							);
+							await this.enqueueAgentMessage(
+								`Worker review resolved for task ${reviewInput.taskId}: ${verdict}`,
+								'human_input:review_response:worker_resume'
+							);
+						} else {
+							await this.enqueueAgentMessage(reviewMsg, 'human_input:review_response');
+						}
+
+						await this.ctx.daemonHub.emit('roomAgent.reviewReceived', {
+							sessionId: this.sessionId,
+							roomId: this.ctx.room.id,
+							taskId: reviewInput.taskId,
+							approved: reviewInput.approved,
+							response: reviewInput.response,
+						});
 						this.updateWaitingContext(null);
 						await this.setLifecycleState('planning');
-						const ri = input as { response: string; approved: boolean };
-						const verdict = ri.approved ? 'APPROVED' : 'REJECTED';
-						const reviewMsg = ri.response
-							? `Review ${verdict}: ${ri.response}`
-							: `Review ${verdict}`;
-						await this.enqueueAgentMessage(reviewMsg, 'human_input:review_response');
 					} else if (input.type === 'escalation_response') {
 						// Handle escalation response in agentSession path
 						const escalationInput = input as { escalationId: string; response: string };
@@ -1653,6 +1701,29 @@ export class RoomSelfService {
 				}
 				this.state = result;
 				log.info(`Review complete (hasMoreWork: ${hasMoreWork})`);
+
+				if (hasMoreWork) {
+					const activeGoals = await this.goalManager.getActiveGoals();
+					const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
+					const inProgressTasks = await this.taskManager.listTasks({ status: 'in_progress' });
+					const availableCapacity = Math.max(
+						0,
+						this.config.maxConcurrentPairs - inProgressTasks.length
+					);
+					await this.injectPlanningMessage({
+						activeGoals,
+						pendingTasks,
+						inProgressTasks,
+						recentEvents: [
+							{
+								type: 'review_complete',
+								summary: 'Review finished with remaining work. Re-plan and continue execution.',
+								timestamp: Date.now(),
+							},
+						],
+						availableCapacity,
+					});
+				}
 			},
 			onCancelJob: async (jobId: string) => {
 				await this.ctx.recurringJobScheduler.deleteJob(jobId);

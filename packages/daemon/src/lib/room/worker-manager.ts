@@ -219,6 +219,37 @@ export class WorkerManager {
 	}
 
 	/**
+	 * Resume a worker that is blocked on human review.
+	 */
+	async resumeWorker(workerSessionId: string, message: string): Promise<void> {
+		const worker = this.getWorkerBySessionId(workerSessionId);
+		if (!worker) {
+			throw new Error(`Worker not found: ${workerSessionId}`);
+		}
+
+		if (worker.status !== 'waiting_for_review') {
+			throw new Error(
+				`Worker ${workerSessionId} is not waiting for review (status: ${worker.status})`
+			);
+		}
+
+		const agentSession = this.sessionLifecycle.getAgentSession(workerSessionId);
+		if (!agentSession) {
+			throw new Error(`Worker session unavailable for resume: ${workerSessionId}`);
+		}
+
+		// Move worker back to running before injecting the reviewer decision.
+		this.updateWorkerStatus(workerSessionId, 'running');
+		try {
+			await agentSession.messageQueue.enqueue(message, true);
+		} catch (error) {
+			// Keep state consistent if message delivery fails.
+			this.updateWorkerStatus(workerSessionId, 'waiting_for_review');
+			throw error;
+		}
+	}
+
+	/**
 	 * Complete a worker session
 	 */
 	completeWorker(workerSessionId: string): void {

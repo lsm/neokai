@@ -426,6 +426,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		taskId: string;
 		reason: string;
+		workerSessionId?: string;
 	};
 	'roomAgent.reviewReceived': {
 		sessionId: string;

@@ -20,6 +20,7 @@ interface Fixture {
 	ctx: RoomSelfContext;
 	taskManager: TaskManager;
 	workerManager: WorkerManager;
+	workerMessageEnqueueMock: ReturnType<typeof mock>;
 	service: RoomSelfService;
 	stateRepo: RoomSelfStateRepository;
 	cleanup: () => Promise<void>;
@@ -46,10 +47,11 @@ async function createFixture(): Promise<Fixture> {
 	});
 
 	let workerCounter = 0;
+	const workerMessageEnqueueMock = mock(async () => {});
 	const workerAgentSession = {
 		session: { config: {} as Record<string, unknown> },
 		startStreamingQuery: mock(async () => {}),
-		messageQueue: { enqueue: mock(async () => {}) },
+		messageQueue: { enqueue: workerMessageEnqueueMock },
 		cleanup: mock(async () => {}),
 	};
 
@@ -144,6 +146,7 @@ async function createFixture(): Promise<Fixture> {
 		ctx,
 		taskManager,
 		workerManager,
+		workerMessageEnqueueMock,
 		service,
 		stateRepo,
 		cleanup: async () => {
@@ -257,6 +260,85 @@ describe('RoomSelf worker lifecycle integration', () => {
 		expect(fixture.service.getState().lifecycleState).toBe('idle');
 		expect(fixture.roomManager.getRoom(fixture.room.id)?.sessionIds).not.toContain(
 			workerSessionId!
+		);
+	});
+
+	test('review response in agent-session path resumes the waiting worker deterministically', async () => {
+		await fixture.service.forceState('executing');
+		const roomAgentQueueEnqueueMock = mock(async () => {});
+		(
+			fixture.service as unknown as {
+				agentSession: {
+					messageQueue: { enqueue: (message: string, highPriority: boolean) => Promise<void> };
+				};
+			}
+		).agentSession = {
+			messageQueue: {
+				enqueue: roomAgentQueueEnqueueMock,
+			},
+		};
+
+		const task = await fixture.taskManager.createTask({
+			title: 'Needs review to continue',
+			description: 'Pause and wait for approval',
+			priority: 'normal',
+		});
+		const workerSessionId = await (
+			fixture.service as unknown as {
+				spawnWorkerForTask: (
+					taskArg: typeof task,
+					options: { throwOnBlocked: boolean }
+				) => Promise<string | null>;
+			}
+		).spawnWorkerForTask(task, { throwOnBlocked: true });
+		expect(workerSessionId).toBeString();
+
+		const workerToolsServer = fixture.workerManager.getWorkerTools(workerSessionId!);
+		expect(workerToolsServer).toBeDefined();
+		const tools = (
+			workerToolsServer as unknown as {
+				instance: {
+					_registeredTools: Record<string, { handler: (args: unknown) => Promise<unknown> }>;
+				};
+			}
+		).instance._registeredTools;
+
+		await tools.worker_request_review.handler({
+			reason: 'Need explicit sign-off before proceeding',
+		});
+
+		expect(fixture.service.getState().lifecycleState).toBe('waiting');
+		expect(fixture.stateRepo.getWaitingContext(fixture.room.id)).toEqual(
+			expect.objectContaining({
+				type: 'review',
+				taskId: task.id,
+				workerSessionId: workerSessionId!,
+			})
+		);
+		expect(fixture.workerManager.getWorkerBySessionId(workerSessionId!)?.status).toBe(
+			'waiting_for_review'
+		);
+
+		await fixture.service.handleHumanInput({
+			type: 'review_response',
+			taskId: task.id,
+			approved: true,
+			response: 'Looks good, continue',
+		});
+
+		const reviewResumeCall = fixture.workerMessageEnqueueMock.mock.calls.find(
+			([message]) =>
+				typeof message === 'string' &&
+				message.includes(`Human review decision for task ${task.id}: APPROVED`)
+		);
+		expect(reviewResumeCall).toBeDefined();
+		expect(reviewResumeCall?.[1]).toBe(true);
+		expect(fixture.workerManager.getWorkerBySessionId(workerSessionId!)?.status).toBe('running');
+		expect(fixture.stateRepo.getWaitingContext(fixture.room.id)).toBeNull();
+		expect(fixture.service.getState().lifecycleState).toBe('planning');
+		expect(roomAgentQueueEnqueueMock).toHaveBeenCalledWith(
+			`Worker review resolved for task ${task.id}: APPROVED`,
+			true
 		);
 	});
 
