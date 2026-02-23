@@ -10,19 +10,20 @@ describe('RoomSelfStateRepository waiting context', () => {
 	beforeEach(() => {
 		db = new Database(':memory:');
 		db.exec(`
-			CREATE TABLE room_agent_states (
-				room_id TEXT PRIMARY KEY,
-				lifecycle_state TEXT NOT NULL DEFAULT 'idle',
-				current_goal_id TEXT,
-				current_task_id TEXT,
-				active_worker_session_ids TEXT NOT NULL DEFAULT '[]',
-				last_activity_at INTEGER NOT NULL,
-				error_count INTEGER NOT NULL DEFAULT 0,
-				last_error TEXT,
-				pending_actions TEXT NOT NULL DEFAULT '[]',
-				waiting_context TEXT
-			)
-		`);
+				CREATE TABLE room_agent_states (
+					room_id TEXT PRIMARY KEY,
+					lifecycle_state TEXT NOT NULL DEFAULT 'idle',
+					current_goal_id TEXT,
+					current_task_id TEXT,
+					active_worker_session_ids TEXT NOT NULL DEFAULT '[]',
+					last_activity_at INTEGER NOT NULL,
+					error_count INTEGER NOT NULL DEFAULT 0,
+					last_error TEXT,
+					pending_actions TEXT NOT NULL DEFAULT '[]',
+					waiting_context TEXT,
+					run_intent INTEGER NOT NULL DEFAULT 0
+				)
+			`);
 
 		repo = new RoomSelfStateRepository(db);
 		repo.createState({ roomId: 'room-1' });
@@ -67,5 +68,25 @@ describe('RoomSelfStateRepository waiting context', () => {
 		);
 
 		expect(repo.getWaitingContext('room-1')).toBeNull();
+	});
+
+	it('persists run intent and lists rooms with run intent', () => {
+		repo.createState({ roomId: 'room-2' });
+
+		repo.setRunIntent('room-1', true);
+		repo.setRunIntent('room-2', false);
+
+		expect(repo.getRunIntent('room-1')).toBe(true);
+		expect(repo.getRunIntent('room-2')).toBe(false);
+		expect(repo.getRoomsWithRunIntent()).toEqual(['room-1']);
+	});
+
+	it('can create state when setting run intent for a missing row', () => {
+		expect(repo.getState('room-3')).toBeNull();
+
+		repo.setRunIntent('room-3', true, { createIfMissing: true });
+
+		expect(repo.getState('room-3')).not.toBeNull();
+		expect(repo.getRunIntent('room-3')).toBe(true);
 	});
 });

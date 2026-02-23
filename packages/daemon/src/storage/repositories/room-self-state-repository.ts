@@ -268,6 +268,51 @@ export class RoomSelfStateRepository {
 	}
 
 	/**
+	 * Persist whether this room agent should auto-start on daemon boot.
+	 */
+	setRunIntent(
+		roomId: string,
+		shouldRun: boolean,
+		options?: { createIfMissing?: boolean }
+	): RoomSelfState | null {
+		if (options?.createIfMissing && !this.getState(roomId)) {
+			this.createState({ roomId });
+		}
+
+		const stmt = this.db.prepare(
+			`UPDATE room_agent_states
+			 SET run_intent = ?, last_activity_at = ?
+			 WHERE room_id = ?`
+		);
+		const result = stmt.run(shouldRun ? 1 : 0, Date.now(), roomId);
+		if (result.changes === 0) {
+			return null;
+		}
+
+		return this.getState(roomId);
+	}
+
+	/**
+	 * Returns true if this room agent is marked to auto-start on daemon boot.
+	 */
+	getRunIntent(roomId: string): boolean {
+		const stmt = this.db.prepare(`SELECT run_intent FROM room_agent_states WHERE room_id = ?`);
+		const row = stmt.get(roomId) as { run_intent?: number | null } | undefined;
+		return Boolean(row?.run_intent);
+	}
+
+	/**
+	 * List room IDs whose room agents should auto-start on daemon boot.
+	 */
+	getRoomsWithRunIntent(): string[] {
+		const stmt = this.db.prepare(
+			`SELECT room_id FROM room_agent_states WHERE run_intent = 1 ORDER BY last_activity_at DESC`
+		);
+		const rows = stmt.all() as Array<{ room_id: string }>;
+		return rows.map((row) => row.room_id);
+	}
+
+	/**
 	 * Delete state for a room agent
 	 */
 	deleteState(roomId: string): boolean {

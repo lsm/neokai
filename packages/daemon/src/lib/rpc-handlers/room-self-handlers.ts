@@ -26,6 +26,7 @@ import { GoalManager } from '../room/goal-manager';
 import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type { SessionManager } from '../session-manager';
+import { RoomSelfStateRepository } from '../../storage/repositories/room-self-state-repository';
 import { Logger } from '../logger';
 
 // MCP server functions are accessed via dynamic require from room-handlers
@@ -89,8 +90,11 @@ export interface RoomSelfManagerDeps {
  */
 export class RoomSelfManager {
 	private agents: Map<string, RoomSelfService> = new Map();
+	private stateRepo: RoomSelfStateRepository;
 
-	constructor(private deps: RoomSelfManagerDeps) {}
+	constructor(private deps: RoomSelfManagerDeps) {
+		this.stateRepo = new RoomSelfStateRepository(this.deps.db.getDatabase());
+	}
 
 	/**
 	 * Get or create a RoomSelfService for a room
@@ -116,7 +120,15 @@ export class RoomSelfManager {
 	 * Start the agent for a room
 	 * Creates the agent if it doesn't exist, then starts it
 	 */
-	async startAgent(roomId: string): Promise<void> {
+	async startAgent(roomId: string, options?: { persistRunIntent?: boolean }): Promise<void> {
+		const persistRunIntent = options?.persistRunIntent ?? true;
+		if (!this.deps.roomManager.getRoom(roomId)) {
+			throw new Error(`Room not found: ${roomId}`);
+		}
+		if (persistRunIntent) {
+			this.stateRepo.setRunIntent(roomId, true, { createIfMissing: true });
+		}
+
 		const agent = this.getOrCreateAgent(roomId);
 		await agent.start();
 
@@ -128,10 +140,39 @@ export class RoomSelfManager {
 	 * Stop the agent for a room
 	 * The agent remains in memory but is stopped
 	 */
-	async stopAgent(roomId: string): Promise<void> {
+	async stopAgent(roomId: string, options?: { persistRunIntent?: boolean }): Promise<void> {
+		const persistRunIntent = options?.persistRunIntent ?? true;
+		if (persistRunIntent && this.stateRepo.getState(roomId)) {
+			this.stateRepo.setRunIntent(roomId, false);
+		}
+
 		const agent = this.agents.get(roomId);
 		if (agent) {
 			await agent.stop();
+		}
+	}
+
+	/**
+	 * Autostart room agents that were previously marked as running.
+	 */
+	async startAgentsWithRunIntent(): Promise<void> {
+		const roomIds = this.stateRepo.getRoomsWithRunIntent();
+		if (roomIds.length === 0) {
+			return;
+		}
+
+		log.info(`Autostarting ${roomIds.length} room agent(s) from persisted run intent`);
+		for (const roomId of roomIds) {
+			if (!this.deps.roomManager.getRoom(roomId)) {
+				log.warn(`Skipping room agent autostart for missing room: ${roomId}`);
+				continue;
+			}
+
+			try {
+				await this.startAgent(roomId, { persistRunIntent: false });
+			} catch (error) {
+				log.error(`Failed to autostart room agent for room ${roomId}:`, error);
+			}
 		}
 	}
 

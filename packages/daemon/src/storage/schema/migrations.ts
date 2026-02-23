@@ -104,6 +104,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 30: Persist room agent waiting context for restart-safe escalations
 	runMigration30(db);
+
+	// Migration 31: Persist room agent run intent for boot-time autostart
+	runMigration31(db);
 }
 
 /**
@@ -1546,5 +1549,20 @@ function runMigration30(db: BunDatabase): void {
 
 	if (!tableHasColumn(db, 'room_agent_states', 'waiting_context')) {
 		db.exec(`ALTER TABLE room_agent_states ADD COLUMN waiting_context TEXT`);
+	}
+}
+
+/**
+ * Migration 31: Add run_intent to room_agent_states
+ *
+ * Persists whether a room agent should be auto-started when the daemon boots.
+ */
+function runMigration31(db: BunDatabase): void {
+	if (!tableExists(db, 'room_agent_states')) {
+		return;
+	}
+
+	if (!tableHasColumn(db, 'room_agent_states', 'run_intent')) {
+		db.exec(`ALTER TABLE room_agent_states ADD COLUMN run_intent INTEGER NOT NULL DEFAULT 0`);
 	}
 }
