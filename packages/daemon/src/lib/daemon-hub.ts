@@ -428,6 +428,13 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		approved: boolean;
 		response: string;
 	};
+	'roomAgent.escalated': {
+		sessionId: string;
+		roomId: string;
+		taskId: string;
+		escalationId: string;
+		reason: string;
+	};
 	'roomAgent.escalationResolved': {
 		sessionId: string;
 		roomId: string;

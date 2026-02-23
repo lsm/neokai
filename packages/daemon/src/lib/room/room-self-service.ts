@@ -181,6 +181,8 @@ export class RoomSelfService {
 	private lifecycleManager: RoomSelfLifecycleManager | null = null;
 	private agentSession: AgentSession | null = null;
 	private roomMcpServer: ReturnType<typeof createRoomAgentMcpServer> | null = null;
+	/** Lock to prevent concurrent worker spawning */
+	private spawnLock = false;
 
 	constructor(
 		private ctx: RoomSelfContext,
@@ -734,6 +736,12 @@ export class RoomSelfService {
 	}
 
 	private async maybeSpawnWorker(task: NeoTask): Promise<void> {
+		// Prevent concurrent spawning - check lock first
+		if (this.spawnLock) {
+			log.debug(`Spawn in progress, skipping task ${task.id}`);
+			return;
+		}
+
 		if (this.state.activeWorkerSessionIds.length >= this.config.maxConcurrentPairs) {
 			log.info(`At capacity, queuing task ${task.id}`);
 			return;
@@ -746,6 +754,8 @@ export class RoomSelfService {
 			return;
 		}
 
+		// Acquire lock
+		this.spawnLock = true;
 		log.info(`Spawning worker for task ${task.id}`);
 
 		try {
@@ -783,6 +793,9 @@ export class RoomSelfService {
 
 			// Record error and potentially transition to error state
 			await this.recordError(errorMessage);
+		} finally {
+			// Release lock
+			this.spawnLock = false;
 		}
 	}
 
@@ -846,6 +859,10 @@ export class RoomSelfService {
 				);
 				this.state = this.lifecycleManager.getState();
 				this.stopIdleCheck();
+
+				// Terminate active workers when max errors reached
+				await this.ctx.workerManager.terminateWorkersForRoom(this.ctx.room.id);
+				log.info(`Terminated all workers for room due to max errors reached`);
 			}
 		} else {
 			this.state = this.stateRepo.recordError(this.ctx.room.id, error) ?? this.state;
@@ -860,6 +877,10 @@ export class RoomSelfService {
 			if (this.state.errorCount >= this.config.maxErrorCount) {
 				await this.transitionTo('error', `Max errors reached (${this.state.errorCount})`);
 				this.stopIdleCheck();
+
+				// Terminate active workers when max errors reached
+				await this.ctx.workerManager.terminateWorkersForRoom(this.ctx.room.id);
+				log.info(`Terminated all workers for room due to max errors reached`);
 			}
 		}
 	}
@@ -998,15 +1019,29 @@ export class RoomSelfService {
 				);
 			} else if (input.type === 'escalation_response' && this.lifecycleState === 'waiting') {
 				// Handle escalation response in agentSession path
+				const escalationInput = input as { escalationId: string; response: string };
+
+				// Validate escalation ID matches current waiting context
+				if (
+					!this.waitingContext ||
+					this.waitingContext.type !== 'escalation' ||
+					this.waitingContext.escalationId !== escalationInput.escalationId
+				) {
+					log.warn(
+						`Escalation response received for unknown/stale escalation: ${escalationInput.escalationId}`
+					);
+					return;
+				}
+
 				this.waitingContext = null;
 				await this.ctx.daemonHub.emit('roomAgent.escalationResolved', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
-					escalationId: (input as { escalationId: string }).escalationId,
-					response: (input as { response: string }).response,
+					escalationId: escalationInput.escalationId,
+					response: escalationInput.response,
 				});
 				await this.agentSession.messageQueue.enqueue(
-					`Escalation resolved: ${(input as { response: string }).response}`,
+					`Escalation resolved: ${escalationInput.response}`,
 					true
 				);
 			} else if (input.type === 'question_response' && this.lifecycleState === 'waiting') {
@@ -1078,6 +1113,16 @@ export class RoomSelfService {
 	private async handleEscalationResponse(
 		input: Extract<RoomSelfHumanInput, { type: 'escalation_response' }>
 	): Promise<void> {
+		// Validate escalation ID matches current waiting context
+		if (
+			!this.waitingContext ||
+			this.waitingContext.type !== 'escalation' ||
+			this.waitingContext.escalationId !== input.escalationId
+		) {
+			log.warn(`Escalation response received for unknown/stale escalation: ${input.escalationId}`);
+			return;
+		}
+
 		log.info(`Escalation response for ${input.escalationId}: ${input.response}`);
 
 		this.waitingContext = null;
@@ -1325,14 +1370,22 @@ export class RoomSelfService {
 				log.info(`Review requested for task ${taskId}: ${reason}`);
 			},
 			onEscalate: async (taskId: string, reason: string) => {
-				await this.setWaiting({ type: 'escalation', taskId, reason, since: Date.now() });
+				const escalationId = generateUUID();
+				await this.setWaiting({
+					type: 'escalation',
+					taskId,
+					escalationId,
+					reason,
+					since: Date.now(),
+				});
 				await this.ctx.daemonHub.emit('roomAgent.escalated', {
 					sessionId: this.sessionId,
 					roomId: this.ctx.room.id,
 					taskId,
+					escalationId,
 					reason,
-				} as unknown as Parameters<typeof this.ctx.daemonHub.emit>[1]);
-				log.warn(`Task ${taskId} escalated: ${reason}`);
+				});
+				log.warn(`Task ${taskId} escalated (${escalationId}): ${reason}`);
 			},
 			onUpdateGoalProgress: async (params: RoomUpdateGoalProgressParams) => {
 				await this.goalManager.updateGoalProgress(params.goalId, params.progress, params.metrics);

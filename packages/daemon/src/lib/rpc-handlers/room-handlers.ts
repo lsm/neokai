@@ -21,6 +21,7 @@
  */
 
 import type { MessageHub, WorkspacePath, McpServerConfig } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { WorkerManager } from '../room/worker-manager';
@@ -263,12 +264,14 @@ export function createOrUpdateRoomMcpServer(
 			onEscalate: async (taskId, reason) => {
 				// PHASE 5: Emit escalation event for room:self to handle (if daemonHub provided)
 				if (daemonHub) {
+					const escalationId = generateUUID();
 					await daemonHub.emit('roomAgent.escalated', {
 						sessionId: `room:${roomId}`,
 						roomId,
 						taskId,
+						escalationId,
 						reason,
-					} as unknown as Parameters<typeof daemonHub.emit>[1]);
+					});
 				}
 			},
 			onUpdateGoalProgress: async (params) => {
