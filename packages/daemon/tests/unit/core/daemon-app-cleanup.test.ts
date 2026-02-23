@@ -16,11 +16,23 @@ describe('Daemon App Cleanup', () => {
 	let config: Config;
 	let originalConsoleLog: typeof console.log;
 	let originalConsoleError: typeof console.error;
+	let originalAnthropicApiKey: string | undefined;
+	let originalClaudeCodeOAuthToken: string | undefined;
+	let originalAnthropicAuthToken: string | undefined;
+	let originalGlmApiKey: string | undefined;
 	const logs: string[] = [];
 
 	beforeEach(() => {
-		// Set fake API key for auth (createDaemonApp requires authentication)
-		process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key-for-unit-tests';
+		// Force unauthenticated startup for deterministic unit timing.
+		// This avoids model initialization paths that can hit SDK/network timeouts in CI.
+		originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+		originalClaudeCodeOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+		originalGlmApiKey = process.env.GLM_API_KEY;
+		delete process.env.ANTHROPIC_API_KEY;
+		delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		delete process.env.ANTHROPIC_AUTH_TOKEN;
+		delete process.env.GLM_API_KEY;
 
 		// Capture console output for verification
 		originalConsoleLog = console.log;
@@ -36,7 +48,6 @@ describe('Daemon App Cleanup', () => {
 			defaultModel: 'claude-sonnet-4-5-20250929',
 			maxTokens: 8192,
 			temperature: 1.0,
-			anthropicApiKey: 'sk-ant-test-key-for-unit-tests',
 			dbPath: ':memory:',
 			maxSessions: 10,
 			nodeEnv: 'test',
@@ -46,8 +57,27 @@ describe('Daemon App Cleanup', () => {
 	});
 
 	afterEach(() => {
-		// Clean up env var
-		delete process.env.ANTHROPIC_API_KEY;
+		// Restore auth env vars
+		if (originalAnthropicApiKey !== undefined) {
+			process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+		} else {
+			delete process.env.ANTHROPIC_API_KEY;
+		}
+		if (originalClaudeCodeOAuthToken !== undefined) {
+			process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOAuthToken;
+		} else {
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		}
+		if (originalAnthropicAuthToken !== undefined) {
+			process.env.ANTHROPIC_AUTH_TOKEN = originalAnthropicAuthToken;
+		} else {
+			delete process.env.ANTHROPIC_AUTH_TOKEN;
+		}
+		if (originalGlmApiKey !== undefined) {
+			process.env.GLM_API_KEY = originalGlmApiKey;
+		} else {
+			delete process.env.GLM_API_KEY;
+		}
 
 		// Restore console
 		console.log = originalConsoleLog;
