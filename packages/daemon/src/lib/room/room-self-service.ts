@@ -51,6 +51,7 @@ import {
 	type RoomSpawnWorkerParams,
 	type RoomUpdateGoalProgressParams,
 	type RoomScheduleJobParams,
+	type RoomUpdatePromptsParams,
 } from '../agent/room-agent-tools';
 import type { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import type {
@@ -487,8 +488,13 @@ export class RoomSelfService {
 						});
 					}
 
-					// Check if all workers are done
-					if (this.state.activeWorkerSessionIds.length === 0) {
+					// Check if all workers are done. Only call finishExecution() when not
+					// already in reviewing state — injectReviewMessage() may have already
+					// transitioned us there, and completeReviewing() handles that exit.
+					if (
+						this.state.activeWorkerSessionIds.length === 0 &&
+						this.lifecycleState !== 'reviewing'
+					) {
 						const result = await lifecycleManager.finishExecution();
 						if (result) {
 							this.state = result;
@@ -562,6 +568,33 @@ export class RoomSelfService {
 			{ sessionId: this.sessionId }
 		);
 		this.unsubscribers.push(unsubRecurringJob);
+
+		// React immediately when a new goal is created instead of waiting for
+		// the 60-second idle check timer.
+		const unsubGoalCreated = this.ctx.daemonHub.on(
+			'goal.created',
+			async (event: { roomId: string; goalId: string; goal: RoomGoal }) => {
+				if (event.roomId !== this.ctx.room.id) return;
+
+				if (this.agentSession && this.lifecycleManager?.canStartPlanning()) {
+					await this.injectPlanningMessage({
+						activeGoals: [event.goal],
+						pendingTasks: [],
+						inProgressTasks: [],
+						recentEvents: [
+							{
+								type: 'goal_created',
+								summary: `New goal created: "${event.goal.title}"`,
+								timestamp: Date.now(),
+							},
+						],
+						availableCapacity: this.config.maxConcurrentPairs,
+					});
+				}
+			},
+			{ sessionId: this.sessionId }
+		);
+		this.unsubscribers.push(unsubGoalCreated);
 
 		// Subscribe to session errors to detect worker failures
 		const unsubSessionError = this.ctx.daemonHub.on(
@@ -812,7 +845,13 @@ export class RoomSelfService {
 			await this.taskManager.startTask(task.id, workerSessionId);
 
 			lifecycleManager.addActiveWorkerSession(workerSessionId);
-			this.state = lifecycleManager.getState();
+			// Transition planning → executing when the first worker is spawned.
+			if (lifecycleManager.getLifecycleState() === 'planning') {
+				const execResult = await lifecycleManager.startExecuting();
+				this.state = execResult ?? lifecycleManager.getState();
+			} else {
+				this.state = lifecycleManager.getState();
+			}
 
 			log.info(`Spawned worker ${workerSessionId} for task ${task.id}`);
 			return workerSessionId;
@@ -867,8 +906,10 @@ export class RoomSelfService {
 			});
 		}
 
-		// Check if all workers are done
-		if (this.state.activeWorkerSessionIds.length === 0) {
+		// Check if all workers are done. Guard finishExecution() — if
+		// injectReviewMessage() already moved us to reviewing, completeReviewing()
+		// handles the exit instead.
+		if (this.state.activeWorkerSessionIds.length === 0 && this.lifecycleState !== 'reviewing') {
 			const result = await lifecycleManager.finishExecution();
 			if (result) {
 				this.state = result;
@@ -1282,9 +1323,17 @@ export class RoomSelfService {
 
 		parts.push('\n## Instructions');
 		parts.push('Review this task completion and:');
-		parts.push('1. If successful, should any goals be updated?');
-		parts.push('2. If failed, should the task be retried or escalated?');
-		parts.push('3. Are there follow-up tasks to create?');
+		parts.push(
+			'1. If successful, update goal progress with `room_update_goal_progress` if applicable.'
+		);
+		parts.push('2. If failed, decide whether to retry (create a new task) or escalate.');
+		parts.push('3. Create any follow-up tasks needed.');
+		parts.push(
+			'4. Check pending work with `room_list_tasks` (the `progress` field reflects worker progress).'
+		);
+		parts.push(
+			'5. When done reviewing, call `room_finish_review` with `has_more_work: true` if there are pending goals/tasks, or `false` if everything is complete.'
+		);
 
 		return parts.join('\n');
 	}
@@ -1553,6 +1602,33 @@ export class RoomSelfService {
 						pairedSessionId: undefined, // PHASE 4: No more paired sessions
 					};
 				});
+			},
+			onFinishReview: async (hasMoreWork: boolean) => {
+				const lifecycleManager = this.requireLifecycleManager();
+				const result = await lifecycleManager.completeReviewing(hasMoreWork);
+				if (result) {
+					this.state = result;
+				}
+				log.info(`Review complete (hasMoreWork: ${hasMoreWork})`);
+			},
+			onCancelJob: async (jobId: string) => {
+				await this.ctx.recurringJobScheduler.deleteJob(jobId);
+				log.info(`Recurring job cancelled: ${jobId}`);
+			},
+			onUpdatePrompts: async (params: RoomUpdatePromptsParams) => {
+				const existing = this.ctx.promptTemplateManager.getTemplate(params.templateId);
+				await this.ctx.promptTemplateManager.saveCustomTemplate({
+					id: params.templateId,
+					name: existing?.name ?? params.templateId,
+					description: params.reason,
+					category: existing?.category ?? 'room_agent',
+					template: params.customContent,
+					variables: existing?.variables ?? [],
+					version: existing?.version ?? 0,
+					createdAt: existing?.createdAt ?? Date.now(),
+					updatedAt: Date.now(),
+				});
+				log.info(`Room prompts updated: ${params.templateId}`);
 			},
 		};
 
