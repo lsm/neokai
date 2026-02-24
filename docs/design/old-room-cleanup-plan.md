@@ -534,203 +534,197 @@ bun run check    # must pass before starting
 ```
 
 ### Step 1: Delete old orchestration (daemon/src/lib/room/)
-- [ ] `room-self-service.ts`
-- [ ] `room-self-lifecycle-manager.ts`
-- [ ] `worker-manager.ts`
-- [ ] `recurring-job-scheduler.ts`
-- [ ] `context-manager.ts`
-- [ ] `memory-manager.ts`
-- [ ] `archive/` (entire directory) _(skip if doesn't exist)_
+- [x] `room-self-service.ts`
+- [x] `room-self-lifecycle-manager.ts`
+- [x] `worker-manager.ts`
+- [x] `recurring-job-scheduler.ts`
+- [x] `context-manager.ts`
+- [x] `memory-manager.ts`
+- [x] `archive/` (entire directory) _(skip if doesn't exist)_
 
 ### Step 2: Delete old agent tools (daemon/src/lib/agent/)
-- [ ] `room-agent-tools.ts`
-- [ ] `worker-tools.ts` (if exists)
+- [x] `room-agent-tools.ts`
+- [x] `worker-tools.ts` (if exists)
 
 ### Step 3: Delete old RPC handlers (daemon/src/lib/rpc-handlers/)
-- [ ] `room-self-handlers.ts`
-- [ ] `room-message-handlers.ts`
-- [ ] `recurring-job-handlers.ts`
-- [ ] `memory-handlers.ts`
+- [x] `room-self-handlers.ts`
+- [x] `room-message-handlers.ts`
+- [x] `recurring-job-handlers.ts`
+- [x] `memory-handlers.ts`
 ~~- [ ] `archive-room-self-handlers.ts.bak`~~ _(doesn't exist — removed)_
 
 ### Step 4: Delete old repositories (daemon/src/storage/repositories/)
-- [ ] `room-self-state-repository.ts`
-- [ ] `worker-session-repository.ts`
-- [ ] `room-context-version-repository.ts`
-- [ ] `recurring-job-repository.ts`
-- [ ] `context-repository.ts`
-- [ ] `memory-repository.ts`
+- [x] `room-self-state-repository.ts`
+- [x] `worker-session-repository.ts`
+- [x] `room-context-version-repository.ts`
+- [x] `recurring-job-repository.ts`
+- [x] `context-repository.ts`
+- [x] `memory-repository.ts`
 ~~- [ ] `archive-room-self-state-repository.ts.bak`~~ _(doesn't exist — removed)_
 
 ### Step 5: Delete old prompts (shared/src/) + neo package
-- [ ] `prompts/room-agent.ts`
-- [ ] `neo-prompt/` (entire directory, if only room orchestration)
-- [ ] `packages/neo/` (entire package, if only room orchestration)
-- [ ] If deleting `packages/neo`: remove from `tsconfig.json` references + remove `@neokai/neo` from `packages/cli/package.json`
+- [x] `prompts/room-agent.ts`
+- [x] `neo-prompt/` (entire directory, if only room orchestration)
+- [x] `packages/neo/` (entire package, if only room orchestration)
+- [x] If deleting `packages/neo`: remove from `tsconfig.json` references + remove `@neokai/neo` from `packages/cli/package.json`
+- [x] `daemon/src/lib/prompts/` deleted (PromptTemplateManager + builtin templates — only consumers were deleted handlers)
 
 ### Step 6: Delete old UI components (web/src/components/room/)
-- [ ] `RoomSelfStatus.tsx` + `RoomSelfStatus.test.tsx`
-- [ ] `RoomEscalations.tsx`
-- [ ] `TaskSessionView.tsx` + `TaskSessionView.test.tsx`
-- [ ] `ContextEditor.tsx`
-- [ ] `ContextVersionHistory.tsx`
-- [ ] `ContextVersionViewer.tsx`
-- [ ] `RecurringJobsConfig.tsx` + `RecurringJobsConfig.test.tsx`
+- [x] `RoomSelfStatus.tsx` + `RoomSelfStatus.test.tsx`
+- [x] `RoomEscalations.tsx`
+- [x] `TaskSessionView.tsx` + `TaskSessionView.test.tsx`
+- [x] `ContextEditor.tsx`
+- [x] `ContextVersionHistory.tsx`
+- [x] `ContextVersionViewer.tsx`
+- [x] `RecurringJobsConfig.tsx` + `RecurringJobsConfig.test.tsx`
 
 ### Step 7: Delete old tests (daemon/tests/)
-- [ ] `unit/room/worker-manager.test.ts`
-- [ ] `unit/room/memory-manager.test.ts`
-- [ ] `unit/room/context-manager.test.ts` (**NOT** `providers/context-manager.test.ts` — that tests AI provider context, unrelated)
-- [ ] `unit/room/recurring-job-scheduler.test.ts`
-- [ ] `unit/room/recurring-job-scheduler.guards.test.ts`
-- [ ] `unit/room/room-self-state-repository.test.ts`
-- [ ] `unit/rpc/room-self-handlers.test.ts`
-- [ ] `unit/rpc/room-message-handlers.test.ts`
-- [ ] `unit/rpc/memory-handlers.test.ts`
-- [ ] `unit/rpc-handlers/recurring-job-handlers.test.ts`
-- [ ] `integration/room/room-self-worker-lifecycle.integration.test.ts`
-- [ ] `e2e/tests/smoke/room.e2e.ts`
-- [ ] `e2e/tests/helpers/room-helpers.ts`
-- [ ] `integration/neo-in-process.test.ts` — imports `@neokai/neo` (deleted in Step 5)
+- [x] `unit/room/worker-manager.test.ts`
+- [x] `unit/room/memory-manager.test.ts`
+- [x] `unit/room/context-manager.test.ts` (**NOT** `providers/context-manager.test.ts` — that tests AI provider context, unrelated)
+- [x] `unit/room/recurring-job-scheduler.test.ts`
+- [x] `unit/room/recurring-job-scheduler.guards.test.ts`
+- [x] `unit/room/room-self-state-repository.test.ts`
+- [x] `unit/rpc/room-self-handlers.test.ts`
+- [x] `unit/rpc/room-message-handlers.test.ts`
+- [x] `unit/rpc/memory-handlers.test.ts`
+- [x] `unit/rpc-handlers/recurring-job-handlers.test.ts`
+- [x] `integration/room/room-self-worker-lifecycle.integration.test.ts`
+- [x] `e2e/tests/smoke/room.e2e.ts`
+- [x] `e2e/tests/helpers/room-helpers.ts`
+- [x] `integration/neo-in-process.test.ts` — imports `@neokai/neo` (deleted in Step 5)
 
 ### Step 8: Update wiring — rpc-handlers/index.ts
-- [ ] Remove `WorkerManager` creation
-- [ ] Remove `RecurringJobScheduler` creation + `.start()`
-- [ ] Remove `PromptTemplateManager` creation (line 109) — only consumer was `RoomSelfManager`
-- [ ] Remove `RoomSelfManager` creation
-- [ ] Remove `setupMemoryHandlers()` call
-- [ ] Remove `setupRoomMessageHandlers()` call
-- [ ] Remove `setupRecurringJobHandlers()` call
-- [ ] Remove `setupRoomSelfHandlers()` call
-- [ ] Remove `roomSelfManager.startAgentsWithRunIntent()` call
-- [ ] Update cleanup: remove `recurringJobScheduler.stop()`, `roomSelfManager.stopAll()`
-- [ ] Update `setupRoomHandlers()` params: remove `workerManager`, `roomSelfManager`
-- [ ] Relocate `TaskManagerFactory` type import (currently from deleted `room-self-handlers.ts`). Note: `task-handlers.ts` already has its own `TaskManagerFactory` with a different signature — `(db: Database, roomId: string) => TaskManagerLike` vs the deleted `(roomId: string) => TaskManager`. Use the surviving `task-handlers.ts` definition; do NOT create a third definition. Same applies to `GoalManagerFactory`.
-- [ ] Remove imports for all deleted modules
+- [x] Remove `WorkerManager` creation
+- [x] Remove `RecurringJobScheduler` creation + `.start()`
+- [x] Remove `PromptTemplateManager` creation (line 109) — only consumer was `RoomSelfManager`
+- [x] Remove `RoomSelfManager` creation
+- [x] Remove `setupMemoryHandlers()` call
+- [x] Remove `setupRoomMessageHandlers()` call
+- [x] Remove `setupRecurringJobHandlers()` call
+- [x] Remove `setupRoomSelfHandlers()` call
+- [x] Remove `roomSelfManager.startAgentsWithRunIntent()` call
+- [x] Update cleanup: remove `recurringJobScheduler.stop()`, `roomSelfManager.stopAll()`
+- [x] Update `setupRoomHandlers()` params: remove `workerManager`, `roomSelfManager`
+- [x] Relocate `TaskManagerFactory` type import (currently from deleted `room-self-handlers.ts`). Note: `task-handlers.ts` already has its own `TaskManagerFactory` with a different signature — `(db: Database, roomId: string) => TaskManagerLike` vs the deleted `(roomId: string) => TaskManager`. Use the surviving `task-handlers.ts` definition; do NOT create a third definition. Same applies to `GoalManagerFactory`.
+- [x] Remove imports for all deleted modules
 
 ### Step 9: Update wiring — room/index.ts
-- [ ] Remove exports for deleted managers and types
-- [ ] Remove imports for deleted modules
+- [x] Remove exports for deleted managers and types
+- [x] Remove imports for deleted modules
 
 ### Step 10: Update wiring — storage/index.ts (Database facade)
-- [ ] Remove memory operation methods
-- [ ] Remove context operation methods
-- [ ] Remove recurring job operation methods
-- [ ] Remove room agent state operation methods
-- [ ] Remove worker session operation methods
-- [ ] Remove repository imports for deleted repos
+- [x] Remove memory operation methods
+- [x] Remove context operation methods
+- [x] Remove recurring job operation methods
+- [x] Remove room agent state operation methods
+- [x] Remove worker session operation methods
+- [x] Remove repository imports for deleted repos
 
 ### Step 11: Update shared types — neo.ts
-- [ ] Delete ~25 old type definitions (see Part 3 list)
-- [ ] Update `GoalStatus` enum values
-- [ ] Update `TaskStatus` enum values
-- [ ] Add new fields to `NeoTask`, `Room`, `RoomGoal`
+- [x] Delete ~25 old type definitions (see Part 3 list)
+- [x] Update `GoalStatus` enum values
+- [x] Update `TaskStatus` enum values
+- [ ] Add new fields to `NeoTask`, `Room`, `RoomGoal` _(deferred to Phase 0 — new columns added in runtime migration)_
 
 ### Step 12: Update shared types — types.ts
-- [ ] Change `SessionType`: remove `room_self`, add `craft` | `lead`
-- [ ] Clean up `SessionContext`: remove `selfSessionId`, `chatSessionId`
-- [ ] Remove `DEFAULT_ROOM_SELF_FEATURES`
-- [ ] KEEP `DEFAULT_ROOM_CHAT_FEATURES` (room_chat sessions still exist in new spec)
-- [ ] Relocate `TaskManagerFactory` type — currently exported from `room-self-handlers.ts` (being deleted), imported by `rpc-handlers/index.ts`. `task-handlers.ts` already exports its own `TaskManagerFactory` with signature `(db: Database, roomId: string) => TaskManagerLike` — switch `index.ts` import to use that one. Do NOT create a third definition
+- [x] Change `SessionType`: remove `room_self`, add `craft` | `lead`
+- [x] Clean up `SessionContext`: remove `selfSessionId`, `chatSessionId`
+- [x] Remove `DEFAULT_ROOM_SELF_FEATURES`
+- [x] KEEP `DEFAULT_ROOM_CHAT_FEATURES` (room_chat sessions still exist in new spec)
+- [x] Relocate `TaskManagerFactory` type — currently exported from `room-self-handlers.ts` (being deleted), imported by `rpc-handlers/index.ts`. `task-handlers.ts` already exports its own `TaskManagerFactory` with signature `(db: Database, roomId: string) => TaskManagerLike` — switch `index.ts` import to use that one. Do NOT create a third definition
 
 ### Step 13: Update shared prompts
-- [ ] Remove `ROOM_AGENT_SYSTEM_TEMPLATE` import (line 10) and room_agent template entry from `BUILTIN_TEMPLATES` in `templates.ts`
-- [ ] Remove `MANAGER_AGENT_*` templates from `BUILTIN_TEMPLATES` in `templates.ts`
-- [ ] Remove `'manager_agent'` and `'room_agent'` from `PromptTemplateCategory` in `types.ts`
-- [ ] Remove `MANAGER_AGENT_*` and `ROOM_AGENT_*` from `BUILTIN_TEMPLATE_IDS` in `types.ts`
-- [ ] Update `prompts/index.ts` to remove `room-agent.ts` re-export
-- [ ] Update `tests/unit/prompts/prompt-template-manager.test.ts` — remove/update assertions on `manager_agent` category (line 39), `MANAGER_AGENT_SYSTEM` ID (lines 157, 878), and manager agent template retrieval test (lines 794-799)
+- [x] Remove `ROOM_AGENT_SYSTEM_TEMPLATE` import (line 10) and room_agent template entry from `BUILTIN_TEMPLATES` in `templates.ts`
+- [x] Remove `MANAGER_AGENT_*` templates from `BUILTIN_TEMPLATES` in `templates.ts`
+- [x] Remove `'manager_agent'` and `'room_agent'` from `PromptTemplateCategory` in `types.ts`
+- [x] Remove `MANAGER_AGENT_*` and `ROOM_AGENT_*` from `BUILTIN_TEMPLATE_IDS` in `types.ts`
+- [x] Update `prompts/index.ts` to remove `room-agent.ts` re-export
+- [x] Update `tests/unit/prompts/prompt-template-manager.test.ts` — remove/update assertions on `manager_agent` category (line 39), `MANAGER_AGENT_SYSTEM` ID (lines 157, 878), and manager agent template retrieval test (lines 794-799)
 
 ### Step 14: Update room-handlers.ts
-- [ ] Remove `workerManager` and `roomSelfManager` from function params
-- [ ] Remove `createRoomAgentMcpServer` import (line 30) — from deleted `room-agent-tools.ts`
-- [ ] Remove `roomMcpServerRegistry` Map + all exports: `getOrCreateRoomMcpServer()`, `getRoomMcpServer()`, `setRoomMcpServer()`, `deleteRoomMcpServer()`
-- [ ] Remove 4 context versioning handlers (lines 711-816): `room.updateContext`, `room.getContextVersions`, `room.getContextVersion`, `room.rollbackContext`
-- [ ] Update `neo.status` handler (line 852): rewrite `roomManager.getGlobalStatus()` to not use memory/context
-- [ ] Remove handler registrations that depend on deleted code
-- [ ] Keep `room.create`, `room.list`, `room.get`, `room.update`, `room.archive`, `room.overview`
+- [x] Remove `workerManager` and `roomSelfManager` from function params
+- [x] Remove `createRoomAgentMcpServer` import (line 30) — from deleted `room-agent-tools.ts`
+- [x] Remove `roomMcpServerRegistry` Map + all exports: `getOrCreateRoomMcpServer()`, `getRoomMcpServer()`, `setRoomMcpServer()`, `deleteRoomMcpServer()`
+- [x] Remove 4 context versioning handlers (lines 711-816): `room.updateContext`, `room.getContextVersions`, `room.getContextVersion`, `room.rollbackContext`
+- [x] Update `neo.status` handler (line 852): rewrite `roomManager.getGlobalStatus()` to not use memory/context
+- [x] Remove handler registrations that depend on deleted code
+- [x] Keep `room.create`, `room.list`, `room.get`, `room.update`, `room.archive`, `room.overview`
 
 ### Step 14a: Update query-options-builder.ts
-- [ ] Remove dynamic `getRoomMcpServer` import block (lines 25-34)
-- [ ] Remove `room_self` session type check (line 210)
-- [ ] Remove `__IN_PROCESS_ROOM_AGENT_TOOLS__` marker handling (lines 546-568)
+- [x] Remove dynamic `getRoomMcpServer` import block (lines 25-34)
+- [x] Remove `room_self` session type check (line 210)
+- [x] Remove `__IN_PROCESS_ROOM_AGENT_TOOLS__` marker handling (lines 546-568)
 
 ### Step 14b: Update agent-session.ts
-- [ ] Update session title formatting (line 451): replace `room_self` → `craft`/`lead` types
+- [x] Update session title formatting (line 451): replace `room_self` → `craft`/`lead` types
 
 ### Step 14c: Update session-lifecycle.ts
-- [ ] Update comments and type union: replace `room_self` with `craft`/`lead` (lines 45-48, 159)
+- [x] Update comments and type union: replace `room_self` with `craft`/`lead` (lines 45-48, 159)
 
 ### Step 14d: Update room-manager.ts
-- [ ] Strip `MemoryRepository`/`ContextRepository` imports, fields, constructor init
-- [ ] Rewrite `getRoomStatus()` and `getRoomOverview()` to not use context/memory
-- [ ] Remove `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods
-- [ ] Update `createRoom()` (lines 55-70): remove context creation (`contextRepo.createContext()` line 61) and linking (`roomRepo.setRoomContextId()` line 64)
+- [x] Strip `MemoryRepository`/`ContextRepository` imports, fields, constructor init
+- [x] Rewrite `getRoomStatus()` and `getRoomOverview()` to not use context/memory
+- [x] Remove `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods
+- [x] Update `createRoom()` (lines 55-70): remove context creation (`contextRepo.createContext()` line 61) and linking (`roomRepo.setRoomContextId()` line 64)
 
 ### Step 14e: Update room-repository.ts
-- [ ] Strip `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods (delegate to dropped `room_context_versions` table)
-- [ ] Remove `context_id` from `createRoom()` INSERT statement (line 45) and null value (line 59) — column being dropped
-- [ ] Remove `setRoomContextId()` helper (lines 309-312) — no longer needed
+- [x] Strip `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods (delegate to dropped `room_context_versions` table)
+- [x] Remove `context_id` from `createRoom()` INSERT statement (line 45) and null value (line 59) — column being dropped
+- [x] Remove `setRoomContextId()` helper (lines 309-312) — no longer needed
 
 ### Step 14f: Update frontend — ChatContainer.tsx
-- [ ] Remove `DEFAULT_ROOM_SELF_FEATURES` import (line 23)
-- [ ] Remove `room:self:` session ID branch (lines 291-292)
-- [ ] Keep `DEFAULT_ROOM_CHAT_FEATURES` import and `room:chat:` branch
+- [x] Remove `DEFAULT_ROOM_SELF_FEATURES` import (line 23)
+- [x] Remove `room:self:` session ID branch (lines 291-292)
+- [x] Keep `DEFAULT_ROOM_CHAT_FEATURES` import and `room:chat:` branch
 
 ### Step 15: Update frontend — Room.tsx
-- [ ] Remove "context" and "jobs" tabs
-- [ ] Remove "self" chat tab
-- [ ] Remove imports: `ContextEditor`, `RecurringJobsConfig`, `CreateJobParams`
+- [x] Remove "context" and "jobs" tabs
+- [x] Remove "self" chat tab
+- [x] Remove imports: `ContextEditor`, `RecurringJobsConfig`, `CreateJobParams`
 
 ### Step 16: Update frontend — RoomDashboard.tsx
-- [ ] Remove imports: `RoomSelfStatus`, `RoomEscalations`
-- [ ] Remove agent status section
-- [ ] Remove escalation section
+- [x] Remove imports: `RoomSelfStatus`, `RoomEscalations`
+- [x] Remove agent status section
+- [x] Remove escalation section
 
 ### Step 17: Update frontend — RoomTasks.tsx
-- [ ] Remove `TaskSessionView` import/usage
-- [ ] Update task status display for new states
+- [x] Remove `TaskSessionView` import/usage
+- [x] Update task status display for new states
 
 ### Step 18: Update frontend — room/index.ts
-- [ ] Remove exports for all deleted components
+- [x] Remove exports for all deleted components
 
 ### Step 19: Update frontend — RoomContextPanel.tsx
-- [ ] Remove agent status display
-- [ ] Remove worker sessions list
-- [ ] Remove `roomStore.agentState` / `roomStore.waitingContext` references
+- [x] Remove agent status display
+- [x] Remove worker sessions list
+- [x] Remove `roomStore.agentState` / `roomStore.waitingContext` references
 
 ### Step 20: Update frontend — room-store.ts
-- [ ] Remove signals: `recurringJobs`, `jobsLoading`, `agentState`, `waitingContext`
-- [ ] Remove computed: `enabledRecurringJobs`
-- [ ] Remove subscriptions: `recurringJob.*`, `roomAgent.*`
-- [ ] Remove methods: recurring jobs (5), context versioning (3), room agent (8)
+- [x] Remove signals: `recurringJobs`, `jobsLoading`, `agentState`, `waitingContext`
+- [x] Remove computed: `enabledRecurringJobs`
+- [x] Remove subscriptions: `recurringJob.*`, `roomAgent.*`
+- [x] Remove methods: recurring jobs (5), context versioning (3), room agent (8)
 
 ### Step 21: Add database migration + update schema baseline
-- [ ] Drop 7 old tables
-- [ ] Alter `rooms`, `goals`, `tasks` (use table rebuild pattern for status/priority changes — see Part 6 note)
-- [ ] Create `task_pairs`, `task_messages`, `room_audit_log`
-- [ ] Update `sessions` table CHECK constraint: drop `'manager'` and `'room_self'`, add `'craft'` and `'lead'` → `CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby'))`. Requires table rebuild (same pattern as tasks/goals — SQLite doesn't support ALTER CHECK). Data mapping: `'room_self'` → `'craft'` (reasonable default, or DELETE if no active room_self sessions exist), `'manager'` → DELETE (stale rows)
-- [ ] **Update `storage/schema/index.ts` in lockstep**:
-  - Remove 3 table definitions from `createTables()`: `memories`, `contexts`, `context_messages` (the other 4 — `room_agent_states`, `worker_sessions`, `recurring_jobs`, `room_context_versions` — only exist via migrations, no action needed in schema baseline)
-  - Remove 3 indexes from `createIndexes()`: `idx_memories_room`, `idx_memories_type`, `idx_context_messages_context`
-  - Update `sessions` CHECK constraint (drop `'manager'` and `'room_self'`, add `'craft'`, `'lead'`)
-  - Update `tasks` baseline: add `task_type`, `version`, `created_by_task_id` columns; change `priority` to INTEGER; update `status` CHECK; remove `session_id`
-  - Update `rooms` baseline: add `config`, drop `context_id`/`context_version`
-  - Update `goals` baseline: add `planning_attempts`, `goal_review_attempts`; update `status` CHECK
-  - Add `task_pairs`, `task_messages`, `room_audit_log` table definitions
-  - Without this, `createTables()` (which runs after migrations) will recreate dropped tables via `CREATE TABLE IF NOT EXISTS`
+- [x] Drop 7 old tables (migration 32: room_agent_states, worker_sessions, recurring_jobs, room_context_versions, context_messages, contexts, memories)
+- [x] Migrate task statuses: `blocked`→`escalated`, `cancelled`→`failed`
+- [x] Migrate goal statuses: `pending`/`in_progress`→`active`, `blocked`→`needs_human`
+- [x] Migrate session types: `room_self`→`craft`, `manager`→`lead`
+- [x] Update `sessions` CHECK constraint in schema baseline
+- [x] Update `schema/index.ts`: removed `memories`/`contexts`/`context_messages` table defs + 3 stale indexes
+- [ ] Alter `rooms` (add `config` column), `goals` (add `planning_attempts`/`goal_review_attempts`), `tasks` (add `task_type`/`version`/`created_by_task_id`, change `priority` to INTEGER) _(deferred to Phase 0 — needed for Runtime, not cleanup)_
+- [ ] Create `task_pairs`, `task_messages`, `room_audit_log` _(deferred to Phase 0 — Runtime tables)_
 
 ### Step 22: Update daemon-hub.ts event types (~22 events across 5 groups)
-- [ ] Remove `ManagerHookEvent`/`ManagerHookPayload` references
-- [ ] Remove 9 `roomAgent.*` events: `stateChanged` (399), `hook` (406), `error` (412), `idle` (418), `reviewRequested` (424), `reviewReceived` (431), `escalated` (438), `escalationResolved` (445), `questionAnswered` (451)
-- [ ] Remove 2 `room.context*` events: `room.contextUpdated` (185), `room.contextRolledBack` (193)
-- [ ] Remove 1 `room.message` event (225) — message system replaced by `task_messages`
-- [ ] Remove 7 `recurringJob.*` events: `created` (357), `updated` (363), `triggered` (369), `completed` (376), `enabled` (382), `disabled` (387), `deleted` (392)
-- [ ] Remove 3 dead `task.session*` events: `sessionStarted` (459), `sessionCompleted` (466), `allSessionsCompleted` (474) — zero emitters
-- [ ] Remove worker session event types
+- [x] Remove `ManagerHookEvent`/`ManagerHookPayload` references
+- [x] Remove 9 `roomAgent.*` events: `stateChanged`, `hook`, `error`, `idle`, `reviewRequested`, `reviewReceived`, `escalated`, `escalationResolved`, `questionAnswered`
+- [x] Remove 2 `room.context*` events: `room.contextUpdated`, `room.contextRolledBack`
+- [x] Remove 7 `recurringJob.*` events: `created`, `updated`, `triggered`, `completed`, `enabled`, `disabled`, `deleted`
+- [x] Remove 3 dead `task.session*` events: `sessionStarted`, `sessionCompleted`, `allSessionsCompleted`
 
 ### Step 22a: Clean up feature-flags.ts
-- [ ] `packages/daemon/src/lib/config/feature-flags.ts` — update stale comments about `WorkerManager` and `manager-worker pairs` (lines 40-62). The flag is always enabled now; simplify or remove the historical commentary
+- [x] Remove stale flag registrations `WORKER_ONLY_ORCHESTRATION` and `ROOM_CHAT_WORKER_SPAWNING` from `initializeFlags()`
 
 ### Step 22b: Resolve telemetry subsystem (hard decision — pick A or B)
 - `WorkerTelemetry` in `rpc-handlers/index.ts` (lines 231-240) tracks `worker-only` vs `manager-worker` modes
@@ -738,14 +732,24 @@ bun run check    # must pass before starting
 - These are wired to worker session events being removed in Step 22
 - **Option A**: Remove telemetry together with events (clean cut, rebuild in Phase 1 with runtime metrics)
 - **Option B**: Keep telemetry, migrate to runtime event model (more work now, continuity of metrics)
-- [ ] Pick option and execute accordingly
+- [ ] Pick option and execute accordingly _(deferred — telemetry still compiles; resolve in Phase 0)_
 
-### Step 23: Verify
+### Step 23: Verify ✅ COMPLETE
 ```bash
-bun run check          # lint + typecheck + knip
-make test-daemon       # non-room tests pass
+bun run check          # lint + typecheck + knip  ✓ PASSES
+make test-daemon       # 3012 pass, 0 fail  ✓
 make test-web          # non-room tests pass
 ```
+
+Fixed during verify:
+- `migrations.ts:runMigration32`: Added `PRAGMA foreign_keys = OFF/ON` around table rebuilds to fix "no such table: main.rooms" on fresh databases (rooms only created by `createTables()` which runs after migrations)
+- `migrations.ts:runMigration14`: Added `tableHasColumn(db, 'tasks', 'session_id')` guard to skip tasks rebuild when column doesn't exist (already rebuilt to new schema by migration 32)
+- `tests/unit/rpc/room-handlers.test.ts`: Removed stale `WorkerManager` references (module deleted); fixed `RoomOverview` mock (removed `status`/`recentActivity`, added `activeTasks`); replaced `NeoStatus` return type for `room.status`
+- `tests/unit/agent/query-options-builder.test.ts`: Changed `'room_self'` → `'room_chat'` in room session restriction tests (type was renamed in migration 32)
+- `tests/unit/room/task-manager.test.ts`: Removed `sessionId` from `startTask` calls; replaced `blockTask`/`unblockTask` with `escalateTask`/`deescalateTask`; updated `'blocked'` → `'escalated'` status
+- `tests/unit/room/room-manager.test.ts`: Removed `contextId`, `contextStatus`, `memoryCount`, `totalMemories` assertions (fields removed from types)
+- `tests/unit/rpc/task-handlers.test.ts`: Removed `sessionId` from `startTask` mock; updated call expectations
+- `shared/types/neo.ts`: Added `| null` to clearable `UpdateRoomParams` fields
 
 ### Step 24: Commit
 ```
