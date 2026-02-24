@@ -23,7 +23,7 @@ describe('GoalsEditor', () => {
 		roomId: 'room-1',
 		title: `Goal ${id}`,
 		description: `Description for ${id}`,
-		status: 'pending',
+		status: 'active',
 		priority: 'normal',
 		progress: 50,
 		linkedTaskIds: [],
@@ -219,24 +219,24 @@ describe('GoalsEditor', () => {
 	});
 
 	describe('Goal Sorting', () => {
-		it('should sort in_progress goals first', () => {
+		it('should sort active goals first', () => {
 			const goals = [
-				createMockGoal('goal-pending', { title: 'Pending Goal', status: 'pending' }),
-				createMockGoal('goal-progress', { title: 'In Progress Goal', status: 'in_progress' }),
+				createMockGoal('goal-needs-human', { title: 'Needs Human Goal', status: 'needs_human' }),
+				createMockGoal('goal-active', { title: 'Active Goal', status: 'active' }),
 			];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 
 			const goalElements = container.querySelectorAll('h4');
-			expect(goalElements[0]?.textContent).toBe('In Progress Goal');
-			expect(goalElements[1]?.textContent).toBe('Pending Goal');
+			expect(goalElements[0]?.textContent).toBe('Active Goal');
+			expect(goalElements[1]?.textContent).toBe('Needs Human Goal');
 		});
 
 		it('should sort by priority within same status', () => {
 			const goals = [
-				createMockGoal('goal-low', { title: 'Low Priority', status: 'pending', priority: 'low' }),
+				createMockGoal('goal-low', { title: 'Low Priority', status: 'active', priority: 'low' }),
 				createMockGoal('goal-urgent', {
 					title: 'Urgent Priority',
-					status: 'pending',
+					status: 'active',
 					priority: 'urgent',
 				}),
 			];
