@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.12
+Status: Draft v0.13
 Date: 2026-02-23
 
 ## Context
@@ -263,7 +263,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 
 **Scheduling rules (hardcoded, not LLM-decided)**:
 - A goal needs planning when: it's active AND has no pending/in-progress/draft/escalated tasks AND `planning_attempts < max_planning_attempts` (default: 3)
-- A task is ready to execute when: status is `pending`
+- A task is ready to execute when: status is `pending`. When multiple pending tasks exist, Runtime picks by: (1) `priority` descending (higher = more important, default 0), then (2) `created_at` ascending (oldest first). For inter-goal ordering: same priority rules apply across goals
 - Planning is itself a task: "Plan goal X" → creates a (Craft, Lead) pair where Craft Agent plans
 - If all tasks for a goal have `failed` and `planning_attempts >= max_planning_attempts`, the goal enters `needs_human` status — Runtime stops auto-planning and notifies human via Room Agent
 - **`needs_human` recovery**: Human can mark a `needs_human` goal back to `active` via Room Agent's `update_goal` tool. This resets `planning_attempts` to 0, allowing Runtime to re-plan on the next tick
@@ -303,7 +303,7 @@ This is a full **AgentSession** with:
 | `list_goals()` | List all goals with their status |
 | `create_task(goalId, title, description)` | Manually create a task for a goal |
 | `update_task(taskId, updates)` | Update task details or priority |
-| `cancel_task(taskId)` | Kill the active (Craft, Lead) pair, mark task failed |
+| `cancel_task(taskId)` | Kill the active (Craft, Lead) pair, mark task failed. Cleanup: (1) abort Craft session via SDK cancel, (2) record last known state in task failure metadata (files modified, commands run — extracted from Craft's tool call history), (3) surface to human: "Task X cancelled. Craft had modified: [file list]. These changes may be partial." |
 | `retry_task(taskId)` | Kill current pair, create new (Craft, Lead) pair |
 | `get_task_status(taskId)` | Get task state including recent Craft/Lead messages |
 | `list_tasks(goalId?)` | List tasks, optionally filtered by goal |
@@ -322,6 +322,13 @@ The Craft Agent works on a task. It's a standard AgentSession with tools appropr
 - **Planning task**: read, glob, grep (codebase exploration) + `create_task(goalId, title, description)` for writing tasks to DB. **Tasks created by planning Craft are created with status `draft`** and tagged with `created_by_task_id` pointing to the planning task — Runtime does not schedule them until the planning task itself is `completed` (i.e., Lead has approved the plan), at which point only `draft` tasks matching that `created_by_task_id` are promoted to `pending` in a single DB transaction. If a planning task fails, Runtime cleans up its associated `draft` tasks (marks them `failed`) also in a single transaction.
 - **Research task**: read, web search, etc.
 - **Design task**: read, write (spec writing)
+
+**System prompt includes**:
+- The specific task description and acceptance criteria
+- The goal description this task belongs to (provides broader context)
+- Room-level instructions/guidelines (coding standards, conventions, tech stack)
+- **Previous task summaries** for completed tasks within the same goal (e.g., "Task 1: Added auth endpoint at src/routes/auth.ts. Task 2: Added input validation with zod schemas."). This gives Craft awareness of work already done, preventing conflicts and enabling building on prior results
+- Craft does **NOT** know about Lead Agent or the review process — it should focus on quality work and naturally reach a terminal state, not game its output for approval
 
 The Craft Agent has **no special completion-signaling tools**. It doesn't tell the system it's done — the system observes it. Activity-specific tools (like `create_task` for planning) are allowed. When the Craft Agent finishes, the SDK emits a terminal state:
 - **Result** (`type: "result"`, `subtype: "success"`) — normal turn completion → Runtime collects output, sends to Lead
@@ -378,10 +385,11 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
   Terminal state: {success|error|question}
   Tool calls: ["Edit src/auth.ts (+42 lines)", "Bash: bun test (exit 0)"]
   Human interventions: [{message}]  ← if any during this iteration
+  Draft tasks created: [{title}: {description}]  ← planning tasks only, so Lead reviews actual DB tasks not just narrative
   ---
   {craft_assistant_messages}
   ```
-  Including `task_description` in every forwarded message ensures Lead can always compare "what was asked" vs "what was delivered," even after older context has been compacted.
+  Including `task_description` in every forwarded message ensures Lead can always compare "what was asked" vs "what was delivered," even after older context has been compacted. For planning tasks, including `Draft tasks created` ensures Lead reviews the actual tasks written to DB, not just Craft's narrative about what it planned.
 
 Lead session may need **context compaction** on long-running tasks. When Lead's conversation exceeds ~80% of the context window, Runtime summarizes older review exchanges before injecting the next Craft output. This uses the existing AgentSession compaction mechanism. **Compaction rules**:
 - Immutable context (goal description, task description, room instructions) is always retained verbatim
@@ -469,7 +477,7 @@ Human intervention is NOT a special state. It works at multiple levels:
 
 **Room Runtime**: `running` | `paused`
 
-**Goals**: `active` | `needs_human` | `completed` | `archived`
+**Goals**: `active` | `needs_human` | `completed` | `archived` (human-initiated via Room Agent — hides goal from active views. Any goal can be archived. Active tasks are cancelled on archive. Archived goals can be restored to `active`)
 
 **Tasks**: `draft` | `pending` | `in_progress` | `escalated` | `completed` | `failed`
 
@@ -558,7 +566,11 @@ sequenceDiagram
 
 **Task state during escalation**: `escalated` (a sub-state of `in_progress`). The pair is paused — Lead waits for human input, Craft is idle. Human responds **directly to Lead** (since Lead has the review context), and Lead translates guidance into actionable feedback for Craft.
 
-**Escalation notification**: Runtime injects a message into Room Agent's conversation describing the escalation (task name, reason, link to task). The UI surfaces an **escalation badge** on the room and the specific task. Push notifications are out of scope for MVP.
+**Notification delivery** (applies to all Runtime→human notifications, not just escalation):
+- **Session injection**: Runtime injects a message into Room Agent's conversation describing the event — so it persists in conversation history and is visible next time human opens Room Agent
+- **UI push**: Runtime publishes an event via MessageHub — frontend shows a notification badge/toast immediately, regardless of whether Room Agent is active
+- Both mechanisms fire for: escalations, task failures, goal completion, `needs_human` transitions, session-lost errors
+- Push notifications (browser/OS) are out of scope for MVP
 
 **Queued messages on escalation**: When Lead calls `escalate()`, any human messages that were queued during Lead's review are **delivered to Lead** along with the escalation context. This way the human's earlier input isn't lost — Lead sees both the escalation reason and any human messages that arrived during review.
 
@@ -625,15 +637,20 @@ This is a **prerequisite component** that should be designed and implemented bef
 ### Database Schema
 
 ```sql
--- Tasks: add task_type and depends_on (existing table, new columns)
+-- Tasks: add new columns (existing table)
 -- task_type determines Craft tool set and Lead review prompt
 -- depends_on is nullable, ignored in sequential MVP, required for parallel mode
+-- version for optimistic locking (Room Agent tools check before writing)
 ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'coding';
     -- 'planning' | 'coding' | 'research' | 'design' | 'goal_review'
 ALTER TABLE tasks ADD COLUMN depends_on TEXT;
     -- JSON array of task IDs, nullable
 ALTER TABLE tasks ADD COLUMN created_by_task_id TEXT;
     -- References the planning task that created this task (for draft scoping)
+ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+    -- Higher = more important. Runtime picks highest priority first, then oldest
+ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+    -- Optimistic locking for Room Agent tools
 
 -- Goals: add planning_attempts counter (existing table, new column)
 ALTER TABLE goals ADD COLUMN planning_attempts INTEGER NOT NULL DEFAULT 0;
@@ -669,6 +686,21 @@ CREATE TABLE task_messages (
     created_at INTEGER NOT NULL,
     delivered_at INTEGER
 );
+
+-- Audit log: observability for debugging Runtime behavior
+CREATE TABLE room_audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,  -- 'tick' | 'pair_state_change' | 'message_delivery' | 'notification'
+    detail TEXT NOT NULL,      -- JSON: what happened, trigger, outcome
+    created_at INTEGER NOT NULL
+);
+```
+
+Add `tokens_used` to task_pairs for cost tracking from day one:
+```sql
+ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
+    -- Accumulated input + output tokens across both Craft and Lead sessions
 ```
 
 ---
@@ -758,7 +790,16 @@ CREATE TABLE task_messages (
 54. **Human interrupt is "pause and inject"**: Lead retains full session context. Interrupt delivered as additional user message after Lead's current turn.
 55. **Runtime is sole writer of pair state**: No optimistic locking needed on `task_pairs`. `version` field exists for Room Agent tool coordination only.
 56. **Cron safety net is stateless**: Queries DB directly, no in-memory index. Survives daemon restarts.
-57. **Escalation notification via Room Agent + UI badge**: Runtime injects message into Room Agent conversation. UI shows escalation badge on room and task. Push notifications out of scope for MVP.
+57. **Notification delivery: session injection + UI push**: All Runtime→human notifications use both: (1) inject into Room Agent conversation for persistence, (2) publish via MessageHub for immediate UI badge/toast. Push notifications out of scope for MVP.
+58. **Craft Agent system prompt defined**: Includes task description, goal context, room instructions, and previous task summaries. Does NOT include Lead awareness — Craft focuses on quality, not gaming approval.
+59. **Cross-task context in Craft prompt**: Previous completed task summaries included in Craft's system prompt for tasks within same goal. Promoted from open question to MVP decision.
+60. **Task selection ordering**: By `priority` descending (higher = more important), then `created_at` ascending (oldest first). Applies across goals.
+61. **`cancel_task` cleanup**: Abort Craft session, record modified files in failure metadata, surface partial changes to human.
+62. **Goal `archived` state**: Human-initiated, hides from active views. Active tasks cancelled on archive. Can be restored to `active`.
+63. **`version` on tasks table**: Optimistic locking for Room Agent tools modifying task state. Separate from `task_pairs.version`.
+64. **Draft tasks in planning review**: Structured Craft→Lead message includes `Draft tasks created` list so Lead reviews actual DB tasks, not just narrative.
+65. **Audit log**: `room_audit_log` table for tick decisions, pair state changes, message delivery. Essential for debugging.
+66. **Token tracking**: `tokens_used` on task_pairs from day one for cost visibility.
 
 ## Open Questions (For Future Iterations)
 
@@ -766,8 +807,8 @@ CREATE TABLE task_messages (
 2. **Task dependency management**: Priority/dependency constraints across goals/tasks need first-class representation for parallel mode. Sequential MVP sidesteps this but it must be solved before `maxConcurrentPairs > 1`.
 3. **Multi-reviewer**: Multiple Lead Agents with different models reviewing the same work (consensus-based review). The Craft→Lead loop supports this naturally.
 4. **Room Agent as Lead**: Should the Room Agent serve as Lead for tasks, or should each task get its own dedicated Lead? Trade-off: shared context vs. isolation.
-5. **Cross-task context**: Should a subsequent Craft Agent get context from previous tasks' sessions?
-6. **External review integration**: PR reviews, CI results as input to Lead Agent.
+5. **External review integration**: PR reviews, CI results as input to Lead Agent.
+6. **Budget limits**: Per-goal or per-room token budgets with auto-escalation on threshold. `tokens_used` tracking provides the data; policy enforcement is a future iteration.
 
 ---
 
