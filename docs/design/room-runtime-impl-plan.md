@@ -64,6 +64,8 @@ CREATE TABLE task_pairs (
 );
 
 -- Message queue: reliable inter-agent message delivery
+-- MVP Note: Table kept for schema compatibility, not used for Lead→Craft routing
+-- Will be used when human queueing/interrupts are implemented
 CREATE TABLE task_messages (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -71,7 +73,7 @@ CREATE TABLE task_messages (
     from_role TEXT NOT NULL,       -- 'craft' | 'lead' | 'human'
     to_role TEXT NOT NULL,         -- 'craft' | 'lead'
     to_session_id TEXT NOT NULL,   -- target session (prevents misdelivery on retry)
-    message_type TEXT NOT NULL DEFAULT 'normal',  -- 'normal' | 'interrupt' | 'escalation_context'
+    message_type TEXT NOT NULL DEFAULT 'normal',  -- MVP: only 'normal'; future: 'interrupt' | 'escalation_context'
     payload TEXT NOT NULL,         -- JSON message content
     status TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | dead_letter
     created_at INTEGER NOT NULL,
@@ -138,10 +140,19 @@ class TaskPairRepository {
 
 **File:** `packages/daemon/src/lib/room/task-message-queue.ts`
 
-DB-backed message queue:
+**MVP Decision:** For the minimal core, we use **direct synchronous routing** for all Lead→Craft messages. The `task_messages` table is kept for schema compatibility but **not used in MVP**. This simplifies the implementation significantly:
+
+- No write-ahead queue semantics needed
+- No recovery replay of in-flight messages
+- Crash during routing = message lost (acceptable for MVP)
+
+When we add human message queueing and interrupts, we'll implement write-ahead semantics: `enqueue pending → inject → mark delivered`.
 
 ```typescript
 class TaskMessageQueue {
+  // MVP: These methods exist but are not used for Lead→Craft routing
+  // They will be used when human queueing/interrupts are implemented
+
   enqueue(params: {
     pairId: string;
     taskId: string;
@@ -149,16 +160,13 @@ class TaskMessageQueue {
     toRole: 'craft' | 'lead';
     toSessionId: string;
     payload: string;
-    messageType?: 'normal' | 'interrupt' | 'escalation_context';
+    messageType?: 'normal';  // MVP: only 'normal' type needed
   }): TaskMessage;
 
-  // Returns messages in created_at order
   dequeuePending(pairId: string, toRole: 'craft' | 'lead'): TaskMessage[];
-
   markDelivered(messageId: string): void;
   markDeadLetter(messageId: string): void;
   deadLetterAllForPair(pairId: string): void;
-  retargetMessages(oldSessionId: string, newSessionId: string): void;  // for Lead replacement
 }
 ```
 
@@ -179,7 +187,7 @@ class RoomRuntime {
   private timerInterval?: Timer;  // 30-second fallback
 
   // Lifecycle
-  start(): void;   // Starts 30-second timer + event listeners
+  start(): void;   // Starts 30-second timer + subscribes to DaemonHub events
   pause(): void;
   resume(): void;
   getState(): 'running' | 'paused';
@@ -187,13 +195,27 @@ class RoomRuntime {
   // Main scheduling loop
   tick(): Promise<void>;
 
-  // Event handlers (trigger immediate tick)
+  // Event handlers (trigger immediate tick via DaemonHub subscriptions)
   onGoalCreated(goalId: string): void;
   onTaskStatusChanged(taskId: string): void;
   onCraftTerminalState(pairId: string): void;
-  onLeadToolExecuted(pairId: string, tool: string): void;
+
+  // Lead tool handling (called synchronously from MCP tool handlers)
+  handleLeadTool(pairId: string, toolName: string, params: any): Promise<ToolResult>;
 }
 ```
+
+### Tick Trigger Matrix
+
+| Event Source | Signal | Runtime Handler | Notes |
+|--------------|--------|-----------------|-------|
+| Room Agent MCP tools | `goal.created`, `task.created` | `onGoalCreated()`, `onTaskStatusChanged()` | After DB write succeeds |
+| TaskManager | `task.status_changed` | `onTaskStatusChanged()` | After status update |
+| SessionObserver | `session.terminal_state` | `onCraftTerminalState()` | When Craft reaches result/error |
+| `handleLeadTool()` | (internal) | Triggers tick after `complete_task`/`fail_task` | For task completion cleanup |
+| Timer | 30s interval | `tick()` | Fallback for missed events |
+
+**Idempotency:** All handlers are idempotent - duplicate events produce same result. Tick mutex prevents concurrent execution.
 
 ### Tick Logic
 
@@ -205,10 +227,23 @@ class RoomRuntime {
    b. Find pending tasks (ordered by priority DESC → created_at ASC → id ASC)
       → spawn (Craft, Lead) pair if below capacity
    c. Find awaiting_craft pairs with terminal Craft → collect messages, forward to Lead
-   d. Find pending messages in queue → deliver to appropriate agent (for recovery only in MVP)
+   d. Check feedback_iteration >= max_feedback_iterations → auto-escalate
 4. Log tick summary to room_audit_log
 5. Release mutex
 ```
+
+### Loop Termination Guard
+
+Before each Lead→Craft cycle, Runtime checks:
+```
+if (pair.feedback_iteration >= room.config.max_feedback_iterations) {
+  // Auto-escalate instead of another feedback cycle
+  await escalatePair(pairId, `Max feedback iterations (${max_feedback_iterations}) reached`);
+  await logAudit(roomId, 'auto_escalate', { pairId, reason: 'max_iterations' });
+}
+```
+
+Default `max_feedback_iterations`: 10 (configurable in `rooms.config`).
 
 ### 2.2 Session Observer
 
@@ -498,20 +533,17 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
     }
   }
 
-  // 4. Reprocess pending messages in queue (created_at order)
-  const pendingMessages = db.query(`
-    SELECT * FROM task_messages
-    WHERE status = 'pending'
-    ORDER BY created_at ASC
-  `);
-  for (const msg of pendingMessages) {
-    // Only deliver if pair still active
-    const pair = getPair(msg.pair_id);
-    if (pair && pair.pair_state !== 'completed' && pair.pair_state !== 'failed') {
-      await deliverMessage(msg);
-    } else {
-      await markDeadLetter(msg.id);
-    }
+  // 4. MVP: No queue recovery needed (direct synchronous routing)
+  // When human queueing is implemented, reprocess pending messages here
+
+  // 5. Resume tick loop
+  runtime.start();
+}
+```
+
+**MVP Recovery Limitations:**
+- In-flight Lead→Craft messages are lost on crash (acceptable - Lead can resend)
+- Human messages to escalated pairs are lost (will be fixed with queue implementation)
   }
 
   // 5. Resume tick loop
