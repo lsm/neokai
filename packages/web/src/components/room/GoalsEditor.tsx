@@ -43,14 +43,26 @@ export interface GoalsEditorProps {
 // Status icon components
 function StatusIcon({ status }: { status: GoalStatus }) {
 	switch (status) {
-		case 'pending':
+		case 'active':
 			return (
-				<div class="w-5 h-5 rounded-full border-2 border-gray-500 flex-shrink-0" title="Pending" />
-			);
-		case 'in_progress':
-			return (
-				<div class="w-5 h-5 flex-shrink-0" title="In Progress">
+				<div class="w-5 h-5 flex-shrink-0" title="Active">
 					<Spinner size="xs" color="border-blue-400" />
+				</div>
+			);
+		case 'needs_human':
+			return (
+				<div
+					class="w-5 h-5 rounded-full bg-yellow-500 flex items-center justify-center flex-shrink-0"
+					title="Needs Human"
+				>
+					<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={3}
+							d="M12 9v2m0 4h.01"
+						/>
+					</svg>
 				</div>
 			);
 		case 'completed':
@@ -69,18 +81,18 @@ function StatusIcon({ status }: { status: GoalStatus }) {
 					</svg>
 				</div>
 			);
-		case 'blocked':
+		case 'archived':
 			return (
 				<div
-					class="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center flex-shrink-0"
-					title="Blocked"
+					class="w-5 h-5 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0"
+					title="Archived"
 				>
 					<svg class="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							stroke-width={3}
-							d="M6 18L18 6M6 6l12 12"
+							stroke-width={2}
+							d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8"
 						/>
 					</svg>
 				</div>
@@ -291,20 +303,21 @@ function GoalItem({
 	// Get available status transitions based on current status
 	const getAvailableActions = (): { label: string; status: GoalStatus }[] => {
 		switch (goal.status) {
-			case 'pending':
-				return [{ label: 'Start', status: 'in_progress' }];
-			case 'in_progress':
+			case 'active':
 				return [
 					{ label: 'Complete', status: 'completed' },
-					{ label: 'Block', status: 'blocked' },
+					{ label: 'Needs Human', status: 'needs_human' },
+					{ label: 'Archive', status: 'archived' },
 				];
-			case 'blocked':
+			case 'needs_human':
 				return [
-					{ label: 'Unblock', status: 'in_progress' },
+					{ label: 'Reactivate', status: 'active' },
 					{ label: 'Complete', status: 'completed' },
 				];
 			case 'completed':
-				return [{ label: 'Reopen', status: 'in_progress' }];
+				return [{ label: 'Reactivate', status: 'active' }];
+			case 'archived':
+				return [{ label: 'Reactivate', status: 'active' }];
 			default:
 				return [];
 		}
@@ -535,14 +548,14 @@ export function GoalsEditor({
 		setExpandedGoalId((current) => (current === goalId ? null : goalId));
 	};
 
-	// Sort goals: in_progress first, then by priority (urgent > high > normal > low), then by created date
+	// Sort goals: active first, then by priority (urgent > high > normal > low), then by created date
 	const sortedGoals = [...goals].sort((a, b) => {
-		// Status priority: in_progress > pending > blocked > completed
+		// Status priority: active > needs_human > completed > archived
 		const statusOrder: Record<GoalStatus, number> = {
-			in_progress: 0,
-			pending: 1,
-			blocked: 2,
-			completed: 3,
+			active: 0,
+			needs_human: 1,
+			completed: 2,
+			archived: 3,
 		};
 		if (statusOrder[a.status] !== statusOrder[b.status]) {
 			return statusOrder[a.status] - statusOrder[b.status];

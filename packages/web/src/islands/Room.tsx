@@ -3,25 +3,22 @@
  *
  * Main room page component with:
  * - Room dashboard showing sessions and tasks
- * - Tabs for context, goals, jobs
+ * - Goals tab
  * - Real-time updates via state channels
  * - Room chat using unified session architecture (ChatContainer)
  */
 
 import { useEffect, useState } from 'preact/hooks';
-import type { RoomContextVersion } from '@neokai/shared';
 import { roomStore } from '../lib/room-store';
 import { navigateToHome } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
-import { ContextEditor, GoalsEditor, RecurringJobsConfig, RoomSettings } from '../components/room';
-import type { CreateJobParams } from '../components/room/RecurringJobsConfig';
+import { GoalsEditor, RoomSettings } from '../components/room';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'overview' | 'context' | 'goals' | 'jobs' | 'settings';
-type RoomChatTab = 'chat' | 'self';
+type RoomTab = 'overview' | 'goals' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -31,7 +28,6 @@ interface RoomProps {
 export default function Room({ roomId, sessionViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
-	const [activeChatTab, setActiveChatTab] = useState<RoomChatTab>('chat');
 
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => setInitialLoad(false));
@@ -78,19 +74,6 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 		);
 	}
 
-	// Context handlers
-	const handleSaveContext = async (background?: string, instructions?: string) => {
-		await roomStore.updateContext(background, instructions);
-	};
-
-	const handleRollbackContext = async (version: number) => {
-		await roomStore.rollbackContext(version);
-	};
-
-	const handleFetchContextVersions = async (_roomId: string): Promise<RoomContextVersion[]> => {
-		return await roomStore.fetchContextVersions();
-	};
-
 	// Goals handlers
 	const handleCreateGoal = async (goal: {
 		title: string;
@@ -114,27 +97,6 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 
 	const handleLinkTaskToGoal = async (goalId: string, taskId: string) => {
 		await roomStore.linkTaskToGoal(goalId, taskId);
-	};
-
-	// Jobs handlers
-	const handleCreateJob = async (params: CreateJobParams) => {
-		await roomStore.createRecurringJob({
-			...params,
-			roomId,
-			description: params.description ?? '',
-		});
-	};
-
-	const handleUpdateJob = async (jobId: string, updates: Record<string, unknown>) => {
-		await roomStore.updateRecurringJob(jobId, updates);
-	};
-
-	const handleDeleteJob = async (jobId: string) => {
-		await roomStore.deleteRecurringJob(jobId);
-	};
-
-	const handleTriggerJob = async (jobId: string) => {
-		await roomStore.triggerRecurringJob(jobId);
 	};
 
 	const handleArchiveRoom = async () => {
@@ -177,16 +139,6 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'context'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => setActiveTab('context')}
-							>
-								Context
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'goals'
 										? 'text-blue-400 border-b-2 border-blue-400'
 										: 'text-gray-400 hover:text-gray-200'
@@ -194,16 +146,6 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 								onClick={() => setActiveTab('goals')}
 							>
 								Goals
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'jobs'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => setActiveTab('jobs')}
-							>
-								Jobs
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -224,17 +166,6 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 									<RoomDashboard />
 								</div>
 							)}
-							{activeTab === 'context' && (
-								<div class="h-full overflow-y-auto p-4">
-									<ContextEditor
-										room={room}
-										onSave={handleSaveContext}
-										onRollback={handleRollbackContext}
-										onFetchVersions={handleFetchContextVersions}
-										isLoading={roomStore.loading.value}
-									/>
-								</div>
-							)}
 							{activeTab === 'goals' && (
 								<div class="h-full overflow-y-auto p-4">
 									<GoalsEditor
@@ -245,19 +176,6 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 										onDeleteGoal={handleDeleteGoal}
 										onLinkTask={handleLinkTaskToGoal}
 										isLoading={roomStore.goalsLoading.value}
-									/>
-								</div>
-							)}
-							{activeTab === 'jobs' && (
-								<div class="h-full overflow-y-auto p-4">
-									<RecurringJobsConfig
-										roomId={roomId}
-										jobs={roomStore.recurringJobs.value}
-										onCreateJob={handleCreateJob}
-										onUpdateJob={handleUpdateJob}
-										onDeleteJob={handleDeleteJob}
-										onTriggerJob={handleTriggerJob}
-										isLoading={roomStore.jobsLoading.value}
 									/>
 								</div>
 							)}
@@ -280,41 +198,9 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 			{/* Room Chat Panel - only show when NOT viewing a session within the room */}
 			{!sessionViewId && (
 				<div class="w-96 border-l border-dark-700 flex flex-col bg-dark-950">
-					{/* Chat Tabs */}
-					<div class="flex border-b border-dark-700 bg-dark-850">
-						<button
-							class={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-								activeChatTab === 'chat'
-									? 'text-blue-400 border-b-2 border-blue-400'
-									: 'text-gray-400 hover:text-gray-200'
-							}`}
-							onClick={() => setActiveChatTab('chat')}
-						>
-							Chat
-						</button>
-						<button
-							class={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
-								activeChatTab === 'self'
-									? 'text-blue-400 border-b-2 border-blue-400'
-									: 'text-gray-400 hover:text-gray-200'
-							}`}
-							onClick={() => setActiveChatTab('self')}
-						>
-							Self
-						</button>
+					<div class="flex-1 flex flex-col">
+						<ChatContainer sessionId={`room:chat:${roomId}`} />
 					</div>
-
-					{/* Chat Content */}
-					{activeChatTab === 'chat' && (
-						<div class="flex-1 flex flex-col">
-							<ChatContainer sessionId={`room:chat:${roomId}`} />
-						</div>
-					)}
-					{activeChatTab === 'self' && (
-						<div class="flex-1 flex flex-col">
-							<ChatContainer sessionId={`room:self:${roomId}`} readonly />
-						</div>
-					)}
 				</div>
 			)}
 		</div>

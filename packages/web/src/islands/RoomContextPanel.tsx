@@ -4,38 +4,16 @@
  * Context panel content shown when viewing a specific room.
  * Replaces the generic RoomList with room-specific information:
  * - Back navigation to rooms list
- * - Agent status + quick Start/Pause/Resume control
  * - Task stats strip
- * - Room Agent session pinned at top
- * - Worker sessions list below
+ * - Room Dashboard pinned at top
+ * - Sessions list below
  */
 
 import { useMemo } from 'preact/hooks';
-import type { RoomSelfLifecycleState } from '@neokai/shared';
 import { roomStore } from '../lib/room-store';
 import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
-
-const STATE_COLORS: Record<RoomSelfLifecycleState, { dot: string; text: string }> = {
-	idle: { dot: 'bg-gray-400', text: 'text-gray-400' },
-	planning: { dot: 'bg-blue-400', text: 'text-blue-400' },
-	executing: { dot: 'bg-green-400', text: 'text-green-400' },
-	waiting: { dot: 'bg-yellow-400', text: 'text-yellow-400' },
-	reviewing: { dot: 'bg-purple-400', text: 'text-purple-400' },
-	error: { dot: 'bg-red-400', text: 'text-red-400' },
-	paused: { dot: 'bg-orange-400', text: 'text-orange-400' },
-};
-
-const STATE_LABELS: Record<RoomSelfLifecycleState, string> = {
-	idle: 'Idle',
-	planning: 'Planning',
-	executing: 'Executing',
-	waiting: 'Waiting',
-	reviewing: 'Reviewing',
-	error: 'Error',
-	paused: 'Paused',
-};
 
 function formatRelativeTime(timestamp: number): string {
 	const seconds = Math.floor((Date.now() - timestamp) / 1000);
@@ -63,7 +41,6 @@ interface RoomContextPanelProps {
 }
 
 export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) {
-	const agentState = roomStore.agentState.value;
 	const sessions = roomStore.sessions.value;
 	const tasks = roomStore.tasks.value;
 
@@ -73,10 +50,6 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		[tasks]
 	);
 	const doneCount = useMemo(() => tasks.filter((t) => t.status === 'completed').length, [tasks]);
-
-	const lifecycleState = agentState?.lifecycleState ?? 'idle';
-	const colors = STATE_COLORS[lifecycleState];
-	const stateLabel = STATE_LABELS[lifecycleState];
 
 	const handleRoomAgentClick = () => {
 		// Navigate to room without a session selected (shows dashboard + room chat)
@@ -137,37 +110,21 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				</button>
 			</div>
 
-			{/* Agent status */}
+			{/* Task stats */}
 			<div class="px-3 py-2">
-				<div class="flex items-center gap-1.5 min-w-0">
-					<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
-					<span class={cn('text-xs font-medium', colors.text)}>{stateLabel}</span>
-					{agentState?.errorCount != null && agentState.errorCount > 0 && (
-						<span
-							class="text-xs text-red-400 ml-1"
-							title={agentState.lastError ?? 'Errors occurred'}
-						>
-							{agentState.errorCount} err
-						</span>
-					)}
-				</div>
-
-				{/* Task stats */}
-				<div class="mt-1.5">
-					{hasTasks ? (
-						<span class="text-xs text-gray-500">
-							{pendingCount > 0 && <span class="text-yellow-500/80">{pendingCount} pending</span>}
-							{pendingCount > 0 && activeCount > 0 && <span class="text-gray-600"> · </span>}
-							{activeCount > 0 && <span class="text-green-500/80">{activeCount} active</span>}
-							{(pendingCount > 0 || activeCount > 0) && doneCount > 0 && (
-								<span class="text-gray-600"> · </span>
-							)}
-							{doneCount > 0 && <span>{doneCount} done</span>}
-						</span>
-					) : (
-						<span class="text-xs text-gray-600">No tasks</span>
-					)}
-				</div>
+				{hasTasks ? (
+					<span class="text-xs text-gray-500">
+						{pendingCount > 0 && <span class="text-yellow-500/80">{pendingCount} pending</span>}
+						{pendingCount > 0 && activeCount > 0 && <span class="text-gray-600"> · </span>}
+						{activeCount > 0 && <span class="text-green-500/80">{activeCount} active</span>}
+						{(pendingCount > 0 || activeCount > 0) && doneCount > 0 && (
+							<span class="text-gray-600"> · </span>
+						)}
+						{doneCount > 0 && <span>{doneCount} done</span>}
+					</span>
+				) : (
+					<span class="text-xs text-gray-600">No tasks</span>
+				)}
 			</div>
 
 			{/* Divider */}
@@ -199,13 +156,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 						</svg>
 					</div>
 					<span class="flex-1 text-sm text-gray-200 text-left truncate">Room Dashboard</span>
-					<div class={cn('w-2 h-2 rounded-full flex-shrink-0', colors.dot)} />
 				</button>
 
-				{/* Worker sessions */}
+				{/* Sessions */}
 				{sessions.length === 0 ? (
 					<div class="px-4 py-5 text-center">
-						<p class="text-xs text-gray-500">No worker sessions yet</p>
+						<p class="text-xs text-gray-500">No sessions yet</p>
 					</div>
 				) : (
 					sessions.map((session) => (
