@@ -116,6 +116,7 @@ export default function ContextUsageBar({
 	const totalTokens = contextUsage?.totalUsed || 0;
 	const contextCapacity = contextUsage?.totalCapacity || maxContextTokens;
 	const contextPercentage = contextUsage?.percentUsed || 0;
+	const hasContextData = totalTokens > 0;
 
 	// Determine color based on usage - green for lower usage
 	const getContextColor = () => {
@@ -217,9 +218,15 @@ export default function ContextUsageBar({
 			{/* Context usage indicator - always show */}
 			<div
 				ref={indicatorRef}
-				class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
-				onClick={() => setShowContextDetails(!showContextDetails)}
-				title="Click for context details"
+				class={`flex items-center gap-3 transition-opacity ${
+					hasContextData ? 'cursor-pointer hover:opacity-80' : 'cursor-default'
+				}`}
+				onClick={() => {
+					if (hasContextData) {
+						setShowContextDetails(!showContextDetails);
+					}
+				}}
+				title={hasContextData ? 'Click for context details' : 'Context data loading...'}
 			>
 				{/* Compact: Pie Chart only (container width < threshold) */}
 				{useCompactLayout && (
@@ -290,7 +297,7 @@ export default function ContextUsageBar({
 			</div>
 
 			{/* Context Details Dropdown - uses document click detection instead of backdrop */}
-			{showContextDetails && totalTokens > 0 && (
+			{showContextDetails && hasContextData && (
 				<div class="fixed right-0 px-4 z-50" style={{ bottom: `${dropdownBottom}px` }}>
 					<div class="max-w-4xl mx-auto flex justify-end">
 						<div ref={dropdownRef}>
