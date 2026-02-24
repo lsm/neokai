@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.8
+Status: Draft v0.9
 Date: 2026-02-23
 
 ## Context
@@ -137,7 +137,7 @@ Lead Agent has a focused tool set, all routed through Room Runtime:
 | `complete_task(summary)` | Accept the work, mark task done | Updates task status in DB |
 | `fail_task(reason)` | Task is not achievable | Updates task status, notifies Room Agent |
 | `escalate(reason)` | Flag for human attention | Notifies human via Room Agent / UI |
-| `read_craft_messages(limit)` | Pull more Craft messages beyond what Runtime sent | Returns messages from Craft session |
+| `read_craft_messages(limit, offset?)` | Read Craft messages from previous iterations | Returns messages from Craft session |
 | `run_verification(command)` | Run tests/linting independently of Craft | Executes command, returns output |
 
 ### Task Chat View: Sub-Agent Blocks
@@ -268,11 +268,14 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 - If all tasks for a goal have `failed` and `planning_attempts >= max_planning_attempts`, the goal enters `needs_human` status — Runtime stops auto-planning and notifies human via Room Agent
 
 **Routing rules**:
-- When Craft Agent reaches terminal state → collect all assistant messages from its last turn → send to Lead Agent as user message
+- When Craft Agent reaches terminal state → collect all assistant messages from its last turn → send to Lead Agent as user message. **If a human sent messages to Craft during this iteration**, include them in the forwarding with a note: `[Human intervened: "{message}"]` so Lead understands why Craft may have changed direction
 - When Craft Agent emits `AskUserQuestion` → route question to Lead Agent first. Lead can answer via `send_to_craft()` or `escalate()` to human
 - When Lead Agent calls `send_to_craft()` → inject message into Craft Agent session as user message
 - When Lead Agent calls `complete_task()` / `fail_task()` → update task in DB → trigger next tick
-- When human sends message to Craft during Lead review → queue message until Lead's current review cycle completes
+- When human sends message to Craft during Lead review → queue message until Lead's current review cycle completes. **Delivery rules per Lead terminal action**:
+  - `send_to_craft()` → deliver queued human messages to Craft after Lead's feedback
+  - `complete_task()` / `fail_task()` → surface queued messages to Room Agent as "FYI: human said X but task already completed/failed"
+  - `escalate()` → deliver to Lead along with escalation context (already specified)
 - **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message immediately pauses Lead's current review, transitions the pair to `awaiting_human`, and delivers the interrupt message to Lead along with any queued messages. Lead must re-evaluate before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel.
 - **Urgent control actions** (`cancel_task`, `pause runtime`) bypass the message queue and execute immediately via Room Agent tools, even if Lead is mid-review
 
@@ -307,13 +310,15 @@ This is a full **AgentSession** with:
 
 The Room Agent is NOT the scheduler. It's the human interface. When the human creates a goal via conversation, the Room Agent calls its tools → data goes to DB → Room Runtime picks it up.
 
+**Context compaction**: Room Agent is a long-lived session that accumulates conversation over days/weeks. It uses the existing AgentSession compaction mechanism. Since Room Agent primarily does CRUD via tools (not deep reasoning), aggressive compaction of older conversations is safe — retain recent exchanges and a summary of older ones.
+
 **Coordination with Runtime**: Room Agent tools that modify task state (`cancel_task`, `retry_task`, `update_task`) use **optimistic locking** — they check `task.version` before writing, and fail gracefully if Runtime has already transitioned the task. This prevents races where Room Agent cancels a task that Runtime just completed. On conflict, the tool returns the current state so Room Agent can inform the human.
 
 #### 3. Craft Agent (on-demand AgentSession — per task)
 
 The Craft Agent works on a task. It's a standard AgentSession with tools appropriate for the activity:
 - **Coding task**: bash, edit, read, write, glob, grep (standard coding tools)
-- **Planning task**: read, glob, grep (codebase exploration) + `create_task(goalId, title, description)` for writing tasks to DB
+- **Planning task**: read, glob, grep (codebase exploration) + `create_task(goalId, title, description)` for writing tasks to DB. **Tasks created by planning Craft are created with status `draft`** — Runtime does not schedule them until the planning task itself is `completed` (i.e., Lead has approved the plan), at which point all `draft` tasks for that goal are promoted to `pending`.
 - **Research task**: read, web search, etc.
 - **Design task**: read, write (spec writing)
 
@@ -344,14 +349,19 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
 | `complete_task(summary)` | Accept the work, mark task done |
 | `fail_task(reason)` | Task is not achievable |
 | `escalate(reason)` | Flag for human attention (see Escalation Flow) |
-| `read_craft_messages(limit)` | Pull more Craft messages if needed |
+| `read_craft_messages(limit, offset?)` | Read Craft messages from previous iterations for deeper context (e.g., understanding decisions made in earlier turns) |
 | `run_verification(command)` | Run a verification command (e.g., `bun test`, `bun run check`) independently of Craft. Trust, but verify. |
 
 **System prompt includes**:
 - The goal description this task belongs to
 - The specific task description and acceptance criteria
 - Room-level instructions/guidelines (coding standards, review policy, etc.)
-- Review policy: what to check for (correctness, completeness, style, tests)
+- **Activity-specific review instructions** based on `task_type`:
+  - `planning`: Review task breakdown quality — are tasks well-scoped, ordered logically, covering the full goal?
+  - `coding`: Review code correctness, test coverage, style. Use `run_verification` to confirm tests/linting pass.
+  - `research`: Review findings completeness, source quality, actionability.
+  - `design`: Review architectural soundness, completeness, alignment with goals.
+  - `goal_review`: Verify all task summaries satisfy the original goal.
 - Available tools and when to use each
 - **Verification requirements**: Before calling `complete_task`, Lead must verify the work meets acceptance criteria. For coding tasks: use `run_verification` to confirm tests pass and linting is clean. Do not accept based solely on Craft's claim of completion.
 - **AskUserQuestion answer policy**: Lead may answer Craft's questions about architectural choices, code patterns, and technical decisions based on goal/task context. Lead must **always escalate** questions about: secrets/API keys/credentials, subjective human preferences, access permissions, or anything outside the goal/task scope.
@@ -359,9 +369,24 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
 **Context management**: Each message from Runtime to Lead includes a structured header:
 - **Immutable context** (in system prompt): goal, task description, room instructions
 - **Rolling context** (accumulated in session): all previous review exchanges
-- **Latest delta** (in user message): Craft's output from this iteration
+- **Latest delta** (in user message): Craft's output from this iteration, in structured format:
+  ```
+  [CRAFT OUTPUT] Iteration: {n} / Task: {task_title}
+  Task description: {task_description}  ← included every time, survives compaction
+  Task type: {task_type}
+  Terminal state: {success|error|question}
+  Tool calls: ["Edit src/auth.ts (+42 lines)", "Bash: bun test (exit 0)"]
+  Human interventions: [{message}]  ← if any during this iteration
+  ---
+  {craft_assistant_messages}
+  ```
+  Including `task_description` in every forwarded message ensures Lead can always compare "what was asked" vs "what was delivered," even after older context has been compacted.
 
-Lead session may need **context compaction** on long-running tasks. When Lead's conversation exceeds ~80% of the context window, Runtime summarizes older review exchanges before injecting the next Craft output. This uses the existing AgentSession compaction mechanism. **Compaction rules**: immutable context (goal description, task description, room instructions) is always retained verbatim. Only the rolling conversation history (previous review exchanges) is summarized. The latest Craft output delta is never summarized.
+Lead session may need **context compaction** on long-running tasks. When Lead's conversation exceeds ~80% of the context window, Runtime summarizes older review exchanges before injecting the next Craft output. This uses the existing AgentSession compaction mechanism. **Compaction rules**:
+- Immutable context (goal description, task description, room instructions) is always retained verbatim
+- Only the rolling conversation history (previous review exchanges) is summarized
+- The latest Craft output delta is never summarized
+- Compaction preserves **structured feedback→resolution pairs** (e.g., "Lead requested input validation → Craft added zod schema → Lead accepted") rather than generic summaries. This prevents Lead from re-raising feedback that was already addressed.
 
 The Lead Agent is triggered when Room Runtime sends it a user message containing Craft Agent's output. It evaluates the output against the goal/task context and uses its tools to respond.
 
@@ -373,7 +398,6 @@ The Lead Agent is triggered when Room Runtime sends it a user message containing
 
 **Loop termination guards**:
 - `max_feedback_iterations`: default 10 per task. After N `send_to_craft` cycles without `complete_task`/`fail_task`, Runtime auto-escalates to human
-- `max_no_progress_iterations`: if Lead sends the same feedback 3 times consecutively (stagnation), auto-escalate
 - `task_timeout`: wall-clock timeout per task (default: 30 minutes). On expiry, Runtime pauses pair and escalates
 - All thresholds configurable per room
 
@@ -446,7 +470,7 @@ Human intervention is NOT a special state. It works at multiple levels:
 
 **Goals**: `active` | `needs_human` | `completed` | `archived`
 
-**Tasks**: `pending` | `in_progress` | `escalated` | `completed` | `failed`
+**Tasks**: `draft` | `pending` | `in_progress` | `escalated` | `completed` | `failed`
 
 **Task pair lifecycle** (explicit state machine for deterministic recovery):
 
@@ -480,7 +504,7 @@ No `planning`, `executing`, `reviewing`, `waiting`, `error` states for the room 
 
 Event-driven with a timer fallback:
 
-1. **Timer**: Every 30-60 seconds (catches anything missed)
+1. **Timer**: Every 30 seconds (safety net for missed events)
 2. **Goal created/updated**: Immediate tick
 3. **Craft Agent session reaches terminal state**: Immediate tick
 4. **Lead Agent tool call executed**: Immediate tick (after `complete_task`, `fail_task`)
@@ -488,7 +512,7 @@ Event-driven with a timer fallback:
 
 Each tick runs the same deterministic logic. No special handling per trigger type.
 
-**Tick idempotency**: Runtime uses a single-flight mutex — only one tick executes at a time. If multiple events fire concurrently (timer + session terminal state), the first acquires the lock, subsequent triggers queue a single re-tick after the current one completes. This prevents double-spawning pairs, double-delivering feedback, or duplicate `complete_task` processing.
+**Tick idempotency**: Runtime uses a single-flight mutex — only one tick executes at a time. If multiple events fire concurrently (timer + session terminal state), the first acquires the lock, subsequent triggers queue a single re-tick after the current one completes. This prevents double-spawning pairs, double-delivering feedback, or duplicate `complete_task` processing. Note: for parallel mode (`maxConcurrentPairs > 1`), this single-threaded tick architecture may need to evolve into a per-pair event loop.
 
 ### Error Handling
 
@@ -501,7 +525,7 @@ Each tick runs the same deterministic logic. No special handling per trigger typ
   Craft's last assistant message before error: {last_message_excerpt}
   ```
   Lead decides: `send_to_craft` (retry with guidance), `fail_task`, or `escalate`.
-- **Lead Agent session fails**: Log error, retry on next tick. Craft output stays pending review.
+- **Lead Agent session fails**: Recovery protocol: (1) Re-send the pending Craft output to the same Lead session on next tick. (2) If Lead fails 3 times consecutively, kill the Lead session and create a new one with a summary of prior review exchanges injected into the system prompt. (3) If the replacement Lead also fails, escalate to human.
 - **Too many consecutive errors**: Runtime pauses itself, notifies human via Room Agent.
 
 All errors are recoverable by re-running the tick. No stuck states.
@@ -593,6 +617,14 @@ This is a **prerequisite component** that should be designed and implemented bef
 ### Database Schema
 
 ```sql
+-- Tasks: add task_type and depends_on (existing table, new columns)
+-- task_type determines Craft tool set and Lead review prompt
+-- depends_on is nullable, ignored in sequential MVP, required for parallel mode
+ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'coding';
+    -- 'planning' | 'coding' | 'research' | 'design' | 'goal_review'
+ALTER TABLE tasks ADD COLUMN depends_on TEXT;
+    -- JSON array of task IDs, nullable
+
 -- Task pairs: tracks the (Craft, Lead) sessions for each task
 CREATE TABLE task_pairs (
     id TEXT PRIMARY KEY,
@@ -676,7 +708,7 @@ CREATE TABLE task_messages (
 20. **Explicit pair state machine**: Pairs have 5 states (`awaiting_craft`, `awaiting_lead`, `awaiting_human`, `completed`, `failed`) for deterministic recovery.
 21. **Lead tool contract**: Exactly one terminal tool per turn. Invalid responses get one retry with system nudge, then escalate.
 22. **Turn boundary tracking**: `last_forwarded_message_id` on task pairs prevents duplicate/skipped reviews.
-23. **Loop termination**: `max_feedback_iterations` (10), stagnation detection (3), wall-clock timeout (30min). All configurable.
+23. **Loop termination**: `max_feedback_iterations` (10), wall-clock timeout (30min). All configurable.
 24. **Non-idempotent recovery**: Lost sessions mark task `failed` without auto-retry. Human must acknowledge.
 25. **Optimistic locking**: Room Agent tools check `task.version` to prevent races with Runtime state transitions.
 26. **Goal review cap**: Max 2 goal review cycles, then `needs_human`.
@@ -688,10 +720,16 @@ CREATE TABLE task_messages (
 32. **Human interrupt**: Human can interrupt Lead mid-review for redirect messages (not just cancel). Transitions pair to `awaiting_human`.
 33. **Escalation SLA**: Unresponded escalations hibernate after 2h (configurable). Pair preserved, not observed. Unblocks task queue.
 34. **Room Agent is on-demand**: "Always available" means session exists in DB, not persistently-running LLM. Only costs tokens when human chats.
+35. **Planning tasks created as `draft`**: Tasks created by planning Craft are `draft` until Lead approves the plan, then promoted to `pending`. Prevents unapproved tasks from executing.
+36. **Task type determines agent behavior**: `task_type` field on tasks determines Craft's tool set and Lead's activity-specific review prompt.
+37. **Human interventions forwarded to Lead**: When human sends messages to Craft during an iteration, those messages are included in the Craft→Lead forwarding so Lead understands context changes.
+38. **Lead failure recovery**: Re-send pending output to same Lead. After 3 consecutive failures, replace Lead session with summary. After replacement also fails, escalate.
+39. **Structured Craft→Lead message format**: Runtime sends structured envelope with iteration number, task description, tool call summary, terminal state, and human interventions.
+40. **Structured compaction**: Lead compaction preserves feedback→resolution pairs, not generic summaries.
 
 ## Open Questions (For Future Iterations)
 
-1. **Parallel (Craft, Lead) pairs**: Multiple pairs for different tasks/goals. Requires: per-room scheduler lock, worktree isolation policy, fair task selection, and starvation prevention. Not MVP.
+1. **Parallel (Craft, Lead) pairs**: Multiple pairs for different tasks/goals. Requires: per-room scheduler lock, **worktree-per-pair isolation** (two Craft Agents editing the same files will corrupt each other), fair task selection, starvation prevention, and per-pair event loop. Not MVP.
 2. **Task dependency management**: Priority/dependency constraints across goals/tasks need first-class representation for parallel mode. Sequential MVP sidesteps this but it must be solved before `maxConcurrentPairs > 1`.
 3. **Multi-reviewer**: Multiple Lead Agents with different models reviewing the same work (consensus-based review). The Craft→Lead loop supports this naturally.
 4. **Room Agent as Lead**: Should the Room Agent serve as Lead for tasks, or should each task get its own dedicated Lead? Trade-off: shared context vs. isolation.
