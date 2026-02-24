@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.15
+Status: Draft v0.16
 Date: 2026-02-23
 
 ## Context
@@ -263,7 +263,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 
 **Scheduling rules (hardcoded, not LLM-decided)**:
 - A goal needs planning when: it's active AND has no pending/in-progress/draft/escalated tasks AND `planning_attempts < max_planning_attempts` (default: 3)
-- A task is ready to execute when: status is `pending`. When multiple pending tasks exist, Runtime picks by: (1) `priority` descending (higher = more important, default 0), then (2) `created_at` ascending (oldest first). For inter-goal ordering: same priority rules apply across goals
+- A task is ready to execute when: status is `pending`. When multiple pending tasks exist, Runtime picks by: (1) `priority` descending (higher = more important, default 0), then (2) `created_at` ascending (oldest first), then (3) `id` ascending (deterministic tiebreaker for same-tick creation). For inter-goal ordering: same priority rules apply across goals
 - Planning is itself a task: "Plan goal X" → creates a (Craft, Lead) pair where Craft Agent plans
 - If all tasks for a goal have `failed` and `planning_attempts >= max_planning_attempts`, the goal enters `needs_human` status — Runtime stops auto-planning and notifies human via Room Agent
 - **`needs_human` recovery**: Human can mark a `needs_human` goal back to `active` via Room Agent's `update_goal` tool. This resets `planning_attempts` to 0, allowing Runtime to re-plan on the next tick
@@ -477,7 +477,7 @@ Human intervention is NOT a special state. It works at multiple levels:
 
 **Room Runtime**: `running` | `paused`
 
-**Goals**: `active` | `needs_human` | `completed` | `archived` (human-initiated via Room Agent — hides goal from active views. Any goal can be archived. Active tasks are cancelled on archive. Archived goals can be restored to `active`)
+**Goals**: `active` | `needs_human` | `completed` | `archived` (human-initiated via Room Agent — hides goal from active views. Any goal can be archived. Active tasks are **hard cancelled** on archive — immediate abort, no soft wait, since this is an explicit human "stop everything" action. Archived goals can be restored to `active`)
 
 **Tasks**: `draft` | `pending` | `in_progress` | `escalated` | `completed` | `failed`
 
@@ -637,6 +637,13 @@ This is a **prerequisite component** that should be designed and implemented bef
 ### Database Schema
 
 ```sql
+-- Rooms: add config column (existing table)
+-- Stores all room-level configuration as JSON
+ALTER TABLE rooms ADD COLUMN config TEXT;
+    -- JSON: { allowed_verification_commands: ["bun test", "bun run check", "bun run typecheck"],
+    --         max_feedback_iterations: 10, task_timeout: 1800000, max_planning_attempts: 3,
+    --         maxConcurrentPairs: 1, escalation_sla: 7200000 }
+
 -- Tasks: add new columns (existing table)
 -- task_type determines Craft tool set and Lead review prompt
 -- depends_on is nullable, ignored in sequential MVP, required for parallel mode
@@ -688,6 +695,7 @@ CREATE TABLE task_messages (
 );
 
 -- Audit log: observability for debugging Runtime behavior
+-- Retention: cleanup job deletes entries older than 7 days
 CREATE TABLE room_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id TEXT NOT NULL,
@@ -701,6 +709,7 @@ Add `tokens_used` to task_pairs for cost tracking from day one:
 ```sql
 ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
     -- Accumulated input + output tokens across both Craft and Lead sessions
+    -- Updated after each agent turn (per-turn for accuracy)
 ```
 
 ---
@@ -806,6 +815,11 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 70. **Notification message type**: Dedicated type (not user/assistant/system). Renders distinctly in UI. Included in Room Agent context as read-only — no unprompted response.
 71. **Version bumping protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment version. Both Runtime and Room Agent tools follow this.
 72. **Soft timeout requires per-command hard timeout**: Craft's bash tool must enforce a per-command timeout (e.g., 5 min) so hanging commands can't bypass the soft task timeout indefinitely.
+73. **Room config stored as JSON column**: `rooms.config` JSON column holds all room-level settings (verification commands, timeouts, caps, concurrency).
+74. **Audit log retention**: 7-day TTL, cleanup job deletes older entries.
+75. **Token tracking per-turn**: `tokens_used` updated after each Craft/Lead turn for accuracy.
+76. **Goal archive is hard cancel**: Immediate abort of active tasks — no soft wait. Human-intentional action.
+77. **Task selection deterministic tiebreaker**: priority DESC → created_at ASC → id ASC. Handles same-tick creation.
 
 ## Open Questions (For Future Iterations)
 
