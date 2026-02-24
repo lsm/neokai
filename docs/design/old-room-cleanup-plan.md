@@ -83,7 +83,7 @@ return () => {
 | File | Lines | Why delete |
 |---|---|---|
 | `room-self-service.ts` | ~1,909 | LLM orchestrator → replaced by RoomRuntime |
-| `room-self-lifecycle-manager.ts` | ~512 | 7-state lifecycle → spec has 5-state pair machine |
+| `room-self-lifecycle-manager.ts` | ~512 | 7-state lifecycle → spec has 6-state pair machine (`awaiting_craft`, `awaiting_lead`, `awaiting_human`, `hibernated`, `completed`, `failed`) |
 | `worker-manager.ts` | ~460 | Worker sessions → replaced by TaskPairManager |
 | `recurring-job-scheduler.ts` | ~444 | Not in v0.19 spec |
 | `context-manager.ts` | ~193 | Context versioning not in spec |
@@ -168,6 +168,11 @@ return () => {
 | `tests/room-neo-pair.test.ts` | Tests for deleted code |
 
 **Delete entire package** if it only contains room orchestration.
+
+**If deleting `packages/neo`, also update workspace references:**
+- `tsconfig.json` (root): remove `{ "path": "./packages/neo" }` from references array
+- `packages/cli/package.json`: remove `"@neokai/neo": "workspace:*"` dependency
+- Root `package.json` workspaces uses `"packages/*"` glob — no change needed (auto-excludes deleted dir)
 
 ---
 
@@ -438,21 +443,28 @@ export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
 
 **`rooms`:**
 - ADD `config TEXT` (JSON — `maxConcurrentPairs`, `taskTimeout`, `maxFeedbackIterations`, etc.)
-- DROP `context_id`, `context_version`, `instructions` (context system removed)
+- DROP `context_id`, `context_version` (context system removed)
+- KEEP `instructions` — runtime spec depends on room instructions for Craft/Lead system prompts
 
 **`goals`:**
 - ADD `planning_attempts INTEGER NOT NULL DEFAULT 0`
 - ADD `goal_review_attempts INTEGER NOT NULL DEFAULT 0`
 - UPDATE status CHECK: `'active' | 'needs_human' | 'completed' | 'archived'`
+- Data mapping: `'pending'` → `'active'`, `'in_progress'` → `'active'`, `'blocked'` → `'needs_human'`, `'completed'` → `'completed'`, others → `'archived'`
 
 **`tasks`:**
 - ADD `task_type TEXT NOT NULL DEFAULT 'coding'`
-- ADD `priority INTEGER NOT NULL DEFAULT 0`
+- CHANGE `priority` from TEXT enum (`low/normal/high/urgent`) to INTEGER (mapping: `low`→0, `normal`→1, `high`→2, `urgent`→3)
 - ADD `version INTEGER NOT NULL DEFAULT 0`
 - ADD `created_by_task_id TEXT`
 - ADD `depends_on TEXT` (JSON array)
 - UPDATE status CHECK: `'draft' | 'pending' | 'in_progress' | 'escalated' | 'completed' | 'failed'`
+- Data mapping: `'blocked'` → `'escalated'`, `'cancelled'` → `'failed'`, others carry over
 - DROP `session_id`, `session_ids`, `execution_mode`, `sessions`, `recurring_job_id` (old multi-session columns)
+
+> **Note**: SQLite does not support ALTER COLUMN. Status/priority changes require table rebuild:
+> `CREATE TABLE tasks_new(...)` → `INSERT INTO tasks_new SELECT ... FROM tasks` (with value mapping) → `DROP TABLE tasks` → `ALTER TABLE tasks_new RENAME TO tasks`
+> Same pattern for `goals` table.
 
 ### Tables to CREATE
 
@@ -462,13 +474,20 @@ CREATE TABLE task_pairs (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id),
     room_id TEXT NOT NULL REFERENCES rooms(id),
-    craft_session_id TEXT,
-    lead_session_id TEXT,
-    pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
+    craft_session_id TEXT NOT NULL,
+    lead_session_id TEXT NOT NULL,
+    pair_state TEXT NOT NULL DEFAULT 'awaiting_craft'
+        CHECK(pair_state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
     pair_type TEXT NOT NULL DEFAULT 'coding',
     iteration INTEGER NOT NULL DEFAULT 0,
     lead_failures INTEGER NOT NULL DEFAULT 0,
+    last_forwarded_message_id TEXT,
+    feedback_iteration INTEGER NOT NULL DEFAULT 0,
     active_work_started_at INTEGER,
+    active_work_elapsed INTEGER NOT NULL DEFAULT 0,
+    hibernated_at INTEGER,
+    completed_at INTEGER,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -543,9 +562,11 @@ bun run check    # must pass before starting
 - [ ] `memory-repository.ts`
 ~~- [ ] `archive-room-self-state-repository.ts.bak`~~ _(doesn't exist — removed)_
 
-### Step 5: Delete old prompts (shared/src/)
+### Step 5: Delete old prompts (shared/src/) + neo package
 - [ ] `prompts/room-agent.ts`
 - [ ] `neo-prompt/` (entire directory, if only room orchestration)
+- [ ] `packages/neo/` (entire package, if only room orchestration)
+- [ ] If deleting `packages/neo`: remove from `tsconfig.json` references + remove `@neokai/neo` from `packages/cli/package.json`
 
 ### Step 6: Delete old UI components (web/src/components/room/)
 - [ ] `RoomSelfStatus.tsx` + `RoomSelfStatus.test.tsx`
@@ -677,12 +698,12 @@ bun run check    # must pass before starting
 - [ ] Remove subscriptions: `recurringJob.*`, `roomAgent.*`
 - [ ] Remove methods: recurring jobs (5), context versioning (3), room agent (8)
 
-### Step 21: Add database migration
+### Step 21: Add database migration + update schema baseline
 - [ ] Drop 7 old tables
-- [ ] Alter `rooms`, `goals`, `tasks`
+- [ ] Alter `rooms`, `goals`, `tasks` (use table rebuild pattern for status/priority changes — see Part 6 note)
 - [ ] Create `task_pairs`, `task_messages`, `room_audit_log`
 - [ ] Update `sessions` table CHECK constraint: replace `room_self` with `craft`, `lead`
-- [ ] Update `storage/schema/index.ts` (line 46): same CHECK constraint change (this is the initial schema)
+- [ ] **Update `storage/schema/index.ts` in lockstep** — remove old table definitions (`memories`, `contexts`, `context_messages`, `room_agent_states`, `worker_sessions`, `recurring_jobs`, `room_context_versions`) from `createTables()`, update `sessions`/`rooms`/`goals`/`tasks` definitions, add new table definitions. Without this, `createTables()` (which runs after migrations) will recreate dropped tables via `CREATE TABLE IF NOT EXISTS`
 
 ### Step 22: Update daemon-hub.ts event types (~15 events across 4 groups)
 - [ ] Remove `ManagerHookEvent`/`ManagerHookPayload` references
@@ -692,11 +713,16 @@ bun run check    # must pass before starting
 - [ ] Remove dead `task.sessionStarted` (line 459), `task.sessionCompleted` (line 466), `task.allSessionsCompleted` (line 474) — zero emitters
 - [ ] Remove worker session event types
 
+### Step 22a: Evaluate telemetry subsystem
+- [ ] `WorkerTelemetry` in `rpc-handlers/index.ts` (lines 231-240) tracks `worker-only` vs `manager-worker` modes
+- [ ] `telemetry/worker-telemetry.ts` and `rpc-handlers/telemetry-handlers.ts` have worker/manager-specific semantics
+- [ ] Decide: keep (still useful for worker sessions), remove (stale after room runtime cutover), or defer to Phase 1
+
 ### Step 23: Verify
 ```bash
 bun run check          # lint + typecheck + knip
-make test:daemon       # non-room tests pass
-make test:web          # non-room tests pass
+make test-daemon       # non-room tests pass
+make test-web          # non-room tests pass
 ```
 
 ### Step 24: Commit
