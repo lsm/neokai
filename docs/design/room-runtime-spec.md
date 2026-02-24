@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.20
+Status: Draft v0.21
 Date: 2026-02-23
 
 ## Context
@@ -545,7 +545,7 @@ Each tick runs the same deterministic logic. No special handling per trigger typ
   Craft's last assistant message before error: {last_message_excerpt}
   ```
   Lead decides: `send_to_craft` (retry with guidance), `fail_task`, or `escalate`.
-- **Lead Agent session fails**: Recovery protocol: (1) Re-send the pending Craft output to the same Lead session on next tick. (2) If Lead fails 3 times consecutively, kill the Lead session and create a new one with a summary of prior review exchanges injected into the system prompt. (3) If the replacement Lead also fails, escalate to human.
+- **Lead Agent session fails**: Recovery protocol: (1) Re-send the pending Craft output to the same Lead session on next tick. (2) If Lead fails 3 times consecutively, kill the Lead session and create a new one with a summary of prior review exchanges injected into the system prompt. When replacing a Lead session, retarget any `pending` messages in `task_messages` from the old Lead session ID to the new one (prevents queued interrupts from being dead-lettered due to session ID mismatch). (3) If the replacement Lead also fails, escalate to human.
 - **Too many consecutive errors**: Runtime pauses itself, notifies human via Room Agent.
 
 All errors are recoverable by re-running the tick. No stuck states.
@@ -882,6 +882,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 91. **Failed tasks don't block goal review**: Goal review triggers when all tasks are terminal (`completed`/`failed`) with at least one `completed`. The goal review Craft assesses whether the goal is met despite failures. Re-planning only triggers when ALL tasks are `failed` (nothing succeeded).
 92. **Planning duplicate mitigation**: Runtime includes `task_messages.id` as header in injected messages. Lead reviews drafts before promotion. Draft promotion scoped to `created_by_task_id`. Soft guards; `processing` state (deferred) would close the window fully.
 93. **Pair state write ownership clarified**: Runtime is **primary** writer for normal lifecycle. Room Agent tools are **authorized writers** for control-plane (`cancel_task`, `retry_task`). Both use optimistic locking. Replaces the overly-strong "sole writer" claim.
+94. **Lead session replacement retargets queued messages**: When Lead is replaced after 3 consecutive failures, pending messages in `task_messages` are retargeted from old to new Lead session ID. Prevents queued interrupts from being dead-lettered due to session ID mismatch.
 
 ### Meta
 82. **Resolved decisions kept in sync**: Decisions #15, #32, #55, #83 updated to match body changes.
