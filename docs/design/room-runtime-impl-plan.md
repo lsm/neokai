@@ -58,7 +58,7 @@ CREATE TABLE task_pairs (
     active_work_elapsed INTEGER NOT NULL DEFAULT 0,
     hibernated_at INTEGER,
     version INTEGER NOT NULL DEFAULT 1,  -- starts at 1 for optimistic locking
-    tokens_used INTEGER NOT NULL DEFAULT 0,
+    tokens_used INTEGER NOT NULL DEFAULT 0,  -- Updated per-turn (mechanism TBD, tracking only for now)
     created_at INTEGER NOT NULL,
     completed_at INTEGER
 );
@@ -176,9 +176,10 @@ import { Mutex } from 'async-mutex';  // npm package
 class RoomRuntime {
   private state: 'running' | 'paused' = 'running';
   private tickMutex = new Mutex(); // single-flight
+  private timerInterval?: Timer;  // 30-second fallback
 
   // Lifecycle
-  start(): void;
+  start(): void;   // Starts 30-second timer + event listeners
   pause(): void;
   resume(): void;
   getState(): 'running' | 'paused';
@@ -201,9 +202,10 @@ class RoomRuntime {
 2. Acquire mutex (already locked → queue re-tick, exit)
 3. For each room:
    a. Check capacity (maxConcurrentPairs)
-   b. Find pending tasks → spawn (Craft, Lead) pair if below capacity
+   b. Find pending tasks (ordered by priority DESC → created_at ASC → id ASC)
+      → spawn (Craft, Lead) pair if below capacity
    c. Find awaiting_craft pairs with terminal Craft → collect messages, forward to Lead
-   d. Find pending messages in queue → deliver to appropriate agent
+   d. Find pending messages in queue → deliver to appropriate agent (for recovery only in MVP)
 4. Log tick summary to room_audit_log
 5. Release mutex
 ```
@@ -255,7 +257,7 @@ Persistent AgentSession for human conversation:
 | `create_task(goalId, title, description)` | Create a task |
 | `list_tasks(goalId?)` | List tasks |
 | `update_task(taskId, updates)` | Update task |
-| `cancel_task(taskId)` | Cancel a task (marks failed, aborts pair) |
+| `cancel_task(taskId)` | Cancel a task (marks failed, calls `AgentSession.cleanup()` on both Craft and Lead) |
 | `retry_task(taskId)` | Retry a failed task (teardown old pair, create new) |
 | `get_room_status()` | Overview of room state |
 
@@ -319,16 +321,27 @@ Lead Agent must call **exactly one terminal tool** per turn: `complete_task`, `f
 - If Lead emits text with no tool call, or calls multiple conflicting tools → Runtime retries once with system nudge: "You must call exactly one of: send_to_craft, complete_task, fail_task, or escalate"
 - If second attempt also fails → Runtime auto-escalates to human
 
-**Lead Tool Routing:**
-All Lead tool calls are intercepted by Runtime:
-1. Tool call detected → Runtime receives via DaemonHub event
-2. Runtime validates:
-   - `pair_state == awaiting_lead`
-   - Task version matches expected
-   - No queued interrupts for this pair
-3. If validation fails → tool call rejected as stale
-4. Runtime executes the action
-5. Result returned to Lead
+**Lead Tool Routing (MCP Callback Pattern):**
+
+Lead MCP tools are defined with callback functions that call into Runtime methods directly (same pattern as `lobby-agent-tools.ts`):
+
+```typescript
+// In lead-agent-tools.ts
+tool('send_to_craft', 'Send feedback to Craft', { message: z.string() }, async (params) => {
+  return runtime.handleLeadTool(pairId, 'send_to_craft', params);
+});
+
+// In RoomRuntime
+handleLeadTool(pairId: string, toolName: string, params: any): Promise<ToolResult> {
+  // 1. Validate pair_state == 'awaiting_lead'
+  // 2. Validate task version matches expected
+  // 3. Validate no queued interrupts for this pair
+  // 4. Execute the action
+  // 5. Return tool result to Lead
+}
+```
+
+This is **synchronous** — the tool handler calls Runtime directly, Runtime validates and executes, then returns the result. No DaemonHub events involved.
 
 ---
 
@@ -365,11 +378,14 @@ class TaskPairManager {
 
 ### Pair Creation Flow
 
-1. Create Craft session with task context
-2. Create Lead session with review context
+1. Create Craft session with task context in system prompt
+2. Create Lead session with review context in system prompt
 3. Create task_pairs record (state: `awaiting_craft`, version: 1)
 4. Set task status to `in_progress`
-5. Start observing Craft session
+5. **Send initial task instruction to Craft as first user message** — this triggers Craft to begin working
+6. Start observing Craft session
+
+**Why step 5 is needed:** The system prompt provides context but doesn't trigger action. Craft needs an explicit user message (e.g., "Please implement the task: {title}. {description}") to start working.
 
 ---
 
@@ -399,11 +415,33 @@ When Craft reaches terminal state:
 
 When Lead calls `send_to_craft(feedback)`:
 
-1. Runtime intercepts tool call
+1. Runtime method called directly by MCP tool handler (see Lead Tool Routing below)
 2. Validate pair state and version
-3. Inject message into Craft session as user message
+3. **Synchronously** inject message into Craft session as user message (no queue delay)
 4. Update pair state to `awaiting_craft`
 5. Increment feedback_iteration
+
+**Note:** For MVP, Lead→Craft is synchronous (direct injection). The `task_messages` queue is used for recovery only, not for routing delays.
+
+### 5.3 Escalation Return Path
+
+When Lead calls `escalate(reason)`:
+
+1. Runtime sets pair state to `awaiting_human`
+2. Runtime sets task status to `escalated`
+3. Runtime notifies human (via Room Agent message + UI event)
+4. **Human responds directly to Lead session** — sends message via UI
+5. Runtime detects human message to Lead session → transitions pair back to `awaiting_lead`
+6. Lead re-evaluates with human guidance and calls a terminal tool
+
+**Why this works:** Lead session is a standard AgentSession. Human messages to Lead are just user messages in that session. Runtime observes all sessions and transitions pair state when it sees human activity on a Lead session that's in `awaiting_human`.
+
+### 5.4 Task Selection Ordering
+
+When multiple pending tasks exist, Runtime selects by:
+1. `priority` TEXT sort: `urgent` > `high` > `normal` > `low` (mapped in code)
+2. `created_at` ASC (oldest first)
+3. `id` ASC (deterministic tiebreaker)
 
 ---
 
