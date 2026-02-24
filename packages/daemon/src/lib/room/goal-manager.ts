@@ -10,7 +10,6 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { DaemonHub } from '../daemon-hub';
 import { GoalRepository, type CreateGoalParams } from '../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
@@ -21,8 +20,7 @@ export class GoalManager {
 
 	constructor(
 		private db: BunDatabase,
-		private roomId: string,
-		private daemonHub?: DaemonHub
+		private roomId: string
 	) {
 		this.goalRepo = new GoalRepository(db);
 		this.taskRepo = new TaskRepository(db);
@@ -38,16 +36,6 @@ export class GoalManager {
 			description: params.description,
 			priority: params.priority,
 		});
-
-		// Emit goal.created event
-		if (this.daemonHub) {
-			await this.daemonHub.emit('goal.created', {
-				sessionId: `room:${this.roomId}`,
-				roomId: this.roomId,
-				goalId: goal.id,
-				goal,
-			});
-		}
 
 		return goal;
 	}
@@ -92,16 +80,6 @@ export class GoalManager {
 			throw new Error(`Failed to update goal: ${goalId}`);
 		}
 
-		// Emit goal.updated event
-		if (this.daemonHub) {
-			await this.daemonHub.emit('goal.updated', {
-				sessionId: `room:${this.roomId}`,
-				roomId: this.roomId,
-				goalId,
-				goal: updatedGoal,
-			});
-		}
-
 		return updatedGoal;
 	}
 
@@ -125,16 +103,6 @@ export class GoalManager {
 
 		if (!updatedGoal) {
 			throw new Error(`Failed to update goal: ${goalId}`);
-		}
-
-		// Emit progress update event
-		if (this.daemonHub) {
-			await this.daemonHub.emit('goal.progressUpdated', {
-				sessionId: `room:${this.roomId}`,
-				roomId: this.roomId,
-				goalId,
-				progress: updatedGoal.progress,
-			});
 		}
 
 		return updatedGoal;

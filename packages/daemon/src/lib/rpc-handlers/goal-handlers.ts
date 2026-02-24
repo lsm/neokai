@@ -180,6 +180,51 @@ export function setupGoalHandlers(
 		return { goals };
 	});
 
+	// goal.update - Update a goal (dispatches to status/progress/priority based on updates)
+	messageHub.onRequest('goal.update', async (data) => {
+		const params = data as {
+			roomId: string;
+			goalId: string;
+			updates: Partial<RoomGoal>;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.goalId) {
+			throw new Error('Goal ID is required');
+		}
+		if (!params.updates || Object.keys(params.updates).length === 0) {
+			throw new Error('No update fields provided');
+		}
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const { status, progress, priority, metrics, ...rest } = params.updates;
+
+		let goal: RoomGoal;
+		if (status) {
+			goal = await goalManager.updateGoalStatus(params.goalId, status, {
+				...(progress !== undefined ? { progress } : {}),
+				...(priority ? { priority } : {}),
+				...rest,
+			});
+		} else if (progress !== undefined) {
+			goal = await goalManager.updateGoalProgress(
+				params.goalId,
+				progress,
+				metrics as Record<string, number> | undefined
+			);
+		} else if (priority) {
+			goal = await goalManager.updateGoalPriority(params.goalId, priority);
+		} else {
+			throw new Error('No update fields provided (status, progress, or priority required)');
+		}
+
+		emitGoalUpdated(params.roomId, params.goalId, goal);
+
+		return { goal };
+	});
+
 	// goal.updateStatus - Update goal status
 	messageHub.onRequest('goal.updateStatus', async (data) => {
 		const params = data as {

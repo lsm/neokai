@@ -430,6 +430,111 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
+	describe('goal.update', () => {
+		it('updates goal status when status is provided', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			const params = {
+				roomId: 'room-123',
+				goalId: 'goal-123',
+				updates: { status: 'completed' as GoalStatus },
+			};
+
+			const result = (await handler!(params, {})) as { goal: RoomGoal };
+
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith('goal-123', 'completed', {});
+			expect(result.goal).toBeDefined();
+		});
+
+		it('updates goal progress when progress is provided', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			const params = {
+				roomId: 'room-123',
+				goalId: 'goal-123',
+				updates: { progress: 75 },
+			};
+
+			const result = (await handler!(params, {})) as { goal: RoomGoal };
+
+			expect(mockGoalManager.updateGoalProgress).toHaveBeenCalledWith('goal-123', 75, undefined);
+			expect(result.goal).toBeDefined();
+		});
+
+		it('updates goal priority when priority is provided', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			const params = {
+				roomId: 'room-123',
+				goalId: 'goal-123',
+				updates: { priority: 'high' as GoalPriority },
+			};
+
+			const result = (await handler!(params, {})) as { goal: RoomGoal };
+
+			expect(mockGoalManager.updateGoalPriority).toHaveBeenCalledWith('goal-123', 'high');
+			expect(result.goal).toBeDefined();
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ goalId: 'goal-123', updates: { status: 'active' } }, {})
+			).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ roomId: 'room-123', updates: { status: 'active' } }, {})
+			).rejects.toThrow('Goal ID is required');
+		});
+
+		it('throws error when no update fields are provided', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', updates: {} }, {})
+			).rejects.toThrow('No update fields provided');
+		});
+
+		it('throws error when updates has no recognized fields', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', updates: { title: 'New Title' } }, {})
+			).rejects.toThrow('No update fields provided');
+		});
+
+		it('emits goal.updated event', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{ roomId: 'room-123', goalId: 'goal-123', updates: { status: 'active' as GoalStatus } },
+				{}
+			);
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'goal.updated',
+				expect.objectContaining({
+					sessionId: 'room:room-123',
+					roomId: 'room-123',
+					goalId: 'goal-123',
+				})
+			);
+		});
+	});
+
 	describe('goal.updateStatus', () => {
 		it('updates goal status', async () => {
 			const handler = messageHubData.handlers.get('goal.updateStatus');

@@ -1614,20 +1614,25 @@ function runMigration32(db: BunDatabase): void {
 	// Drop stale session_pairs if it somehow survived Migration 29
 	db.exec(`DROP TABLE IF EXISTS session_pairs`);
 
-	// Temporarily disable FK enforcement for table rebuilds.
-	// rooms is only created by createTables() which runs after all migrations,
-	// so FK validation against rooms(id) would fail on a fresh database.
+	// Temporarily disable FK enforcement for all table rebuilds in this migration.
+	// Two reasons:
+	// 1. rooms is only created by createTables() which runs after all migrations,
+	//    so FK validation against rooms(id) would fail on a fresh database.
+	// 2. DROP TABLE sessions with FK ON cascades into events/sdk_messages rows
+	//    (both tables have FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE),
+	//    silently wiping all chat history on upgrade.
+	// FK is restored in the finally block below.
 	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		// Rebuild tasks table: update CHECK constraint to new status values
+		// SQLite does not support ALTER CHECK, so we use the table rebuild pattern
+		if (tableExists(db, 'tasks')) {
+			// First migrate old status values
+			db.exec(`UPDATE tasks SET status = 'escalated' WHERE status = 'blocked'`);
+			db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'cancelled'`);
 
-	// Rebuild tasks table: update CHECK constraint to new status values
-	// SQLite does not support ALTER CHECK, so we use the table rebuild pattern
-	if (tableExists(db, 'tasks')) {
-		// First migrate old status values
-		db.exec(`UPDATE tasks SET status = 'escalated' WHERE status = 'blocked'`);
-		db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'cancelled'`);
-
-		// Rebuild the table with the new CHECK constraint
-		db.exec(`
+			// Rebuild the table with the new CHECK constraint
+			db.exec(`
 			CREATE TABLE tasks_new (
 				id TEXT PRIMARY KEY,
 				room_id TEXT NOT NULL,
@@ -1648,7 +1653,7 @@ function runMigration32(db: BunDatabase): void {
 				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 			)
 		`);
-		db.exec(`
+			db.exec(`
 			INSERT INTO tasks_new (id, room_id, title, description, status, priority,
 				progress, current_step, result, error, depends_on,
 				created_at, started_at, completed_at)
@@ -1662,20 +1667,20 @@ function runMigration32(db: BunDatabase): void {
 				created_at, started_at, completed_at
 			FROM tasks
 		`);
-		db.exec(`DROP TABLE tasks`);
-		db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-	}
+			db.exec(`DROP TABLE tasks`);
+			db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+		}
 
-	// Rebuild goals table: update CHECK constraint to new status values
-	if (tableExists(db, 'goals')) {
-		// First migrate old status values
-		db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
-		db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
+		// Rebuild goals table: update CHECK constraint to new status values
+		if (tableExists(db, 'goals')) {
+			// First migrate old status values
+			db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
+			db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
 
-		// Rebuild the table with the new CHECK constraint
-		db.exec(`
+			// Rebuild the table with the new CHECK constraint
+			db.exec(`
 			CREATE TABLE goals_new (
 				id TEXT PRIMARY KEY,
 				room_id TEXT NOT NULL,
@@ -1694,7 +1699,7 @@ function runMigration32(db: BunDatabase): void {
 				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 			)
 		`);
-		db.exec(`
+			db.exec(`
 			INSERT INTO goals_new (id, room_id, title, description, status, priority,
 				progress, linked_task_ids, metrics, created_at, updated_at, completed_at)
 			SELECT id, room_id, title, description,
@@ -1707,27 +1712,25 @@ function runMigration32(db: BunDatabase): void {
 				priority, progress, linked_task_ids, metrics, created_at, updated_at, completed_at
 			FROM goals
 		`);
-		db.exec(`DROP TABLE goals`);
-		db.exec(`ALTER TABLE goals_new RENAME TO goals`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
-		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
-	}
+			db.exec(`DROP TABLE goals`);
+			db.exec(`ALTER TABLE goals_new RENAME TO goals`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+		}
 
-	db.exec(`PRAGMA foreign_keys = ON`);
+		// Rebuild sessions table: update type CHECK constraint
+		// (drop 'room_self' and 'manager', add 'craft' and 'lead')
+		if (tableExists(db, 'sessions')) {
+			// Migrate old type values first
+			db.exec(`UPDATE sessions SET type = 'craft' WHERE type = 'room_self'`);
+			db.exec(`UPDATE sessions SET type = 'lead' WHERE type = 'manager'`);
+			// Remove any rows with unmappable types
+			db.exec(
+				`DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')`
+			);
 
-	// Rebuild sessions table: update type CHECK constraint
-	// (drop 'room_self' and 'manager', add 'craft' and 'lead')
-	if (tableExists(db, 'sessions')) {
-		// Migrate old type values first
-		db.exec(`UPDATE sessions SET type = 'craft' WHERE type = 'room_self'`);
-		db.exec(`UPDATE sessions SET type = 'lead' WHERE type = 'manager'`);
-		// Remove any rows with unmappable types
-		db.exec(
-			`DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')`
-		);
-
-		// Rebuild with new CHECK constraint
-		db.exec(`
+			// Rebuild with new CHECK constraint
+			db.exec(`
 			CREATE TABLE sessions_new (
 				id TEXT PRIMARY KEY,
 				title TEXT NOT NULL,
@@ -1753,7 +1756,7 @@ function runMigration32(db: BunDatabase): void {
 				session_context TEXT
 			)
 		`);
-		db.exec(`
+			db.exec(`
 			INSERT INTO sessions_new
 			SELECT id, title, workspace_path, created_at, last_active_at,
 				status, config, metadata, is_worktree, worktree_path, main_repo_path,
@@ -1762,7 +1765,10 @@ function runMigration32(db: BunDatabase): void {
 				COALESCE(sub_session_order, 0), type, session_context
 			FROM sessions
 		`);
-		db.exec(`DROP TABLE sessions`);
-		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+			db.exec(`DROP TABLE sessions`);
+			db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+		}
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
 	}
 }

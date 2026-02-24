@@ -12,14 +12,13 @@
  * - Edge cases
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { RoomManager } from '../../../src/lib/room/room-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
-import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
+import type { NeoTask } from '@neokai/shared';
 
 describe('GoalManager', () => {
 	let db: Database;
@@ -27,8 +26,6 @@ describe('GoalManager', () => {
 	let taskManager: TaskManager;
 	let roomManager: RoomManager;
 	let roomId: string;
-	let mockDaemonHub: DaemonHub;
-	let trackedEvents: Array<{ event: string; data: unknown }>;
 
 	beforeEach(() => {
 		// Use an anonymous in-memory database for each test
@@ -66,16 +63,8 @@ describe('GoalManager', () => {
 		});
 		roomId = room.id;
 
-		// Track events emitted by the daemon hub
-		trackedEvents = [];
-		mockDaemonHub = {
-			emit: mock(async (event: string, data: unknown) => {
-				trackedEvents.push({ event, data });
-			}),
-		} as unknown as DaemonHub;
-
-		// Create goal manager with mock daemon hub
-		goalManager = new GoalManager(db, roomId, mockDaemonHub);
+		// Create goal manager
+		goalManager = new GoalManager(db, roomId);
 
 		// Create task manager for testing task linking
 		taskManager = new TaskManager(db, roomId);
@@ -88,17 +77,6 @@ describe('GoalManager', () => {
 	describe('initialization', () => {
 		it('should create goal manager with valid room', () => {
 			expect(goalManager).toBeDefined();
-		});
-
-		it('should work without daemon hub (no event emission)', async () => {
-			const managerWithoutHub = new GoalManager(db, roomId);
-			const goal = await managerWithoutHub.createGoal({
-				title: 'Test Goal',
-				description: 'Description',
-			});
-
-			expect(goal).toBeDefined();
-			expect(goal.title).toBe('Test Goal');
 		});
 	});
 
@@ -160,22 +138,6 @@ describe('GoalManager', () => {
 
 			expect(goal.createdAt).toBeGreaterThanOrEqual(before);
 			expect(goal.createdAt).toBeLessThanOrEqual(after);
-		});
-
-		it('should emit goal.created event', async () => {
-			const goal = await goalManager.createGoal({
-				title: 'Test Goal',
-				description: 'Description',
-			});
-
-			expect(trackedEvents).toHaveLength(1);
-			expect(trackedEvents[0].event).toBe('goal.created');
-			expect(trackedEvents[0].data).toEqual({
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				goal,
-			});
 		});
 	});
 
@@ -302,22 +264,6 @@ describe('GoalManager', () => {
 				'Goal not found: non-existent'
 			);
 		});
-
-		it('should emit goal.updated event', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			trackedEvents.length = 0; // Clear create event
-
-			const updated = await goalManager.updateGoalStatus(goal.id, 'active');
-
-			expect(trackedEvents).toHaveLength(1);
-			expect(trackedEvents[0].event).toBe('goal.updated');
-			expect(trackedEvents[0].data).toEqual({
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				goal: updated,
-			});
-		});
 	});
 
 	describe('updateGoalProgress', () => {
@@ -353,22 +299,6 @@ describe('GoalManager', () => {
 			await expect(goalManager.updateGoalProgress('non-existent', 50)).rejects.toThrow(
 				'Goal not found: non-existent'
 			);
-		});
-
-		it('should emit goal.progressUpdated event', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			trackedEvents.length = 0; // Clear create event
-
-			await goalManager.updateGoalProgress(goal.id, 75);
-
-			expect(trackedEvents).toHaveLength(1);
-			expect(trackedEvents[0].event).toBe('goal.progressUpdated');
-			expect(trackedEvents[0].data).toEqual({
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				progress: 75,
-			});
 		});
 	});
 
@@ -942,7 +872,7 @@ describe('GoalManager', () => {
 
 		it('should handle linking multiple tasks to a goal', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			const tasks = [];
+			const tasks: NeoTask[] = [];
 			for (let i = 0; i < 10; i++) {
 				const task = await taskManager.createTask({ title: `Task ${i}`, description: '' });
 				await taskManager.updateTaskProgress(task.id, i * 10);
