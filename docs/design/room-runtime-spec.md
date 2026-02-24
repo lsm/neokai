@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.6
+Status: Draft v0.7
 Date: 2026-02-23
 
 ## Context
@@ -320,7 +320,11 @@ The Craft Agent has **no special completion-signaling tools**. It doesn't tell t
 - **Error** (`type: "result"`, `subtype: "error"`) — turn failed → Runtime sends error context to Lead
 - **AskUserQuestion** (tool use detected via `canUseTool` callback) — session enters `waiting_for_input` → Runtime routes question to Lead first
 
-**Safety net**: A cron job (every 60s) checks all in-progress sessions to catch any missed terminal states.
+**Safety net**: A cron job (every 60s) checks all in-progress sessions to catch missed terminal states. Scenarios it guards against:
+- SDK event listener detached after hot module reload during development
+- Event callback threw an unhandled exception, preventing state transition
+- Race condition where session reached terminal state between observer setup and first check
+- Process recovered from an uncaught exception that disrupted the event loop
 
 Human can open this session and interact with it directly.
 
@@ -479,7 +483,15 @@ Each tick runs the same deterministic logic. No special handling per trigger typ
 
 ### Error Handling
 
-- **Craft Agent session errors**: Runtime sends error to Lead Agent → Lead decides: retry, adjust, or escalate.
+- **Craft Agent session errors**: Runtime sends error context to Lead Agent as a structured user message:
+  ```
+  [CRAFT ERROR] Task: {task_title}
+  Error type: {sdk_error_subtype}
+  Last tool call: {tool_name}({args_summary})
+  Error message: {error_message}
+  Craft's last assistant message before error: {last_message_excerpt}
+  ```
+  Lead decides: `send_to_craft` (retry with guidance), `fail_task`, or `escalate`.
 - **Lead Agent session fails**: Log error, retry on next tick. Craft output stays pending review.
 - **Too many consecutive errors**: Runtime pauses itself, notifies human via Room Agent.
 
@@ -511,16 +523,19 @@ sequenceDiagram
 
 **Task state during escalation**: `escalated` (a sub-state of `in_progress`). The pair is paused — Lead waits for human input, Craft is idle. Human responds **directly to Lead** (since Lead has the review context), and Lead translates guidance into actionable feedback for Craft.
 
+**Queued messages on escalation**: When Lead calls `escalate()`, any human messages that were queued during Lead's review are **delivered to Lead** along with the escalation context. This way the human's earlier input isn't lost — Lead sees both the escalation reason and any human messages that arrived during review.
+
 ### Goal Completion
 
 When all tasks for a goal are completed, Runtime triggers a **goal review** (Craft, Lead) pair:
 
 1. Runtime detects: all tasks for goal X have status `completed`
 2. Runtime creates a special task: "Review goal: X"
-3. Spawns a (Craft, Lead) pair where Craft Agent:
-   - Reviews all completed task summaries
-   - Checks if the original goal is truly satisfied
-   - Either confirms completion or creates additional tasks
+3. Spawns a (Craft, Lead) pair where Craft Agent receives via system prompt:
+   - The original goal description
+   - All completed task summaries (from `complete_task(summary)` calls)
+   - The Craft Agent then verifies the goal is satisfied (may use `read`, `glob`, `grep` tools to inspect actual results)
+   - Either confirms completion or creates additional tasks via `create_task` tool
 4. Lead Agent reviews the assessment
 5. If confirmed → Runtime marks goal as `completed`
 6. If gaps found → new tasks created → Runtime picks them up on next tick
@@ -539,6 +554,8 @@ Runtime state is **reconstructed from DB on startup**. No in-memory-only state.
    - **Session exists + waiting_for_input**: Re-route the pending question
    - **Session gone** (process crashed): Mark task as `failed` with reason `session_lost`
 3. Runtime resumes `running` state and continues normal tick loop
+
+**Message queue recovery**: On restart, Runtime scans `task_messages` for entries with `status = 'pending'` and reprocesses them in `created_at` order. Since messages are scoped to `pair_id` + `to_session_id`, only messages for still-active pairs are delivered. Messages targeting sessions that no longer exist are marked `dead_letter`.
 
 **Non-idempotent task recovery**: When a Craft session is lost after it has already made changes (edited files, ran commands), blind retry is dangerous — it could duplicate side effects. For lost sessions, Runtime marks the task `failed` and **does not auto-retry**. The human must acknowledge and decide: retry (if workspace state is safe) or manually intervene. Room Agent surfaces these failures prominently.
 
@@ -589,7 +606,7 @@ CREATE TABLE task_messages (
     to_role TEXT NOT NULL,         -- 'craft' | 'lead'
     to_session_id TEXT NOT NULL,   -- target session (prevents misdelivery on retry)
     payload TEXT NOT NULL,         -- JSON message content
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | dead_letter
     created_at INTEGER NOT NULL,
     delivered_at INTEGER
 );
