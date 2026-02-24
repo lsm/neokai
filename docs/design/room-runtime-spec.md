@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.17
+Status: Draft v0.18
 Date: 2026-02-23
 
 ## Context
@@ -262,7 +262,8 @@ graph TB
 The Room Runtime is the **scheduler and router**. It's a simple loop driven by triggers (timer, events). It makes no decisions about WHAT work to do — it decides WHEN to create (Craft, Lead) pairs, routes messages between them, and executes Lead Agent tool calls.
 
 **Scheduling rules (hardcoded, not LLM-decided)**:
-- A goal needs planning when: it's active AND has no pending/in-progress/draft/escalated tasks AND `planning_attempts < max_planning_attempts` (default: 3)
+- **Scheduler precedence**: Goal review takes precedence over re-planning. The tick loop evaluates goal review first: if all tasks for a goal are `completed`, trigger goal review (not planning). Planning only triggers when: the goal has zero tasks, OR has at least one `failed` task (with no pending/in-progress/draft/escalated tasks remaining). This prevents the ambiguous case where all-completed goals match both predicates
+- A goal needs planning when: it's active AND has no pending/in-progress/draft/escalated tasks AND (has no tasks at all OR at least one task is `failed`) AND `planning_attempts < max_planning_attempts` (default: 3)
 - A task is ready to execute when: status is `pending`. When multiple pending tasks exist, Runtime picks by: (1) `priority` descending (higher = more important, default 0), then (2) `created_at` ascending (oldest first), then (3) `id` ascending (deterministic tiebreaker for same-tick creation). For inter-goal ordering: same priority rules apply across goals
 - Planning is itself a task: "Plan goal X" → creates a (Craft, Lead) pair where Craft Agent plans
 - If all tasks for a goal have `failed` and `planning_attempts >= max_planning_attempts`, the goal enters `needs_human` status — Runtime stops auto-planning and notifies human via Room Agent
@@ -309,7 +310,7 @@ This is a full **AgentSession** with:
 | `create_task(goalId, title, description)` | Manually create a task for a goal |
 | `update_task(taskId, updates)` | Update task details or priority |
 | `cancel_task(taskId)` | **Full pair teardown**: (1) abort Craft session via SDK cancel, (2) abort Lead session, (3) transition pair to `failed`, (4) dead-letter all queued messages for this pair, (5) record last known state in task failure metadata (files modified, commands run — extracted from Craft's tool call history), (6) mark task `failed`, (7) surface to human: "Task X cancelled. Craft had modified: [file list]. These changes may be partial." |
-| `retry_task(taskId)` | Kill current pair, create new (Craft, Lead) pair. New pair receives previous attempt context in system prompt: failure reason and summarized Lead feedback from prior pair. Prevents repeating the same mistakes |
+| `retry_task(taskId)` | **Full old-pair teardown + new pair creation**: (1) abort Craft session via SDK cancel, (2) abort Lead session, (3) transition old pair to `failed`, (4) dead-letter all queued messages for the old pair, (5) record last known state in task failure metadata, (6) create new (Craft, Lead) pair. New pair receives previous attempt context in system prompt: failure reason and summarized Lead feedback from prior pair. Prevents repeating the same mistakes. Same teardown guarantees as `cancel_task` for the old pair |
 | `get_task_status(taskId)` | Get task state including recent Craft/Lead messages |
 | `list_tasks(goalId?)` | List tasks, optionally filtered by goal |
 | `get_room_status()` | Overview: runtime state, active pairs, goal/task summary |
@@ -616,7 +617,7 @@ Runtime state is **reconstructed from DB on startup**. No in-memory-only state.
 
 **Message queue recovery**: On restart, Runtime scans `task_messages` for entries with `status = 'pending'` and reprocesses them in `created_at` order. Since messages are scoped to `pair_id` + `to_session_id`, only messages for still-active pairs are delivered. Messages targeting sessions that no longer exist are marked `dead_letter`.
 
-**Delivery idempotency**: For Craft→Lead forwarding, `last_forwarded_message_id` serves as an idempotency guard — if a message ID is already ≤ the marker, it's skipped. For Lead→Craft messages via the queue, each delivered message includes an **idempotency key** (`task_messages.id`) that the receiver session tracks. Before injecting a message into an AgentSession, Runtime checks if that message ID was already delivered (via a `delivered_message_ids` set on the pair or a `last_delivered_message_id` marker). This handles the crash window between "send to session" and "mark delivered" — since sending to an AgentSession is an external side effect that cannot be atomically committed with SQLite. A `processing` intermediate state is deferred to parallel mode.
+**Delivery idempotency**: For Craft→Lead forwarding, `last_forwarded_message_id` serves as an idempotency guard — if a message ID is already ≤ the marker, it's skipped. For Lead→Craft messages via the queue, Runtime checks `task_messages.status` before injecting: only `pending` messages are delivered. After successful injection into the AgentSession, Runtime updates the message status to `delivered` with a `delivered_at` timestamp. On crash recovery, the restart scan re-processes `pending` messages — any that were actually delivered but not marked (crash window) result in a duplicate message to the agent, which is a benign worst case (agent sees the same instruction twice). Sending to an AgentSession is an external side effect that cannot be atomically committed with SQLite, so true exactly-once delivery is not achievable; the design accepts at-most-once-duplicate as the failure mode. A `processing` intermediate state is deferred to parallel mode.
 
 **Non-idempotent task recovery**: When a Craft session is lost after it has already made changes (edited files, ran commands), blind retry is dangerous — it could duplicate side effects. For lost sessions, Runtime marks the task `failed` and **does not auto-retry**. The human must acknowledge and decide: retry (if workspace state is safe) or manually intervene. Room Agent surfaces these failures prominently.
 
@@ -702,8 +703,15 @@ CREATE TABLE task_messages (
     delivered_at INTEGER
 );
 
+-- Task messages retention: messages are retained for the lifetime of the pair.
+-- When a pair reaches terminal state (completed/failed), delivered and dead_letter
+-- messages can be purged. Pending messages on terminal pairs are dead-lettered first.
+-- This is separate from audit log retention (7 days) — task messages have no
+-- time-based TTL. Long-lived hibernated pairs retain their pending messages
+-- indefinitely until reactivation or manual cleanup.
+
 -- Audit log: observability for debugging Runtime behavior
--- Retention: cleanup job deletes entries older than 7 days
+-- Retention: cleanup job deletes entries older than 7 days (audit log only, not task_messages)
 CREATE TABLE room_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id TEXT NOT NULL,
@@ -797,7 +805,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 44. **Task timeout pauses during human waits**: `task_timeout` only counts active work time (`awaiting_craft` + `awaiting_lead`). Clock pauses during `awaiting_human`/`hibernated` to avoid conflicting with escalation SLA.
 45. **Human interrupt goes to `awaiting_lead`**: Interrupt is delivered to Lead after its current turn, keeping pair in `awaiting_lead` (not `awaiting_human`) because the interrupt IS the human's input.
 46. **Lead `AskUserQuestion` transitions to `awaiting_human`**: Lead's questions route to human, pair pauses. Human responds → pair returns to `awaiting_lead`. Same SLA timeout as escalation.
-47. **Delivery idempotency via markers**: Craft→Lead uses `last_forwarded_message_id` as guard. Lead→Craft delivery within single-flight tick transaction. `processing` queue state deferred to parallel mode.
+47. **Delivery idempotency via markers**: Craft→Lead uses `last_forwarded_message_id` as guard. Lead→Craft uses `task_messages.status` — only `pending` messages injected, then marked `delivered`. AgentSession injection is an external side effect (not atomically committed with SQLite), so crash-window duplicates are accepted as benign. `processing` queue state deferred to parallel mode.
 48. **Hibernation reactivation via message queue**: Human messages to hibernated pairs are stored in queue, tick detects pending messages and reactivates the pair.
 49. **`run_verification` restricted to allowlist**: Commands scoped to room's `allowed_verification_commands` config (default: test/lint). Not arbitrary bash.
 50. **Soft task timeout**: Waits for current tool call to complete before pausing. Prevents corrupted state from interrupted operations.
@@ -833,6 +841,10 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 80. **Receiver-side delivery dedupe**: Each message has idempotency key (`task_messages.id`). Runtime checks before injecting into AgentSession. Handles crash window between send and mark-delivered.
 81. **Counter increment on spawn**: `planning_attempts` and `goal_review_attempts` increment when pair is spawned (counts attempts, not outcomes). `feedback_iteration` increments on each `send_to_craft`.
 82. **Resolved decisions kept in sync**: Decisions #15 and #32 updated to match body changes from v0.11+.
+83. **Scheduler precedence: goal review before re-planning**: Tick evaluates goal review first. If all tasks `completed` → goal review. Planning only triggers when goal has zero tasks or at least one `failed` task. Prevents ambiguous overlap.
+84. **`retry_task` full old-pair teardown**: Same teardown as `cancel_task` (abort both sessions, fail pair, dead-letter messages, record state) before creating new pair. No orphaned sessions or stale messages.
+85. **Idempotency uses existing `task_messages.status`**: No separate `delivered_message_ids` tracking needed. Runtime checks `status == 'pending'` before injection, marks `delivered` after. Crash-window duplicates accepted as benign.
+86. **Task messages retention: pair-scoped, not time-based**: Messages retained for pair lifetime. Purged on terminal state. No time-based TTL — long-lived hibernated pairs keep their pending messages. Separate from audit log 7-day retention.
 
 ## Open Questions (For Future Iterations)
 
