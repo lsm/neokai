@@ -3,7 +3,6 @@
 	"references": [
 		{ "path": "./packages/cli" },
 		{ "path": "./packages/daemon" },
-		{ "path": "./packages/neo" },
 		{ "path": "./packages/shared" },
 		{ "path": "./packages/web" }
 	],

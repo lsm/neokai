@@ -12,7 +12,6 @@
 	},
 	"dependencies": {
 		"@neokai/daemon": "workspace:*",
-		"@neokai/neo": "workspace:*",
 		"@neokai/shared": "workspace:*",
 		"hono": "4.12.1",
 		"vite": "7.3.1"
