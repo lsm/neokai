@@ -151,6 +151,11 @@ export class ModelSwitchHandler {
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
 				session.config.model = resolvedModel;
+				// Keep provider aligned with model for pre-query switches too.
+				// Without this, a stale explicit provider can force wrong model routing.
+				if (newProviderInstance?.id) {
+					session.config.provider = newProviderInstance.id as 'anthropic' | 'glm';
+				}
 				db.updateSession(session.id, {
 					config: session.config,
 				});

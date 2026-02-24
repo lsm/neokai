@@ -61,6 +61,17 @@ const TEST_MODELS: ModelInfo[] = [
 		releaseDate: '2025-01-01',
 		available: true,
 	},
+	{
+		id: 'glm-5',
+		name: 'GLM-5',
+		alias: 'glm',
+		family: 'glm',
+		provider: 'glm',
+		contextWindow: 200000,
+		description: 'GLM model',
+		releaseDate: '2026-01-01',
+		available: true,
+	},
 ];
 
 describe('ModelSwitchHandler', () => {
@@ -301,6 +312,17 @@ describe('ModelSwitchHandler', () => {
 					}),
 					{ channel: 'session:' + mockSession.id }
 				);
+			});
+
+			it('should align provider with model for pre-query cross-provider switches', async () => {
+				mockSession.config.model = 'glm-5';
+				mockSession.config.provider = 'glm';
+
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel(VALID_MODEL);
+
+				expect(result.success).toBe(true);
+				expect(mockSession.config.provider).toBe('anthropic');
 			});
 		});
 
