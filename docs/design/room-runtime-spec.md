@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.7
+Status: Draft v0.8
 Date: 2026-02-23
 
 ## Context
@@ -138,6 +138,7 @@ Lead Agent has a focused tool set, all routed through Room Runtime:
 | `fail_task(reason)` | Task is not achievable | Updates task status, notifies Room Agent |
 | `escalate(reason)` | Flag for human attention | Notifies human via Room Agent / UI |
 | `read_craft_messages(limit)` | Pull more Craft messages beyond what Runtime sent | Returns messages from Craft session |
+| `run_verification(command)` | Run tests/linting independently of Craft | Executes command, returns output |
 
 ### Task Chat View: Sub-Agent Blocks
 
@@ -272,6 +273,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 - When Lead Agent calls `send_to_craft()` → inject message into Craft Agent session as user message
 - When Lead Agent calls `complete_task()` / `fail_task()` → update task in DB → trigger next tick
 - When human sends message to Craft during Lead review → queue message until Lead's current review cycle completes
+- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message immediately pauses Lead's current review, transitions the pair to `awaiting_human`, and delivers the interrupt message to Lead along with any queued messages. Lead must re-evaluate before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel.
 - **Urgent control actions** (`cancel_task`, `pause runtime`) bypass the message queue and execute immediately via Room Agent tools, even if Lead is mid-review
 
 **State**: `running` | `paused`. That's it.
@@ -280,7 +282,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 
 #### 2. Room Agent (persistent AgentSession — human-facing)
 
-The Room Agent is the **department head**. It's always available for human conversation.
+The Room Agent is the **department head**. It's always available for human conversation. Note: "always available" means the session exists in DB and can be activated on demand — it is NOT a persistently-running LLM consuming tokens. It only costs tokens when the human actually sends a message.
 
 This is a full **AgentSession** with:
 - **Tools** for room management (see table below)
@@ -343,6 +345,7 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
 | `fail_task(reason)` | Task is not achievable |
 | `escalate(reason)` | Flag for human attention (see Escalation Flow) |
 | `read_craft_messages(limit)` | Pull more Craft messages if needed |
+| `run_verification(command)` | Run a verification command (e.g., `bun test`, `bun run check`) independently of Craft. Trust, but verify. |
 
 **System prompt includes**:
 - The goal description this task belongs to
@@ -350,13 +353,15 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
 - Room-level instructions/guidelines (coding standards, review policy, etc.)
 - Review policy: what to check for (correctness, completeness, style, tests)
 - Available tools and when to use each
+- **Verification requirements**: Before calling `complete_task`, Lead must verify the work meets acceptance criteria. For coding tasks: use `run_verification` to confirm tests pass and linting is clean. Do not accept based solely on Craft's claim of completion.
+- **AskUserQuestion answer policy**: Lead may answer Craft's questions about architectural choices, code patterns, and technical decisions based on goal/task context. Lead must **always escalate** questions about: secrets/API keys/credentials, subjective human preferences, access permissions, or anything outside the goal/task scope.
 
 **Context management**: Each message from Runtime to Lead includes a structured header:
 - **Immutable context** (in system prompt): goal, task description, room instructions
 - **Rolling context** (accumulated in session): all previous review exchanges
 - **Latest delta** (in user message): Craft's output from this iteration
 
-Lead session may need **context compaction** on long-running tasks. When Lead's conversation exceeds ~80% of the context window, Runtime summarizes older review exchanges before injecting the next Craft output. This uses the existing AgentSession compaction mechanism.
+Lead session may need **context compaction** on long-running tasks. When Lead's conversation exceeds ~80% of the context window, Runtime summarizes older review exchanges before injecting the next Craft output. This uses the existing AgentSession compaction mechanism. **Compaction rules**: immutable context (goal description, task description, room instructions) is always retained verbatim. Only the rolling conversation history (previous review exchanges) is summarized. The latest Craft output delta is never summarized.
 
 The Lead Agent is triggered when Room Runtime sends it a user message containing Craft Agent's output. It evaluates the output against the goal/task context and uses its tools to respond.
 
@@ -451,7 +456,10 @@ stateDiagram-v2
     awaiting_craft --> awaiting_lead : Craft reaches terminal state
     awaiting_lead --> awaiting_craft : Lead calls send_to_craft()
     awaiting_lead --> awaiting_human : Lead calls escalate()
+    awaiting_lead --> awaiting_human : Human sends interrupt
     awaiting_human --> awaiting_lead : Human responds to Lead
+    awaiting_human --> hibernated : Escalation SLA timeout (2h)
+    hibernated --> awaiting_lead : Human responds, pair reactivated
     awaiting_lead --> completed : Lead calls complete_task()
     awaiting_lead --> failed : Lead calls fail_task()
     awaiting_craft --> awaiting_lead : Craft errors (sent to Lead)
@@ -461,7 +469,8 @@ stateDiagram-v2
 |---|---|---|
 | `awaiting_craft` | Craft Agent is working or about to receive feedback | Craft |
 | `awaiting_lead` | Craft output collected, waiting for Lead review | Lead |
-| `awaiting_human` | Escalated, pair paused until human responds | Human |
+| `awaiting_human` | Escalated or interrupted, pair paused until human responds | Human |
+| `hibernated` | Escalation SLA expired, pair preserved but not observed | Human (eventually) |
 | `completed` | Lead accepted, task done | — |
 | `failed` | Lead rejected or unrecoverable error | — |
 
@@ -524,6 +533,8 @@ sequenceDiagram
 **Task state during escalation**: `escalated` (a sub-state of `in_progress`). The pair is paused — Lead waits for human input, Craft is idle. Human responds **directly to Lead** (since Lead has the review context), and Lead translates guidance into actionable feedback for Craft.
 
 **Queued messages on escalation**: When Lead calls `escalate()`, any human messages that were queued during Lead's review are **delivered to Lead** along with the escalation context. This way the human's earlier input isn't lost — Lead sees both the escalation reason and any human messages that arrived during review.
+
+**Escalation SLA**: If an escalated task receives no human response within a configurable timeout (default: 2 hours), Runtime transitions the pair to `hibernated` state — sessions are preserved in DB but not actively observed. This prevents blocking the task queue indefinitely. When the human eventually responds, Runtime reactivates the pair and resumes the flow. If the room has other pending tasks, Runtime can proceed with those while the escalated task hibernates.
 
 ### Goal Completion
 
@@ -589,7 +600,7 @@ CREATE TABLE task_pairs (
     craft_session_id TEXT NOT NULL,
     lead_session_id TEXT NOT NULL,
     pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
-        -- awaiting_craft | awaiting_lead | awaiting_human | completed | failed
+        -- awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
     last_forwarded_message_id TEXT,  -- turn boundary marker
     feedback_iteration INTEGER NOT NULL DEFAULT 0,
     version INTEGER NOT NULL DEFAULT 0,  -- optimistic locking
@@ -672,6 +683,11 @@ CREATE TABLE task_messages (
 27. **Planning attempt cap**: Max 3 planning attempts per goal before `needs_human`.
 28. **Urgent controls bypass queue**: `cancel_task`, `pause runtime` execute immediately, not queued.
 29. **Lead questions route to human**: Lead Agent's `AskUserQuestion` goes directly to human (no higher review layer).
+30. **Lead verification tool**: Lead can independently run verification commands (`run_verification`) to confirm tests/linting pass before accepting.
+31. **Lead answer policy**: Lead may answer Craft's architectural/technical questions but must escalate secrets, credentials, permissions, and subjective preferences.
+32. **Human interrupt**: Human can interrupt Lead mid-review for redirect messages (not just cancel). Transitions pair to `awaiting_human`.
+33. **Escalation SLA**: Unresponded escalations hibernate after 2h (configurable). Pair preserved, not observed. Unblocks task queue.
+34. **Room Agent is on-demand**: "Always available" means session exists in DB, not persistently-running LLM. Only costs tokens when human chats.
 
 ## Open Questions (For Future Iterations)
 
