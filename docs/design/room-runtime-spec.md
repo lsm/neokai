@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.11
+Status: Draft v0.12
 Date: 2026-02-23
 
 ## Context
@@ -266,6 +266,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 - A task is ready to execute when: status is `pending`
 - Planning is itself a task: "Plan goal X" → creates a (Craft, Lead) pair where Craft Agent plans
 - If all tasks for a goal have `failed` and `planning_attempts >= max_planning_attempts`, the goal enters `needs_human` status — Runtime stops auto-planning and notifies human via Room Agent
+- **`needs_human` recovery**: Human can mark a `needs_human` goal back to `active` via Room Agent's `update_goal` tool. This resets `planning_attempts` to 0, allowing Runtime to re-plan on the next tick
 
 **Routing rules**:
 - When Craft Agent reaches terminal state → collect all assistant messages from its last turn → send to Lead Agent as user message. **If a human sent messages to Craft during this iteration**, include them in the forwarding with a note: `[Human intervened: "{message}"]` so Lead understands why Craft may have changed direction
@@ -276,7 +277,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
   - `send_to_craft()` → deliver queued human messages to Craft after Lead's feedback
   - `complete_task()` / `fail_task()` → surface queued messages to Room Agent as "FYI: human said X but task already completed/failed"
   - `escalate()` → deliver to Lead along with escalation context (already specified)
-- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message is **queued and delivered to Lead after its current turn completes**, transitioning the pair to `awaiting_lead` (not `awaiting_human`, because the interrupt IS the human's input — Lead must now act on it). Lead must re-evaluate with the interrupt context before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel.
+- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message is **queued and delivered to Lead after its current turn completes**, transitioning the pair to `awaiting_lead` (not `awaiting_human`, because the interrupt IS the human's input — Lead must now act on it). This is a "pause and inject" — Lead retains its full session context and the interrupt is delivered as an additional user message. Lead must re-evaluate with the interrupt context before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel.
 - **Urgent control actions** (`cancel_task`, `pause runtime`) bypass the message queue and execute immediately via Room Agent tools, even if Lead is mid-review
 
 **State**: `running` | `paused`. That's it.
@@ -318,7 +319,7 @@ The Room Agent is NOT the scheduler. It's the human interface. When the human cr
 
 The Craft Agent works on a task. It's a standard AgentSession with tools appropriate for the activity:
 - **Coding task**: bash, edit, read, write, glob, grep (standard coding tools)
-- **Planning task**: read, glob, grep (codebase exploration) + `create_task(goalId, title, description)` for writing tasks to DB. **Tasks created by planning Craft are created with status `draft`** and tagged with `created_by_task_id` pointing to the planning task — Runtime does not schedule them until the planning task itself is `completed` (i.e., Lead has approved the plan), at which point only `draft` tasks matching that `created_by_task_id` are promoted to `pending`. If a planning task fails, Runtime cleans up its associated `draft` tasks (marks them `failed`).
+- **Planning task**: read, glob, grep (codebase exploration) + `create_task(goalId, title, description)` for writing tasks to DB. **Tasks created by planning Craft are created with status `draft`** and tagged with `created_by_task_id` pointing to the planning task — Runtime does not schedule them until the planning task itself is `completed` (i.e., Lead has approved the plan), at which point only `draft` tasks matching that `created_by_task_id` are promoted to `pending` in a single DB transaction. If a planning task fails, Runtime cleans up its associated `draft` tasks (marks them `failed`) also in a single transaction.
 - **Research task**: read, web search, etc.
 - **Design task**: read, write (spec writing)
 
@@ -327,7 +328,7 @@ The Craft Agent has **no special completion-signaling tools**. It doesn't tell t
 - **Error** (`type: "result"`, `subtype: "error"`) — turn failed → Runtime sends error context to Lead
 - **AskUserQuestion** (tool use detected via `canUseTool` callback) — session enters `waiting_for_input` → Runtime routes question to Lead first
 
-**Safety net**: A cron job (every 60s) checks all in-progress sessions to catch missed terminal states. Scenarios it guards against:
+**Safety net**: A cron job (every 60s) queries DB for all in-progress sessions (stateless, no in-memory index — survives daemon restarts) to catch missed terminal states. Scenarios it guards against:
 - SDK event listener detached after hot module reload during development
 - Event callback threw an unhandled exception, preventing state transition
 - Race condition where session reached terminal state between observer setup and first check
@@ -349,8 +350,8 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
 | `complete_task(summary)` | Accept the work, mark task done |
 | `fail_task(reason)` | Task is not achievable |
 | `escalate(reason)` | Flag for human attention (see Escalation Flow) |
-| `read_craft_messages(limit, offset?)` | Read Craft messages from previous iterations for deeper context (e.g., understanding decisions made in earlier turns) |
-| `run_verification(command)` | Run a verification command (e.g., `bun test`, `bun run check`) independently of Craft. Executes in the **Craft session's working directory/worktree**, not the base branch. Trust, but verify. |
+| `read_craft_messages(limit, offset?)` | Read Craft messages from previous iterations for deeper context (e.g., understanding decisions made in earlier turns). Reads Craft session directly (bypasses message queue — intentional, read-only) |
+| `run_verification(command)` | Run a verification command (e.g., `bun test`, `bun run check`) independently of Craft. Executes in the **Craft session's working directory/worktree**, not the base branch. Restricted to commands in the room's `allowed_verification_commands` list (default: `["bun test", "bun run check", "bun run typecheck"]`). Not arbitrary bash. Trust, but verify. |
 
 **System prompt includes**:
 - The goal description this task belongs to
@@ -398,7 +399,7 @@ The Lead Agent is triggered when Room Runtime sends it a user message containing
 
 **Loop termination guards**:
 - `max_feedback_iterations`: default 10 per task. After N `send_to_craft` cycles without `complete_task`/`fail_task`, Runtime auto-escalates to human
-- `task_timeout`: wall-clock timeout per task (default: 30 minutes), counting only **active work time** (`awaiting_craft` + `awaiting_lead` states). Clock is paused during `awaiting_human` and `hibernated` states to avoid conflicting with the escalation SLA (2h). On expiry, Runtime pauses pair and escalates
+- `task_timeout`: wall-clock timeout per task (default: 30 minutes), counting only **active work time** (`awaiting_craft` + `awaiting_lead` states). Clock is paused during `awaiting_human` and `hibernated` states to avoid conflicting with the escalation SLA (2h). Timeout is **soft** — if Craft is mid-tool-call when timeout fires, Runtime waits for the current turn to complete before pausing the pair and escalating. This prevents corrupted state from interrupted file edits or partial operations
 - All thresholds configurable per room
 
 ### Planning as a (Craft, Lead) Pair
@@ -547,7 +548,7 @@ sequenceDiagram
     RT->>RT: Set task status to "escalated"
     RT->>RT: Pause the (Craft, Lead) pair
     RT->>RA: Notify Room Agent with reason
-    RA->>H: Surface notification in chat / UI
+    RA->>H: Surface notification (Room Agent message + UI badge/banner)
     H->>L: Human responds to Lead with guidance
     Note over RT: Lead reviews guidance
     L->>L: Calls send_to_craft(revised_instruction)
@@ -557,9 +558,11 @@ sequenceDiagram
 
 **Task state during escalation**: `escalated` (a sub-state of `in_progress`). The pair is paused — Lead waits for human input, Craft is idle. Human responds **directly to Lead** (since Lead has the review context), and Lead translates guidance into actionable feedback for Craft.
 
+**Escalation notification**: Runtime injects a message into Room Agent's conversation describing the escalation (task name, reason, link to task). The UI surfaces an **escalation badge** on the room and the specific task. Push notifications are out of scope for MVP.
+
 **Queued messages on escalation**: When Lead calls `escalate()`, any human messages that were queued during Lead's review are **delivered to Lead** along with the escalation context. This way the human's earlier input isn't lost — Lead sees both the escalation reason and any human messages that arrived during review.
 
-**Escalation SLA**: If an escalated task receives no human response within a configurable timeout (default: 2 hours), Runtime transitions the pair to `hibernated` state — sessions are preserved in DB but not actively observed. This prevents blocking the task queue indefinitely. When the human eventually responds, Runtime reactivates the pair and resumes the flow. If the room has other pending tasks, Runtime can proceed with those while the escalated task hibernates.
+**Escalation SLA**: If an escalated task receives no human response within a configurable timeout (default: 2 hours), Runtime transitions the pair to `hibernated` state — sessions are preserved in DB but not actively observed. This prevents blocking the task queue indefinitely. When the human eventually responds, the human message is stored in the message queue, triggering a tick. The tick loop checks for pending messages on hibernated pairs — if found, it reactivates the pair (transitions to `awaiting_lead`), delivers the message to Lead, and resumes normal flow. If the room has other pending tasks, Runtime can proceed with those while the escalated task hibernates.
 
 ### Goal Completion
 
@@ -615,6 +618,7 @@ This is a **prerequisite component** that should be designed and implemented bef
 
 - `maxConcurrentPairs`: configurable per room (default: 1 for MVP)
 - Runtime only spawns (Craft, Lead) pairs when below capacity
+- **`awaiting_human` and `hibernated` pairs do NOT count** toward the concurrency limit — they're idle and blocking them would stall the queue for up to 2h. Only `awaiting_craft` and `awaiting_lead` pairs count as active
 - Each tick checks capacity before spawning — pending tasks wait without wasted ticks
 - Tasks execute sequentially (MVP)
 
@@ -631,6 +635,9 @@ ALTER TABLE tasks ADD COLUMN depends_on TEXT;
 ALTER TABLE tasks ADD COLUMN created_by_task_id TEXT;
     -- References the planning task that created this task (for draft scoping)
 
+-- Goals: add planning_attempts counter (existing table, new column)
+ALTER TABLE goals ADD COLUMN planning_attempts INTEGER NOT NULL DEFAULT 0;
+
 -- Task pairs: tracks the (Craft, Lead) sessions for each task
 CREATE TABLE task_pairs (
     id TEXT PRIMARY KEY,
@@ -641,7 +648,10 @@ CREATE TABLE task_pairs (
         -- awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
     last_forwarded_message_id TEXT,  -- turn boundary marker
     feedback_iteration INTEGER NOT NULL DEFAULT 0,
-    version INTEGER NOT NULL DEFAULT 0,  -- optimistic locking
+    active_work_started_at INTEGER,  -- tracks active work time for soft timeout
+    active_work_elapsed INTEGER NOT NULL DEFAULT 0,  -- accumulated ms in awaiting_craft + awaiting_lead
+    hibernated_at INTEGER,  -- when pair entered hibernated state (for SLA tracking)
+    version INTEGER NOT NULL DEFAULT 0,  -- optimistic locking (Room Agent tools only; Runtime is sole writer of pair state)
     created_at INTEGER NOT NULL,
     completed_at INTEGER
 );
@@ -739,6 +749,16 @@ CREATE TABLE task_messages (
 45. **Human interrupt goes to `awaiting_lead`**: Interrupt is delivered to Lead after its current turn, keeping pair in `awaiting_lead` (not `awaiting_human`) because the interrupt IS the human's input.
 46. **Lead `AskUserQuestion` transitions to `awaiting_human`**: Lead's questions route to human, pair pauses. Human responds → pair returns to `awaiting_lead`. Same SLA timeout as escalation.
 47. **Delivery idempotency via markers**: Craft→Lead uses `last_forwarded_message_id` as guard. Lead→Craft delivery within single-flight tick transaction. `processing` queue state deferred to parallel mode.
+48. **Hibernation reactivation via message queue**: Human messages to hibernated pairs are stored in queue, tick detects pending messages and reactivates the pair.
+49. **`run_verification` restricted to allowlist**: Commands scoped to room's `allowed_verification_commands` config (default: test/lint). Not arbitrary bash.
+50. **Soft task timeout**: Waits for current tool call to complete before pausing. Prevents corrupted state from interrupted operations.
+51. **`awaiting_human`/`hibernated` don't count toward concurrency**: Idle pairs free the concurrency slot immediately, preventing 2h queue blocking on escalation.
+52. **Goal `needs_human` recovery**: Human marks goal `active` via Room Agent → resets `planning_attempts` to 0 → Runtime re-plans on next tick.
+53. **Draft promotion is atomic**: Single DB transaction for promoting drafts on approval or cleaning up drafts on failure.
+54. **Human interrupt is "pause and inject"**: Lead retains full session context. Interrupt delivered as additional user message after Lead's current turn.
+55. **Runtime is sole writer of pair state**: No optimistic locking needed on `task_pairs`. `version` field exists for Room Agent tool coordination only.
+56. **Cron safety net is stateless**: Queries DB directly, no in-memory index. Survives daemon restarts.
+57. **Escalation notification via Room Agent + UI badge**: Runtime injects message into Room Agent conversation. UI shows escalation badge on room and task. Push notifications out of scope for MVP.
 
 ## Open Questions (For Future Iterations)
 
