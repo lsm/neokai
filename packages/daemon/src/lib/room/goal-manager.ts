@@ -4,7 +4,7 @@
  * Handles:
  * - Creating goals
  * - Listing and filtering goals
- * - Status transitions (pending -> in_progress -> completed/blocked)
+ * - Status transitions (active -> completed/needs_human/archived)
  * - Linking tasks to goals
  * - Progress aggregation from linked tasks
  */
@@ -141,13 +141,6 @@ export class GoalManager {
 	}
 
 	/**
-	 * Start goal (mark as in_progress)
-	 */
-	async startGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'in_progress');
-	}
-
-	/**
 	 * Complete goal
 	 */
 	async completeGoal(goalId: string): Promise<RoomGoal> {
@@ -157,17 +150,24 @@ export class GoalManager {
 	}
 
 	/**
-	 * Block goal
+	 * Mark goal as needing human input
 	 */
-	async blockGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'blocked');
+	async needsHumanGoal(goalId: string): Promise<RoomGoal> {
+		return this.updateGoalStatus(goalId, 'needs_human');
 	}
 
 	/**
-	 * Unblock goal (return to pending)
+	 * Reactivate goal (return to active)
 	 */
-	async unblockGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'pending');
+	async reactivateGoal(goalId: string): Promise<RoomGoal> {
+		return this.updateGoalStatus(goalId, 'active');
+	}
+
+	/**
+	 * Archive goal
+	 */
+	async archiveGoal(goalId: string): Promise<RoomGoal> {
+		return this.updateGoalStatus(goalId, 'archived');
 	}
 
 	/**
@@ -311,11 +311,11 @@ export class GoalManager {
 	}
 
 	/**
-	 * Get all active goals (pending or in_progress)
+	 * Get all active goals (active or needs_human)
 	 */
 	async getActiveGoals(): Promise<RoomGoal[]> {
 		const goals = await this.listGoals();
-		return goals.filter((g) => g.status === 'pending' || g.status === 'in_progress');
+		return goals.filter((g) => g.status === 'active' || g.status === 'needs_human');
 	}
 
 	/**
@@ -342,10 +342,10 @@ export class GoalManager {
 			return a.createdAt - b.createdAt; // Older first if same priority
 		});
 
-		// Prefer in_progress goals, then pending
-		const inProgressGoals = activeGoals.filter((g) => g.status === 'in_progress');
-		if (inProgressGoals.length > 0) {
-			return inProgressGoals[0];
+		// Prefer 'active' goals over 'needs_human' (which are blocked on human input)
+		const readyGoals = activeGoals.filter((g) => g.status === 'active');
+		if (readyGoals.length > 0) {
+			return readyGoals[0];
 		}
 
 		return activeGoals[0];

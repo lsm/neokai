@@ -43,7 +43,7 @@ export function createTables(db: BunDatabase): void {
         parent_id TEXT,
         labels TEXT,
         sub_session_order INTEGER DEFAULT 0,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'manager', 'room_chat', 'room_self', 'lobby')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')),
         session_context TEXT
       )
     `);
@@ -143,28 +143,8 @@ export function createTables(db: BunDatabase): void {
         allowed_models TEXT DEFAULT '[]',
         session_ids TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
-        context_id TEXT,
-        context_version INTEGER DEFAULT 1,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
-      )
-    `);
-
-	// Memories table - persistent memory storage
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS memories (
-        id TEXT PRIMARY KEY,
-        room_id TEXT NOT NULL,
-        type TEXT NOT NULL CHECK(type IN ('conversation', 'task_result', 'preference', 'pattern', 'note')),
-        content TEXT NOT NULL,
-        tags TEXT DEFAULT '[]',
-        importance TEXT NOT NULL DEFAULT 'normal' CHECK(importance IN ('low', 'normal', 'high')),
-        session_id TEXT,
-        task_id TEXT,
-        created_at INTEGER NOT NULL,
-        last_accessed_at INTEGER NOT NULL,
-        access_count INTEGER DEFAULT 0,
-        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
 
@@ -176,7 +156,7 @@ export function createTables(db: BunDatabase): void {
         title TEXT NOT NULL,
         description TEXT NOT NULL,
         session_id TEXT,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'escalated', 'completed', 'failed')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -187,35 +167,6 @@ export function createTables(db: BunDatabase): void {
         started_at INTEGER,
         completed_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-      )
-    `);
-
-	// Contexts table - conversation history per room
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS contexts (
-        id TEXT PRIMARY KEY,
-        room_id TEXT NOT NULL UNIQUE,
-        total_tokens INTEGER DEFAULT 0,
-        last_compacted_at INTEGER,
-        status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'thinking', 'waiting_for_input')),
-        current_task_id TEXT,
-        current_session_id TEXT,
-        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-      )
-    `);
-
-	// Context messages table
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS context_messages (
-        id TEXT PRIMARY KEY,
-        context_id TEXT NOT NULL,
-        role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
-        content TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        token_count INTEGER NOT NULL,
-        session_id TEXT,
-        task_id TEXT,
-        FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
       )
     `);
 
@@ -276,13 +227,8 @@ function createIndexes(db: BunDatabase): void {
       ON sdk_messages(session_id, send_status)`);
 
 	// Room indexes
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(room_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_context_messages_context ON context_messages(context_id)`
-	);
 
 	// GitHub integration indexes
 	db.exec(

@@ -47,7 +47,7 @@ export class GoalRepository {
 			params.roomId,
 			params.title,
 			params.description ?? '',
-			'pending',
+			'active',
 			params.priority ?? 'normal',
 			0,
 			'[]',
@@ -194,7 +194,7 @@ export class GoalRepository {
 	 */
 	getActiveGoalCount(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM goals WHERE room_id = ? AND status IN ('pending', 'in_progress')`
+			`SELECT COUNT(*) as count FROM goals WHERE room_id = ? AND status IN ('active', 'needs_human')`
 		);
 		const row = stmt.get(roomId) as { count: number } | undefined;
 		return row?.count ?? 0;

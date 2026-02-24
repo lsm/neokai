@@ -34,10 +34,10 @@ export type GoalManagerLike = Pick<
 	| 'updateGoalStatus'
 	| 'updateGoalProgress'
 	| 'updateGoalPriority'
-	| 'startGoal'
 	| 'completeGoal'
-	| 'blockGoal'
-	| 'unblockGoal'
+	| 'needsHumanGoal'
+	| 'reactivateGoal'
+	| 'archiveGoal'
 	| 'linkTaskToGoal'
 	| 'unlinkTaskFromGoal'
 	| 'deleteGoal'
@@ -263,26 +263,6 @@ export function setupGoalHandlers(
 		return { goal };
 	});
 
-	// goal.start - Start a goal (mark as in_progress)
-	messageHub.onRequest('goal.start', async (data) => {
-		const params = data as { roomId: string; goalId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.startGoal(params.goalId);
-
-		// Emit goal.updated event (status change from pending to in_progress)
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-
-		return { goal };
-	});
-
 	// goal.complete - Complete a goal
 	messageHub.onRequest('goal.complete', async (data) => {
 		const params = data as { roomId: string; goalId: string };
@@ -303,8 +283,8 @@ export function setupGoalHandlers(
 		return { goal };
 	});
 
-	// goal.block - Block a goal
-	messageHub.onRequest('goal.block', async (data) => {
+	// goal.needsHuman - Mark goal as needing human input
+	messageHub.onRequest('goal.needsHuman', async (data) => {
 		const params = data as { roomId: string; goalId: string };
 
 		if (!params.roomId) {
@@ -315,16 +295,15 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.blockGoal(params.goalId);
+		const goal = await goalManager.needsHumanGoal(params.goalId);
 
-		// Emit goal.updated event (status change to blocked)
 		emitGoalUpdated(params.roomId, params.goalId, goal);
 
 		return { goal };
 	});
 
-	// goal.unblock - Unblock a goal (return to pending)
-	messageHub.onRequest('goal.unblock', async (data) => {
+	// goal.reactivate - Reactivate a goal (return to active)
+	messageHub.onRequest('goal.reactivate', async (data) => {
 		const params = data as { roomId: string; goalId: string };
 
 		if (!params.roomId) {
@@ -335,9 +314,27 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.unblockGoal(params.goalId);
+		const goal = await goalManager.reactivateGoal(params.goalId);
 
-		// Emit goal.updated event (status change from blocked to pending)
+		emitGoalUpdated(params.roomId, params.goalId, goal);
+
+		return { goal };
+	});
+
+	// goal.archive - Archive a goal
+	messageHub.onRequest('goal.archive', async (data) => {
+		const params = data as { roomId: string; goalId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.goalId) {
+			throw new Error('Goal ID is required');
+		}
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.archiveGoal(params.goalId);
+
 		emitGoalUpdated(params.roomId, params.goalId, goal);
 
 		return { goal };

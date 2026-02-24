@@ -25,31 +25,19 @@ import { registerSettingsHandlers } from './settings-handlers';
 import { setupConfigHandlers } from './config-handlers';
 import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
-import { RoomManager, WorkerManager } from '../room';
+import { RoomManager } from '../room';
 // New split handlers for Neo functionality
 import { setupRoomHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
-import { setupMemoryHandlers } from './memory-handlers';
-import { setupRoomMessageHandlers } from './room-message-handlers';
 import { setupLobbyHandlers } from './lobby-handlers';
 import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
-// New handlers for goals, jobs, and room agents
-import { setupGoalHandlers } from './goal-handlers';
-import { setupRecurringJobHandlers } from './recurring-job-handlers';
+// New handlers for goals
+import { setupGoalHandlers, type GoalManagerFactory } from './goal-handlers';
 import { createGitHubAdapter } from '../lobby/adapters/github-adapter';
 import { LobbyAgentService } from '../lobby/lobby-agent-service';
 import { Logger } from '../logger';
-import {
-	setupRoomSelfHandlers,
-	RoomSelfManager,
-	type TaskManagerFactory,
-	type GoalManagerFactory,
-} from './room-self-handlers';
 import { GoalManager } from '../room/goal-manager';
-import { RecurringJobScheduler } from '../room/recurring-job-scheduler';
-import { TaskManager } from '../room/task-manager';
-import { PromptTemplateManager } from '../prompts/prompt-template-manager';
 import { setupDialogHandlers } from './dialog-handlers';
 // PHASE 3: Telemetry and feature flags
 import { registerTelemetryHandlers } from './telemetry-handlers';
@@ -84,46 +72,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Room handlers (create roomManager first as session handlers depend on it)
 	const roomManager = new RoomManager(deps.db.getDatabase());
 
-	// PHASE 4: Create WorkerManager for manager-less architecture
-	const workerManager = new WorkerManager(
-		deps.db.getDatabase(),
-		deps.daemonHub,
-		deps.sessionManager.getSessionLifecycle(),
-		roomManager
-	);
-
-	// Create factory functions for per-room managers
-	const taskManagerFactory: TaskManagerFactory = (roomId: string): TaskManager => {
-		return new TaskManager(deps.db.getDatabase(), roomId);
-	};
-
-	const goalManagerFactory: GoalManagerFactory = (roomId: string): GoalManager => {
+	// Create factory function for per-room goal managers
+	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
 		return new GoalManager(deps.db.getDatabase(), roomId, deps.daemonHub);
 	};
-
-	// Create RecurringJobScheduler singleton
-	const recurringJobScheduler = new RecurringJobScheduler(deps.db.getDatabase(), deps.daemonHub);
-	recurringJobScheduler.start();
-
-	// Create PromptTemplateManager singleton
-	const promptTemplateManager = new PromptTemplateManager(deps.db.getDatabase(), deps.daemonHub);
-
-	// Create RoomSelfManager to track active room agents
-	const roomSelfManager = new RoomSelfManager({
-		db: deps.db,
-		daemonHub: deps.daemonHub,
-		messageHub: deps.messageHub,
-		roomManager,
-		workerManager, // PHASE 4: Use WorkerManager instead of SessionPairManager
-		taskManagerFactory,
-		goalManagerFactory,
-		scheduler: recurringJobScheduler,
-		getApiKey: () => deps.authManager.getCurrentApiKey(),
-		promptTemplateManager,
-		settingsManager: deps.settingsManager,
-		workspaceRoot: deps.config.workspaceRoot,
-		sessionManager: deps.sessionManager,
-	});
 
 	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager);
@@ -143,27 +95,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.messageHub,
 		roomManager,
 		deps.daemonHub,
-		workerManager, // PHASE 4: Use WorkerManager
-		roomSelfManager,
 		deps.config.workspaceRoot,
-		deps.sessionManager,
-		deps.db
+		deps.sessionManager
 	);
 	setupTaskHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
-	setupMemoryHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
-	setupRoomMessageHandlers(deps.messageHub, roomManager, deps.daemonHub, deps.db);
 
 	// Goal handlers
 	setupGoalHandlers(deps.messageHub, deps.daemonHub, goalManagerFactory);
-
-	// Recurring job handlers
-	setupRecurringJobHandlers(deps.messageHub, deps.daemonHub, recurringJobScheduler);
-
-	// Room agent handlers
-	setupRoomSelfHandlers(deps.messageHub, deps.daemonHub, roomSelfManager);
-	roomSelfManager.startAgentsWithRunIntent().catch((error) => {
-		log.error('Failed to autostart room agents from persisted run intent:', error);
-	});
 
 	// Create LobbyAgentService if authenticated
 	let lobbyAgentService: LobbyAgentService | undefined = deps.lobbyAgentService;
@@ -241,10 +179,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Return cleanup function to stop background services
 	return () => {
-		recurringJobScheduler.stop();
-		roomSelfManager.stopAll().catch((error) => {
-			log.warn('Failed to stop room self agents during RPC cleanup:', error);
-		});
 		// TODO: Cleanup telemetry services if needed
 	};
 }
