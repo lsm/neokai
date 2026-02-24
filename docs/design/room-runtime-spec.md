@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.18
+Status: Draft v0.19
 Date: 2026-02-23
 
 ## Context
@@ -283,7 +283,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
   - `send_to_craft()` → deliver queued human messages to Craft after Lead's feedback
   - `complete_task()` / `fail_task()` → surface queued messages to Room Agent as "FYI: human said X but task already completed/failed"
   - `escalate()` → deliver to Lead along with escalation context (already specified)
-- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message is **queued and delivered to Lead after its current turn completes**, transitioning the pair to `awaiting_lead` (not `awaiting_human`, because the interrupt IS the human's input — Lead must now act on it). This is a "pause and inject" — Lead retains its full session context and the interrupt is delivered as an additional user message. Lead must re-evaluate with the interrupt context before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel. **Interrupt precedence**: The Lead tool execution guard (see Lead tool contract) checks for queued interrupts before executing any Lead terminal tool. If an interrupt is queued when Lead calls `complete_task()`/`fail_task()`, the tool call is deferred, the interrupt is delivered to Lead, and Lead re-evaluates. This ensures interrupts take precedence over in-flight terminal actions — the human's redirect intent is respected before acceptance/rejection. Only if the task was already cancelled/completed via Room Agent's urgent controls (which bypass the queue entirely) does the interrupt fall through to FYI delivery.
+- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message is **queued and delivered to Lead after its current turn completes**, transitioning the pair to `awaiting_lead` (not `awaiting_human`, because the interrupt IS the human's input — Lead must now act on it). This is a "pause and inject" — Lead retains its full session context and the interrupt is delivered as an additional user message. Lead must re-evaluate with the interrupt context before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel. **Interrupt precedence**: The Lead tool execution guard (see Lead tool contract) checks for queued interrupts before executing any Lead terminal tool. If an interrupt is queued when Lead calls `complete_task()`/`fail_task()`, the tool call is **rejected with reason** (tool result: "Tool rejected — human interrupt received. Please re-evaluate with the new context before calling a terminal tool."), then the interrupt is delivered to Lead as a follow-up user message, and Lead re-evaluates. Note: this is not pause-and-resume — the SDK has already emitted the tool call, so the implementation intercepts in the tool execution handler and returns a rejection result. This ensures interrupts take precedence over in-flight terminal actions — the human's redirect intent is respected before acceptance/rejection. Only if the task was already cancelled/completed via Room Agent's urgent controls (which bypass the queue entirely) does the interrupt fall through to FYI delivery.
 - **Urgent control actions** (`cancel_task`, `pause runtime`) bypass the message queue and execute immediately via Room Agent tools, even if Lead is mid-review
 
 **State**: `running` | `paused`. That's it.
@@ -613,7 +613,8 @@ Runtime state is **reconstructed from DB on startup**. No in-memory-only state.
    - **Pair `awaiting_human`**: No action needed — pair is waiting for human input, just register for human message events
    - **Pair `hibernated`**: No action needed — pair is preserved but not actively observed, just register for human reactivation
    - **Session gone** (process crashed): Mark task as `failed` with reason `session_lost`
-3. Runtime resumes `running` state and continues normal tick loop
+3. **Active work time recovery**: For pairs in `awaiting_craft`/`awaiting_lead`, `active_work_started_at` was set before the crash but the elapsed time was never accumulated into `active_work_elapsed` (no state transition occurred). Computing `now - active_work_started_at` would count crash downtime as work time. **MVP approach**: reset `active_work_started_at = now()` on recovery — crash time is not counted as active work. If precision matters later, Recovery can estimate crash duration from the daemon's last audit log entry
+4. Runtime resumes `running` state and continues normal tick loop
 
 **Message queue recovery**: On restart, Runtime scans `task_messages` for entries with `status = 'pending'` and reprocesses them in `created_at` order. Since messages are scoped to `pair_id` + `to_session_id`, only messages for still-active pairs are delivered. Messages targeting sessions that no longer exist are marked `dead_letter`.
 
@@ -697,6 +698,10 @@ CREATE TABLE task_messages (
     from_role TEXT NOT NULL,       -- 'craft' | 'lead' | 'human'
     to_role TEXT NOT NULL,         -- 'craft' | 'lead'
     to_session_id TEXT NOT NULL,   -- target session (prevents misdelivery on retry)
+    message_type TEXT NOT NULL DEFAULT 'normal',  -- 'normal' | 'interrupt' | 'escalation_context'
+        -- Enables efficient queue scanning without JSON parsing:
+        -- 'interrupt' messages checked by Lead tool execution guard before terminal tools
+        -- 'escalation_context' bundled with escalation delivery to Lead
     payload TEXT NOT NULL,         -- JSON message content
     status TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | dead_letter
     created_at INTEGER NOT NULL,
@@ -759,92 +764,118 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 
 ## Design Decisions (Resolved)
 
-1. **Task execution**: Sequential only. One (Craft, Lead) pair at a time (MVP).
-2. **Review policy**: Every Craft Agent terminal state triggers Lead Agent review via Runtime.
-3. **Planning is a task**: Not a special actor. Planning creates a (Craft, Lead) pair like any other task.
+*Grouped by category for navigability. Original decision numbers preserved for cross-references.*
+
+### Core Architecture & Agents
 4. **All agents are AgentSessions**: Room Agent, Craft, Lead all reuse existing session infrastructure. All conversations persisted.
 5. **Craft Agents have no completion-signaling tools**: They just work and reach terminal state. Activity-specific tools (e.g., `create_task` for planning) are allowed.
-6. **Lead Agent tools route through Runtime**: `send_to_craft`, `complete_task`, etc. all go through Runtime for consistent routing, tracking, and guard rails.
+11. **Naming**: Craft Agent (does the work) + Lead Agent (reviews and directs).
+18. **Model selection**: Use room default model for both Craft and Lead (configurable later).
+20. **Explicit pair state machine**: Pairs have 6 states (`awaiting_craft`, `awaiting_lead`, `awaiting_human`, `hibernated`, `completed`, `failed`) for deterministic recovery.
+34. **Room Agent is on-demand**: "Always available" means session exists in DB, not persistently-running LLM. Only costs tokens when human chats.
+36. **Task type determines agent behavior**: `task_type` field on tasks determines Craft's tool set and Lead's activity-specific review prompt.
+58. **Craft Agent system prompt defined**: Includes task description, goal context, room instructions, and previous task summaries. Does NOT include Lead awareness — Craft focuses on quality, not gaming approval.
+59. **Cross-task context in Craft prompt**: Previous completed task summaries included in Craft's system prompt for tasks within same goal. Promoted from open question to MVP decision.
+
+### Scheduling & Task Selection
+1. **Task execution**: Sequential only. One (Craft, Lead) pair at a time (MVP).
+19. **Tick idempotency**: Single-flight mutex prevents concurrent ticks from double-spawning or double-delivering.
+51. **`awaiting_human`/`hibernated` don't count toward concurrency**: Idle pairs free the concurrency slot immediately, preventing 2h queue blocking on escalation.
+60. **Task selection ordering**: By `priority` descending (higher = more important), then `created_at` ascending (oldest first). Applies across goals.
+77. **Task selection deterministic tiebreaker**: priority DESC → created_at ASC → id ASC. Handles same-tick creation.
+81. **Counter increment on spawn**: `planning_attempts` and `goal_review_attempts` increment when pair is spawned (counts attempts, not outcomes). `feedback_iteration` increments on each `send_to_craft`.
+83. **Scheduler precedence: goal review before re-planning**: Tick evaluates goal review first. If all tasks `completed` → goal review. Planning only triggers when goal has zero tasks or at least one `failed` task. Prevents ambiguous overlap.
+
+### Craft→Lead Loop & Message Routing
+2. **Review policy**: Every Craft Agent terminal state triggers Lead Agent review via Runtime.
 7. **Runtime collects all messages from Craft's last turn**: When Craft reaches terminal state, Runtime collects all assistant messages since the last user message and sends to Lead.
 8. **Lead session created once, reused**: Lead Agent is created when the task starts and reused across all feedback iterations, maintaining full review context.
-9. **Human interface**: Room Agent is always-on department head. Humans can also join any task's group chat.
-10. **Task Chat View**: (Craft, Lead) pair rendered as unified conversation with sub-agent blocks per turn.
-11. **Naming**: Craft Agent (does the work) + Lead Agent (reviews and directs).
 12. **AskUserQuestion routes to Lead first**: When Craft asks a question, Runtime sends it to Lead. Lead can answer or escalate to human.
 13. **Human messages queued during Lead review**: Prevents race conditions. Messages delivered after Lead's current review cycle.
+22. **Turn boundary tracking**: `last_forwarded_message_id` on task pairs prevents duplicate/skipped reviews.
+37. **Human interventions forwarded to Lead**: When human sends messages to Craft during an iteration, those messages are included in the Craft→Lead forwarding so Lead understands context changes.
+39. **Structured Craft→Lead message format**: Runtime sends structured envelope with iteration number, task description, tool call summary, terminal state, and human interventions.
+40. **Structured compaction**: Lead compaction preserves feedback→resolution pairs, not generic summaries.
+64. **Draft tasks in planning review**: Structured Craft→Lead message includes `Draft tasks created` list so Lead reviews actual DB tasks, not just narrative.
+
+### Lead Agent Contract & Tools
+6. **Lead Agent tools route through Runtime**: `send_to_craft`, `complete_task`, etc. all go through Runtime for consistent routing, tracking, and guard rails.
+21. **Lead tool contract**: Exactly one terminal tool per turn. Invalid responses get one retry with system nudge, then escalate.
+30. **Lead verification tool**: Lead can independently run verification commands (`run_verification`) to confirm tests/linting pass before accepting.
+31. **Lead answer policy**: Lead may answer Craft's architectural/technical questions but must escalate secrets, credentials, permissions, and subjective preferences.
+49. **`run_verification` restricted to allowlist**: Commands scoped to room's `allowed_verification_commands` config (default: test/lint). Not arbitrary bash.
+69. **Verification consecutive failure escalation**: If same verification check fails 3 times consecutively, Lead must escalate instead of continuing feedback loop.
+78. **Lead tool execution guard**: Before executing any Lead tool, Runtime validates pair_state, task version, and checks for queued interrupts. Stale calls rejected, interrupts take precedence over terminal actions.
+87. **Interrupt tool rejection semantics**: "Deferred" means tool call is rejected with a reason result ("human interrupt received, re-evaluate"), then the interrupt is delivered as a follow-up user message. This is standard SDK tool rejection, not pause-and-resume.
+
+### Planning & Goal Lifecycle
+3. **Planning is a task**: Not a special actor. Planning creates a (Craft, Lead) pair like any other task.
 14. **Goal completion triggers review**: When all tasks done, Runtime spawns a goal-review (Craft, Lead) pair to verify the goal is truly met.
+26. **Goal review cap**: Max 2 goal review cycles, then `needs_human`.
+27. **Planning attempt cap**: Max 3 planning attempts per goal before `needs_human`.
+35. **Planning tasks created as `draft`**: Tasks created by planning Craft are `draft` until Lead approves the plan, then promoted to `pending`. Prevents unapproved tasks from executing.
+41. **Planning trigger includes all non-terminal states**: Re-planning only triggers when goal has no `pending`/`in_progress`/`draft`/`escalated` tasks. Prevents duplicate planning when tasks are escalated or drafts linger.
+42. **Draft tasks scoped to planning task**: `created_by_task_id` links drafts to the planning task that created them. Only matching drafts are promoted on approval. Failed planning cleans up its drafts.
+52. **Goal `needs_human` recovery**: Human marks goal `active` via Room Agent → resets `planning_attempts` to 0 → Runtime re-plans on next tick.
+53. **Draft promotion is atomic**: Single DB transaction for promoting drafts on approval or cleaning up drafts on failure.
+62. **Goal `archived` state**: Human-initiated, hides from active views. Active tasks cancelled on archive. Can be restored to `active`.
+76. **Goal archive is hard cancel**: Immediate abort of active tasks — no soft wait. Human-intentional action.
+
+### Human Intervention & Interrupts
+9. **Human interface**: Room Agent is always-on department head. Humans can also join any task's group chat.
+10. **Task Chat View**: (Craft, Lead) pair rendered as unified conversation with sub-agent blocks per turn.
+28. **Urgent controls bypass queue**: `cancel_task`, `pause runtime` execute immediately, not queued.
+29. **Lead questions route to human**: Lead Agent's `AskUserQuestion` goes directly to human (no higher review layer).
+32. **Human interrupt**: Human can interrupt Lead mid-review for redirect messages (not just cancel). Delivered after Lead's turn completes, pair stays in `awaiting_lead`. Interrupt takes precedence over in-flight terminal tools via the Lead tool execution guard.
+45. **Human interrupt goes to `awaiting_lead`**: Interrupt is delivered to Lead after its current turn, keeping pair in `awaiting_lead` (not `awaiting_human`) because the interrupt IS the human's input.
+46. **Lead `AskUserQuestion` transitions to `awaiting_human`**: Lead's questions route to human, pair pauses. Human responds → pair returns to `awaiting_lead`. Same SLA timeout as escalation.
+54. **Human interrupt is "pause and inject"**: Lead retains full session context. Interrupt delivered as additional user message after Lead's current turn.
+61. **`cancel_task` cleanup**: Abort Craft session, record modified files in failure metadata, surface partial changes to human.
+67. **Interrupt race with completion**: If Lead completes/fails task before interrupt is delivered, interrupt is surfaced to Room Agent as FYI. Room Agent can `retry_task` if rework is warranted.
+79. **`cancel_task` is full pair teardown**: Aborts both Craft and Lead sessions, transitions pair to `failed`, dead-letters queued messages, records partial changes.
+84. **`retry_task` full old-pair teardown**: Same teardown as `cancel_task` (abort both sessions, fail pair, dead-letter messages, record state) before creating new pair. No orphaned sessions or stale messages.
+
+### Recovery & Resilience
 15. **Recovery from DB**: Runtime is stateless and reconstructable. All state lives in DB. On restart, Runtime queries all non-terminal tasks (`in_progress`, `escalated`) and re-attaches.
 16. **DB-backed message queue**: Prerequisite for reliable inter-agent message delivery.
 17. **Session idle detection**: SDK terminal states (Result/Error/AskQuestion) + cron job safety net every 60s.
-18. **Model selection**: Use room default model for both Craft and Lead (configurable later).
-19. **Tick idempotency**: Single-flight mutex prevents concurrent ticks from double-spawning or double-delivering.
-20. **Explicit pair state machine**: Pairs have 6 states (`awaiting_craft`, `awaiting_lead`, `awaiting_human`, `hibernated`, `completed`, `failed`) for deterministic recovery.
-21. **Lead tool contract**: Exactly one terminal tool per turn. Invalid responses get one retry with system nudge, then escalate.
-22. **Turn boundary tracking**: `last_forwarded_message_id` on task pairs prevents duplicate/skipped reviews.
-23. **Loop termination**: `max_feedback_iterations` (10), wall-clock timeout (30min). All configurable.
 24. **Non-idempotent recovery**: Lost sessions mark task `failed` without auto-retry. Human must acknowledge.
-25. **Optimistic locking**: Room Agent tools check `task.version` to prevent races with Runtime state transitions.
-26. **Goal review cap**: Max 2 goal review cycles, then `needs_human`.
-27. **Planning attempt cap**: Max 3 planning attempts per goal before `needs_human`.
-28. **Urgent controls bypass queue**: `cancel_task`, `pause runtime` execute immediately, not queued.
-29. **Lead questions route to human**: Lead Agent's `AskUserQuestion` goes directly to human (no higher review layer).
-30. **Lead verification tool**: Lead can independently run verification commands (`run_verification`) to confirm tests/linting pass before accepting.
-31. **Lead answer policy**: Lead may answer Craft's architectural/technical questions but must escalate secrets, credentials, permissions, and subjective preferences.
-32. **Human interrupt**: Human can interrupt Lead mid-review for redirect messages (not just cancel). Delivered after Lead's turn completes, pair stays in `awaiting_lead`. Interrupt takes precedence over in-flight terminal tools via the Lead tool execution guard.
-33. **Escalation SLA**: Unresponded escalations hibernate after 2h (configurable). Pair preserved, not observed. Unblocks task queue.
-34. **Room Agent is on-demand**: "Always available" means session exists in DB, not persistently-running LLM. Only costs tokens when human chats.
-35. **Planning tasks created as `draft`**: Tasks created by planning Craft are `draft` until Lead approves the plan, then promoted to `pending`. Prevents unapproved tasks from executing.
-36. **Task type determines agent behavior**: `task_type` field on tasks determines Craft's tool set and Lead's activity-specific review prompt.
-37. **Human interventions forwarded to Lead**: When human sends messages to Craft during an iteration, those messages are included in the Craft→Lead forwarding so Lead understands context changes.
 38. **Lead failure recovery**: Re-send pending output to same Lead. After 3 consecutive failures, replace Lead session with summary. After replacement also fails, escalate.
-39. **Structured Craft→Lead message format**: Runtime sends structured envelope with iteration number, task description, tool call summary, terminal state, and human interventions.
-40. **Structured compaction**: Lead compaction preserves feedback→resolution pairs, not generic summaries.
-41. **Planning trigger includes all non-terminal states**: Re-planning only triggers when goal has no `pending`/`in_progress`/`draft`/`escalated` tasks. Prevents duplicate planning when tasks are escalated or drafts linger.
-42. **Draft tasks scoped to planning task**: `created_by_task_id` links drafts to the planning task that created them. Only matching drafts are promoted on approval. Failed planning cleans up its drafts.
 43. **Recovery includes all non-terminal tasks**: Startup queries `in_progress` AND `escalated` tasks, handles all pair states including `awaiting_human` and `hibernated`.
-44. **Task timeout pauses during human waits**: `task_timeout` only counts active work time (`awaiting_craft` + `awaiting_lead`). Clock pauses during `awaiting_human`/`hibernated` to avoid conflicting with escalation SLA.
-45. **Human interrupt goes to `awaiting_lead`**: Interrupt is delivered to Lead after its current turn, keeping pair in `awaiting_lead` (not `awaiting_human`) because the interrupt IS the human's input.
-46. **Lead `AskUserQuestion` transitions to `awaiting_human`**: Lead's questions route to human, pair pauses. Human responds → pair returns to `awaiting_lead`. Same SLA timeout as escalation.
 47. **Delivery idempotency via markers**: Craft→Lead uses `last_forwarded_message_id` as guard. Lead→Craft uses `task_messages.status` — only `pending` messages injected, then marked `delivered`. AgentSession injection is an external side effect (not atomically committed with SQLite), so crash-window duplicates are accepted as benign. `processing` queue state deferred to parallel mode.
 48. **Hibernation reactivation via message queue**: Human messages to hibernated pairs are stored in queue, tick detects pending messages and reactivates the pair.
-49. **`run_verification` restricted to allowlist**: Commands scoped to room's `allowed_verification_commands` config (default: test/lint). Not arbitrary bash.
-50. **Soft task timeout**: Waits for current tool call to complete before pausing. Prevents corrupted state from interrupted operations.
-51. **`awaiting_human`/`hibernated` don't count toward concurrency**: Idle pairs free the concurrency slot immediately, preventing 2h queue blocking on escalation.
-52. **Goal `needs_human` recovery**: Human marks goal `active` via Room Agent → resets `planning_attempts` to 0 → Runtime re-plans on next tick.
-53. **Draft promotion is atomic**: Single DB transaction for promoting drafts on approval or cleaning up drafts on failure.
-54. **Human interrupt is "pause and inject"**: Lead retains full session context. Interrupt delivered as additional user message after Lead's current turn.
-55. **Runtime is sole writer of pair state**: No optimistic locking needed on `task_pairs`. `version` field exists for Room Agent tool coordination only.
 56. **Cron safety net is stateless**: Queries DB directly, no in-memory index. Survives daemon restarts.
+68. **`retry_task` injects previous attempt context**: New Craft and Lead receive failure reason and summarized prior feedback in system prompt. Prevents repeating mistakes.
+80. **Receiver-side delivery dedupe**: Each message has idempotency key (`task_messages.id`). Runtime checks before injecting into AgentSession. Handles crash window between send and mark-delivered.
+85. **Idempotency uses existing `task_messages.status`**: No separate `delivered_message_ids` tracking needed. Runtime checks `status == 'pending'` before injection, marks `delivered` after. Crash-window duplicates accepted as benign.
+88. **Active work time recovery on restart**: Reset `active_work_started_at = now()` on recovery — crash downtime not counted as active work. Avoids false timeout triggers.
+
+### Timeouts & Loop Termination
+23. **Loop termination**: `max_feedback_iterations` (10), wall-clock timeout (30min). All configurable.
+33. **Escalation SLA**: Unresponded escalations hibernate after 2h (configurable). Pair preserved, not observed. Unblocks task queue.
+44. **Task timeout pauses during human waits**: `task_timeout` only counts active work time (`awaiting_craft` + `awaiting_lead`). Clock pauses during `awaiting_human`/`hibernated` to avoid conflicting with escalation SLA.
+50. **Soft task timeout**: Waits for current tool call to complete before pausing. Prevents corrupted state from interrupted operations.
+72. **Soft timeout requires per-command hard timeout**: Craft's bash tool must enforce a per-command timeout (e.g., 5 min) so hanging commands can't bypass the soft task timeout indefinitely.
+
+### Room Agent & Notifications
 57. **Notification delivery: session injection + UI push**: All Runtime→human notifications use both: (1) inject into Room Agent conversation for persistence, (2) publish via MessageHub for immediate UI badge/toast. Push notifications out of scope for MVP.
-58. **Craft Agent system prompt defined**: Includes task description, goal context, room instructions, and previous task summaries. Does NOT include Lead awareness — Craft focuses on quality, not gaming approval.
-59. **Cross-task context in Craft prompt**: Previous completed task summaries included in Craft's system prompt for tasks within same goal. Promoted from open question to MVP decision.
-60. **Task selection ordering**: By `priority` descending (higher = more important), then `created_at` ascending (oldest first). Applies across goals.
-61. **`cancel_task` cleanup**: Abort Craft session, record modified files in failure metadata, surface partial changes to human.
-62. **Goal `archived` state**: Human-initiated, hides from active views. Active tasks cancelled on archive. Can be restored to `active`.
+70. **Notification message type**: Dedicated type (not user/assistant/system). Renders distinctly in UI. Included in Room Agent context as read-only — no unprompted response.
+
+### Schema, Versioning & Data
+25. **Optimistic locking**: Room Agent tools check `task.version` to prevent races with Runtime state transitions.
+55. **Runtime is sole writer of pair state**: No optimistic locking needed on `task_pairs`. `version` field exists for Room Agent tool coordination only.
 63. **`version` on tasks table**: Optimistic locking for Room Agent tools modifying task state. Separate from `task_pairs.version`.
-64. **Draft tasks in planning review**: Structured Craft→Lead message includes `Draft tasks created` list so Lead reviews actual DB tasks, not just narrative.
 65. **Audit log**: `room_audit_log` table for tick decisions, pair state changes, message delivery. Essential for debugging.
 66. **Token tracking**: `tokens_used` on task_pairs from day one for cost visibility.
-67. **Interrupt race with completion**: If Lead completes/fails task before interrupt is delivered, interrupt is surfaced to Room Agent as FYI. Room Agent can `retry_task` if rework is warranted.
-68. **`retry_task` injects previous attempt context**: New Craft and Lead receive failure reason and summarized prior feedback in system prompt. Prevents repeating mistakes.
-69. **Verification consecutive failure escalation**: If same verification check fails 3 times consecutively, Lead must escalate instead of continuing feedback loop.
-70. **Notification message type**: Dedicated type (not user/assistant/system). Renders distinctly in UI. Included in Room Agent context as read-only — no unprompted response.
 71. **Version bumping protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment version. Both Runtime and Room Agent tools follow this.
-72. **Soft timeout requires per-command hard timeout**: Craft's bash tool must enforce a per-command timeout (e.g., 5 min) so hanging commands can't bypass the soft task timeout indefinitely.
 73. **Room config stored as JSON column**: `rooms.config` JSON column holds all room-level settings (verification commands, timeouts, caps, concurrency).
 74. **Audit log retention**: 7-day TTL, cleanup job deletes older entries.
 75. **Token tracking per-turn**: `tokens_used` updated after each Craft/Lead turn for accuracy.
-76. **Goal archive is hard cancel**: Immediate abort of active tasks — no soft wait. Human-intentional action.
-77. **Task selection deterministic tiebreaker**: priority DESC → created_at ASC → id ASC. Handles same-tick creation.
-78. **Lead tool execution guard**: Before executing any Lead tool, Runtime validates pair_state, task version, and checks for queued interrupts. Stale calls rejected, interrupts take precedence over terminal actions.
-79. **`cancel_task` is full pair teardown**: Aborts both Craft and Lead sessions, transitions pair to `failed`, dead-letters queued messages, records partial changes.
-80. **Receiver-side delivery dedupe**: Each message has idempotency key (`task_messages.id`). Runtime checks before injecting into AgentSession. Handles crash window between send and mark-delivered.
-81. **Counter increment on spawn**: `planning_attempts` and `goal_review_attempts` increment when pair is spawned (counts attempts, not outcomes). `feedback_iteration` increments on each `send_to_craft`.
-82. **Resolved decisions kept in sync**: Decisions #15 and #32 updated to match body changes from v0.11+.
-83. **Scheduler precedence: goal review before re-planning**: Tick evaluates goal review first. If all tasks `completed` → goal review. Planning only triggers when goal has zero tasks or at least one `failed` task. Prevents ambiguous overlap.
-84. **`retry_task` full old-pair teardown**: Same teardown as `cancel_task` (abort both sessions, fail pair, dead-letter messages, record state) before creating new pair. No orphaned sessions or stale messages.
-85. **Idempotency uses existing `task_messages.status`**: No separate `delivered_message_ids` tracking needed. Runtime checks `status == 'pending'` before injection, marks `delivered` after. Crash-window duplicates accepted as benign.
 86. **Task messages retention: pair-scoped, not time-based**: Messages retained for pair lifetime. Purged on terminal state. No time-based TTL — long-lived hibernated pairs keep their pending messages. Separate from audit log 7-day retention.
+89. **`message_type` column on task_messages**: Explicit type (`normal`/`interrupt`/`escalation_context`) for efficient queue scanning. Enables Lead tool execution guard to check for interrupts without JSON parsing.
+
+### Meta
+82. **Resolved decisions kept in sync**: Decisions #15 and #32 updated to match body changes from v0.11+.
 
 ## Open Questions (For Future Iterations)
 
