@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.9
+Status: Draft v0.10
 Date: 2026-02-23
 
 ## Context
@@ -310,7 +310,7 @@ This is a full **AgentSession** with:
 
 The Room Agent is NOT the scheduler. It's the human interface. When the human creates a goal via conversation, the Room Agent calls its tools → data goes to DB → Room Runtime picks it up.
 
-**Context compaction**: Room Agent is a long-lived session that accumulates conversation over days/weeks. It uses the existing AgentSession compaction mechanism. Since Room Agent primarily does CRUD via tools (not deep reasoning), aggressive compaction of older conversations is safe — retain recent exchanges and a summary of older ones.
+**Context compaction**: Room Agent is a long-lived session that accumulates conversation over days/weeks. It uses the existing AgentSession compaction mechanism. Since Room Agent primarily does CRUD via tools (not deep reasoning), aggressive compaction of older conversations is safe — retain recent exchanges and a summary of older ones. **Important**: recent tool-call results (e.g., newly created goal/task IDs) must survive compaction so the human can reference them in follow-up messages.
 
 **Coordination with Runtime**: Room Agent tools that modify task state (`cancel_task`, `retry_task`, `update_task`) use **optimistic locking** — they check `task.version` before writing, and fail gracefully if Runtime has already transitioned the task. This prevents races where Room Agent cancels a task that Runtime just completed. On conflict, the tool returns the current state so Room Agent can inform the human.
 
@@ -350,7 +350,7 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
 | `fail_task(reason)` | Task is not achievable |
 | `escalate(reason)` | Flag for human attention (see Escalation Flow) |
 | `read_craft_messages(limit, offset?)` | Read Craft messages from previous iterations for deeper context (e.g., understanding decisions made in earlier turns) |
-| `run_verification(command)` | Run a verification command (e.g., `bun test`, `bun run check`) independently of Craft. Trust, but verify. |
+| `run_verification(command)` | Run a verification command (e.g., `bun test`, `bun run check`) independently of Craft. Executes in the **Craft session's working directory/worktree**, not the base branch. Trust, but verify. |
 
 **System prompt includes**:
 - The goal description this task belongs to
@@ -363,8 +363,8 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
   - `design`: Review architectural soundness, completeness, alignment with goals.
   - `goal_review`: Verify all task summaries satisfy the original goal.
 - Available tools and when to use each
-- **Verification requirements**: Before calling `complete_task`, Lead must verify the work meets acceptance criteria. For coding tasks: use `run_verification` to confirm tests pass and linting is clean. Do not accept based solely on Craft's claim of completion.
-- **AskUserQuestion answer policy**: Lead may answer Craft's questions about architectural choices, code patterns, and technical decisions based on goal/task context. Lead must **always escalate** questions about: secrets/API keys/credentials, subjective human preferences, access permissions, or anything outside the goal/task scope.
+- **Verification requirements**: Before calling `complete_task`, Lead must verify the work meets acceptance criteria. For coding tasks: use `run_verification` to confirm tests pass and linting is clean. Do not accept based solely on Craft's claim of completion. **If `run_verification` fails**, Lead must not attempt to debug or fix the issue — immediately call `send_to_craft()` with the verification output so Craft can address it.
+- **AskUserQuestion answer policy**: Lead may answer Craft's questions about architectural choices, code patterns, and technical decisions based on goal/task context. Lead must **always escalate** questions about: secrets/API keys/credentials, subjective human preferences, access permissions, or anything outside the goal/task scope. When escalating a Craft question, Lead must call `escalate()` with the Craft's original question included verbatim in the reason, so the human has full context without needing to read the Craft session.
 
 **Context management**: Each message from Runtime to Lead includes a structured header:
 - **Immutable context** (in system prompt): goal, task description, room instructions
