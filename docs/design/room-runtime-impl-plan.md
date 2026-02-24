@@ -1,31 +1,15 @@
-# Room Runtime Implementation Plan — Minimal Core
+# Room Runtime Implementation Plan
 
 Status: Draft
 Date: 2026-02-24
 Related: [Room Runtime Spec v0.21](./room-runtime-spec.md)
 
-## Important: This is NOT a Full Implementation Spec
+## Goal: Reach Autonomous Room Operation
 
-This document describes the **minimal core** needed to reach a point where the room can operate autonomously and **use itself to continue developing the remaining features**.
-
-Once this core is working, we can ask the room to implement:
-- Planning as a (Craft, Lead) pair
-- Goal review
-- Human message queueing
-- Interrupt handling
-- Task timeout
-- Parallel pairs
-
-**The room builds itself.** This plan just gets us to the starting line.
-
----
-
-## Goal: Reach Self-Bootstrapping Operation
-
-The minimal viable system needs:
+The minimal viable system that can **self-improve** needs:
 1. Human can create goals/tasks via Room Agent
 2. Runtime detects pending tasks and spawns (Craft, Lead) pairs
-3. Craft does work, Lead reviews, feedback loop until accepted or escalated
+3. Craft does work, Lead reviews, feedback loop until accepted
 4. Basic recovery from daemon restart
 
 ---
@@ -33,13 +17,6 @@ The minimal viable system needs:
 ## Phase 0: Database Schema (Prerequisite)
 
 **File:** `packages/daemon/src/storage/schema/migrations.ts`
-
-### Existing Columns (DO NOT re-add)
-
-The following columns already exist in the schema:
-- `tasks.priority` — TEXT with CHECK constraint (`low`, `normal`, `high`, `urgent`)
-- `tasks.depends_on` — TEXT DEFAULT `'[]'`
-- `goals.priority` — TEXT with CHECK constraint (`low`, `normal`, `high`, `urgent`)
 
 ### New Tables
 
@@ -57,15 +34,13 @@ CREATE TABLE task_pairs (
     active_work_started_at INTEGER,
     active_work_elapsed INTEGER NOT NULL DEFAULT 0,
     hibernated_at INTEGER,
-    version INTEGER NOT NULL DEFAULT 1,  -- starts at 1 for optimistic locking
-    tokens_used INTEGER NOT NULL DEFAULT 0,  -- Updated per-turn (mechanism TBD, tracking only for now)
+    version INTEGER NOT NULL DEFAULT 0,
+    tokens_used INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     completed_at INTEGER
 );
 
 -- Message queue: reliable inter-agent message delivery
--- MVP Note: Table kept for schema compatibility, not used for Lead→Craft routing
--- Will be used when human queueing/interrupts are implemented
 CREATE TABLE task_messages (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id),
@@ -73,40 +48,29 @@ CREATE TABLE task_messages (
     from_role TEXT NOT NULL,       -- 'craft' | 'lead' | 'human'
     to_role TEXT NOT NULL,         -- 'craft' | 'lead'
     to_session_id TEXT NOT NULL,   -- target session (prevents misdelivery on retry)
-    message_type TEXT NOT NULL DEFAULT 'normal',  -- MVP: only 'normal'; future: 'interrupt' | 'escalation_context'
+    message_type TEXT NOT NULL DEFAULT 'normal',  -- 'normal' | 'interrupt' | 'escalation_context'
     payload TEXT NOT NULL,         -- JSON message content
     status TEXT NOT NULL DEFAULT 'pending',  -- pending | delivered | dead_letter
     created_at INTEGER NOT NULL,
     delivered_at INTEGER
 );
-
--- Audit log: observability for debugging Runtime behavior
--- Retention: 7 days (cleanup job deletes older entries)
-CREATE TABLE room_audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    room_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,  -- 'tick' | 'pair_state_change' | 'message_delivery' | 'notification'
-    detail TEXT NOT NULL,      -- JSON: what happened, trigger, outcome
-    created_at INTEGER NOT NULL
-);
 ```
 
-### Column Additions (only what's missing)
+### Column Additions
 
 ```sql
--- Tasks table: add columns that don't exist yet
+-- Tasks table
 ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'coding';
     -- 'planning' | 'coding' | 'research' | 'design' | 'goal_review'
-ALTER TABLE tasks ADD COLUMN version INTEGER DEFAULT 1;
-    -- starts at 1 for optimistic locking
+ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN version INTEGER DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN created_by_task_id TEXT;
-    -- References the planning task that created this task
 
--- Goals table: add counters
+-- Goals table
 ALTER TABLE goals ADD COLUMN planning_attempts INTEGER DEFAULT 0;
 ALTER TABLE goals ADD COLUMN goal_review_attempts INTEGER DEFAULT 0;
 
--- Rooms table: add config
+-- Rooms table
 ALTER TABLE rooms ADD COLUMN config TEXT;
     -- JSON: { max_feedback_iterations, task_timeout, max_planning_attempts, ... }
 ```
@@ -126,33 +90,22 @@ class TaskPairRepository {
   createPair(taskId: string, craftSessionId: string, leadSessionId: string): TaskPair;
   getPair(pairId: string): TaskPair | null;
   getPairByTaskId(taskId: string): TaskPair | null;
-  getActivePairs(roomId: string): TaskPair[];  // JOINs through tasks to get roomId
-  updatePairState(pairId: string, newState: PairState, expectedVersion: number): TaskPair | null;
-  incrementFeedbackIteration(pairId: string, expectedVersion: number): TaskPair | null;
-  completePair(pairId: string, expectedVersion: number): TaskPair | null;
-  failPair(pairId: string, expectedVersion: number): TaskPair | null;
+  getActivePairs(roomId: string): TaskPair[];
+  updatePairState(pairId: string, newState: PairState, version: number): TaskPair | null;
+  incrementFeedbackIteration(pairId: string, version: number): TaskPair | null;
+  completePair(pairId: string, version: number): TaskPair | null;
+  failPair(pairId: string, version: number): TaskPair | null;
 }
 ```
-
-**Version contract:** All update methods use optimistic locking. Pass `expectedVersion` = current version. Method increments to `expectedVersion + 1` on success, returns `null` on version mismatch.
 
 ### 1.2 TaskMessageQueue
 
 **File:** `packages/daemon/src/lib/room/task-message-queue.ts`
 
-**MVP Decision:** For the minimal core, we use **direct synchronous routing** for all Lead→Craft messages. The `task_messages` table is kept for schema compatibility but **not used in MVP**. This simplifies the implementation significantly:
-
-- No write-ahead queue semantics needed
-- No recovery replay of in-flight messages
-- Crash during routing = message lost (acceptable for MVP)
-
-When we add human message queueing and interrupts, we'll implement write-ahead semantics: `enqueue pending → inject → mark delivered`.
+DB-backed message queue:
 
 ```typescript
 class TaskMessageQueue {
-  // MVP: These methods exist but are not used for Lead→Craft routing
-  // They will be used when human queueing/interrupts are implemented
-
   enqueue(params: {
     pairId: string;
     taskId: string;
@@ -160,7 +113,7 @@ class TaskMessageQueue {
     toRole: 'craft' | 'lead';
     toSessionId: string;
     payload: string;
-    messageType?: 'normal';  // MVP: only 'normal' type needed
+    messageType?: 'normal' | 'interrupt' | 'escalation_context';
   }): TaskMessage;
 
   dequeuePending(pairId: string, toRole: 'craft' | 'lead'): TaskMessage[];
@@ -179,15 +132,12 @@ class TaskMessageQueue {
 **File:** `packages/daemon/src/lib/room/room-runtime.ts`
 
 ```typescript
-import { Mutex } from 'async-mutex';  // npm package
-
 class RoomRuntime {
   private state: 'running' | 'paused' = 'running';
   private tickMutex = new Mutex(); // single-flight
-  private timerInterval?: Timer;  // 30-second fallback
 
   // Lifecycle
-  start(): void;   // Starts 30-second timer + subscribes to DaemonHub events
+  start(): void;
   pause(): void;
   resume(): void;
   getState(): 'running' | 'paused';
@@ -195,27 +145,13 @@ class RoomRuntime {
   // Main scheduling loop
   tick(): Promise<void>;
 
-  // Event handlers (trigger immediate tick via DaemonHub subscriptions)
+  // Event handlers (trigger immediate tick)
   onGoalCreated(goalId: string): void;
   onTaskStatusChanged(taskId: string): void;
   onCraftTerminalState(pairId: string): void;
-
-  // Lead tool handling (called synchronously from MCP tool handlers)
-  handleLeadTool(pairId: string, toolName: string, params: any): Promise<ToolResult>;
+  onLeadToolExecuted(pairId: string, tool: string): void;
 }
 ```
-
-### Tick Trigger Matrix
-
-| Event Source | Signal | Runtime Handler | Notes |
-|--------------|--------|-----------------|-------|
-| Room Agent MCP tools | `goal.created`, `task.created` | `onGoalCreated()`, `onTaskStatusChanged()` | After DB write succeeds |
-| TaskManager | `task.status_changed` | `onTaskStatusChanged()` | After status update |
-| SessionObserver | `session.terminal_state` | `onCraftTerminalState()` | When Craft reaches result/error |
-| `handleLeadTool()` | (internal) | Triggers tick after `complete_task`/`fail_task` | For task completion cleanup |
-| Timer | 30s interval | `tick()` | Fallback for missed events |
-
-**Idempotency:** All handlers are idempotent - duplicate events produce same result. Tick mutex prevents concurrent execution.
 
 ### Tick Logic
 
@@ -224,26 +160,11 @@ class RoomRuntime {
 2. Acquire mutex (already locked → queue re-tick, exit)
 3. For each room:
    a. Check capacity (maxConcurrentPairs)
-   b. Find pending tasks (ordered by priority DESC → created_at ASC → id ASC)
-      → spawn (Craft, Lead) pair if below capacity
+   b. Find pending tasks → spawn (Craft, Lead) pair if below capacity
    c. Find awaiting_craft pairs with terminal Craft → collect messages, forward to Lead
-   d. Check feedback_iteration >= max_feedback_iterations → auto-escalate
-4. Log tick summary to room_audit_log
-5. Release mutex
+   d. Find pending messages in queue → deliver to appropriate agent
+4. Release mutex
 ```
-
-### Loop Termination Guard
-
-Before each Lead→Craft cycle, Runtime checks:
-```
-if (pair.feedback_iteration >= room.config.max_feedback_iterations) {
-  // Auto-escalate instead of another feedback cycle
-  await escalatePair(pairId, `Max feedback iterations (${max_feedback_iterations}) reached`);
-  await logAudit(roomId, 'auto_escalate', { pairId, reason: 'max_iterations' });
-}
-```
-
-Default `max_feedback_iterations`: 10 (configurable in `rooms.config`).
 
 ### 2.2 Session Observer
 
@@ -253,14 +174,13 @@ Detects terminal states from AgentSession:
 
 ```typescript
 class SessionObserver {
-  // Subscribe to session state changes via DaemonHub
+  // Subscribe to session state changes
   observe(sessionId: string, onTerminal: (state: TerminalState) => void): void;
 
   // Stop observing
   unobserve(sessionId: string): void;
 
   // Cron safety net (60s): query DB for stuck sessions
-  // Stateless - queries DB directly, survives daemon restarts
   checkStuckSessions(): Promise<void>;
 }
 ```
@@ -292,8 +212,7 @@ Persistent AgentSession for human conversation:
 | `create_task(goalId, title, description)` | Create a task |
 | `list_tasks(goalId?)` | List tasks |
 | `update_task(taskId, updates)` | Update task |
-| `cancel_task(taskId)` | Cancel a task (marks failed, calls `AgentSession.cleanup()` on both Craft and Lead) |
-| `retry_task(taskId)` | Retry a failed task (teardown old pair, create new) |
+| `cancel_task(taskId)` | Cancel a task |
 | `get_room_status()` | Overview of room state |
 
 **Key insight:** Room Agent session already exists (created in `room-handlers.ts`). We just need to add MCP tools.
@@ -337,8 +256,7 @@ class LeadAgentFactory {
 - Task description and acceptance criteria
 - Room-level review policy
 - Activity-specific review instructions (coding, planning, etc.)
-- **Tool contract:** Must call exactly one terminal tool per turn
-- **Escalation policy:** Use `escalate` when uncertain or blocked
+- Verification requirements
 
 **MCP Tools (routed through Runtime):**
 
@@ -347,38 +265,13 @@ class LeadAgentFactory {
 | `send_to_craft(message)` | Send feedback to Craft |
 | `complete_task(summary)` | Accept work, mark done |
 | `fail_task(reason)` | Task not achievable |
-| `escalate(reason)` | Flag for human attention |
 
-**Lead Tool Contract (CRITICAL):**
-
-Lead Agent must call **exactly one terminal tool** per turn: `complete_task`, `fail_task`, `escalate`, or `send_to_craft`.
-
-- If Lead emits text with no tool call, or calls multiple conflicting tools → Runtime retries once with system nudge: "You must call exactly one of: send_to_craft, complete_task, fail_task, or escalate"
-- If second attempt also fails → Runtime auto-escalates to human
-
-**No-tool-call detection:** Set `leadCalledTool = true` flag when `handleLeadTool` is invoked. When Lead reaches terminal state, check the flag. If unset, Lead didn't call a tool. Reset flag when forwarding new Craft output to Lead.
-
-**Lead Tool Routing (MCP Callback Pattern):**
-
-Lead MCP tools are defined with callback functions that call into Runtime methods directly (same pattern as `lobby-agent-tools.ts`):
-
-```typescript
-// In lead-agent-tools.ts
-tool('send_to_craft', 'Send feedback to Craft', { message: z.string() }, async (params) => {
-  return runtime.handleLeadTool(pairId, 'send_to_craft', params);
-});
-
-// In RoomRuntime
-handleLeadTool(pairId: string, toolName: string, params: LeadToolParams): Promise<ToolResult> {
-  // 1. Validate pair_state == 'awaiting_lead'
-  // 2. Validate task version matches expected
-  // 3. Validate no queued interrupts for this pair
-  // 4. Execute the action
-  // 5. Return tool result to Lead
-}
-```
-
-This is **synchronous** — the tool handler calls Runtime directly, Runtime validates and executes, then returns the result. No DaemonHub events involved.
+**Lead Tool Routing:**
+All Lead tool calls are intercepted by Runtime:
+1. Tool call detected → Runtime receives via DaemonHub event
+2. Runtime validates (pair state, version, no queued interrupts)
+3. Runtime executes the action
+4. Result returned to Lead
 
 ---
 
@@ -407,22 +300,16 @@ class TaskPairManager {
 
   // Cancel pair (urgent control)
   async cancelPair(pairId: string): Promise<void>;
-
-  // Handle escalation
-  async escalatePair(pairId: string, reason: string): Promise<void>;
 }
 ```
 
 ### Pair Creation Flow
 
-1. Create Craft session with task context in system prompt
-2. Create Lead session with review context in system prompt
-3. Create task_pairs record (state: `awaiting_craft`, version: 1)
+1. Create Craft session with task context
+2. Create Lead session with review context
+3. Create task_pairs record (state: `awaiting_craft`)
 4. Set task status to `in_progress`
-5. **Start observing Craft session** — must observe BEFORE sending to avoid race condition
-6. **Send initial task instruction to Craft as first user message** — this triggers Craft to begin working
-
-**Why step 5 before 6:** Observation setup is instant. If we send first and Craft completes before observation starts, we miss the terminal state and rely on the 60s cron safety net. Observing first eliminates this race.
+5. Start observing Craft session
 
 ---
 
@@ -433,7 +320,7 @@ class TaskPairManager {
 When Craft reaches terminal state:
 
 1. Runtime detects via session observer
-2. Collect all assistant messages since `last_forwarded_message_id`
+2. Collect all assistant messages since last user message
 3. Format as structured envelope:
    ```
    [CRAFT OUTPUT] Iteration: {n}
@@ -445,42 +332,17 @@ When Craft reaches terminal state:
    {craft_assistant_messages}
    ```
 4. Send to Lead session as user message
-5. Update `last_forwarded_message_id` to latest Craft message
-6. Update pair state to `awaiting_lead`
+5. Update pair state to `awaiting_lead`
 
 ### 5.2 Lead → Craft Routing
 
 When Lead calls `send_to_craft(feedback)`:
 
-1. Runtime method called directly by MCP tool handler (see Lead Tool Routing below)
-2. Validate pair state and version
-3. **Synchronously** inject message into Craft session as user message (no queue delay)
+1. Runtime intercepts tool call
+2. Enqueue message in task_messages
+3. Inject message into Craft session as user message
 4. Update pair state to `awaiting_craft`
 5. Increment feedback_iteration
-
-**Note:** For MVP, Lead→Craft is synchronous (direct injection). The `task_messages` queue is used for recovery only, not for routing delays.
-
-### 5.3 Escalation Return Path
-
-When Lead calls `escalate(reason)`:
-
-1. Runtime sets pair state to `awaiting_human`
-2. Runtime sets task status to `escalated`
-3. Runtime notifies human (via Room Agent message + UI event)
-4. **Human responds directly to Lead session** — sends message via UI
-5. Runtime detects human message to Lead session → transitions pair back to `awaiting_lead`
-6. Lead re-evaluates with human guidance and calls a terminal tool
-
-**Detection mechanism:** Runtime listens for DaemonHub `message.sent` events filtered to Lead sessions with pairs in `awaiting_human` state. When a human message arrives, transition the pair.
-
-**Why this works:** Lead session is a standard AgentSession. Human messages to Lead are just user messages in that session.
-
-### 5.4 Task Selection Ordering
-
-When multiple pending tasks exist, Runtime selects by:
-1. `priority` TEXT sort: `urgent` > `high` > `normal` > `low` (mapped in code)
-2. `created_at` ASC (oldest first)
-3. `id` ASC (deterministic tiebreaker)
 
 ---
 
@@ -492,69 +354,33 @@ On daemon startup:
 
 ```typescript
 async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void> {
-  // 1. Find all active pairs (in_progress OR escalated tasks)
-  // Include room_id from tasks for audit logging
+  // 1. Find all in_progress tasks with active pairs
   const activePairs = db.query(`
-    SELECT tp.*, t.room_id FROM task_pairs tp
+    SELECT tp.* FROM task_pairs tp
     JOIN tasks t ON tp.task_id = t.id
-    WHERE t.status IN ('in_progress', 'escalated')
+    WHERE t.status = 'in_progress'
     AND tp.pair_state NOT IN ('completed', 'failed')
   `);
 
-  // 2. For each pair, re-attach observers and handle edge cases
+  // 2. For each pair, re-attach observers
   for (const pair of activePairs) {
     switch (pair.pair_state) {
       case 'awaiting_craft':
-        // Check if Craft session still exists
-        if (!sessionExists(pair.craft_session_id)) {
-          // Session lost - mark task and pair failed
-          await failTask(pair.task_id, 'session_lost');
-          await failPair(pair.id, 'session_lost');
-          await logAudit(pair.room_id, 'session_lost', { pairId: pair.id });
-        } else {
-          // Re-observe Craft session
-          sessionObserver.observe(pair.craft_session_id, onTerminal);
-        }
+        // Re-observe Craft session
+        sessionObserver.observe(pair.craft_session_id, onTerminal);
         break;
       case 'awaiting_lead':
-        // Check if Lead session still exists
-        if (!sessionExists(pair.lead_session_id)) {
-          // Session lost - mark task and pair failed
-          await failTask(pair.task_id, 'session_lost');
-          await failPair(pair.id, 'session_lost');
-          await logAudit(pair.room_id, 'session_lost', { pairId: pair.id });
-        } else {
-          // Re-observe Lead session
-          sessionObserver.observe(pair.lead_session_id, onTerminal);
-        }
+        // Re-observe Lead session
+        sessionObserver.observe(pair.lead_session_id, onTerminal);
         break;
       case 'awaiting_human':
       case 'hibernated':
         // No action needed - waiting for human
         break;
     }
-
-    // 3. Reset active_work_started_at (crash downtime not counted)
-    if (pair.active_work_started_at) {
-      db.exec(`UPDATE task_pairs SET active_work_started_at = ? WHERE id = ?`,
-        [Date.now(), pair.id]);
-    }
   }
 
-  // 4. MVP: No queue recovery needed (direct synchronous routing)
-  // When human queueing is implemented, reprocess pending messages here
-
-  // 5. Resume tick loop
-  runtime.start();
-}
-```
-
-**MVP Recovery Limitations:**
-- In-flight Lead→Craft messages are lost on crash (acceptable - Lead can resend)
-- Human messages to escalated pairs are lost (will be fixed with queue implementation)
-  }
-
-  // 5. Resume tick loop
+  // 3. Resume tick loop
   runtime.start();
 }
 ```
@@ -563,52 +389,48 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
 
 ## Implementation Order
 
-Phases are numbered for document organization, but **implementation must follow this dependency order**:
-
 ```
-Phase 0: Database Schema                    [Prerequisite - blocks everything]
+Phase 0: Database Schema          [Prerequisite]
     ↓
-Phase 1.1: TaskPairRepository               [Needs schema]
-Phase 1.2: TaskMessageQueue                 [Needs schema]
+Phase 1.1: TaskPairRepository
     ↓
-Phase 3.1: Room Agent Tools                 [Human can create tasks]
-Phase 3.2: Craft Agent Factory              [Needs nothing]
-Phase 3.3: Lead Agent Factory               [Needs nothing]
+Phase 1.2: TaskMessageQueue
     ↓
-Phase 2.2: Session Observer                 [Needs agent factories]
-Phase 4: TaskPairManager                    [Needs repos + agents + observer]
-Phase 5: Message Routing                    [Needs TaskPairManager]
+Phase 3.1: Room Agent Tools       ← Human can create tasks
     ↓
-Phase 2.1: RoomRuntime Tick                 [Needs ALL above - autonomous operation!]
+Phase 3.2: Craft Agent
     ↓
-Phase 6: Recovery                           [Needs Runtime]
+Phase 3.3: Lead Agent
+    ↓
+Phase 4: TaskPairManager
+    ↓
+Phase 2.1: RoomRuntime Tick       ← Autonomous operation!
+    ↓
+Phase 2.2: Session Observer
+    ↓
+Phase 5: Message Routing
+    ↓
+Phase 6: Recovery
 ```
-
-**Critical path to first integration test:** Phases 0 → 1 → 3 → 2.2 → 4 → 5 → 2.1
 
 ---
 
-## Minimal Viable Feature Set (The Core)
+## Minimal Viable Feature Set
 
-These are the features we implement in this plan. Everything else is deferred.
-
-### Included
+### Included (MVP)
 
 - ✅ Human creates goals/tasks via Room Agent
 - ✅ Runtime detects pending tasks
 - ✅ Runtime spawns (Craft, Lead) pairs
 - ✅ Craft works, Lead reviews
-- ✅ Feedback loop until accepted or escalated
-- ✅ Lead escalation to human
+- ✅ Feedback loop until accepted
 - ✅ Basic daemon restart recovery
-- ✅ Audit logging for debugging
 
-### Deferred (the room builds these after core works)
+### Deferred (room can build these later)
 
-Once the core is operational, we can use the room itself to implement:
-
-- ⏳ Planning as (Craft, Lead) pair (for now: human creates tasks manually)
-- ⏳ Goal review (for now: human marks complete)
+- ⏳ Planning as (Craft, Lead) pair (human creates tasks manually)
+- ⏳ Goal review (human marks complete)
+- ⏳ Escalation flow (Lead can fail_task)
 - ⏳ Human message queueing during Lead review
 - ⏳ Interrupt handling
 - ⏳ Task timeout
@@ -616,21 +438,6 @@ Once the core is operational, we can use the room itself to implement:
 - ⏳ Parallel pairs (maxConcurrentPairs > 1)
 - ⏳ Escalation SLA / hibernation
 - ⏳ `run_verification` tool for Lead
-- ⏳ `read_craft_messages` tool for Lead
-
----
-
-## Unit Test Plan
-
-Each component needs tests before integration:
-
-| Component | Test File | Key Test Cases |
-|-----------|-----------|----------------|
-| TaskPairRepository | `task-pair-repository.test.ts` | CRUD, optimistic locking, version conflicts |
-| TaskMessageQueue | `task-message-queue.test.ts` | Enqueue/dequeue, ordering, dead-letter |
-| RoomRuntime | `room-runtime.test.ts` | Tick logic, mutex, capacity checks |
-| SessionObserver | `session-observer.test.ts` | Terminal state detection, stuck session recovery |
-| TaskPairManager | `task-pair-manager.test.ts` | Pair creation, routing, completion |
 
 ---
 
@@ -645,7 +452,7 @@ Each component needs tests before integration:
 7. Runtime tick detects pending task → spawns (Craft, Lead)
 8. Watch Craft work in UI
 9. Watch Lead review in UI
-10. Loop until Lead calls `complete_task` or `escalate`
+10. Loop until Lead calls `complete_task`
 
 **This is the minimal autonomous loop.** Once this works, the room can help implement the deferred features.
 
