@@ -42,7 +42,9 @@ const goalManagerFactory = ...;
 const recurringJobScheduler = new RecurringJobScheduler(...);
 recurringJobScheduler.start();
 
-// Line ~109: PromptTemplateManager — EVALUATE (may reuse for Craft/Lead prompts)
+// Line ~109: PromptTemplateManager — DELETE creation (only consumer is RoomSelfManager)
+// KEEP the class definition + DB tables for future Craft/Lead prompt management
+// Remove creation here until Phase 1 needs it
 const promptTemplateManager = new PromptTemplateManager(...);
 
 // Lines ~112-126: RoomSelfManager — DELETE (replaced by RoomRuntime)
@@ -89,7 +91,7 @@ return () => {
 | `archive/` | entire dir | Already archived old versions |
 
 **KEEP in this directory:**
-- `room-manager.ts` (293 lines) — room CRUD, add `config` column
+- `room-manager.ts` (293 lines) — room CRUD, add `config` column (**MODIFY**: strip `MemoryRepository`/`ContextRepository` imports, fields, constructor init; rewrite `getRoomStatus()`/`getRoomOverview()` to not use context/memory; remove `getContextVersions()`/`getContextVersion()`/`rollbackContext()`)
 - `goal-manager.ts` (365 lines) — goal CRUD, update states
 - `task-manager.ts` (276 lines) — task CRUD, update states + add columns
 - `index.ts` (78 lines) — update exports (remove deleted managers)
@@ -131,7 +133,7 @@ return () => {
 | `archive-room-self-state-repository.ts.bak` | Already archived |
 
 **KEEP in this directory:**
-- `room-repository.ts` — room CRUD (add `config` column)
+- `room-repository.ts` — room CRUD (add `config` column) (**MODIFY**: strip `getContextVersions()`/`getContextVersion()`/`rollbackContext()` which delegate to `RoomContextVersionRepository` and reference the dropped `room_context_versions` table)
 - `goal-repository.ts` — goal CRUD (update states + counters)
 - `task-repository.ts` — task CRUD (update states + columns)
 - `session-repository.ts`, `sdk-message-repository.ts`, `settings-repository.ts`, etc.
@@ -189,14 +191,39 @@ return () => {
 - `RoomGoal`, `GoalStatus`, `GoalPriority`
 - `NeoTask`, `TaskStatus`, `TaskPriority`, `TaskFilter`, `CreateTaskParams`, `UpdateTaskParams`
 
-### daemon/src/lib/rpc-handlers/room-handlers.ts — Remove agent params
+### daemon/src/lib/rpc-handlers/room-handlers.ts — Remove agent params + context RPCs + MCP registry
 
 **Current signature** (passes `workerManager`, `roomSelfManager`, `roomMcpServerRegistry`):
 - Remove `workerManager` param
 - Remove `roomSelfManager` param
-- Remove `getOrCreateRoomMcpServer()` export (old MCP registry)
-- Remove any `roomAgent.*` or `neo.*` handler registrations that depend on deleted code
+- Remove `roomMcpServerRegistry` Map (line 42)
+- Remove `getOrCreateRoomMcpServer()` export (line 50)
+- Remove `getRoomMcpServer()` export (line 176)
+- Remove `setRoomMcpServer()` export (line 188)
+- Remove `deleteRoomMcpServer()` export (line 467)
+- Remove `createRoomAgentMcpServer` import from deleted `room-agent-tools.ts` (line 30)
+- Remove 4 context versioning handlers (lines 711-816): `room.updateContext`, `room.getContextVersions`, `room.getContextVersion`, `room.rollbackContext`
+- Update `neo.status` handler (line 852): `roomManager.getGlobalStatus()` depends on `memoryRepo` — rewrite to not use memory/context data
+- Remove any `roomAgent.*` handler registrations that depend on deleted code
 - Keep `room.create`, `room.list`, `room.get`, `room.update`, `room.archive`, `room.overview`
+
+### daemon/src/lib/agent/query-options-builder.ts — Remove room_self MCP handling
+
+- Remove dynamic `getRoomMcpServer` import block (lines 25-34) — requires deleted `room-handlers.ts` exports
+- Remove `room_self` session type check (line 210): `session.type === 'room_self'` branch
+- Remove `__IN_PROCESS_ROOM_AGENT_TOOLS__` marker handling in `getMcpServers()` (lines 546-568)
+- Add `craft`/`lead` session type handling if needed (evaluate during implementation)
+
+### daemon/src/lib/agent/agent-session.ts — Update session type branching
+
+- Line 451: references `type === 'room_self'` in session title formatting
+- Update to handle new `craft`/`lead` session types instead (e.g., `'Craft Agent'`, `'Lead Agent'`)
+
+### daemon/src/lib/session/session-lifecycle.ts — Remove room_self references
+
+- Lines 45-48: comments document `room_self` type and include it in type union — update for `craft`/`lead`
+- Line 159: comment mentions `room_self` as valid session type — update
+- Line 181: MCP server comment references "room chat sessions" — review for accuracy
 
 ### daemon/src/storage/index.ts (Database facade) — Remove delegated methods
 
@@ -256,9 +283,12 @@ export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
 
 ### daemon/src/lib/daemon-hub.ts — Remove old event types
 
-**Remove event types referencing:**
+**Remove event types (~15 events across 4 groups):**
 - `ManagerHookEvent`, `ManagerHookPayload`
 - `roomAgent.stateChanged`, `roomAgent.escalated`, `roomAgent.reviewRequested`
+- `room.contextUpdated` (line 185), `room.contextRolledBack` (line 193)
+- `recurringJob.created` (line 357), `recurringJob.updated` (line 363), `recurringJob.deleted` (line 392)
+- `task.sessionStarted` (line 459), `task.sessionCompleted` (line 466), `task.allSessionsCompleted` (line 474) — dead code, zero emitters in codebase
 - Any worker session events
 
 ---
@@ -293,6 +323,12 @@ export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
 - `TaskSessionView`
 - `ContextEditor`, `ContextVersionHistory`, `ContextVersionViewer`
 - `RecurringJobsConfig`
+
+### web/src/islands/ChatContainer.tsx — Remove room_self feature branch
+
+- Remove `DEFAULT_ROOM_SELF_FEATURES` import (line 23) — being deleted from `types.ts`
+- Remove `room:self:` branch (lines 291-292): `if (sessionId.startsWith('room:self:')) { return DEFAULT_ROOM_SELF_FEATURES; }`
+- Keep `DEFAULT_ROOM_CHAT_FEATURES` import and `room:chat:` branch (still used)
 
 ### web/src/islands/Room.tsx — Remove deleted tabs
 
@@ -524,6 +560,7 @@ bun run check    # must pass before starting
 ### Step 8: Update wiring — rpc-handlers/index.ts
 - [ ] Remove `WorkerManager` creation
 - [ ] Remove `RecurringJobScheduler` creation + `.start()`
+- [ ] Remove `PromptTemplateManager` creation (line 109) — only consumer was `RoomSelfManager`
 - [ ] Remove `RoomSelfManager` creation
 - [ ] Remove `setupMemoryHandlers()` call
 - [ ] Remove `setupRoomMessageHandlers()` call
@@ -532,6 +569,7 @@ bun run check    # must pass before starting
 - [ ] Remove `roomSelfManager.startAgentsWithRunIntent()` call
 - [ ] Update cleanup: remove `recurringJobScheduler.stop()`, `roomSelfManager.stopAll()`
 - [ ] Update `setupRoomHandlers()` params: remove `workerManager`, `roomSelfManager`
+- [ ] Relocate `TaskManagerFactory` type import (currently from deleted `room-self-handlers.ts`)
 - [ ] Remove imports for all deleted modules
 
 ### Step 9: Update wiring — room/index.ts
@@ -556,6 +594,8 @@ bun run check    # must pass before starting
 - [ ] Change `SessionType`: remove `room_self`, add `craft` | `lead`
 - [ ] Clean up `SessionContext`: remove `selfSessionId`, `chatSessionId`
 - [ ] Remove `DEFAULT_ROOM_SELF_FEATURES`
+- [ ] KEEP `DEFAULT_ROOM_CHAT_FEATURES` (room_chat sessions still exist in new spec)
+- [ ] Relocate `TaskManagerFactory` type — currently exported from `room-self-handlers.ts` (being deleted), imported by `rpc-handlers/index.ts`. Move type to `task-handlers.ts` or a shared types file
 
 ### Step 13: Update shared prompts
 - [ ] Remove `MANAGER_AGENT_*` templates from `BUILTIN_TEMPLATES` in `templates.ts`
@@ -564,10 +604,36 @@ bun run check    # must pass before starting
 
 ### Step 14: Update room-handlers.ts
 - [ ] Remove `workerManager` and `roomSelfManager` from function params
-- [ ] Remove `roomMcpServerRegistry` (old MCP server map)
-- [ ] Remove `getOrCreateRoomMcpServer()` export
+- [ ] Remove `createRoomAgentMcpServer` import (line 30) — from deleted `room-agent-tools.ts`
+- [ ] Remove `roomMcpServerRegistry` Map + all exports: `getOrCreateRoomMcpServer()`, `getRoomMcpServer()`, `setRoomMcpServer()`, `deleteRoomMcpServer()`
+- [ ] Remove 4 context versioning handlers (lines 711-816): `room.updateContext`, `room.getContextVersions`, `room.getContextVersion`, `room.rollbackContext`
+- [ ] Update `neo.status` handler (line 852): rewrite `roomManager.getGlobalStatus()` to not use memory/context
 - [ ] Remove handler registrations that depend on deleted code
 - [ ] Keep `room.create`, `room.list`, `room.get`, `room.update`, `room.archive`, `room.overview`
+
+### Step 14a: Update query-options-builder.ts
+- [ ] Remove dynamic `getRoomMcpServer` import block (lines 25-34)
+- [ ] Remove `room_self` session type check (line 210)
+- [ ] Remove `__IN_PROCESS_ROOM_AGENT_TOOLS__` marker handling (lines 546-568)
+
+### Step 14b: Update agent-session.ts
+- [ ] Update session title formatting (line 451): replace `room_self` → `craft`/`lead` types
+
+### Step 14c: Update session-lifecycle.ts
+- [ ] Update comments and type union: replace `room_self` with `craft`/`lead` (lines 45-48, 159)
+
+### Step 14d: Update room-manager.ts
+- [ ] Strip `MemoryRepository`/`ContextRepository` imports, fields, constructor init
+- [ ] Rewrite `getRoomStatus()` and `getRoomOverview()` to not use context/memory
+- [ ] Remove `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods
+
+### Step 14e: Update room-repository.ts
+- [ ] Strip `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods (delegate to dropped `room_context_versions` table)
+
+### Step 14f: Update frontend — ChatContainer.tsx
+- [ ] Remove `DEFAULT_ROOM_SELF_FEATURES` import (line 23)
+- [ ] Remove `room:self:` session ID branch (lines 291-292)
+- [ ] Keep `DEFAULT_ROOM_CHAT_FEATURES` import and `room:chat:` branch
 
 ### Step 15: Update frontend — Room.tsx
 - [ ] Remove "context" and "jobs" tabs
@@ -602,9 +668,12 @@ bun run check    # must pass before starting
 - [ ] Alter `rooms`, `goals`, `tasks`
 - [ ] Create `task_pairs`, `task_messages`, `room_audit_log`
 
-### Step 22: Update daemon-hub.ts event types
+### Step 22: Update daemon-hub.ts event types (~15 events across 4 groups)
 - [ ] Remove `ManagerHookEvent`/`ManagerHookPayload` references
-- [ ] Remove `roomAgent.*` event types
+- [ ] Remove `roomAgent.*` event types (`stateChanged`, `escalated`, `reviewRequested`)
+- [ ] Remove `room.contextUpdated` (line 185), `room.contextRolledBack` (line 193)
+- [ ] Remove `recurringJob.created` (line 357), `recurringJob.updated` (line 363), `recurringJob.deleted` (line 392)
+- [ ] Remove dead `task.sessionStarted` (line 459), `task.sessionCompleted` (line 466), `task.allSessionsCompleted` (line 474) — zero emitters
 - [ ] Remove worker session event types
 
 ### Step 23: Verify
