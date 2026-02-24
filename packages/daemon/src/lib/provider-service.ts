@@ -548,7 +548,9 @@ export class ProviderService {
 				delete process.env.API_TIMEOUT_MS;
 			}
 		}
-		if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) {
+		if (
+			Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
+		) {
 			if (original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
 				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
 					original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
