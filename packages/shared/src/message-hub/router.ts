@@ -120,10 +120,6 @@ export class MessageHubRouter {
 			if (value.constructor?.name === 'AgentSession') {
 				return `[AgentSession]`;
 			}
-			if (value.constructor?.name === 'RoomSelfService') {
-				return `[RoomSelfService]`;
-			}
-
 			return value;
 		});
 	}

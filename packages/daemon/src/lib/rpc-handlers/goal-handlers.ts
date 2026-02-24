@@ -8,10 +8,10 @@
  * - goal.updateStatus - Update goal status
  * - goal.updateProgress - Update goal progress
  * - goal.updatePriority - Update goal priority
- * - goal.start - Start a goal (mark as in_progress)
  * - goal.complete - Complete a goal
- * - goal.block - Block a goal
- * - goal.unblock - Unblock a goal
+ * - goal.needsHuman - Mark goal as needing human input
+ * - goal.reactivate - Reactivate a goal (return to active)
+ * - goal.archive - Archive a goal
  * - goal.linkTask - Link a task to a goal
  * - goal.unlinkTask - Unlink a task from a goal
  * - goal.delete - Delete a goal

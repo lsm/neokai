@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 20 migrations for schema changes.
+ * All 32 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
