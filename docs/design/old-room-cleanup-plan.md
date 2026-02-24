@@ -104,7 +104,7 @@ return () => {
 | `room-message-handlers.ts` | `room.message.send/history` → replaced by task_messages queue |
 | `recurring-job-handlers.ts` | `recurringJob.*` handlers → not in spec |
 | `memory-handlers.ts` | `memory.*` handlers → not in spec |
-| `archive-room-self-handlers.ts.bak` | Already archived |
+| ~~`archive-room-self-handlers.ts.bak`~~ | ~~Already archived~~ _(doesn't exist — removed)_ |
 
 **KEEP in this directory:**
 - `room-handlers.ts` — room CRUD RPCs (remove `workerManager`, `roomSelfManager` params)
@@ -130,7 +130,7 @@ return () => {
 | `recurring-job-repository.ts` | Not in spec |
 | `context-repository.ts` | Context/conversation system not in spec |
 | `memory-repository.ts` | Memory system not in spec |
-| `archive-room-self-state-repository.ts.bak` | Already archived |
+| ~~`archive-room-self-state-repository.ts.bak`~~ | ~~Already archived~~ _(doesn't exist — removed)_ |
 
 **KEEP in this directory:**
 - `room-repository.ts` — room CRUD (add `config` column) (**MODIFY**: strip `getContextVersions()`/`getContextVersion()`/`rollbackContext()` which delegate to `RoomContextVersionRepository` and reference the dropped `room_context_versions` table)
@@ -164,6 +164,7 @@ return () => {
 |---|---|
 | `room-neo.ts` | `RoomNeo` class — entirely replaced by deterministic Runtime |
 | `neo-session-watcher.ts` | Session watching → replaced by Runtime event loop |
+| `neo-client.ts` | Client for old orchestrator — no longer needed |
 | `tests/room-neo-pair.test.ts` | Tests for deleted code |
 
 **Delete entire package** if it only contains room orchestration.
@@ -280,6 +281,17 @@ export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
 - `SessionContext`: remove `selfSessionId`, `chatSessionId` (old room_self ↔ room_chat linking)
 - `SessionMetadata.sessionType`: remove `'manager'` from union
 - Feature defaults: remove `DEFAULT_ROOM_SELF_FEATURES`, rename for new types
+
+### daemon/src/storage/schema/index.ts — Update session type CHECK constraint
+
+- Line 46: `CHECK(type IN ('worker', 'manager', 'room_chat', 'room_self', 'lobby'))` → replace `room_self` with `craft`, `lead`
+
+### daemon/src/storage/schema/migrations.ts — Update session type references
+
+- Multiple references to `room_self` in migration comments and CHECK constraints (lines 95, 1260, 1313, 1382, 1397-1398, 1430)
+- These are in historical migrations — **do NOT modify old migrations**. The new migration (Step 21) will ALTER the CHECK constraint on the `sessions` table
+
+> **WARNING**: `providers/context-manager.ts` handles AI provider context switching and is **unrelated** to room context. Do NOT delete it or its test.
 
 ### daemon/src/lib/daemon-hub.ts — Remove old event types
 
@@ -520,7 +532,7 @@ bun run check    # must pass before starting
 - [ ] `room-message-handlers.ts`
 - [ ] `recurring-job-handlers.ts`
 - [ ] `memory-handlers.ts`
-- [ ] `archive-room-self-handlers.ts.bak`
+~~- [ ] `archive-room-self-handlers.ts.bak`~~ _(doesn't exist — removed)_
 
 ### Step 4: Delete old repositories (daemon/src/storage/repositories/)
 - [ ] `room-self-state-repository.ts`
@@ -529,7 +541,7 @@ bun run check    # must pass before starting
 - [ ] `recurring-job-repository.ts`
 - [ ] `context-repository.ts`
 - [ ] `memory-repository.ts`
-- [ ] `archive-room-self-state-repository.ts.bak`
+~~- [ ] `archive-room-self-state-repository.ts.bak`~~ _(doesn't exist — removed)_
 
 ### Step 5: Delete old prompts (shared/src/)
 - [ ] `prompts/room-agent.ts`
@@ -547,12 +559,14 @@ bun run check    # must pass before starting
 ### Step 7: Delete old tests (daemon/tests/)
 - [ ] `unit/room/worker-manager.test.ts`
 - [ ] `unit/room/memory-manager.test.ts`
-- [ ] `unit/room/context-manager.test.ts`
+- [ ] `unit/room/context-manager.test.ts` (**NOT** `providers/context-manager.test.ts` — that tests AI provider context, unrelated)
 - [ ] `unit/room/recurring-job-scheduler.test.ts`
 - [ ] `unit/room/recurring-job-scheduler.guards.test.ts`
 - [ ] `unit/room/room-self-state-repository.test.ts`
 - [ ] `unit/rpc/room-self-handlers.test.ts`
 - [ ] `unit/rpc/room-message-handlers.test.ts`
+- [ ] `unit/rpc/memory-handlers.test.ts`
+- [ ] `unit/rpc-handlers/recurring-job-handlers.test.ts`
 - [ ] `integration/room/room-self-worker-lifecycle.integration.test.ts`
 - [ ] `e2e/tests/smoke/room.e2e.ts`
 - [ ] `e2e/tests/helpers/room-helpers.ts`
@@ -667,6 +681,8 @@ bun run check    # must pass before starting
 - [ ] Drop 7 old tables
 - [ ] Alter `rooms`, `goals`, `tasks`
 - [ ] Create `task_pairs`, `task_messages`, `room_audit_log`
+- [ ] Update `sessions` table CHECK constraint: replace `room_self` with `craft`, `lead`
+- [ ] Update `storage/schema/index.ts` (line 46): same CHECK constraint change (this is the initial schema)
 
 ### Step 22: Update daemon-hub.ts event types (~15 events across 4 groups)
 - [ ] Remove `ManagerHookEvent`/`ManagerHookPayload` references
