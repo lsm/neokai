@@ -145,8 +145,8 @@ return () => {
 | `room-agent.ts` (~211 lines) | `buildRoomAgentSystemPrompt()`, `ROOM_AGENT_SYSTEM_TEMPLATE` → replaced by Craft/Lead/Room Agent prompts |
 
 **Also clean up:**
-- `templates.ts` — remove `MANAGER_AGENT_*` templates from `BUILTIN_TEMPLATES` array
-- `types.ts` — remove `'manager_agent'` from `PromptTemplateCategory`, remove `MANAGER_AGENT_*` from `BUILTIN_TEMPLATE_IDS`
+- `templates.ts` — remove `ROOM_AGENT_SYSTEM_TEMPLATE` import (line 10) and the room_agent template entry from `BUILTIN_TEMPLATES` array; also remove `MANAGER_AGENT_*` templates
+- `types.ts` — remove `'manager_agent'` and `'room_agent'` from `PromptTemplateCategory`, remove `MANAGER_AGENT_*` and `ROOM_AGENT_*` from `BUILTIN_TEMPLATE_IDS`
 
 ### shared/src/neo-prompt/ — Legacy Package
 
@@ -464,9 +464,9 @@ export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
 - Data mapping: `'blocked'` → `'escalated'`, `'cancelled'` → `'failed'`, others carry over
 - DROP `session_id` (in schema baseline), `session_ids`, `execution_mode`, `sessions`, `recurring_job_id` (last 4 exist only via migrations — omit from table rebuild, no change needed in schema baseline)
 
-> **Note**: SQLite does not support ALTER COLUMN. Status/priority changes require table rebuild:
+> **Note**: SQLite does not support ALTER COLUMN or ALTER CHECK. Status/priority/type constraint changes require table rebuild:
 > `CREATE TABLE tasks_new(...)` → `INSERT INTO tasks_new SELECT ... FROM tasks` (with value mapping) → `DROP TABLE tasks` → `ALTER TABLE tasks_new RENAME TO tasks`
-> Same pattern for `goals` table.
+> Same rebuild pattern needed for `goals` table and `sessions` table (CHECK constraint change).
 
 ### Tables to CREATE
 
@@ -513,15 +513,13 @@ CREATE TABLE task_messages (
 );
 ```
 
-**`room_audit_log`:**
+**`room_audit_log`:** (aligned with runtime spec §DDL)
 ```sql
 CREATE TABLE room_audit_log (
-    id TEXT PRIMARY KEY,
-    room_id TEXT NOT NULL REFERENCES rooms(id),
-    event_type TEXT NOT NULL,
-    entity_type TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    details TEXT,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,  -- 'tick' | 'pair_state_change' | 'message_delivery' | 'notification'
+    detail TEXT NOT NULL,      -- JSON: what happened, trigger, outcome
     created_at INTEGER NOT NULL
 );
 ```
@@ -636,9 +634,12 @@ bun run check    # must pass before starting
 - [ ] Relocate `TaskManagerFactory` type — currently exported from `room-self-handlers.ts` (being deleted), imported by `rpc-handlers/index.ts`. `task-handlers.ts` already exports its own `TaskManagerFactory` with signature `(db: Database, roomId: string) => TaskManagerLike` — switch `index.ts` import to use that one. Do NOT create a third definition
 
 ### Step 13: Update shared prompts
+- [ ] Remove `ROOM_AGENT_SYSTEM_TEMPLATE` import (line 10) and room_agent template entry from `BUILTIN_TEMPLATES` in `templates.ts`
 - [ ] Remove `MANAGER_AGENT_*` templates from `BUILTIN_TEMPLATES` in `templates.ts`
-- [ ] Remove `'manager_agent'` from `PromptTemplateCategory` in `types.ts`
+- [ ] Remove `'manager_agent'` and `'room_agent'` from `PromptTemplateCategory` in `types.ts`
+- [ ] Remove `MANAGER_AGENT_*` and `ROOM_AGENT_*` from `BUILTIN_TEMPLATE_IDS` in `types.ts`
 - [ ] Update `prompts/index.ts` to remove `room-agent.ts` re-export
+- [ ] Update `tests/unit/prompts/prompt-template-manager.test.ts` — remove/update assertions on `manager_agent` category (line 39), `MANAGER_AGENT_SYSTEM` ID (lines 157, 878), and manager agent template retrieval test (lines 794-799)
 
 ### Step 14: Update room-handlers.ts
 - [ ] Remove `workerManager` and `roomSelfManager` from function params
@@ -664,9 +665,12 @@ bun run check    # must pass before starting
 - [ ] Strip `MemoryRepository`/`ContextRepository` imports, fields, constructor init
 - [ ] Rewrite `getRoomStatus()` and `getRoomOverview()` to not use context/memory
 - [ ] Remove `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods
+- [ ] Update `createRoom()` (lines 55-70): remove context creation (`contextRepo.createContext()` line 61) and linking (`roomRepo.setRoomContextId()` line 64)
 
 ### Step 14e: Update room-repository.ts
 - [ ] Strip `getContextVersions()`/`getContextVersion()`/`rollbackContext()` methods (delegate to dropped `room_context_versions` table)
+- [ ] Remove `context_id` from `createRoom()` INSERT statement (line 45) and null value (line 59) — column being dropped
+- [ ] Remove `setRoomContextId()` helper (lines 309-312) — no longer needed
 
 ### Step 14f: Update frontend — ChatContainer.tsx
 - [ ] Remove `DEFAULT_ROOM_SELF_FEATURES` import (line 23)
@@ -705,7 +709,7 @@ bun run check    # must pass before starting
 - [ ] Drop 7 old tables
 - [ ] Alter `rooms`, `goals`, `tasks` (use table rebuild pattern for status/priority changes — see Part 6 note)
 - [ ] Create `task_pairs`, `task_messages`, `room_audit_log`
-- [ ] Update `sessions` table CHECK constraint: drop `'manager'` and `'room_self'`, add `'craft'` and `'lead'` → `CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby'))`
+- [ ] Update `sessions` table CHECK constraint: drop `'manager'` and `'room_self'`, add `'craft'` and `'lead'` → `CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby'))`. Requires table rebuild (same pattern as tasks/goals — SQLite doesn't support ALTER CHECK). Data mapping: `'room_self'` → `'craft'` (reasonable default, or DELETE if no active room_self sessions exist), `'manager'` → DELETE (stale rows)
 - [ ] **Update `storage/schema/index.ts` in lockstep**:
   - Remove 3 table definitions from `createTables()`: `memories`, `contexts`, `context_messages` (the other 4 — `room_agent_states`, `worker_sessions`, `recurring_jobs`, `room_context_versions` — only exist via migrations, no action needed in schema baseline)
   - Remove 3 indexes from `createIndexes()`: `idx_memories_room`, `idx_memories_type`, `idx_context_messages_context`
@@ -728,10 +732,13 @@ bun run check    # must pass before starting
 ### Step 22a: Clean up feature-flags.ts
 - [ ] `packages/daemon/src/lib/config/feature-flags.ts` — update stale comments about `WorkerManager` and `manager-worker pairs` (lines 40-62). The flag is always enabled now; simplify or remove the historical commentary
 
-### Step 22b: Evaluate telemetry subsystem
-- [ ] `WorkerTelemetry` in `rpc-handlers/index.ts` (lines 231-240) tracks `worker-only` vs `manager-worker` modes
-- [ ] `telemetry/worker-telemetry.ts` and `rpc-handlers/telemetry-handlers.ts` have worker/manager-specific semantics
-- [ ] Decide: keep (still useful for worker sessions), remove (stale after room runtime cutover), or defer to Phase 1
+### Step 22b: Resolve telemetry subsystem (hard decision — pick A or B)
+- `WorkerTelemetry` in `rpc-handlers/index.ts` (lines 231-240) tracks `worker-only` vs `manager-worker` modes
+- `telemetry/worker-telemetry.ts` and `rpc-handlers/telemetry-handlers.ts` have worker/manager-specific semantics
+- These are wired to worker session events being removed in Step 22
+- **Option A**: Remove telemetry together with events (clean cut, rebuild in Phase 1 with runtime metrics)
+- **Option B**: Keep telemetry, migrate to runtime event model (more work now, continuity of metrics)
+- [ ] Pick option and execute accordingly
 
 ### Step 23: Verify
 ```bash
