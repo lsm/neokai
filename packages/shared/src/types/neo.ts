@@ -1,8 +1,8 @@
 /**
  * Neo Self-Aware Architecture Types
  *
- * Types for rooms, memories, tasks, contexts, and events.
- * Phase 1: Foundation layer - data structures and persistence.
+ * Types for rooms, goals, tasks, and summaries.
+ * Prepared for Room Runtime v0.19.
  */
 
 // ============================================================================
@@ -45,14 +45,12 @@ export interface Room {
 	sessionIds: string[];
 	/** Current status of the room */
 	status: RoomStatus;
-	/** ID of the context for this room */
-	contextId?: string;
 	/** Background context for the room - describes project, goals, constraints */
 	background?: string;
 	/** Custom instructions for how the room agent should behave */
 	instructions?: string;
-	/** Version of the room context (incremented on changes) */
-	contextVersion?: number;
+	/** Runtime configuration (maxConcurrentPairs, taskTimeout, etc.) */
+	config?: Record<string, unknown>;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -62,7 +60,7 @@ export interface Room {
 /**
  * Room goal status
  */
-export type GoalStatus = 'pending' | 'in_progress' | 'completed' | 'blocked';
+export type GoalStatus = 'active' | 'needs_human' | 'completed' | 'archived';
 
 /**
  * Room goal priority
@@ -92,6 +90,10 @@ export interface RoomGoal {
 	linkedTaskIds: string[];
 	/** Custom progress metrics */
 	metrics?: Record<string, number>;
+	/** Number of planning attempts */
+	planning_attempts?: number;
+	/** Number of goal review attempts */
+	goal_review_attempts?: number;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Last update timestamp (milliseconds since epoch) */
@@ -123,97 +125,14 @@ export interface CreateRoomParams {
 export interface UpdateRoomParams {
 	name?: string;
 	allowedPaths?: WorkspacePath[];
-	defaultPath?: string;
-	defaultModel?: string;
+	defaultPath?: string | null;
+	defaultModel?: string | null;
 	/** Allowed models for this room (empty/undefined = all models allowed) */
 	allowedModels?: string[];
 	/** Background context for the room */
-	background?: string;
+	background?: string | null;
 	/** Custom instructions for the room agent */
-	instructions?: string;
-}
-
-/**
- * Who made the context change
- */
-export type ContextChangedBy = 'human' | 'agent';
-
-/**
- * A versioned snapshot of room context
- */
-export interface RoomContextVersion {
-	/** Unique identifier */
-	id: string;
-	/** Room this version belongs to */
-	roomId: string;
-	/** Version number (sequential per room) */
-	version: number;
-	/** Background context text */
-	background?: string;
-	/** Instructions context text */
-	instructions?: string;
-	/** Who made the change */
-	changedBy: ContextChangedBy;
-	/** Optional reason for the change */
-	changeReason?: string;
-	/** When this version was created */
-	createdAt: number;
-}
-
-// ============================================================================
-// Neo Memory Types
-// ============================================================================
-
-/**
- * Memory type for categorizing stored information
- */
-export type MemoryType = 'conversation' | 'task_result' | 'preference' | 'pattern' | 'note';
-
-/**
- * Memory importance level
- */
-export type MemoryImportance = 'low' | 'normal' | 'high';
-
-/**
- * A memory entry stored by Neo for a room
- * Persistent memory that survives across sessions
- */
-export interface NeoMemory {
-	/** Unique identifier */
-	id: string;
-	/** Room this memory belongs to */
-	roomId: string;
-	/** Type of memory */
-	type: MemoryType;
-	/** The memory content (can be text or JSON) */
-	content: string;
-	/** Tags for categorization and search */
-	tags: string[];
-	/** Importance level for prioritization */
-	importance: MemoryImportance;
-	/** Session ID if memory is session-specific */
-	sessionId?: string;
-	/** Task ID if memory is related to a task */
-	taskId?: string;
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-	/** Last access timestamp (milliseconds since epoch) */
-	lastAccessedAt: number;
-	/** Number of times this memory has been accessed */
-	accessCount: number;
-}
-
-/**
- * Parameters for creating a new memory
- */
-export interface CreateMemoryParams {
-	roomId: string;
-	type: MemoryType;
-	content: string;
-	tags?: string[];
-	importance?: MemoryImportance;
-	sessionId?: string;
-	taskId?: string;
+	instructions?: string | null;
 }
 
 // ============================================================================
@@ -223,13 +142,7 @@ export interface CreateMemoryParams {
 /**
  * Task status
  */
-export type TaskStatus =
-	| 'pending'
-	| 'in_progress'
-	| 'blocked'
-	| 'completed'
-	| 'failed'
-	| 'cancelled';
+export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'escalated' | 'completed' | 'failed';
 
 /**
  * Task priority
@@ -237,7 +150,7 @@ export type TaskStatus =
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 /**
- * A task managed by Neo within a room
+ * A task managed within a room
  */
 export interface NeoTask {
 	/** Unique identifier */
@@ -248,16 +161,6 @@ export interface NeoTask {
 	title: string;
 	/** Detailed description */
 	description: string;
-	/** Session ID if task is being worked on in a session (legacy, prefer sessionIds) */
-	sessionId?: string;
-	/** IDs of sessions working on this task (multi-session support) */
-	sessionIds?: string[];
-	/** How multiple sessions should coordinate */
-	executionMode?: TaskExecutionMode;
-	/** Detailed session assignments */
-	sessions?: TaskSession[];
-	/** Link to recurring job if spawned by one */
-	recurringJobId?: string;
 	/** Current status */
 	status: TaskStatus;
 	/** Priority level */
@@ -286,7 +189,6 @@ export interface NeoTask {
 export interface TaskFilter {
 	status?: TaskStatus;
 	priority?: TaskPriority;
-	sessionId?: string;
 }
 
 /**
@@ -306,7 +208,6 @@ export interface CreateTaskParams {
 export interface UpdateTaskParams {
 	title?: string;
 	description?: string;
-	sessionId?: string;
 	status?: TaskStatus;
 	priority?: TaskPriority;
 	progress?: number;
@@ -314,198 +215,6 @@ export interface UpdateTaskParams {
 	result?: string;
 	error?: string;
 	dependsOn?: string[];
-	/** IDs of sessions working on this task (multi-session support) */
-	sessionIds?: string[];
-	/** How multiple sessions should coordinate */
-	executionMode?: TaskExecutionMode;
-	/** Detailed session assignments */
-	sessions?: TaskSession[];
-	/** Link to recurring job if spawned by one */
-	recurringJobId?: string;
-}
-
-// ============================================================================
-// Multi-Session Task Types
-// ============================================================================
-
-/**
- * Task execution mode for multi-session support
- */
-export type TaskExecutionMode = 'single' | 'parallel' | 'serial' | 'parallel_then_merge';
-
-/**
- * Session assignment within a task
- */
-export interface TaskSession {
-	/** Session ID */
-	sessionId: string;
-	/** Role of this session in the task */
-	role: 'primary' | 'secondary' | 'reviewer';
-	/** Status of this session's work */
-	status: 'pending' | 'active' | 'completed' | 'failed';
-	/** When this session started work */
-	startedAt?: number;
-	/** When this session completed work */
-	completedAt?: number;
-}
-
-// ============================================================================
-// Recurring Job Types
-// ============================================================================
-
-/**
- * Schedule configuration for recurring jobs
- */
-export type RecurringJobSchedule =
-	| { type: 'cron'; expression: string }
-	| { type: 'interval'; minutes: number }
-	| { type: 'daily'; hour: number; minute: number }
-	| { type: 'weekly'; dayOfWeek: number; hour: number; minute: number };
-
-/**
- * Task template for recurring jobs
- */
-export interface RecurringTaskTemplate {
-	/** Task title template */
-	title: string;
-	/** Task description template */
-	description: string;
-	/** Default priority for spawned tasks */
-	priority: TaskPriority;
-	/** Default execution mode for spawned tasks */
-	executionMode?: TaskExecutionMode;
-}
-
-/**
- * A recurring job that spawns tasks on a schedule
- */
-export interface RecurringJob {
-	/** Unique identifier */
-	id: string;
-	/** Room this job belongs to */
-	roomId: string;
-	/** Job name */
-	name: string;
-	/** Detailed description */
-	description: string;
-	/** Schedule configuration */
-	schedule: RecurringJobSchedule;
-	/** Task template for spawned tasks */
-	taskTemplate: RecurringTaskTemplate;
-	/** Whether the job is enabled */
-	enabled: boolean;
-	/** When the job last ran */
-	lastRunAt?: number;
-	/** When the job will run next */
-	nextRunAt?: number;
-	/** Number of times the job has run */
-	runCount: number;
-	/** Maximum number of runs (optional) */
-	maxRuns?: number;
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-	/** Last update timestamp (milliseconds since epoch) */
-	updatedAt: number;
-}
-
-/**
- * Parameters for creating a recurring job
- */
-export interface CreateRecurringJobParams {
-	roomId: string;
-	name: string;
-	description: string;
-	schedule: RecurringJobSchedule;
-	taskTemplate: RecurringTaskTemplate;
-	enabled?: boolean;
-	maxRuns?: number;
-}
-
-// ============================================================================
-// Neo Context Types
-// ============================================================================
-
-/**
- * Neo context status
- */
-export type NeoContextStatus = 'idle' | 'thinking' | 'waiting_for_input';
-
-/**
- * Message role in context
- */
-export type ContextMessageRole = 'system' | 'user' | 'assistant';
-
-/**
- * Neo context for a room - manages conversation history
- */
-export interface NeoContext {
-	/** Unique identifier */
-	id: string;
-	/** Room this context belongs to */
-	roomId: string;
-	/** Total tokens used in context */
-	totalTokens: number;
-	/** Last time context was compacted (milliseconds since epoch) */
-	lastCompactedAt?: number;
-	/** Current context status */
-	status: NeoContextStatus;
-	/** Current task being worked on */
-	currentTaskId?: string;
-	/** Current session being used */
-	currentSessionId?: string;
-}
-
-/**
- * A message in the Neo context
- */
-export interface NeoContextMessage {
-	/** Unique identifier */
-	id: string;
-	/** Context this message belongs to */
-	contextId: string;
-	/** Message role */
-	role: ContextMessageRole;
-	/** Message content */
-	content: string;
-	/** Timestamp (milliseconds since epoch) */
-	timestamp: number;
-	/** Token count for this message */
-	tokenCount: number;
-	/** Session ID if message was from a session */
-	sessionId?: string;
-	/** Task ID if message was related to a task */
-	taskId?: string;
-}
-
-// ============================================================================
-// Session Event Types
-// ============================================================================
-
-/**
- * Types of session events that Neo can react to
- */
-export type SessionEventType =
-	| 'turn_complete'
-	| 'question_asked'
-	| 'question_answered'
-	| 'error'
-	| 'session_created'
-	| 'session_archived';
-
-/**
- * An event from a session that Neo observes
- */
-export interface SessionEvent {
-	/** Event type */
-	type: SessionEventType;
-	/** Session ID that generated the event */
-	sessionId: string;
-	/** Room ID if session is assigned to a room */
-	roomId?: string;
-	/** Event timestamp (milliseconds since epoch) */
-	timestamp: number;
-	/** Event-specific data */
-	data?: unknown;
 }
 
 // ============================================================================
@@ -531,10 +240,6 @@ export interface TaskSummary {
 	status: TaskStatus;
 	priority: TaskPriority;
 	progress?: number;
-	/** Detailed session assignments */
-	sessions?: TaskSession[];
-	/** How multiple sessions should coordinate */
-	executionMode?: TaskExecutionMode;
 }
 
 /**
@@ -544,7 +249,6 @@ export interface RoomOverview {
 	room: Room;
 	sessions: SessionSummary[];
 	activeTasks: TaskSummary[];
-	contextStatus?: NeoContextStatus;
 }
 
 /**
@@ -552,329 +256,13 @@ export interface RoomOverview {
  */
 export interface NeoStatus {
 	roomId: string;
-	contextStatus: NeoContextStatus;
-	currentTaskId?: string;
-	currentSessionId?: string;
 	activeTaskCount: number;
-	memoryCount: number;
 }
 
 /**
- * Global status of all Neo instances
+ * Global status of all room instances
  */
 export interface GlobalStatus {
 	rooms: NeoStatus[];
 	totalActiveTasks: number;
-	totalMemories: number;
-}
-
-// ============================================================================
-// Worker Session Types (Manager-less Architecture)
-// ============================================================================
-
-/**
- * Worker session status
- */
-export type WorkerStatus =
-	| 'starting'
-	| 'running'
-	| 'waiting_for_review'
-	| 'completed'
-	| 'failed'
-	| 'cancelled';
-
-/**
- * Worker session tracking record
- *
- * Tracks worker sessions created by room agents. Supports both room:chat and room:self modes.
- *
- * MANAGER REMOVAL (v1.0): Replaces SessionPair with simplified worker-only tracking.
- * CRITICAL FIXES APPLIED:
- * - FIX 2: roomSessionId is mode-agnostic (not hardcoded to room_self)
- * - FIX 3: sessionId is the actual agent session ID (not just tracking ID)
- */
-export interface WorkerSession {
-	/** Unique tracking record ID */
-	id: string;
-	/** The actual agent session ID (for direct lookup) - FIX 3 */
-	sessionId: string;
-	/** Room this worker belongs to */
-	roomId: string;
-	/** Room agent session that created this worker (mode-agnostic) - FIX 2 */
-	roomSessionId: string;
-	/** Room agent type (discriminator) - FIX 2 */
-	roomSessionType: 'room_chat' | 'room_self';
-	/** Task this worker is executing */
-	taskId: string;
-	/** Current status of the worker */
-	status: WorkerStatus;
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-	/** Last update timestamp (milliseconds since epoch) */
-	updatedAt: number;
-	/** Completion timestamp (milliseconds since epoch) */
-	completedAt?: number;
-}
-
-/**
- * Parameters for spawning a new worker
- *
- * MANAGER REMOVAL (v1.0): Replaces CreateSessionPairParams.
- * CRITICAL FIXES APPLIED:
- * - FIX 2: roomSessionId is mode-agnostic (not roomSelfSessionId)
- */
-export interface CreateWorkerParams {
-	roomId: string;
-	roomSessionId: string; // FIX 2: Mode-agnostic (was roomSelfSessionId)
-	roomSessionType?: 'room_chat' | 'room_self'; // FIX 2: Optional, defaults to room_self
-	taskId: string;
-	taskTitle: string;
-	taskDescription?: string;
-	workspacePath?: string;
-	model?: string;
-}
-
-/**
- * Parameters for worker_complete_task tool
- *
- * MANAGER REMOVAL (v1.0): Worker calls this to signal task completion.
- */
-export interface WorkerCompleteTaskParams {
-	taskId: string;
-	summary: string;
-	filesChanged?: string[];
-	nextSteps?: string[];
-}
-
-// ============================================================================
-// Session Pair Types (Dual-Session Architecture) - DEPRECATED
-// ============================================================================
-
-/**
- * @deprecated Manager agent removed. Use WorkerSession instead.
- *
- * Status of a session pair
- */
-export type SessionPairStatus = 'active' | 'idle' | 'crashed' | 'completed';
-
-/**
- * @deprecated Manager agent removed. Use WorkerSession instead.
- *
- * Represents a paired Manager + Worker session within a Room.
- * Created when RoomAgent delegates work to be executed.
- */
-export interface SessionPair {
-	/** Unique identifier for this pair */
-	id: string;
-	/** Room this pair belongs to */
-	roomId: string;
-	/** The RoomSession that created this pair */
-	roomSessionId: string;
-	/** The manager session ID */
-	managerSessionId: string;
-	/** The worker session ID */
-	workerSessionId: string;
-	/** Current status of the pair */
-	status: SessionPairStatus;
-	/** Current task being worked on */
-	currentTaskId?: string;
-	/** Creation timestamp (milliseconds since epoch) */
-	createdAt: number;
-	/** Last update timestamp (milliseconds since epoch) */
-	updatedAt: number;
-}
-
-/**
- * @deprecated Manager agent removed.
- *
- * Summary view of a session pair for listings.
- */
-export interface SessionPairSummary {
-	id: string;
-	managerSessionId: string;
-	workerSessionId: string;
-	status: SessionPairStatus;
-	currentTaskId?: string;
-}
-
-/**
- * @deprecated Manager agent removed. Use CreateWorkerParams instead.
- *
- * Parameters for creating a new session pair.
- */
-export interface CreateSessionPairParams {
-	roomId: string;
-	roomSessionId: string;
-	taskId?: string;
-	taskTitle: string;
-	taskDescription?: string;
-	workspacePath?: string;
-	model?: string;
-}
-
-// ============================================================================
-// Room Self Types
-// ============================================================================
-
-/**
- * Room self lifecycle states
- */
-export type RoomSelfLifecycleState =
-	| 'idle'
-	| 'planning'
-	| 'executing'
-	| 'waiting'
-	| 'reviewing'
-	| 'error'
-	| 'paused';
-
-/**
- * State of a room's self agent
- *
- * MANAGER REMOVAL (v1.0): Updated to track workers instead of pairs.
- */
-export interface RoomSelfState {
-	/** Room this agent manages */
-	roomId: string;
-	/** Current lifecycle state */
-	lifecycleState: RoomSelfLifecycleState;
-	/** Current goal being worked on */
-	currentGoalId?: string;
-	/** Current task being executed */
-	currentTaskId?: string;
-	/** Active worker session IDs - MANAGER REMOVAL: was activeSessionPairIds */
-	activeWorkerSessionIds: string[];
-	/** Last activity timestamp */
-	lastActivityAt: number;
-	/** Error count for health monitoring */
-	errorCount: number;
-	/** Last error message */
-	lastError?: string;
-	/** Queue of planned actions */
-	pendingActions: string[];
-}
-
-/**
- * Room self session metadata (stored in sessions table)
- */
-export interface RoomSelfSessionMetadata {
-	sessionType: 'room_self';
-	roomId: string;
-	lifecycleState: RoomSelfLifecycleState;
-	waitingFor?: 'review' | 'escalation' | 'question';
-	waitingContext?: {
-		taskId?: string;
-		reason?: string;
-		questionId?: string;
-	};
-}
-
-/**
- * Context passed to room self for planning decisions
- */
-export interface RoomSelfPlanningContext {
-	type: 'idle_check' | 'event_triggered' | 'goal_review' | 'context_update';
-	activeGoals: RoomGoal[];
-	pendingTasks: NeoTask[];
-	inProgressTasks: NeoTask[];
-	capacity: number;
-	eventContext?: {
-		type: 'github' | 'user_message' | 'timer' | 'job_triggered';
-		data: unknown;
-	};
-	timestamp: number;
-}
-
-/**
- * Context for reviewing completed work
- */
-export interface RoomSelfReviewContext {
-	taskId: string;
-	summary: string;
-	filesChanged?: string[];
-	goalProgress?: {
-		goalId: string;
-		previousProgress: number;
-		newProgress: number;
-	}[];
-	timestamp: number;
-}
-
-/**
- * Human input types for room self
- */
-export type RoomSelfHumanInput =
-	| { type: 'review_response'; taskId: string; response: string; approved: boolean }
-	| { type: 'escalation_response'; escalationId: string; response: string }
-	| { type: 'question_response'; questionId: string; responses: Record<string, string | string[]> }
-	| { type: 'message'; content: string };
-
-/**
- * Room self waiting context
- */
-export interface RoomSelfWaitingContext {
-	type: 'review' | 'escalation' | 'question';
-	taskId?: string;
-	workerSessionId?: string;
-	escalationId?: string;
-	questionId?: string;
-	reason?: string;
-	since: number;
-}
-
-/**
- * Room self configuration
- */
-export interface RoomSelfConfig {
-	maxConcurrentPairs: number;
-	idleCheckIntervalMs: number;
-	planningTimeoutMs: number;
-	maxErrorCount: number;
-	autoStartOnRoomCreate: boolean;
-}
-
-/**
- * Default configuration for room self.
- * @public
- */
-export const DEFAULT_ROOM_SELF_CONFIG: RoomSelfConfig = {
-	maxConcurrentPairs: 3,
-	idleCheckIntervalMs: 60000, // 1 minute
-	planningTimeoutMs: 300000, // 5 minutes
-	maxErrorCount: 5,
-	autoStartOnRoomCreate: false,
-};
-
-// ============================================================================
-// Manager Hook Types
-// ============================================================================
-
-/**
- * Events that trigger manager hooks
- */
-export type ManagerHookEvent =
-	| 'task_started'
-	| 'task_progress'
-	| 'task_completed'
-	| 'task_failed'
-	| 'task_escalated'
-	| 'review_requested'
-	| 'worker_timeout';
-
-/**
- * Payload for manager hook events
- */
-export interface ManagerHookPayload {
-	/** Event type */
-	event: ManagerHookEvent;
-	/** Room ID */
-	roomId: string;
-	/** Session pair ID */
-	pairId: string;
-	/** Task ID */
-	taskId: string;
-	/** Event-specific data */
-	data: Record<string, unknown>;
-	/** Event timestamp */
-	timestamp: number;
 }
