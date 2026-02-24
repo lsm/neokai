@@ -356,6 +356,8 @@ Lead Agent must call **exactly one terminal tool** per turn: `complete_task`, `f
 - If Lead emits text with no tool call, or calls multiple conflicting tools → Runtime retries once with system nudge: "You must call exactly one of: send_to_craft, complete_task, fail_task, or escalate"
 - If second attempt also fails → Runtime auto-escalates to human
 
+**No-tool-call detection:** Set `leadCalledTool = true` flag when `handleLeadTool` is invoked. When Lead reaches terminal state, check the flag. If unset, Lead didn't call a tool. Reset flag when forwarding new Craft output to Lead.
+
 **Lead Tool Routing (MCP Callback Pattern):**
 
 Lead MCP tools are defined with callback functions that call into Runtime methods directly (same pattern as `lobby-agent-tools.ts`):
@@ -367,7 +369,7 @@ tool('send_to_craft', 'Send feedback to Craft', { message: z.string() }, async (
 });
 
 // In RoomRuntime
-handleLeadTool(pairId: string, toolName: string, params: any): Promise<ToolResult> {
+handleLeadTool(pairId: string, toolName: string, params: LeadToolParams): Promise<ToolResult> {
   // 1. Validate pair_state == 'awaiting_lead'
   // 2. Validate task version matches expected
   // 3. Validate no queued interrupts for this pair
@@ -417,10 +419,10 @@ class TaskPairManager {
 2. Create Lead session with review context in system prompt
 3. Create task_pairs record (state: `awaiting_craft`, version: 1)
 4. Set task status to `in_progress`
-5. **Send initial task instruction to Craft as first user message** — this triggers Craft to begin working
-6. Start observing Craft session
+5. **Start observing Craft session** — must observe BEFORE sending to avoid race condition
+6. **Send initial task instruction to Craft as first user message** — this triggers Craft to begin working
 
-**Why step 5 is needed:** The system prompt provides context but doesn't trigger action. Craft needs an explicit user message (e.g., "Please implement the task: {title}. {description}") to start working.
+**Why step 5 before 6:** Observation setup is instant. If we send first and Craft completes before observation starts, we miss the terminal state and rely on the 60s cron safety net. Observing first eliminates this race.
 
 ---
 
@@ -469,7 +471,9 @@ When Lead calls `escalate(reason)`:
 5. Runtime detects human message to Lead session → transitions pair back to `awaiting_lead`
 6. Lead re-evaluates with human guidance and calls a terminal tool
 
-**Why this works:** Lead session is a standard AgentSession. Human messages to Lead are just user messages in that session. Runtime observes all sessions and transitions pair state when it sees human activity on a Lead session that's in `awaiting_human`.
+**Detection mechanism:** Runtime listens for DaemonHub `message.sent` events filtered to Lead sessions with pairs in `awaiting_human` state. When a human message arrives, transition the pair.
+
+**Why this works:** Lead session is a standard AgentSession. Human messages to Lead are just user messages in that session.
 
 ### 5.4 Task Selection Ordering
 
@@ -489,8 +493,9 @@ On daemon startup:
 ```typescript
 async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void> {
   // 1. Find all active pairs (in_progress OR escalated tasks)
+  // Include room_id from tasks for audit logging
   const activePairs = db.query(`
-    SELECT tp.* FROM task_pairs tp
+    SELECT tp.*, t.room_id FROM task_pairs tp
     JOIN tasks t ON tp.task_id = t.id
     WHERE t.status IN ('in_progress', 'escalated')
     AND tp.pair_state NOT IN ('completed', 'failed')
@@ -502,8 +507,9 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
       case 'awaiting_craft':
         // Check if Craft session still exists
         if (!sessionExists(pair.craft_session_id)) {
-          // Session lost - mark task failed
+          // Session lost - mark task and pair failed
           await failTask(pair.task_id, 'session_lost');
+          await failPair(pair.id, 'session_lost');
           await logAudit(pair.room_id, 'session_lost', { pairId: pair.id });
         } else {
           // Re-observe Craft session
@@ -513,8 +519,10 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
       case 'awaiting_lead':
         // Check if Lead session still exists
         if (!sessionExists(pair.lead_session_id)) {
-          // Session lost - mark task failed
+          // Session lost - mark task and pair failed
           await failTask(pair.task_id, 'session_lost');
+          await failPair(pair.id, 'session_lost');
+          await logAudit(pair.room_id, 'session_lost', { pairId: pair.id });
         } else {
           // Re-observe Lead session
           sessionObserver.observe(pair.lead_session_id, onTerminal);
