@@ -365,7 +365,7 @@ describe('QueryOptionsBuilder', () => {
 
 	describe('room session restrictions', () => {
 		it('should preserve room MCP servers while enforcing strict MCP config', async () => {
-			mockSession.type = 'room_self';
+			mockSession.type = 'room_chat';
 			mockSession.config.mcpServers = {
 				'room-agent-tools': { command: 'test-command' },
 			};
@@ -379,7 +379,7 @@ describe('QueryOptionsBuilder', () => {
 		});
 
 		it('should only block high-risk built-in tools for room sessions', async () => {
-			mockSession.type = 'room_self';
+			mockSession.type = 'room_chat';
 			const options = await builder.build();
 			const disallowed = options.disallowedTools ?? [];
 

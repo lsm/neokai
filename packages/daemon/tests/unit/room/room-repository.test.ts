@@ -491,33 +491,6 @@ describe('RoomRepository', () => {
 		});
 	});
 
-	describe('setRoomContextId', () => {
-		it('should set context ID for room', () => {
-			const room = repository.createRoom({ name: 'Room' });
-
-			repository.setRoomContextId(room.id, 'context-123');
-
-			const updated = repository.getRoom(room.id);
-			expect(updated?.contextId).toBe('context-123');
-		});
-
-		it('should overwrite existing context ID', () => {
-			const room = repository.createRoom({ name: 'Room' });
-			repository.setRoomContextId(room.id, 'context-1');
-			repository.setRoomContextId(room.id, 'context-2');
-
-			const updated = repository.getRoom(room.id);
-			expect(updated?.contextId).toBe('context-2');
-		});
-
-		it('should not throw for non-existent room', () => {
-			// Should not throw - just silently do nothing
-			expect(() => {
-				repository.setRoomContextId('non-existent', 'context-123');
-			}).not.toThrow();
-		});
-	});
-
 	describe('archiveRoom', () => {
 		it('should archive an active room', () => {
 			const room = repository.createRoom({ name: 'Room' });

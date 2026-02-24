@@ -8,10 +8,10 @@
  * - goal.updateStatus - Update goal status
  * - goal.updateProgress - Update goal progress
  * - goal.updatePriority - Update goal priority
- * - goal.start - Start a goal (mark as in_progress)
  * - goal.complete - Complete a goal
- * - goal.block - Block a goal
- * - goal.unblock - Unblock a goal
+ * - goal.needsHuman - Mark goal as needing human input
+ * - goal.reactivate - Reactivate a goal
+ * - goal.archive - Archive a goal
  * - goal.linkTask - Link a task to a goal
  * - goal.unlinkTask - Unlink a task from a goal
  * - goal.delete - Delete a goal
@@ -40,7 +40,7 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'pending' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
@@ -54,7 +54,7 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'pending' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
@@ -69,7 +69,7 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'in_progress' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
@@ -83,7 +83,7 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'in_progress' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 50,
 			linkedTaskIds: [],
@@ -97,22 +97,8 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'pending' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'high' as GoalPriority,
-			progress: 0,
-			linkedTaskIds: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
-		})
-	),
-	startGoal: mock(
-		async (): Promise<RoomGoal> => ({
-			id: 'goal-123',
-			roomId: 'room-123',
-			title: 'Test Goal',
-			description: 'Test description',
-			status: 'in_progress' as GoalStatus,
-			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
 			createdAt: Date.now(),
@@ -134,13 +120,13 @@ const mockGoalManager = {
 			completedAt: Date.now(),
 		})
 	),
-	blockGoal: mock(
+	needsHumanGoal: mock(
 		async (): Promise<RoomGoal> => ({
 			id: 'goal-123',
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'blocked' as GoalStatus,
+			status: 'needs_human' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
@@ -148,13 +134,27 @@ const mockGoalManager = {
 			updatedAt: Date.now(),
 		})
 	),
-	unblockGoal: mock(
+	reactivateGoal: mock(
 		async (): Promise<RoomGoal> => ({
 			id: 'goal-123',
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'pending' as GoalStatus,
+			status: 'active' as GoalStatus,
+			priority: 'normal' as GoalPriority,
+			progress: 0,
+			linkedTaskIds: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		})
+	),
+	archiveGoal: mock(
+		async (): Promise<RoomGoal> => ({
+			id: 'goal-123',
+			roomId: 'room-123',
+			title: 'Test Goal',
+			description: 'Test description',
+			status: 'archived' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
@@ -168,7 +168,7 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'pending' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: ['task-123'],
@@ -182,7 +182,7 @@ const mockGoalManager = {
 			roomId: 'room-123',
 			title: 'Test Goal',
 			description: 'Test description',
-			status: 'pending' as GoalStatus,
+			status: 'active' as GoalStatus,
 			priority: 'normal' as GoalPriority,
 			progress: 0,
 			linkedTaskIds: [],
@@ -259,10 +259,10 @@ describe('Goal RPC Handlers', () => {
 		mockGoalManager.updateGoalStatus.mockClear();
 		mockGoalManager.updateGoalProgress.mockClear();
 		mockGoalManager.updateGoalPriority.mockClear();
-		mockGoalManager.startGoal.mockClear();
 		mockGoalManager.completeGoal.mockClear();
-		mockGoalManager.blockGoal.mockClear();
-		mockGoalManager.unblockGoal.mockClear();
+		mockGoalManager.needsHumanGoal.mockClear();
+		mockGoalManager.reactivateGoal.mockClear();
+		mockGoalManager.archiveGoal.mockClear();
 		mockGoalManager.linkTaskToGoal.mockClear();
 		mockGoalManager.unlinkTaskFromGoal.mockClear();
 		mockGoalManager.deleteGoal.mockClear();
@@ -414,12 +414,12 @@ describe('Goal RPC Handlers', () => {
 
 			const params = {
 				roomId: 'room-123',
-				status: 'pending' as GoalStatus,
+				status: 'active' as GoalStatus,
 			};
 
 			await handler!(params, {});
 
-			expect(mockGoalManager.listGoals).toHaveBeenCalledWith('pending');
+			expect(mockGoalManager.listGoals).toHaveBeenCalledWith('active');
 		});
 
 		it('throws error when roomId is missing', async () => {
@@ -438,14 +438,14 @@ describe('Goal RPC Handlers', () => {
 			const params = {
 				roomId: 'room-123',
 				goalId: 'goal-123',
-				status: 'in_progress' as GoalStatus,
+				status: 'active' as GoalStatus,
 			};
 
 			const result = (await handler!(params, {})) as { goal: RoomGoal };
 
 			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith(
 				'goal-123',
-				'in_progress',
+				'active',
 				undefined
 			);
 			expect(result.goal).toBeDefined();
@@ -455,7 +455,7 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('goal.updateStatus');
 			expect(handler).toBeDefined();
 
-			await expect(handler!({ goalId: 'goal-123', status: 'in_progress' }, {})).rejects.toThrow(
+			await expect(handler!({ goalId: 'goal-123', status: 'active' }, {})).rejects.toThrow(
 				'Room ID is required'
 			);
 		});
@@ -464,7 +464,7 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('goal.updateStatus');
 			expect(handler).toBeDefined();
 
-			await expect(handler!({ roomId: 'room-123', status: 'in_progress' }, {})).rejects.toThrow(
+			await expect(handler!({ roomId: 'room-123', status: 'active' }, {})).rejects.toThrow(
 				'Goal ID is required'
 			);
 		});
@@ -482,7 +482,7 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('goal.updateStatus');
 			expect(handler).toBeDefined();
 
-			await handler!({ roomId: 'room-123', goalId: 'goal-123', status: 'in_progress' }, {});
+			await handler!({ roomId: 'room-123', goalId: 'goal-123', status: 'active' }, {});
 
 			expect(daemonHubData.emit).toHaveBeenCalledWith(
 				'goal.updated',
@@ -637,54 +637,6 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
-	describe('goal.start', () => {
-		it('starts a goal', async () => {
-			const handler = messageHubData.handlers.get('goal.start');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.startGoal).toHaveBeenCalledWith('goal-123');
-			expect(result.goal).toBeDefined();
-			expect(result.goal.status).toBe('in_progress');
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.start');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.start');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
-		});
-
-		it('emits goal.updated event', async () => {
-			const handler = messageHubData.handlers.get('goal.start');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-		});
-	});
-
 	describe('goal.complete', () => {
 		it('completes a goal', async () => {
 			const handler = messageHubData.handlers.get('goal.complete');
@@ -733,9 +685,9 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
-	describe('goal.block', () => {
-		it('blocks a goal', async () => {
-			const handler = messageHubData.handlers.get('goal.block');
+	describe('goal.needsHuman', () => {
+		it('marks a goal as needing human input', async () => {
+			const handler = messageHubData.handlers.get('goal.needsHuman');
 			expect(handler).toBeDefined();
 
 			const params = {
@@ -745,27 +697,27 @@ describe('Goal RPC Handlers', () => {
 
 			const result = (await handler!(params, {})) as { goal: RoomGoal };
 
-			expect(mockGoalManager.blockGoal).toHaveBeenCalledWith('goal-123');
+			expect(mockGoalManager.needsHumanGoal).toHaveBeenCalledWith('goal-123');
 			expect(result.goal).toBeDefined();
-			expect(result.goal.status).toBe('blocked');
+			expect(result.goal.status).toBe('needs_human');
 		});
 
 		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.block');
+			const handler = messageHubData.handlers.get('goal.needsHuman');
 			expect(handler).toBeDefined();
 
 			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.block');
+			const handler = messageHubData.handlers.get('goal.needsHuman');
 			expect(handler).toBeDefined();
 
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
 		});
 
 		it('emits goal.updated event', async () => {
-			const handler = messageHubData.handlers.get('goal.block');
+			const handler = messageHubData.handlers.get('goal.needsHuman');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
@@ -781,9 +733,9 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
-	describe('goal.unblock', () => {
-		it('unblocks a goal', async () => {
-			const handler = messageHubData.handlers.get('goal.unblock');
+	describe('goal.reactivate', () => {
+		it('reactivates a goal', async () => {
+			const handler = messageHubData.handlers.get('goal.reactivate');
 			expect(handler).toBeDefined();
 
 			const params = {
@@ -793,27 +745,75 @@ describe('Goal RPC Handlers', () => {
 
 			const result = (await handler!(params, {})) as { goal: RoomGoal };
 
-			expect(mockGoalManager.unblockGoal).toHaveBeenCalledWith('goal-123');
+			expect(mockGoalManager.reactivateGoal).toHaveBeenCalledWith('goal-123');
 			expect(result.goal).toBeDefined();
-			expect(result.goal.status).toBe('pending');
+			expect(result.goal.status).toBe('active');
 		});
 
 		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.unblock');
+			const handler = messageHubData.handlers.get('goal.reactivate');
 			expect(handler).toBeDefined();
 
 			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.unblock');
+			const handler = messageHubData.handlers.get('goal.reactivate');
 			expect(handler).toBeDefined();
 
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
 		});
 
 		it('emits goal.updated event', async () => {
-			const handler = messageHubData.handlers.get('goal.unblock');
+			const handler = messageHubData.handlers.get('goal.reactivate');
+			expect(handler).toBeDefined();
+
+			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'goal.updated',
+				expect.objectContaining({
+					sessionId: 'room:room-123',
+					roomId: 'room-123',
+					goalId: 'goal-123',
+				})
+			);
+		});
+	});
+
+	describe('goal.archive', () => {
+		it('archives a goal', async () => {
+			const handler = messageHubData.handlers.get('goal.archive');
+			expect(handler).toBeDefined();
+
+			const params = {
+				roomId: 'room-123',
+				goalId: 'goal-123',
+			};
+
+			const result = (await handler!(params, {})) as { goal: RoomGoal };
+
+			expect(mockGoalManager.archiveGoal).toHaveBeenCalledWith('goal-123');
+			expect(result.goal).toBeDefined();
+			expect(result.goal.status).toBe('archived');
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.archive');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.archive');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
+		});
+
+		it('emits goal.updated event', async () => {
+			const handler = messageHubData.handlers.get('goal.archive');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
@@ -1038,7 +1038,7 @@ describe('Goal RPC Handlers', () => {
 				roomId: 'room-123',
 				title: 'Next Goal',
 				description: '',
-				status: 'pending',
+				status: 'active',
 				priority: 'high',
 				progress: 0,
 				linkedTaskIds: [],
@@ -1091,7 +1091,7 @@ describe('Goal RPC Handlers', () => {
 					roomId: 'room-123',
 					title: 'Active Goal 1',
 					description: '',
-					status: 'in_progress',
+					status: 'active',
 					priority: 'normal',
 					progress: 50,
 					linkedTaskIds: [],
@@ -1101,9 +1101,9 @@ describe('Goal RPC Handlers', () => {
 				{
 					id: 'goal-456',
 					roomId: 'room-123',
-					title: 'Active Goal 2',
+					title: 'Needs Human Goal',
 					description: '',
-					status: 'pending',
+					status: 'needs_human',
 					priority: 'high',
 					progress: 0,
 					linkedTaskIds: [],

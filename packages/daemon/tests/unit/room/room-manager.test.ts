@@ -2,7 +2,7 @@
  * RoomManager Tests
  *
  * Tests for room lifecycle and operations:
- * - Create rooms with auto-generated context
+ * - Create rooms
  * - Get room details
  * - Update rooms
  * - Archive rooms
@@ -61,31 +61,11 @@ describe('RoomManager', () => {
 			expect(room.background).toBe('A room with background context');
 		});
 
-		it('should create a context for the room', () => {
-			const room = roomManager.createRoom({ name: 'Context Test Room' });
-
-			expect(room.contextId).toBeDefined();
-			expect(typeof room.contextId).toBe('string');
-			expect(room.contextId.length).toBeGreaterThan(0);
-		});
-
-		it('should create room atomically - context is linked in transaction', () => {
-			const room = roomManager.createRoom({ name: 'Atomic Room' });
-
-			// Room should have a valid contextId immediately after creation
-			expect(room.contextId).toBeDefined();
-
-			// Fetch room again to verify persistence
-			const fetchedRoom = roomManager.getRoom(room.id);
-			expect(fetchedRoom?.contextId).toBe(room.contextId);
-		});
-
 		it('should generate unique IDs for each room', () => {
 			const room1 = roomManager.createRoom({ name: 'Room 1' });
 			const room2 = roomManager.createRoom({ name: 'Room 2' });
 
 			expect(room1.id).not.toBe(room2.id);
-			expect(room1.contextId).not.toBe(room2.contextId);
 		});
 
 		it('should set timestamps correctly', () => {
@@ -135,7 +115,6 @@ describe('RoomManager', () => {
 			expect(room.defaultModel).toBe('claude-opus-4-5-20250514');
 			expect(room.status).toBe('active');
 			expect(room.sessionIds).toEqual([]);
-			expect(room.contextId).toBeDefined();
 		});
 	});
 
@@ -149,7 +128,6 @@ describe('RoomManager', () => {
 			expect(overview?.room.name).toBe('Overview Room');
 			expect(overview?.sessions).toEqual([]);
 			expect(overview?.activeTasks).toEqual([]);
-			expect(overview?.contextStatus).toBe('idle');
 		});
 
 		it('should return null for non-existent room', () => {
@@ -250,18 +228,6 @@ describe('RoomManager', () => {
 			expect(overview?.activeTasks[0].title).toBe('Active Task');
 			expect(overview?.activeTasks[0].status).toBe('in_progress');
 			expect(overview?.activeTasks[0].priority).toBe('high');
-		});
-
-		it('should include context status in overview', () => {
-			const room = roomManager.createRoom({ name: 'Room With Context' });
-			const dbRaw = db.getDatabase();
-
-			// Update context status
-			dbRaw.prepare(`UPDATE contexts SET status = ? WHERE id = ?`).run('thinking', room.contextId);
-
-			const overview = roomManager.getRoomOverview(room.id);
-
-			expect(overview?.contextStatus).toBe('thinking');
 		});
 	});
 
@@ -468,9 +434,7 @@ describe('RoomManager', () => {
 
 			expect(status).toBeDefined();
 			expect(status?.roomId).toBe(room.id);
-			expect(status?.contextStatus).toBe('idle');
 			expect(status?.activeTaskCount).toBe(0);
-			expect(status?.memoryCount).toBe(0);
 		});
 
 		it('should return null for non-existent room', () => {
@@ -514,69 +478,6 @@ describe('RoomManager', () => {
 			// Only pending and in_progress are "active" (not completed/failed)
 			expect(status?.activeTaskCount).toBe(2);
 		});
-
-		it('should count memories correctly', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			const dbRaw = db.getDatabase();
-
-			// Create memories
-			dbRaw
-				.prepare(
-					`INSERT INTO memories (id, room_id, type, content, tags, importance, created_at, last_accessed_at, access_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-				)
-				.run(
-					'mem-1',
-					room.id,
-					'conversation',
-					'Content 1',
-					'[]',
-					'normal',
-					Date.now(),
-					Date.now(),
-					0
-				);
-			dbRaw
-				.prepare(
-					`INSERT INTO memories (id, room_id, type, content, tags, importance, created_at, last_accessed_at, access_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-				)
-				.run('mem-2', room.id, 'note', 'Content 2', '[]', 'high', Date.now(), Date.now(), 0);
-
-			const status = roomManager.getRoomStatus(room.id);
-
-			expect(status?.memoryCount).toBe(2);
-		});
-
-		it('should include current task and session from context', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			const dbRaw = db.getDatabase();
-
-			// Update context with current task/session
-			dbRaw
-				.prepare(
-					`UPDATE contexts SET current_task_id = ?, current_session_id = ?, status = ? WHERE id = ?`
-				)
-				.run('task-active', 'session-active', 'thinking', room.contextId);
-
-			const status = roomManager.getRoomStatus(room.id);
-
-			expect(status?.currentTaskId).toBe('task-active');
-			expect(status?.currentSessionId).toBe('session-active');
-			expect(status?.contextStatus).toBe('thinking');
-		});
-
-		it('should return idle status when context has no status', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			const dbRaw = db.getDatabase();
-
-			// Remove contextId from room
-			dbRaw.prepare(`UPDATE rooms SET context_id = NULL WHERE id = ?`).run(room.id);
-
-			const status = roomManager.getRoomStatus(room.id);
-
-			expect(status?.contextStatus).toBe('idle');
-		});
 	});
 
 	describe('getGlobalStatus', () => {
@@ -585,7 +486,6 @@ describe('RoomManager', () => {
 
 			expect(status.rooms).toEqual([]);
 			expect(status.totalActiveTasks).toBe(0);
-			expect(status.totalMemories).toBe(0);
 		});
 
 		it('should aggregate status from multiple rooms', () => {
@@ -615,41 +515,10 @@ describe('RoomManager', () => {
 				)
 				.run('task-3', room2.id, 'Task 3', 'Desc', 'pending', 'normal', '[]', Date.now());
 
-			// Add memories
-			dbRaw
-				.prepare(
-					`INSERT INTO memories (id, room_id, type, content, tags, importance, created_at, last_accessed_at, access_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-				)
-				.run(
-					'mem-1',
-					room1.id,
-					'conversation',
-					'Content',
-					'[]',
-					'normal',
-					Date.now(),
-					Date.now(),
-					0
-				);
-			dbRaw
-				.prepare(
-					`INSERT INTO memories (id, room_id, type, content, tags, importance, created_at, last_accessed_at, access_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-				)
-				.run('mem-2', room2.id, 'note', 'Content', '[]', 'normal', Date.now(), Date.now(), 0);
-			dbRaw
-				.prepare(
-					`INSERT INTO memories (id, room_id, type, content, tags, importance, created_at, last_accessed_at, access_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-				)
-				.run('mem-3', room2.id, 'note', 'Content', '[]', 'normal', Date.now(), Date.now(), 0);
-
 			const status = roomManager.getGlobalStatus();
 
 			expect(status.rooms).toHaveLength(2);
 			expect(status.totalActiveTasks).toBe(3); // 2 from room1 + 1 from room2
-			expect(status.totalMemories).toBe(3); // 1 from room1 + 2 from room2
 		});
 
 		it('should exclude archived rooms from global status', () => {
@@ -660,7 +529,7 @@ describe('RoomManager', () => {
 			const status = roomManager.getGlobalStatus();
 
 			expect(status.rooms).toHaveLength(1);
-			expect(status.rooms[0].roomId).toBe(room1.id);
+			expect(status.rooms[0]?.roomId).toBe(room1.id);
 		});
 
 		it('should include all room status fields', () => {
@@ -670,11 +539,7 @@ describe('RoomManager', () => {
 
 			expect(status.rooms[0]).toEqual({
 				roomId: room.id,
-				contextStatus: 'idle',
-				currentTaskId: undefined,
-				currentSessionId: undefined,
 				activeTaskCount: 0,
-				memoryCount: 0,
 			});
 		});
 	});
