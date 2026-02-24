@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.14
+Status: Draft v0.15
 Date: 2026-02-23
 
 ## Context
@@ -407,7 +407,7 @@ The Lead Agent is triggered when Room Runtime sends it a user message containing
 
 **Loop termination guards**:
 - `max_feedback_iterations`: default 10 per task. After N `send_to_craft` cycles without `complete_task`/`fail_task`, Runtime auto-escalates to human
-- `task_timeout`: wall-clock timeout per task (default: 30 minutes), counting only **active work time** (`awaiting_craft` + `awaiting_lead` states). Clock is paused during `awaiting_human` and `hibernated` states to avoid conflicting with the escalation SLA (2h). Timeout is **soft** — if Craft is mid-tool-call when timeout fires, Runtime waits for the current turn to complete before pausing the pair and escalating. This prevents corrupted state from interrupted file edits or partial operations
+- `task_timeout`: wall-clock timeout per task (default: 30 minutes), counting only **active work time** (`awaiting_craft` + `awaiting_lead` states). Clock is paused during `awaiting_human` and `hibernated` states to avoid conflicting with the escalation SLA (2h). Timeout is **soft** — if Craft is mid-tool-call when timeout fires, Runtime waits for the current turn to complete before pausing the pair and escalating. This prevents corrupted state from interrupted file edits or partial operations. **Prerequisite**: Craft's bash tool must have a per-command hard timeout (e.g., 5 minutes) to guarantee turns eventually end — otherwise a hanging command (e.g., `npm run dev` without background flag) would make the soft timeout wait forever
 - All thresholds configurable per room
 
 ### Planning as a (Craft, Lead) Pair
@@ -805,6 +805,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 69. **Verification consecutive failure escalation**: If same verification check fails 3 times consecutively, Lead must escalate instead of continuing feedback loop.
 70. **Notification message type**: Dedicated type (not user/assistant/system). Renders distinctly in UI. Included in Room Agent context as read-only — no unprompted response.
 71. **Version bumping protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment version. Both Runtime and Room Agent tools follow this.
+72. **Soft timeout requires per-command hard timeout**: Craft's bash tool must enforce a per-command timeout (e.g., 5 min) so hanging commands can't bypass the soft task timeout indefinitely.
 
 ## Open Questions (For Future Iterations)
 
