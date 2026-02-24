@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.13
+Status: Draft v0.14
 Date: 2026-02-23
 
 ## Context
@@ -277,7 +277,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
   - `send_to_craft()` → deliver queued human messages to Craft after Lead's feedback
   - `complete_task()` / `fail_task()` → surface queued messages to Room Agent as "FYI: human said X but task already completed/failed"
   - `escalate()` → deliver to Lead along with escalation context (already specified)
-- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message is **queued and delivered to Lead after its current turn completes**, transitioning the pair to `awaiting_lead` (not `awaiting_human`, because the interrupt IS the human's input — Lead must now act on it). This is a "pause and inject" — Lead retains its full session context and the interrupt is delivered as an additional user message. Lead must re-evaluate with the interrupt context before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel.
+- **Human interrupt**: Human can flag a message as "interrupt" in the task chat UI. An interrupt message is **queued and delivered to Lead after its current turn completes**, transitioning the pair to `awaiting_lead` (not `awaiting_human`, because the interrupt IS the human's input — Lead must now act on it). This is a "pause and inject" — Lead retains its full session context and the interrupt is delivered as an additional user message. Lead must re-evaluate with the interrupt context before calling any terminal tool. This handles "Stop, use Preact not React" scenarios where the human wants to redirect, not cancel. **Race with terminal action**: If Lead's current turn calls `complete_task()`/`fail_task()` before the interrupt is delivered, the interrupt follows the same queued-message delivery rules — surfaced to Room Agent as "Human sent interrupt but task already completed/failed: {message}." Room Agent can then `retry_task` if the interrupt was important enough to warrant rework.
 - **Urgent control actions** (`cancel_task`, `pause runtime`) bypass the message queue and execute immediately via Room Agent tools, even if Lead is mid-review
 
 **State**: `running` | `paused`. That's it.
@@ -304,7 +304,7 @@ This is a full **AgentSession** with:
 | `create_task(goalId, title, description)` | Manually create a task for a goal |
 | `update_task(taskId, updates)` | Update task details or priority |
 | `cancel_task(taskId)` | Kill the active (Craft, Lead) pair, mark task failed. Cleanup: (1) abort Craft session via SDK cancel, (2) record last known state in task failure metadata (files modified, commands run — extracted from Craft's tool call history), (3) surface to human: "Task X cancelled. Craft had modified: [file list]. These changes may be partial." |
-| `retry_task(taskId)` | Kill current pair, create new (Craft, Lead) pair |
+| `retry_task(taskId)` | Kill current pair, create new (Craft, Lead) pair. New pair receives previous attempt context in system prompt: failure reason and summarized Lead feedback from prior pair. Prevents repeating the same mistakes |
 | `get_task_status(taskId)` | Get task state including recent Craft/Lead messages |
 | `list_tasks(goalId?)` | List tasks, optionally filtered by goal |
 | `get_room_status()` | Overview: runtime state, active pairs, goal/task summary |
@@ -313,7 +313,7 @@ The Room Agent is NOT the scheduler. It's the human interface. When the human cr
 
 **Context compaction**: Room Agent is a long-lived session that accumulates conversation over days/weeks. It uses the existing AgentSession compaction mechanism. Since Room Agent primarily does CRUD via tools (not deep reasoning), aggressive compaction of older conversations is safe — retain recent exchanges and a summary of older ones. **Important**: recent tool-call results (e.g., newly created goal/task IDs) must survive compaction so the human can reference them in follow-up messages.
 
-**Coordination with Runtime**: Room Agent tools that modify task state (`cancel_task`, `retry_task`, `update_task`) use **optimistic locking** — they check `task.version` before writing, and fail gracefully if Runtime has already transitioned the task. This prevents races where Room Agent cancels a task that Runtime just completed. On conflict, the tool returns the current state so Room Agent can inform the human.
+**Coordination with Runtime**: Room Agent tools that modify task state (`cancel_task`, `retry_task`, `update_task`) use **optimistic locking** — they check `task.version` before writing, and fail gracefully if Runtime has already transitioned the task. This prevents races where Room Agent cancels a task that Runtime just completed. On conflict, the tool returns the current state so Room Agent can inform the human. **Version protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment the version column — both Runtime and Room Agent tools follow this protocol. Without this, optimistic locking is meaningless.
 
 #### 3. Craft Agent (on-demand AgentSession — per task)
 
@@ -371,7 +371,7 @@ The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools r
   - `design`: Review architectural soundness, completeness, alignment with goals.
   - `goal_review`: Verify all task summaries satisfy the original goal.
 - Available tools and when to use each
-- **Verification requirements**: Before calling `complete_task`, Lead must verify the work meets acceptance criteria. For coding tasks: use `run_verification` to confirm tests pass and linting is clean. Do not accept based solely on Craft's claim of completion. **If `run_verification` fails**, Lead must not attempt to debug or fix the issue — immediately call `send_to_craft()` with the verification output so Craft can address it.
+- **Verification requirements**: Before calling `complete_task`, Lead must verify the work meets acceptance criteria. For coding tasks: use `run_verification` to confirm tests pass and linting is clean. Do not accept based solely on Craft's claim of completion. **If `run_verification` fails**, Lead must not attempt to debug or fix the issue — immediately call `send_to_craft()` with the verification output so Craft can address it. **If the same verification check fails 3 times consecutively**, Lead must call `escalate()` instead of continuing the feedback loop — the issue likely requires human diagnosis (flaky test, environment problem, broken fixture).
 - **AskUserQuestion answer policy**: Lead may answer Craft's questions about architectural choices, code patterns, and technical decisions based on goal/task context. Lead must **always escalate** questions about: secrets/API keys/credentials, subjective human preferences, access permissions, or anything outside the goal/task scope. When escalating a Craft question, Lead must call `escalate()` with the Craft's original question included verbatim in the reason, so the human has full context without needing to read the Craft session.
 
 **Context management**: Each message from Runtime to Lead includes a structured header:
@@ -567,7 +567,7 @@ sequenceDiagram
 **Task state during escalation**: `escalated` (a sub-state of `in_progress`). The pair is paused — Lead waits for human input, Craft is idle. Human responds **directly to Lead** (since Lead has the review context), and Lead translates guidance into actionable feedback for Craft.
 
 **Notification delivery** (applies to all Runtime→human notifications, not just escalation):
-- **Session injection**: Runtime injects a message into Room Agent's conversation describing the event — so it persists in conversation history and is visible next time human opens Room Agent
+- **Session injection**: Runtime injects a **notification message** (dedicated type — not user, assistant, or system) into Room Agent's conversation. Renders distinctly in UI (e.g., info banner style). Included in Room Agent's context as read-only information — Room Agent does NOT attempt to respond to it, avoiding unprompted token consumption
 - **UI push**: Runtime publishes an event via MessageHub — frontend shows a notification badge/toast immediately, regardless of whether Room Agent is active
 - Both mechanisms fire for: escalations, task failures, goal completion, `needs_human` transitions, session-lost errors
 - Push notifications (browser/OS) are out of scope for MVP
@@ -800,6 +800,11 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 64. **Draft tasks in planning review**: Structured Craft→Lead message includes `Draft tasks created` list so Lead reviews actual DB tasks, not just narrative.
 65. **Audit log**: `room_audit_log` table for tick decisions, pair state changes, message delivery. Essential for debugging.
 66. **Token tracking**: `tokens_used` on task_pairs from day one for cost visibility.
+67. **Interrupt race with completion**: If Lead completes/fails task before interrupt is delivered, interrupt is surfaced to Room Agent as FYI. Room Agent can `retry_task` if rework is warranted.
+68. **`retry_task` injects previous attempt context**: New Craft and Lead receive failure reason and summarized prior feedback in system prompt. Prevents repeating mistakes.
+69. **Verification consecutive failure escalation**: If same verification check fails 3 times consecutively, Lead must escalate instead of continuing feedback loop.
+70. **Notification message type**: Dedicated type (not user/assistant/system). Renders distinctly in UI. Included in Room Agent context as read-only — no unprompted response.
+71. **Version bumping protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment version. Both Runtime and Room Agent tools follow this.
 
 ## Open Questions (For Future Iterations)
 
