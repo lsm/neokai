@@ -1,12 +1,29 @@
-# Room Runtime Implementation Plan
+# Room Runtime Implementation Plan — Minimal Core
 
 Status: Draft
 Date: 2026-02-24
 Related: [Room Runtime Spec v0.21](./room-runtime-spec.md)
 
-## Goal: Reach Autonomous Room Operation
+## Important: This is NOT a Full Implementation Spec
 
-The minimal viable system that can **self-improve** needs:
+This document describes the **minimal core** needed to reach a point where the room can operate autonomously and **use itself to continue developing the remaining features**.
+
+Once this core is working, we can ask the room to implement:
+- Planning as a (Craft, Lead) pair
+- Goal review
+- Escalation flow
+- Human message queueing
+- Interrupt handling
+- Task timeout
+- Parallel pairs
+
+**The room builds itself.** This plan just gets us to the starting line.
+
+---
+
+## Goal: Reach Self-Bootstrapping Operation
+
+The minimal viable system needs:
 1. Human can create goals/tasks via Room Agent
 2. Runtime detects pending tasks and spawns (Craft, Lead) pairs
 3. Craft does work, Lead reviews, feedback loop until accepted
@@ -415,9 +432,11 @@ Phase 6: Recovery
 
 ---
 
-## Minimal Viable Feature Set
+## Minimal Viable Feature Set (The Core)
 
-### Included (MVP)
+These are the features we implement in this plan. Everything else is deferred.
+
+### Included
 
 - ✅ Human creates goals/tasks via Room Agent
 - ✅ Runtime detects pending tasks
@@ -426,11 +445,13 @@ Phase 6: Recovery
 - ✅ Feedback loop until accepted
 - ✅ Basic daemon restart recovery
 
-### Deferred (room can build these later)
+### Deferred (the room builds these after core works)
 
-- ⏳ Planning as (Craft, Lead) pair (human creates tasks manually)
-- ⏳ Goal review (human marks complete)
-- ⏳ Escalation flow (Lead can fail_task)
+Once the core is operational, we can use the room itself to implement:
+
+- ⏳ Planning as (Craft, Lead) pair (for now: human creates tasks manually)
+- ⏳ Goal review (for now: human marks complete)
+- ⏳ Escalation flow (for now: Lead can fail_task)
 - ⏳ Human message queueing during Lead review
 - ⏳ Interrupt handling
 - ⏳ Task timeout
