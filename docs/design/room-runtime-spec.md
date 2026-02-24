@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.3
+Status: Draft v0.4
 Date: 2026-02-23
 
 ## Context
@@ -25,25 +25,26 @@ The current `RoomSelfService` uses an **LLM as the orchestrator** — a persiste
 
 ---
 
-## The Core Abstraction: Do → Watch Loop
+## The Core Abstraction: Craft → Lead Loop
 
-Everything in this system follows the same meta-process. **Planning, coding, researching, designing** — they're all just activities. The abstraction is always the same: one agent does, one agent watches and gives feedback.
+Everything in this system follows the same meta-process. **Planning, coding, researching, designing** — they're all just activities. The abstraction is always the same: one agent crafts, one agent leads and gives feedback.
 
 ```mermaid
 graph LR
-    A[Something needs doing] --> B["Do Agent works on it<br/>(any activity: planning, coding, research, design)"]
-    B --> C["Do Agent reaches a state<br/>(result / error / question / idle)"]
-    C --> D["Watch Agent observes & reviews<br/>(reads Do Agent's messages/artifacts)"]
-    D -->|feedback / follow-up| B
-    D -->|accepted| E[Done]
-    D -->|needs human| F[Human intervenes]
-    F -->|guidance| B
-    F -->|decision| D
+    A[Something needs doing] --> B["Craft Agent works on it<br/>(any activity: planning, coding,<br/>research, design)"]
+    B --> C["Craft Agent reaches a state<br/>(result / error / question / idle)"]
+    C --> D["Room Runtime observes idle,<br/>collects last 1-3 assistant messages"]
+    D --> E["Lead Agent receives Craft output<br/>as user message, reviews"]
+    E -->|"send_to_craft(feedback)"| B
+    E -->|"complete_task(summary)"| F[Done]
+    E -->|"escalate(reason)"| G[Human intervenes]
+    G -->|guidance to Craft| B
+    G -->|decision to Lead| E
 ```
 
-The **Do → Watch loop** is universal:
+The **Craft → Lead loop** is universal:
 
-| Activity | Do Agent does | Watch Agent does |
+| Activity | Craft Agent does | Lead Agent does |
 |---|---|---|
 | **Planning** | Examines codebase, proposes task breakdown | Reviews plan quality, suggests adjustments |
 | **Coding** | Implements feature, writes tests | Reviews code, checks correctness, requests fixes |
@@ -51,62 +52,161 @@ The **Do → Watch loop** is universal:
 | **Design** | Drafts architecture, creates specs | Reviews design, identifies gaps, validates approach |
 | **PR Review** | Addresses review comments, pushes fixes | Reads diff, leaves feedback, approves/requests changes |
 
-The loop is always between two parties: a **doer** and a **watcher**. The watcher can be an agent, a human, or both, or a process that can be involved by many parties (like a PR review).
+The loop is always between two parties: a **Craft Agent** and a **Lead Agent**. The Lead can be an agent, a human, or both, or a process involving many parties (like a PR review).
 
-### The (Do, Watch) Pair
+### The (Craft, Lead) Pair
 
-Every task in the system creates a **(Do, Watch) pair** — two agent sessions that collaborate:
+Every task in the system creates a **(Craft, Lead) pair** — two agent sessions that collaborate:
 
 ```mermaid
 graph LR
     subgraph TaskPair["Task: Implement auth endpoint"]
-        Do["Do Agent<br/>(AgentSession)"]
-        Watch["Watch Agent<br/>(AgentSession)"]
+        Craft["Craft Agent<br/>(AgentSession)"]
+        Lead["Lead Agent<br/>(AgentSession)"]
     end
 
-    Do -->|reaches idle/result/error| Watch
-    Watch -->|feedback message| Do
-    Watch -->|accepted → update task| DB[(Database)]
-    Human -->|joins conversation| Do
-    Human -->|provides guidance| Watch
+    RT["Room Runtime"]
+
+    Craft -->|"goes idle"| RT
+    RT -->|"sends last 1-3 Craft messages<br/>as user message"| Lead
+    Lead -->|"send_to_craft(feedback)<br/>routed through Runtime"| RT
+    RT -->|"injects as user message"| Craft
+    Lead -->|"complete_task() / fail_task()<br/>routed through Runtime"| RT
+    Human -->|joins conversation| Craft
+    Human -->|provides guidance| Lead
 ```
 
-- **Do Agent**: Full AgentSession with activity-appropriate tools. It does the work and naturally reaches idle when done.
-- **Watch Agent**: Full AgentSession that observes Do Agent's session. When Do Agent goes idle, Watch Agent pulls its messages, evaluates the output, and either sends feedback (as a user message to Do Agent) or accepts the work.
-- **Human**: Can participate at any time — send messages to Do Agent directly, or provide guidance to Watch Agent.
+- **Craft Agent**: Full AgentSession with activity-appropriate tools. It does the work and naturally reaches idle when done.
+- **Lead Agent**: Full AgentSession that reviews Craft Agent's output. Room Runtime sends the last 1-3 Craft Agent assistant messages as a user message to Lead. Lead evaluates and uses tools to respond.
+- **Room Runtime**: All message routing between Craft and Lead goes through Runtime. Runtime observes session state, collects messages, and routes them.
+- **Human**: Can participate at any time — send messages to Craft Agent directly, or provide guidance to Lead Agent.
 
-Behind the scenes, these are two separate sessions. But the **Task View** unifies them.
+### Message Routing Through Room Runtime
 
-### Task View: Group Chat UI
-
-The (Do, Watch) pair is rendered in the UI as a **single conversation** — a group chat with three possible participants:
+All inter-agent communication is routed through the Room Runtime:
 
 ```mermaid
-graph TD
-    subgraph TaskView["Task View — unified chat"]
-        direction TB
-        M1["🤖 Do Agent: I'll start by examining<br/>the existing route structure...<br/>[tool: Read src/routes/index.ts]<br/>[tool: Edit src/routes/auth.ts]"]
-        M2["👁 Watch Agent: The endpoint looks good<br/>but you missed input validation.<br/>Add zod schema validation."]
-        M3["🤖 Do Agent: Good catch. Adding zod<br/>validation now...<br/>[tool: Edit src/routes/auth.ts]"]
-        M4["👤 Human: Also make sure to rate-limit<br/>the login endpoint"]
-        M5["🤖 Do Agent: Adding rate limiting...<br/>[tool: Edit src/middleware/rate.ts]"]
-        M6["👁 Watch Agent: Looks complete. ✓"]
+sequenceDiagram
+    participant C as Craft Agent
+    participant RT as Room Runtime
+    participant L as Lead Agent
+    participant H as Human
 
-        M1 --> M2 --> M3 --> M4 --> M5 --> M6
+    RT->>C: Create session, send task description
+    C->>C: Works on task...
+    C-->>RT: Session goes idle (result)
+    Note over RT: Collects last 1-3<br/>Craft assistant messages
+    RT->>L: User message with Craft's output
+    L->>L: Evaluates against goal/task
+
+    alt Accepted
+        L->>L: Calls complete_task(summary) tool
+        Note over L,RT: Tool routes through Runtime
+        RT->>RT: Updates task status in DB
+    else Needs more work
+        L->>L: Calls send_to_craft(feedback) tool
+        Note over L,RT: Tool routes through Runtime
+        RT->>C: Injects feedback as user message
+        C->>C: Continues working...
+        C-->>RT: Goes idle again
+        Note over RT: Collects latest messages
+        RT->>L: User message with Craft's update
+    else Needs human
+        L->>L: Calls escalate(reason) tool
+        Note over L,RT: Runtime notifies human
+        H->>C: Human sends message to Craft
+        C->>C: Incorporates guidance...
+        C-->>RT: Goes idle
+        RT->>L: User message with Craft's update
     end
+```
+
+**Why all routing goes through Runtime**:
+1. Runtime tracks state — knows when to re-observe Craft's next idle
+2. All inter-agent messages flow through one place — auditable
+3. Runtime can enforce guard rails (e.g., max feedback iterations)
+4. Consistent routing pattern in both directions
+
+### Lead Agent Tools
+
+Lead Agent has a focused tool set, all routed through Room Runtime:
+
+| Tool | Purpose | Runtime action |
+|---|---|---|
+| `send_to_craft(message)` | Send feedback/follow-up to Craft Agent | Injects as user message into Craft session |
+| `complete_task(summary)` | Accept the work, mark task done | Updates task status in DB |
+| `fail_task(reason)` | Task is not achievable | Updates task status, notifies Room Agent |
+| `escalate(reason)` | Flag for human attention | Notifies human via Room Agent / UI |
+| `read_craft_messages(limit)` | Pull more Craft messages beyond what Runtime sent | Returns messages from Craft session |
+
+### Task Chat View: Sub-Agent Blocks
+
+The (Craft, Lead) pair is rendered in the UI as a **single conversation** using **sub-agent blocks**. Each agent's complete turn (thinking + tool uses + result) is grouped into one collapsible block:
+
+```
+┌─────────────────────────────────────────────────┐
+│ Task: Implement auth endpoint                    │
+├─────────────────────────────────────────────────┤
+│                                                  │
+│ ┌─ 🔨 Craft Agent ────────────────────────────┐ │
+│ │ I'll start by examining the existing route   │ │
+│ │ structure...                                 │ │
+│ │ ▸ Read src/routes/index.ts                   │ │
+│ │ ▸ Read src/routes/auth.ts                    │ │
+│ │ ▸ Edit src/routes/auth.ts (+42 lines)        │ │
+│ │ ▸ Edit src/middleware/validate.ts (+18 lines) │ │
+│ │                                              │ │
+│ │ Created the POST /api/auth/login endpoint    │ │
+│ │ with JWT token generation.                   │ │
+│ └──────────────────────────────────────────────┘ │
+│                                                  │
+│ ┌─ 👁 Lead Agent ─────────────────────────────┐ │
+│ │ The endpoint looks good but you missed       │ │
+│ │ input validation. Add zod schema validation  │ │
+│ │ for the request body.                        │ │
+│ │ ▸ send_to_craft("Add zod schema...")         │ │
+│ └──────────────────────────────────────────────┘ │
+│                                                  │
+│ ┌─ 🔨 Craft Agent ────────────────────────────┐ │
+│ │ Good catch. Adding zod validation now...     │ │
+│ │ ▸ Edit src/routes/auth.ts (+12 lines)        │ │
+│ │                                              │ │
+│ │ Added zod schema for login request body.     │ │
+│ └──────────────────────────────────────────────┘ │
+│                                                  │
+│ 👤 Human: Also make sure to rate-limit the      │
+│    login endpoint                                │
+│                                                  │
+│ ┌─ 🔨 Craft Agent ────────────────────────────┐ │
+│ │ Adding rate limiting...                      │ │
+│ │ ▸ Edit src/middleware/rate.ts (+25 lines)     │ │
+│ │ ▸ Edit src/routes/auth.ts (+3 lines)         │ │
+│ │                                              │ │
+│ │ Added rate limiting middleware to the login   │ │
+│ │ endpoint (max 5 attempts per minute).        │ │
+│ └──────────────────────────────────────────────┘ │
+│                                                  │
+│ ┌─ 👁 Lead Agent ─────────────────────────────┐ │
+│ │ Looks complete. All requirements met.        │ │
+│ │ ▸ complete_task("Implemented auth endpoint   │ │
+│ │   with JWT, validation, and rate limiting")  │ │
+│ └──────────────────────────────────────────────┘ │
+│                                                  │
+│ ✅ Task completed                                │
+└─────────────────────────────────────────────────┘
 ```
 
 **Rendering rules**:
-- **Do Agent messages** → assistant message style (tool uses visible)
-- **Watch Agent messages** → distinct style (visually different from both human and Do Agent)
-- **Human messages** → standard user message style
-- Messages are **interleaved chronologically** from both sessions
+- **Craft Agent turns** → sub-agent block with 🔨 icon, assistant color scheme. Each complete turn (all thinking + tool uses + result) is one collapsible block.
+- **Lead Agent turns** → sub-agent block with 👁 icon, distinct color scheme. Each complete turn is one block.
+- **Human messages** → standard user message style (not in a sub-agent block)
+- **Turns are interleaved chronologically** from both sessions
 
 **Behind the scenes**:
-- Do Agent session: receives Watch Agent feedback and Human messages as user messages
-- Watch Agent session: receives Do Agent output as context, human guidance as user messages
-- Human messages to Do Agent are real user messages to the Do Agent session
-- Watch Agent sends follow-ups to Do Agent as synthetic user messages
+- Craft Agent session: receives Lead feedback and Human messages as user messages
+- Lead Agent session: receives Craft output (last 1-3 assistant messages) as user messages from Runtime
+- Human messages to Craft are real user messages in the Craft session
+- Lead's `send_to_craft()` tool calls route through Runtime → injected as user messages in Craft session
 
 ---
 
@@ -120,19 +220,20 @@ graph TB
         direction TB
         Tick[Tick Loop]
         Rules[Scheduling Rules]
+        Router[Message Router]
     end
 
     subgraph Agents["Agent Sessions"]
         RoomAgent["Room Agent<br/>(always-on, human-facing)<br/>The department head"]
 
-        subgraph Task1["Task 1: (Do, Watch) pair"]
-            Do1["Do Agent"]
-            Watch1["Watch Agent"]
+        subgraph Task1["Task 1: (Craft, Lead) pair"]
+            Craft1["Craft Agent"]
+            Lead1["Lead Agent"]
         end
 
-        subgraph Task2["Task 2: (Do, Watch) pair"]
-            Do2["Do Agent"]
-            Watch2["Watch Agent"]
+        subgraph Task2["Task 2: (Craft, Lead) pair"]
+            Craft2["Craft Agent"]
+            Lead2["Lead Agent"]
         end
     end
 
@@ -140,28 +241,34 @@ graph TB
 
     Human <-->|"chat, commands,<br/>goal/task management"| RoomAgent
     RoomAgent -->|"creates goals/tasks<br/>via tools"| Room
-    Room -->|"spawns (Do, Watch) pair"| Task1
-    Room -->|"spawns (Do, Watch) pair"| Task2
-    Do1 -->|idle/result| Watch1
-    Watch1 -->|feedback| Do1
-    Watch1 -->|"task status update"| Room
-    Do2 -->|idle/result| Watch2
-    Watch2 -->|feedback| Do2
-    Watch2 -->|"task status update"| Room
-    Human -->|"joins task conversation"| Do1
-    Human -->|"joins task conversation"| Do2
+    Room -->|"spawns (Craft, Lead) pair"| Task1
+    Room -->|"spawns (Craft, Lead) pair"| Task2
+    Craft1 -->|"idle → Runtime collects messages"| Room
+    Room -->|"Craft output as user msg"| Lead1
+    Lead1 -->|"send_to_craft / complete_task<br/>routed through Runtime"| Room
+    Room -->|"feedback as user msg"| Craft1
+    Craft2 -->|idle| Room
+    Room -->|"Craft output"| Lead2
+    Lead2 -->|"tools route through Runtime"| Room
+    Human -->|"joins task conversation"| Craft1
+    Human -->|"joins task conversation"| Craft2
 ```
 
 ### The Actors
 
 #### 1. Room Runtime (deterministic code — no LLM)
 
-The Room Runtime is the **scheduler**. It's a simple loop driven by triggers (timer, events). It makes no decisions about WHAT work to do — it decides WHEN to create (Do, Watch) pairs and HOW to route information.
+The Room Runtime is the **scheduler and router**. It's a simple loop driven by triggers (timer, events). It makes no decisions about WHAT work to do — it decides WHEN to create (Craft, Lead) pairs, routes messages between them, and executes Lead Agent tool calls.
 
-**Rules (hardcoded, not LLM-decided)**:
+**Scheduling rules (hardcoded, not LLM-decided)**:
 - A goal needs planning when: it's active AND has no pending/in-progress tasks
 - A task is ready to execute when: status is `pending`
-- Planning is itself a task: "Plan goal X" → creates a (Do, Watch) pair where the Do Agent plans
+- Planning is itself a task: "Plan goal X" → creates a (Craft, Lead) pair where Craft Agent plans
+
+**Routing rules**:
+- When Craft Agent goes idle → collect last 1-3 assistant messages → send to Lead Agent as user message
+- When Lead Agent calls `send_to_craft()` → inject message into Craft Agent session as user message
+- When Lead Agent calls `complete_task()` / `fail_task()` → update task in DB → trigger next tick
 
 **State**: `running` | `paused`. That's it.
 
@@ -171,115 +278,78 @@ The Room Agent is the **department head**. It's always available for human conve
 
 This is a full **AgentSession** with:
 - **Tools** for room management: create/update goals, create/update tasks, query room state
-- **Access to room context**: goals, tasks, active (Do, Watch) pairs, room instructions
+- **Access to room context**: goals, tasks, active (Craft, Lead) pairs, room instructions
 - **Conversation persisted to DB** (like any other session)
 - **Human can chat naturally** — "what's the status?", "prioritize the auth work", "add a goal for..."
 
 The Room Agent is NOT the scheduler. It's the human interface. When the human creates a goal via conversation, the Room Agent calls its tools → data goes to DB → Room Runtime picks it up.
 
-The Room Agent could also act as the Watch Agent for certain tasks — but this is a design choice per task, not a hardcoded rule.
+#### 3. Craft Agent (on-demand AgentSession — per task)
 
-#### 3. Do Agent (on-demand AgentSession — per task)
-
-The Do Agent works on a task. It's a standard AgentSession with tools appropriate for the activity:
+The Craft Agent works on a task. It's a standard AgentSession with tools appropriate for the activity:
 - **Coding task**: bash, edit, read, write, glob, grep (standard coding tools)
 - **Planning task**: read, glob, grep (codebase exploration) + task creation tools
 - **Research task**: read, web search, etc.
 - **Design task**: read, write (spec writing)
 
-The Do Agent is a **normal session**. No special tools for signaling completion. When it finishes:
+The Craft Agent is a **normal session**. No special tools for signaling completion. When it finishes:
 - It reaches **idle state** (result message emitted)
 - Or it emits an **error**
 - Or it asks a **question** (via AskUserQuestion)
 
 Human can open this session and interact with it directly.
 
-#### 4. Watch Agent (on-demand AgentSession — per task)
+#### 4. Lead Agent (on-demand AgentSession — per task)
 
-The Watch Agent observes and reviews the Do Agent's work. It's a full AgentSession with:
-- **Tool to read Do Agent's session messages** — pull the latest messages/artifacts
-- **Tool to send message to Do Agent** — inject a follow-up as a user message
-- **Tool to update task status** — mark task completed/failed
-- **Tool to escalate to human** — flag for human attention
-- **Access to goal context** — understands what the task is trying to achieve
+The Lead Agent reviews Craft Agent's work. It's a full AgentSession with tools routed through Room Runtime:
 
-The Watch Agent is triggered by the Room Runtime when the Do Agent goes idle. It reads the Do Agent's output, evaluates it, and decides: send feedback, accept, or escalate.
+| Tool | Purpose |
+|---|---|
+| `send_to_craft(message)` | Send feedback/follow-up to Craft Agent |
+| `complete_task(summary)` | Accept the work, mark task done |
+| `fail_task(reason)` | Task is not achievable |
+| `escalate(reason)` | Flag for human attention |
+| `read_craft_messages(limit)` | Pull more Craft messages if needed |
 
-### How the (Do, Watch) Loop Works
+The Lead Agent is triggered when Room Runtime sends it a user message containing Craft Agent's output. It evaluates the output and uses its tools to respond.
 
-```mermaid
-sequenceDiagram
-    participant RT as Room Runtime
-    participant D as Do Agent
-    participant W as Watch Agent
-    participant H as Human
+### Planning as a (Craft, Lead) Pair
 
-    RT->>D: Create session, send task description
-    D->>D: Works on task...
-    D-->>RT: Session goes idle (result)
-    RT->>W: Create/resume session, "Do Agent finished. Review."
-    W->>W: Reads Do Agent's messages
-    W->>W: Evaluates against goal/task
-
-    alt Accepted
-        W->>RT: Update task → completed
-    else Needs more work
-        W->>D: Send follow-up message
-        D->>D: Continues working...
-        D-->>RT: Goes idle again
-        RT->>W: "Do Agent updated. Review again."
-        W->>W: Re-evaluates...
-    else Needs human input
-        W->>H: Escalate (notification in UI)
-        H->>D: Sends message directly to Do Agent
-        D->>D: Incorporates human guidance...
-        D-->>RT: Goes idle
-        RT->>W: "Do Agent updated. Review."
-    end
-```
-
-### Planning as a (Do, Watch) Pair
-
-Planning is not a special actor — it's just another activity for a (Do, Watch) pair:
+Planning is not a special actor — it's just another activity for a (Craft, Lead) pair:
 
 ```mermaid
 graph TD
-    A[Goal created: 'Implement user auth'] --> B[Runtime: no tasks for goal<br/>→ create planning task]
-    B --> C["Spawn (Do, Watch) pair<br/>Do Agent: plan the goal<br/>Watch Agent: review the plan"]
-    C --> D[Do Agent examines codebase,<br/>proposes task breakdown via tools]
-    D --> E[Watch Agent reviews plan<br/>quality and completeness]
-    E -->|"plan accepted"| F[Tasks saved to DB<br/>Planning task marked complete]
-    E -->|"plan needs work"| G[Watch Agent sends feedback]
-    G --> D
-    F --> H[Runtime: pending tasks exist<br/>→ spawn coding (Do, Watch) pairs]
+    A["Goal created: 'Implement user auth'"] --> B["Runtime: no tasks for goal<br/>→ create planning task"]
+    B --> C["Spawn (Craft, Lead) pair<br/>Craft: plan the goal<br/>Lead: review the plan"]
+    C --> D["Craft Agent examines codebase,<br/>proposes task breakdown via tools"]
+    D --> E["Craft goes idle → Runtime collects output<br/>→ sends to Lead as user message"]
+    E --> F["Lead reviews plan<br/>quality and completeness"]
+    F -->|"plan accepted → complete_task()"| G["Tasks saved to DB<br/>Planning task marked complete"]
+    F -->|"plan needs work → send_to_craft(feedback)"| H["Runtime routes feedback<br/>to Craft Agent"]
+    H --> D
+    G --> I["Runtime: pending tasks exist<br/>→ spawn coding (Craft, Lead) pairs"]
 ```
-
-The Do Agent for planning has tools to:
-- Read codebase files
-- Create tasks in DB
-- Query existing goals/tasks
-
-The Watch Agent for planning evaluates whether the task breakdown is sensible, complete, and actionable.
 
 ### Data Flow: A Complete Cycle
 
 ```mermaid
 graph TD
-    A["Human → Room Agent:<br/>'Implement user authentication'"] --> B[Room Agent creates Goal in DB]
+    A["Human → Room Agent:<br/>'Implement user authentication'"] --> B["Room Agent creates Goal in DB"]
     B --> C["Runtime tick: active goal, no tasks<br/>→ create planning task"]
-    C --> D["Spawn planning (Do, Watch) pair"]
-    D --> E["Do Agent plans: examines code,<br/>creates 3 tasks in DB"]
-    E --> F["Watch Agent reviews plan → accepted"]
-    F --> G["Runtime tick: pending task 1<br/>→ spawn coding (Do, Watch) pair"]
-    G --> H[Do Agent codes task 1...<br/>goes idle]
-    H --> I[Watch Agent reviews code]
-    I -->|"needs work"| J[Sends feedback to Do Agent]
-    J --> H
-    I -->|"accepted"| K[Mark task 1 complete]
-    K --> L["Runtime tick: pending task 2<br/>→ spawn coding (Do, Watch) pair"]
-    L --> M[...repeat for remaining tasks]
-    M --> N["All tasks done → Runtime checks<br/>goal completion (via Watch Agent)"]
-    N --> O[Goal marked completed]
+    C --> D["Spawn planning (Craft, Lead) pair"]
+    D --> E["Craft Agent plans: examines code,<br/>creates 3 tasks in DB"]
+    E --> F["Runtime sends Craft output to Lead"]
+    F --> G["Lead reviews plan → complete_task()"]
+    G --> H["Runtime tick: pending task 1<br/>→ spawn coding (Craft, Lead) pair"]
+    H --> I["Craft Agent codes task 1...<br/>goes idle"]
+    I --> J["Runtime sends Craft output to Lead"]
+    J --> K["Lead reviews code"]
+    K -->|"send_to_craft(feedback)"| L["Runtime routes to Craft"]
+    L --> I
+    K -->|"complete_task()"| M["Mark task 1 complete"]
+    M --> N["Runtime tick: pending task 2<br/>→ spawn (Craft, Lead) pair"]
+    N --> O["...repeat for remaining tasks"]
+    O --> P["All tasks done → goal completed"]
 ```
 
 ### Human Intervention
@@ -294,9 +364,9 @@ Human intervention is NOT a special state. It works at multiple levels:
 - "The worker seems stuck, tell it to use JWT instead of sessions"
 
 **Level 2: Direct task participation (join the group chat)**
-- Open a task view → see Do Agent and Watch Agent conversation
-- Send a message → goes to Do Agent as user input
-- Human becomes a third participant in the (Do, Watch) loop
+- Open a task view → see Craft and Lead conversation in sub-agent blocks
+- Send a message → goes to Craft Agent as user input
+- Human becomes a third participant in the (Craft, Lead) loop
 
 **Level 3: Traditional app controls**
 | Action | Effect |
@@ -314,7 +384,7 @@ Human intervention is NOT a special state. It works at multiple levels:
 
 **Tasks**: `pending` | `in_progress` | `completed` | `failed`
 
-**Task pairs**: Each in-progress task has a (Do session, Watch session) tracked in DB
+**Task pairs**: Each in-progress task has a (Craft session, Lead session) tracked in DB
 
 No `planning`, `executing`, `reviewing`, `waiting`, `error` states for the room itself.
 
@@ -324,102 +394,110 @@ Event-driven with a timer fallback:
 
 1. **Timer**: Every 30-60 seconds (catches anything missed)
 2. **Goal created/updated**: Immediate tick
-3. **Do Agent session goes idle**: Immediate tick
-4. **Task status changed**: Immediate tick
+3. **Craft Agent session goes idle**: Immediate tick
+4. **Lead Agent tool call executed**: Immediate tick (after `complete_task`, `fail_task`)
+5. **Task status changed**: Immediate tick
 
 Each tick runs the same deterministic logic. No special handling per trigger type.
 
 ### Error Handling
 
-- **Do Agent session errors**: Watch Agent reviews the error and decides: retry, adjust approach, or escalate.
-- **Watch Agent session fails**: Log error, retry on next tick. Do Agent output stays pending review.
+- **Craft Agent session errors**: Runtime sends error to Lead Agent → Lead decides: retry, adjust, or escalate.
+- **Lead Agent session fails**: Log error, retry on next tick. Craft output stays pending review.
 - **Too many consecutive errors**: Runtime pauses itself, notifies human via Room Agent.
 
 All errors are recoverable by re-running the tick. No stuck states.
 
 ### Capacity Management
 
-- `maxConcurrentWorkers`: configurable per room (default: 1 for MVP)
-- Runtime only spawns (Do, Watch) pairs when below capacity
+- `maxConcurrentPairs`: configurable per room (default: 1 for MVP)
+- Runtime only spawns (Craft, Lead) pairs when below capacity
 - Tasks execute sequentially (MVP)
 
 ---
 
 ## What We Reuse
 
-- **AgentSession infrastructure** — for ALL agents (Room Agent, Do Agents, Watch Agents)
+- **AgentSession infrastructure** — for ALL agents (Room Agent, Craft, Lead)
 - **Session persistence** — all conversations stored in DB automatically
+- **Sub-agent block UI components** — already exist, used for Task Chat View
 - **Database schema** — rooms, goals, tasks tables
 - **DaemonHub events** — for session state change observations
 - **MessageHub** — for UI communication
 
 ## What We Replace
 
-- **RoomSelfService** → new `RoomRuntime` (deterministic scheduler)
+- **RoomSelfService** → new `RoomRuntime` (deterministic scheduler + router)
 - **Room agent tools MCP** → new Room Agent tools (goal/task CRUD, room state queries)
 - **RoomSelfLifecycleManager** → not needed (only 2 states)
-- **Worker tools (worker_complete_task etc.)** → not needed (session observation + Watch Agent instead)
-- **WorkerManager** → simplified or replaced by (Do, Watch) pair manager
+- **Worker tools (worker_complete_task etc.)** → Lead Agent tools instead
+- **WorkerManager** → replaced by (Craft, Lead) pair manager
 
 ## New Components
 
-1. **RoomRuntime** — deterministic scheduler loop
+1. **RoomRuntime** — deterministic scheduler loop + message router
 2. **Room Agent tools** — MCP tools for goal/task CRUD, room state queries
-3. **Watch Agent tools** — MCP tools to read Do Agent messages, send follow-ups, update task status
-4. **Task pair manager** — creates and tracks (Do, Watch) pairs for tasks
-5. **Session observer** — detects when Do Agent / Watch Agent sessions go idle/error
-6. **Task View UI** — unified chat rendering of (Do, Watch, Human) messages
+3. **Lead Agent tools** — MCP tools: `send_to_craft`, `complete_task`, `fail_task`, `escalate`, `read_craft_messages`
+4. **Task pair manager** — creates and tracks (Craft, Lead) pairs for tasks
+5. **Session observer** — detects when Craft / Lead sessions go idle/error
+6. **Task Chat View UI** — unified chat rendering with sub-agent blocks for (Craft, Lead, Human)
 
 ## Design Decisions (Resolved)
 
-1. **Task execution**: Sequential only. One (Do, Watch) pair at a time (MVP).
-2. **Review policy**: Every Do Agent idle/result triggers Watch Agent review.
-3. **Planning is a task**: Not a special actor. Planning creates a (Do, Watch) pair like any other task.
-4. **All agents are AgentSessions**: Room Agent, Do Agents, Watch Agents all reuse existing session infrastructure. All conversations persisted.
-5. **No special worker tools**: Do Agents are normal sessions. Watch Agents handle the review/feedback loop.
-6. **Human interface**: Room Agent is always-on department head. Humans can also join any task's group chat.
-7. **Task View**: (Do, Watch) pair rendered as unified group chat in UI.
+1. **Task execution**: Sequential only. One (Craft, Lead) pair at a time (MVP).
+2. **Review policy**: Every Craft Agent idle/result triggers Lead Agent review via Runtime.
+3. **Planning is a task**: Not a special actor. Planning creates a (Craft, Lead) pair like any other task.
+4. **All agents are AgentSessions**: Room Agent, Craft, Lead all reuse existing session infrastructure. All conversations persisted.
+5. **Craft Agents are normal sessions**: No special signaling tools. They just work and go idle.
+6. **Lead Agent tools route through Runtime**: `send_to_craft`, `complete_task`, etc. all go through Runtime for consistent routing, tracking, and guard rails.
+7. **Runtime collects messages**: When Craft goes idle, Runtime collects last 1-3 assistant messages and sends to Lead as a user message.
+8. **Human interface**: Room Agent is always-on department head. Humans can also join any task's group chat.
+9. **Task Chat View**: (Craft, Lead) pair rendered as unified conversation with sub-agent blocks per turn.
+10. **Naming**: Craft Agent (does the work) + Lead Agent (reviews and directs).
 
 ## Open Questions (For Future Iterations)
 
-1. **Parallel (Do, Watch) pairs**: Multiple pairs for different tasks/goals. Not MVP.
-2. **Multi-reviewer**: Multiple Watch Agents with different models reviewing the same work (consensus-based review). The do→watch loop supports this naturally.
-3. **Watch Agent as Room Agent**: Should the Room Agent serve as Watch Agent for tasks, or should each task get its own dedicated Watch Agent? Trade-off: shared context vs. isolation.
-4. **Cross-task context**: Should a subsequent Do Agent get context from previous tasks' sessions?
-5. **External review integration**: PR reviews, CI results as input to Watch Agent.
+1. **Parallel (Craft, Lead) pairs**: Multiple pairs for different tasks/goals. Not MVP.
+2. **Multi-reviewer**: Multiple Lead Agents with different models reviewing the same work (consensus-based review). The Craft→Lead loop supports this naturally.
+3. **Room Agent as Lead**: Should the Room Agent serve as Lead for tasks, or should each task get its own dedicated Lead? Trade-off: shared context vs. isolation.
+4. **Cross-task context**: Should a subsequent Craft Agent get context from previous tasks' sessions?
+5. **External review integration**: PR reviews, CI results as input to Lead Agent.
 
 ---
 
 ## Implementation Plan
 
 ### Phase 1: Foundation
-- RoomRuntime scheduler loop
+- RoomRuntime scheduler loop + message router
 - Session observation (detect idle/error)
 - Room Agent with goal/task management tools
 
-### Phase 2: Do → Watch Loop
-- Task pair manager (create Do + Watch sessions per task)
-- Watch Agent tools (read Do messages, send follow-ups, update task status)
-- Integration test: task → Do Agent works → Watch Agent reviews → feedback loop → accepted
+### Phase 2: Craft → Lead Loop
+- Task pair manager (create Craft + Lead sessions per task)
+- Lead Agent tools (`send_to_craft`, `complete_task`, `fail_task`, `escalate`, `read_craft_messages`)
+- Runtime message collection (Craft idle → collect messages → send to Lead)
+- Runtime message routing (Lead `send_to_craft()` → inject into Craft session)
+- Integration test: task → Craft works → Lead reviews → feedback loop → accepted
 
 ### Phase 3: Planning as a Task
-- Planning (Do, Watch) pair for goal decomposition
+- Planning (Craft, Lead) pair for goal decomposition
 - Full cycle test: goal → plan → tasks → execute → review → complete
 
 ### Phase 4: Human Intervention
 - Room Agent conversation flows
-- Human joins task group chat
+- Human joins task group chat (message routing)
 - Pause/resume, task editing
 
-### Phase 5: Task View UI
-- Unified chat rendering of (Do, Watch, Human) messages
-- Visual differentiation of message sources
+### Phase 5: Task Chat View UI
+- Sub-agent blocks for Craft turns (🔨) and Lead turns (👁)
+- Human messages rendered inline
+- Chronological interleaving from both sessions
 - Task controls within the view
 
 ### Verification (end-to-end acceptance criteria)
 - Create a room, chat with Room Agent: "Add a health check endpoint to the API"
 - Room Agent creates goal → Runtime creates planning task → plan reviewed → coding tasks created
-- Runtime spawns (Do, Watch) pair → Do Agent codes → Watch Agent reviews → iterates → accepts
+- Runtime spawns (Craft, Lead) pair → Craft codes → Lead reviews → iterates → accepts
 - Repeat for remaining tasks → goal marked complete
 - Human can: pause, chat with Room Agent, join task group chat, edit tasks
 - Add another goal and verify continuous operation
