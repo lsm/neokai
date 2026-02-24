@@ -23,7 +23,7 @@ describe('GoalsEditor', () => {
 		roomId: 'room-1',
 		title: `Goal ${id}`,
 		description: `Description for ${id}`,
-		status: 'pending',
+		status: 'active',
 		priority: 'normal',
 		progress: 50,
 		linkedTaskIds: [],
@@ -123,15 +123,8 @@ describe('GoalsEditor', () => {
 	});
 
 	describe('Status Icons', () => {
-		it('should show empty circle for pending status', () => {
-			const goals = [createMockGoal('goal-1', { status: 'pending' })];
-			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			const pendingIcon = container.querySelector('.border-gray-500');
-			expect(pendingIcon).toBeTruthy();
-		});
-
-		it('should show spinner for in_progress status', () => {
-			const goals = [createMockGoal('goal-1', { status: 'in_progress' })];
+		it('should show spinner for active status', () => {
+			const goals = [createMockGoal('goal-1', { status: 'active' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 			// Spinner component has animate-spin class
 			const spinner = container.querySelector('[class*="animate-spin"]');
@@ -145,11 +138,18 @@ describe('GoalsEditor', () => {
 			expect(completedIcon).toBeTruthy();
 		});
 
-		it('should show red X for blocked status', () => {
-			const goals = [createMockGoal('goal-1', { status: 'blocked' })];
+		it('should show yellow icon for needs_human status', () => {
+			const goals = [createMockGoal('goal-1', { status: 'needs_human' })];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
-			const blockedIcon = container.querySelector('.bg-red-500');
-			expect(blockedIcon).toBeTruthy();
+			const needsHumanIcon = container.querySelector('.bg-yellow-500');
+			expect(needsHumanIcon).toBeTruthy();
+		});
+
+		it('should show gray icon for archived status', () => {
+			const goals = [createMockGoal('goal-1', { status: 'archived' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const archivedIcon = container.querySelector('.bg-gray-600');
+			expect(archivedIcon).toBeTruthy();
 		});
 	});
 
@@ -219,24 +219,24 @@ describe('GoalsEditor', () => {
 	});
 
 	describe('Goal Sorting', () => {
-		it('should sort in_progress goals first', () => {
+		it('should sort active goals first', () => {
 			const goals = [
-				createMockGoal('goal-pending', { title: 'Pending Goal', status: 'pending' }),
-				createMockGoal('goal-progress', { title: 'In Progress Goal', status: 'in_progress' }),
+				createMockGoal('goal-needs-human', { title: 'Needs Human Goal', status: 'needs_human' }),
+				createMockGoal('goal-active', { title: 'Active Goal', status: 'active' }),
 			];
 			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
 
 			const goalElements = container.querySelectorAll('h4');
-			expect(goalElements[0]?.textContent).toBe('In Progress Goal');
-			expect(goalElements[1]?.textContent).toBe('Pending Goal');
+			expect(goalElements[0]?.textContent).toBe('Active Goal');
+			expect(goalElements[1]?.textContent).toBe('Needs Human Goal');
 		});
 
 		it('should sort by priority within same status', () => {
 			const goals = [
-				createMockGoal('goal-low', { title: 'Low Priority', status: 'pending', priority: 'low' }),
+				createMockGoal('goal-low', { title: 'Low Priority', status: 'active', priority: 'low' }),
 				createMockGoal('goal-urgent', {
 					title: 'Urgent Priority',
-					status: 'pending',
+					status: 'active',
 					priority: 'urgent',
 				}),
 			];

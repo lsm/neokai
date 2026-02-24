@@ -17,11 +17,7 @@
  */
 
 import type { MessageImage, ResolvedQuestion, SessionFeatures } from '@neokai/shared';
-import {
-	DEFAULT_WORKER_FEATURES,
-	DEFAULT_ROOM_CHAT_FEATURES,
-	DEFAULT_ROOM_SELF_FEATURES,
-} from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES, DEFAULT_ROOM_CHAT_FEATURES } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -287,9 +283,6 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		// Determine default features based on session ID format
 		if (sessionId.startsWith('room:chat:')) {
 			return DEFAULT_ROOM_CHAT_FEATURES;
-		}
-		if (sessionId.startsWith('room:self:')) {
-			return DEFAULT_ROOM_SELF_FEATURES;
 		}
 		return DEFAULT_WORKER_FEATURES;
 	}, [session?.config?.features, sessionId]);

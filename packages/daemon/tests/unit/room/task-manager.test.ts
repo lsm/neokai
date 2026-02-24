@@ -18,7 +18,6 @@ import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { TaskManager } from '../../../src/lib/room/task-manager';
 import { RoomManager } from '../../../src/lib/room/room-manager';
-import type { NeoTask, TaskStatus, TaskPriority, TaskFilter } from '@neokai/shared';
 
 describe('TaskManager', () => {
 	let db: Database;
@@ -168,7 +167,7 @@ describe('TaskManager', () => {
 		it('should filter tasks by status', async () => {
 			await taskManager.createTask({ title: 'Task 1', description: '' });
 			const task2 = await taskManager.createTask({ title: 'Task 2', description: '' });
-			await taskManager.startTask(task2.id, 'session-123');
+			await taskManager.startTask(task2.id);
 
 			const pendingTasks = await taskManager.listTasks({ status: 'pending' });
 			const inProgressTasks = await taskManager.listTasks({ status: 'in_progress' });
@@ -185,17 +184,6 @@ describe('TaskManager', () => {
 			const highPriorityTasks = await taskManager.listTasks({ priority: 'high' });
 
 			expect(highPriorityTasks).toHaveLength(2);
-		});
-
-		it('should filter tasks by session ID', async () => {
-			await taskManager.createTask({ title: 'Task 1', description: '' });
-			const task2 = await taskManager.createTask({ title: 'Task 2', description: '' });
-			await taskManager.startTask(task2.id, 'session-123');
-
-			const sessionTasks = await taskManager.listTasks({ sessionId: 'session-123' });
-
-			expect(sessionTasks).toHaveLength(1);
-			expect(sessionTasks[0].sessionId).toBe('session-123');
 		});
 
 		it('should return empty array for room with no tasks', async () => {
@@ -247,12 +235,12 @@ describe('TaskManager', () => {
 			expect(updated.completedAt).toBeDefined();
 		});
 
-		it('should update task status to blocked', async () => {
+		it('should update task status to escalated', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.updateTaskStatus(task.id, 'blocked');
+			const updated = await taskManager.updateTaskStatus(task.id, 'escalated');
 
-			expect(updated.status).toBe('blocked');
+			expect(updated.status).toBe('escalated');
 		});
 
 		it('should include additional updates', async () => {
@@ -308,18 +296,17 @@ describe('TaskManager', () => {
 	});
 
 	describe('startTask', () => {
-		it('should start task and assign session', async () => {
+		it('should start task and mark as in_progress', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.startTask(task.id, 'session-123');
+			const updated = await taskManager.startTask(task.id);
 
 			expect(updated.status).toBe('in_progress');
-			expect(updated.sessionId).toBe('session-123');
 			expect(updated.startedAt).toBeDefined();
 		});
 
 		it('should throw error for non-existent task', async () => {
-			await expect(taskManager.startTask('non-existent', 'session-123')).rejects.toThrow(
+			await expect(taskManager.startTask('non-existent')).rejects.toThrow(
 				'Task not found: non-existent'
 			);
 		});
@@ -362,45 +349,43 @@ describe('TaskManager', () => {
 		});
 	});
 
-	describe('blockTask', () => {
-		it('should block task', async () => {
+	describe('escalateTask', () => {
+		it('should escalate task', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.blockTask(task.id);
+			const updated = await taskManager.escalateTask(task.id);
 
-			expect(updated.status).toBe('blocked');
+			expect(updated.status).toBe('escalated');
 		});
 
-		it('should block task with reason', async () => {
+		it('should escalate task with reason', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.blockTask(task.id, 'Waiting for dependency');
+			const updated = await taskManager.escalateTask(task.id, 'Needs human attention');
 
-			expect(updated.status).toBe('blocked');
-			expect(updated.currentStep).toBe('Waiting for dependency');
+			expect(updated.status).toBe('escalated');
+			expect(updated.currentStep).toBe('Needs human attention');
 		});
 
 		it('should throw error for non-existent task', async () => {
-			await expect(taskManager.blockTask('non-existent')).rejects.toThrow(
+			await expect(taskManager.escalateTask('non-existent')).rejects.toThrow(
 				'Task not found: non-existent'
 			);
 		});
 	});
 
-	describe('unblockTask', () => {
-		it('should unblock task and return to pending status', async () => {
+	describe('deescalateTask', () => {
+		it('should de-escalate task and return to pending status', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
-			await taskManager.blockTask(task.id, 'Blocked');
+			await taskManager.escalateTask(task.id, 'Escalated');
 
-			const updated = await taskManager.unblockTask(task.id);
+			const updated = await taskManager.deescalateTask(task.id);
 
 			expect(updated.status).toBe('pending');
-			// Note: currentStep is not cleared due to the way undefined is handled in the repository
-			// The updateTaskStatus passes currentStep: undefined, but the repository checks !== undefined
 		});
 
 		it('should throw error for non-existent task', async () => {
-			await expect(taskManager.unblockTask('non-existent')).rejects.toThrow(
+			await expect(taskManager.deescalateTask('non-existent')).rejects.toThrow(
 				'Task not found: non-existent'
 			);
 		});
@@ -417,7 +402,7 @@ describe('TaskManager', () => {
 			await taskManager.createTask({ title: 'Task 1', description: '' });
 			await taskManager.createTask({ title: 'Task 2', description: '' });
 			const task3 = await taskManager.createTask({ title: 'Task 3', description: '' });
-			await taskManager.startTask(task3.id, 'session-123');
+			await taskManager.startTask(task3.id);
 
 			const count = await taskManager.getPendingCount();
 
@@ -436,8 +421,8 @@ describe('TaskManager', () => {
 			await taskManager.createTask({ title: 'Task 1', description: '' });
 			const task2 = await taskManager.createTask({ title: 'Task 2', description: '' });
 			const task3 = await taskManager.createTask({ title: 'Task 3', description: '' });
-			await taskManager.startTask(task2.id, 'session-123');
-			await taskManager.startTask(task3.id, 'session-456');
+			await taskManager.startTask(task2.id);
+			await taskManager.startTask(task3.id);
 
 			const count = await taskManager.getActiveCount();
 
@@ -455,13 +440,13 @@ describe('TaskManager', () => {
 		it('should return only non-completed, non-failed tasks', async () => {
 			await taskManager.createTask({ title: 'Pending Task', description: '' });
 			const task2 = await taskManager.createTask({ title: 'In Progress Task', description: '' });
-			await taskManager.startTask(task2.id, 'session-123');
+			await taskManager.startTask(task2.id);
 			const task3 = await taskManager.createTask({ title: 'Completed Task', description: '' });
 			await taskManager.completeTask(task3.id, 'Done');
 			const task4 = await taskManager.createTask({ title: 'Failed Task', description: '' });
 			await taskManager.failTask(task4.id, 'Error');
-			const task5 = await taskManager.createTask({ title: 'Blocked Task', description: '' });
-			await taskManager.blockTask(task5.id);
+			const task5 = await taskManager.createTask({ title: 'Escalated Task', description: '' });
+			await taskManager.escalateTask(task5.id);
 
 			const tasks = await taskManager.getActiveTasks();
 
@@ -469,7 +454,7 @@ describe('TaskManager', () => {
 			const statuses = tasks.map((t) => t.status);
 			expect(statuses).toContain('pending');
 			expect(statuses).toContain('in_progress');
-			expect(statuses).toContain('blocked');
+			expect(statuses).toContain('escalated');
 		});
 	});
 
@@ -642,7 +627,7 @@ describe('TaskManager', () => {
 
 		it('should return false when dependency is in_progress', async () => {
 			const dep = await taskManager.createTask({ title: 'Dep', description: '' });
-			await taskManager.startTask(dep.id, 'session-123');
+			await taskManager.startTask(dep.id);
 
 			const task = await taskManager.createTask({
 				title: 'Test Task',
@@ -758,10 +743,10 @@ describe('TaskManager', () => {
 		it('should handle multiple status transitions', async () => {
 			const task = await taskManager.createTask({ title: 'Test', description: '' });
 
-			await taskManager.startTask(task.id, 'session-123');
-			await taskManager.blockTask(task.id, 'Waiting');
-			await taskManager.unblockTask(task.id);
-			await taskManager.startTask(task.id, 'session-456');
+			await taskManager.startTask(task.id);
+			await taskManager.escalateTask(task.id, 'Waiting');
+			await taskManager.deescalateTask(task.id);
+			await taskManager.startTask(task.id);
 			await taskManager.completeTask(task.id, 'Done');
 
 			const final = await taskManager.getTask(task.id);

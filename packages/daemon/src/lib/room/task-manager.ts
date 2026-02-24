@@ -4,7 +4,7 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (pending -> in_progress -> completed/failed)
+ * - Status transitions (draft -> pending -> in_progress -> completed/failed/escalated)
  * - Task assignment to sessions
  */
 
@@ -112,12 +112,10 @@ export class TaskManager {
 	}
 
 	/**
-	 * Start task (assign session)
+	 * Start task (mark as in_progress)
 	 */
-	async startTask(taskId: string, sessionId: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'in_progress', {
-			sessionId,
-		});
+	async startTask(taskId: string): Promise<NeoTask> {
+		return this.updateTaskStatus(taskId, 'in_progress');
 	}
 
 	/**
@@ -140,18 +138,18 @@ export class TaskManager {
 	}
 
 	/**
-	 * Block task
+	 * Escalate task (needs human intervention)
 	 */
-	async blockTask(taskId: string, reason?: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'blocked', {
+	async escalateTask(taskId: string, reason?: string): Promise<NeoTask> {
+		return this.updateTaskStatus(taskId, 'escalated', {
 			currentStep: reason,
 		});
 	}
 
 	/**
-	 * Unblock task (return to pending)
+	 * De-escalate task (return to pending)
 	 */
-	async unblockTask(taskId: string): Promise<NeoTask> {
+	async deescalateTask(taskId: string): Promise<NeoTask> {
 		return this.updateTaskStatus(taskId, 'pending', {
 			currentStep: undefined,
 		});
@@ -208,18 +206,6 @@ export class TaskManager {
 		}
 
 		return updatedTask;
-	}
-
-	/**
-	 * Cancel a task (mark as cancelled)
-	 */
-	async cancelTask(taskId: string, _reason?: string): Promise<void> {
-		const task = await this.getTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
-
-		this.taskRepo.updateTask(taskId, { status: 'cancelled' });
 	}
 
 	/**

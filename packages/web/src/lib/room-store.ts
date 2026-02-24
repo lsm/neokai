@@ -13,7 +13,6 @@
  * - tasks: Task list for the room
  * - sessions: Session summaries for the room
  * - goals: Room goals
- * - recurringJobs: Recurring jobs for the room
  */
 
 import { signal, computed } from '@preact/signals';
@@ -25,12 +24,7 @@ import type {
 	RoomOverview,
 	RoomGoal,
 	GoalPriority,
-	RecurringJob,
-	CreateRecurringJobParams,
-	RoomContextVersion,
 	WorkspacePath,
-	RoomSelfState,
-	RoomSelfWaitingContext,
 } from '@neokai/shared';
 
 /**
@@ -50,22 +44,6 @@ interface CreateGoalParams {
 interface GoalEventPayload {
 	roomId: string;
 	goal: RoomGoal;
-}
-
-/**
- * Event payload for recurring job events
- */
-interface RecurringJobEventPayload {
-	roomId: string;
-	job: RecurringJob;
-}
-
-/**
- * Event payload for recurring job deletion
- */
-interface RecurringJobDeletedEventPayload {
-	roomId: string;
-	jobId: string;
 }
 
 import { Logger } from '@neokai/shared';
@@ -108,26 +86,6 @@ class RoomStore {
 	readonly goalsLoading = signal<boolean>(false);
 
 	// ========================================
-	// Recurring Jobs Signals
-	// ========================================
-
-	/** Recurring jobs for this room */
-	readonly recurringJobs = signal<RecurringJob[]>([]);
-
-	/** Jobs loading state */
-	readonly jobsLoading = signal<boolean>(false);
-
-	// ========================================
-	// Room Agent Signals
-	// ========================================
-
-	/** Room agent state (null if agent is not running) */
-	readonly agentState = signal<RoomSelfState | null>(null);
-
-	/** Waiting context when agent is waiting for human input */
-	readonly waitingContext = signal<RoomSelfWaitingContext | null>(null);
-
-	// ========================================
 	// Computed Accessors
 	// ========================================
 
@@ -149,12 +107,7 @@ class RoomStore {
 	readonly sessionCount = computed(() => this.sessions.value.length);
 
 	/** Active goals */
-	readonly activeGoals = computed(() =>
-		this.goals.value.filter((g) => g.status === 'in_progress' || g.status === 'pending')
-	);
-
-	/** Enabled recurring jobs */
-	readonly enabledRecurringJobs = computed(() => this.recurringJobs.value.filter((j) => j.enabled));
+	readonly activeGoals = computed(() => this.goals.value.filter((g) => g.status === 'active'));
 
 	// ========================================
 	// Private State
@@ -209,8 +162,6 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goals.value = [];
-		this.recurringJobs.value = [];
-		this.agentState.value = null;
 
 		// 3. Update active room
 		this.roomId.value = roomId;
@@ -321,119 +272,7 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubGoalCompleted);
 
-			// 4. Recurring job events
-			const unsubJobCreated = hub.onEvent<RecurringJobEventPayload>(
-				'recurringJob.created',
-				(event) => {
-					if (event.roomId === roomId) {
-						this.recurringJobs.value = [...this.recurringJobs.value, event.job];
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubJobCreated);
-
-			const unsubJobUpdated = hub.onEvent<RecurringJobEventPayload>(
-				'recurringJob.updated',
-				(event) => {
-					if (event.roomId === roomId) {
-						const idx = this.recurringJobs.value.findIndex((j) => j.id === event.job.id);
-						if (idx >= 0) {
-							this.recurringJobs.value = [
-								...this.recurringJobs.value.slice(0, idx),
-								event.job,
-								...this.recurringJobs.value.slice(idx + 1),
-							];
-						}
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubJobUpdated);
-
-			const unsubJobDeleted = hub.onEvent<RecurringJobDeletedEventPayload>(
-				'recurringJob.deleted',
-				(event) => {
-					if (event.roomId === roomId) {
-						this.recurringJobs.value = this.recurringJobs.value.filter((j) => j.id !== event.jobId);
-					}
-				}
-			);
-			this.cleanupFunctions.push(unsubJobDeleted);
-
-			const unsubJobTriggered = hub.onEvent<{
-				roomId: string;
-				jobId: string;
-				taskId: string;
-				timestamp: number;
-			}>('recurringJob.triggered', (event) => {
-				if (event.roomId === roomId) {
-					// Update lastRunAt for the triggered job; no full job object in this event
-					const idx = this.recurringJobs.value.findIndex((j) => j.id === event.jobId);
-					if (idx >= 0) {
-						this.recurringJobs.value = [
-							...this.recurringJobs.value.slice(0, idx),
-							{ ...this.recurringJobs.value[idx], lastRunAt: event.timestamp },
-							...this.recurringJobs.value.slice(idx + 1),
-						];
-					}
-				}
-			});
-			this.cleanupFunctions.push(unsubJobTriggered);
-
-			// 5. Room agent state changes
-			const unsubAgentState = hub.onEvent<{
-				roomId: string;
-				newState: RoomSelfState['lifecycleState'];
-				previousState: RoomSelfState['lifecycleState'];
-			}>('roomAgent.stateChanged', (event) => {
-				if (event.roomId === roomId) {
-					// Refresh full agent state on any state change
-					this.fetchAgentState().catch(() => {});
-				}
-			});
-			this.cleanupFunctions.push(unsubAgentState);
-
-			// 5.1. Room agent escalation events
-			const unsubEscalated = hub.onEvent<{
-				roomId: string;
-				sessionId: string;
-				taskId: string;
-				escalationId: string;
-				reason: string;
-			}>('roomAgent.escalated', (event) => {
-				if (event.roomId === roomId) {
-					// Set waiting context when agent escalates
-					this.waitingContext.value = {
-						type: 'escalation',
-						taskId: event.taskId,
-						escalationId: event.escalationId,
-						reason: event.reason,
-						since: Date.now(),
-					};
-				}
-			});
-			this.cleanupFunctions.push(unsubEscalated);
-
-			// 5.2. Room agent review requested events
-			const unsubReviewRequested = hub.onEvent<{
-				roomId: string;
-				sessionId: string;
-				taskId: string;
-				reason: string;
-				workerSessionId?: string;
-			}>('roomAgent.reviewRequested', (event) => {
-				if (event.roomId === roomId) {
-					// Set waiting context when agent requests review
-					this.waitingContext.value = {
-						type: 'review',
-						taskId: event.taskId,
-						reason: event.reason,
-						since: Date.now(),
-					};
-				}
-			});
-			this.cleanupFunctions.push(unsubReviewRequested);
-
-			// 6. Fetch initial state via RPC
+			// 4. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -460,8 +299,7 @@ class RoomStore {
 				this.error.value = 'Room not found';
 			}
 
-			// Fetch additional data for new features
-			await Promise.all([this.fetchGoals(), this.fetchRecurringJobs(), this.fetchAgentState()]);
+			await this.fetchGoals();
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -691,136 +529,11 @@ class RoomStore {
 	}
 
 	// ========================================
-	// Recurring Jobs Methods
-	// ========================================
-
-	/**
-	 * Fetch recurring jobs for the room
-	 */
-	async fetchRecurringJobs(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return;
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return;
-		}
-
-		try {
-			this.jobsLoading.value = true;
-			const response = await hub.request<{ jobs: RecurringJob[] }>('recurringJob.list', {
-				roomId,
-			});
-			this.recurringJobs.value = response.jobs ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch recurring jobs:', err);
-		} finally {
-			this.jobsLoading.value = false;
-		}
-	}
-
-	/**
-	 * Create a new recurring job
-	 */
-	async createRecurringJob(params: CreateRecurringJobParams): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('recurringJob.create', { ...params, roomId });
-			// Refetch jobs to ensure UI is up to date
-			await this.fetchRecurringJobs();
-		} catch (err) {
-			logger.error('Failed to create recurring job:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Update a recurring job
-	 */
-	async updateRecurringJob(jobId: string, updates: Partial<RecurringJob>): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('recurringJob.update', { roomId, jobId, updates });
-			// Refetch jobs to ensure UI is up to date
-			await this.fetchRecurringJobs();
-		} catch (err) {
-			logger.error('Failed to update recurring job:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Delete a recurring job
-	 */
-	async deleteRecurringJob(jobId: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('recurringJob.delete', { roomId, jobId });
-			// Refetch jobs to ensure UI is up to date
-			await this.fetchRecurringJobs();
-		} catch (err) {
-			logger.error('Failed to delete recurring job:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Manually trigger a recurring job
-	 */
-	async triggerRecurringJob(jobId: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('recurringJob.trigger', { roomId, jobId });
-		} catch (err) {
-			logger.error('Failed to trigger recurring job:', err);
-			throw err;
-		}
-	}
-
-	// ========================================
 	// Context Methods
 	// ========================================
 
 	/**
-	 * Update room context
+	 * Update room context (background + instructions)
 	 */
 	async updateContext(background?: string, instructions?: string): Promise<void> {
 		const roomId = this.roomId.value;
@@ -834,7 +547,7 @@ class RoomStore {
 		}
 
 		try {
-			await hub.request('room.updateContext', { roomId, background, instructions });
+			await hub.request('room.update', { roomId, background, instructions });
 			// Fetch updated room data to ensure UI is up to date
 			const overview = await hub.request<RoomOverview>('room.get', { roomId });
 			if (overview) {
@@ -842,237 +555,6 @@ class RoomStore {
 			}
 		} catch (err) {
 			logger.error('Failed to update context:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Fetch context version history
-	 */
-	async fetchContextVersions(): Promise<RoomContextVersion[]> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			return [];
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			return [];
-		}
-
-		try {
-			const response = await hub.request<{ versions: RoomContextVersion[] }>(
-				'room.getContextVersions',
-				{ roomId }
-			);
-			return response.versions ?? [];
-		} catch (err) {
-			logger.error('Failed to fetch context versions:', err);
-			return [];
-		}
-	}
-
-	/**
-	 * Rollback context to a specific version
-	 */
-	async rollbackContext(version: number): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) {
-			throw new Error('No room selected');
-		}
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) {
-			throw new Error('Not connected');
-		}
-
-		try {
-			await hub.request('room.rollbackContext', { roomId, version });
-		} catch (err) {
-			logger.error('Failed to rollback context:', err);
-			throw err;
-		}
-	}
-
-	// ========================================
-	// Room Agent Methods
-	// ========================================
-
-	/**
-	 * Fetch the current agent state from the daemon
-	 */
-	async fetchAgentState(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) return;
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) return;
-
-		try {
-			const response = await hub.request<{ state: RoomSelfState | null }>('roomAgent.getState', {
-				roomId,
-			});
-			this.agentState.value = response.state ?? null;
-
-			// If agent is in waiting state, also fetch waiting context
-			if (response.state?.lifecycleState === 'waiting') {
-				await this.fetchWaitingContext();
-			} else {
-				this.waitingContext.value = null;
-			}
-		} catch (err) {
-			logger.error('Failed to fetch agent state:', err);
-		}
-	}
-
-	/**
-	 * Start the room agent
-	 */
-	async startAgent(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		await hub.request('roomAgent.start', { roomId });
-		await this.fetchAgentState();
-	}
-
-	/**
-	 * Stop the room agent
-	 */
-	async stopAgent(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		await hub.request('roomAgent.stop', { roomId });
-		await this.fetchAgentState();
-	}
-
-	/**
-	 * Pause the room agent
-	 */
-	async pauseAgent(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		await hub.request('roomAgent.pause', { roomId });
-		await this.fetchAgentState();
-	}
-
-	/**
-	 * Resume the room agent
-	 */
-	async resumeAgent(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		await hub.request('roomAgent.resume', { roomId });
-		await this.fetchAgentState();
-	}
-
-	/**
-	 * Fetch the current waiting context (escalations, reviews, questions)
-	 */
-	async fetchWaitingContext(): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) return;
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) return;
-
-		try {
-			const response = await hub.request<{ waitingContext: RoomSelfWaitingContext | null }>(
-				'roomAgent.getWaitingContext',
-				{ roomId }
-			);
-			this.waitingContext.value = response.waitingContext;
-		} catch (err) {
-			logger.error('Failed to fetch waiting context:', err);
-		}
-	}
-
-	/**
-	 * Send a human message to the room agent (responds to escalations, questions, etc.)
-	 */
-	async sendHumanInput(message: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		try {
-			await hub.request('roomAgent.humanInput', {
-				roomId,
-				type: 'message',
-				content: message,
-			});
-			// Clear waiting context after sending input
-			this.waitingContext.value = null;
-		} catch (err) {
-			logger.error('Failed to send human input:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Respond to a review request
-	 */
-	async respondToReview(taskId: string, approved: boolean, response?: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		try {
-			await hub.request('roomAgent.humanInput', {
-				roomId,
-				type: 'review_response',
-				taskId,
-				approved,
-				response,
-			});
-			// Clear waiting context after responding
-			this.waitingContext.value = null;
-		} catch (err) {
-			logger.error('Failed to respond to review:', err);
-			throw err;
-		}
-	}
-
-	/**
-	 * Respond to an escalation
-	 */
-	async respondToEscalation(escalationId: string, response: string): Promise<void> {
-		const roomId = this.roomId.value;
-		if (!roomId) throw new Error('No room selected');
-
-		const hub = connectionManager.getHubIfConnected();
-		if (!hub) throw new Error('Not connected');
-
-		try {
-			await hub.request('roomAgent.humanInput', {
-				roomId,
-				type: 'escalation_response',
-				escalationId,
-				response,
-			});
-			// Clear waiting context after responding
-			this.waitingContext.value = null;
-		} catch (err) {
-			logger.error('Failed to respond to escalation:', err);
 			throw err;
 		}
 	}

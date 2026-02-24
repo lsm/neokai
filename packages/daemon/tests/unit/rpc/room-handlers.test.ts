@@ -18,11 +18,9 @@
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import { setupRoomHandlers } from '../../../src/lib/rpc-handlers/room-handlers';
-import type { SessionManager } from '../../../src/lib/session-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { RoomManager } from '../../../src/lib/room/room-manager';
-import type { WorkerManager } from '../../../src/lib/room/worker-manager';
-import type { Room, RoomOverview, RoomStatus } from '@neokai/shared';
+import type { Room, RoomOverview, NeoStatus } from '@neokai/shared';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -106,8 +104,12 @@ function createMockRoomManager(): {
 	const mockRoomOverview: RoomOverview = {
 		room: mockRoom,
 		sessions: [],
-		status: 'idle' as RoomStatus,
-		recentActivity: [],
+		activeTasks: [],
+	};
+
+	const mockRoomStatus: NeoStatus = {
+		roomId: 'room-123',
+		activeTaskCount: 0,
 	};
 
 	const mocks = {
@@ -118,7 +120,7 @@ function createMockRoomManager(): {
 		updateRoom: mock(() => mockRoom),
 		archiveRoom: mock(() => ({ ...mockRoom, archivedAt: new Date().toISOString() })),
 		deleteRoom: mock(() => true),
-		getRoomStatus: mock(() => 'idle' as RoomStatus),
+		getRoomStatus: mock(() => mockRoomStatus),
 		assignSession: mock(() => mockRoom),
 		unassignSession: mock(() => mockRoom),
 		addAllowedPath: mock(() => mockRoom),
@@ -133,50 +135,18 @@ function createMockRoomManager(): {
 	};
 }
 
-// Helper to create mock WorkerManager (PHASE 5)
-function createMockWorkerManager(): {
-	workerManager: WorkerManager;
-	mocks: {
-		spawnWorker: ReturnType<typeof mock>;
-		getWorkerByTask: ReturnType<typeof mock>;
-		getWorkersByRoom: ReturnType<typeof mock>;
-		terminateWorkersForRoom: ReturnType<typeof mock>;
-	};
-} {
-	const mocks = {
-		spawnWorker: mock(async () => 'worker-session-123'),
-		getWorkerByTask: mock(() => null),
-		getWorkersByRoom: mock(() => []),
-		terminateWorkersForRoom: mock(async () => {}),
-	};
-
-	return {
-		workerManager: {
-			...mocks,
-		} as unknown as WorkerManager,
-		mocks,
-	};
-}
-
 describe('Room RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
 	let roomManagerData: ReturnType<typeof createMockRoomManager>;
-	let workerManagerData: ReturnType<typeof createMockWorkerManager>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
 		roomManagerData = createMockRoomManager();
-		workerManagerData = createMockWorkerManager();
 
 		// Setup handlers with mocked dependencies
-		setupRoomHandlers(
-			messageHubData.hub,
-			roomManagerData.roomManager,
-			daemonHubData.daemonHub,
-			workerManagerData.workerManager
-		);
+		setupRoomHandlers(messageHubData.hub, roomManagerData.roomManager, daemonHubData.daemonHub);
 	});
 
 	afterEach(() => {
@@ -465,7 +435,7 @@ describe('Room RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('room.status');
 			expect(handler).toBeDefined();
 
-			const result = (await handler!({ roomId: 'room-123' }, {})) as { status: RoomStatus };
+			const result = (await handler!({ roomId: 'room-123' }, {})) as { status: NeoStatus };
 
 			expect(result.status).toBeDefined();
 		});

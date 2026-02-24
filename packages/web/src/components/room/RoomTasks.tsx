@@ -3,13 +3,15 @@
  *
  * Displays tasks grouped by status:
  * - In Progress
+ * - Escalated
  * - Pending
+ * - Draft
  * - Completed
+ * - Failed
  */
 
 import { useState } from 'preact/hooks';
-import type { TaskSummary, TaskSession, TaskExecutionMode } from '@neokai/shared';
-import { TaskSessionView } from './TaskSessionView';
+import type { TaskSummary } from '@neokai/shared';
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
@@ -20,16 +22,17 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
 				<p class="text-gray-400">No tasks yet</p>
-				<p class="text-sm text-gray-500 mt-1">Ask Neo to create a task</p>
+				<p class="text-sm text-gray-500 mt-1">Create a task to get started</p>
 			</div>
 		);
 	}
 
 	// Group by status
 	const inProgress = tasks.filter((t) => t.status === 'in_progress');
+	const escalated = tasks.filter((t) => t.status === 'escalated');
 	const pending = tasks.filter((t) => t.status === 'pending');
+	const draft = tasks.filter((t) => t.status === 'draft');
 	const completed = tasks.filter((t) => t.status === 'completed');
-	const blocked = tasks.filter((t) => t.status === 'blocked');
 	const failed = tasks.filter((t) => t.status === 'failed');
 
 	return (
@@ -48,14 +51,14 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 				</div>
 			)}
 
-			{/* Blocked */}
-			{blocked.length > 0 && (
+			{/* Escalated */}
+			{escalated.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-orange-900/20">
-						<h3 class="font-semibold text-orange-400">Blocked ({blocked.length})</h3>
+						<h3 class="font-semibold text-orange-400">Escalated ({escalated.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
-						{blocked.map((task) => (
+						{escalated.map((task) => (
 							<TaskItem key={task.id} task={task} />
 						))}
 					</div>
@@ -70,6 +73,20 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{pending.map((task) => (
+							<TaskItem key={task.id} task={task} />
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* Draft */}
+			{draft.length > 0 && (
+				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
+					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
+						<h3 class="font-semibold text-gray-400">Draft ({draft.length})</h3>
+					</div>
+					<div class="divide-y divide-dark-700">
+						{draft.map((task) => (
 							<TaskItem key={task.id} task={task} />
 						))}
 					</div>
@@ -108,19 +125,12 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 }
 
 function TaskItem({ task }: { task: TaskSummary }) {
-	const [isExpanded, setIsExpanded] = useState(false);
-
-	// Check if task has sessions to display
-	const hasSessions = task.sessions && task.sessions.length > 0;
+	const [_isExpanded, setIsExpanded] = useState(false);
 
 	return (
 		<div class="px-4 py-3">
-			<div
-				class="flex items-start justify-between cursor-pointer"
-				onClick={() => hasSessions && setIsExpanded(!isExpanded)}
-			>
-				<div class="flex-1 min-w-0 flex items-center gap-2">
-					{hasSessions && <span class="text-gray-500 text-xs">{isExpanded ? '▼' : '▶'}</span>}
+			<div class="flex items-start justify-between" onClick={() => setIsExpanded((v) => !v)}>
+				<div class="flex-1 min-w-0">
 					<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
 				</div>
 				{task.progress !== undefined && (
@@ -132,17 +142,6 @@ function TaskItem({ task }: { task: TaskSummary }) {
 					<div
 						class="h-full bg-blue-500 transition-all duration-300"
 						style={{ width: `${task.progress}%` }}
-					/>
-				</div>
-			)}
-
-			{/* Expanded TaskSessionView */}
-			{isExpanded && hasSessions && (
-				<div class="mt-3 pt-3 border-t border-dark-700">
-					<TaskSessionView
-						taskId={task.id}
-						sessions={task.sessions as TaskSession[]}
-						executionMode={(task.executionMode as TaskExecutionMode) ?? 'single'}
 					/>
 				</div>
 			)}

@@ -28,7 +28,6 @@ describe('TaskRepository', () => {
 				room_id TEXT NOT NULL,
 				title TEXT NOT NULL,
 				description TEXT NOT NULL,
-				session_id TEXT,
 				status TEXT NOT NULL DEFAULT 'pending',
 				priority TEXT NOT NULL DEFAULT 'normal',
 				progress INTEGER,
@@ -95,18 +94,6 @@ describe('TaskRepository', () => {
 			const task = repository.createTask(params);
 
 			expect(task.createdAt).toBeGreaterThanOrEqual(beforeTime);
-		});
-
-		it('should initialize sessionId as undefined', () => {
-			const params: CreateTaskParams = {
-				roomId: 'room-1',
-				title: 'Task',
-				description: 'Description',
-			};
-
-			const task = repository.createTask(params);
-
-			expect(task.sessionId).toBeUndefined();
 		});
 
 		it('should support all priority levels', () => {
@@ -210,27 +197,6 @@ describe('TaskRepository', () => {
 			expect(highPriorityTasks[0].priority).toBe('high');
 		});
 
-		it('should filter by sessionId', () => {
-			const task1 = repository.createTask({
-				roomId: 'room-1',
-				title: 'Task 1',
-				description: 'Desc',
-			});
-			const task2 = repository.createTask({
-				roomId: 'room-1',
-				title: 'Task 2',
-				description: 'Desc',
-			});
-			repository.updateTask(task1.id, { sessionId: 'session-1' });
-			repository.updateTask(task2.id, { sessionId: 'session-2' });
-
-			const filter: TaskFilter = { sessionId: 'session-1' };
-			const tasks = repository.listTasks('room-1', filter);
-
-			expect(tasks.length).toBe(1);
-			expect(tasks[0].sessionId).toBe('session-1');
-		});
-
 		it('should combine multiple filters', () => {
 			const task1 = repository.createTask({
 				roomId: 'room-1',
@@ -282,23 +248,6 @@ describe('TaskRepository', () => {
 			const updated = repository.updateTask(task.id, { description: 'New description' });
 
 			expect(updated?.description).toBe('New description');
-		});
-
-		it('should update sessionId', () => {
-			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-
-			const updated = repository.updateTask(task.id, { sessionId: 'session-1' });
-
-			expect(updated?.sessionId).toBe('session-1');
-		});
-
-		it('should clear sessionId when set to null', () => {
-			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
-			repository.updateTask(task.id, { sessionId: 'session-1' });
-
-			const updated = repository.updateTask(task.id, { sessionId: null });
-
-			expect(updated?.sessionId).toBeUndefined();
 		});
 
 		it('should update status and set started_at when status is in_progress', () => {
@@ -565,7 +514,6 @@ describe('TaskRepository', () => {
 			await new Promise((r) => setTimeout(r, 5));
 			repository.updateTask(task.id, {
 				status: 'in_progress',
-				sessionId: 'session-1',
 				progress: 0,
 			});
 			let current = repository.getTask(task.id);
@@ -614,17 +562,17 @@ describe('TaskRepository', () => {
 			expect(failed?.error).toBe('Connection timeout');
 		});
 
-		it('should support blocked task status', () => {
+		it('should support escalated task status', () => {
 			const task = repository.createTask({
 				roomId: 'room-1',
-				title: 'Blocked Task',
-				description: 'Waiting on dependency',
+				title: 'Escalated Task',
+				description: 'Needs human intervention',
 			});
 
-			repository.updateTask(task.id, { status: 'blocked' });
+			repository.updateTask(task.id, { status: 'escalated' });
 
-			const blocked = repository.getTask(task.id);
-			expect(blocked?.status).toBe('blocked');
+			const escalated = repository.getTask(task.id);
+			expect(escalated?.status).toBe('escalated');
 		});
 	});
 });

@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 20 migrations for schema changes.
+ * All 32 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -107,6 +107,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 31: Persist room agent run intent for boot-time autostart
 	runMigration31(db);
+
+	// Migration 32: v0.19 cleanup - drop old room orchestration tables
+	runMigration32(db);
 }
 
 /**
@@ -756,7 +759,8 @@ function runMigration14(db: BunDatabase): void {
 		}
 
 		// Update foreign key references in tasks table
-		if (tableExists(db, 'tasks')) {
+		// Only needed when session_id column exists (old schema, pre-migration32)
+		if (tableExists(db, 'tasks') && tableHasColumn(db, 'tasks', 'session_id')) {
 			// Clean up any leftover tasks_new from partial migration
 			db.exec(`DROP TABLE IF EXISTS tasks_new`);
 			db.exec(`
@@ -1581,5 +1585,190 @@ function runMigration31(db: BunDatabase): void {
 				WHERE lifecycle_state != 'paused'
 			`);
 		}
+	}
+}
+
+/**
+ * Migration 32: v0.19 cleanup - drop old room orchestration tables
+ *
+ * Removes tables belonging to the AI-based RoomNeo/RoomSelf orchestration
+ * that was replaced by the deterministic Runtime scheduler in v0.19.
+ *
+ * Drops:
+ * - room_agent_states, worker_sessions, recurring_jobs
+ * - room_context_versions, contexts, context_messages, memories
+ *
+ * Also migrates stale status values in tasks, goals, and sessions.
+ */
+function runMigration32(db: BunDatabase): void {
+	// Drop old orchestration tables (IF EXISTS so idempotent)
+	db.exec(`DROP TABLE IF EXISTS room_agent_states`);
+	db.exec(`DROP TABLE IF EXISTS worker_sessions`);
+	db.exec(`DROP TABLE IF EXISTS worker_sessions_orphaned`);
+	db.exec(`DROP TABLE IF EXISTS recurring_jobs`);
+	db.exec(`DROP TABLE IF EXISTS room_context_versions`);
+	db.exec(`DROP TABLE IF EXISTS context_messages`);
+	db.exec(`DROP TABLE IF EXISTS contexts`);
+	db.exec(`DROP TABLE IF EXISTS memories`);
+
+	// Drop stale session_pairs if it somehow survived Migration 29
+	db.exec(`DROP TABLE IF EXISTS session_pairs`);
+
+	// Temporarily disable FK enforcement for all table rebuilds in this migration.
+	// Two reasons:
+	// 1. rooms is only created by createTables() which runs after all migrations,
+	//    so FK validation against rooms(id) would fail on a fresh database.
+	// 2. DROP TABLE sessions with FK ON cascades into events/sdk_messages rows
+	//    (both tables have FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE),
+	//    silently wiping all chat history on upgrade.
+	// FK is restored in the finally block below.
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		// Rebuild tasks table: update CHECK constraint to new status values
+		// SQLite does not support ALTER CHECK, so we use the table rebuild pattern
+		if (tableExists(db, 'tasks')) {
+			// First migrate old status values
+			db.exec(`UPDATE tasks SET status = 'escalated' WHERE status = 'blocked'`);
+			db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'cancelled'`);
+
+			// Rebuild the table with the new CHECK constraint
+			db.exec(`
+			CREATE TABLE tasks_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('draft', 'pending', 'in_progress', 'escalated', 'completed', 'failed')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT DEFAULT '[]',
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+			db.exec(`
+			INSERT INTO tasks_new (id, room_id, title, description, status, priority,
+				progress, current_step, result, error, depends_on,
+				created_at, started_at, completed_at)
+			SELECT id, room_id, title, description,
+				CASE status
+					WHEN 'blocked' THEN 'escalated'
+					WHEN 'cancelled' THEN 'failed'
+					ELSE status
+				END,
+				priority, progress, current_step, result, error, depends_on,
+				created_at, started_at, completed_at
+			FROM tasks
+		`);
+			db.exec(`DROP TABLE tasks`);
+			db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+		}
+
+		// Rebuild goals table: update CHECK constraint to new status values
+		if (tableExists(db, 'goals')) {
+			// First migrate old status values
+			db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
+			db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
+
+			// Rebuild the table with the new CHECK constraint
+			db.exec(`
+			CREATE TABLE goals_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]',
+				metrics TEXT DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				completed_at INTEGER,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+			db.exec(`
+			INSERT INTO goals_new (id, room_id, title, description, status, priority,
+				progress, linked_task_ids, metrics, created_at, updated_at, completed_at)
+			SELECT id, room_id, title, description,
+				CASE status
+					WHEN 'pending' THEN 'active'
+					WHEN 'in_progress' THEN 'active'
+					WHEN 'blocked' THEN 'needs_human'
+					ELSE status
+				END,
+				priority, progress, linked_task_ids, metrics, created_at, updated_at, completed_at
+			FROM goals
+		`);
+			db.exec(`DROP TABLE goals`);
+			db.exec(`ALTER TABLE goals_new RENAME TO goals`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
+			db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+		}
+
+		// Rebuild sessions table: update type CHECK constraint
+		// (drop 'room_self' and 'manager', add 'craft' and 'lead')
+		if (tableExists(db, 'sessions')) {
+			// Migrate old type values first
+			db.exec(`UPDATE sessions SET type = 'craft' WHERE type = 'room_self'`);
+			db.exec(`UPDATE sessions SET type = 'lead' WHERE type = 'manager'`);
+			// Remove any rows with unmappable types
+			db.exec(
+				`DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')`
+			);
+
+			// Rebuild with new CHECK constraint
+			db.exec(`
+			CREATE TABLE sessions_new (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				labels TEXT,
+				sub_session_order INTEGER DEFAULT 0,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')),
+				session_context TEXT
+			)
+		`);
+			db.exec(`
+			INSERT INTO sessions_new
+			SELECT id, title, workspace_path, created_at, last_active_at,
+				status, config, metadata, is_worktree, worktree_path, main_repo_path,
+				worktree_branch, git_branch, sdk_session_id, available_commands,
+				processing_state, archived_at, parent_id, labels,
+				COALESCE(sub_session_order, 0), type, session_context
+			FROM sessions
+		`);
+			db.exec(`DROP TABLE sessions`);
+			db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+		}
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
 	}
 }

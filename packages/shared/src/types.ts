@@ -51,27 +51,18 @@ export type {
  * Session type for unified session architecture
  * - 'worker': Standard coding session with full Claude Code system prompt
  * - 'room_chat': User-facing room chat interface (room:chat:${roomId})
- * - 'room_self': Autonomous room orchestration (room:self:${roomId})
+ * - 'craft': Craft agent session (Room Runtime v0.19)
+ * - 'lead': Lead agent session (Room Runtime v0.19)
  * - 'lobby': Instance-level agent session
- *
- * MANAGER REMOVAL (v1.0): 'manager' type removed as part of manager agent elimination
  */
-export type SessionType = 'worker' | 'room_chat' | 'room_self' | 'lobby';
+export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
 
 /**
  * Context for room/lobby sessions
- *
- * For room sessions, includes links between chat and self sessions:
- * - room:chat:${roomId} has selfSessionId pointing to room:self:${roomId}
- * - room:self:${roomId} has chatSessionId pointing to room:chat:${roomId}
  */
 export interface SessionContext {
 	roomId?: string;
 	lobbyId?: string;
-	/** Link to the paired room self session (for room_chat) */
-	selfSessionId?: string;
-	/** Link to the paired room chat session (for room_self) */
-	chatSessionId?: string;
 }
 
 /**
@@ -108,18 +99,6 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
  * Room chat sessions do NOT use Claude Code system prompt - they are for user interaction
  */
 export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
-	rewind: false,
-	worktree: false,
-	coordinator: false,
-	archive: false,
-	sessionInfo: false,
-};
-
-/**
- * Default features for room self sessions (all disabled)
- * Room self sessions do NOT use Claude Code system prompt - they are for orchestration
- */
-export const DEFAULT_ROOM_SELF_FEATURES: SessionFeatures = {
 	rewind: false,
 	worktree: false,
 	coordinator: false,
@@ -533,9 +512,9 @@ export interface SessionMetadata {
 		createdAt?: string;
 		completedAt?: string;
 	};
-	// Dual-session architecture fields
-	/** Type of session in dual-architecture context */
-	sessionType?: 'room_chat' | 'room_self' | 'manager' | 'worker' | 'lobby';
+	// Session architecture fields
+	/** Type of session in architecture context */
+	sessionType?: 'room_chat' | 'craft' | 'lead' | 'worker' | 'lobby';
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */

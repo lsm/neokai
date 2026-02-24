@@ -21,8 +21,8 @@ export class TaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, session_id, status, priority, depends_on, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -30,7 +30,6 @@ export class TaskRepository {
 			params.roomId,
 			params.title,
 			params.description,
-			null,
 			'pending',
 			params.priority ?? 'normal',
 			JSON.stringify(params.dependsOn ?? []),
@@ -66,11 +65,6 @@ export class TaskRepository {
 			query += ` AND priority = ?`;
 			params.push(filter.priority);
 		}
-		if (filter?.sessionId) {
-			query += ` AND session_id = ?`;
-			params.push(filter.sessionId);
-		}
-
 		query += ` ORDER BY created_at DESC`;
 
 		const stmt = this.db.prepare(query);
@@ -92,10 +86,6 @@ export class TaskRepository {
 		if (params.description !== undefined) {
 			fields.push('description = ?');
 			values.push(params.description);
-		}
-		if (params.sessionId !== undefined) {
-			fields.push('session_id = ?');
-			values.push(params.sessionId ?? null);
 		}
 		if (params.status !== undefined) {
 			fields.push('status = ?');
@@ -134,23 +124,6 @@ export class TaskRepository {
 			fields.push('depends_on = ?');
 			values.push(JSON.stringify(params.dependsOn));
 		}
-		if (params.sessionIds !== undefined) {
-			fields.push('session_ids = ?');
-			values.push(JSON.stringify(params.sessionIds));
-		}
-		if (params.executionMode !== undefined) {
-			fields.push('execution_mode = ?');
-			values.push(params.executionMode);
-		}
-		if (params.sessions !== undefined) {
-			fields.push('sessions = ?');
-			values.push(JSON.stringify(params.sessions));
-		}
-		if (params.recurringJobId !== undefined) {
-			fields.push('recurring_job_id = ?');
-			values.push(params.recurringJobId ?? null);
-		}
-
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
@@ -207,13 +180,6 @@ export class TaskRepository {
 			roomId: row.room_id as string,
 			title: row.title as string,
 			description: row.description as string,
-			sessionId: (row.session_id as string | null) ?? undefined,
-			sessionIds: row.session_ids ? (JSON.parse(row.session_ids as string) as string[]) : undefined,
-			executionMode: row.execution_mode as NeoTask['executionMode'],
-			sessions: row.sessions
-				? (JSON.parse(row.sessions as string) as NeoTask['sessions'])
-				: undefined,
-			recurringJobId: (row.recurring_job_id as string | null) ?? undefined,
 			status: row.status as NeoTask['status'],
 			priority: row.priority as NeoTask['priority'],
 			progress: (row.progress as number | null) ?? undefined,

@@ -13,8 +13,6 @@ import type {
 	RoomGitHubMapping,
 	InboxItem,
 	RoomGoal,
-	RecurringJob,
-	RoomSelfState,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { DatabaseCore } from './database-core';
@@ -32,37 +30,15 @@ import {
 	type CreateGoalParams,
 	type UpdateGoalParams,
 } from './repositories/goal-repository';
-import {
-	RecurringJobRepository,
-	type CreateRecurringJobParams,
-	type UpdateRecurringJobParams,
-} from './repositories/recurring-job-repository';
-import {
-	RoomSelfStateRepository,
-	type CreateRoomSelfStateParams,
-	type UpdateRoomSelfStateParams,
-} from './repositories/room-self-state-repository';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
 export type { CreateInboxItemParams, InboxItemFilter } from './repositories/inbox-item-repository';
 export type { CreateGoalParams, UpdateGoalParams } from './repositories/goal-repository';
-export type {
-	CreateRecurringJobParams,
-	UpdateRecurringJobParams,
-} from './repositories/recurring-job-repository';
-export type {
-	CreateRoomSelfStateParams,
-	UpdateRoomSelfStateParams,
-} from './repositories/room-self-state-repository';
 
 // @public - Library export
 // Re-export repository classes for direct use
 export { GoalRepository } from './repositories/goal-repository';
-// @public - Library export
-export { RecurringJobRepository } from './repositories/recurring-job-repository';
-// @public - Library export
-export { RoomSelfStateRepository } from './repositories/room-self-state-repository';
 
 /**
  * Database facade class that maintains backward compatibility with the original Database class.
@@ -78,8 +54,6 @@ export class Database {
 	private githubMappingRepo!: GitHubMappingRepository;
 	private inboxItemRepo!: InboxItemRepository;
 	private goalRepo!: GoalRepository;
-	private recurringJobRepo!: RecurringJobRepository;
-	private roomSelfStateRepo!: RoomSelfStateRepository;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -96,8 +70,6 @@ export class Database {
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
 		this.goalRepo = new GoalRepository(db);
-		this.recurringJobRepo = new RecurringJobRepository(db);
-		this.roomSelfStateRepo = new RoomSelfStateRepository(db);
 	}
 
 	// ============================================================================
@@ -371,118 +343,6 @@ export class Database {
 	}
 
 	// ============================================================================
-	// Recurring Job operations (delegated to RecurringJobRepository)
-	// ============================================================================
-
-	createRecurringJob(params: CreateRecurringJobParams): RecurringJob {
-		return this.recurringJobRepo.createJob(params);
-	}
-
-	getRecurringJob(id: string): RecurringJob | null {
-		return this.recurringJobRepo.getJob(id);
-	}
-
-	listRecurringJobs(roomId: string, enabledOnly?: boolean): RecurringJob[] {
-		return this.recurringJobRepo.listJobs(roomId, enabledOnly);
-	}
-
-	getAllEnabledRecurringJobs(): RecurringJob[] {
-		return this.recurringJobRepo.getAllEnabledJobs();
-	}
-
-	getDueRecurringJobs(now?: number): RecurringJob[] {
-		return this.recurringJobRepo.getDueJobs(now);
-	}
-
-	updateRecurringJob(id: string, params: UpdateRecurringJobParams): RecurringJob | null {
-		return this.recurringJobRepo.updateJob(id, params);
-	}
-
-	markRecurringJobRun(id: string, nextRunAt: number): RecurringJob | null {
-		return this.recurringJobRepo.markJobRun(id, nextRunAt);
-	}
-
-	enableRecurringJob(id: string): RecurringJob | null {
-		return this.recurringJobRepo.enableJob(id);
-	}
-
-	disableRecurringJob(id: string): RecurringJob | null {
-		return this.recurringJobRepo.disableJob(id);
-	}
-
-	deleteRecurringJob(id: string): boolean {
-		return this.recurringJobRepo.deleteJob(id);
-	}
-
-	// ============================================================================
-	// Room Agent State operations (delegated to RoomSelfStateRepository)
-	// ============================================================================
-
-	createRoomSelfState(params: CreateRoomSelfStateParams): RoomSelfState {
-		return this.roomSelfStateRepo.createState(params);
-	}
-
-	getRoomSelfState(roomId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.getState(roomId);
-	}
-
-	getOrCreateRoomSelfState(roomId: string): RoomSelfState {
-		return this.roomSelfStateRepo.getOrCreateState(roomId);
-	}
-
-	updateRoomSelfState(roomId: string, params: UpdateRoomSelfStateParams): RoomSelfState | null {
-		return this.roomSelfStateRepo.updateState(roomId, params);
-	}
-
-	transitionRoomSelfState(
-		roomId: string,
-		newState: import('@neokai/shared').RoomSelfLifecycleState
-	): RoomSelfState | null {
-		return this.roomSelfStateRepo.transitionTo(roomId, newState);
-	}
-
-	recordRoomSelfError(roomId: string, error: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.recordError(roomId, error);
-	}
-
-	clearRoomSelfError(roomId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.clearError(roomId);
-	}
-
-	// MANAGER REMOVAL v1.0: Updated method names (old names kept as deprecated aliases)
-	addActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.addActiveWorkerSession(roomId, workerSessionId);
-	}
-
-	removeActiveWorkerSession(roomId: string, workerSessionId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.removeActiveWorkerSession(roomId, workerSessionId);
-	}
-
-	/** @deprecated Use addActiveWorkerSession instead */
-	addActiveSessionPair(roomId: string, workerSessionId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.addActiveWorkerSession(roomId, workerSessionId);
-	}
-
-	/** @deprecated Use removeActiveWorkerSession instead */
-	removeActiveSessionPair(roomId: string, workerSessionId: string): RoomSelfState | null {
-		return this.roomSelfStateRepo.removeActiveWorkerSession(roomId, workerSessionId);
-	}
-
-	deleteRoomSelfState(roomId: string): boolean {
-		return this.roomSelfStateRepo.deleteState(roomId);
-	}
-
-	getAllRoomSelfStates(): RoomSelfState[] {
-		return this.roomSelfStateRepo.getAllStates();
-	}
-
-	getRoomSelfStatesByLifecycle(
-		lifecycleState: import('@neokai/shared').RoomSelfLifecycleState
-	): RoomSelfState[] {
-		return this.roomSelfStateRepo.getStatesByLifecycle(lifecycleState);
-	}
-
-	// ============================================================================
 	// Core operations (delegated to DatabaseCore)
 	// ============================================================================
 
@@ -508,22 +368,6 @@ export class Database {
 	 */
 	getGoalRepo(): GoalRepository {
 		return this.goalRepo;
-	}
-
-	/**
-	 * Get the recurring job repository
-	 * Used by RecurringJobScheduler for direct access to jobs
-	 */
-	getRecurringJobRepo(): RecurringJobRepository {
-		return this.recurringJobRepo;
-	}
-
-	/**
-	 * Get the room agent state repository
-	 * Used by RoomAgentService for direct access to agent states
-	 */
-	getRoomSelfStateRepo(): RoomSelfStateRepository {
-		return this.roomSelfStateRepo;
 	}
 
 	/**

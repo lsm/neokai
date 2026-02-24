@@ -9,6 +9,8 @@
  * - task.start - Start a task (assign to session)
  * - task.complete - Complete a task
  * - task.fail - Fail a task
+ * - task.escalate - Escalate a task (needs human input)
+ * - task.deescalate - De-escalate a task (return to pending)
  * - task.delete - Delete a task
  *
  * Renamed from neo.task.* to task.* for cleaner API.
@@ -33,6 +35,8 @@ export type TaskManagerLike = Pick<
 	| 'startTask'
 	| 'completeTask'
 	| 'failTask'
+	| 'escalateTask'
+	| 'deescalateTask'
 	| 'deleteTask'
 >;
 
@@ -124,7 +128,6 @@ export function setupTaskHandlers(
 			roomId: string;
 			status?: TaskStatus;
 			priority?: TaskPriority;
-			sessionId?: string;
 		};
 
 		if (!params.roomId) {
@@ -135,7 +138,6 @@ export function setupTaskHandlers(
 		const tasks = await taskManager.listTasks({
 			status: params.status,
 			priority: params.priority,
-			sessionId: params.sessionId,
 		});
 
 		return { tasks };
@@ -209,9 +211,9 @@ export function setupTaskHandlers(
 		return { task };
 	});
 
-	// task.start - Start a task (assign to session)
+	// task.start - Start a task (mark as in_progress)
 	messageHub.onRequest('task.start', async (data) => {
-		const params = data as { roomId: string; taskId: string; sessionId: string };
+		const params = data as { roomId: string; taskId: string };
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
@@ -219,12 +221,9 @@ export function setupTaskHandlers(
 		if (!params.taskId) {
 			throw new Error('Task ID is required');
 		}
-		if (!params.sessionId) {
-			throw new Error('Session ID is required');
-		}
 
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.startTask(params.taskId, params.sessionId);
+		const task = await taskManager.startTask(params.taskId);
 
 		// Emit task update event (status change from pending to in_progress)
 		if (task) {
@@ -270,6 +269,44 @@ export function setupTaskHandlers(
 
 		// Emit room overview for task failure (significant status change)
 		emitRoomOverview(params.roomId);
+
+		return { task };
+	});
+
+	// task.escalate - Escalate a task (needs human input)
+	messageHub.onRequest('task.escalate', async (data) => {
+		const params = data as { roomId: string; taskId: string; reason?: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.escalateTask(params.taskId, params.reason);
+
+		emitTaskUpdate(params.roomId, task);
+
+		return { task };
+	});
+
+	// task.deescalate - De-escalate a task (return to pending)
+	messageHub.onRequest('task.deescalate', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.deescalateTask(params.taskId);
+
+		emitTaskUpdate(params.roomId, task);
 
 		return { task };
 	});

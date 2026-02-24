@@ -352,7 +352,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
 
-			// Cleanup RPC handlers (stops background services like RecurringJobScheduler)
+			// Cleanup RPC handlers
 			rpcHandlerCleanup();
 
 			// Stop GitHub service

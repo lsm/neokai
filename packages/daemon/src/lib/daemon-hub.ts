@@ -182,21 +182,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	'room.updated': { sessionId: string; roomId: string; room?: Partial<Room> };
 	'room.archived': { sessionId: string; roomId: string };
 	'room.deleted': { sessionId: string; roomId: string };
-	'room.contextUpdated': {
-		sessionId: string;
-		roomId: string;
-		changes: {
-			background?: string;
-			instructions?: string;
-		};
-	};
-	'room.contextRolledBack': {
-		sessionId: string;
-		roomId: string;
-		rolledBackToVersion: number;
-		newVersion: number;
-	};
-
 	// Room channel events (emitted to room:${roomId} channel via sessionId)
 	// UI subscribes to these for real-time updates
 	// sessionId is set to 'room:${roomId}' for channel routing
@@ -221,7 +206,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		task?: Partial<NeoTask>;
 	};
 
-	// Room message events (for Neo chat functionality)
+	// Room message events (for room chat)
 	'room.message': {
 		sessionId: string;
 		roomId: string;
@@ -351,130 +336,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		goalId: string;
 		goal: import('@neokai/shared').RoomGoal;
-	};
-
-	// Recurring job events
-	'recurringJob.created': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-		job: import('@neokai/shared').RecurringJob;
-	};
-	'recurringJob.updated': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-		job?: Partial<import('@neokai/shared').RecurringJob>;
-	};
-	'recurringJob.triggered': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-		taskId: string;
-		timestamp: number;
-	};
-	'recurringJob.completed': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-		taskId: string;
-	};
-	'recurringJob.enabled': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-	};
-	'recurringJob.disabled': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-	};
-	'recurringJob.deleted': {
-		sessionId: string;
-		roomId: string;
-		jobId: string;
-	};
-
-	// Room agent lifecycle events
-	'roomAgent.stateChanged': {
-		sessionId: string;
-		roomId: string;
-		previousState: import('@neokai/shared').RoomSelfLifecycleState;
-		newState: import('@neokai/shared').RoomSelfLifecycleState;
-		reason?: string;
-	};
-	'roomAgent.hook': {
-		sessionId: string;
-		roomId: string;
-		event: import('@neokai/shared').ManagerHookEvent;
-		payload: import('@neokai/shared').ManagerHookPayload;
-	};
-	'roomAgent.error': {
-		sessionId: string;
-		roomId: string;
-		error: string;
-		errorCount: number;
-	};
-	'roomAgent.idle': {
-		sessionId: string;
-		roomId: string;
-		hasPendingTasks: boolean;
-		hasIncompleteGoals: boolean;
-	};
-	'roomAgent.reviewRequested': {
-		sessionId: string;
-		roomId: string;
-		taskId: string;
-		reason: string;
-		workerSessionId?: string;
-	};
-	'roomAgent.reviewReceived': {
-		sessionId: string;
-		roomId: string;
-		taskId: string;
-		approved: boolean;
-		response: string;
-	};
-	'roomAgent.escalated': {
-		sessionId: string;
-		roomId: string;
-		taskId: string;
-		escalationId: string;
-		reason: string;
-	};
-	'roomAgent.escalationResolved': {
-		sessionId: string;
-		roomId: string;
-		escalationId: string;
-		response: string;
-	};
-	'roomAgent.questionAnswered': {
-		sessionId: string;
-		roomId: string;
-		questionId: string;
-		responses: Record<string, string | string[]>;
-	};
-
-	// Multi-session task events
-	'task.sessionStarted': {
-		sessionId: string;
-		roomId: string;
-		taskId: string;
-		taskSessionId: string;
-		role: 'primary' | 'secondary' | 'reviewer';
-	};
-	'task.sessionCompleted': {
-		sessionId: string;
-		roomId: string;
-		taskId: string;
-		taskSessionId: string;
-		role: 'primary' | 'secondary' | 'reviewer';
-		result?: string;
-	};
-	'task.allSessionsCompleted': {
-		sessionId: string;
-		roomId: string;
-		taskId: string;
 	};
 
 	// Lobby Agent events (for external message processing)

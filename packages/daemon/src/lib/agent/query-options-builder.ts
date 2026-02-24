@@ -18,23 +18,6 @@
  * - Hooks (output limiter)
  */
 
-/**
- * Import the MCP server getter function from room-handlers
- * This is a dynamic import to avoid circular dependencies
- */
-let getRoomMcpServer:
-	| ((
-			roomId: string
-	  ) => ReturnType<typeof import('./room-agent-tools').createRoomAgentMcpServer> | undefined)
-	| undefined;
-try {
-	// eslint-disable-next-line @typescript-eslint/no-var-requires
-	const roomHandlers = require('../rpc-handlers/room-handlers');
-	getRoomMcpServer = roomHandlers.getRoomMcpServer;
-} catch {
-	// Module not available (e.g., in tests)
-}
-
 import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type {
 	Session,
@@ -48,7 +31,6 @@ import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
-import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
@@ -64,12 +46,9 @@ export interface QueryOptionsBuilderContext {
 }
 
 export class QueryOptionsBuilder {
-	private logger: Logger;
 	private canUseTool?: CanUseTool;
 
-	constructor(private ctx: QueryOptionsBuilderContext) {
-		this.logger = new Logger(`QueryOptionsBuilder ${ctx.session.id}`);
-	}
+	constructor(private ctx: QueryOptionsBuilderContext) {}
 
 	/**
 	 * Set the canUseTool callback for handling tool permissions
@@ -86,7 +65,6 @@ export class QueryOptionsBuilder {
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
-		const _legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
 
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
@@ -205,9 +183,9 @@ export class QueryOptionsBuilder {
 		};
 
 		// ============ Room Session Restrictions ============
-		// Room sessions (both chat and self) are orchestrators only — they must not
+		// Room chat sessions are orchestrators only — they must not
 		// have access to built-in file/shell tools or user-configured MCP servers.
-		if (this.ctx.session.type === 'room_chat' || this.ctx.session.type === 'room_self') {
+		if (this.ctx.session.type === 'room_chat') {
 			const restrictedBuiltinTools = [
 				'Task',
 				'TaskOutput',
@@ -220,28 +198,10 @@ export class QueryOptionsBuilder {
 			queryOptions.disallowedTools = [
 				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
 			];
-			// Prevent user-configured MCP servers (from ~/.claude/settings.json) from
-			// being merged in — the room agent only needs its own room-agent-tools MCP.
+			// Prevent user-configured MCP servers from being merged in.
 			queryOptions.strictMcpConfig = true;
 			// Skip settings file loading so user's settings.json doesn't inject extra tools.
 			queryOptions.settingSources = [];
-		}
-
-		// Manager sessions coordinate worker sessions and complete tasks; they should not
-		// execute concrete implementation directly.
-		if (this.ctx.session.metadata?.sessionType === 'manager') {
-			const managerDisallowedTools = [
-				'Task',
-				'TaskOutput',
-				'TaskStop',
-				'Bash',
-				'Edit',
-				'Write',
-				'NotebookEdit',
-			];
-			queryOptions.disallowedTools = [
-				...new Set([...(queryOptions.disallowedTools ?? []), ...managerDisallowedTools]),
-			];
 		}
 
 		// ============ Coordinator Mode ============
@@ -542,38 +502,12 @@ CRITICAL RULES:
 	 * Priority:
 	 * 1. SDKConfig mcpServers (programmatic configuration)
 	 * 2. Undefined to let SDK auto-load from settings files
-	 *
-	 * Special handling for in-process MCP servers (e.g., room-agent-tools):
-	 * If the config contains a marker like { type: '__IN_PROCESS_ROOM_AGENT_TOOLS__', roomId },
-	 * we replace it with the actual MCP server instance from the global registry.
-	 *
 	 */
 	private getMcpServers(): Record<string, unknown> | undefined {
 		// Use SDKConfig mcpServers if explicitly set
 		const config = this.ctx.session.config;
 		if (config.mcpServers !== undefined) {
-			const mcpServers: Record<string, unknown> = {};
-			for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
-				// Check if this is a marker for an in-process MCP server
-				if (
-					typeof serverConfig === 'object' &&
-					serverConfig !== null &&
-					'type' in serverConfig &&
-					(serverConfig as { type: string }).type === '__IN_PROCESS_ROOM_AGENT_TOOLS__' &&
-					'roomId' in serverConfig &&
-					getRoomMcpServer
-				) {
-					// Replace marker with actual MCP server instance
-					const roomId = (serverConfig as { roomId: string }).roomId;
-					const mcpServer = getRoomMcpServer(roomId);
-					if (mcpServer) {
-						mcpServers[name] = mcpServer;
-					}
-				} else {
-					mcpServers[name] = serverConfig;
-				}
-			}
-			return mcpServers;
+			return config.mcpServers as Record<string, unknown>;
 		}
 
 		// Let SDK auto-load from settings files

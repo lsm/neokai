@@ -5,21 +5,20 @@
  * - Initialization
  * - Creating goals
  * - Listing and filtering goals
- * - Status transitions (pending -> in_progress -> completed/blocked)
+ * - Status transitions (active -> completed/needs_human/archived)
  * - Linking tasks to goals
  * - Progress aggregation from linked tasks
  * - Priority handling
  * - Edge cases
  */
 
-import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { RoomManager } from '../../../src/lib/room/room-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
-import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
+import type { NeoTask } from '@neokai/shared';
 
 describe('GoalManager', () => {
 	let db: Database;
@@ -27,8 +26,6 @@ describe('GoalManager', () => {
 	let taskManager: TaskManager;
 	let roomManager: RoomManager;
 	let roomId: string;
-	let mockDaemonHub: DaemonHub;
-	let trackedEvents: Array<{ event: string; data: unknown }>;
 
 	beforeEach(() => {
 		// Use an anonymous in-memory database for each test
@@ -43,8 +40,8 @@ describe('GoalManager', () => {
 				room_id TEXT NOT NULL,
 				title TEXT NOT NULL,
 				description TEXT NOT NULL DEFAULT '',
-				status TEXT NOT NULL DEFAULT 'pending'
-					CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked')),
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
 				priority TEXT NOT NULL DEFAULT 'normal'
 					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 				progress INTEGER DEFAULT 0,
@@ -66,16 +63,8 @@ describe('GoalManager', () => {
 		});
 		roomId = room.id;
 
-		// Track events emitted by the daemon hub
-		trackedEvents = [];
-		mockDaemonHub = {
-			emit: mock(async (event: string, data: unknown) => {
-				trackedEvents.push({ event, data });
-			}),
-		} as unknown as DaemonHub;
-
-		// Create goal manager with mock daemon hub
-		goalManager = new GoalManager(db, roomId, mockDaemonHub);
+		// Create goal manager
+		goalManager = new GoalManager(db, roomId);
 
 		// Create task manager for testing task linking
 		taskManager = new TaskManager(db, roomId);
@@ -88,17 +77,6 @@ describe('GoalManager', () => {
 	describe('initialization', () => {
 		it('should create goal manager with valid room', () => {
 			expect(goalManager).toBeDefined();
-		});
-
-		it('should work without daemon hub (no event emission)', async () => {
-			const managerWithoutHub = new GoalManager(db, roomId);
-			const goal = await managerWithoutHub.createGoal({
-				title: 'Test Goal',
-				description: 'Description',
-			});
-
-			expect(goal).toBeDefined();
-			expect(goal.title).toBe('Test Goal');
 		});
 	});
 
@@ -114,7 +92,7 @@ describe('GoalManager', () => {
 			expect(goal.roomId).toBe(roomId);
 			expect(goal.title).toBe('Test Goal');
 			expect(goal.description).toBe('');
-			expect(goal.status).toBe('pending');
+			expect(goal.status).toBe('active');
 			expect(goal.priority).toBe('normal');
 			expect(goal.progress).toBe(0);
 			expect(goal.linkedTaskIds).toEqual([]);
@@ -160,22 +138,6 @@ describe('GoalManager', () => {
 
 			expect(goal.createdAt).toBeGreaterThanOrEqual(before);
 			expect(goal.createdAt).toBeLessThanOrEqual(after);
-		});
-
-		it('should emit goal.created event', async () => {
-			const goal = await goalManager.createGoal({
-				title: 'Test Goal',
-				description: 'Description',
-			});
-
-			expect(trackedEvents).toHaveLength(1);
-			expect(trackedEvents[0].event).toBe('goal.created');
-			expect(trackedEvents[0].data).toEqual({
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				goal,
-			});
 		});
 	});
 
@@ -230,13 +192,13 @@ describe('GoalManager', () => {
 		it('should filter goals by status', async () => {
 			await goalManager.createGoal({ title: 'Goal 1', description: '' });
 			const goal2 = await goalManager.createGoal({ title: 'Goal 2', description: '' });
-			await goalManager.startGoal(goal2.id);
+			await goalManager.needsHumanGoal(goal2.id);
 
-			const pendingGoals = await goalManager.listGoals('pending');
-			const inProgressGoals = await goalManager.listGoals('in_progress');
+			const activeGoals = await goalManager.listGoals('active');
+			const needsHumanGoals = await goalManager.listGoals('needs_human');
 
-			expect(pendingGoals).toHaveLength(1);
-			expect(inProgressGoals).toHaveLength(1);
+			expect(activeGoals).toHaveLength(1);
+			expect(needsHumanGoals).toHaveLength(1);
 		});
 
 		it('should return empty array for room with no goals', async () => {
@@ -261,12 +223,13 @@ describe('GoalManager', () => {
 	});
 
 	describe('updateGoalStatus', () => {
-		it('should update goal status to in_progress', async () => {
+		it('should update goal status to active', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
+			await goalManager.needsHumanGoal(goal.id);
 
-			const updated = await goalManager.updateGoalStatus(goal.id, 'in_progress');
+			const updated = await goalManager.updateGoalStatus(goal.id, 'active');
 
-			expect(updated.status).toBe('in_progress');
+			expect(updated.status).toBe('active');
 		});
 
 		it('should update goal status to completed', async () => {
@@ -278,12 +241,12 @@ describe('GoalManager', () => {
 			expect(updated.completedAt).toBeDefined();
 		});
 
-		it('should update goal status to blocked', async () => {
+		it('should update goal status to needs_human', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
 
-			const updated = await goalManager.updateGoalStatus(goal.id, 'blocked');
+			const updated = await goalManager.updateGoalStatus(goal.id, 'needs_human');
 
-			expect(updated.status).toBe('blocked');
+			expect(updated.status).toBe('needs_human');
 		});
 
 		it('should include additional updates', async () => {
@@ -300,22 +263,6 @@ describe('GoalManager', () => {
 			await expect(goalManager.updateGoalStatus('non-existent', 'completed')).rejects.toThrow(
 				'Goal not found: non-existent'
 			);
-		});
-
-		it('should emit goal.updated event', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			trackedEvents.length = 0; // Clear create event
-
-			const updated = await goalManager.updateGoalStatus(goal.id, 'in_progress');
-
-			expect(trackedEvents).toHaveLength(1);
-			expect(trackedEvents[0].event).toBe('goal.updated');
-			expect(trackedEvents[0].data).toEqual({
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				goal: updated,
-			});
 		});
 	});
 
@@ -353,22 +300,6 @@ describe('GoalManager', () => {
 				'Goal not found: non-existent'
 			);
 		});
-
-		it('should emit goal.progressUpdated event', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			trackedEvents.length = 0; // Clear create event
-
-			await goalManager.updateGoalProgress(goal.id, 75);
-
-			expect(trackedEvents).toHaveLength(1);
-			expect(trackedEvents[0].event).toBe('goal.progressUpdated');
-			expect(trackedEvents[0].data).toEqual({
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				progress: 75,
-			});
-		});
 	});
 
 	describe('updateGoalPriority', () => {
@@ -391,17 +322,17 @@ describe('GoalManager', () => {
 		});
 	});
 
-	describe('startGoal', () => {
-		it('should start goal and set status to in_progress', async () => {
+	describe('needsHumanGoal', () => {
+		it('should mark goal as needing human input', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
 
-			const updated = await goalManager.startGoal(goal.id);
+			const updated = await goalManager.needsHumanGoal(goal.id);
 
-			expect(updated.status).toBe('in_progress');
+			expect(updated.status).toBe('needs_human');
 		});
 
 		it('should throw error for non-existent goal', async () => {
-			await expect(goalManager.startGoal('non-existent')).rejects.toThrow(
+			await expect(goalManager.needsHumanGoal('non-existent')).rejects.toThrow(
 				'Goal not found: non-existent'
 			);
 		});
@@ -425,34 +356,34 @@ describe('GoalManager', () => {
 		});
 	});
 
-	describe('blockGoal', () => {
-		it('should block goal', async () => {
+	describe('archiveGoal', () => {
+		it('should archive goal', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
 
-			const updated = await goalManager.blockGoal(goal.id);
+			const updated = await goalManager.archiveGoal(goal.id);
 
-			expect(updated.status).toBe('blocked');
+			expect(updated.status).toBe('archived');
 		});
 
 		it('should throw error for non-existent goal', async () => {
-			await expect(goalManager.blockGoal('non-existent')).rejects.toThrow(
+			await expect(goalManager.archiveGoal('non-existent')).rejects.toThrow(
 				'Goal not found: non-existent'
 			);
 		});
 	});
 
-	describe('unblockGoal', () => {
-		it('should unblock goal and return to pending status', async () => {
+	describe('reactivateGoal', () => {
+		it('should reactivate goal and return to active status', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			await goalManager.blockGoal(goal.id);
+			await goalManager.needsHumanGoal(goal.id);
 
-			const updated = await goalManager.unblockGoal(goal.id);
+			const updated = await goalManager.reactivateGoal(goal.id);
 
-			expect(updated.status).toBe('pending');
+			expect(updated.status).toBe('active');
 		});
 
 		it('should throw error for non-existent goal', async () => {
-			await expect(goalManager.unblockGoal('non-existent')).rejects.toThrow(
+			await expect(goalManager.reactivateGoal('non-existent')).rejects.toThrow(
 				'Goal not found: non-existent'
 			);
 		});
@@ -687,16 +618,16 @@ describe('GoalManager', () => {
 			expect(count).toBe(0);
 		});
 
-		it('should return correct count of pending and in_progress goals', async () => {
+		it('should return correct count of active and needs_human goals', async () => {
 			await goalManager.createGoal({ title: 'Goal 1', description: '' });
 			const goal2 = await goalManager.createGoal({ title: 'Goal 2', description: '' });
 			const goal3 = await goalManager.createGoal({ title: 'Goal 3', description: '' });
-			await goalManager.startGoal(goal2.id);
+			await goalManager.needsHumanGoal(goal2.id);
 			await goalManager.completeGoal(goal3.id);
 
 			const count = await goalManager.getActiveCount();
 
-			expect(count).toBe(2); // 1 pending + 1 in_progress
+			expect(count).toBe(2); // 1 active + 1 needs_human
 		});
 	});
 
@@ -707,23 +638,23 @@ describe('GoalManager', () => {
 			expect(goals).toEqual([]);
 		});
 
-		it('should return only pending and in_progress goals', async () => {
-			await goalManager.createGoal({ title: 'Pending Goal', description: '' });
-			const goal2 = await goalManager.createGoal({ title: 'In Progress Goal', description: '' });
-			await goalManager.startGoal(goal2.id);
+		it('should return only active and needs_human goals', async () => {
+			await goalManager.createGoal({ title: 'Active Goal', description: '' });
+			const goal2 = await goalManager.createGoal({ title: 'Needs Human Goal', description: '' });
+			await goalManager.needsHumanGoal(goal2.id);
 			const goal3 = await goalManager.createGoal({ title: 'Completed Goal', description: '' });
 			await goalManager.completeGoal(goal3.id);
-			const goal4 = await goalManager.createGoal({ title: 'Blocked Goal', description: '' });
-			await goalManager.blockGoal(goal4.id);
+			const goal4 = await goalManager.createGoal({ title: 'Archived Goal', description: '' });
+			await goalManager.archiveGoal(goal4.id);
 
 			const goals = await goalManager.getActiveGoals();
 
 			expect(goals).toHaveLength(2);
 			const statuses = goals.map((g) => g.status);
-			expect(statuses).toContain('pending');
-			expect(statuses).toContain('in_progress');
+			expect(statuses).toContain('active');
+			expect(statuses).toContain('needs_human');
 			expect(statuses).not.toContain('completed');
-			expect(statuses).not.toContain('blocked');
+			expect(statuses).not.toContain('archived');
 		});
 	});
 
@@ -766,23 +697,23 @@ describe('GoalManager', () => {
 			expect(goal?.title).toBe('Urgent');
 		});
 
-		it('should prefer in_progress goals over pending', async () => {
+		it('should prefer active goals over needs_human', async () => {
 			const goal1 = await goalManager.createGoal({
-				title: 'Pending Urgent',
+				title: 'Needs Human Urgent',
 				description: '',
 				priority: 'urgent',
 			});
-			const goal2 = await goalManager.createGoal({
-				title: 'In Progress Normal',
+			await goalManager.needsHumanGoal(goal1.id);
+			await goalManager.createGoal({
+				title: 'Active Normal',
 				description: '',
 				priority: 'normal',
 			});
-			await goalManager.startGoal(goal2.id);
 
 			const nextGoal = await goalManager.getNextGoal();
 
-			// Should prefer in_progress even though pending has higher priority
-			expect(nextGoal?.title).toBe('In Progress Normal');
+			// Should prefer active even though needs_human has higher priority
+			expect(nextGoal?.title).toBe('Active Normal');
 		});
 
 		it('should not return completed goals', async () => {
@@ -794,9 +725,9 @@ describe('GoalManager', () => {
 			expect(nextGoal).toBeNull();
 		});
 
-		it('should not return blocked goals', async () => {
-			const goal = await goalManager.createGoal({ title: 'Blocked Goal', description: '' });
-			await goalManager.blockGoal(goal.id);
+		it('should not return archived goals', async () => {
+			const goal = await goalManager.createGoal({ title: 'Archived Goal', description: '' });
+			await goalManager.archiveGoal(goal.id);
 
 			const nextGoal = await goalManager.getNextGoal();
 
@@ -929,10 +860,10 @@ describe('GoalManager', () => {
 		it('should handle multiple status transitions', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test', description: '' });
 
-			await goalManager.startGoal(goal.id);
-			await goalManager.blockGoal(goal.id);
-			await goalManager.unblockGoal(goal.id);
-			await goalManager.startGoal(goal.id);
+			await goalManager.needsHumanGoal(goal.id);
+			await goalManager.reactivateGoal(goal.id);
+			await goalManager.archiveGoal(goal.id);
+			await goalManager.reactivateGoal(goal.id);
 			await goalManager.completeGoal(goal.id);
 
 			const final = await goalManager.getGoal(goal.id);
@@ -941,7 +872,7 @@ describe('GoalManager', () => {
 
 		it('should handle linking multiple tasks to a goal', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			const tasks = [];
+			const tasks: NeoTask[] = [];
 			for (let i = 0; i < 10; i++) {
 				const task = await taskManager.createTask({ title: `Task ${i}`, description: '' });
 				await taskManager.updateTaskProgress(task.id, i * 10);

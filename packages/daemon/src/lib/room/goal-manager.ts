@@ -4,13 +4,12 @@
  * Handles:
  * - Creating goals
  * - Listing and filtering goals
- * - Status transitions (pending -> in_progress -> completed/blocked)
+ * - Status transitions (active -> completed/needs_human/archived)
  * - Linking tasks to goals
  * - Progress aggregation from linked tasks
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { DaemonHub } from '../daemon-hub';
 import { GoalRepository, type CreateGoalParams } from '../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../storage/repositories/task-repository';
 import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
@@ -21,8 +20,7 @@ export class GoalManager {
 
 	constructor(
 		private db: BunDatabase,
-		private roomId: string,
-		private daemonHub?: DaemonHub
+		private roomId: string
 	) {
 		this.goalRepo = new GoalRepository(db);
 		this.taskRepo = new TaskRepository(db);
@@ -38,16 +36,6 @@ export class GoalManager {
 			description: params.description,
 			priority: params.priority,
 		});
-
-		// Emit goal.created event
-		if (this.daemonHub) {
-			await this.daemonHub.emit('goal.created', {
-				sessionId: `room:${this.roomId}`,
-				roomId: this.roomId,
-				goalId: goal.id,
-				goal,
-			});
-		}
 
 		return goal;
 	}
@@ -92,16 +80,6 @@ export class GoalManager {
 			throw new Error(`Failed to update goal: ${goalId}`);
 		}
 
-		// Emit goal.updated event
-		if (this.daemonHub) {
-			await this.daemonHub.emit('goal.updated', {
-				sessionId: `room:${this.roomId}`,
-				roomId: this.roomId,
-				goalId,
-				goal: updatedGoal,
-			});
-		}
-
 		return updatedGoal;
 	}
 
@@ -127,24 +105,7 @@ export class GoalManager {
 			throw new Error(`Failed to update goal: ${goalId}`);
 		}
 
-		// Emit progress update event
-		if (this.daemonHub) {
-			await this.daemonHub.emit('goal.progressUpdated', {
-				sessionId: `room:${this.roomId}`,
-				roomId: this.roomId,
-				goalId,
-				progress: updatedGoal.progress,
-			});
-		}
-
 		return updatedGoal;
-	}
-
-	/**
-	 * Start goal (mark as in_progress)
-	 */
-	async startGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'in_progress');
 	}
 
 	/**
@@ -157,17 +118,24 @@ export class GoalManager {
 	}
 
 	/**
-	 * Block goal
+	 * Mark goal as needing human input
 	 */
-	async blockGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'blocked');
+	async needsHumanGoal(goalId: string): Promise<RoomGoal> {
+		return this.updateGoalStatus(goalId, 'needs_human');
 	}
 
 	/**
-	 * Unblock goal (return to pending)
+	 * Reactivate goal (return to active)
 	 */
-	async unblockGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'pending');
+	async reactivateGoal(goalId: string): Promise<RoomGoal> {
+		return this.updateGoalStatus(goalId, 'active');
+	}
+
+	/**
+	 * Archive goal
+	 */
+	async archiveGoal(goalId: string): Promise<RoomGoal> {
+		return this.updateGoalStatus(goalId, 'archived');
 	}
 
 	/**
@@ -311,11 +279,11 @@ export class GoalManager {
 	}
 
 	/**
-	 * Get all active goals (pending or in_progress)
+	 * Get all active goals (active or needs_human)
 	 */
 	async getActiveGoals(): Promise<RoomGoal[]> {
 		const goals = await this.listGoals();
-		return goals.filter((g) => g.status === 'pending' || g.status === 'in_progress');
+		return goals.filter((g) => g.status === 'active' || g.status === 'needs_human');
 	}
 
 	/**
@@ -342,10 +310,10 @@ export class GoalManager {
 			return a.createdAt - b.createdAt; // Older first if same priority
 		});
 
-		// Prefer in_progress goals, then pending
-		const inProgressGoals = activeGoals.filter((g) => g.status === 'in_progress');
-		if (inProgressGoals.length > 0) {
-			return inProgressGoals[0];
+		// Prefer 'active' goals over 'needs_human' (which are blocked on human input)
+		const readyGoals = activeGoals.filter((g) => g.status === 'active');
+		if (readyGoals.length > 0) {
+			return readyGoals[0];
 		}
 
 		return activeGoals[0];
