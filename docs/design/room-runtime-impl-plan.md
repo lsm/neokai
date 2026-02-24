@@ -30,6 +30,8 @@ CREATE TABLE task_pairs (
     pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
         -- awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
     feedback_iteration INTEGER NOT NULL DEFAULT 0,
+    lead_contract_violations INTEGER NOT NULL DEFAULT 0,  -- Tracks retry count for tool call violations
+    last_processed_lead_turn_id TEXT,  -- Idempotency marker for terminal state processing
     last_forwarded_message_id TEXT,
     active_work_started_at INTEGER,
     active_work_elapsed INTEGER NOT NULL DEFAULT 0,
@@ -59,8 +61,9 @@ CREATE TABLE task_messages (
 ### Column Additions
 
 ```sql
--- Tasks table
-ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'coding';
+-- Tasks table: add columns that don't exist yet
+ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'coding'
+    CHECK (task_type IN ('planning', 'coding', 'research', 'design', 'goal_review'));
     -- 'planning' | 'coding' | 'research' | 'design' | 'goal_review'
 ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN version INTEGER DEFAULT 0;
@@ -149,9 +152,25 @@ class RoomRuntime {
   onGoalCreated(goalId: string): void;
   onTaskStatusChanged(taskId: string): void;
   onCraftTerminalState(pairId: string): void;
-  onLeadToolExecuted(pairId: string, tool: string): void;
+  onLeadTerminalState(pairId: string): void;  // Detects when Lead reaches terminal without calling a tool
+
+  // Lead tool handling (called synchronously from MCP tool handlers)
+  handleLeadTool(pairId: string, toolName: string, params: LeadToolParams): Promise<ToolResult>;
 }
 ```
+
+### Tick Trigger Matrix
+
+| Event Source | Signal | Runtime Handler | Notes |
+|--------------|--------|-----------------|-------|
+| Room Agent MCP tools | `goal.created`, `task.created` | `onGoalCreated()`, `onTaskStatusChanged()` | After DB write succeeds |
+| TaskManager | `task.status_changed` | `onTaskStatusChanged()` | After status update |
+| SessionObserver | `session.terminal_state` (Craft) | `onCraftTerminalState()` | When Craft reaches result/error |
+| SessionObserver | `session.terminal_state` (Lead) | `onLeadTerminalState()` | When Lead reaches terminal without tool call |
+| `handleLeadTool()` | (internal) | Triggers tick after `complete_task`/`fail_task` | For task completion cleanup |
+| Timer | 30s interval | `tick()` | Fallback for missed events |
+
+**Idempotency:** All handlers are idempotent - duplicate events produce same result. Tick mutex prevents concurrent execution.
 
 ### Tick Logic
 
@@ -162,8 +181,10 @@ class RoomRuntime {
    a. Check capacity (maxConcurrentPairs)
    b. Find pending tasks → spawn (Craft, Lead) pair if below capacity
    c. Find awaiting_craft pairs with terminal Craft → collect messages, forward to Lead
-   d. Find pending messages in queue → deliver to appropriate agent
-4. Release mutex
+   d. Check feedback_iteration >= max_feedback_iterations → auto-escalate
+   e. Find awaiting_lead pairs with terminal Lead → trigger onLeadTerminalState
+4. Log tick summary to room_audit_log
+5. Release mutex
 ```
 
 ### 2.2 Session Observer
@@ -266,12 +287,59 @@ class LeadAgentFactory {
 | `complete_task(summary)` | Accept work, mark done |
 | `fail_task(reason)` | Task not achievable |
 
-**Lead Tool Routing:**
-All Lead tool calls are intercepted by Runtime:
-1. Tool call detected → Runtime receives via DaemonHub event
-2. Runtime validates (pair state, version, no queued interrupts)
-3. Runtime executes the action
-4. Result returned to Lead
+**Lead Tool Contract (CRITICAL):**
+
+Lead Agent must call **exactly one terminal tool** per turn: `complete_task`, `fail_task`, `escalate`, or `send_to_craft`.
+
+- If Lead emits text with no tool call, or calls multiple conflicting tools → Runtime retries once with system nudge: "You must call exactly one of: send_to_craft, complete_task, fail_task, or escalate"
+- If second attempt also fails → Runtime auto-escalates to human
+
+**Tool call validation:**
+- Track per-pair state: `leadCalledToolMap: Map<pairId, boolean>` in RoomRuntime for fast-path detection
+- Set `leadCalledToolMap.set(pairId, true)` when `handleLeadTool` is invoked
+- SessionObserver monitors Lead sessions and triggers `onLeadTerminalState(pairId)` when Lead reaches terminal state
+- In `onLeadTerminalState`:
+  1. **Idempotency check:** Load pair from DB. Check `pair.last_processed_lead_turn_id` against current Lead session turn ID. If match, already processed → no-op
+  2. Count Lead tool calls in current turn (check both in-memory map and session transcript):
+     - If exactly 1 tool call → success, no-op
+     - If 0 or multiple tool calls → contract violation, proceed to step 3
+  3. **Retry-then-escalate logic:**
+     - Load `pair.lead_contract_violations` counter from DB (defaults to 0)
+     - If violations == 0 (first violation):
+       - Inject system nudge into Lead session: "You must call exactly one of: send_to_craft, complete_task, fail_task, or escalate"
+       - Increment `lead_contract_violations` to 1
+       - Update `last_processed_lead_turn_id` to current turn ID
+       - Keep `pair_state = 'awaiting_lead'`
+     - If violations >= 1 (second violation):
+       - Auto-escalate with reason: "Lead failed to call required tool after nudge"
+       - Update `pair_state = 'awaiting_human'`
+       - Update `last_processed_lead_turn_id` to current turn ID
+  4. Reset `lead_contract_violations` to 0 when forwarding new Craft output to Lead
+
+**Crash safety:** After restart, `leadCalledToolMap` is empty, so transcript check acts as durable fallback. Per-turn marker prevents duplicate processing across recovery.
+
+**Idempotency:** Turn-based marker (`last_processed_lead_turn_id`) prevents duplicate nudges/escalations from SessionObserver, tick scan, and recovery paths, even when retry maintains `awaiting_lead` state.
+
+**Lead Tool Routing (MCP Callback Pattern):**
+
+Lead MCP tools are defined with callback functions that call into Runtime methods directly (same pattern as `lobby-agent-tools.ts`):
+
+```typescript
+// In lead-agent-tools.ts
+tool('send_to_craft', 'Send feedback to Craft', { message: z.string() }, async (params) => {
+  return runtime.handleLeadTool(pairId, 'send_to_craft', params);
+});
+
+// In RoomRuntime
+handleLeadTool(pairId: string, toolName: string, params: LeadToolParams): Promise<ToolResult> {
+  // 1. Validate pair_state == 'awaiting_lead'
+  // 2. Validate task version matches expected
+  // 3. Execute the action (MVP: no interrupt validation - queue not used)
+  // 4. Return tool result to Lead
+}
+```
+
+This is **synchronous** — the tool handler calls Runtime directly, Runtime validates and executes, then returns the result. No DaemonHub events involved.
 
 ---
 
@@ -344,6 +412,30 @@ When Lead calls `send_to_craft(feedback)`:
 4. Update pair state to `awaiting_craft`
 5. Increment feedback_iteration
 
+**Note:** For MVP, Lead→Craft is synchronous (direct injection). The `task_messages` queue is **not used** — messages are not persisted or recovered.
+
+### 5.3 Escalation Return Path
+
+When Lead calls `escalate(reason)`:
+
+1. Runtime sets pair state to `awaiting_human`
+2. Runtime sets task status to `escalated`
+3. Runtime notifies human (via Room Agent message + UI event)
+4. **Human responds directly to Lead session** — sends message via UI
+5. Runtime detects human message to Lead session → transitions pair back to `awaiting_lead`
+6. Lead re-evaluates with human guidance and calls a terminal tool
+
+**Detection mechanism:** Runtime listens for DaemonHub `message.sent` events filtered to Lead sessions with pairs in `awaiting_human` state. When a human message arrives, transition the pair.
+
+**Why this works:** Lead session is a standard AgentSession. Human messages to Lead are just user messages in that session.
+
+### 5.4 Task Selection Ordering
+
+When multiple pending tasks exist, Runtime selects by:
+1. `priority` TEXT sort: `urgent` > `high` > `normal` > `low` (mapped in code)
+2. `created_at` ASC (oldest first)
+3. `id` ASC (deterministic tiebreaker)
+
 ---
 
 ## Phase 6: Recovery
@@ -366,12 +458,42 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
   for (const pair of activePairs) {
     switch (pair.pair_state) {
       case 'awaiting_craft':
-        // Re-observe Craft session
-        sessionObserver.observe(pair.craft_session_id, onTerminal);
+        // Check if Craft session still exists
+        if (!sessionExists(pair.craft_session_id)) {
+          // Session lost - mark task and pair failed
+          await failTask(pair.task_id, 'session_lost');
+          await failPair(pair.id, 'session_lost');
+          await logAudit(pair.room_id, 'session_lost', { pairId: pair.id });
+        } else {
+          // Check if already in terminal state (completed before crash)
+          const sessionState = getSessionState(pair.craft_session_id);
+          if (isTerminalState(sessionState)) {
+            // Already terminal - process immediately
+            await runtime.onCraftTerminalState(pair.id);
+          } else {
+            // Still active - observe for future terminal state
+            sessionObserver.observe(pair.craft_session_id, onTerminal);
+          }
+        }
         break;
       case 'awaiting_lead':
-        // Re-observe Lead session
-        sessionObserver.observe(pair.lead_session_id, onTerminal);
+        // Check if Lead session still exists
+        if (!sessionExists(pair.lead_session_id)) {
+          // Session lost - mark task and pair failed
+          await failTask(pair.task_id, 'session_lost');
+          await failPair(pair.id, 'session_lost');
+          await logAudit(pair.room_id, 'session_lost', { pairId: pair.id });
+        } else {
+          // Check if already in terminal state (completed before crash)
+          const sessionState = getSessionState(pair.lead_session_id);
+          if (isTerminalState(sessionState)) {
+            // Already terminal - process immediately
+            await runtime.onLeadTerminalState(pair.id);
+          } else {
+            // Still active - observe for future terminal state
+            sessionObserver.observe(pair.lead_session_id, onTerminal);
+          }
+        }
         break;
       case 'awaiting_human':
       case 'hibernated':
@@ -380,10 +502,24 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
     }
   }
 
-  // 3. Resume tick loop
+  // 4. MVP: No queue recovery needed (direct synchronous routing)
+  // When human queueing is implemented, reprocess pending messages here
+
+  // 5. Resume tick loop
   runtime.start();
 }
 ```
+
+**Key Recovery Insight:**
+
+Recovery must be **proactive**, not purely event-driven. The logic checks if sessions are already in terminal state *before* subscribing to future terminal events. Without this check, pairs with sessions that completed right before the crash would wait 60 seconds for the cron safety net, delaying recovery unnecessarily.
+
+The human-inspired pattern: check current state first, then subscribe only if still active.
+
+**MVP Recovery Behavior:**
+- In-flight Lead→Craft messages are lost on crash (acceptable - Lead can resend after recovery)
+- Human messages to escalated pairs are lost (will be fixed with queue implementation)
+- **Dangling tool calls:** If Lead session has incomplete tool calls after crash (tool invoked but result not returned), recovery treats this as session corruption → fail pair with reason "session_lost" and notify human. This prevents indefinite wedging while maintaining deterministic recovery.
 
 ---
 
@@ -392,7 +528,8 @@ async function recoverRuntime(db: Database, runtime: RoomRuntime): Promise<void>
 ```
 Phase 0: Database Schema          [Prerequisite]
     ↓
-Phase 1.1: TaskPairRepository
+Phase 1.1: TaskPairRepository               [Needs schema]
+Phase 1.2: TaskMessageQueue                 [Needs schema - stub only for MVP]
     ↓
 Phase 1.2: TaskMessageQueue
     ↓
@@ -412,6 +549,10 @@ Phase 5: Message Routing
     ↓
 Phase 6: Recovery
 ```
+
+**Critical path to first integration test:** Phases 0 → 1.1 → 3 → 2.2 → 4 → 5 → 2.1
+
+**Note:** Phase 1.2 (TaskMessageQueue) can be implemented as a minimal stub with empty methods for MVP, since messages are not persisted.
 
 ---
 
@@ -438,6 +579,21 @@ Phase 6: Recovery
 - ⏳ Parallel pairs (maxConcurrentPairs > 1)
 - ⏳ Escalation SLA / hibernation
 - ⏳ `run_verification` tool for Lead
+- ⏳ `read_craft_messages` tool for Lead
+
+---
+
+## Unit Test Plan
+
+Each component needs tests before integration:
+
+| Component | Test File | Key Test Cases |
+|-----------|-----------|----------------|
+| TaskPairRepository | `task-pair-repository.test.ts` | CRUD, optimistic locking, version conflicts |
+| TaskMessageQueue | `task-message-queue.test.ts` | Schema only (stub implementation for MVP) |
+| RoomRuntime | `room-runtime.test.ts` | Tick logic, mutex, capacity checks, Lead terminal detection |
+| SessionObserver | `session-observer.test.ts` | Terminal state detection (Craft & Lead), stuck session recovery |
+| TaskPairManager | `task-pair-manager.test.ts` | Pair creation, routing, completion |
 
 ---
 
