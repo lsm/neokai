@@ -1,6 +1,6 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.19
+Status: Draft v0.20
 Date: 2026-02-23
 
 ## Context
@@ -262,8 +262,10 @@ graph TB
 The Room Runtime is the **scheduler and router**. It's a simple loop driven by triggers (timer, events). It makes no decisions about WHAT work to do — it decides WHEN to create (Craft, Lead) pairs, routes messages between them, and executes Lead Agent tool calls.
 
 **Scheduling rules (hardcoded, not LLM-decided)**:
-- **Scheduler precedence**: Goal review takes precedence over re-planning. The tick loop evaluates goal review first: if all tasks for a goal are `completed`, trigger goal review (not planning). Planning only triggers when: the goal has zero tasks, OR has at least one `failed` task (with no pending/in-progress/draft/escalated tasks remaining). This prevents the ambiguous case where all-completed goals match both predicates
-- A goal needs planning when: it's active AND has no pending/in-progress/draft/escalated tasks AND (has no tasks at all OR at least one task is `failed`) AND `planning_attempts < max_planning_attempts` (default: 3)
+- **Scheduler precedence**: Goal review takes precedence over re-planning. The tick loop evaluates goal review first, then planning. Predicates:
+  - **Goal review**: goal is `active` AND `task_count > 0` AND all tasks are terminal (`completed` or `failed`) AND at least one task is `completed`. The `task_count > 0` guard prevents brand-new goals with zero tasks from vacuously matching. Failed tasks do NOT block goal review — the goal review Craft Agent assesses whether the goal is met despite failures and either confirms completion or creates additional tasks
+  - **Planning**: goal is `active` AND has no tasks at all, OR all tasks are `failed` (none completed, no pending/in-progress/draft/escalated). Planning addresses the "fresh start" scenarios — brand-new goals or goals where every attempt failed
+- A goal needs planning when: it's active AND (has no tasks at all OR all tasks are `failed`) AND has no pending/in-progress/draft/escalated tasks AND `planning_attempts < max_planning_attempts` (default: 3)
 - A task is ready to execute when: status is `pending`. When multiple pending tasks exist, Runtime picks by: (1) `priority` descending (higher = more important, default 0), then (2) `created_at` ascending (oldest first), then (3) `id` ascending (deterministic tiebreaker for same-tick creation). For inter-goal ordering: same priority rules apply across goals
 - Planning is itself a task: "Plan goal X" → creates a (Craft, Lead) pair where Craft Agent plans
 - If all tasks for a goal have `failed` and `planning_attempts >= max_planning_attempts`, the goal enters `needs_human` status — Runtime stops auto-planning and notifies human via Room Agent
@@ -586,13 +588,14 @@ sequenceDiagram
 
 ### Goal Completion
 
-When all tasks for a goal are completed, Runtime triggers a **goal review** (Craft, Lead) pair:
+When all tasks for a goal are terminal (`completed` or `failed`) and at least one is `completed`, Runtime triggers a **goal review** (Craft, Lead) pair:
 
-1. Runtime detects: all tasks for goal X have status `completed`
+1. Runtime detects: all tasks for goal X are terminal (no pending/in_progress/draft/escalated) AND at least one task is `completed` AND `task_count > 0`
 2. Runtime creates a special task: "Review goal: X"
 3. Spawns a (Craft, Lead) pair where Craft Agent receives via system prompt:
    - The original goal description
    - All completed task summaries (from `complete_task(summary)` calls)
+   - All failed task summaries (reason, what was attempted) — so the reviewer can assess whether failures matter
    - The Craft Agent then verifies the goal is satisfied (may use `read`, `glob`, `grep` tools to inspect actual results)
    - Either confirms completion or creates additional tasks via `create_task` tool
 4. Lead Agent reviews the assessment
@@ -618,7 +621,9 @@ Runtime state is **reconstructed from DB on startup**. No in-memory-only state.
 
 **Message queue recovery**: On restart, Runtime scans `task_messages` for entries with `status = 'pending'` and reprocesses them in `created_at` order. Since messages are scoped to `pair_id` + `to_session_id`, only messages for still-active pairs are delivered. Messages targeting sessions that no longer exist are marked `dead_letter`.
 
-**Delivery idempotency**: For Craft→Lead forwarding, `last_forwarded_message_id` serves as an idempotency guard — if a message ID is already ≤ the marker, it's skipped. For Lead→Craft messages via the queue, Runtime checks `task_messages.status` before injecting: only `pending` messages are delivered. After successful injection into the AgentSession, Runtime updates the message status to `delivered` with a `delivered_at` timestamp. On crash recovery, the restart scan re-processes `pending` messages — any that were actually delivered but not marked (crash window) result in a duplicate message to the agent, which is a benign worst case (agent sees the same instruction twice). Sending to an AgentSession is an external side effect that cannot be atomically committed with SQLite, so true exactly-once delivery is not achievable; the design accepts at-most-once-duplicate as the failure mode. A `processing` intermediate state is deferred to parallel mode.
+**Delivery idempotency**: For Craft→Lead forwarding, `last_forwarded_message_id` serves as an idempotency guard — if a message ID is already ≤ the marker, it's skipped. For Lead→Craft messages via the queue, Runtime checks `task_messages.status` before injecting: only `pending` messages are delivered. After successful injection into the AgentSession, Runtime updates the message status to `delivered` with a `delivered_at` timestamp. On crash recovery, the restart scan re-processes `pending` messages — any that were actually delivered but not marked (crash window) result in a duplicate message to the agent. Sending to an AgentSession is an external side effect that cannot be atomically committed with SQLite, so true exactly-once delivery is not achievable; the design accepts at-most-once-duplicate as the failure mode. A `processing` intermediate state is deferred to parallel mode.
+
+**Planning duplicate risk**: For most task types, duplicate message delivery is benign (agent sees the same instruction twice). For **planning tasks**, duplicates could cause the Craft Agent to create duplicate draft tasks via `create_task`. Mitigations: (1) Runtime includes the `task_messages.id` as a header in each injected message — if the session already contains a message with that ID, the agent can recognize it as a duplicate. (2) Lead Agent reviews all draft tasks before promotion and would catch obvious duplicates. (3) Draft promotion is scoped to `created_by_task_id`, so duplicates are contained within one planning task's scope. These are soft guards — for stronger guarantees, the `processing` intermediate state (deferred to parallel mode) would close this window.
 
 **Non-idempotent task recovery**: When a Craft session is lost after it has already made changes (edited files, ran commands), blind retry is dangerous — it could duplicate side effects. For lost sessions, Runtime marks the task `failed` and **does not auto-retry**. The human must acknowledge and decide: retry (if workspace state is safe) or manually intervene. Room Agent surfaces these failures prominently.
 
@@ -685,7 +690,7 @@ CREATE TABLE task_pairs (
     active_work_started_at INTEGER,  -- tracks active work time for soft timeout
     active_work_elapsed INTEGER NOT NULL DEFAULT 0,  -- accumulated ms in awaiting_craft + awaiting_lead
     hibernated_at INTEGER,  -- when pair entered hibernated state (for SLA tracking)
-    version INTEGER NOT NULL DEFAULT 0,  -- optimistic locking (Room Agent tools only; Runtime is sole writer of pair state)
+    version INTEGER NOT NULL DEFAULT 0,  -- optimistic locking (both Runtime and Room Agent tools increment on write)
     created_at INTEGER NOT NULL,
     completed_at INTEGER
 );
@@ -784,7 +789,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 60. **Task selection ordering**: By `priority` descending (higher = more important), then `created_at` ascending (oldest first). Applies across goals.
 77. **Task selection deterministic tiebreaker**: priority DESC → created_at ASC → id ASC. Handles same-tick creation.
 81. **Counter increment on spawn**: `planning_attempts` and `goal_review_attempts` increment when pair is spawned (counts attempts, not outcomes). `feedback_iteration` increments on each `send_to_craft`.
-83. **Scheduler precedence: goal review before re-planning**: Tick evaluates goal review first. If all tasks `completed` → goal review. Planning only triggers when goal has zero tasks or at least one `failed` task. Prevents ambiguous overlap.
+83. **Scheduler precedence: goal review before re-planning**: Tick evaluates goal review first. Goal review: `task_count > 0` AND all tasks terminal AND at least one `completed`. Planning: goal has zero tasks OR all tasks `failed`. No overlap possible.
 
 ### Craft→Lead Loop & Message Routing
 2. **Review policy**: Every Craft Agent terminal state triggers Lead Agent review via Runtime.
@@ -863,7 +868,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 
 ### Schema, Versioning & Data
 25. **Optimistic locking**: Room Agent tools check `task.version` to prevent races with Runtime state transitions.
-55. **Runtime is sole writer of pair state**: No optimistic locking needed on `task_pairs`. `version` field exists for Room Agent tool coordination only.
+55. **Pair state write ownership**: Runtime is the **primary** writer of pair state for normal lifecycle transitions (`awaiting_craft` → `awaiting_lead` → `completed`/`failed`). Room Agent control-plane tools (`cancel_task`, `retry_task`) are **authorized writers** for urgent operations — they use optimistic locking (version check) to prevent races with Runtime. Both Runtime and Room Agent tools increment `task_pairs.version` on every write. This is not "sole writer" — it's "primary writer with authorized control-plane overrides."
 63. **`version` on tasks table**: Optimistic locking for Room Agent tools modifying task state. Separate from `task_pairs.version`.
 65. **Audit log**: `room_audit_log` table for tick decisions, pair state changes, message delivery. Essential for debugging.
 66. **Token tracking**: `tokens_used` on task_pairs from day one for cost visibility.
@@ -873,9 +878,13 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 75. **Token tracking per-turn**: `tokens_used` updated after each Craft/Lead turn for accuracy.
 86. **Task messages retention: pair-scoped, not time-based**: Messages retained for pair lifetime. Purged on terminal state. No time-based TTL — long-lived hibernated pairs keep their pending messages. Separate from audit log 7-day retention.
 89. **`message_type` column on task_messages**: Explicit type (`normal`/`interrupt`/`escalation_context`) for efficient queue scanning. Enables Lead tool execution guard to check for interrupts without JSON parsing.
+90. **Goal review requires `task_count > 0`**: Prevents brand-new goals with zero tasks from vacuously matching "all tasks completed." Goal review predicate: `task_count > 0 AND all tasks terminal AND at least one completed`.
+91. **Failed tasks don't block goal review**: Goal review triggers when all tasks are terminal (`completed`/`failed`) with at least one `completed`. The goal review Craft assesses whether the goal is met despite failures. Re-planning only triggers when ALL tasks are `failed` (nothing succeeded).
+92. **Planning duplicate mitigation**: Runtime includes `task_messages.id` as header in injected messages. Lead reviews drafts before promotion. Draft promotion scoped to `created_by_task_id`. Soft guards; `processing` state (deferred) would close the window fully.
+93. **Pair state write ownership clarified**: Runtime is **primary** writer for normal lifecycle. Room Agent tools are **authorized writers** for control-plane (`cancel_task`, `retry_task`). Both use optimistic locking. Replaces the overly-strong "sole writer" claim.
 
 ### Meta
-82. **Resolved decisions kept in sync**: Decisions #15 and #32 updated to match body changes from v0.11+.
+82. **Resolved decisions kept in sync**: Decisions #15, #32, #55, #83 updated to match body changes.
 
 ## Open Questions (For Future Iterations)
 
