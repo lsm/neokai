@@ -570,6 +570,21 @@ describe('ProviderService', () => {
 			expect(original).toEqual({});
 		});
 
+		it('should clear leaked GLM routing vars for anthropic model', () => {
+			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
+			process.env.API_TIMEOUT_MS = '120000';
+			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
+
+			const original = service.applyEnvVarsToProcess('claude-3-opus');
+
+			expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+			expect(original.API_TIMEOUT_MS).toBe('120000');
+			expect(original.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4');
+			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+			expect(process.env.API_TIMEOUT_MS).toBeUndefined();
+			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+		});
+
 		it('should apply GLM env vars and return original values', () => {
 			process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
 			process.env.ANTHROPIC_BASE_URL = 'original-url';
@@ -586,9 +601,16 @@ describe('ProviderService', () => {
 	});
 
 	describe('applyEnvVarsToProcessForProvider', () => {
-		it('should return empty object for anthropic provider', () => {
+		it('should clear leaked GLM routing vars for anthropic provider', () => {
+			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
+			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
+
 			const original = service.applyEnvVarsToProcessForProvider('anthropic');
-			expect(original).toEqual({});
+
+			expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+			expect(original.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4');
+			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+			expect(process.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
 		});
 
 		it('should apply GLM env vars for GLM provider', () => {
@@ -644,6 +666,16 @@ describe('ProviderService', () => {
 
 			// Should not change anything
 			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('some-token');
+		});
+
+		it('should only restore keys captured in original', () => {
+			process.env.ANTHROPIC_AUTH_TOKEN = 'keep-me';
+			process.env.ANTHROPIC_BASE_URL = 'to-be-restored';
+
+			service.restoreEnvVars({ ANTHROPIC_BASE_URL: 'restored-url' });
+
+			expect(process.env.ANTHROPIC_BASE_URL).toBe('restored-url');
+			expect(process.env.ANTHROPIC_AUTH_TOKEN).toBe('keep-me');
 		});
 
 		it('should restore all supported env vars', () => {
