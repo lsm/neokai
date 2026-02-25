@@ -34,12 +34,27 @@ test.describe('Slash Command Autocomplete - Basic Functionality', () => {
 		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
 		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
-		// Fill workspace path to enable Create Session button
-		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
-		// Wait for button to be enabled (React state update after fill)
+		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
+		await pathInput.waitFor({ state: 'visible', timeout: 5000 });
+		// Use evaluate to set value reliably — avoids focus-trap timing issues where
+		// the modal's setupFocusTrap useEffect focuses the close button and can intercept
+		// characters from pressSequentially('/tmp').
+		await page.evaluate(() => {
+			const input = document.querySelector(
+				'input[placeholder="Enter workspace path..."]'
+			) as HTMLInputElement;
+			if (!input) return;
+			input.focus();
+			input.value = '/tmp';
+			input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		});
+		// Wait for button to be enabled (Preact state updated by the input event)
 		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
 		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
 		await createSessionBtn.click();
+		// Modal uses <div role="dialog"> (not <dialog>), so use role selector.
+		// waitFor({ state: 'hidden' }) passes when the div is removed from DOM on close.
+		await page.locator('[role="dialog"]').waitFor({ state: 'hidden', timeout: 25000 });
 		sessionId = await waitForSessionCreated(page);
 
 		// Wait for commands to load
@@ -123,12 +138,27 @@ test.describe('Slash Command Autocomplete - Navigation', () => {
 		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
 		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
-		// Fill workspace path to enable Create Session button
-		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
-		// Wait for button to be enabled (React state update after fill)
+		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
+		await pathInput.waitFor({ state: 'visible', timeout: 5000 });
+		// Use evaluate to set value reliably — avoids focus-trap timing issues where
+		// the modal's setupFocusTrap useEffect focuses the close button and can intercept
+		// characters from pressSequentially('/tmp').
+		await page.evaluate(() => {
+			const input = document.querySelector(
+				'input[placeholder="Enter workspace path..."]'
+			) as HTMLInputElement;
+			if (!input) return;
+			input.focus();
+			input.value = '/tmp';
+			input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		});
+		// Wait for button to be enabled (Preact state updated by the input event)
 		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
 		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
 		await createSessionBtn.click();
+		// Modal uses <div role="dialog"> (not <dialog>), so use role selector.
+		// waitFor({ state: 'hidden' }) passes when the div is removed from DOM on close.
+		await page.locator('[role="dialog"]').waitFor({ state: 'hidden', timeout: 25000 });
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -225,12 +255,27 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
 		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
-		// Fill workspace path to enable Create Session button
-		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
-		// Wait for button to be enabled (React state update after fill)
+		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
+		await pathInput.waitFor({ state: 'visible', timeout: 5000 });
+		// Use evaluate to set value reliably — avoids focus-trap timing issues where
+		// the modal's setupFocusTrap useEffect focuses the close button and can intercept
+		// characters from pressSequentially('/tmp').
+		await page.evaluate(() => {
+			const input = document.querySelector(
+				'input[placeholder="Enter workspace path..."]'
+			) as HTMLInputElement;
+			if (!input) return;
+			input.focus();
+			input.value = '/tmp';
+			input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		});
+		// Wait for button to be enabled (Preact state updated by the input event)
 		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
 		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
 		await createSessionBtn.click();
+		// Modal uses <div role="dialog"> (not <dialog>), so use role selector.
+		// waitFor({ state: 'hidden' }) passes when the div is removed from DOM on close.
+		await page.locator('[role="dialog"]').waitFor({ state: 'hidden', timeout: 25000 });
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -306,12 +351,27 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
 		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
-		// Fill workspace path to enable Create Session button
-		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
-		// Wait for button to be enabled (React state update after fill)
+		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
+		await pathInput.waitFor({ state: 'visible', timeout: 5000 });
+		// Use evaluate to set value reliably — avoids focus-trap timing issues where
+		// the modal's setupFocusTrap useEffect focuses the close button and can intercept
+		// characters from pressSequentially('/tmp').
+		await page.evaluate(() => {
+			const input = document.querySelector(
+				'input[placeholder="Enter workspace path..."]'
+			) as HTMLInputElement;
+			if (!input) return;
+			input.focus();
+			input.value = '/tmp';
+			input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		});
+		// Wait for button to be enabled (Preact state updated by the input event)
 		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
 		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
 		await createSessionBtn.click();
+		// Modal uses <div role="dialog"> (not <dialog>), so use role selector.
+		// waitFor({ state: 'hidden' }) passes when the div is removed from DOM on close.
+		await page.locator('[role="dialog"]').waitFor({ state: 'hidden', timeout: 25000 });
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -382,12 +442,27 @@ test.describe('Slash Command Autocomplete - Edge Cases', () => {
 		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
 		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
-		// Fill workspace path to enable Create Session button
-		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
-		// Wait for button to be enabled (React state update after fill)
+		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
+		await pathInput.waitFor({ state: 'visible', timeout: 5000 });
+		// Use evaluate to set value reliably — avoids focus-trap timing issues where
+		// the modal's setupFocusTrap useEffect focuses the close button and can intercept
+		// characters from pressSequentially('/tmp').
+		await page.evaluate(() => {
+			const input = document.querySelector(
+				'input[placeholder="Enter workspace path..."]'
+			) as HTMLInputElement;
+			if (!input) return;
+			input.focus();
+			input.value = '/tmp';
+			input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		});
+		// Wait for button to be enabled (Preact state updated by the input event)
 		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
 		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
 		await createSessionBtn.click();
+		// Modal uses <div role="dialog"> (not <dialog>), so use role selector.
+		// waitFor({ state: 'hidden' }) passes when the div is removed from DOM on close.
+		await page.locator('[role="dialog"]').waitFor({ state: 'hidden', timeout: 25000 });
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -482,12 +557,27 @@ test.describe('Slash Command Autocomplete - SDK Commands from system:init', () =
 		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
 		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
-		// Fill workspace path to enable Create Session button
-		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
-		// Wait for button to be enabled (React state update after fill)
+		const pathInput = page.locator('input[placeholder="Enter workspace path..."]');
+		await pathInput.waitFor({ state: 'visible', timeout: 5000 });
+		// Use evaluate to set value reliably — avoids focus-trap timing issues where
+		// the modal's setupFocusTrap useEffect focuses the close button and can intercept
+		// characters from pressSequentially('/tmp').
+		await page.evaluate(() => {
+			const input = document.querySelector(
+				'input[placeholder="Enter workspace path..."]'
+			) as HTMLInputElement;
+			if (!input) return;
+			input.focus();
+			input.value = '/tmp';
+			input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+		});
+		// Wait for button to be enabled (Preact state updated by the input event)
 		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
 		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
 		await createSessionBtn.click();
+		// Modal uses <div role="dialog"> (not <dialog>), so use role selector.
+		// waitFor({ state: 'hidden' }) passes when the div is removed from DOM on close.
+		await page.locator('[role="dialog"]').waitFor({ state: 'hidden', timeout: 25000 });
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
