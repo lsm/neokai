@@ -263,15 +263,15 @@ describe('ContextUsageBar', () => {
 			expect(container.textContent).toContain('Free Space');
 		});
 
-		it('should show category token counts', () => {
+		it('should show category token counts in k-notation', () => {
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
 			const clickable = container.querySelector('[title="Click for context details"]')!;
 			fireEvent.click(clickable);
 
-			expect(container.textContent).toContain('5,000');
-			expect(container.textContent).toContain('40,000');
-			expect(container.textContent).toContain('155,000');
+			expect(container.textContent).toContain('5.0k');
+			expect(container.textContent).toContain('40.0k');
+			expect(container.textContent).toContain('155.0k');
 		});
 
 		it('should show category percentages', () => {

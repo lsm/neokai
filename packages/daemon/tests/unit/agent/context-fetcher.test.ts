@@ -44,6 +44,19 @@ describe('ContextFetcher', () => {
 
 			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
+
+		it('should detect context response without explicit "Context Usage" header', () => {
+			const message = {
+				type: 'user',
+				isReplay: true,
+				message: {
+					content:
+						'<local-command-stdout>**Tokens:** 12,345 / 200,000 (6.2%)</local-command-stdout>',
+				},
+			};
+
+			expect(fetcher.isContextResponse(message as never)).toBe(true);
+		});
 	});
 
 	describe('parseContextResponse', () => {
@@ -66,11 +79,6 @@ describe('ContextFetcher', () => {
 | Messages | 25 | 0.0% |
 | Free space | 137.5k | 68.7% |
 | Autocompact buffer | 45.0k | 22.5% |
-
-### SlashCommand Tool
-
-**Commands:** 5
-**Total tokens:** 877
 
 </local-command-stdout>`,
 				},
@@ -101,12 +109,6 @@ describe('ContextFetcher', () => {
 				tokens: 25,
 				percent: 0.0,
 			});
-
-			// Check SlashCommand tool
-			expect(result?.slashCommandTool).toEqual({
-				commands: 5,
-				totalTokens: 877,
-			});
 		});
 
 		it('should return null for non-context messages', () => {
@@ -117,37 +119,6 @@ describe('ContextFetcher', () => {
 
 			const result = fetcher.parseContextResponse(message as never);
 			expect(result).toBeNull();
-		});
-
-		it('should handle context response without SlashCommand section', () => {
-			const message = {
-				type: 'user',
-				isReplay: true,
-				message: {
-					content: `<local-command-stdout>## Context Usage
-
-**Model:** claude-sonnet-4-5-20250929
-**Tokens:** 50.0k / 200.0k (25%)
-
-### Categories
-
-| Category | Tokens | Percentage |
-|----------|--------|------------|
-| System prompt | 3.0k | 1.5% |
-| Free space | 150.0k | 75.0% |
-
-</local-command-stdout>`,
-				},
-			};
-
-			const result = fetcher.parseContextResponse(message as never);
-
-			expect(result).not.toBeNull();
-			// totalUsed = 3000 (only System prompt, excludes Free space)
-			expect(result?.totalUsed).toBe(3000);
-			// percentUsed = Math.round(3000 / 200000 * 100) = 2%
-			expect(result?.percentUsed).toBe(2);
-			expect(result?.slashCommandTool).toBeUndefined();
 		});
 
 		it('should handle context response with zero tokens (no k suffix)', () => {
@@ -183,7 +154,92 @@ describe('ContextFetcher', () => {
 			// percentUsed = Math.round(62021 / 200000 * 100) = 31%
 			expect(result?.percentUsed).toBe(31);
 			expect(result?.model).toBe('glm-5');
-			expect(result?.slashCommandTool).toBeUndefined();
+		});
+
+		it('should parse comma-formatted token values and decimal percentages', () => {
+			const message = {
+				type: 'user',
+				isReplay: true,
+				message: {
+					content: `<local-command-stdout>### Session Context
+
+**Model:** claude-sonnet-4-5-20250929
+**Tokens:** 12,345 / 200,000 (6.2%)
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 3,200 | 1.6% |
+| Messages | 145 | 0.1% |
+| Free space | 196,655 | 98.3% |
+
+</local-command-stdout>`,
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+
+			expect(result).not.toBeNull();
+			expect(result?.totalCapacity).toBe(200000);
+			expect(result?.totalUsed).toBe(3345);
+			expect(result?.percentUsed).toBe(2);
+			expect(result?.breakdown['System prompt']?.tokens).toBe(3200);
+			expect(result?.breakdown.Messages?.tokens).toBe(145);
+		});
+
+		it('should parse SDK 0.2.55 format with integer k-notation and Skills sub-table', () => {
+			// Exact format captured from SDK 0.2.55 /context output
+			const message = {
+				type: 'user',
+				isReplay: true,
+				message: {
+					content: `<local-command-stdout>## Context Usage\n\n**Model:** claude-sonnet-4-6  \n**Tokens:** 20.3k / 200k (10%)\n\n### Estimated usage by category\n\n| Category | Tokens | Percentage |\n|----------|--------|------------|\n| System prompt | 3.6k | 1.8% |\n| System tools | 18k | 9.0% |\n| Skills | 61 | 0.0% |\n| Messages | 108 | 0.1% |\n| Free space | 145.3k | 72.6% |\n| Autocompact buffer | 33k | 16.5% |\n\n### Skills\n\n| Skill | Source | Tokens |\n|-------|--------|--------|\n| keybindings-help | undefined | 61 |\n\n</local-command-stdout>`,
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+
+			expect(result).not.toBeNull();
+			// Trailing spaces stripped from model name
+			expect(result?.model).toBe('claude-sonnet-4-6');
+			// 200k (no decimal) → 200000
+			expect(result?.totalCapacity).toBe(200000);
+			// totalUsed = 3600 + 18000 + 61 + 108 + 33000 = 54769 (Free space excluded)
+			expect(result?.totalUsed).toBe(54769);
+			// percentUsed = Math.round(54769 / 200000 * 100) = 27
+			expect(result?.percentUsed).toBe(27);
+
+			// Integer k-notation: 18k → 18000 (no decimal point)
+			expect(result?.breakdown['System tools']).toEqual({ tokens: 18000, percent: 9.0 });
+			// No k suffix: 61 → 61
+			expect(result?.breakdown['Skills']).toEqual({ tokens: 61, percent: 0.0 });
+			// Fractional k: 3.6k → 3600
+			expect(result?.breakdown['System prompt']).toEqual({ tokens: 3600, percent: 1.8 });
+			// Autocompact buffer with integer k: 33k → 33000
+			expect(result?.breakdown['Autocompact buffer']).toEqual({ tokens: 33000, percent: 16.5 });
+
+			// ### Skills sub-table rows must NOT appear in breakdown
+			// ('keybindings-help | undefined | 61' has a non-numeric 'undefined' in the 3rd column)
+			expect(result?.breakdown['keybindings-help']).toBeUndefined();
+		});
+
+		it('should return null when category table cannot be parsed', () => {
+			const message = {
+				type: 'user',
+				isReplay: true,
+				message: {
+					content: `<local-command-stdout>## Context Usage
+
+**Model:** claude-sonnet-4-5-20250929
+**Tokens:** 12,345 / 200,000 (6.2%)
+
+No table rows here.
+
+</local-command-stdout>`,
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+			expect(result).toBeNull();
 		});
 	});
 

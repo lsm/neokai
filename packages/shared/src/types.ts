@@ -781,14 +781,6 @@ export interface ContextCategoryBreakdown {
 }
 
 /**
- * SlashCommand tool statistics
- */
-export interface ContextSlashCommandTool {
-	commands: number;
-	totalTokens: number;
-}
-
-/**
  * API usage statistics from Claude response
  */
 export interface ContextAPIUsage {
@@ -812,7 +804,6 @@ export interface ContextInfo {
 	// Category breakdown
 	breakdown: Record<string, ContextCategoryBreakdown>;
 	// Optional additional info
-	slashCommandTool?: ContextSlashCommandTool;
 	apiUsage?: ContextAPIUsage;
 	// Metadata
 	lastUpdated?: number; // Timestamp of last update

@@ -23,10 +23,6 @@ interface ParsedContextInfo {
 	totalCapacity: number;
 	percentUsed: number;
 	breakdown: Record<string, ContextCategoryBreakdown>;
-	slashCommandTool?: {
-		commands: number;
-		totalTokens: number;
-	};
 }
 
 export class ContextFetcher {
@@ -51,7 +47,11 @@ export class ContextFetcher {
 		if (!userMsg.isReplay) return false;
 
 		const content = userMsg.message?.content || '';
-		return content.includes('<local-command-stdout>') && content.includes('Context Usage');
+		if (!content.includes('<local-command-stdout>')) return false;
+
+		// SDK output headers can drift by version/provider, but /context output always
+		// includes a "**Tokens:**" line in local-command stdout.
+		return content.includes('Context Usage') || content.includes('**Tokens:**');
 	}
 
 	/**
@@ -59,15 +59,23 @@ export class ContextFetcher {
 	 * Returns null if message is not a context response
 	 */
 	parseContextResponse(message: SDKMessage): ParsedContextInfo | null {
-		if (!this.isContextResponse(message)) {
+		if (message.type !== 'user') {
 			return null;
 		}
 
 		const userMsg = message as {
+			isReplay?: boolean;
 			message?: { content?: string };
 		};
 
+		if (!userMsg.isReplay) {
+			return null;
+		}
+
 		const content = userMsg.message?.content || '';
+		if (!content.includes('<local-command-stdout>')) {
+			return null;
+		}
 
 		try {
 			return this.parseMarkdownContext(content);
@@ -93,10 +101,11 @@ export class ContextFetcher {
 		// Example: **Model:** claude-sonnet-4-5-20250929
 		// Example: **Tokens:** 62.5k / 200.0k (31%) - when tokens > 0, SDK uses 'k' suffix
 		// Example: **Tokens:** 0 / 200.0k (0%) - when tokens is 0 or whole number, no 'k' suffix
+		// Example: **Tokens:** 12,345 / 200,000 (6.2%) - some SDK versions/providers use commas
 		const modelMatch = markdown.match(/\*\*Model:\*\*\s*(\S+)/);
-		// First token count may or may not have 'k' suffix, but capacity always does
+		// Both values may or may not use "k" suffix depending on provider/version.
 		const tokensMatch = markdown.match(
-			/\*\*Tokens:\*\*\s*([\d.]+)(k?)\s*\/\s*([\d.]+)k\s*\((\d+)%\)/
+			/\*\*Tokens:\*\*\s*([\d.,]+)(k?)\s*\/\s*([\d.,]+)(k?)\s*\(([\d.]+)%\)/
 		);
 
 		if (!tokensMatch) {
@@ -104,10 +113,18 @@ export class ContextFetcher {
 		}
 
 		const model = modelMatch?.[1] || 'unknown';
-		const totalCapacity = parseFloat(tokensMatch[3]) * 1000;
+		const parseTokenValue = (value: string, hasK: boolean): number => {
+			const normalized = value.replaceAll(',', '');
+			const parsed = parseFloat(normalized);
+			return hasK ? parsed * 1000 : parsed;
+		};
+		const totalCapacity = parseTokenValue(tokensMatch[3], tokensMatch[4] === 'k');
 
 		// Parse category breakdown table
 		const breakdown = this.parseCategoryTable(markdown);
+		if (Object.keys(breakdown).length === 0) {
+			throw new Error('No context category rows parsed');
+		}
 
 		// Recalculate totalUsed from breakdown to be consistent with displayed categories
 		// SDK's reported totalUsed excludes Autocompact buffer, but we want to include it
@@ -118,16 +135,12 @@ export class ContextFetcher {
 
 		const percentUsed = Math.round((totalUsed / totalCapacity) * 100);
 
-		// Parse SlashCommand tool info (optional)
-		const slashCommandTool = this.parseSlashCommandInfo(markdown);
-
 		return {
 			model,
 			totalUsed,
 			totalCapacity,
 			percentUsed,
 			breakdown,
-			slashCommandTool,
 		};
 	}
 
@@ -144,7 +157,7 @@ export class ContextFetcher {
 
 		// Match table rows: | Category | Tokens | Percentage |
 		// Capture 'k' suffix separately to detect thousands
-		const tableRegex = /\|\s*([^|]+)\s*\|\s*([\d.]+)(k?)\s*\|\s*([\d.]+)%\s*\|/g;
+		const tableRegex = /\|\s*([^|]+)\s*\|\s*([\d.,]+)(k?)\s*\|\s*([\d.]+)%\s*\|/g;
 		let match;
 
 		while ((match = tableRegex.exec(markdown)) !== null) {
@@ -153,7 +166,7 @@ export class ContextFetcher {
 			// Skip header row
 			if (category === 'Category') continue;
 
-			const tokenValue = parseFloat(match[2]);
+			const tokenValue = parseFloat(match[2].replaceAll(',', ''));
 			const hasK = match[3] === 'k';
 
 			// Apply 1000x multiplier if 'k' suffix present
@@ -167,29 +180,6 @@ export class ContextFetcher {
 		}
 
 		return breakdown;
-	}
-
-	/**
-	 * Parse SlashCommand tool statistics (optional section)
-	 * Example:
-	 * ### SlashCommand Tool
-	 * **Commands:** 0
-	 * **Total tokens:** 877
-	 */
-	private parseSlashCommandInfo(
-		markdown: string
-	): { commands: number; totalTokens: number } | undefined {
-		const commandsMatch = markdown.match(/\*\*Commands:\*\*\s*(\d+)/);
-		const tokensMatch = markdown.match(/\*\*Total tokens:\*\*\s*(\d+)/);
-
-		if (commandsMatch && tokensMatch) {
-			return {
-				commands: parseInt(commandsMatch[1]),
-				totalTokens: parseInt(tokensMatch[1]),
-			};
-		}
-
-		return undefined;
 	}
 
 	/**
@@ -211,7 +201,6 @@ export class ContextFetcher {
 			totalCapacity: parsedContext.totalCapacity,
 			percentUsed: parsedContext.percentUsed,
 			breakdown: parsedContext.breakdown,
-			slashCommandTool: parsedContext.slashCommandTool,
 
 			// Keep API usage from stream events if available
 			apiUsage: streamContext?.apiUsage,

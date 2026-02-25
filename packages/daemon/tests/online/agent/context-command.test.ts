@@ -14,9 +14,11 @@
  *
  * Test Coverage:
  * 1. /context command is queued after each turn
- * 2. /context response is detected and parsed correctly
- * 3. Context info is updated and persisted to session metadata
- * 4. Internal /context handling does not create repeated zero-token result loops
+ * 2. /context response is detected and parsed correctly (source === 'merged')
+ * 3. SDK format categories are parsed (including integer k-notation like '18k')
+ * 4. Sub-table rows (e.g. Skills breakdown) don't pollute category breakdown
+ * 5. Context info is persisted to session metadata
+ * 6. Internal /context handling does not create repeated zero-token result loops
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -55,7 +57,7 @@ describe('Context Command Online Tests', () => {
 	);
 
 	describe('Automatic /context at turn end', () => {
-		test('should queue /context after turn and parse response correctly', async () => {
+		test('should parse /context replay and produce source=merged with SDK categories', async () => {
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
@@ -65,13 +67,9 @@ describe('Context Command Online Tests', () => {
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// Send a simple message
 			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
-
-			// Wait for processing to complete
 			await waitForIdle(daemon, sessionId, 30000);
 
-			// Get session metadata - should contain context info
 			const session = await getSession(daemon, sessionId);
 			const metadata = session.metadata as {
 				lastContextInfo?: ContextInfo;
@@ -80,97 +78,52 @@ describe('Context Command Online Tests', () => {
 
 			expect(metadata).toBeDefined();
 			expect(metadata?.messageCount).toBeGreaterThan(0);
-
-			// Verify context info was parsed and stored
-			// The /context command response should have been processed
-			if (metadata?.lastContextInfo) {
-				const contextInfo = metadata.lastContextInfo;
-
-				// Verify basic structure
-				expect(contextInfo.model).toBeString();
-				expect(contextInfo.totalCapacity).toBeGreaterThan(0);
-				expect(contextInfo.percentUsed).toBeGreaterThanOrEqual(0);
-				expect(contextInfo.percentUsed).toBeLessThanOrEqual(100);
-
-				// Verify breakdown exists and has categories
-				expect(contextInfo.breakdown).toBeDefined();
-				const categories = Object.keys(contextInfo.breakdown);
-
-				// Should have at least some categories (SDK-specific which ones)
-				expect(categories.length).toBeGreaterThan(0);
-
-				// Common categories that are typically present
-				// Note: Some categories may vary by SDK version
-				const typicalCategories = [
-					'system prompt',
-					'system tools',
-					'mcp tools',
-					'messages',
-					'free space',
-					'autocompact buffer',
-				];
-				const hasTypicalCategory = categories.some((cat) =>
-					typicalCategories.some((typical) => cat.toLowerCase().includes(typical))
-				);
-				expect(hasTypicalCategory).toBe(true);
-
-				// Verify source if set (may be 'context-command', 'merged', 'stream', or undefined)
-				if (contextInfo.source) {
-					expect(['context-command', 'merged', 'stream']).toContain(contextInfo.source);
-				}
-
-				// Verify each category has tokens and percent
-				for (const [, data] of Object.entries(contextInfo.breakdown)) {
-					expect(data.tokens).toBeGreaterThanOrEqual(0);
-					// percent may be null for some categories
-					if (data.percent !== null) {
-						expect(data.percent).toBeGreaterThanOrEqual(0);
-						expect(data.percent).toBeLessThanOrEqual(100);
-					}
-				}
-			} else {
-				// If lastContextInfo is not set, that's still a valid outcome
-				// The parsing might have succeeded but context info wasn't persisted
-				// This test primarily verifies no parsing errors occurred
-			}
-		}, 60000);
-
-		test('should handle zero token usage (no k suffix)', async () => {
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: process.cwd(),
-				title: 'Zero Token Context Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Send a message that might result in minimal token usage
-			// (context parsing should work regardless of actual token values)
-			await sendMessage(daemon, sessionId, 'Say hello. Just respond "Hello".');
-
-			// Wait for processing to complete
-			await waitForIdle(daemon, sessionId, 30000);
-
-			// Get session metadata - should contain context info
-			const session = await getSession(daemon, sessionId);
-			const metadata = session.metadata as {
-				lastContextInfo?: ContextInfo;
-			} | null;
-
-			// Verify context info exists even with zero/minimal tokens
 			expect(metadata?.lastContextInfo).toBeDefined();
 
-			if (metadata?.lastContextInfo) {
-				const contextInfo = metadata.lastContextInfo;
+			const contextInfo = metadata?.lastContextInfo as ContextInfo;
 
-				// Verify structure is valid
-				expect(contextInfo.totalCapacity).toBeGreaterThan(0);
-				expect(contextInfo.breakdown).toBeDefined();
+			// source === 'merged' proves the /context replay message was received and
+			// successfully parsed by ContextFetcher — not just stream-based fallback.
+			expect(contextInfo.source).toBe('merged');
 
-				// The key is that parsing succeeded - structure should be valid
-				expect(Object.keys(contextInfo.breakdown).length).toBeGreaterThan(0);
+			// Basic numeric sanity
+			expect(contextInfo.model).toBeString();
+			expect(contextInfo.totalCapacity).toBeGreaterThan(0);
+			expect(contextInfo.percentUsed).toBeGreaterThanOrEqual(0);
+			expect(contextInfo.percentUsed).toBeLessThanOrEqual(100);
+			expect(contextInfo.totalUsed).toBeGreaterThan(0);
+
+			// Breakdown must exist and have entries
+			const categories = Object.keys(contextInfo.breakdown);
+			expect(categories.length).toBeGreaterThan(0);
+
+			// SDK 0.2.55 emits these categories; fail loudly if format changes
+			const expectedCategories = ['System prompt', 'System tools', 'Messages', 'Free space'];
+			for (const expected of expectedCategories) {
+				const found = categories.find((cat) => cat.toLowerCase() === expected.toLowerCase());
+				expect(found).toBeDefined();
 			}
+
+			// Each category must have valid token counts and percentages
+			for (const [cat, data] of Object.entries(contextInfo.breakdown)) {
+				expect(data.tokens).toBeGreaterThanOrEqual(0);
+				if (data.percent !== null) {
+					expect(data.percent).toBeGreaterThanOrEqual(0);
+					expect(data.percent).toBeLessThanOrEqual(100);
+				}
+				// System tools are always substantial (thousands of tokens) due to
+				// built-in tool definitions — verifies k-notation parsing (e.g. '18k' → 18000)
+				if (cat.toLowerCase() === 'system tools') {
+					expect(data.tokens).toBeGreaterThan(1000);
+				}
+			}
+
+			// totalUsed must match the sum of non-free-space categories
+			// This verifies ContextFetcher.parseMarkdownContext() recalculation logic
+			const summedUsed = Object.entries(contextInfo.breakdown)
+				.filter(([cat]) => !cat.toLowerCase().includes('free space'))
+				.reduce((sum, [, data]) => sum + data.tokens, 0);
+			expect(contextInfo.totalUsed).toBe(summedUsed);
 		}, 60000);
 
 		test('should not produce repeated zero-token result messages after one turn', async () => {
@@ -210,34 +163,5 @@ describe('Context Command Online Tests', () => {
 			// but repeated 0->0 loops should never occur.
 			expect(zeroTokenSuccessResults.length).toBeLessThanOrEqual(1);
 		}, 90000);
-	});
-
-	describe('Context info format compatibility', () => {
-		test('should parse both "Categories" and "Estimated usage by category" headers', async () => {
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: process.cwd(),
-				title: 'Context Format Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Send a message
-			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
-
-			// Wait for processing
-			await waitForIdle(daemon, sessionId, 30000);
-
-			// Verify context was parsed successfully
-			const session = await getSession(daemon, sessionId);
-			const metadata = session.metadata as {
-				lastContextInfo?: ContextInfo;
-			} | null;
-
-			// The test passes if we got context info without errors
-			// (parsing worked regardless of which header format SDK returned)
-			expect(metadata?.lastContextInfo).toBeDefined();
-		}, 60000);
 	});
 });
