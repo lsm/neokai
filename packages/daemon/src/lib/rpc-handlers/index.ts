@@ -40,10 +40,6 @@ import { RoomRuntimeService } from '../room/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/goal-manager';
 import { setupDialogHandlers } from './dialog-handlers';
-// PHASE 3: Telemetry and feature flags
-import { registerTelemetryHandlers } from './telemetry-handlers';
-import { getFeatureFlagService } from '../config';
-import { WorkerTelemetry } from '../telemetry';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -177,20 +173,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
-
-	// PHASE 3: Initialize feature flag service
-	const featureFlagService = getFeatureFlagService(deps.db);
-
-	// PHASE 3: Initialize worker telemetry
-	const workerTelemetry = new WorkerTelemetry(deps.daemonHub);
-
-	// PHASE 3: Register telemetry and feature flag RPC handlers
-	registerTelemetryHandlers({
-		messageHub: deps.messageHub,
-		daemonHub: deps.daemonHub,
-		featureFlagService,
-		workerTelemetry,
-	});
 
 	// Return cleanup function to stop background services
 	return () => {
