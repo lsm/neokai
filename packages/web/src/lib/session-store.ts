@@ -58,9 +58,9 @@ class SessionStore {
 		() => this.sessionState.value?.agentState || { status: 'idle' }
 	);
 
-	/** Context info (token usage) */
+	/** Context info (token usage) - uses direct signal to avoid race condition */
 	readonly contextInfo = computed<ContextInfo | null>(
-		() => this.sessionState.value?.contextInfo || null
+		() => this._contextInfo.value || this.sessionState.value?.contextInfo || null
 	);
 
 	/** Available slash commands */
@@ -113,6 +113,13 @@ class SessionStore {
 	/** Track whether there are more messages to load (from server response) */
 	private readonly _hasMoreMessages = signal(false);
 
+	/**
+	 * Direct context info signal - updated independently via context.updated events.
+	 * This fixes a race condition where context.updated events arriving before
+	 * sessionState is loaded would be silently dropped.
+	 */
+	private readonly _contextInfo = signal<ContextInfo | null>(null);
+
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
 	// ========================================
@@ -156,6 +163,7 @@ class SessionStore {
 		this.sdkMessages.value = [];
 		this._initialMessageCount.value = 0;
 		this._hasMoreMessages.value = false;
+		this._contextInfo.value = null; // Clear context info on session switch
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
@@ -224,10 +232,10 @@ class SessionStore {
 			// 2. Context updates (fast path - bypasses full state.session round-trip)
 			// The daemon also sends context via state.session, but subscribing directly here
 			// ensures the UI updates as soon as context.updated fires on the session channel.
+			// FIX: Use direct signal to avoid race condition where events are dropped
+			// when sessionState.value is null (during initial load)
 			const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
-				if (this.sessionState.value) {
-					this.sessionState.value = { ...this.sessionState.value, contextInfo };
-				}
+				this._contextInfo.value = contextInfo;
 			});
 			this.cleanupFunctions.push(unsubContextUpdated);
 
