@@ -20,14 +20,14 @@ export function SDKRateLimitEvent({ message }: Props) {
 
 	return (
 		<div
-			class={`flex items-start gap-2 px-3 py-2 rounded text-xs border ${
+			class={`flex items-start gap-2 px-3 py-2 mb-4 rounded border ${
 				isRejected
-					? 'bg-red-950/40 border-red-800/50 text-red-300'
-					: 'bg-amber-950/30 border-amber-800/40 text-amber-300/80'
+					? 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800 text-red-900 dark:text-red-100'
+					: 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100'
 			}`}
 		>
 			<svg
-				class={`w-3.5 h-3.5 mt-0.5 shrink-0 ${isRejected ? 'text-red-400' : 'text-amber-400/70'}`}
+				class={`w-3.5 h-3.5 mt-0.5 shrink-0 ${isRejected ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}
 				fill="none"
 				viewBox="0 0 24 24"
 				stroke="currentColor"
@@ -39,18 +39,40 @@ export function SDKRateLimitEvent({ message }: Props) {
 					d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
 				/>
 			</svg>
-			<div class="flex flex-wrap gap-x-3 gap-y-0.5">
+			<div class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
 				<span>
-					<span class="opacity-60">Rate limit</span>{' '}
+					<span
+						class={
+							isRejected ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300'
+						}
+					>
+						Rate limit
+					</span>{' '}
 					<span class="font-medium">{formatRateLimitType(info.rateLimitType)}</span>
 					{' — '}
-					<span class={isRejected ? 'text-red-300 font-medium' : 'opacity-80'}>
+					<span
+						class={`${isRejected ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300'} font-medium`}
+					>
 						{isRejected ? 'rejected' : 'allowed'}
 					</span>
 				</span>
-				<span class="opacity-60">Resets at {formatResetTime(info.resetsAt)}</span>
+				<span
+					class={
+						isRejected
+							? 'text-red-700/80 dark:text-red-300/80'
+							: 'text-amber-700/80 dark:text-amber-300/80'
+					}
+				>
+					Resets at {formatResetTime(info.resetsAt)}
+				</span>
 				{overageRejected && info.overageDisabledReason && (
-					<span class="opacity-60">
+					<span
+						class={
+							isRejected
+								? 'text-red-700/80 dark:text-red-300/80'
+								: 'text-amber-700/80 dark:text-amber-300/80'
+						}
+					>
 						Overage disabled ({info.overageDisabledReason.replace(/_/g, ' ')})
 					</span>
 				)}
