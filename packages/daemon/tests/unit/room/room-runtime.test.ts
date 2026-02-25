@@ -399,6 +399,186 @@ describe('RoomRuntime', () => {
 		});
 	});
 
+	describe('autonomous flow integration', () => {
+		it('should complete the full single-iteration cycle: spawn → craft done → lead completes', async () => {
+			const { task } = await createGoalAndTask();
+			runtime.start();
+
+			// Step 1: tick spawns the pair
+			await runtime.tick();
+			const pairs = taskPairRepo.getActivePairs('room-1');
+			expect(pairs).toHaveLength(1);
+			const pair = pairs[0];
+
+			// Step 2: Craft finishes — runtime routes output to Lead
+			await runtime.onCraftTerminalState(pair.id, {
+				sessionId: pair.craftSessionId,
+				kind: 'completed',
+			});
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+
+			// Step 3: Lead reviews and approves
+			const result = await runtime.handleLeadTool(pair.id, 'complete_task', {
+				summary: 'Endpoint added successfully',
+			});
+			expect(JSON.parse(result.content[0].text).success).toBe(true);
+
+			// Pair and task are both done
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+			expect((await taskManager.getTask(task.id))!.status).toBe('completed');
+
+			// Tick should not spawn a new pair (no more pending tasks)
+			sessionFactory.calls.length = 0;
+			await runtime.tick();
+			expect(sessionFactory.calls.filter((c) => c.method === 'createAndStartSession')).toHaveLength(
+				0
+			);
+		});
+
+		it('should complete the full two-iteration feedback cycle: craft → lead feedback → craft → lead completes', async () => {
+			const { task } = await createGoalAndTask();
+			runtime.start();
+
+			// Spawn
+			await runtime.tick();
+			const pair = taskPairRepo.getActivePairs('room-1')[0];
+			expect(pair.feedbackIteration).toBe(0);
+
+			// Iteration 1: Craft done → Lead sends feedback
+			await runtime.onCraftTerminalState(pair.id, {
+				sessionId: pair.craftSessionId,
+				kind: 'completed',
+			});
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+
+			await runtime.handleLeadTool(pair.id, 'send_to_craft', {
+				message: 'Add error handling to the endpoint',
+			});
+
+			// Pair is back to awaiting_craft with iteration bumped
+			const afterFeedback = taskPairRepo.getPair(pair.id)!;
+			expect(afterFeedback.pairState).toBe('awaiting_craft');
+			expect(afterFeedback.feedbackIteration).toBe(1);
+
+			// Feedback message was injected into Craft
+			const feedbackInjects = sessionFactory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === pair.craftSessionId &&
+					(c.args[1] as string).includes('LEAD FEEDBACK')
+			);
+			expect(feedbackInjects).toHaveLength(1);
+
+			// Iteration 2: Craft finishes again → Lead completes
+			await runtime.onCraftTerminalState(pair.id, {
+				sessionId: pair.craftSessionId,
+				kind: 'completed',
+			});
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+
+			const result = await runtime.handleLeadTool(pair.id, 'complete_task', {
+				summary: 'Error handling added',
+			});
+			expect(JSON.parse(result.content[0].text).success).toBe(true);
+
+			// Final state
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+			const finalTask = await taskManager.getTask(task.id);
+			expect(finalTask!.status).toBe('completed');
+			expect(finalTask!.result).toBe('Error handling added');
+		});
+
+		it('should complete a three-iteration cycle and track feedback iterations accurately', async () => {
+			await createGoalAndTask();
+			runtime.start();
+			await runtime.tick();
+			const pair = taskPairRepo.getActivePairs('room-1')[0];
+
+			// Iterations 1 and 2: Lead sends feedback each time
+			for (let i = 0; i < 2; i++) {
+				await runtime.onCraftTerminalState(pair.id, {
+					sessionId: pair.craftSessionId,
+					kind: 'completed',
+				});
+				await runtime.handleLeadTool(pair.id, 'send_to_craft', {
+					message: `Feedback round ${i + 1}`,
+				});
+				expect(taskPairRepo.getPair(pair.id)!.feedbackIteration).toBe(i + 1);
+			}
+
+			// Iteration 3: Lead completes
+			await runtime.onCraftTerminalState(pair.id, {
+				sessionId: pair.craftSessionId,
+				kind: 'completed',
+			});
+			await runtime.handleLeadTool(pair.id, 'complete_task', { summary: 'All done' });
+
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+			expect(taskPairRepo.getPair(pair.id)!.feedbackIteration).toBe(2);
+		});
+
+		it('should reset lead contract violations on each new craft→lead round', async () => {
+			await createGoalAndTask();
+			runtime.start();
+			await runtime.tick();
+			const pair = taskPairRepo.getActivePairs('room-1')[0];
+
+			// Craft done → Lead violates contract once
+			await runtime.onCraftTerminalState(pair.id, {
+				sessionId: pair.craftSessionId,
+				kind: 'completed',
+			});
+			await runtime.onLeadTerminalState(pair.id, {
+				sessionId: pair.leadSessionId,
+				kind: 'completed',
+			});
+			expect(taskPairRepo.getPair(pair.id)!.leadContractViolations).toBe(1);
+
+			// Lead sends feedback — pair goes back to awaiting_craft, violations stay until next round
+			await runtime.handleLeadTool(pair.id, 'send_to_craft', { message: 'Redo this' });
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_craft');
+
+			// Iteration 2: Craft done → routeCraftToLead resets violations to 0
+			await runtime.onCraftTerminalState(pair.id, {
+				sessionId: pair.craftSessionId,
+				kind: 'completed',
+			});
+			expect(taskPairRepo.getPair(pair.id)!.leadContractViolations).toBe(0);
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+
+			// Lead finishes cleanly
+			await runtime.handleLeadTool(pair.id, 'complete_task', { summary: 'Done' });
+			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+		});
+
+		it('should spawn the next pending task after first pair completes', async () => {
+			// Create two tasks under the same goal
+			const goal = await goalManager.createGoal({ title: 'Sprint 1', description: '' });
+			const task1 = await taskManager.createTask({ title: 'Task 1', description: 'First' });
+			const task2 = await taskManager.createTask({ title: 'Task 2', description: 'Second' });
+			await goalManager.linkTaskToGoal(goal.id, task1.id);
+			await goalManager.linkTaskToGoal(goal.id, task2.id);
+
+			runtime.start();
+
+			// Tick 1: picks up task1 (maxConcurrentPairs = 1)
+			await runtime.tick();
+			const pair1 = taskPairRepo.getActivePairs('room-1')[0];
+			expect(pair1).toBeDefined();
+
+			// Complete pair1 directly via pairManager (avoids scheduleTick microtask timing)
+			await runtime.pairManager.completePair(pair1.id, 'Task 1 done');
+			expect((await taskManager.getTask(task1.id))!.status).toBe('completed');
+			expect(taskPairRepo.getActivePairs('room-1')).toHaveLength(0);
+
+			// Tick 2: picks up task2 now that slot is free
+			await runtime.tick();
+			expect(taskPairRepo.getActivePairs('room-1')).toHaveLength(1);
+			expect(taskPairRepo.getActivePairs('room-1')[0].id).not.toBe(pair1.id);
+			expect((await taskManager.getTask(task2.id))!.status).toBe('in_progress');
+		});
+	});
+
 	describe('onLeadTerminalState (contract validation)', () => {
 		it('should nudge on first contract violation', async () => {
 			await createGoalAndTask();
