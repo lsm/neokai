@@ -5,7 +5,7 @@
  * Extracted from MessageInput.tsx for better separation of concerns.
  */
 
-import { useState, useEffect, useCallback } from 'preact/hooks';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
 import { sessionStore } from '../lib/session-store.ts';
 
 export interface UseCommandAutocompleteOptions {
@@ -39,7 +39,21 @@ export function useCommandAutocomplete({
 	// global slashCommandsSignal, so it always reflects the active session's commands.
 	// Guard with Array.isArray: corrupted sessions may have a string stored in DB.
 	const rawCommands = sessionStore.commandsData.value;
-	const availableCommands = Array.isArray(rawCommands) ? rawCommands : [];
+
+	// Stabilize the array reference: only return a new reference when command values
+	// actually change. This prevents the useEffect below from re-running (and
+	// re-showing a closed dropdown) when the server sends a new array object with
+	// identical command names (e.g. periodic state syncs that JSON-parse the same data).
+	const prevCmdsRef = useRef<string[]>([]);
+	const availableCommands = useMemo(() => {
+		const cmds = Array.isArray(rawCommands) ? rawCommands : [];
+		const prev = prevCmdsRef.current;
+		if (cmds.length === prev.length && cmds.every((c, i) => c === prev[i])) {
+			return prev;
+		}
+		prevCmdsRef.current = cmds;
+		return cmds;
+	}, [rawCommands]);
 
 	// Detect slash commands
 	useEffect(() => {
