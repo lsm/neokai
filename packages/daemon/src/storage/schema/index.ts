@@ -144,7 +144,9 @@ export function createTables(db: BunDatabase): void {
         session_ids TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        context_version INTEGER DEFAULT 0,
+        config TEXT
       )
     `);
 
@@ -165,7 +167,65 @@ export function createTables(db: BunDatabase): void {
         created_at INTEGER NOT NULL,
         started_at INTEGER,
         completed_at INTEGER,
+        task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+        version INTEGER DEFAULT 0,
+        created_by_task_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Goals table
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS goals (
+        id TEXT PRIMARY KEY,
+        room_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active'
+          CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
+        priority TEXT NOT NULL DEFAULT 'normal'
+          CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+        progress INTEGER DEFAULT 0,
+        linked_task_ids TEXT DEFAULT '[]',
+        metrics TEXT DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        planning_attempts INTEGER DEFAULT 0,
+        goal_review_attempts INTEGER DEFAULT 0,
+        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Prompt templates and rendered prompts
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS prompt_templates (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL
+          CHECK(category IN ('room_agent', 'manager_agent', 'worker_agent', 'lobby_agent', 'security_agent', 'router_agent')),
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        template TEXT NOT NULL,
+        variables TEXT DEFAULT '[]',
+        version INTEGER DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS rendered_prompts (
+        id TEXT PRIMARY KEY,
+        template_id TEXT NOT NULL,
+        room_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        rendered_with TEXT DEFAULT '{}',
+        template_version INTEGER DEFAULT 1,
+        rendered_at INTEGER NOT NULL,
+        customizations TEXT,
+        FOREIGN KEY (template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
+        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+        UNIQUE(template_id, room_id)
       )
     `);
 
@@ -208,6 +268,58 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	// Room Runtime tables
+
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS task_pairs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        craft_session_id TEXT NOT NULL,
+        lead_session_id TEXT NOT NULL,
+        pair_state TEXT NOT NULL DEFAULT 'awaiting_craft'
+          CHECK(pair_state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+        feedback_iteration INTEGER NOT NULL DEFAULT 0,
+        lead_contract_violations INTEGER NOT NULL DEFAULT 0,
+        last_processed_lead_turn_id TEXT,
+        last_forwarded_message_id TEXT,
+        active_work_started_at INTEGER,
+        active_work_elapsed INTEGER NOT NULL DEFAULT 0,
+        hibernated_at INTEGER,
+        version INTEGER NOT NULL DEFAULT 0,
+        tokens_used INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER
+      )
+    `);
+
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS task_messages (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id),
+        pair_id TEXT NOT NULL REFERENCES task_pairs(id),
+        from_role TEXT NOT NULL CHECK(from_role IN ('craft', 'lead', 'human')),
+        to_role TEXT NOT NULL CHECK(to_role IN ('craft', 'lead')),
+        to_session_id TEXT NOT NULL,
+        message_type TEXT NOT NULL DEFAULT 'normal'
+          CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'delivered', 'dead_letter')),
+        created_at INTEGER NOT NULL,
+        delivered_at INTEGER
+      )
+    `);
+
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS room_audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `);
+
 	// Create indexes
 	createIndexes(db);
 }
@@ -228,6 +340,8 @@ function createIndexes(db: BunDatabase): void {
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
 
 	// GitHub integration indexes
 	db.exec(
@@ -236,5 +350,21 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_inbox_items_status ON inbox_items(status)`);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_rendered_prompts_room ON rendered_prompts(room_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_rendered_prompts_template ON rendered_prompts(template_id)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category)`);
+
+	// Room Runtime indexes
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_pairs_task ON task_pairs(task_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_pairs_state ON task_pairs(pair_state)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_pairs_craft ON task_pairs(craft_session_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_pairs_lead ON task_pairs(lead_session_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_messages_pair ON task_messages(pair_id, status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_room_audit_log_room ON room_audit_log(room_id, created_at)`
 	);
 }
