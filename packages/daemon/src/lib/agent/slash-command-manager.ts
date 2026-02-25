@@ -75,6 +75,31 @@ export class SlashCommandManager {
 	}
 
 	/**
+	 * Update commands from the SDK system init message.
+	 * This is the most reliable source — fires immediately on every query start
+	 * and contains all built-in commands plus custom skills.
+	 */
+	async updateFromInit(sdkCommands: string[]): Promise<void> {
+		if (this.commandsFetchedFromSDK) return;
+
+		const { session, db, daemonHub } = this.ctx;
+
+		const kaiBuiltInCommands = getBuiltInCommandNames();
+		const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
+
+		this.slashCommands = allCommands;
+		this.commandsFetchedFromSDK = true;
+
+		session.availableCommands = this.slashCommands;
+		db.updateSession(session.id, { availableCommands: this.slashCommands });
+
+		await daemonHub.emit('commands.updated', {
+			sessionId: session.id,
+			commands: this.slashCommands,
+		});
+	}
+
+	/**
 	 * Fetch and cache slash commands from SDK
 	 */
 	async fetchAndCache(): Promise<void> {

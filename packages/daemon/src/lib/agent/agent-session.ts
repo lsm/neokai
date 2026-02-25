@@ -684,6 +684,10 @@ export class AgentSession
 		await this.slashCommandManager.fetchAndCache();
 	}
 
+	async onInitSlashCommands(commands: string[]): Promise<void> {
+		await this.slashCommandManager.updateFromInit(commands);
+	}
+
 	async onModelsFetched(): Promise<void> {
 		if (!this.queryObject) return;
 		try {

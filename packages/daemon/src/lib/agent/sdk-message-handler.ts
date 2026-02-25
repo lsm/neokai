@@ -27,6 +27,7 @@ import {
 	isSDKStatusMessage,
 	isSDKCompactBoundary,
 	isSDKSystemMessage,
+	isSDKSystemInit,
 } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
@@ -58,6 +59,9 @@ export interface SDKMessageHandlerContext {
 	// Mutable query state (needed to check if query is running)
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
+
+	// Called when the SDK init message provides the full slash commands list
+	onInitSlashCommands: (commands: string[]) => Promise<void>;
 }
 
 export class SDKMessageHandler {
@@ -331,7 +335,7 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Handle system message (capture SDK session ID)
+	 * Handle system message (capture SDK session ID and slash commands)
 	 */
 	private async handleSystemMessage(message: SDKMessage): Promise<void> {
 		const { session, db, daemonHub } = this.ctx;
@@ -356,6 +360,14 @@ export class SDKMessageHandler {
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id },
 			});
+		}
+
+		// Capture the full slash commands list from the init message.
+		// This is the authoritative source — it includes all SDK built-ins plus
+		// any custom skills, and fires immediately when a query starts.
+		// Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
+		if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
+			await this.ctx.onInitSlashCommands(message.slash_commands);
 		}
 	}
 
