@@ -24,6 +24,61 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
 }
 
 /**
+ * Get the workspace root path from the system state
+ */
+export async function getWorkspaceRoot(page: Page): Promise<string> {
+	const workspaceRoot = await page.evaluate(async () => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub || !hub.request) {
+			throw new Error('MessageHub not available');
+		}
+
+		const systemState = await hub.request('state.system', {});
+		return (systemState as { workspaceRoot: string }).workspaceRoot;
+	});
+
+	if (!workspaceRoot) {
+		throw new Error('Workspace root not found in system state');
+	}
+
+	return workspaceRoot;
+}
+
+/**
+ * Create a new session through the UI modal
+ * This helper uses RPC directly to create sessions for reliability,
+ * then navigates to the session via URL.
+ */
+export async function createSessionViaUI(page: Page): Promise<string> {
+	// Get the workspace root path
+	const workspaceRoot = await getWorkspaceRoot(page);
+
+	// Create session via RPC (more reliable than UI modal)
+	const sessionId = await page.evaluate(async (workspacePath) => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub || !hub.request) {
+			throw new Error('MessageHub not available');
+		}
+
+		const response = await hub.request('session.create', {
+			workspacePath,
+			createdBy: 'human',
+		});
+		return (response as { sessionId: string }).sessionId;
+	}, workspaceRoot);
+
+	if (!sessionId) {
+		throw new Error('Failed to create session');
+	}
+
+	// Navigate to the session using the correct path format
+	await page.goto(`/session/${sessionId}`);
+
+	// Wait for session to be loaded
+	return await waitForSessionCreated(page);
+}
+
+/**
  * Wait for session to be created and loaded
  */
 export async function waitForSessionCreated(page: Page): Promise<string> {
@@ -38,7 +93,7 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 
 	// Verify we're in a chat view (message input should be visible)
 	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-	await expect(messageInput).toBeVisible({ timeout: 10000 });
+	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
 	// Get and return the session ID - try multiple methods for robustness

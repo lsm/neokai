@@ -95,13 +95,10 @@ describe('Context Tracking Integration', () => {
 			const session = createTestSession(env.testWorkspace, { id: sessionId });
 			env.db.createSession(session);
 
-			const contextTracker = new ContextTracker(
-				sessionId,
-				(contextInfo: ContextInfo) => {
-					session.metadata.lastContextInfo = contextInfo;
-					env.db.updateSession(sessionId, { metadata: session.metadata });
-				}
-			);
+			const contextTracker = new ContextTracker(sessionId, (contextInfo: ContextInfo) => {
+				session.metadata.lastContextInfo = contextInfo;
+				env.db.updateSession(sessionId, { metadata: session.metadata });
+			});
 
 			const detailedContext: ContextInfo = {
 				model: 'claude-sonnet-4-5-20250929',

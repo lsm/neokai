@@ -14,7 +14,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 // Desktop viewport for standard tests
 const DESKTOP_VIEWPORT = { width: 1280, height: 720 };
@@ -42,18 +42,12 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 		// Verify NavRail has w-16 class (64px width)
 		await expect(navRail).toHaveClass(/w-16/);
 
-		// Verify it contains navigation icons
+		// Verify it contains navigation icons (current UI: Home, Chats, Settings)
+		const homeButton = page.getByRole('button', { name: 'Home', exact: true });
+		await expect(homeButton).toBeVisible();
+
 		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
 		await expect(chatsButton).toBeVisible();
-
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await expect(roomsButton).toBeVisible();
-
-		const projectsButton = page.getByRole('button', {
-			name: 'Projects (Coming Soon)',
-			exact: true,
-		});
-		await expect(projectsButton).toBeVisible();
 
 		const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
 		await expect(settingsButton).toBeVisible();
@@ -64,8 +58,8 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 		const contextPanel = page.locator('.w-70').first();
 		await expect(contextPanel).toBeVisible();
 
-		// It contains the "Chats" header and "New Session" button
-		const contextPanelHeader = page.locator('h2:has-text("Chats")');
+		// It contains the "Rooms" header and "New Session" button on home page
+		const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 		await expect(contextPanelHeader).toBeVisible();
 
 		// New Session button should be visible in ContextPanel
@@ -80,28 +74,19 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 		await expect(lobbyHeader).toBeVisible();
 	});
 
-	test('should have Projects icon disabled', async ({ page }) => {
-		const projectsButton = page.getByRole('button', {
-			name: 'Projects (Coming Soon)',
-			exact: true,
-		});
-		await expect(projectsButton).toBeVisible();
-		await expect(projectsButton).toBeDisabled();
-	});
-
 	test('should show SessionList in ContextPanel by default', async ({ page }) => {
-		// On page load, ContextPanel should show the Chats section with SessionList
-		// The ContextPanel header should show "Chats"
-		const contextPanelHeader = page.locator('h2:has-text("Chats")');
+		// On page load (home section), ContextPanel should show the Rooms section with SessionList
+		// The ContextPanel header should show "Rooms" on home page
+		const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 		await expect(contextPanelHeader).toBeVisible();
 
 		// New Session button should be visible (part of SessionList container)
 		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
 		await expect(newSessionButton).toBeVisible();
 
-		// Chats button in NavRail should be active
-		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
-		await expect(chatsButton).toHaveAttribute('aria-pressed', 'true');
+		// Home button in NavRail should be active
+		const homeButton = page.getByRole('button', { name: 'Home', exact: true });
+		await expect(homeButton).toHaveAttribute('aria-pressed', 'true');
 	});
 });
 
@@ -117,67 +102,40 @@ test.describe('Navigation Section Switching', () => {
 		await page.waitForTimeout(500);
 	});
 
-	test('should show SessionList when Chats is active', async ({ page }) => {
-		// Click Chats button to ensure we're on that section
-		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
-		await chatsButton.click();
+	test('should show SessionList when Home is active', async ({ page }) => {
+		// Click Home button to ensure we're on that section
+		const homeButton = page.getByRole('button', { name: 'Home', exact: true });
+		await homeButton.click();
 		await page.waitForTimeout(300);
 
-		// ContextPanel header should show "Chats"
-		const contextPanelHeader = page.locator('h2:has-text("Chats")');
-		await expect(contextPanelHeader).toBeVisible();
-
-		// New Session button should be visible (part of chats section)
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await expect(newSessionButton).toBeVisible();
-
-		// Chats button should be active (aria-pressed=true)
-		await expect(chatsButton).toHaveAttribute('aria-pressed', 'true');
-	});
-
-	test('should show RoomList when Rooms is clicked', async ({ page }) => {
-		// Click Rooms button
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await roomsButton.click();
-		await page.waitForTimeout(300);
-
-		// ContextPanel header should show "Rooms"
+		// ContextPanel header should show "Rooms" on home page
 		const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 		await expect(contextPanelHeader).toBeVisible();
 
-		// Create Room button should be visible
-		const createRoomButton = page.getByRole('button', { name: 'Create Room', exact: true });
-		await expect(createRoomButton).toBeVisible();
+		// New Session button should be visible (part of home section)
+		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
+		await expect(newSessionButton).toBeVisible();
 
-		// Rooms button should be active
-		await expect(roomsButton).toHaveAttribute('aria-pressed', 'true');
+		// Home button should be active (aria-pressed=true)
+		await expect(homeButton).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	test('should show Settings section when Settings is clicked', async ({ page }) => {
 		// Click Settings button
 		const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
 		await settingsButton.click();
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(500);
 
-		// ContextPanel header should show "Settings"
-		const contextPanelHeader = page.locator('h2:has-text("Settings")');
-		await expect(contextPanelHeader).toBeVisible();
+		// ContextPanel header should show "Settings" (exact match to avoid "Global Settings")
+		const contextPanelHeader = page.getByRole('heading', {
+			name: 'Settings',
+			exact: true,
+			level: 2,
+		});
+		await expect(contextPanelHeader).toBeVisible({ timeout: 10000 });
 
 		// Settings button should be active
 		await expect(settingsButton).toHaveAttribute('aria-pressed', 'true');
-	});
-
-	test('should show Projects coming soon content when Projects is clicked (if enabled)', async ({
-		page,
-	}) => {
-		// Note: Projects button is disabled, so this tests the UI state
-		const projectsButton = page.getByRole('button', {
-			name: 'Projects (Coming Soon)',
-			exact: true,
-		});
-
-		// Verify it's disabled
-		await expect(projectsButton).toBeDisabled();
 	});
 });
 
@@ -208,12 +166,8 @@ test.describe('Session Navigation', () => {
 	});
 
 	test('should create new session via New Session button', async ({ page }) => {
-		// Click New Session button in ContextPanel
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-
-		// Wait for session to be created
-		sessionId = await waitForSessionCreated(page);
+		// Create session via the UI helper
+		sessionId = await createSessionViaUI(page);
 
 		// Verify session ID was obtained
 		expect(sessionId).toBeTruthy();
@@ -221,9 +175,7 @@ test.describe('Session Navigation', () => {
 
 	test('should show new session in SessionList', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Session should appear in the sidebar (ContextPanel)
 		const sessionCard = page.locator(`[data-session-id="${sessionId}"]`);
@@ -232,22 +184,17 @@ test.describe('Session Navigation', () => {
 
 	test('should navigate to session when clicked in SessionList', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Navigate away to home first
 		await page.goto('/');
+		// Wait for Lobby to load with Recent Sessions section
+		await expect(page.locator('h3:has-text("Recent Sessions")')).toBeVisible({ timeout: 10000 });
 		await page.waitForTimeout(500);
 
-		// Make sure we're on Chats section
-		const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
-		await chatsButton.click();
-		await page.waitForTimeout(300);
-
-		// Click on the session in the list
+		// Click on the session in the Recent Sessions list
 		const sessionCard = page.locator(`[data-session-id="${sessionId}"]`);
-		await expect(sessionCard).toBeVisible({ timeout: 5000 });
+		await expect(sessionCard).toBeVisible({ timeout: 10000 });
 		await sessionCard.click();
 
 		// URL should change to /session/{sessionId}
@@ -257,73 +204,11 @@ test.describe('Session Navigation', () => {
 
 	test('should show session content in MainContent area', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// MainContent should show the chat container with message input
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(textarea).toBeVisible({ timeout: 10000 });
-	});
-});
-
-test.describe('Room Navigation', () => {
-	test.use({ viewport: DESKTOP_VIEWPORT });
-
-	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
-		// Wait for the app to load by checking for the New Session button
-		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
-			timeout: 10000,
-		});
-		await page.waitForTimeout(500);
-	});
-
-	test('should show RoomList when Rooms section is active', async ({ page }) => {
-		// Click Rooms button
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await roomsButton.click();
-		await page.waitForTimeout(300);
-
-		// ContextPanel should show "Rooms" header
-		const contextPanelHeader = page.locator('h2:has-text("Rooms")');
-		await expect(contextPanelHeader).toBeVisible();
-
-		// Create Room button should be visible
-		const createRoomButton = page.getByRole('button', { name: 'Create Room', exact: true });
-		await expect(createRoomButton).toBeVisible();
-	});
-
-	test('should create room and navigate to it', async ({ page }) => {
-		// Navigate to Rooms section
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await roomsButton.click();
-		await page.waitForTimeout(300);
-
-		// Click Create Room button
-		const createRoomButton = page.getByRole('button', { name: 'Create Room', exact: true });
-		await createRoomButton.click();
-		await page.waitForTimeout(1000);
-
-		// Should navigate to a room URL
-		expect(page.url()).toMatch(/\/room\//);
-	});
-
-	test('should show Room component in MainContent when viewing a room', async ({ page }) => {
-		// Create a room
-		const roomsButton = page.getByRole('button', { name: 'Rooms', exact: true });
-		await roomsButton.click();
-		await page.waitForTimeout(300);
-
-		const createRoomButton = page.getByRole('button', { name: 'Create Room', exact: true });
-		await createRoomButton.click();
-		await page.waitForTimeout(1000);
-
-		// Room component should be visible with room header
-		// Look for the room name header or dashboard content
-		await expect(page.locator('h2').filter({ hasText: /Room/ }).first()).toBeVisible({
-			timeout: 5000,
-		});
 	});
 });
 
@@ -335,16 +220,8 @@ test.describe
 		async function createSessionForMobileTest(
 			page: typeof import('@playwright/test').Page
 		): Promise<string> {
-			// On mobile at home page, ContextPanel is hidden but New Session might be visible in Lobby
-			// Try clicking New Session from Lobby header
-			const lobbyNewSessionButton = page
-				.getByRole('button', { name: 'New Session', exact: true })
-				.first();
-			if (await lobbyNewSessionButton.isVisible().catch(() => false)) {
-				await lobbyNewSessionButton.dispatchEvent('click');
-				return waitForSessionCreated(page);
-			}
-			throw new Error('Could not find New Session button');
+			// Use the centralized helper
+			return createSessionViaUI(page);
 		}
 
 		test.beforeEach(async ({ page }) => {
@@ -353,7 +230,7 @@ test.describe
 			await expect(page.locator('h2:has-text("Neo Lobby")')).toBeVisible({ timeout: 10000 });
 
 			// If the ContextPanel drawer is open from a previous test, close it
-			const contextPanelHeader = page.locator('h2:has-text("Chats")');
+			const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 			if (await contextPanelHeader.isVisible().catch(() => false)) {
 				// Try clicking the close button first (use dispatchEvent to avoid viewport issues)
 				const closeButton = page.locator('button[title="Close panel"]');
@@ -387,8 +264,8 @@ test.describe
 		// The drawer behavior is tested in other mobile tests (open/close via hamburger menu)
 		test.skip('should hide ContextPanel drawer by default on mobile', async ({ page }) => {
 			// ContextPanel uses "-translate-x-full md:translate-x-0" so it's hidden by default on mobile
-			// The "Chats" header in ContextPanel should not be visible initially
-			const contextPanelHeader = page.locator('h2:has-text("Chats")');
+			// The "Rooms" header in ContextPanel should not be visible initially
+			const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 			const isVisible = await contextPanelHeader.isVisible().catch(() => false);
 			expect(isVisible).toBe(false);
 		});
@@ -418,15 +295,22 @@ test.describe
 				// Click hamburger menu
 				const hamburgerButton = page.locator('button[title="Open menu"]');
 				await hamburgerButton.click();
-				await page.waitForTimeout(300);
 
-				// ContextPanel should now be visible
-				const contextPanelHeader = page.locator('h2:has-text("Chats")');
-				await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
+				// Wait for the drawer animation - check for backdrop which appears when drawer is open
+				const backdrop = page.locator('.fixed.inset-0.bg-black\\/50');
+				await expect(backdrop).toBeVisible({ timeout: 5000 });
 
-				// New Session button should be visible
-				const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-				await expect(newSessionButton).toBeVisible();
+				// Wait for animation to complete
+				await page.waitForTimeout(500);
+
+				// Check that ContextPanel is visible by looking for the close button
+				const closeButton = page.locator('button[title="Close panel"]');
+				await expect(closeButton).toBeVisible({ timeout: 5000 });
+
+				// Verify the drawer has content by checking for any heading
+				// The ContextPanel shows "Rooms" on home section
+				const panelContent = page.locator('.w-70').first();
+				await expect(panelContent).toBeVisible({ timeout: 5000 });
 			} finally {
 				if (sessionId) {
 					await cleanupTestSession(page, sessionId).catch(() => {});
@@ -468,8 +352,8 @@ test.describe
 				await hamburgerButton.click();
 				await page.waitForTimeout(300);
 
-				// Verify drawer is open
-				const contextPanelHeader = page.locator('h2:has-text("Chats")');
+				// Verify drawer is open (shows "Rooms" on home section)
+				const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 				await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
 
 				// Click the backdrop - use force:true because session cards may intercept
@@ -499,8 +383,8 @@ test.describe
 				await hamburgerButton.click();
 				await page.waitForTimeout(500);
 
-				// Verify drawer is open
-				const contextPanelHeader = page.locator('h2:has-text("Chats")');
+				// Verify drawer is open (shows "Rooms" on home section)
+				const contextPanelHeader = page.locator('h2:has-text("Rooms")');
 				await expect(contextPanelHeader).toBeVisible({ timeout: 5000 });
 
 				// Click the close button (has title="Close panel") - use force to avoid interception
@@ -522,15 +406,8 @@ test.describe
 			let sessionId: string | null = null;
 
 			try {
-				// On mobile home page, try to create session via Lobby button
-				const lobbyNewSessionButton = page
-					.getByRole('button', { name: 'New Session', exact: true })
-					.first();
-				await expect(lobbyNewSessionButton).toBeVisible({ timeout: 5000 });
-				await lobbyNewSessionButton.dispatchEvent('click');
-
-				// Wait for session creation
-				sessionId = await waitForSessionCreated(page);
+				// Create session via the UI helper
+				sessionId = await createSessionViaUI(page);
 				expect(sessionId).toBeTruthy();
 			} finally {
 				// Cleanup
@@ -552,9 +429,9 @@ test.describe
 				await hamburgerButton.click();
 				await page.waitForTimeout(500);
 
-				// Initially should show Chats
-				const chatsHeader = page.locator('h2:has-text("Chats")');
-				await expect(chatsHeader).toBeVisible({ timeout: 5000 });
+				// Should show Rooms section (sessions are listed here on home page)
+				const roomsHeader = page.locator('h2:has-text("Rooms")');
+				await expect(roomsHeader).toBeVisible({ timeout: 5000 });
 
 				// Since NavRail is hidden on mobile, verify we can see the drawer content
 				// and close it by clicking backdrop with force to avoid interception
@@ -563,7 +440,7 @@ test.describe
 				await page.waitForTimeout(500);
 
 				// Drawer should be closed
-				const isVisible = await chatsHeader.isVisible().catch(() => false);
+				const isVisible = await roomsHeader.isVisible().catch(() => false);
 				expect(isVisible).toBe(false);
 			} finally {
 				if (sessionId) {

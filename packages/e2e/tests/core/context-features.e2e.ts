@@ -10,7 +10,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 	waitForAssistantResponse,
 } from '../helpers/wait-helpers';
@@ -35,8 +35,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should display context usage indicator', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Context usage bar should be visible (the clickable indicator area)
 		// Title is "Context data loading..." initially
@@ -46,8 +45,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should show context loading state initially', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Initial state should show loading message
 		const loadingIndicator = page.locator('[title="Context data loading..."]');
@@ -56,8 +54,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should toggle dropdown when clicking indicator again', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -109,8 +106,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 		page,
 	}) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -133,8 +129,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show context window percentage in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -157,8 +152,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show breakdown section in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -179,8 +173,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show model information in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -201,8 +194,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should display token counts in breakdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -227,8 +219,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show progress bar in context window section', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -274,8 +265,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 
 	test('should close dropdown when clicking close button', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -311,8 +301,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 	test.skip('should close dropdown with Escape key', async ({ page }) => {
 		// TODO: Escape key close not implemented in dropdown
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -344,8 +333,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 	test.skip('should close dropdown when clicking outside', async ({ page }) => {
 		// TODO: Click outside close not working reliably
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
