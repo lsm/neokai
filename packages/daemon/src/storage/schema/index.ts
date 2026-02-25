@@ -197,38 +197,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	// Prompt templates and rendered prompts
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS prompt_templates (
-        id TEXT PRIMARY KEY,
-        category TEXT NOT NULL
-          CHECK(category IN ('room_agent', 'manager_agent', 'worker_agent', 'lobby_agent', 'security_agent', 'router_agent')),
-        name TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        template TEXT NOT NULL,
-        variables TEXT DEFAULT '[]',
-        version INTEGER DEFAULT 1,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS rendered_prompts (
-        id TEXT PRIMARY KEY,
-        template_id TEXT NOT NULL,
-        room_id TEXT NOT NULL,
-        content TEXT NOT NULL,
-        rendered_with TEXT DEFAULT '{}',
-        template_version INTEGER DEFAULT 1,
-        rendered_at INTEGER NOT NULL,
-        customizations TEXT,
-        FOREIGN KEY (template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
-        FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
-        UNIQUE(template_id, room_id)
-      )
-    `);
-
 	// GitHub integration tables
 
 	// Room GitHub mappings - maps repositories to rooms
@@ -351,12 +319,6 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_inbox_items_repository ON inbox_items(repository, issue_number)`
 	);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_rendered_prompts_room ON rendered_prompts(room_id)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_rendered_prompts_template ON rendered_prompts(template_id)`
-	);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category)`);
-
 	// Room Runtime indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_pairs_task ON task_pairs(task_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_pairs_state ON task_pairs(pair_state)`);
