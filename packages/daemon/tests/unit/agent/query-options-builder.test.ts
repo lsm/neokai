@@ -378,19 +378,38 @@ describe('QueryOptionsBuilder', () => {
 			expect(options.settingSources).toEqual([]);
 		});
 
-		it('should only block high-risk built-in tools for room sessions', async () => {
+		it('should enforce room built-in tool allowlist', async () => {
 			mockSession.type = 'room_chat';
 			const options = await builder.build();
-			const disallowed = options.disallowedTools ?? [];
+			expect(options.tools).toEqual([
+				'Read',
+				'Glob',
+				'Grep',
+				'WebFetch',
+				'WebSearch',
+				'ToolSearch',
+				'AskUserQuestion',
+				'Skill',
+			]);
+			expect(options.allowedTools).toEqual(
+				expect.arrayContaining([
+					'Read',
+					'Glob',
+					'Grep',
+					'WebFetch',
+					'WebSearch',
+					'ToolSearch',
+					'AskUserQuestion',
+					'Skill',
+					'room-agent-tools__*',
+				])
+			);
+		});
 
-			expect(disallowed).toContain('Bash');
-			expect(disallowed).toContain('Edit');
-			expect(disallowed).toContain('Write');
-			expect(disallowed).not.toContain('Read');
-			expect(disallowed).not.toContain('TodoWrite');
-			expect(disallowed).not.toContain('EnterPlanMode');
-			expect(disallowed).not.toContain('ExitPlanMode');
-			expect(disallowed).not.toContain('ToolSearch');
+		it('should disable Claude Code preset system prompt for room sessions', async () => {
+			mockSession.type = 'room_chat';
+			const options = await builder.build();
+			expect(options.systemPrompt).toBeUndefined();
 		});
 	});
 
