@@ -3,11 +3,9 @@
  *
  * Generalized external message processing system:
  * - Types for external messages and routing
- * - LobbyAgentService for orchestrating all sources
  * - Adapters for different external sources
  */
 
-export { LobbyAgentService, type LobbyAgentContext } from './lobby-agent-service';
 export type {
 	ExternalMessage,
 	ExternalSource,
@@ -20,10 +18,3 @@ export type {
 	LobbyAgentStats,
 	LobbyAgentConfig,
 } from './types';
-export { DEFAULT_LOBBY_AGENT_CONFIG } from './types';
-export {
-	// @public - Library export
-	GitHubAdapter,
-	createGitHubAdapter,
-	type GitHubAdapterConfig,
-} from './adapters/github-adapter';

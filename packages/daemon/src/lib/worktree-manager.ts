@@ -406,13 +406,23 @@ export class WorktreeManager {
 	 * Get the current branch name for a worktree
 	 */
 	async getCurrentBranch(worktreePath: string): Promise<string | null> {
+		const git = simpleGit(worktreePath);
+
 		try {
-			const git = simpleGit(worktreePath);
-			const branch = await git.revparse(['--abbrev-ref', 'HEAD']);
-			return branch.trim();
-		} catch (error) {
-			this.logger.error(' Failed to get current branch:', error);
+			// Works for normal repos and returns empty string for unborn HEAD.
+			const branch = (await git.raw(['branch', '--show-current'])).trim();
+			if (branch) {
+				return branch;
+			}
 			return null;
+		} catch {
+			// Fallback for older git variants.
+			try {
+				const branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+				return branch && branch !== 'HEAD' ? branch : null;
+			} catch {
+				return null;
+			}
 		}
 	}
 

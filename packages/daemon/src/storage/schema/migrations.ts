@@ -593,9 +593,11 @@ function runMigration32(db: BunDatabase): void {
 		// Rebuild sessions table: update type CHECK constraint
 		// (drop 'room_self' and 'manager', add 'craft' and 'lead')
 		if (tableExists(db, 'sessions')) {
-			// Migrate old type values first
+			// Migrate old type values first (disable CHECK so new values are accepted)
+			db.exec(`PRAGMA ignore_check_constraints = 1`);
 			db.exec(`UPDATE sessions SET type = 'craft' WHERE type = 'room_self'`);
 			db.exec(`UPDATE sessions SET type = 'lead' WHERE type = 'manager'`);
+			db.exec(`PRAGMA ignore_check_constraints = 0`);
 			// Remove any rows with unmappable types
 			db.exec(
 				`DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')`

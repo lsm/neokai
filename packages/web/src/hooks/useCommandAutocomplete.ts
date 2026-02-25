@@ -34,13 +34,17 @@ export function useCommandAutocomplete({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [filteredCommands, setFilteredCommands] = useState<string[]>([]);
 
+	// Read signal in render scope to subscribe to changes - when commands load,
+	// this will trigger a re-render and the effect below will re-run.
+	const availableCommands = slashCommandsSignal.value;
+
 	// Detect slash commands
 	useEffect(() => {
 		const trimmedContent = content.trimStart();
 
-		if (trimmedContent.startsWith('/') && slashCommandsSignal.value.length > 0) {
+		if (trimmedContent.startsWith('/') && availableCommands.length > 0) {
 			const query = trimmedContent.slice(1).toLowerCase();
-			const filtered = slashCommandsSignal.value.filter((cmd) => cmd.toLowerCase().includes(query));
+			const filtered = availableCommands.filter((cmd) => cmd.toLowerCase().includes(query));
 
 			setFilteredCommands(filtered);
 			setShowAutocomplete(filtered.length > 0);
@@ -49,7 +53,7 @@ export function useCommandAutocomplete({
 			setShowAutocomplete(false);
 			setFilteredCommands([]);
 		}
-	}, [content]);
+	}, [content, availableCommands]);
 
 	const close = useCallback(() => {
 		setShowAutocomplete(false);

@@ -16,6 +16,7 @@
  * 1. /context command is queued after each turn
  * 2. /context response is detected and parsed correctly
  * 3. Context info is updated and persisted to session metadata
+ * 4. Internal /context handling does not create repeated zero-token result loops
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -24,6 +25,17 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, getSession } from '../../helpers/daemon-actions';
 import type { ContextInfo } from '@neokai/shared';
+
+interface SDKMessageResult {
+	type: string;
+	subtype?: string;
+	usage?: {
+		input_tokens?: number;
+		output_tokens?: number;
+		cache_read_input_tokens?: number;
+		cache_creation_input_tokens?: number;
+	};
+}
 
 describe('Context Command Online Tests', () => {
 	let daemon: DaemonServerContext;
@@ -160,6 +172,44 @@ describe('Context Command Online Tests', () => {
 				expect(Object.keys(contextInfo.breakdown).length).toBeGreaterThan(0);
 			}
 		}, 60000);
+
+		test('should not produce repeated zero-token result messages after one turn', async () => {
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: process.cwd(),
+				title: 'Context Loop Regression Test',
+				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			await sendMessage(daemon, sessionId, 'Say hello in one short sentence.');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Allow any queued internal follow-up to settle, then ensure idle again
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+			await waitForIdle(daemon, sessionId, 30000);
+
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+				limit: 200,
+			})) as { sdkMessages: SDKMessageResult[] };
+			const sdkMessages = result.sdkMessages || [];
+
+			const zeroTokenSuccessResults = sdkMessages.filter((msg) => {
+				if (msg.type !== 'result' || msg.subtype !== 'success' || !msg.usage) return false;
+				return (
+					(msg.usage.input_tokens ?? 0) === 0 &&
+					(msg.usage.output_tokens ?? 0) === 0 &&
+					(msg.usage.cache_read_input_tokens ?? 0) === 0 &&
+					(msg.usage.cache_creation_input_tokens ?? 0) === 0
+				);
+			});
+
+			// A single internal zero-token result may appear depending on SDK format,
+			// but repeated 0->0 loops should never occur.
+			expect(zeroTokenSuccessResults.length).toBeLessThanOrEqual(1);
+		}, 90000);
 	});
 
 	describe('Context info format compatibility', () => {

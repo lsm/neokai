@@ -12,7 +12,6 @@ import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
-import type { LobbyAgentService } from './lib/lobby/lobby-agent-service';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -43,10 +42,6 @@ export interface DaemonAppContext {
 	 * GitHub service instance (null if not configured)
 	 */
 	gitHubService: GitHubService | null;
-	/**
-	 * Lobby agent service instance (undefined if not configured)
-	 */
-	lobbyAgentService?: LobbyAgentService;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -183,7 +178,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	}
 
 	// Setup RPC handlers (returns cleanup function)
-	let lobbyAgentService: LobbyAgentService | undefined;
 	const rpcHandlerCleanup = setupRPCHandlers({
 		messageHub,
 		sessionManager,
@@ -193,7 +187,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		daemonHub: eventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
-		lobbyAgentService,
 	});
 
 	// Create WebSocket handlers
@@ -361,12 +354,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				logInfo('[Daemon] GitHub service stopped');
 			}
 
-			// Stop lobby agent service
-			if (lobbyAgentService) {
-				await lobbyAgentService.stop();
-				logInfo('[Daemon] Lobby agent service stopped');
-			}
-
 			// Stop all agent sessions
 			await sessionManager.cleanup();
 
@@ -390,7 +377,6 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		stateManager,
 		transport,
 		gitHubService,
-		lobbyAgentService,
 		cleanup,
 	};
 }

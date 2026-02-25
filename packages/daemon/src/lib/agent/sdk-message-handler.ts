@@ -73,6 +73,32 @@ export class SDKMessageHandler {
 	// Track UUIDs of internal /context commands to skip their result messages
 	private internalContextCommandIds: Set<string> = new Set();
 
+	/**
+	 * Check if this message is the replay response for an internally queued /context command.
+	 *
+	 * This is ID-based (not content-based) so loop prevention still works if SDK output format changes.
+	 */
+	private isInternalContextResponse(message: SDKMessage): boolean {
+		if (message.type !== 'user') return false;
+		const userMessage = message as { uuid?: string };
+		return !!userMessage.uuid && this.internalContextCommandIds.has(userMessage.uuid);
+	}
+
+	/**
+	 * Check if a successful result consumed zero tokens.
+	 * Internal slash-command turns (like /context) typically produce this shape.
+	 */
+	private isZeroTokenResult(message: SDKMessage): boolean {
+		if (!isSDKResultSuccess(message)) return false;
+		const usage = message.usage;
+		return (
+			usage.input_tokens === 0 &&
+			usage.output_tokens === 0 &&
+			usage.cache_read_input_tokens === 0 &&
+			usage.cache_creation_input_tokens === 0
+		);
+	}
+
 	constructor(private ctx: SDKMessageHandlerContext) {
 		const { session } = ctx;
 		this.logger = new Logger(`SDKMessageHandler ${session.id}`);
@@ -198,6 +224,22 @@ export class SDKMessageHandler {
 		// Automatically update phase based on message type
 		await stateManager.detectPhaseFromMessage(message);
 
+		// First, correlate internal /context replay by message UUID.
+		// This avoids relying on brittle content markers that may change across SDK versions.
+		if (this.isInternalContextResponse(message)) {
+			await this.handleContextResponse(message);
+			// Skip:
+			// 1. Queuing another /context for the paired result
+			// 2. Saving/broadcasting this internal replay message
+			this.lastMessageWasContextResponse = true;
+
+			const userMsg = message as { uuid?: string };
+			if (userMsg.uuid) {
+				this.internalContextCommandIds.delete(userMsg.uuid);
+			}
+			return;
+		}
+
 		// Check if this is a /context response BEFORE saving/emitting
 		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
@@ -216,6 +258,15 @@ export class SDKMessageHandler {
 
 			// IMPORTANT: Return early to skip saving and emitting this message
 			// It's already been processed for context tracking
+			return;
+		}
+
+		// Fallback guard: if an internal /context command is pending and we get a
+		// zero-token result, treat it as the paired internal result even when replay
+		// correlation failed (SDK format/UUID drift). This prevents re-queue loops.
+		if (this.isZeroTokenResult(message) && this.internalContextCommandIds.size > 0) {
+			this.internalContextCommandIds.clear();
+			this.lastMessageWasContextResponse = false;
 			return;
 		}
 
@@ -389,7 +440,12 @@ export class SDKMessageHandler {
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
 		// Note: flag is reset when we process the result message (see early return above)
-		if (!this.lastMessageWasContextResponse) {
+		const isZeroTokenResult = this.isZeroTokenResult(message);
+		if (
+			!this.lastMessageWasContextResponse &&
+			!isZeroTokenResult &&
+			this.internalContextCommandIds.size === 0
+		) {
 			try {
 				// Queue as internal message (won't be saved to DB or broadcast as user message)
 				const messageId = await messageQueue.enqueue('/context', true);
