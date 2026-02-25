@@ -31,11 +31,15 @@ test.describe('Slash Command Autocomplete - Basic Functionality', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
+		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
+		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
+		// Fill workspace path to enable Create Session button
+		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
+		// Wait for button to be enabled (React state update after fill)
+		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
+		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
+		await createSessionBtn.click();
 		sessionId = await waitForSessionCreated(page);
 
 		// Wait for commands to load
@@ -116,11 +120,15 @@ test.describe('Slash Command Autocomplete - Navigation', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
+		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
+		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
+		// Fill workspace path to enable Create Session button
+		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
+		// Wait for button to be enabled (React state update after fill)
+		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
+		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
+		await createSessionBtn.click();
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -214,11 +222,15 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
+		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
+		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
+		// Fill workspace path to enable Create Session button
+		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
+		// Wait for button to be enabled (React state update after fill)
+		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
+		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
+		await createSessionBtn.click();
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -291,11 +303,15 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
+		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
+		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
+		// Fill workspace path to enable Create Session button
+		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
+		// Wait for button to be enabled (React state update after fill)
+		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
+		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
+		await createSessionBtn.click();
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -363,11 +379,15 @@ test.describe('Slash Command Autocomplete - Edge Cases', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
+		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
+		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
+		// Fill workspace path to enable Create Session button
+		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
+		// Wait for button to be enabled (React state update after fill)
+		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
+		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
+		await createSessionBtn.click();
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
@@ -459,11 +479,15 @@ test.describe('Slash Command Autocomplete - SDK Commands from system:init', () =
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
+		// Use .first() to avoid strict-mode violation when session list shows "New Session /path" items
+		const newSessionButton = page.getByRole('button', { name: 'New Session' }).first();
 		await newSessionButton.click();
+		// Fill workspace path to enable Create Session button
+		await page.locator('input[placeholder="Enter workspace path..."]').fill('/tmp');
+		// Wait for button to be enabled (React state update after fill)
+		const createSessionBtn = page.getByRole('button', { name: 'Create Session' });
+		await expect(createSessionBtn).toBeEnabled({ timeout: 5000 });
+		await createSessionBtn.click();
 		sessionId = await waitForSessionCreated(page);
 
 		await waitForSlashCommandsLoaded(page);
