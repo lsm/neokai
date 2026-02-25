@@ -36,7 +36,8 @@ export function useCommandAutocomplete({
 
 	// Read signal in render scope to subscribe to changes - when commands load,
 	// this will trigger a re-render and the effect below will re-run.
-	const availableCommands = slashCommandsSignal.value;
+	const rawCommands = slashCommandsSignal.value;
+	const availableCommands = Array.isArray(rawCommands) ? rawCommands : [];
 
 	// Detect slash commands
 	useEffect(() => {
