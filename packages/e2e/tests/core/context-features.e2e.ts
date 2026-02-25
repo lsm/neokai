@@ -13,6 +13,8 @@ import {
 	createSessionViaUI,
 	cleanupTestSession,
 	waitForAssistantResponse,
+	waitForSessionCreated,
+	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
 test.describe('Context Usage - Display', () => {
@@ -114,6 +116,60 @@ test.describe('Context Usage - Display', () => {
 		await expect(page.locator('text=Context Usage')).not.toBeVisible({
 			timeout: 3000,
 		});
+	});
+
+	test('should persist context data after page refresh', async ({ page }) => {
+		// Create a new session
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		sessionId = await waitForSessionCreated(page);
+
+		// Send a message to populate context data
+		const input = page.locator('textarea[placeholder*="Ask"]').first();
+		await input.fill('Hello, please respond with a brief greeting');
+		await page.keyboard.press('Enter');
+
+		// Wait for assistant response
+		await waitForAssistantResponse(page);
+
+		// Wait for context indicator to have data (title changes from "Context data loading...")
+		const contextIndicator = page.locator('[title="Click for context details"]');
+		await expect(contextIndicator).toBeVisible({ timeout: 15000 });
+
+		// Get the context percentage element by data-testid
+		const contextPercentage = page.getByTestId('context-percentage');
+		await expect(contextPercentage).toBeVisible({ timeout: 5000 });
+
+		// Get the percentage value before refresh
+		const percentageBeforeRefresh = await contextPercentage.textContent();
+		expect(percentageBeforeRefresh).not.toBe('0.0%');
+		const percentageValueBefore = parseFloat(percentageBeforeRefresh?.replace('%', '') || '0');
+		expect(percentageValueBefore).toBeGreaterThan(0);
+
+		// Refresh the page
+		await page.reload();
+
+		// Wait for page to load and WebSocket to reconnect
+		await waitForWebSocketConnected(page);
+
+		// Wait for session to load
+		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
+			timeout: 10000,
+		});
+
+		// Context indicator should still show data (not "Context data loading...")
+		const contextIndicatorAfterRefresh = page.locator('[title="Click for context details"]');
+		await expect(contextIndicatorAfterRefresh).toBeVisible({ timeout: 15000 });
+
+		// Context percentage should still be visible and non-zero
+		const contextPercentageAfterRefresh = page.getByTestId('context-percentage');
+		await expect(contextPercentageAfterRefresh).toBeVisible({ timeout: 5000 });
+
+		const percentageAfterRefresh = await contextPercentageAfterRefresh.textContent();
+		const percentageValueAfter = parseFloat(percentageAfterRefresh?.replace('%', '') || '0');
+
+		// CRITICAL: Context data should persist after refresh
+		// This is the bug - currently context usage goes back to 0 after refresh
+		expect(percentageValueAfter).toBeGreaterThan(0);
 	});
 });
 
