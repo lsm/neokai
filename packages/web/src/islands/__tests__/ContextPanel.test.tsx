@@ -38,6 +38,7 @@ let mockSessionsSignal: ReturnType<typeof signal<any[]>>;
 let mockHasArchivedSessionsSignal: ReturnType<typeof signal<boolean>>;
 let mockGlobalSettingsSignal: ReturnType<typeof signal<any>>;
 let mockSettingsSectionSignal: ReturnType<typeof signal<string>>;
+let mockCreateRoomModalSignal: ReturnType<typeof signal<boolean>>;
 // Mock the signals module - use importOriginal to pass through signals not under test
 vi.mock('../../lib/signals.ts', async (importOriginal) => {
 	const actual = await importOriginal();
@@ -51,6 +52,9 @@ vi.mock('../../lib/signals.ts', async (importOriginal) => {
 		},
 		get settingsSectionSignal() {
 			return mockSettingsSectionSignal;
+		},
+		get createRoomModalSignal() {
+			return mockCreateRoomModalSignal;
 		},
 	};
 });
@@ -139,6 +143,7 @@ mockSessionsSignal = signal<any[]>([]);
 mockHasArchivedSessionsSignal = signal<boolean>(false);
 mockGlobalSettingsSignal = signal<any>({ showArchived: false });
 mockSettingsSectionSignal = signal<string>('general');
+mockCreateRoomModalSignal = signal<boolean>(false);
 
 import { ContextPanel } from '../ContextPanel';
 
@@ -156,6 +161,7 @@ describe('ContextPanel', () => {
 		mockHasArchivedSessionsSignal.value = false;
 		mockGlobalSettingsSignal.value = { showArchived: false };
 		mockSettingsSectionSignal.value = 'general';
+		mockCreateRoomModalSignal.value = false;
 	});
 
 	afterEach(() => {
@@ -203,12 +209,12 @@ describe('ContextPanel', () => {
 	});
 
 	describe('Header Title', () => {
-		it('should show Chats title when navSection is chats', () => {
+		it('should show Sessions title when navSection is chats', () => {
 			mockNavSectionSignal.value = 'chats';
 
 			render(<ContextPanel />);
 
-			expect(screen.getByRole('heading', { name: 'Chats' })).toBeTruthy();
+			expect(screen.getByRole('heading', { name: 'Sessions' })).toBeTruthy();
 		});
 
 		it('should show Rooms title when navSection is rooms', () => {
@@ -349,44 +355,28 @@ describe('ContextPanel', () => {
 	});
 
 	describe('Create Room Action', () => {
-		it('should call createRoom when Create Room clicked', async () => {
+		it('should open create room modal when Create Room clicked', async () => {
 			mockNavSectionSignal.value = 'rooms';
-			mockCreateRoom.mockResolvedValue({ id: 'room-1', name: 'Test Room' });
 
 			render(<ContextPanel />);
 
 			const button = screen.getByRole('button', { name: /Create Room/i });
 			fireEvent.click(button);
 
-			expect(mockCreateRoom).toHaveBeenCalled();
+			// The button should open the modal by setting the signal to true
+			expect(mockCreateRoomModalSignal.value).toBe(true);
 		});
 
-		it('should navigate to room after creation', async () => {
-			mockNavSectionSignal.value = 'rooms';
-			mockCreateRoom.mockResolvedValue({ id: 'room-123', name: 'New Room' });
+		it('should open create room modal from home section', async () => {
+			mockNavSectionSignal.value = 'home';
 
 			render(<ContextPanel />);
 
 			const button = screen.getByRole('button', { name: /Create Room/i });
 			fireEvent.click(button);
 
-			await vi.waitFor(() => {
-				expect(mockNavigateToRoom).toHaveBeenCalledWith('room-123');
-			});
-		});
-
-		it('should show error toast when createRoom fails', async () => {
-			mockNavSectionSignal.value = 'rooms';
-			mockCreateRoom.mockRejectedValue(new Error('Failed to create room'));
-
-			render(<ContextPanel />);
-
-			const button = screen.getByRole('button', { name: /Create Room/i });
-			fireEvent.click(button);
-
-			await vi.waitFor(() => {
-				expect(mockToastError).toHaveBeenCalledWith('Failed to create room');
-			});
+			// The button should open the modal by setting the signal to true
+			expect(mockCreateRoomModalSignal.value).toBe(true);
 		});
 	});
 
@@ -530,7 +520,7 @@ describe('ContextPanel', () => {
 			mockNavSectionSignal.value = 'chats';
 			const { rerender } = render(<ContextPanel />);
 
-			expect(screen.getByRole('heading', { name: 'Chats' })).toBeTruthy();
+			expect(screen.getByRole('heading', { name: 'Sessions' })).toBeTruthy();
 
 			mockNavSectionSignal.value = 'rooms';
 			rerender(<ContextPanel />);

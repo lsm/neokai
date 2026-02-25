@@ -10,9 +10,11 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 	waitForAssistantResponse,
+	waitForSessionCreated,
+	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
 test.describe('Context Usage - Display', () => {
@@ -35,8 +37,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should display context usage indicator', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Context usage bar should be visible (the clickable indicator area)
 		// Title is "Context data loading..." initially
@@ -46,8 +47,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should show context loading state initially', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Initial state should show loading message
 		const loadingIndicator = page.locator('[title="Context data loading..."]');
@@ -89,8 +89,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should toggle dropdown when clicking indicator again', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -118,6 +117,60 @@ test.describe('Context Usage - Display', () => {
 			timeout: 3000,
 		});
 	});
+
+	test('should persist context data after page refresh', async ({ page }) => {
+		// Create a new session
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		sessionId = await waitForSessionCreated(page);
+
+		// Send a message to populate context data
+		const input = page.locator('textarea[placeholder*="Ask"]').first();
+		await input.fill('Hello, please respond with a brief greeting');
+		await page.keyboard.press('Enter');
+
+		// Wait for assistant response
+		await waitForAssistantResponse(page);
+
+		// Wait for context indicator to have data (title changes from "Context data loading...")
+		const contextIndicator = page.locator('[title="Click for context details"]');
+		await expect(contextIndicator).toBeVisible({ timeout: 15000 });
+
+		// Get the context percentage element by data-testid
+		const contextPercentage = page.getByTestId('context-percentage');
+		await expect(contextPercentage).toBeVisible({ timeout: 5000 });
+
+		// Get the percentage value before refresh
+		const percentageBeforeRefresh = await contextPercentage.textContent();
+		expect(percentageBeforeRefresh).not.toBe('0.0%');
+		const percentageValueBefore = parseFloat(percentageBeforeRefresh?.replace('%', '') || '0');
+		expect(percentageValueBefore).toBeGreaterThan(0);
+
+		// Refresh the page
+		await page.reload();
+
+		// Wait for page to load and WebSocket to reconnect
+		await waitForWebSocketConnected(page);
+
+		// Wait for session to load
+		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
+			timeout: 10000,
+		});
+
+		// Context indicator should still show data (not "Context data loading...")
+		const contextIndicatorAfterRefresh = page.locator('[title="Click for context details"]');
+		await expect(contextIndicatorAfterRefresh).toBeVisible({ timeout: 15000 });
+
+		// Context percentage should still be visible and non-zero
+		const contextPercentageAfterRefresh = page.getByTestId('context-percentage');
+		await expect(contextPercentageAfterRefresh).toBeVisible({ timeout: 5000 });
+
+		const percentageAfterRefresh = await contextPercentageAfterRefresh.textContent();
+		const percentageValueAfter = parseFloat(percentageAfterRefresh?.replace('%', '') || '0');
+
+		// CRITICAL: Context data should persist after refresh
+		// This is the bug - currently context usage goes back to 0 after refresh
+		expect(percentageValueAfter).toBeGreaterThan(0);
+	});
 });
 
 test.describe('Context Usage - Dropdown Content', () => {
@@ -142,8 +195,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 		page,
 	}) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -166,8 +218,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show context window percentage in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -190,8 +241,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show breakdown section in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -212,8 +262,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show model information in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -234,8 +283,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should display token counts in breakdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -260,8 +308,7 @@ test.describe('Context Usage - Dropdown Content', () => {
 
 	test('should show progress bar in context window section', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -307,8 +354,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 
 	test('should close dropdown when clicking close button', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -344,8 +390,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 	test.skip('should close dropdown with Escape key', async ({ page }) => {
 		// TODO: Escape key close not implemented in dropdown
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -377,8 +422,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 	test.skip('should close dropdown when clicking outside', async ({ page }) => {
 		// TODO: Click outside close not working reliably
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();

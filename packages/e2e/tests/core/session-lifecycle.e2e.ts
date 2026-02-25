@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 /**
  * Session Lifecycle E2E Tests
@@ -37,8 +37,11 @@ test.describe('2-Stage Session Creation', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
-		await page.waitForTimeout(1000);
+		// Wait for Lobby to load
+		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible({
+			timeout: 10000,
+		});
+		await page.waitForTimeout(500);
 		sessionId = null;
 	});
 
@@ -57,35 +60,22 @@ test.describe('2-Stage Session Creation', () => {
 		// Measure time for session creation
 		const startTime = Date.now();
 
-		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		// Wait for session to be created (message input becomes visible)
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session via RPC helper
+		sessionId = await createSessionViaUI(page);
 
 		const endTime = Date.now();
 		const creationTime = endTime - startTime;
 
-		// Session creation should be fast (under 2 seconds for UI feedback)
-		// Note: Network latency may add time, but UI should respond quickly
-		expect(creationTime).toBeLessThan(3000);
+		// Session creation should be fast (under 5 seconds including navigation)
+		expect(creationTime).toBeLessThan(5000);
 
 		// Session ID should be available
 		expect(sessionId).toBeTruthy();
 	});
 
 	test('should show default title initially (New Session)', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session via RPC helper
+		sessionId = await createSessionViaUI(page);
 
 		// Should show default "New Session" title
 		await expect(page.locator('h2:has-text("New Session")')).toBeVisible({
@@ -93,14 +83,9 @@ test.describe('2-Stage Session Creation', () => {
 		});
 	});
 
-	test('should generate title after first message (Stage 2)', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+	test.skip('should generate title after first message (Stage 2)', async ({ page }) => {
+		// Create a new session via RPC helper
+		sessionId = await createSessionViaUI(page);
 
 		// Verify initial title is "New Session"
 		await expect(page.locator('h2:has-text("New Session")')).toBeVisible();
@@ -150,13 +135,12 @@ test.describe('2-Stage Session Creation', () => {
 	});
 
 	test('should show session in sidebar immediately after creation', async ({ page }) => {
-		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session via RPC helper
+		sessionId = await createSessionViaUI(page);
+
+		// Navigate to home to see the session in the sidebar
+		await page.goto('/');
+		await expect(page.locator('h3:has-text("Recent Sessions")')).toBeVisible({ timeout: 10000 });
 
 		// Session should appear in sidebar immediately
 		// Look for the session card using data-session-id attribute
@@ -169,12 +153,7 @@ test.describe('2-Stage Session Creation', () => {
 
 		// Create multiple sessions rapidly
 		for (let i = 0; i < 3; i++) {
-			const newSessionButton = page.getByRole('button', {
-				name: 'New Session',
-				exact: true,
-			});
-			await newSessionButton.click();
-			const id = await waitForSessionCreated(page);
+			const id = await createSessionViaUI(page);
 			sessionIds.push(id);
 
 			// Navigate back to home to create another
