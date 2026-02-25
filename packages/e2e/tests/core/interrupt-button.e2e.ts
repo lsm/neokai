@@ -11,7 +11,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -23,8 +23,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should show stop button when agent is processing', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Initial state: should show send button (disabled, no content)
 		await expect(page.locator('[data-testid="send-button"]')).toBeVisible();
@@ -55,8 +54,7 @@ test.describe('Interrupt Button', () => {
 		page,
 	}) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = await waitForElement(page, 'textarea');
@@ -96,8 +94,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should interrupt agent when stop button is clicked', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a long message
 		const messageInput = await waitForElement(page, 'textarea');
@@ -126,8 +123,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should show loading spinner while interrupting', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = await waitForElement(page, 'textarea');
@@ -169,8 +165,7 @@ test.describe('Interrupt Button', () => {
 
 	test('should transition from send to stop and back to send', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		const messageInput = await waitForElement(page, 'textarea');
 
@@ -208,8 +203,7 @@ test.describe('Interrupt Button', () => {
 	test.skip('should handle rapid interrupt attempts gracefully', async ({ page }) => {
 		// TODO: This test is flaky because rapid clicks can cause the browser context to close unexpectedly
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a long message that will take time to process
 		const messageInput = await waitForElement(page, 'textarea');

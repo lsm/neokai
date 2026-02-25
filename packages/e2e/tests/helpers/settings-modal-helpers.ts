@@ -10,18 +10,14 @@ import type { Page } from '@playwright/test';
  * Open the Settings modal from the sidebar footer
  */
 export async function openSettingsModal(page: Page): Promise<void> {
-	// Find the settings button in the sidebar footer
-	// It's a button with a gear/settings icon, containing the authentication status and settings icon
-	const settingsButton = page
-		.locator('button')
-		.filter({ has: page.locator('svg[viewBox="0 0 24 24"]') })
-		.filter({ hasText: /OAuth|API Key|Not configured/ })
-		.first();
+	// Find the settings button in the NavRail (sidebar)
+	// It's a button with aria-label "Settings"
+	const settingsButton = page.getByRole('button', { name: 'Settings', exact: true });
 
 	await settingsButton.waitFor({ state: 'visible', timeout: 5000 });
 	await settingsButton.click();
 
-	// Wait for Settings modal to appear
+	// Wait for Settings section to appear in ContextPanel
 	await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
 }
 

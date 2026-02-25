@@ -19,7 +19,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	waitForWebSocketConnected,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 import { closeWebSocket, restoreWebSocket } from '../helpers/connection-helpers';

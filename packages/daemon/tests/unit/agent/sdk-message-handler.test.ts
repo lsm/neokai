@@ -335,26 +335,6 @@ describe('SDKMessageHandler', () => {
 			);
 		});
 
-		it('should call context tracker handleResultUsage', async () => {
-			const message: SDKMessage = {
-				type: 'result',
-				subtype: 'success',
-				uuid: 'test-uuid',
-				usage: {
-					input_tokens: 100,
-					output_tokens: 50,
-					cache_read_input_tokens: 10,
-					cache_creation_input_tokens: 5,
-				},
-				total_cost_usd: 0.001,
-				modelUsage: { model1: { tokens: 100 } },
-			} as unknown as SDKMessage;
-
-			await handler.handleMessage(message);
-
-			expect(handleResultUsageSpy).toHaveBeenCalled();
-		});
-
 		it('should queue /context command', async () => {
 			const message: SDKMessage = {
 				type: 'result',

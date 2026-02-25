@@ -329,11 +329,15 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 	test('should close dropdown when clicking outside', async ({ page }) => {
 		await typeInMessageInput(page, '/');
 
-		// Wait for dropdown
+		// Wait for dropdown to be fully visible and event listeners mounted
 		await expect(getAutocompleteDropdown(page)).toBeVisible();
 
-		// Click outside the dropdown (on the page body)
-		await page.locator('body').click({ position: { x: 10, y: 10 } });
+		// Click in the "No messages yet" area at the center of the chat (y≈300).
+		// This is above the dropdown (y≈555) and below the nav bar (y≈60), so:
+		//   - It generates a real native mousedown that bubbles to document
+		//   - handleClickOutside fires: target not in listRef → onClose()
+		//   - No navigation occurs (static chat area has no click handlers)
+		await page.mouse.click(640, 300);
 
 		// Dropdown should close
 		await page.waitForTimeout(500);
@@ -414,11 +418,11 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await expect(page.locator('button:has-text("context")')).toBeVisible();
 	});
 
-	test('should show /clear command', async ({ page }) => {
-		await typeInMessageInput(page, '/cl');
+	test('should show /init command', async ({ page }) => {
+		await typeInMessageInput(page, '/ini');
 
-		// Should show clear command
-		await expect(page.locator('button:has-text("clear")')).toBeVisible();
+		// Should show init command
+		await expect(page.locator('button:has-text("init")')).toBeVisible();
 	});
 
 	test('should show multiple commands matching filter', async ({ page }) => {
@@ -427,8 +431,8 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		// Wait for dropdown
 		await expect(getAutocompleteDropdown(page)).toBeVisible();
 
-		// Should show at least the clear command
-		await expect(page.locator('button:has-text("clear")')).toBeVisible();
+		// Should show at least the context command
+		await expect(page.locator('button:has-text("context")')).toBeVisible();
 	});
 });
 

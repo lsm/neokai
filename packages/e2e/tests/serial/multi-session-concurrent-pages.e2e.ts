@@ -16,7 +16,7 @@ import { test, expect } from '../../fixtures';
 import type { Browser, Page } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForMessageProcessed,
 	waitForElement,
 	cleanupTestSession,
@@ -46,8 +46,7 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 		try {
 			// Create a session in each page
 			for (const page of pages) {
-				await page.getByRole('button', { name: 'New Session', exact: true }).click();
-				const sessionId = await waitForSessionCreated(page);
+				const sessionId = await createSessionViaUI(page);
 				sessionIds.push(sessionId);
 			}
 
@@ -103,8 +102,7 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 		try {
 			// Create sessions
 			for (const page of pages) {
-				await page.getByRole('button', { name: 'New Session', exact: true }).click();
-				const sessionId = await waitForSessionCreated(page);
+				const sessionId = await createSessionViaUI(page);
 				sessionIds.push(sessionId);
 			}
 
@@ -179,11 +177,9 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 			await setupMessageHubTesting(page2);
 
 			// Create sessions
-			await page1.getByRole('button', { name: 'New Session', exact: true }).click();
-			const session1 = await waitForSessionCreated(page1);
+			const session1 = await createSessionViaUI(page1);
 
-			await page2.getByRole('button', { name: 'New Session', exact: true }).click();
-			const session2 = await waitForSessionCreated(page2);
+			const session2 = await createSessionViaUI(page2);
 
 			// Send messages concurrently
 			const message1Promise = (async () => {
@@ -227,8 +223,7 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 		try {
 			// Create sessions
 			for (const page of pages) {
-				await page.getByRole('button', { name: 'New Session', exact: true }).click();
-				const sessionId = await waitForSessionCreated(page);
+				const sessionId = await createSessionViaUI(page);
 				sessionIds.push(sessionId);
 			}
 
@@ -303,8 +298,7 @@ test.describe('Multi-Session Concurrent Pages (Skipped - Flaky)', () => {
 			);
 
 			// Create a session in first tab
-			await pages[0].getByRole('button', { name: 'New Session', exact: true }).click();
-			const sessionId = await waitForSessionCreated(pages[0]);
+			const sessionId = await createSessionViaUI(pages[0]);
 
 			// Wait for sync across tabs
 			// await waitForTabSync(pages); // TODO: Function not available

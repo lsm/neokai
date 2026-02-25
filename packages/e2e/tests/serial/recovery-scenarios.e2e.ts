@@ -9,7 +9,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -19,8 +19,7 @@ test.describe('Recovery Mechanisms', () => {
 		await setupMessageHubTesting(page);
 
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Type a message but don't send
 		const messageInput = await waitForElement(page, 'textarea');
@@ -50,8 +49,7 @@ test.describe('Recovery Mechanisms', () => {
 		await setupMessageHubTesting(page);
 
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		await page.locator('textarea').first().fill('Message before refresh');
