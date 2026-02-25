@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { slashCommandsSignal } from '../lib/signals.ts';
+import { sessionStore } from '../lib/session-store.ts';
 
 export interface UseCommandAutocompleteOptions {
 	content: string;
@@ -34,9 +34,11 @@ export function useCommandAutocomplete({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [filteredCommands, setFilteredCommands] = useState<string[]>([]);
 
-	// Read signal in render scope to subscribe to changes - when commands load,
-	// this will trigger a re-render and the effect below will re-run.
-	const rawCommands = slashCommandsSignal.value;
+	// Read per-session commands signal in render scope to subscribe to changes.
+	// Uses sessionStore.commandsData (computed from sessionState) rather than the
+	// global slashCommandsSignal, so it always reflects the active session's commands.
+	// Guard with Array.isArray: corrupted sessions may have a string stored in DB.
+	const rawCommands = sessionStore.commandsData.value;
 	const availableCommands = Array.isArray(rawCommands) ? rawCommands : [];
 
 	// Detect slash commands

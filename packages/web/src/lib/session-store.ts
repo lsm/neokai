@@ -64,9 +64,10 @@ class SessionStore {
 	);
 
 	/** Available slash commands */
-	readonly commandsData = computed<string[]>(
-		() => this.sessionState.value?.commandsData?.availableCommands || []
-	);
+	readonly commandsData = computed<string[]>(() => {
+		const cmds = this.sessionState.value?.commandsData?.availableCommands;
+		return Array.isArray(cmds) ? cmds : [];
+	});
 
 	/** Session error state */
 	readonly error = computed<{
@@ -212,7 +213,17 @@ class SessionStore {
 			});
 			this.cleanupFunctions.push(unsubSessionState);
 
-			// 2. SDK messages delta (for incremental updates)
+			// 2. Context updates (fast path - bypasses full state.session round-trip)
+			// The daemon also sends context via state.session, but subscribing directly here
+			// ensures the UI updates as soon as context.updated fires on the session channel.
+			const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
+				if (this.sessionState.value) {
+					this.sessionState.value = { ...this.sessionState.value, contextInfo };
+				}
+			});
+			this.cleanupFunctions.push(unsubContextUpdated);
+
+			// 3. SDK messages delta (for incremental updates)
 			// Set up BEFORE fetching initial state to avoid race conditions
 			// FIX: Add deduplication to prevent double messages after Safari reconnection
 			// This can happen when events are queued during reconnection and replayed,
