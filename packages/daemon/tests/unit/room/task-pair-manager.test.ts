@@ -352,11 +352,13 @@ describe('TaskPairManager', () => {
 
 			await manager.routeLeadToCraft(pair.id, 'Fix the tests');
 
-			const injectCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'injectMessage' && c.args[0] === pair.craftSessionId
+			const feedbackCalls = sessionFactory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === pair.craftSessionId &&
+					c.args[1] === 'Fix the tests'
 			);
-			expect(injectCalls).toHaveLength(1);
-			expect(injectCalls[0].args[1]).toBe('Fix the tests');
+			expect(feedbackCalls).toHaveLength(1);
 		});
 
 		it('should update pair state to awaiting_craft and increment iteration', async () => {

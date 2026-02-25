@@ -11,6 +11,8 @@ export { RoomManager } from './room-manager';
 export { TaskManager } from './task-manager';
 // @public - Library export
 export { GoalManager } from './goal-manager';
+export { RoomRuntimeService } from './room-runtime-service';
+export type { RoomRuntimeServiceConfig } from './room-runtime-service';
 
 // Types - re-exported from @neokai/shared for convenience
 export type {

@@ -123,6 +123,12 @@ export class TaskPairManager {
 		await this.sessionFactory.createAndStartSession(craftInit, 'craft');
 		await this.sessionFactory.createAndStartSession(leadInit, 'lead');
 
+		// Kick off Craft so the SDK streaming loop starts processing immediately
+		await this.sessionFactory.injectMessage(
+			craftSessionId,
+			'Please begin working on the task described in your system prompt.'
+		);
+
 		// Observe Craft session for terminal state
 		this.observer.observe(craftSessionId, (state) => {
 			onCraftTerminal(pair.id, state);

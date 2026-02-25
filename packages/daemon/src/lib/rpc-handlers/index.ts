@@ -36,6 +36,7 @@ import type { GitHubService } from '../github/github-service';
 import { setupGoalHandlers, type GoalManagerFactory } from './goal-handlers';
 import { createGitHubAdapter } from '../lobby/adapters/github-adapter';
 import { LobbyAgentService } from '../lobby/lobby-agent-service';
+import { RoomRuntimeService } from '../room/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/goal-manager';
 import { setupDialogHandlers } from './dialog-handlers';
@@ -148,6 +149,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		}
 	}
 
+	// Room Runtime Service
+	const roomRuntimeService = new RoomRuntimeService({
+		db: deps.db,
+		messageHub: deps.messageHub,
+		daemonHub: deps.daemonHub,
+		getApiKey: () => deps.authManager.getCurrentApiKey(),
+		roomManager,
+		defaultWorkspacePath: deps.config.workspaceRoot,
+		defaultModel: deps.config.defaultModel,
+	});
+	roomRuntimeService.start().catch((error) => {
+		log.error('Failed to start RoomRuntimeService:', error);
+	});
+
 	// Lobby handlers
 	setupLobbyHandlers(deps.messageHub, deps.daemonHub, lobbyAgentService);
 
@@ -179,6 +194,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Return cleanup function to stop background services
 	return () => {
-		// TODO: Cleanup telemetry services if needed
+		roomRuntimeService.stop();
 	};
 }
