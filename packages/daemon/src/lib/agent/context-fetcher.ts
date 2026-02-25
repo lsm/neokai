@@ -183,31 +183,17 @@ export class ContextFetcher {
 	}
 
 	/**
-	 * Merge parsed context with existing ContextInfo from ContextTracker
-	 *
-	 * Strategy:
-	 * - Use detailed breakdown from /context
-	 * - Keep API usage stats from stream events
-	 * - Update totals and percentages
-	 * - Mark source as 'merged'
+	 * Convert parsed /context output to ContextInfo
 	 */
-	mergeWithStreamContext(
-		parsedContext: ParsedContextInfo,
-		streamContext: ContextInfo | null
-	): ContextInfo {
+	toContextInfo(parsedContext: ParsedContextInfo): ContextInfo {
 		return {
 			model: parsedContext.model,
 			totalUsed: parsedContext.totalUsed,
 			totalCapacity: parsedContext.totalCapacity,
 			percentUsed: parsedContext.percentUsed,
 			breakdown: parsedContext.breakdown,
-
-			// Keep API usage from stream events if available
-			apiUsage: streamContext?.apiUsage,
-
-			// Metadata
 			lastUpdated: Date.now(),
-			source: 'merged',
+			source: 'context-command',
 		};
 	}
 }

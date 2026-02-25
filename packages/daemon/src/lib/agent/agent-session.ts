@@ -232,8 +232,6 @@ export class AgentSession
 		this.stateManager = new ProcessingStateManager(session.id, daemonHub, db);
 		this.contextTracker = new ContextTracker(
 			session.id,
-			session.config.model,
-			daemonHub,
 			(contextInfo: ContextInfo) => {
 				this.session.metadata.lastContextInfo = contextInfo;
 				this.db.updateSession(this.session.id, { metadata: this.session.metadata });

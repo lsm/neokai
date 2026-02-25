@@ -487,7 +487,7 @@ export class StateManager {
 		const agentState = agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
 
-		// Get context info (populated during streaming, null before first message)
+		// Get context info (null before first /context command response)
 		const contextInfo = agentSession.getContextInfo();
 
 		// Get error from cache (null if no error or error has been cleared)

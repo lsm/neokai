@@ -433,21 +433,6 @@ export class SDKMessageHandler {
 			},
 		});
 
-		// Update context tracker with final accurate usage
-		// SKIP for /context command's result - /context doesn't call the API, so it has 0 tokens
-		// We already have the correct context from parsing the /context response
-		if (!this.lastMessageWasContextResponse) {
-			await contextTracker.handleResultUsage(
-				{
-					input_tokens: usage.input_tokens,
-					output_tokens: usage.output_tokens,
-					cache_read_input_tokens: usage.cache_read_input_tokens,
-					cache_creation_input_tokens: usage.cache_creation_input_tokens,
-				},
-				message.modelUsage
-			);
-		}
-
 		// Queue /context command to get detailed breakdown (unless we just got one)
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
@@ -548,7 +533,7 @@ export class SDKMessageHandler {
 
 	/**
 	 * Handle /context response
-	 * Parse the detailed breakdown and merge with stream-based context tracking
+	 * Parse the detailed breakdown and update context tracker
 	 */
 	private async handleContextResponse(message: SDKMessage): Promise<void> {
 		const { session, daemonHub, contextTracker } = this.ctx;
@@ -559,20 +544,16 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		// Merge with stream-based context
-		const streamContext = contextTracker.getContextInfo();
-		const mergedContext = this.contextFetcher.mergeWithStreamContext(parsedContext, streamContext);
+		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
 
-		// Update ContextTracker with merged data
-		// This makes it the source of truth for context info
-		// The tracker will persist to session metadata and emit the context:updated event
-		contextTracker.updateWithDetailedBreakdown(mergedContext);
+		// Update ContextTracker - persists to session metadata
+		contextTracker.updateWithDetailedBreakdown(contextInfo);
 
 		// Emit context update event via DaemonHub
 		// StateManager will broadcast this via state.session channel
 		await daemonHub.emit('context.updated', {
 			sessionId: session.id,
-			contextInfo: mergedContext,
+			contextInfo,
 		});
 	}
 }
