@@ -37,6 +37,9 @@ export const contextPanelOpenSignal = signal<boolean>(false);
 // NavRail mobile open state
 export const navRailOpenSignal = signal<boolean>(false);
 
+// Create Room modal open state - shared between ContextPanel and Lobby
+export const createRoomModalSignal = signal<boolean>(false);
+
 // Settings section signal - which settings section is active
 export type SettingsSection = 'general' | 'mcp-servers' | 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

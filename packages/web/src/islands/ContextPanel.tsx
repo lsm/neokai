@@ -4,13 +4,13 @@ import {
 	contextPanelOpenSignal,
 	currentRoomIdSignal,
 	settingsSectionSignal,
+	createRoomModalSignal,
 	type SettingsSection,
 } from '../lib/signals.ts';
 import { authStatus, connectionState } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
-import { navigateToSession, navigateToRoom } from '../lib/router.ts';
-import { lobbyStore } from '../lib/lobby-store.ts';
+import { navigateToSession } from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
@@ -80,7 +80,6 @@ function SectionIcon({ type }: { type: string }) {
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
-	const [creatingRoom, setCreatingRoom] = useState(false);
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
@@ -164,36 +163,11 @@ export function ContextPanel() {
 		}
 	};
 
-	const handleCreateRoom = async () => {
-		if (connectionState.value !== 'connected') {
-			toast.error('Not connected to server. Please wait...');
-			return;
-		}
-
-		setCreatingRoom(true);
-
-		try {
-			const room = await lobbyStore.createRoom({
-				name: `Room ${new Date().toLocaleDateString()}`,
-			});
-
-			if (room) {
-				navigateToRoom(room.id);
-				toast.success('Room created successfully');
-			}
-		} catch (_err) {
-			const message = _err instanceof Error ? _err.message : 'Failed to create room';
-			toast.error(message);
-		} finally {
-			setCreatingRoom(false);
-		}
-	};
-
 	const handleAction = () => {
 		switch (navSection) {
 			case 'home':
 			case 'rooms':
-				handleCreateRoom();
+				createRoomModalSignal.value = true;
 				break;
 			case 'chats':
 				handleCreateSession();
@@ -213,7 +187,7 @@ export function ContextPanel() {
 		navSection === 'projects' ||
 		navSection === 'settings';
 
-	const isActionLoading = creatingSession || creatingRoom;
+	const isActionLoading = creatingSession;
 
 	return (
 		<>

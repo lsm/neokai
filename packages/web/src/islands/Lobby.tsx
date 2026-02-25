@@ -30,9 +30,11 @@ import { getRecentPaths, addRecentPath } from '../lib/recent-paths';
 import { formatRelativeTime } from '../lib/utils';
 import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
+import { createRoomModalSignal } from '../lib/signals';
+
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const createRoomModal = useModal();
+	const isCreateRoomModalOpen = createRoomModalSignal.value;
 	const newSessionModal = useModal();
 
 	useEffect(() => {
@@ -118,7 +120,7 @@ export default function Lobby() {
 						<Button variant="secondary" onClick={newSessionModal.open} icon="+">
 							New Session
 						</Button>
-						<Button onClick={createRoomModal.open} icon="+">
+						<Button onClick={() => (createRoomModalSignal.value = true)} icon="+">
 							Create Room
 						</Button>
 					</div>
@@ -139,7 +141,7 @@ export default function Lobby() {
 							</svg>
 						</button>
 						<button
-							onClick={createRoomModal.open}
+							onClick={() => (createRoomModalSignal.value = true)}
 							class="p-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
 							title="Create Room"
 						>
@@ -221,7 +223,7 @@ export default function Lobby() {
 						<RoomGrid
 							rooms={rooms}
 							onRoomClick={(room) => navigateToRoom(room.id)}
-							onCreateRoom={createRoomModal.open}
+							onCreateRoom={() => (createRoomModalSignal.value = true)}
 						/>
 					</div>
 				</div>
@@ -229,12 +231,12 @@ export default function Lobby() {
 
 			{/* Create Room Modal */}
 			<CreateRoomModal
-				isOpen={createRoomModal.isOpen}
-				onClose={createRoomModal.close}
+				isOpen={isCreateRoomModalOpen}
+				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
 					const room = await lobbyStore.createRoom(params);
 					if (room) {
-						createRoomModal.close();
+						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
 					}
 				}}
