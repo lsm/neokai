@@ -40,9 +40,12 @@ export class SlashCommandManager {
 	private commandsFetchedFromSDK = false;
 
 	constructor(private ctx: SlashCommandManagerContext) {
-		// Restore from session if available
-		if (ctx.session.availableCommands && ctx.session.availableCommands.length > 0) {
-			this.slashCommands = ctx.session.availableCommands;
+		// Restore from session if available — validate it's a real array, not a
+		// corrupted string (old sessions may have "merge-session" stored as a
+		// JSON-encoded string rather than a JSON-encoded array).
+		const stored = ctx.session.availableCommands;
+		if (Array.isArray(stored) && stored.length > 0) {
+			this.slashCommands = stored;
 		}
 	}
 

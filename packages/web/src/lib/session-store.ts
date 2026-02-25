@@ -197,8 +197,11 @@ class SessionStore {
 				this.sessionState.value = state;
 
 				// Sync slash commands signal (for autocomplete)
-				if (state.commandsData?.availableCommands) {
-					slashCommandsSignal.value = state.commandsData.availableCommands;
+				// Guard with Array.isArray: corrupted sessions may have a string stored in DB
+				// instead of an array, which would break the filter call in the hook.
+				const cmds = state.commandsData?.availableCommands;
+				if (Array.isArray(cmds) && cmds.length > 0) {
+					slashCommandsSignal.value = cmds;
 				}
 
 				// Handle error (show toast only for NEW errors that occurred after session was opened)
@@ -258,8 +261,9 @@ class SessionStore {
 			// Update signals with initial state
 			if (sessionState) {
 				this.sessionState.value = sessionState;
-				if (sessionState.commandsData?.availableCommands) {
-					slashCommandsSignal.value = sessionState.commandsData.availableCommands;
+				const initialCmds = sessionState.commandsData?.availableCommands;
+				if (Array.isArray(initialCmds) && initialCmds.length > 0) {
+					slashCommandsSignal.value = initialCmds;
 				}
 			} else {
 				// sessionState RPC returned null - set error state so UI shows error instead of infinite loading
