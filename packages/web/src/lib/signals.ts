@@ -34,9 +34,6 @@ export const navSectionSignal = signal<NavSection>('chats');
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
-// Lobby Manager panel signal
-export const lobbyManagerOpenSignal = signal<boolean>(false);
-
 // NavRail mobile open state
 export const navRailOpenSignal = signal<boolean>(false);
 
