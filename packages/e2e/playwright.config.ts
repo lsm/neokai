@@ -22,6 +22,14 @@ console.log(`\n📁 E2E Test Isolation:
    Database: ${e2eDatabaseDir}/daemon.db
 \n`);
 
+// E2E_PORT: when set, tests start their own server on this specific port (random port mode).
+// PLAYWRIGHT_BASE_URL: when set, reuse an external already-running server.
+// Neither set: default standalone mode on port 9283.
+const e2ePort = process.env.E2E_PORT;
+const baseURL = e2ePort
+	? `http://localhost:${e2ePort}`
+	: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283';
+
 /**
  * Monocart Coverage Reporter Configuration
  * See https://github.com/nicolo-ribaudo/monocart-reporter
@@ -142,8 +150,7 @@ export default defineConfig({
 	/* Shared settings for all the projects below */
 	use: {
 		/* Base URL to use in actions like `await page.goto('/')` */
-		/* Can be overridden via PLAYWRIGHT_BASE_URL for in-process server testing */
-		baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
+		baseURL: baseURL,
 
 		/* Collect trace when retrying the failed test */
 		trace: 'on-first-retry',
@@ -229,15 +236,14 @@ export default defineConfig({
 
 	/* Run your local test server before starting the tests */
 	webServer: {
-		// Build web package first, then start production-like server for E2E tests
-		// This avoids HMR overhead and tests against production-like environment
-		command: 'cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts',
-		url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
-		// When PLAYWRIGHT_BASE_URL is set externally (CI, self-test, run-test),
-		// reuse that server. Otherwise, start a fresh isolated test server.
-		// This prevents tests from accidentally connecting to production servers
-		// and ensures teardown can safely clean up all test data.
-		reuseExistingServer: !!process.env.PLAYWRIGHT_BASE_URL,
+		// Build web package first, then start production-like server for E2E tests.
+		// When E2E_PORT is set (random port mode), the port is passed via NEOKAI_PORT.
+		// This avoids HMR overhead and tests against production-like environment.
+		command: `cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts${e2ePort ? ` --port ${e2ePort}` : ''}`,
+		url: baseURL,
+		// Reuse an external server only when PLAYWRIGHT_BASE_URL is set (self-test / CI).
+		// In random port mode (E2E_PORT) or default mode, Playwright starts the server itself.
+		reuseExistingServer: !e2ePort && !!process.env.PLAYWRIGHT_BASE_URL,
 		stdout: 'ignore',
 		stderr: 'pipe',
 		timeout: 120 * 1000,
@@ -247,6 +253,8 @@ export default defineConfig({
 			// Isolated paths for this test run
 			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
 			DB_PATH: join(e2eDatabaseDir, 'daemon.db'),
+			// Pass random port to CLI when in E2E_PORT mode
+			...(e2ePort ? { NEOKAI_PORT: e2ePort } : {}),
 		},
 	},
 });

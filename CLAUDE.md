@@ -42,7 +42,7 @@ make test:web          # Web tests only (vitest run) with coverage
 # Run a single test file
 cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/web && bunx vitest run src/some-test.test.ts
-cd packages/e2e && bunx playwright test tests/some-test.e2e.ts
+make run-e2e TEST=tests/features/some-test.e2e.ts
 
 # Quality checks
 bun run check             # All checks: lint + typecheck + knip
@@ -124,27 +124,25 @@ E2E tests are **pure browser-based Playwright tests** simulating real end-user i
 
 ---
 
-### Self-Development Mode E2E Testing
+### Running E2E Tests
 
-> **IMPORTANT: Always use the correct test command for your scenario**
->
-> When a development server is already running, you MUST reuse it instead of starting a new one.
+**Standard usage — self-contained, starts its own server on a random port:**
+```bash
+make run-e2e TEST=tests/features/slash-cmd.e2e.ts
+make run-e2e                                        # run all tests
+```
 
-**If using `make self` (port 9983):**
+`make run-e2e` builds the web bundle, picks a random available port, starts the server, runs the tests, then shuts everything down. No pre-running server needed.
+
+**If using `make self` (port 9983) and want to run against that server:**
 ```bash
 make self-test TEST=tests/core/navigation-3-column.e2e.ts
 ```
 
-**If using `make run` with a custom port:**
-```bash
-make run-test PORT=8399 TEST=tests/core/navigation-3-column.e2e.ts
-```
-
-**How it works:**
-- `make self` and `make run` create a lock file at `tmp/.dev-server-running`
-- E2E tests check for this lock file before starting
-- If the lock exists without `PLAYWRIGHT_BASE_URL`, tests fail with instructions
-- This prevents accidentally killing your development server
+**How the lock file works:**
+- `make self` and `make run` write the port to `tmp/.dev-server-running`
+- If that lock file exists and you run tests without `E2E_PORT` or `PLAYWRIGHT_BASE_URL`, tests abort with instructions — this prevents accidentally starting a second server on a conflicting port
+- `make run-e2e` sets `E2E_PORT` internally, so the lock file check is skipped
 
 **Other notes:**
 - Always run a single E2E test file at a time — too slow to run all together

@@ -1,4 +1,4 @@
-.PHONY: dev dev-random serve-random self self-test run run-test build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
+.PHONY: dev dev-random serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
 
 dev:
 	@echo "Starting development server..."
@@ -66,15 +66,13 @@ run:
 	@$(MAKE) build
 	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
 
-# Run E2E tests against a `make run` instance (requires server to be running on specified PORT)
-# Usage: make run-test PORT=8399 TEST=tests/core/navigation-3-column.e2e.ts
-#        make run-test PORT=8399 (runs all tests)
-run-test:
-	@if [ -z "$(PORT)" ]; then \
-		echo "Error: PORT is required. Usage: make run-test PORT=8399 TEST=..."; \
-		exit 1; \
-	fi
-	@PLAYWRIGHT_BASE_URL=http://localhost:$(PORT) cd packages/e2e && bunx playwright test $(TEST)
+# Run E2E tests with an auto-started server on a random port (self-contained, no server needed)
+# Usage: make run-e2e TEST=tests/features/slash-cmd.e2e.ts
+#        make run-e2e (runs all tests)
+run-e2e:
+	@PORT=$$(node -e "const net = require('net'); const s = net.createServer(); s.listen(0, () => { console.log(s.address().port); s.close(); });"); \
+	echo "Running E2E tests on random port $$PORT..."; \
+	cd packages/e2e && E2E_PORT=$$PORT bunx playwright test $(TEST)
 
 build:
 	@echo "📦 Building web production bundle..."
