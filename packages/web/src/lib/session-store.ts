@@ -205,6 +205,14 @@ class SessionStore {
 					slashCommandsSignal.value = cmds;
 				}
 
+				// If state.session provided empty commands, restore from system:init SDK message.
+				// The daemon fallback broadcasts commandsData: [] which overwrites valid commands.
+				// The system:init message in sdkMessages is the authoritative source —
+				// same one SDKSystemMessage.tsx uses to show "Slash Commands (N)".
+				if (!Array.isArray(cmds) || cmds.length === 0) {
+					this._syncCommandsFromSDKMessages(this.sdkMessages.value);
+				}
+
 				// Handle error (show toast only for NEW errors that occurred after session was opened)
 				// Prevents showing stale errors from previous sessions or from before session switch
 				if (state.error && state.error.occurredAt > this.sessionSwitchTime) {
@@ -238,6 +246,8 @@ class SessionStore {
 					const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
 					if (newMessages.length > 0) {
 						this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
+						// Sync commands from any system:init message that just arrived
+						this._syncCommandsFromSDKMessages(newMessages);
 					}
 				}
 			});
@@ -355,6 +365,10 @@ class SessionStore {
 					// No timestamp in response or first load, use snapshot directly
 					this.sdkMessages.value = initialSnapshot;
 				}
+
+				// Sync slash commands from system:init message in initial load.
+				// Handles sessions that already have messages (e.g., after page reload).
+				this._syncCommandsFromSDKMessages(this.sdkMessages.value);
 			}
 		} catch (err) {
 			logger.error('Failed to fetch initial state:', err);
@@ -371,6 +385,34 @@ class SessionStore {
 				},
 				timestamp: Date.now(),
 			};
+		}
+	}
+
+	/**
+	 * Sync slash commands from the system:init SDK message.
+	 *
+	 * The system:init message carries the authoritative slash commands list —
+	 * the same one SDKSystemMessage.tsx renders as "Slash Commands (N)".
+	 * When state.session events arrive with empty commandsData (e.g. from the
+	 * daemon fallback broadcast), this restores commands from the SDK message.
+	 */
+	private _syncCommandsFromSDKMessages(messages: SDKMessage[]): void {
+		for (const msg of messages) {
+			const m = msg as unknown as { type?: string; subtype?: string; slash_commands?: string[] };
+			if (
+				m.type === 'system' &&
+				m.subtype === 'init' &&
+				Array.isArray(m.slash_commands) &&
+				m.slash_commands.length > 0
+			) {
+				if (this.sessionState.value) {
+					this.sessionState.value = {
+						...this.sessionState.value,
+						commandsData: { availableCommands: m.slash_commands },
+					};
+				}
+				break;
+			}
 		}
 	}
 
