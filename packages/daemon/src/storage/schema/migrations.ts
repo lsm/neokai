@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 32 migrations for schema changes.
+ * All 33 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -110,6 +110,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 32: v0.19 cleanup - drop old room orchestration tables
 	runMigration32(db);
+
+	// Migration 33: Room Runtime schema - task_pairs, task_messages, room_audit_log tables
+	runMigration33(db);
 }
 
 /**
@@ -1770,5 +1773,119 @@ function runMigration32(db: BunDatabase): void {
 		}
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 33: Room Runtime schema
+ *
+ * Creates tables for the (Craft, Lead) agent pair architecture:
+ * - task_pairs: Tracks (Craft, Lead) session pairs per task
+ * - task_messages: Message queue for inter-agent delivery (stub for MVP)
+ * - room_audit_log: Observability for Runtime tick/state changes
+ *
+ * Also adds columns to existing tables:
+ * - tasks: task_type, version, created_by_task_id
+ * - goals: planning_attempts, goal_review_attempts
+ * - rooms: config
+ */
+function runMigration33(db: BunDatabase): void {
+	// --- New tables ---
+
+	if (!tableExists(db, 'task_pairs')) {
+		db.exec(`
+			CREATE TABLE task_pairs (
+				id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL REFERENCES tasks(id),
+				craft_session_id TEXT NOT NULL,
+				lead_session_id TEXT NOT NULL,
+				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft'
+					CHECK(pair_state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+				feedback_iteration INTEGER NOT NULL DEFAULT 0,
+				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
+				last_processed_lead_turn_id TEXT,
+				last_forwarded_message_id TEXT,
+				active_work_started_at INTEGER,
+				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
+				hibernated_at INTEGER,
+				version INTEGER NOT NULL DEFAULT 0,
+				tokens_used INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				completed_at INTEGER
+			);
+
+			CREATE INDEX idx_task_pairs_task ON task_pairs(task_id);
+			CREATE INDEX idx_task_pairs_state ON task_pairs(pair_state);
+			CREATE INDEX idx_task_pairs_craft ON task_pairs(craft_session_id);
+			CREATE INDEX idx_task_pairs_lead ON task_pairs(lead_session_id);
+		`);
+	}
+
+	if (!tableExists(db, 'task_messages')) {
+		db.exec(`
+			CREATE TABLE task_messages (
+				id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL REFERENCES tasks(id),
+				pair_id TEXT NOT NULL REFERENCES task_pairs(id),
+				from_role TEXT NOT NULL CHECK(from_role IN ('craft', 'lead', 'human')),
+				to_role TEXT NOT NULL CHECK(to_role IN ('craft', 'lead')),
+				to_session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL DEFAULT 'normal'
+					CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
+				payload TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'delivered', 'dead_letter')),
+				created_at INTEGER NOT NULL,
+				delivered_at INTEGER
+			);
+
+			CREATE INDEX idx_task_messages_pair ON task_messages(pair_id, status);
+			CREATE INDEX idx_task_messages_task ON task_messages(task_id);
+		`);
+	}
+
+	if (!tableExists(db, 'room_audit_log')) {
+		db.exec(`
+			CREATE TABLE room_audit_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				room_id TEXT NOT NULL,
+				event_type TEXT NOT NULL,
+				detail TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			);
+
+			CREATE INDEX idx_room_audit_log_room ON room_audit_log(room_id, created_at);
+		`);
+	}
+
+	// --- Column additions to existing tables ---
+
+	if (tableExists(db, 'tasks')) {
+		if (!tableHasColumn(db, 'tasks', 'task_type')) {
+			db.exec(
+				`ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review'))`
+			);
+		}
+		if (!tableHasColumn(db, 'tasks', 'version')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN version INTEGER DEFAULT 0`);
+		}
+		if (!tableHasColumn(db, 'tasks', 'created_by_task_id')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN created_by_task_id TEXT`);
+		}
+	}
+
+	if (tableExists(db, 'goals')) {
+		if (!tableHasColumn(db, 'goals', 'planning_attempts')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN planning_attempts INTEGER DEFAULT 0`);
+		}
+		if (!tableHasColumn(db, 'goals', 'goal_review_attempts')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN goal_review_attempts INTEGER DEFAULT 0`);
+		}
+	}
+
+	if (tableExists(db, 'rooms')) {
+		if (!tableHasColumn(db, 'rooms', 'config')) {
+			db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
+		}
 	}
 }
