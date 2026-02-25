@@ -330,6 +330,9 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
+		if (!sessionId) {
+			navSectionSignal.value = 'home';
+		}
 	}
 }
 

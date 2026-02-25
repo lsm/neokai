@@ -1,10 +1,4 @@
-import {
-	navSectionSignal,
-	navRailOpenSignal,
-	currentSessionIdSignal,
-	currentRoomIdSignal,
-	type NavSection,
-} from '../lib/signals.ts';
+import { navSectionSignal, navRailOpenSignal, type NavSection } from '../lib/signals.ts';
 import {
 	navigateToChats,
 	navigateToRooms,
@@ -19,7 +13,6 @@ import { connectionManager } from '../lib/connection-manager.ts';
 export function NavRail() {
 	const navSection = navSectionSignal.value;
 	const isNavRailOpen = navRailOpenSignal.value;
-	const isHomeActive = currentSessionIdSignal.value === null && currentRoomIdSignal.value === null;
 
 	const handleNavClick = (section: NavSection) => {
 		// Close nav rail on mobile after navigation
@@ -43,7 +36,7 @@ export function NavRail() {
 
 	const handleHomeClick = () => {
 		navRailOpenSignal.value = false;
-		navSectionSignal.value = 'chats'; // Reset to chats section to show lobby
+		navSectionSignal.value = 'home';
 		navigateToHome();
 	};
 
@@ -78,7 +71,7 @@ export function NavRail() {
 				{/* Nav Items */}
 				<nav class="flex-1 flex flex-col gap-1">
 					{/* Home Button */}
-					<NavIconButton active={isHomeActive} onClick={handleHomeClick} label="Home">
+					<NavIconButton active={navSection === 'home'} onClick={handleHomeClick} label="Home">
 						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
 								stroke-linecap="round"

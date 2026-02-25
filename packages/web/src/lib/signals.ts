@@ -28,8 +28,8 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'chats' | 'rooms' | 'projects' | 'settings';
-export const navSectionSignal = signal<NavSection>('chats');
+export type NavSection = 'home' | 'chats' | 'rooms' | 'projects' | 'settings';
+export const navSectionSignal = signal<NavSection>('home');
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);

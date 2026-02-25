@@ -92,6 +92,13 @@ export function ContextPanel() {
 
 	// Section config
 	const sectionConfig = {
+		home: {
+			title: 'Rooms',
+			emptyIcon: '🏢',
+			emptyTitle: 'No rooms yet',
+			emptyDesc: 'Create a room to organize work',
+			actionLabel: 'Create Room',
+		},
 		chats: {
 			title: 'Chats',
 			emptyIcon: '💬',
@@ -184,11 +191,12 @@ export function ContextPanel() {
 
 	const handleAction = () => {
 		switch (navSection) {
-			case 'chats':
-				handleCreateSession();
-				break;
+			case 'home':
 			case 'rooms':
 				handleCreateRoom();
+				break;
+			case 'chats':
+				handleCreateSession();
 				break;
 			default:
 				break;
@@ -247,7 +255,9 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
+					{(navSection === 'home' ||
+						navSection === 'chats' ||
+						(navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}
@@ -270,6 +280,9 @@ export function ContextPanel() {
 				</div>
 
 				{/* Content - switches based on section */}
+				{navSection === 'home' && (
+					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
+				)}
 				{navSection === 'chats' && (
 					<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}
