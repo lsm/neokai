@@ -54,14 +54,9 @@ describe('SDK Message Metadata Broadcasting', () => {
 			const stateManager = new ProcessingStateManager(session.id, env.daemonHub, env.db);
 
 			// Create ContextTracker (without persistence callback to avoid race conditions in test)
-			const contextTracker = new ContextTracker(
-				session.id,
-				session.config.model,
-				env.daemonHub,
-				() => {
-					// No-op callback for test to avoid DB race conditions
-				}
-			);
+			const contextTracker = new ContextTracker(session.id, () => {
+				// No-op callback for test to avoid DB race conditions
+			});
 
 			// We need to get the session from DB and pass it to SDKMessageHandler
 			// The handler will update the session object passed to it AND the DB
@@ -168,14 +163,9 @@ describe('SDK Message Metadata Broadcasting', () => {
 			const stateManager = new ProcessingStateManager(session.id, env.daemonHub, env.db);
 
 			// Create ContextTracker (without persistence callback to avoid race conditions in test)
-			const contextTracker = new ContextTracker(
-				session.id,
-				session.config.model,
-				env.daemonHub,
-				() => {
-					// No-op callback for test to avoid DB race conditions
-				}
-			);
+			const contextTracker = new ContextTracker(session.id, () => {
+				// No-op callback for test to avoid DB race conditions
+			});
 
 			// We need to get the session from DB and pass it to SDKMessageHandler
 			const workingSession = env.db.getSession(session.id)!;
