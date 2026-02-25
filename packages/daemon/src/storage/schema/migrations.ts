@@ -502,6 +502,13 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
 }
 
 /**
+ * Helper to check whether a table has all required columns
+ */
+function tableHasColumns(db: BunDatabase, tableName: string, columnNames: string[]): boolean {
+	return columnNames.every((columnName) => tableHasColumn(db, tableName, columnName));
+}
+
+/**
  * Migration 25: Add type and session_context columns to sessions table
  *
  * Merged with former migration 27. The intermediate CHECK constraint widening
@@ -567,6 +574,26 @@ function runMigration32(db: BunDatabase): void {
 	// Drop stale session_pairs if it somehow survived Migration 29
 	db.exec(`DROP TABLE IF EXISTS session_pairs`);
 
+	// Preserve room/task data when the rooms schema is already compatible.
+	// Only reset room-domain tables if we detect an incompatible legacy rooms table.
+	const shouldResetRoomDomainTables =
+		tableExists(db, 'rooms') &&
+		!tableHasColumns(db, 'rooms', [
+			'id',
+			'name',
+			'background_context',
+			'instructions',
+			'allowed_paths',
+			'default_path',
+			'default_model',
+			'allowed_models',
+			'session_ids',
+			'status',
+			'created_at',
+			'updated_at',
+			'context_version',
+		]);
+
 	// Temporarily disable FK enforcement for all table rebuilds in this migration.
 	// Two reasons:
 	// 1. rooms is only created by createTables() which runs after all migrations,
@@ -577,18 +604,23 @@ function runMigration32(db: BunDatabase): void {
 	// FK is restored in the finally block below.
 	db.exec(`PRAGMA foreign_keys = OFF`);
 	try {
-		// All room-related tables never had production data — drop them all and
-		// let createTables() recreate them with the correct final schema.
-		db.exec(`DROP TABLE IF EXISTS task_messages`);
-		db.exec(`DROP TABLE IF EXISTS task_pairs`);
-		db.exec(`DROP TABLE IF EXISTS room_audit_log`);
-		db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
-		db.exec(`DROP TABLE IF EXISTS prompt_templates`);
-		db.exec(`DROP TABLE IF EXISTS inbox_items`);
-		db.exec(`DROP TABLE IF EXISTS room_github_mappings`);
-		db.exec(`DROP TABLE IF EXISTS goals`);
-		db.exec(`DROP TABLE IF EXISTS tasks`);
-		db.exec(`DROP TABLE IF EXISTS rooms`);
+		if (shouldResetRoomDomainTables) {
+			// Legacy/incompatible room schema detected - reset room-domain tables.
+			db.exec(`DROP TABLE IF EXISTS task_messages`);
+			db.exec(`DROP TABLE IF EXISTS task_pairs`);
+			db.exec(`DROP TABLE IF EXISTS room_audit_log`);
+			db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
+			db.exec(`DROP TABLE IF EXISTS prompt_templates`);
+			db.exec(`DROP TABLE IF EXISTS inbox_items`);
+			db.exec(`DROP TABLE IF EXISTS room_github_mappings`);
+			db.exec(`DROP TABLE IF EXISTS goals`);
+			db.exec(`DROP TABLE IF EXISTS tasks`);
+			db.exec(`DROP TABLE IF EXISTS rooms`);
+		} else {
+			// Compatible schema: keep room-domain data, remove obsolete prompt tables only.
+			db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
+			db.exec(`DROP TABLE IF EXISTS prompt_templates`);
+		}
 
 		// Rebuild sessions table: update type CHECK constraint
 		// (drop 'room_self' and 'manager', add 'craft' and 'lead')
