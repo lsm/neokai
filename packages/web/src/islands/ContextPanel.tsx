@@ -99,7 +99,7 @@ export function ContextPanel() {
 			actionLabel: 'Create Room',
 		},
 		chats: {
-			title: 'Chats',
+			title: 'Sessions',
 			emptyIcon: '💬',
 			emptyTitle: 'No sessions yet',
 			emptyDesc: 'Start a new session to begin',
