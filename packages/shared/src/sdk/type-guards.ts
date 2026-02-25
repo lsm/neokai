@@ -160,6 +160,15 @@ export function isSDKAuthStatusMessage(
   return msg.type === "auth_status";
 }
 
+/**
+ * Check if message is a rate limit event
+ */
+export function isSDKRateLimitEvent(
+  msg: SDKMessage,
+): msg is Extract<SDKMessage, { type: "rate_limit_event" }> {
+  return msg.type === "rate_limit_event";
+}
+
 // ============================================================================
 // Content Block Type Guards (for Assistant messages)
 // ============================================================================

@@ -6,6 +6,7 @@ import type { JSX } from 'preact';
 import type {
 	SDKAuthStatusMessage,
 	SDKMessage,
+	SDKRateLimitEvent as SDKRateLimitEventType,
 	SDKToolProgressMessage as SDKToolProgressMessageType,
 } from '@neokai/shared/sdk/sdk.d.ts';
 import type { PendingUserQuestion, QuestionDraftResponse, ResolvedQuestion } from '@neokai/shared';
@@ -16,6 +17,7 @@ import {
 	isSDKSystemInit,
 	isSDKToolProgressMessage,
 	isSDKAuthStatusMessage,
+	isSDKRateLimitEvent,
 	isSDKUserMessage,
 	isSDKUserMessageReplay,
 	isUserVisibleMessage,
@@ -23,6 +25,7 @@ import {
 
 // Component imports
 import { SDKAssistantMessage } from './SDKAssistantMessage.tsx';
+import { SDKRateLimitEvent } from './SDKRateLimitEvent.tsx';
 import { SDKResultMessage } from './SDKResultMessage.tsx';
 import { SDKSystemMessage } from './SDKSystemMessage.tsx';
 import { SDKToolProgressMessage } from './SDKToolProgressMessage.tsx';
@@ -162,6 +165,8 @@ export function SDKMessageRenderer({
 				variant="default"
 			/>
 		);
+	} else if (isSDKRateLimitEvent(message)) {
+		renderedMessage = <SDKRateLimitEvent message={message as SDKRateLimitEventType} />;
 	} else {
 		// Fallback for unknown message types (shouldn't happen, but safe)
 		renderedMessage = (

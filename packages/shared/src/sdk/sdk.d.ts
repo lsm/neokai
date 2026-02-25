@@ -1705,6 +1705,21 @@ export declare type SDKToolProgressMessage = {
     session_id: string;
 };
 
+export declare type SDKRateLimitEvent = {
+    type: 'rate_limit_event';
+    rate_limit_info: {
+        status: 'allowed' | 'rejected';
+        resetsAt: number;
+        rateLimitType: string;
+        overageStatus: 'allowed' | 'rejected';
+        overageDisabledReason: string | null;
+        isUsingOverage: boolean;
+    };
+    uuid: UUID;
+    session_id: string;
+    timestamp: number;
+};
+
 export declare type SDKToolUseSummaryMessage = {
     type: 'tool_use_summary';
     summary: string;
