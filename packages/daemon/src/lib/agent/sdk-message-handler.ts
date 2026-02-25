@@ -16,18 +16,18 @@
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { UUID } from 'crypto';
-import type { Session, MessageHub } from '@neokai/shared';
+import type { MessageHub, Session } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
-	isSDKResultSuccess,
 	isSDKAssistantMessage,
-	isToolUseBlock,
-	isSDKStatusMessage,
 	isSDKCompactBoundary,
-	isSDKSystemMessage,
+	isSDKResultSuccess,
+	isSDKStatusMessage,
 	isSDKSystemInit,
+	isSDKSystemMessage,
+	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
@@ -148,7 +148,9 @@ export class SDKMessageHandler {
 			// Clear state before stopping
 			messageQueue.clear();
 			this.resetCircuitBreaker();
-			await daemonHub.emit('session.errorClear', { sessionId: session.id });
+			await daemonHub.emit('session.errorClear', {
+				sessionId: session.id,
+			});
 
 			// Stop the query (if running)
 			if (this.ctx.queryObject || this.ctx.queryPromise) {
@@ -375,7 +377,7 @@ export class SDKMessageHandler {
 	 * Handle result message (end of turn)
 	 */
 	private async handleResultMessage(message: SDKMessage): Promise<void> {
-		const { session, db, daemonHub, contextTracker, stateManager, messageQueue } = this.ctx;
+		const { session, db, daemonHub, stateManager, messageQueue } = this.ctx;
 
 		// Type guard to ensure this is a successful result
 		if (!isSDKResultSuccess(message)) return;
