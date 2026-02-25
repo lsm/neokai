@@ -13,13 +13,13 @@ import { navSectionSignal } from '../../lib/signals.ts';
 
 // Mock the router functions
 vi.mock('../../lib/router.ts', () => ({
-	navigateToChats: vi.fn(),
+	navigateToSessions: vi.fn(),
 	navigateToRooms: vi.fn(),
 	navigateToSettings: vi.fn(),
 }));
 
 // Import mocked functions for assertions
-import { navigateToChats, navigateToRooms, navigateToSettings } from '../../lib/router.ts';
+import { navigateToSessions, navigateToRooms, navigateToSettings } from '../../lib/router.ts';
 
 describe('NavRail', () => {
 	beforeEach(() => {
@@ -115,13 +115,13 @@ describe('NavRail', () => {
 	});
 
 	describe('Click Interactions', () => {
-		it('should call navigateToChats when Chats button is clicked', () => {
+		it('should call navigateToSessions when Chats button is clicked', () => {
 			render(<NavRail />);
 
 			const chatsButton = screen.getByRole('button', { name: 'Chats' });
 			fireEvent.click(chatsButton);
 
-			expect(navigateToChats).toHaveBeenCalledTimes(1);
+			expect(navigateToSessions).toHaveBeenCalledTimes(1);
 		});
 
 		it('should call navigateToRooms when Rooms button is clicked', () => {
@@ -150,7 +150,7 @@ describe('NavRail', () => {
 			fireEvent.click(projectsButton);
 
 			// Since the button is disabled, click events shouldn't trigger navigation
-			expect(navigateToChats).not.toHaveBeenCalled();
+			expect(navigateToSessions).not.toHaveBeenCalled();
 			expect(navigateToRooms).not.toHaveBeenCalled();
 			expect(navigateToSettings).not.toHaveBeenCalled();
 		});

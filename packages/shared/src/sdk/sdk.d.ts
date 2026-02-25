@@ -120,6 +120,12 @@ export declare type CanUseTool = (toolName: string, input: Record<string, unknow
     agentID?: string;
 }) => Promise<PermissionResult>;
 
+export declare type ConfigChangeHookInput = BaseHookInput & {
+    hook_event_name: 'ConfigChange';
+    source: 'user_settings' | 'project_settings' | 'local_settings' | 'policy_settings' | 'skills';
+    file_path?: string;
+};
+
 /**
  * Config scope for settings.
  */
@@ -154,6 +160,7 @@ declare namespace coreTypes {
         AsyncHookJSONOutput,
         BaseHookInput,
         BaseOutputFormat,
+        ConfigChangeHookInput,
         ConfigScope,
         ExitReason,
         HookEvent,
@@ -205,10 +212,12 @@ declare namespace coreTypes {
         SDKResultError,
         SDKResultMessage,
         SDKResultSuccess,
+        SDKSessionInfo,
         SDKStatusMessage,
         SDKStatus,
         SDKSystemMessage,
         SDKTaskNotificationMessage,
+        SDKTaskProgressMessage,
         SDKTaskStartedMessage,
         SDKToolProgressMessage,
         SDKToolUseSummaryMessage,
@@ -235,7 +244,9 @@ declare namespace coreTypes {
         ThinkingDisabled,
         ThinkingEnabled,
         UserPromptSubmitHookInput,
-        UserPromptSubmitHookSpecificOutput
+        UserPromptSubmitHookSpecificOutput,
+        WorktreeCreateHookInput,
+        WorktreeRemoveHookInput
     }
 }
 
@@ -257,7 +268,7 @@ export declare const EXIT_REASONS: readonly ["clear", "logout", "prompt_input_ex
 
 export declare type ExitReason = 'clear' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted"];
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted", "ConfigChange", "WorktreeCreate", "WorktreeRemove"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -276,9 +287,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput | ConfigChangeHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -291,6 +302,38 @@ export declare type InferShape<T extends AnyZodRawShape> = {
 export declare type JsonSchemaOutputFormat = {
     type: 'json_schema';
     schema: Record<string, unknown>;
+};
+
+/**
+ * List sessions with metadata.
+ *
+ * When `dir` is provided, returns sessions for that project directory
+ * and its git worktrees. When omitted, returns sessions across all
+ * projects.
+ *
+ * @example
+ * ```typescript
+ * // List sessions for a specific project
+ * const sessions = await listSessions({ dir: '/path/to/project' })
+ *
+ * // List all sessions across all projects
+ * const allSessions = await listSessions()
+ * ```
+ */
+export declare function listSessions(_options?: ListSessionsOptions): Promise<SDKSessionInfo[]>;
+
+/**
+ * Options for listing sessions.
+ */
+export declare type ListSessionsOptions = {
+    /**
+     * Directory to list sessions for. When provided, returns sessions for
+     * this project directory (and its git worktrees). When omitted, returns
+     * sessions across all projects.
+     */
+    dir?: string;
+    /** Maximum number of sessions to return. */
+    limit?: number;
 };
 
 export declare type McpClaudeAIProxyServerConfig = {
@@ -419,6 +462,18 @@ export declare type ModelInfo = {
      * Description of the model's capabilities
      */
     description: string;
+    /**
+     * Whether this model supports effort levels
+     */
+    supportsEffort?: boolean;
+    /**
+     * Available effort levels for this model
+     */
+    supportedEffortLevels?: ('low' | 'medium' | 'high' | 'max')[];
+    /**
+     * Whether this model supports adaptive thinking (Claude decides when and how much to think)
+     */
+    supportsAdaptiveThinking?: boolean;
 };
 
 export declare type ModelUsage = {
@@ -731,6 +786,18 @@ export declare type Options = {
      * ```
      */
     plugins?: SdkPluginConfig[];
+    /**
+     * Enable prompt suggestions. When true, the agent emits a `prompt_suggestion`
+     * message after each turn with a predicted next user prompt.
+     *
+     * Delivery semantics:
+     * - At most one `prompt_suggestion` per turn; arrives after the `result` message.
+     * - Consumers must keep iterating the stream after `result` to receive it.
+     * - Suppressed on the first turn, after API errors, in plan mode, and by the
+     *   `CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false` env var.
+     * - Suggestions piggyback on the parent's prompt cache, making them nearly free.
+     */
+    promptSuggestions?: boolean;
     /**
      * Session ID to resume. Loads the conversation history from the specified session.
      */
@@ -1091,6 +1158,8 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param enabled - Whether the server should be enabled
      */
     toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
+
+
     /**
      * Dynamically set the MCP servers for this session.
      * This replaces the current set of dynamically-added MCP servers with the provided set.
@@ -1240,6 +1309,14 @@ export declare type SDKCompactBoundaryMessage = {
 };
 
 /**
+ * Merges the provided settings into the flag settings layer, updating the active configuration.
+ */
+declare type SDKControlApplyFlagSettingsRequest = {
+    subtype: 'apply_flag_settings';
+    settings: Record<string, unknown>;
+};
+
+/**
  * Cancels a currently open control request.
  */
 declare type SDKControlCancelRequest = {
@@ -1258,6 +1335,7 @@ declare type SDKControlInitializeRequest = {
     systemPrompt?: string;
     appendSystemPrompt?: string;
     agents?: Record<string, coreTypes.AgentDefinition>;
+    promptSuggestions?: boolean;
 };
 
 /**
@@ -1344,7 +1422,7 @@ declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlStopTaskRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest;
 
 declare type SDKControlResponse = {
     type: 'control_response';
@@ -1488,7 +1566,7 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKPromptSuggestionMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -1577,6 +1655,44 @@ export declare interface SDKSession {
     /** Async disposal support (calls close if not already closed) */
     [Symbol.asyncDispose](): Promise<void>;
 }
+
+/**
+ * Session metadata returned by listSessions.
+ */
+export declare type SDKSessionInfo = {
+    /**
+     * Unique session identifier (UUID).
+     */
+    sessionId: string;
+    /**
+     * Display title for the session: custom title, auto-generated summary, or first prompt.
+     */
+    summary: string;
+    /**
+     * Last modified time in milliseconds since epoch.
+     */
+    lastModified: number;
+    /**
+     * Session file size in bytes.
+     */
+    fileSize: number;
+    /**
+     * User-set session title via /rename.
+     */
+    customTitle?: string;
+    /**
+     * First meaningful user prompt in the session.
+     */
+    firstPrompt?: string;
+    /**
+     * Git branch at the end of the session.
+     */
+    gitBranch?: string;
+    /**
+     * Working directory for the session.
+     */
+    cwd?: string;
+};
 
 /**
  * V2 API - UNSTABLE
@@ -1679,6 +1795,27 @@ export declare type SDKTaskNotificationMessage = {
     status: 'completed' | 'failed' | 'stopped';
     output_file: string;
     summary: string;
+    usage?: {
+        total_tokens: number;
+        tool_uses: number;
+        duration_ms: number;
+    };
+    uuid: UUID;
+    session_id: string;
+};
+
+export declare type SDKTaskProgressMessage = {
+    type: 'system';
+    subtype: 'task_progress';
+    task_id: string;
+    tool_use_id?: string;
+    description: string;
+    usage: {
+        total_tokens: number;
+        tool_uses: number;
+        duration_ms: number;
+    };
+    last_tool_name?: string;
     uuid: UUID;
     session_id: string;
 };
@@ -1703,6 +1840,23 @@ export declare type SDKToolProgressMessage = {
     task_id?: string;
     uuid: UUID;
     session_id: string;
+};
+
+// SDK 0.2.55 omits this definition but still references it in the SDKMessage union.
+// Restored from SDK 0.2.47 to preserve type compatibility.
+export declare type SDKRateLimitEvent = {
+    type: 'rate_limit_event';
+    rate_limit_info: {
+        status: 'allowed' | 'rejected';
+        resetsAt: number;
+        rateLimitType: string;
+        overageStatus: 'allowed' | 'rejected';
+        overageDisabledReason: string | null;
+        isUsingOverage: boolean;
+    };
+    uuid: UUID;
+    session_id: string;
+    timestamp: number;
 };
 
 export declare type SDKToolUseSummaryMessage = {
@@ -2001,6 +2155,16 @@ export declare type UserPromptSubmitHookInput = BaseHookInput & {
 export declare type UserPromptSubmitHookSpecificOutput = {
     hookEventName: 'UserPromptSubmit';
     additionalContext?: string;
+};
+
+export declare type WorktreeCreateHookInput = BaseHookInput & {
+    hook_event_name: 'WorktreeCreate';
+    name: string;
+};
+
+export declare type WorktreeRemoveHookInput = BaseHookInput & {
+    hook_event_name: 'WorktreeRemove';
+    worktree_path: string;
 };
 
 export { }

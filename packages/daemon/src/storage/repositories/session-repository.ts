@@ -61,7 +61,9 @@ export class SessionRepository {
 	 * List all sessions ordered by last active time (most recent first)
 	 */
 	listSessions(): Session[] {
-		const stmt = this.db.prepare(`SELECT * FROM sessions ORDER BY last_active_at DESC`);
+		const stmt = this.db.prepare(
+			`SELECT * FROM sessions WHERE type != 'lobby' ORDER BY last_active_at DESC`
+		);
 		const rows = stmt.all() as Record<string, unknown>[];
 
 		return rows.map((r) => this.rowToSession(r));

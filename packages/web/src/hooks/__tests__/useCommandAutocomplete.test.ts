@@ -8,12 +8,21 @@
 
 import { renderHook, act } from '@testing-library/preact';
 import { useCommandAutocomplete } from '../useCommandAutocomplete.ts';
-import { slashCommandsSignal } from '../../lib/signals.ts';
+
+const mockCommandsData = vi.hoisted(() => ({
+	value: ['/help', '/clear', '/model', '/context', '/commit'] as string[],
+}));
+
+vi.mock('../../lib/session-store.ts', () => ({
+	sessionStore: {
+		commandsData: mockCommandsData,
+	},
+}));
 
 describe('useCommandAutocomplete', () => {
 	beforeEach(() => {
-		// Set up slash commands signal for tests
-		slashCommandsSignal.value = ['/help', '/clear', '/model', '/context', '/commit'];
+		// Set up commands for tests
+		mockCommandsData.value = ['/help', '/clear', '/model', '/context', '/commit'];
 	});
 
 	describe('initialization', () => {
@@ -431,7 +440,7 @@ describe('useCommandAutocomplete', () => {
 
 	describe('empty commands list', () => {
 		it('should not show autocomplete when commands list is empty', () => {
-			slashCommandsSignal.value = [];
+			mockCommandsData.value = [];
 
 			const onSelect = vi.fn(() => {});
 			const { result } = renderHook(() =>

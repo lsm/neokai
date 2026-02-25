@@ -4,13 +4,13 @@ import {
 	contextPanelOpenSignal,
 	currentRoomIdSignal,
 	settingsSectionSignal,
+	createRoomModalSignal,
 	type SettingsSection,
 } from '../lib/signals.ts';
 import { authStatus, connectionState } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
-import { navigateToSession, navigateToRoom } from '../lib/router.ts';
-import { lobbyStore } from '../lib/lobby-store.ts';
+import { navigateToSession } from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
@@ -80,7 +80,6 @@ function SectionIcon({ type }: { type: string }) {
 
 export function ContextPanel() {
 	const [creatingSession, setCreatingSession] = useState(false);
-	const [creatingRoom, setCreatingRoom] = useState(false);
 
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
@@ -92,8 +91,15 @@ export function ContextPanel() {
 
 	// Section config
 	const sectionConfig = {
+		home: {
+			title: 'Rooms',
+			emptyIcon: '🏢',
+			emptyTitle: 'No rooms yet',
+			emptyDesc: 'Create a room to organize work',
+			actionLabel: 'Create Room',
+		},
 		chats: {
-			title: 'Chats',
+			title: 'Sessions',
 			emptyIcon: '💬',
 			emptyTitle: 'No sessions yet',
 			emptyDesc: 'Start a new session to begin',
@@ -157,38 +163,14 @@ export function ContextPanel() {
 		}
 	};
 
-	const handleCreateRoom = async () => {
-		if (connectionState.value !== 'connected') {
-			toast.error('Not connected to server. Please wait...');
-			return;
-		}
-
-		setCreatingRoom(true);
-
-		try {
-			const room = await lobbyStore.createRoom({
-				name: `Room ${new Date().toLocaleDateString()}`,
-			});
-
-			if (room) {
-				navigateToRoom(room.id);
-				toast.success('Room created successfully');
-			}
-		} catch (_err) {
-			const message = _err instanceof Error ? _err.message : 'Failed to create room';
-			toast.error(message);
-		} finally {
-			setCreatingRoom(false);
-		}
-	};
-
 	const handleAction = () => {
 		switch (navSection) {
+			case 'home':
+			case 'rooms':
+				createRoomModalSignal.value = true;
+				break;
 			case 'chats':
 				handleCreateSession();
-				break;
-			case 'rooms':
-				handleCreateRoom();
 				break;
 			default:
 				break;
@@ -205,7 +187,7 @@ export function ContextPanel() {
 		navSection === 'projects' ||
 		navSection === 'settings';
 
-	const isActionLoading = creatingSession || creatingRoom;
+	const isActionLoading = creatingSession;
 
 	return (
 		<>
@@ -247,7 +229,9 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
+					{(navSection === 'home' ||
+						navSection === 'chats' ||
+						(navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}
@@ -270,6 +254,9 @@ export function ContextPanel() {
 				</div>
 
 				{/* Content - switches based on section */}
+				{navSection === 'home' && (
+					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
+				)}
 				{navSection === 'chats' && (
 					<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}

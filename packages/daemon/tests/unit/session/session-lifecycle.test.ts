@@ -240,6 +240,26 @@ describe('SessionLifecycle', () => {
 			);
 		});
 
+		it('should not use worktree choice flow for room_chat sessions', async () => {
+			(mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
+				isGitRepo: true,
+				isBare: false,
+				gitRoot: '/test/repo',
+			});
+
+			await lifecycle.create({ sessionType: 'room_chat' });
+
+			expect(mockDb.createSession).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'room_chat',
+					status: 'active',
+					metadata: expect.objectContaining({
+						worktreeChoice: undefined,
+					}),
+				})
+			);
+		});
+
 		it('should create session with active status for non-git repos', async () => {
 			(mockWorktreeManager.detectGitSupport as ReturnType<typeof mock>).mockResolvedValue({
 				isGitRepo: false,
@@ -594,6 +614,39 @@ describe('SessionLifecycle', () => {
 					metadata: expect.objectContaining({
 						worktreeChoice: expect.objectContaining({
 							status: 'completed',
+							choice: 'direct',
+						}),
+					}),
+				})
+			);
+		});
+
+		it('should force direct mode for non-worker sessions', async () => {
+			mockAgentSession.getSessionData.mockReturnValue({
+				id: 'test-id',
+				type: 'room_chat',
+				title: 'Test',
+				workspacePath: '/test',
+				status: 'pending_worktree_choice',
+				metadata: {
+					titleGenerated: true,
+					worktreeChoice: {
+						status: 'pending',
+						createdAt: new Date().toISOString(),
+					},
+				},
+				config: {},
+				worktree: undefined,
+			});
+
+			await lifecycle.completeWorktreeChoice('test-id', 'worktree');
+
+			expect(mockWorktreeManager.createWorktree).not.toHaveBeenCalled();
+			expect(mockDb.updateSession).toHaveBeenCalledWith(
+				'test-id',
+				expect.objectContaining({
+					metadata: expect.objectContaining({
+						worktreeChoice: expect.objectContaining({
 							choice: 'direct',
 						}),
 					}),

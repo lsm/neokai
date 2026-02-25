@@ -28,17 +28,17 @@ export const sessionsSignal = signal<Session[]>([]);
 export const slashCommandsSignal = signal<string[]>([]);
 
 // Navigation section signal - which nav item is active
-export type NavSection = 'chats' | 'rooms' | 'projects' | 'settings';
-export const navSectionSignal = signal<NavSection>('chats');
+export type NavSection = 'home' | 'chats' | 'rooms' | 'projects' | 'settings';
+export const navSectionSignal = signal<NavSection>('home');
 
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
-// Lobby Manager panel signal
-export const lobbyManagerOpenSignal = signal<boolean>(false);
-
 // NavRail mobile open state
 export const navRailOpenSignal = signal<boolean>(false);
+
+// Create Room modal open state - shared between ContextPanel and Lobby
+export const createRoomModalSignal = signal<boolean>(false);
 
 // Settings section signal - which settings section is active
 export type SettingsSection = 'general' | 'mcp-servers' | 'about';

@@ -23,7 +23,9 @@
 		"packages/daemon/src/lib/agent/output-limiter-hook.ts",
 		"packages/daemon/src/lib/lobby/index.ts",
 		"packages/daemon/src/lib/prompts/index.ts",
-		"packages/shared/src/event-bus.ts"
+		"packages/shared/src/event-bus.ts",
+		"packages/daemon/src/lib/room/task-message-queue.ts",
+		"packages/daemon/dump-context.ts"
 	],
 	"ignoreDependencies": ["@testing-library/preact", "tailwindcss"]
 }

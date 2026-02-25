@@ -21,7 +21,7 @@
 		"@biomejs/biome": "2.4.4",
 		"@testing-library/preact": "3.2.4",
 		"knip": "5.85.0",
-		"oxlint": "1.49.0",
+		"oxlint": "1.50.0",
 		"typescript": "5.9.3"
 	}
 }

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
-import { slashCommandsSignal } from '../lib/signals.ts';
+import { sessionStore } from '../lib/session-store.ts';
 
 export interface UseCommandAutocompleteOptions {
 	content: string;
@@ -34,13 +34,20 @@ export function useCommandAutocomplete({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [filteredCommands, setFilteredCommands] = useState<string[]>([]);
 
+	// Read per-session commands signal in render scope to subscribe to changes.
+	// Uses sessionStore.commandsData (computed from sessionState) rather than the
+	// global slashCommandsSignal, so it always reflects the active session's commands.
+	// Guard with Array.isArray: corrupted sessions may have a string stored in DB.
+	const rawCommands = sessionStore.commandsData.value;
+	const availableCommands = Array.isArray(rawCommands) ? rawCommands : [];
+
 	// Detect slash commands
 	useEffect(() => {
 		const trimmedContent = content.trimStart();
 
-		if (trimmedContent.startsWith('/') && slashCommandsSignal.value.length > 0) {
+		if (trimmedContent.startsWith('/') && availableCommands.length > 0) {
 			const query = trimmedContent.slice(1).toLowerCase();
-			const filtered = slashCommandsSignal.value.filter((cmd) => cmd.toLowerCase().includes(query));
+			const filtered = availableCommands.filter((cmd) => cmd.toLowerCase().includes(query));
 
 			setFilteredCommands(filtered);
 			setShowAutocomplete(filtered.length > 0);
@@ -49,7 +56,7 @@ export function useCommandAutocomplete({
 			setShowAutocomplete(false);
 			setFilteredCommands([]);
 		}
-	}, [content]);
+	}, [content, availableCommands]);
 
 	const close = useCallback(() => {
 		setShowAutocomplete(false);

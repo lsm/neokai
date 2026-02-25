@@ -204,17 +204,6 @@ export interface LobbyAgentConfig {
 }
 
 /**
- * Default lobby agent configuration
- */
-export const DEFAULT_LOBBY_AGENT_CONFIG: LobbyAgentConfig = {
-	enableSecurityCheck: true,
-	enableAiRouting: true,
-	routingConfidenceThreshold: 'medium',
-	maxConcurrentProcessing: 10,
-	processingTimeoutMs: 30000,
-};
-
-/**
  * Lobby Agent statistics
  */
 export interface LobbyAgentStats {

@@ -9,6 +9,7 @@ import { sessions } from '../lib/state.ts';
 import ChatContainer from './ChatContainer.tsx';
 import Room from './Room.tsx';
 import Lobby from './Lobby.tsx';
+import { SessionsPage } from './SessionsPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
@@ -35,6 +36,11 @@ export default function MainContent() {
 	// If there's a valid session, show the chat
 	if (sessionId && sessionExists) {
 		return <ChatContainer key={sessionId} sessionId={sessionId} />;
+	}
+
+	// /sessions route: show sessions grid
+	if (navSection === 'chats') {
+		return <SessionsPage />;
 	}
 
 	// If Settings is selected in NavRail, show the selected settings section content

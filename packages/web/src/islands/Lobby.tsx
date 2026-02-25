@@ -30,19 +30,11 @@ import { getRecentPaths, addRecentPath } from '../lib/recent-paths';
 import { formatRelativeTime } from '../lib/utils';
 import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
-import { lobbyManagerOpenSignal } from '../lib/signals';
-import { LobbyManagerPanel } from './LobbyManagerPanel';
-import ChatContainer from './ChatContainer';
-
-type LobbyTab = 'dashboard' | 'chat';
-
-/** Lobby session ID for unified session architecture */
-const LOBBY_SESSION_ID = 'lobby:default';
+import { createRoomModalSignal } from '../lib/signals';
 
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
-	const [activeTab, setActiveTab] = useState<LobbyTab>('dashboard');
-	const createRoomModal = useModal();
+	const isCreateRoomModalOpen = createRoomModalSignal.value;
 	const newSessionModal = useModal();
 
 	useEffect(() => {
@@ -56,9 +48,12 @@ export default function Lobby() {
 	const loading = lobbyStore.loading.value;
 	const rooms = lobbyStore.rooms.value;
 	const error = lobbyStore.error.value;
-	// Use globalStore.recentSessions which is already fetched at app startup
-	// and filtered to show active sessions sorted by lastActiveAt
-	const recentSessions = globalStore.activeSessions.value.slice(0, 5);
+	// Sessions belonging to any room
+	const roomSessionIds = new Set(rooms.flatMap((r) => r.sessionIds));
+	// Only show sessions not belonging to a room
+	const recentSessions = globalStore.activeSessions.value
+		.filter((s) => !roomSessionIds.has(s.id))
+		.slice(0, 5);
 	const recentPaths = getRecentPaths().map((p) => ({
 		path: p.path,
 		relativeTime: formatRelativeTime(p.usedAt),
@@ -122,49 +117,15 @@ export default function Lobby() {
 					</div>
 					{/* Desktop: full buttons with text */}
 					<div class="hidden md:flex gap-2 shrink-0">
-						<Button
-							variant="secondary"
-							onClick={() => {
-								lobbyManagerOpenSignal.value = !lobbyManagerOpenSignal.value;
-							}}
-							icon={
-								<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width={2}
-										d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-									/>
-								</svg>
-							}
-						>
-							Lobby Manager
-						</Button>
 						<Button variant="secondary" onClick={newSessionModal.open} icon="+">
 							New Session
 						</Button>
-						<Button onClick={createRoomModal.open} icon="+">
+						<Button onClick={() => (createRoomModalSignal.value = true)} icon="+">
 							Create Room
 						</Button>
 					</div>
 					{/* Mobile: icon-only buttons */}
 					<div class="flex md:hidden gap-1.5 shrink-0">
-						<button
-							onClick={() => {
-								lobbyManagerOpenSignal.value = !lobbyManagerOpenSignal.value;
-							}}
-							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
-							title="Lobby Manager"
-						>
-							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-								/>
-							</svg>
-						</button>
 						<button
 							onClick={newSessionModal.open}
 							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
@@ -180,7 +141,7 @@ export default function Lobby() {
 							</svg>
 						</button>
 						<button
-							onClick={createRoomModal.open}
+							onClick={() => (createRoomModalSignal.value = true)}
 							class="p-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
 							title="Create Room"
 						>
@@ -200,120 +161,82 @@ export default function Lobby() {
 			{/* Global Status */}
 			<GlobalStatus />
 
-			{/* Tab bar */}
-			<div class="flex border-b border-dark-700 bg-dark-850">
-				<button
-					class={`px-4 py-2 text-sm font-medium transition-colors ${
-						activeTab === 'dashboard'
-							? 'text-blue-400 border-b-2 border-blue-400'
-							: 'text-gray-400 hover:text-gray-200'
-					}`}
-					onClick={() => setActiveTab('dashboard')}
-				>
-					Dashboard
-				</button>
-				<button
-					class={`px-4 py-2 text-sm font-medium transition-colors ${
-						activeTab === 'chat'
-							? 'text-blue-400 border-b-2 border-blue-400'
-							: 'text-gray-400 hover:text-gray-200'
-					}`}
-					onClick={() => setActiveTab('chat')}
-				>
-					Lobby Chat
-				</button>
-			</div>
-
-			{/* Tab content */}
+			{/* Content */}
 			<div class="flex-1 overflow-hidden">
-				{activeTab === 'dashboard' && (
-					<div class="h-full overflow-y-auto p-6">
-						{/* Recent Sessions Section */}
-						{recentSessions.length > 0 && (
-							<div class="mb-8">
-								<div class="flex items-center justify-between mb-4">
-									<h3 class="text-lg font-semibold text-gray-100">Recent Sessions</h3>
-								</div>
-								<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-									{recentSessions.map((session) => {
-										// Find room for this session
-										const room = rooms.find((r) => r.sessionIds.includes(session.id));
-										return (
-											<button
-												key={session.id}
-												onClick={() => navigateToSession(session.id)}
-												class="bg-dark-800 hover:bg-dark-750 border border-dark-700 rounded-lg p-4 text-left transition-colors"
-											>
-												<div class="flex items-start gap-3">
-													<div class="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-900/30 flex items-center justify-center">
-														<svg
-															class="w-5 h-5 text-blue-400"
-															fill="none"
-															viewBox="0 0 24 24"
-															stroke="currentColor"
-														>
-															<path
-																stroke-linecap="round"
-																stroke-linejoin="round"
-																stroke-width={2}
-																d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-															/>
-														</svg>
+				<div class="h-full overflow-y-auto p-6">
+					{/* Recent Sessions Section */}
+					{recentSessions.length > 0 && (
+						<div class="mb-8">
+							<div class="flex items-center justify-between mb-4">
+								<h3 class="text-lg font-semibold text-gray-100">Recent Sessions</h3>
+							</div>
+							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+								{recentSessions.map((session) => {
+									return (
+										<button
+											key={session.id}
+											onClick={() => navigateToSession(session.id)}
+											class="bg-dark-800 hover:bg-dark-750 border border-dark-700 rounded-lg p-4 text-left transition-colors"
+										>
+											<div class="flex items-start gap-3">
+												<div class="flex-shrink-0 w-10 h-10 rounded-lg bg-blue-900/30 flex items-center justify-center">
+													<svg
+														class="w-5 h-5 text-blue-400"
+														fill="none"
+														viewBox="0 0 24 24"
+														stroke="currentColor"
+													>
+														<path
+															stroke-linecap="round"
+															stroke-linejoin="round"
+															stroke-width={2}
+															d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+														/>
+													</svg>
+												</div>
+												<div class="flex-1 min-w-0">
+													<div class="text-sm font-medium text-gray-100 truncate">
+														{session.title}
 													</div>
-													<div class="flex-1 min-w-0">
-														<div class="text-sm font-medium text-gray-100 truncate">
-															{session.title}
-														</div>
-														<div class="text-xs text-gray-500 truncate mt-0.5">
-															{session.workspacePath}
-														</div>
-														<div class="flex items-center gap-2 mt-2">
-															{room && (
-																<span class="text-xs px-2 py-0.5 rounded-full bg-purple-900/30 text-purple-400">
-																	{room.name}
-																</span>
-															)}
-															<span class="text-xs text-gray-500">
-																{formatRelativeTime(new Date(session.lastActiveAt))}
-															</span>
-														</div>
+													<div class="text-xs text-gray-500 truncate mt-0.5">
+														{session.workspacePath}
+													</div>
+													<div class="flex items-center gap-2 mt-2">
+														<span class="text-xs text-gray-500">
+															{formatRelativeTime(new Date(session.lastActiveAt))}
+														</span>
 													</div>
 												</div>
-											</button>
-										);
-									})}
-								</div>
+											</div>
+										</button>
+									);
+								})}
 							</div>
-						)}
-
-						{/* Room Grid */}
-						<div>
-							<div class="flex items-center justify-between mb-4">
-								<h3 class="text-lg font-semibold text-gray-100">Rooms</h3>
-							</div>
-							<RoomGrid
-								rooms={rooms}
-								onRoomClick={(room) => navigateToRoom(room.id)}
-								onCreateRoom={createRoomModal.open}
-							/>
 						</div>
+					)}
+
+					{/* Room Grid */}
+					<div>
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-gray-100">Rooms</h3>
+						</div>
+						<RoomGrid
+							rooms={rooms}
+							onRoomClick={(room) => navigateToRoom(room.id)}
+							onCreateRoom={() => (createRoomModalSignal.value = true)}
+						/>
 					</div>
-				)}
-				{activeTab === 'chat' && (
-					<div class="h-full">
-						<ChatContainer sessionId={LOBBY_SESSION_ID} />
-					</div>
-				)}
+				</div>
 			</div>
 
 			{/* Create Room Modal */}
 			<CreateRoomModal
-				isOpen={createRoomModal.isOpen}
-				onClose={createRoomModal.close}
+				isOpen={isCreateRoomModalOpen}
+				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
 					const room = await lobbyStore.createRoom(params);
 					if (room) {
-						createRoomModal.close();
+						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
 					}
 				}}
@@ -331,9 +254,6 @@ export default function Lobby() {
 					return room;
 				}}
 			/>
-
-			{/* Lobby Manager Panel */}
-			<LobbyManagerPanel />
 		</div>
 	);
 }

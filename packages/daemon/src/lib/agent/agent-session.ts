@@ -232,8 +232,6 @@ export class AgentSession
 		this.stateManager = new ProcessingStateManager(session.id, daemonHub, db);
 		this.contextTracker = new ContextTracker(
 			session.id,
-			session.config.model,
-			daemonHub,
 			(contextInfo: ContextInfo) => {
 				this.session.metadata.lastContextInfo = contextInfo;
 				this.db.updateSession(this.session.id, { metadata: this.session.metadata });
@@ -575,6 +573,17 @@ export class AgentSession
 		await this.sessionConfigHandler.updateConfig(configUpdates);
 	}
 
+	/**
+	 * Apply runtime MCP servers to in-memory session config only.
+	 * These servers may contain non-serializable instances and must not be persisted.
+	 */
+	setRuntimeMcpServers(mcpServers: Record<string, McpServerConfig>): void {
+		this.session.config = {
+			...this.session.config,
+			mcpServers,
+		};
+	}
+
 	updateMetadata(updates: Partial<Session>): void {
 		this.sessionConfigHandler.updateMetadata(updates);
 	}
@@ -682,6 +691,10 @@ export class AgentSession
 
 	async onSlashCommandsFetched(): Promise<void> {
 		await this.slashCommandManager.fetchAndCache();
+	}
+
+	async onInitSlashCommands(commands: string[]): Promise<void> {
+		await this.slashCommandManager.updateFromInit(commands);
 	}
 
 	async onModelsFetched(): Promise<void> {

@@ -10,6 +10,7 @@
 import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens.ts';
+import { formatTokens } from '../lib/utils.ts';
 
 // Width threshold for switching between pie chart and bar layout
 const COMPACT_WIDTH_THRESHOLD = 400;
@@ -373,7 +374,7 @@ export default function ContextUsageBar({
 																</span>
 																<span class={`${text} font-medium`}>{percentage.toFixed(1)}%</span>
 																<span class="text-gray-200 font-mono text-xs">
-																	{data.tokens.toLocaleString()}
+																	{formatTokens(data.tokens)}
 																</span>
 															</div>
 														);

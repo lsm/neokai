@@ -1,7 +1,7 @@
 /**
  * Database Migrations
  *
- * All 32 migrations for schema changes.
+ * All 33 migrations for schema changes.
  * CRITICAL: Preserve the order of migrations.
  */
 
@@ -57,59 +57,16 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
 	runMigration13(db);
 
-	// Migration 14: Rename neo_* tables to generic names
-	runMigration14(db);
-
-	// Migration 15: Add allowed_paths and default_path columns to rooms table
-	runMigration15(db);
-
-	// Migration 16: Create session_pairs table for dual-session architecture
-	runMigration16(db);
-
-	// Migration 17: Add goals table and rooms.background_context column
-	runMigration17(db);
-
-	// Migration 18: Add multi-session task support columns
-	runMigration18(db);
-
-	// Migration 19: Create recurring_jobs table
-	runMigration19(db);
-
-	// Migration 20: Create room_agent_states table
-	runMigration20(db);
-
-	// Migration 21: Create prompt_templates and rendered_prompts tables
-	runMigration21(db);
-
-	// Migration 22: Create room_context_versions table and add context columns to rooms
-	runMigration22(db);
-
-	// Migration 25: Add type and context columns to sessions table
+	// Migration 25: Add type and session_context columns to sessions table
+	// (merged with former migration 27 — intermediate CHECK constraint widening
+	// is redundant since migration 32 rebuilds sessions with the final constraint)
 	runMigration25(db);
-
-	// Migration 26: Add allowed_models column to rooms table
-	runMigration26(db);
-
-	// Migration 27: Rename session types for room architecture
-	// - 'room' → 'room_chat' (user-facing)
-	// - Add 'room_self' (autonomous orchestration)
-	// - Add 'manager' (manager in manager-worker pair)
-	runMigration27(db);
-
-	// Migration 28: Create worker_sessions table (Manager-less Architecture)
-	runMigration28(db);
-
-	// Migration 29: Cleanup after manager removal (Phase 6)
-	runMigration29(db);
-
-	// Migration 30: Persist room agent waiting context for restart-safe escalations
-	runMigration30(db);
-
-	// Migration 31: Persist room agent run intent for boot-time autostart
-	runMigration31(db);
 
 	// Migration 32: v0.19 cleanup - drop old room orchestration tables
 	runMigration32(db);
+
+	// Migration 33: Room Runtime schema - task_pairs, task_messages, room_audit_log tables
+	runMigration33(db);
 }
 
 /**
@@ -535,26 +492,6 @@ function tableExists(db: BunDatabase, tableName: string): boolean {
 }
 
 /**
- * Helper function to idempotently rename a table
- *
- * Handles two safe cases:
- * 1. Old exists, new doesn't -> rename (normal case)
- * 2. Only new exists -> skip (already migrated)
- *
- * IMPORTANT: If both tables exist, this helper intentionally does nothing.
- * The caller must explicitly merge data first to avoid data loss.
- */
-function renameTableIfExists(db: BunDatabase, oldName: string, newName: string): void {
-	const oldExists = tableExists(db, oldName);
-	const newExists = tableExists(db, newName);
-
-	if (oldExists && !newExists) {
-		// Normal case - rename needed
-		db.exec(`ALTER TABLE ${oldName} RENAME TO ${newName}`);
-	}
-}
-
-/**
  * Helper to check whether a table has a specific column
  */
 function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
@@ -565,1027 +502,43 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
 }
 
 /**
- * Migration 14: Rename neo_* tables to generic names
- *
- * Renames:
- * - neo_rooms -> rooms
- * - neo_memories -> memories
- * - neo_tasks -> tasks
- * - neo_contexts -> contexts
- * - neo_context_messages -> context_messages
- * - neo_context_id column -> context_id
- * - Indexes idx_neo_* -> idx_*
- *
- * This migration is idempotent - it can be safely re-run if it failed partway through.
- *
- * Important safety behavior:
- * - If both neo_* and new tables exist, we MERGE missing rows by id first,
- *   then drop the legacy table.
- * - We never blindly drop a populated legacy table.
+ * Helper to check whether a table has all required columns
  */
-function runMigration14(db: BunDatabase): void {
-	// Disable foreign keys during table renaming
-	db.exec('PRAGMA foreign_keys = OFF');
-
-	try {
-		// Drop old indexes first
-		db.exec(`DROP INDEX IF EXISTS idx_neo_memories_room`);
-		db.exec(`DROP INDEX IF EXISTS idx_neo_memories_type`);
-		db.exec(`DROP INDEX IF EXISTS idx_neo_tasks_room`);
-		db.exec(`DROP INDEX IF EXISTS idx_neo_tasks_status`);
-		db.exec(`DROP INDEX IF EXISTS idx_neo_context_messages_context`);
-
-		// If both old and new tables exist, merge missing rows before dropping old tables.
-		// This prevents data loss in partial migration states.
-		if (tableExists(db, 'neo_context_messages') && tableExists(db, 'context_messages')) {
-			db.exec(`
-				INSERT OR IGNORE INTO context_messages (id, context_id, role, content, timestamp, token_count, session_id, task_id)
-				SELECT id, context_id, role, content, timestamp, token_count, session_id, task_id
-				FROM neo_context_messages;
-			`);
-			db.exec(`DROP TABLE neo_context_messages`);
-		}
-
-		if (tableExists(db, 'neo_contexts') && tableExists(db, 'contexts')) {
-			db.exec(`
-				INSERT OR IGNORE INTO contexts (id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id)
-				SELECT id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id
-				FROM neo_contexts;
-			`);
-			db.exec(`DROP TABLE neo_contexts`);
-		}
-
-		if (tableExists(db, 'neo_tasks') && tableExists(db, 'tasks')) {
-			db.exec(`
-				INSERT OR IGNORE INTO tasks (id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at)
-				SELECT id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at
-				FROM neo_tasks;
-			`);
-			db.exec(`DROP TABLE neo_tasks`);
-		}
-
-		if (tableExists(db, 'neo_memories') && tableExists(db, 'memories')) {
-			db.exec(`
-				INSERT OR IGNORE INTO memories (id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count)
-				SELECT id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count
-				FROM neo_memories;
-			`);
-			db.exec(`DROP TABLE neo_memories`);
-		}
-
-		if (tableExists(db, 'neo_rooms') && tableExists(db, 'rooms')) {
-			if (tableHasColumn(db, 'rooms', 'allowed_paths')) {
-				db.exec(`
-					INSERT OR IGNORE INTO rooms (id, name, description, allowed_paths, default_path, default_model, session_ids, status, context_id, created_at, updated_at)
-					SELECT
-						id,
-						name,
-						description,
-						CASE WHEN default_workspace IS NOT NULL THEN json_array(default_workspace) ELSE '[]' END,
-						default_workspace,
-						default_model,
-						session_ids,
-						status,
-						neo_context_id,
-						created_at,
-						updated_at
-					FROM neo_rooms;
-				`);
-			} else {
-				db.exec(`
-					INSERT OR IGNORE INTO rooms (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
-					SELECT id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at
-					FROM neo_rooms;
-				`);
-			}
-			db.exec(`DROP TABLE neo_rooms`);
-		}
-
-		// Rename remaining tables idempotently (when only old table exists)
-		renameTableIfExists(db, 'neo_context_messages', 'context_messages');
-		renameTableIfExists(db, 'neo_contexts', 'contexts');
-		renameTableIfExists(db, 'neo_tasks', 'tasks');
-		renameTableIfExists(db, 'neo_memories', 'memories');
-		renameTableIfExists(db, 'neo_rooms', 'rooms');
-
-		// Rename neo_context_id column to context_id in rooms table
-		// SQLite doesn't support ALTER COLUMN, so we need to recreate the table
-		// First check if the column rename is still needed
-		const roomsHasNeoContextId = db
-			.prepare(`SELECT name FROM pragma_table_info('rooms') WHERE name='neo_context_id'`)
-			.get();
-		if (roomsHasNeoContextId) {
-			// Clean up any leftover rooms_new from partial migration
-			db.exec(`DROP TABLE IF EXISTS rooms_new`);
-			db.exec(`
-				CREATE TABLE rooms_new (
-					id TEXT PRIMARY KEY,
-					name TEXT NOT NULL,
-					description TEXT,
-					default_workspace TEXT,
-					default_model TEXT,
-					session_ids TEXT DEFAULT '[]',
-					status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
-					context_id TEXT,
-					created_at INTEGER NOT NULL,
-					updated_at INTEGER NOT NULL
-				);
-
-				INSERT INTO rooms_new (id, name, description, default_workspace, default_model, session_ids, status, context_id, created_at, updated_at)
-				SELECT id, name, description, default_workspace, default_model, session_ids, status, neo_context_id, created_at, updated_at
-				FROM rooms;
-
-				DROP TABLE rooms;
-
-				ALTER TABLE rooms_new RENAME TO rooms;
-			`);
-		}
-
-		// Update foreign key references in contexts table
-		// Check if contexts table still needs to be updated (has old schema without proper FK)
-		if (tableExists(db, 'contexts')) {
-			// Clean up any leftover contexts_new from partial migration
-			db.exec(`DROP TABLE IF EXISTS contexts_new`);
-			db.exec(`
-				CREATE TABLE contexts_new (
-					id TEXT PRIMARY KEY,
-					room_id TEXT NOT NULL UNIQUE,
-					total_tokens INTEGER DEFAULT 0,
-					last_compacted_at INTEGER,
-					status TEXT NOT NULL DEFAULT 'idle' CHECK(status IN ('idle', 'thinking', 'waiting_for_input')),
-					current_task_id TEXT,
-					current_session_id TEXT,
-					FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-				);
-
-				INSERT INTO contexts_new
-				SELECT id, room_id, total_tokens, last_compacted_at, status, current_task_id, current_session_id
-				FROM contexts;
-
-				DROP TABLE contexts;
-
-				ALTER TABLE contexts_new RENAME TO contexts;
-			`);
-		}
-
-		// Update foreign key references in memories table
-		if (tableExists(db, 'memories')) {
-			// Clean up any leftover memories_new from partial migration
-			db.exec(`DROP TABLE IF EXISTS memories_new`);
-			db.exec(`
-				CREATE TABLE memories_new (
-					id TEXT PRIMARY KEY,
-					room_id TEXT NOT NULL,
-					type TEXT NOT NULL CHECK(type IN ('conversation', 'task_result', 'preference', 'pattern', 'note')),
-					content TEXT NOT NULL,
-					tags TEXT DEFAULT '[]',
-					importance TEXT NOT NULL DEFAULT 'normal' CHECK(importance IN ('low', 'normal', 'high')),
-					session_id TEXT,
-					task_id TEXT,
-					created_at INTEGER NOT NULL,
-					last_accessed_at INTEGER NOT NULL,
-					access_count INTEGER DEFAULT 0,
-					FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-				);
-
-				INSERT INTO memories_new
-				SELECT id, room_id, type, content, tags, importance, session_id, task_id, created_at, last_accessed_at, access_count
-				FROM memories;
-
-				DROP TABLE memories;
-
-				ALTER TABLE memories_new RENAME TO memories;
-			`);
-		}
-
-		// Update foreign key references in tasks table
-		// Only needed when session_id column exists (old schema, pre-migration32)
-		if (tableExists(db, 'tasks') && tableHasColumn(db, 'tasks', 'session_id')) {
-			// Clean up any leftover tasks_new from partial migration
-			db.exec(`DROP TABLE IF EXISTS tasks_new`);
-			db.exec(`
-				CREATE TABLE tasks_new (
-					id TEXT PRIMARY KEY,
-					room_id TEXT NOT NULL,
-					title TEXT NOT NULL,
-					description TEXT NOT NULL,
-					session_id TEXT,
-					status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'blocked', 'completed', 'failed', 'cancelled')),
-					priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-					progress INTEGER,
-					current_step TEXT,
-					result TEXT,
-					error TEXT,
-					depends_on TEXT DEFAULT '[]',
-					created_at INTEGER NOT NULL,
-					started_at INTEGER,
-					completed_at INTEGER,
-					FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-				);
-
-				INSERT INTO tasks_new
-				SELECT id, room_id, title, description, session_id, status, priority, progress, current_step, result, error, depends_on, created_at, started_at, completed_at
-				FROM tasks;
-
-				DROP TABLE tasks;
-
-				ALTER TABLE tasks_new RENAME TO tasks;
-			`);
-		}
-
-		// Update foreign key references in context_messages table
-		if (tableExists(db, 'context_messages')) {
-			// Clean up any leftover context_messages_new from partial migration
-			db.exec(`DROP TABLE IF EXISTS context_messages_new`);
-			db.exec(`
-				CREATE TABLE context_messages_new (
-					id TEXT PRIMARY KEY,
-					context_id TEXT NOT NULL,
-					role TEXT NOT NULL CHECK(role IN ('system', 'user', 'assistant')),
-					content TEXT NOT NULL,
-					timestamp INTEGER NOT NULL,
-					token_count INTEGER NOT NULL,
-					session_id TEXT,
-					task_id TEXT,
-					FOREIGN KEY (context_id) REFERENCES contexts(id) ON DELETE CASCADE
-				);
-
-				INSERT INTO context_messages_new
-				SELECT id, context_id, role, content, timestamp, token_count, session_id, task_id
-				FROM context_messages;
-
-				DROP TABLE context_messages;
-
-				ALTER TABLE context_messages_new RENAME TO context_messages;
-			`);
-		}
-
-		// Create new indexes with renamed names (only if tables exist)
-		if (tableExists(db, 'memories')) {
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_room ON memories(room_id)`);
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)`);
-		}
-		if (tableExists(db, 'tasks')) {
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-		}
-		if (tableExists(db, 'context_messages')) {
-			db.exec(
-				`CREATE INDEX IF NOT EXISTS idx_context_messages_context ON context_messages(context_id)`
-			);
-		}
-	} finally {
-		// Re-enable foreign keys
-		db.exec('PRAGMA foreign_keys = ON');
-	}
+function tableHasColumns(db: BunDatabase, tableName: string, columnNames: string[]): boolean {
+	return columnNames.every((columnName) => tableHasColumn(db, tableName, columnName));
 }
 
 /**
- * Migration 15: Add allowed_paths and default_path columns to rooms table
+ * Migration 25: Add type and session_context columns to sessions table
  *
- * Adds multi-path workspace support to rooms:
- * - allowed_paths: JSON array of workspace paths this room can access
- * - default_path: Default path for new sessions
- *
- * Also migrates existing default_workspace to allowed_paths[0] if present.
- */
-function runMigration15(db: BunDatabase): void {
-	// Skip if rooms table doesn't exist (fresh database)
-	if (!tableExists(db, 'rooms')) {
-		return;
-	}
-	try {
-		// Check if allowed_paths column already exists
-		db.prepare(`SELECT allowed_paths FROM rooms LIMIT 1`).all();
-	} catch {
-		// Column doesn't exist, add the new columns
-		db.exec(`ALTER TABLE rooms ADD COLUMN allowed_paths TEXT DEFAULT '[]'`);
-		db.exec(`ALTER TABLE rooms ADD COLUMN default_path TEXT`);
-
-		// Migrate existing default_workspace to allowed_paths
-		// For each room with a default_workspace, set allowed_paths to [default_workspace]
-		// and default_path to default_workspace
-		const rooms = db
-			.prepare(`SELECT id, default_workspace FROM rooms WHERE default_workspace IS NOT NULL`)
-			.all() as { id: string; default_workspace: string }[];
-
-		for (const room of rooms) {
-			const allowedPaths = JSON.stringify([room.default_workspace]);
-			db.prepare(`UPDATE rooms SET allowed_paths = ?, default_path = ? WHERE id = ?`).run(
-				allowedPaths,
-				room.default_workspace,
-				room.id
-			);
-		}
-	}
-}
-
-/**
- * Migration 16: Create session_pairs table for dual-session architecture
- *
- * Creates a table to track manager-worker session pairs within rooms:
- * - id: Unique identifier for the session pair
- * - room_id: Reference to the room this pair belongs to
- * - room_session_id: Session ID that created this pair (for reference)
- * - manager_session_id: The manager session's ID
- * - worker_session_id: The worker session's ID
- * - status: Current status of the pair (active, idle, crashed, completed)
- * - current_task_id: The currently executing task, if any
- */
-function runMigration16(db: BunDatabase): void {
-	// Skip if session_pairs table already exists (already migrated)
-	if (tableExists(db, 'session_pairs')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS session_pairs (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			room_session_id TEXT NOT NULL,
-			manager_session_id TEXT NOT NULL,
-			worker_session_id TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'active'
-				CHECK(status IN ('active', 'idle', 'crashed', 'completed')),
-			current_task_id TEXT,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_session_pairs_room ON session_pairs(room_id);
-		CREATE INDEX IF NOT EXISTS idx_session_pairs_manager ON session_pairs(manager_session_id);
-		CREATE INDEX IF NOT EXISTS idx_session_pairs_worker ON session_pairs(worker_session_id);
-	`);
-}
-
-/**
- * Migration 17: Add goals table and rooms.background_context column
- *
- * Creates a table for room goals (structured objectives):
- * - id: Unique identifier
- * - room_id: Reference to the room
- * - title, description: Goal details
- * - status: pending, in_progress, completed, blocked
- * - priority: low, normal, high, urgent
- * - progress: 0-100 percentage
- * - linked_task_ids: JSON array of task IDs contributing to this goal
- * - metrics: JSON object for custom progress metrics
- *
- * Also adds background_context column to rooms for room agent context.
- */
-function runMigration17(db: BunDatabase): void {
-	// Skip if goals table already exists (already migrated)
-	if (tableExists(db, 'goals')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS goals (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			title TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'pending'
-				CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked')),
-			priority TEXT NOT NULL DEFAULT 'normal'
-				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-			progress INTEGER DEFAULT 0,
-			linked_task_ids TEXT DEFAULT '[]',
-			metrics TEXT DEFAULT '{}',
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			completed_at INTEGER,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id);
-		CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
-	`);
-
-	// Add background_context column to rooms if it doesn't exist
-	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'background_context')) {
-		db.exec(`ALTER TABLE rooms ADD COLUMN background_context TEXT`);
-	}
-}
-
-/**
- * Migration 18: Add multi-session task support columns
- *
- * Adds columns to tasks table for multi-session execution:
- * - session_ids: JSON array of session IDs (replaces single session_id)
- * - execution_mode: single, parallel, serial, parallel_then_merge
- * - sessions: JSON array of TaskSession objects with role/status tracking
- * - recurring_job_id: Reference to recurring job if spawned by one
- */
-function runMigration18(db: BunDatabase): void {
-	// Skip if tasks table doesn't exist (fresh database)
-	if (!tableExists(db, 'tasks')) {
-		return;
-	}
-
-	// Add session_ids column if it doesn't exist
-	if (!tableHasColumn(db, 'tasks', 'session_ids')) {
-		db.exec(`ALTER TABLE tasks ADD COLUMN session_ids TEXT DEFAULT '[]'`);
-	}
-
-	// Add execution_mode column if it doesn't exist
-	if (!tableHasColumn(db, 'tasks', 'execution_mode')) {
-		db.exec(
-			`ALTER TABLE tasks ADD COLUMN execution_mode TEXT DEFAULT 'single' CHECK(execution_mode IN ('single', 'parallel', 'serial', 'parallel_then_merge'))`
-		);
-	}
-
-	// Add sessions column if it doesn't exist
-	if (!tableHasColumn(db, 'tasks', 'sessions')) {
-		db.exec(`ALTER TABLE tasks ADD COLUMN sessions TEXT DEFAULT '[]'`);
-	}
-
-	// Add recurring_job_id column if it doesn't exist
-	if (!tableHasColumn(db, 'tasks', 'recurring_job_id')) {
-		db.exec(`ALTER TABLE tasks ADD COLUMN recurring_job_id TEXT`);
-	}
-}
-
-/**
- * Migration 19: Create recurring_jobs table
- *
- * Creates a table for scheduled recurring jobs:
- * - id: Unique identifier
- * - room_id: Reference to the room
- * - name, description: Job details
- * - schedule: JSON object with schedule config (cron, interval, daily, weekly)
- * - task_template: JSON object for task creation template
- * - enabled: Whether the job is active
- * - last_run_at, next_run_at: Timestamps for scheduling
- * - run_count: Number of times the job has run
- * - max_runs: Optional maximum run limit
- */
-function runMigration19(db: BunDatabase): void {
-	// Skip if recurring_jobs table already exists (already migrated)
-	if (tableExists(db, 'recurring_jobs')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS recurring_jobs (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			schedule TEXT NOT NULL DEFAULT '{}',
-			task_template TEXT NOT NULL DEFAULT '{}',
-			enabled INTEGER DEFAULT 1,
-			last_run_at INTEGER,
-			next_run_at INTEGER,
-			run_count INTEGER DEFAULT 0,
-			max_runs INTEGER,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_recurring_jobs_room ON recurring_jobs(room_id);
-		CREATE INDEX IF NOT EXISTS idx_recurring_jobs_enabled ON recurring_jobs(enabled);
-		CREATE INDEX IF NOT EXISTS idx_recurring_jobs_next_run ON recurring_jobs(next_run_at);
-	`);
-}
-
-/**
- * Migration 20: Create room_agent_states table
- *
- * Creates a table to track room agent lifecycle state:
- * - room_id: Reference to the room (unique, one agent per room)
- * - lifecycle_state: idle, planning, executing, waiting, reviewing, error, paused
- * - current_goal_id, current_task_id: Current focus
- * - active_session_pair_ids: JSON array of active pairs
- * - last_activity_at: Timestamp of last activity
- * - error_count: Health monitoring counter
- * - last_error: Last error message
- * - pending_actions: JSON array of planned actions
- */
-function runMigration20(db: BunDatabase): void {
-	// Skip if room_agent_states table already exists (already migrated)
-	if (tableExists(db, 'room_agent_states')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS room_agent_states (
-			room_id TEXT PRIMARY KEY,
-			lifecycle_state TEXT NOT NULL DEFAULT 'idle'
-				CHECK(lifecycle_state IN ('idle', 'planning', 'executing', 'waiting', 'reviewing', 'error', 'paused')),
-			current_goal_id TEXT,
-			current_task_id TEXT,
-			active_session_pair_ids TEXT DEFAULT '[]',
-			last_activity_at INTEGER NOT NULL,
-			error_count INTEGER DEFAULT 0,
-			last_error TEXT,
-			pending_actions TEXT DEFAULT '[]',
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
-			FOREIGN KEY (current_goal_id) REFERENCES goals(id) ON DELETE SET NULL,
-			FOREIGN KEY (current_task_id) REFERENCES tasks(id) ON DELETE SET NULL
-		);
-	`);
-}
-
-/**
- * Migration 21: Create prompt_templates and rendered_prompts tables
- *
- * Creates tables for centralized prompt template management:
- *
- * prompt_templates:
- * - id: Unique identifier (e.g., 'room_agent_system')
- * - category: room_agent, manager_agent, worker_agent, lobby_agent, etc.
- * - name, description: Human-readable info
- * - template: The template content with {{variable}} placeholders
- * - variables: JSON array of variable definitions
- * - version: Template version for update tracking
- *
- * rendered_prompts:
- * - template_id: Reference to template
- * - room_id: Room this prompt is rendered for
- * - content: The rendered content
- * - rendered_with: Variables used for rendering
- * - template_version: Version of template at render time
- * - customizations: Agent-made customizations
- */
-function runMigration21(db: BunDatabase): void {
-	// Skip if prompt_templates table already exists (already migrated)
-	if (tableExists(db, 'prompt_templates')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS prompt_templates (
-			id TEXT PRIMARY KEY,
-			category TEXT NOT NULL
-				CHECK(category IN ('room_agent', 'manager_agent', 'worker_agent', 'lobby_agent', 'security_agent', 'router_agent')),
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			template TEXT NOT NULL,
-			variables TEXT DEFAULT '[]',
-			version INTEGER DEFAULT 1,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_prompt_templates_category ON prompt_templates(category);
-
-		CREATE TABLE IF NOT EXISTS rendered_prompts (
-			id TEXT PRIMARY KEY,
-			template_id TEXT NOT NULL,
-			room_id TEXT NOT NULL,
-			content TEXT NOT NULL,
-			rendered_with TEXT DEFAULT '{}',
-			template_version INTEGER DEFAULT 1,
-			rendered_at INTEGER NOT NULL,
-			customizations TEXT,
-			FOREIGN KEY (template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
-			UNIQUE(template_id, room_id)
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_rendered_prompts_room ON rendered_prompts(room_id);
-		CREATE INDEX IF NOT EXISTS idx_rendered_prompts_template ON rendered_prompts(template_id);
-	`);
-}
-
-/**
- * Migration 22: Create room_context_versions table and add context columns to rooms
- *
- * Creates a table for versioning room context changes:
- * - id: Unique identifier
- * - room_id: Reference to the room
- * - version: Version number (auto-incremented per room)
- * - background: Background context text
- * - instructions: Instructions context text
- * - changed_by: Who made the change ('human' or 'agent')
- * - change_reason: Optional reason for the change
- * - created_at: When this version was created
- *
- * Also adds to rooms table:
- * - context_version: Current version number (default 0)
- */
-function runMigration22(db: BunDatabase): void {
-	// Skip if room_context_versions table already exists (already migrated)
-	if (tableExists(db, 'room_context_versions')) {
-		return;
-	}
-
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS room_context_versions (
-			id TEXT PRIMARY KEY,
-			room_id TEXT NOT NULL,
-			version INTEGER NOT NULL,
-			background TEXT,
-			instructions TEXT,
-			changed_by TEXT NOT NULL CHECK(changed_by IN ('human', 'agent')),
-			change_reason TEXT,
-			created_at INTEGER NOT NULL,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-		);
-
-		CREATE INDEX IF NOT EXISTS idx_room_context_versions_room_id ON room_context_versions(room_id);
-		CREATE INDEX IF NOT EXISTS idx_room_context_versions_version ON room_context_versions(room_id, version);
-	`);
-
-	// Add context_version column to rooms if it doesn't exist
-	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'context_version')) {
-		db.exec(`ALTER TABLE rooms ADD COLUMN context_version INTEGER DEFAULT 0`);
-	}
-
-	// Add instructions column to rooms if it doesn't exist
-	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'instructions')) {
-		db.exec(`ALTER TABLE rooms ADD COLUMN instructions TEXT`);
-	}
-}
-
-/**
- * Migration 25: Add type and context columns to sessions table
- *
- * Adds columns for unified session architecture:
- * - type: Session type ('worker', 'room', 'lobby') - defaults to 'worker'
- * - session_context: JSON object with roomId/lobbyId for room/lobby sessions
- *
- * This enables the unified session architecture where worker/room/lobby
- * sessions all use the same sessions table with different types.
+ * Merged with former migration 27. The intermediate CHECK constraint widening
+ * (room → room_chat, adding manager/room_self) is skipped because migration 32
+ * rebuilds the sessions table with the final constraint anyway.
  */
 function runMigration25(db: BunDatabase): void {
-	// Skip if sessions table doesn't exist (fresh database)
 	if (!tableExists(db, 'sessions')) {
 		return;
 	}
 
-	// Add type column if it doesn't exist
 	if (!tableHasColumn(db, 'sessions', 'type')) {
-		db.exec(
-			`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room', 'lobby'))`
-		);
+		db.exec(`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker'`);
 	}
 
-	// Add session_context column if it doesn't exist (renamed from 'context' to avoid SQL keyword conflict)
 	if (!tableHasColumn(db, 'sessions', 'session_context')) {
 		db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
 	}
 
-	// Create index for room sessions lookup
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_sessions_room
 		ON sessions(json_extract(session_context, '$.roomId'))
-		WHERE type = 'room'
+		WHERE type = 'room_chat'
 	`);
 
-	// Create index for lobby sessions lookup
 	db.exec(`
 		CREATE INDEX IF NOT EXISTS idx_sessions_lobby
 		ON sessions(json_extract(session_context, '$.lobbyId'))
 		WHERE type = 'lobby'
 	`);
-}
-
-/**
- * Migration 26: Add allowed_models column to rooms table
- */
-function runMigration26(db: BunDatabase): void {
-	if (!tableExists(db, 'rooms')) {
-		return;
-	}
-	if (!tableHasColumn(db, 'rooms', 'allowed_models')) {
-		db.exec(`ALTER TABLE rooms ADD COLUMN allowed_models TEXT DEFAULT '[]'`);
-	}
-}
-
-/**
- * Migration 27: Rename session types for room architecture and add manager type
- *
- * Changes:
- * - 'room' → 'room_chat' (user-facing room chat interface)
- * - Add 'room_self' (autonomous room orchestration)
- * - Add 'manager' (manager in manager-worker pair)
- *
- * Also updates session_context to include links between chat and self sessions.
- */
-function runMigration27(db: BunDatabase): void {
-	// Skip if sessions table doesn't exist (fresh database)
-	if (!tableExists(db, 'sessions')) {
-		return;
-	}
-
-	// Check if migration is already applied by looking for 'manager' type in the constraint
-	try {
-		const pragma = db.prepare(`PRAGMA table_info(sessions)`).all() as Array<{
-			name: string;
-			dflt_value: string | null;
-		}>;
-		const typeColumn = pragma.find((col) => col.name === 'type');
-		if (typeColumn?.dflt_value?.includes('manager')) {
-			// Migration already applied
-			return;
-		}
-	} catch {
-		// Table doesn't have expected structure, skip migration
-		return;
-	}
-
-	// SQLite doesn't support direct ALTER of CHECK constraint with DROP/ALTER
-	// We need to recreate the table with the new constraint
-
-	// 1. Create new table with updated CHECK constraint
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS sessions_new (
-		  id TEXT PRIMARY KEY,
-		  title TEXT NOT NULL,
-		  workspace_path TEXT NOT NULL,
-		  created_at TEXT NOT NULL,
-		  last_active_at TEXT NOT NULL,
-		  status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
-		  config TEXT NOT NULL,
-		  metadata TEXT NOT NULL,
-		  is_worktree INTEGER DEFAULT 0,
-		  worktree_path TEXT,
-		  main_repo_path TEXT,
-		  worktree_branch TEXT,
-		  git_branch TEXT,
-		  sdk_session_id TEXT,
-		  available_commands TEXT,
-		  processing_state TEXT,
-		  archived_at TEXT,
-		  parent_id TEXT,
-		  labels TEXT,
-		  sub_session_order INTEGER DEFAULT 0,
-		  type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'manager', 'room_chat', 'room_self', 'lobby')),
-		  session_context TEXT
-		)
-	`);
-
-	// CRITICAL: Disable foreign keys during table recreation to prevent
-	// CASCADE delete from wiping sdk_messages when we DROP TABLE sessions
-	db.exec('PRAGMA foreign_keys = OFF');
-
-	try {
-		// 2. Copy data, renaming 'room' → 'room_chat' and updating session_context
-		db.exec(`
-			INSERT INTO sessions_new (
-				id, title, workspace_path, created_at, last_active_at, status,
-				config, metadata, is_worktree, worktree_path, main_repo_path,
-				worktree_branch, git_branch, sdk_session_id, available_commands,
-				processing_state, archived_at, parent_id, labels, sub_session_order,
-				type, session_context
-			)
-			SELECT
-				id, title, workspace_path, created_at, last_active_at, status,
-				config, metadata, is_worktree, worktree_path, main_repo_path,
-				worktree_branch, git_branch, sdk_session_id, available_commands,
-				processing_state, archived_at, parent_id, labels, sub_session_order,
-				CASE
-					WHEN type = 'room' THEN 'room_chat'
-					ELSE type
-				END,
-				session_context
-			FROM sessions
-		`);
-
-		// 3. Drop old table and rename new table (safe now that foreign_keys is OFF)
-		db.exec(`DROP TABLE sessions`);
-		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
-	} finally {
-		// Re-enable foreign keys
-		db.exec('PRAGMA foreign_keys = ON');
-	}
-
-	// 4. Recreate indexes
-	db.exec(`
-		CREATE INDEX IF NOT EXISTS idx_sessions_room
-			ON sessions(json_extract(session_context, '$.roomId'))
-			WHERE type = 'room_chat'
-	`);
-
-	db.exec(`
-		CREATE INDEX IF NOT EXISTS idx_sessions_lobby
-			ON sessions(json_extract(session_context, '$.lobbyId'))
-			WHERE type = 'lobby'
-	`);
-}
-
-/**
- * Migration 28: Create worker_sessions table (Manager-less Architecture)
- *
- * Creates a table for tracking worker sessions created by room agents.
- * This is part of removing the Manager agent layer.
- *
- * CRITICAL FIXES APPLIED (v1.0):
- * - FIX 1: task_id NOT NULL with ON DELETE RESTRICT (was contradictory SET NULL)
- * - FIX 2: room_session_id is mode-agnostic (supports both room:chat and room:self)
- * - FIX 3: session_id column for direct agent session lookup
- * - FIX 4: Preserves orphaned session_pairs (pairs without tasks)
- *
- * Data migration strategy:
- * - Migrates session_pairs with tasks to worker_sessions
- * - Preserves session_pairs without tasks in worker_sessions_orphaned
- * - Sets room_session_type to 'room_self' for historical data
- */
-function runMigration28(db: BunDatabase): void {
-	// Skip if worker_sessions table already exists
-	if (tableExists(db, 'worker_sessions')) {
-		return;
-	}
-
-	// Step 1: Create worker_sessions table with CORRECTED schema
-	db.exec(`
-		CREATE TABLE worker_sessions (
-			id TEXT PRIMARY KEY,
-			session_id TEXT NOT NULL UNIQUE,
-			room_id TEXT NOT NULL,
-			room_session_id TEXT NOT NULL,
-			room_session_type TEXT NOT NULL DEFAULT 'room_self'
-				CHECK(room_session_type IN ('room_chat', 'room_self')),
-			task_id TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'starting'
-				CHECK(status IN ('starting', 'running', 'waiting_for_review', 'completed', 'failed', 'cancelled')),
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL,
-			completed_at INTEGER,
-			FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-			FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
-			FOREIGN KEY (room_session_id) REFERENCES sessions(id) ON DELETE CASCADE,
-			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE RESTRICT
-		);
-
-		CREATE INDEX idx_worker_sessions_room ON worker_sessions(room_id);
-		CREATE INDEX idx_worker_sessions_task ON worker_sessions(task_id);
-		CREATE INDEX idx_worker_sessions_status ON worker_sessions(status);
-		CREATE INDEX idx_worker_sessions_session ON worker_sessions(session_id);
-		CREATE INDEX idx_worker_sessions_room_session ON worker_sessions(room_session_id);
-	`);
-
-	// Step 2: Migrate pairs WITH tasks (only if session_pairs table exists)
-	if (tableExists(db, 'session_pairs') && tableExists(db, 'tasks')) {
-		db.exec(`
-			INSERT INTO worker_sessions (
-				id, session_id, room_id, room_session_id, room_session_type,
-				task_id, status, created_at, updated_at, completed_at
-			)
-			SELECT
-				lower(hex(randomblob(16))),
-				spp.worker_session_id,
-				spp.room_id,
-				spp.room_session_id,
-				'room_self',
-				spp.current_task_id,
-				CASE spp.status
-					WHEN 'completed' THEN 'completed'
-					WHEN 'crashed' THEN 'failed'
-					WHEN 'idle' THEN 'starting'
-					ELSE 'running'
-				END,
-				spp.created_at,
-				spp.updated_at,
-				CASE WHEN spp.status = 'completed' THEN spp.updated_at ELSE NULL END
-			FROM session_pairs spp
-			WHERE spp.current_task_id IS NOT NULL
-		`);
-	}
-
-	// Step 3: Preserve orphaned pairs (FIX 4: No data loss)
-	if (tableExists(db, 'session_pairs')) {
-		db.exec(`
-			CREATE TABLE IF NOT EXISTS worker_sessions_orphaned (
-				id TEXT PRIMARY KEY,
-				original_pair_id TEXT NOT NULL,
-				room_id TEXT NOT NULL,
-				room_session_id TEXT NOT NULL,
-				manager_session_id TEXT NOT NULL,
-				worker_session_id TEXT NOT NULL,
-				original_status TEXT NOT NULL,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				migrated_at INTEGER NOT NULL,
-				notes TEXT
-			);
-
-			INSERT INTO worker_sessions_orphaned (
-				id, original_pair_id, room_id, room_session_id,
-				manager_session_id, worker_session_id, original_status,
-				created_at, updated_at, migrated_at, notes
-			)
-			SELECT
-				lower(hex(randomblob(16))),
-				spp.id,
-				spp.room_id,
-				spp.room_session_id,
-				spp.manager_session_id,
-				spp.worker_session_id,
-				spp.status,
-				spp.created_at,
-				spp.updated_at,
-				strftime('%s', 'now') * 1000,
-				'Migrated during Migration 28: original pair had no task_id'
-			FROM session_pairs spp
-			WHERE spp.current_task_id IS NULL
-		`);
-	}
-
-	// Step 4: Rename column in room_agent_states table (active_session_pair_ids → active_worker_session_ids)
-	if (
-		tableExists(db, 'room_agent_states') &&
-		tableHasColumn(db, 'room_agent_states', 'active_session_pair_ids')
-	) {
-		db.exec(
-			`ALTER TABLE room_agent_states RENAME COLUMN active_session_pair_ids TO active_worker_session_ids`
-		);
-	}
-
-	// Note: We keep session_pairs table for now for backward compatibility
-	// Can be dropped in Migration 29 after verification period
-}
-
-/**
- * Migration 29: Cleanup after manager removal (Phase 6)
- *
- * Drops deprecated tables and columns after manager-worker architecture has been fully removed.
- *
- * This migration can only be run after:
- * - Migration 28 has been applied (worker_sessions table created)
- * - All session_pairs have been migrated to worker_sessions
- * - All code using SessionPairManager has been removed
- */
-function runMigration29(db: BunDatabase): void {
-	// Drop deprecated session_pairs table (PHASE 6)
-	if (tableExists(db, 'session_pairs')) {
-		// Safety check: ensure no active pairs exist
-		const activePairs = db
-			.prepare(
-				`SELECT COUNT(*) as count FROM session_pairs WHERE status NOT IN ('completed', 'crashed')`
-			)
-			.get() as { count: number } | undefined;
-
-		if (activePairs && activePairs.count > 0) {
-			// Skip migration if there are active pairs - log warning for visibility
-			// oxlint-disable-next-line no-console
-			console.warn(
-				`[Migration 29] Skipping session_pairs table drop: ${activePairs.count} active pairs still exist. ` +
-					`Complete or cancel these pairs and restart to complete migration.`
-			);
-			return;
-		}
-
-		// Drop the table
-		db.exec(`DROP TABLE IF EXISTS session_pairs`);
-
-		// Note: We keep worker_sessions_orphaned for audit purposes
-		// It contains historical data about session_pairs that had no task_id
-
-		// Note: active_worker_session_ids column was already renamed in Migration 28
-	}
-}
-
-/**
- * Migration 30: Add waiting_context to room_agent_states
- *
- * Persists review/escalation/question waiting context so room agents can resume
- * pending human-input flows after process restart.
- */
-function runMigration30(db: BunDatabase): void {
-	if (!tableExists(db, 'room_agent_states')) {
-		return;
-	}
-
-	if (!tableHasColumn(db, 'room_agent_states', 'waiting_context')) {
-		db.exec(`ALTER TABLE room_agent_states ADD COLUMN waiting_context TEXT`);
-	}
-}
-
-/**
- * Migration 31: Add run_intent to room_agent_states
- *
- * Persists whether a room agent should be auto-started when the daemon boots.
- */
-function runMigration31(db: BunDatabase): void {
-	if (!tableExists(db, 'room_agent_states')) {
-		return;
-	}
-
-	if (!tableHasColumn(db, 'room_agent_states', 'run_intent')) {
-		db.exec(`ALTER TABLE room_agent_states ADD COLUMN run_intent INTEGER NOT NULL DEFAULT 0`);
-
-		// Backfill run intent for agents that were effectively "running" before
-		// run_intent existed. Paused agents stay opted out.
-		if (tableExists(db, 'rooms')) {
-			db.exec(`
-				UPDATE room_agent_states
-				SET run_intent = 1
-				WHERE lifecycle_state != 'paused'
-					AND room_id IN (SELECT id FROM rooms WHERE status = 'active')
-			`);
-		} else {
-			db.exec(`
-				UPDATE room_agent_states
-				SET run_intent = 1
-				WHERE lifecycle_state != 'paused'
-			`);
-		}
-	}
 }
 
 /**
@@ -1601,6 +554,13 @@ function runMigration31(db: BunDatabase): void {
  * Also migrates stale status values in tasks, goals, and sessions.
  */
 function runMigration32(db: BunDatabase): void {
+	// Drop old neo_* tables in case migration 14 was never run
+	db.exec(`DROP TABLE IF EXISTS neo_context_messages`);
+	db.exec(`DROP TABLE IF EXISTS neo_contexts`);
+	db.exec(`DROP TABLE IF EXISTS neo_tasks`);
+	db.exec(`DROP TABLE IF EXISTS neo_memories`);
+	db.exec(`DROP TABLE IF EXISTS neo_rooms`);
+
 	// Drop old orchestration tables (IF EXISTS so idempotent)
 	db.exec(`DROP TABLE IF EXISTS room_agent_states`);
 	db.exec(`DROP TABLE IF EXISTS worker_sessions`);
@@ -1614,6 +574,26 @@ function runMigration32(db: BunDatabase): void {
 	// Drop stale session_pairs if it somehow survived Migration 29
 	db.exec(`DROP TABLE IF EXISTS session_pairs`);
 
+	// Preserve room/task data when the rooms schema is already compatible.
+	// Only reset room-domain tables if we detect an incompatible legacy rooms table.
+	const shouldResetRoomDomainTables =
+		tableExists(db, 'rooms') &&
+		!tableHasColumns(db, 'rooms', [
+			'id',
+			'name',
+			'background_context',
+			'instructions',
+			'allowed_paths',
+			'default_path',
+			'default_model',
+			'allowed_models',
+			'session_ids',
+			'status',
+			'created_at',
+			'updated_at',
+			'context_version',
+		]);
+
 	// Temporarily disable FK enforcement for all table rebuilds in this migration.
 	// Two reasons:
 	// 1. rooms is only created by createTables() which runs after all migrations,
@@ -1624,106 +604,32 @@ function runMigration32(db: BunDatabase): void {
 	// FK is restored in the finally block below.
 	db.exec(`PRAGMA foreign_keys = OFF`);
 	try {
-		// Rebuild tasks table: update CHECK constraint to new status values
-		// SQLite does not support ALTER CHECK, so we use the table rebuild pattern
-		if (tableExists(db, 'tasks')) {
-			// First migrate old status values
-			db.exec(`UPDATE tasks SET status = 'escalated' WHERE status = 'blocked'`);
-			db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'cancelled'`);
-
-			// Rebuild the table with the new CHECK constraint
-			db.exec(`
-			CREATE TABLE tasks_new (
-				id TEXT PRIMARY KEY,
-				room_id TEXT NOT NULL,
-				title TEXT NOT NULL,
-				description TEXT NOT NULL,
-				status TEXT NOT NULL DEFAULT 'pending'
-					CHECK(status IN ('draft', 'pending', 'in_progress', 'escalated', 'completed', 'failed')),
-				priority TEXT NOT NULL DEFAULT 'normal'
-					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-				progress INTEGER,
-				current_step TEXT,
-				result TEXT,
-				error TEXT,
-				depends_on TEXT DEFAULT '[]',
-				created_at INTEGER NOT NULL,
-				started_at INTEGER,
-				completed_at INTEGER,
-				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-			)
-		`);
-			db.exec(`
-			INSERT INTO tasks_new (id, room_id, title, description, status, priority,
-				progress, current_step, result, error, depends_on,
-				created_at, started_at, completed_at)
-			SELECT id, room_id, title, description,
-				CASE status
-					WHEN 'blocked' THEN 'escalated'
-					WHEN 'cancelled' THEN 'failed'
-					ELSE status
-				END,
-				priority, progress, current_step, result, error, depends_on,
-				created_at, started_at, completed_at
-			FROM tasks
-		`);
-			db.exec(`DROP TABLE tasks`);
-			db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
-		}
-
-		// Rebuild goals table: update CHECK constraint to new status values
-		if (tableExists(db, 'goals')) {
-			// First migrate old status values
-			db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
-			db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
-
-			// Rebuild the table with the new CHECK constraint
-			db.exec(`
-			CREATE TABLE goals_new (
-				id TEXT PRIMARY KEY,
-				room_id TEXT NOT NULL,
-				title TEXT NOT NULL,
-				description TEXT NOT NULL DEFAULT '',
-				status TEXT NOT NULL DEFAULT 'active'
-					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
-				priority TEXT NOT NULL DEFAULT 'normal'
-					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-				progress INTEGER DEFAULT 0,
-				linked_task_ids TEXT DEFAULT '[]',
-				metrics TEXT DEFAULT '{}',
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				completed_at INTEGER,
-				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-			)
-		`);
-			db.exec(`
-			INSERT INTO goals_new (id, room_id, title, description, status, priority,
-				progress, linked_task_ids, metrics, created_at, updated_at, completed_at)
-			SELECT id, room_id, title, description,
-				CASE status
-					WHEN 'pending' THEN 'active'
-					WHEN 'in_progress' THEN 'active'
-					WHEN 'blocked' THEN 'needs_human'
-					ELSE status
-				END,
-				priority, progress, linked_task_ids, metrics, created_at, updated_at, completed_at
-			FROM goals
-		`);
-			db.exec(`DROP TABLE goals`);
-			db.exec(`ALTER TABLE goals_new RENAME TO goals`);
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
-			db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+		if (shouldResetRoomDomainTables) {
+			// Legacy/incompatible room schema detected - reset room-domain tables.
+			db.exec(`DROP TABLE IF EXISTS task_messages`);
+			db.exec(`DROP TABLE IF EXISTS task_pairs`);
+			db.exec(`DROP TABLE IF EXISTS room_audit_log`);
+			db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
+			db.exec(`DROP TABLE IF EXISTS prompt_templates`);
+			db.exec(`DROP TABLE IF EXISTS inbox_items`);
+			db.exec(`DROP TABLE IF EXISTS room_github_mappings`);
+			db.exec(`DROP TABLE IF EXISTS goals`);
+			db.exec(`DROP TABLE IF EXISTS tasks`);
+			db.exec(`DROP TABLE IF EXISTS rooms`);
+		} else {
+			// Compatible schema: keep room-domain data, remove obsolete prompt tables only.
+			db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
+			db.exec(`DROP TABLE IF EXISTS prompt_templates`);
 		}
 
 		// Rebuild sessions table: update type CHECK constraint
 		// (drop 'room_self' and 'manager', add 'craft' and 'lead')
 		if (tableExists(db, 'sessions')) {
-			// Migrate old type values first
+			// Migrate old type values first (disable CHECK so new values are accepted)
+			db.exec(`PRAGMA ignore_check_constraints = 1`);
 			db.exec(`UPDATE sessions SET type = 'craft' WHERE type = 'room_self'`);
 			db.exec(`UPDATE sessions SET type = 'lead' WHERE type = 'manager'`);
+			db.exec(`PRAGMA ignore_check_constraints = 0`);
 			// Remove any rows with unmappable types
 			db.exec(
 				`DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')`
@@ -1770,5 +676,119 @@ function runMigration32(db: BunDatabase): void {
 		}
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 33: Room Runtime schema
+ *
+ * Creates tables for the (Craft, Lead) agent pair architecture:
+ * - task_pairs: Tracks (Craft, Lead) session pairs per task
+ * - task_messages: Message queue for inter-agent delivery (stub for MVP)
+ * - room_audit_log: Observability for Runtime tick/state changes
+ *
+ * Also adds columns to existing tables:
+ * - tasks: task_type, version, created_by_task_id
+ * - goals: planning_attempts, goal_review_attempts
+ * - rooms: config
+ */
+function runMigration33(db: BunDatabase): void {
+	// --- New tables ---
+
+	if (!tableExists(db, 'task_pairs')) {
+		db.exec(`
+			CREATE TABLE task_pairs (
+				id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL REFERENCES tasks(id),
+				craft_session_id TEXT NOT NULL,
+				lead_session_id TEXT NOT NULL,
+				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft'
+					CHECK(pair_state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+				feedback_iteration INTEGER NOT NULL DEFAULT 0,
+				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
+				last_processed_lead_turn_id TEXT,
+				last_forwarded_message_id TEXT,
+				active_work_started_at INTEGER,
+				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
+				hibernated_at INTEGER,
+				version INTEGER NOT NULL DEFAULT 0,
+				tokens_used INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL,
+				completed_at INTEGER
+			);
+
+			CREATE INDEX idx_task_pairs_task ON task_pairs(task_id);
+			CREATE INDEX idx_task_pairs_state ON task_pairs(pair_state);
+			CREATE INDEX idx_task_pairs_craft ON task_pairs(craft_session_id);
+			CREATE INDEX idx_task_pairs_lead ON task_pairs(lead_session_id);
+		`);
+	}
+
+	if (!tableExists(db, 'task_messages')) {
+		db.exec(`
+			CREATE TABLE task_messages (
+				id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL REFERENCES tasks(id),
+				pair_id TEXT NOT NULL REFERENCES task_pairs(id),
+				from_role TEXT NOT NULL CHECK(from_role IN ('craft', 'lead', 'human')),
+				to_role TEXT NOT NULL CHECK(to_role IN ('craft', 'lead')),
+				to_session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL DEFAULT 'normal'
+					CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
+				payload TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'delivered', 'dead_letter')),
+				created_at INTEGER NOT NULL,
+				delivered_at INTEGER
+			);
+
+			CREATE INDEX idx_task_messages_pair ON task_messages(pair_id, status);
+			CREATE INDEX idx_task_messages_task ON task_messages(task_id);
+		`);
+	}
+
+	if (!tableExists(db, 'room_audit_log')) {
+		db.exec(`
+			CREATE TABLE room_audit_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				room_id TEXT NOT NULL,
+				event_type TEXT NOT NULL,
+				detail TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			);
+
+			CREATE INDEX idx_room_audit_log_room ON room_audit_log(room_id, created_at);
+		`);
+	}
+
+	// --- Column additions to existing tables ---
+
+	if (tableExists(db, 'tasks')) {
+		if (!tableHasColumn(db, 'tasks', 'task_type')) {
+			db.exec(
+				`ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review'))`
+			);
+		}
+		if (!tableHasColumn(db, 'tasks', 'version')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN version INTEGER DEFAULT 0`);
+		}
+		if (!tableHasColumn(db, 'tasks', 'created_by_task_id')) {
+			db.exec(`ALTER TABLE tasks ADD COLUMN created_by_task_id TEXT`);
+		}
+	}
+
+	if (tableExists(db, 'goals')) {
+		if (!tableHasColumn(db, 'goals', 'planning_attempts')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN planning_attempts INTEGER DEFAULT 0`);
+		}
+		if (!tableHasColumn(db, 'goals', 'goal_review_attempts')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN goal_review_attempts INTEGER DEFAULT 0`);
+		}
+	}
+
+	if (tableExists(db, 'rooms')) {
+		if (!tableHasColumn(db, 'rooms', 'config')) {
+			db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
+		}
 	}
 }

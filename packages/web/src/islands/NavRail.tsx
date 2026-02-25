@@ -1,16 +1,5 @@
-import {
-	navSectionSignal,
-	navRailOpenSignal,
-	currentSessionIdSignal,
-	currentRoomIdSignal,
-	type NavSection,
-} from '../lib/signals.ts';
-import {
-	navigateToChats,
-	navigateToRooms,
-	navigateToSettings,
-	navigateToHome,
-} from '../lib/router.ts';
+import { navSectionSignal, navRailOpenSignal, type NavSection } from '../lib/signals.ts';
+import { navigateToSessions, navigateToSettings, navigateToHome } from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { connectionState } from '../lib/state.ts';
@@ -19,7 +8,6 @@ import { connectionManager } from '../lib/connection-manager.ts';
 export function NavRail() {
 	const navSection = navSectionSignal.value;
 	const isNavRailOpen = navRailOpenSignal.value;
-	const isHomeActive = currentSessionIdSignal.value === null && currentRoomIdSignal.value === null;
 
 	const handleNavClick = (section: NavSection) => {
 		// Close nav rail on mobile after navigation
@@ -27,23 +15,17 @@ export function NavRail() {
 
 		switch (section) {
 			case 'chats':
-				navigateToChats();
-				break;
-			case 'rooms':
-				navigateToRooms();
+				navigateToSessions();
 				break;
 			case 'settings':
 				navigateToSettings();
-				break;
-			case 'projects':
-				// Future feature - do nothing for now
 				break;
 		}
 	};
 
 	const handleHomeClick = () => {
 		navRailOpenSignal.value = false;
-		navSectionSignal.value = 'chats'; // Reset to chats section to show lobby
+		navSectionSignal.value = 'home';
 		navigateToHome();
 	};
 
@@ -78,7 +60,7 @@ export function NavRail() {
 				{/* Nav Items */}
 				<nav class="flex-1 flex flex-col gap-1">
 					{/* Home Button */}
-					<NavIconButton active={isHomeActive} onClick={handleHomeClick} label="Home">
+					<NavIconButton active={navSection === 'home'} onClick={handleHomeClick} label="Home">
 						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path
 								stroke-linecap="round"
@@ -100,32 +82,6 @@ export function NavRail() {
 								stroke-linejoin="round"
 								stroke-width={2}
 								d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-							/>
-						</svg>
-					</NavIconButton>
-
-					<NavIconButton
-						active={navSection === 'rooms'}
-						onClick={() => handleNavClick('rooms')}
-						label="Rooms"
-					>
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
-							/>
-						</svg>
-					</NavIconButton>
-
-					<NavIconButton active={navSection === 'projects'} disabled label="Projects (Coming Soon)">
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
 							/>
 						</svg>
 					</NavIconButton>

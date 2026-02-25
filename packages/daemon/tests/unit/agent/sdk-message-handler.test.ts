@@ -373,6 +373,26 @@ describe('SDKMessageHandler', () => {
 			expect(enqueueMessageSpy).toHaveBeenCalledWith('/context', true);
 		});
 
+		it('should not queue /context for zero-token result', async () => {
+			const message: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'zero-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(enqueueMessageSpy).not.toHaveBeenCalled();
+		});
+
 		it('should set state to idle', async () => {
 			const message: SDKMessage = {
 				type: 'result',
@@ -857,6 +877,108 @@ describe('SDKMessageHandler', () => {
 
 			// Context tracker should NOT be updated (parsing failed)
 			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
+		});
+
+		it('should suppress internal /context replay and paired result even if replay format changes', async () => {
+			const normalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'normal-result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			// First normal result queues internal /context with mock ID "context-id"
+			await handler.handleMessage(normalResult);
+
+			// Simulate SDK replay for that internal /context with changed/unexpected output format
+			const changedFormatReplay: SDKMessage = {
+				type: 'user',
+				uuid: 'context-id',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '<local-command-stdout>Context: format changed</local-command-stdout>',
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(changedFormatReplay);
+
+			// Paired /context result should be suppressed and must NOT enqueue another /context
+			const internalContextResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'context-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(internalContextResult);
+
+			// Only the first real result should persist/broadcast and queue /context once
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
+			expect(publishSpy).toHaveBeenCalledTimes(1);
+			expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+			expect(enqueueMessageSpy).toHaveBeenCalledWith('/context', true);
+		});
+
+		it('should suppress zero-token internal result when replay correlation fails', async () => {
+			const normalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'normal-result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(normalResult);
+
+			// Replay UUID doesn't match tracked internal command ID ("context-id")
+			const mismatchedReplay: SDKMessage = {
+				type: 'user',
+				uuid: 'different-replay-uuid',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '<local-command-stdout>Context: unexpected shape</local-command-stdout>',
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(mismatchedReplay);
+
+			const internalContextResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'context-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(internalContextResult);
+
+			// normal result + replay persisted, but internal zero-token result suppressed
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(2);
+			expect(publishSpy).toHaveBeenCalledTimes(2);
+			expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 

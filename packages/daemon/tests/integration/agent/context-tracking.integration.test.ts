@@ -1,12 +1,12 @@
 /**
- * Integration tests for context tracking and broadcasting
+ * Integration tests for context tracking and persistence
  *
  * Tests the context window usage tracking flow:
- * Stream Event -> ContextTracker -> Persistence -> DaemonHub Event
+ * /context command parsing -> ContextTracker -> Persistence -> Restoration
  *
  * Test Coverage:
- * 1. Context info restoration after page refresh
- * 2. Context info broadcasting via DaemonHub
+ * 1. Context info persistence after /context command
+ * 2. Context info restoration after page refresh
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -46,13 +46,7 @@ describe('Context Tracking Integration', () => {
 					'System tools': { tokens: 15000, percent: 7.5 },
 					Messages: { tokens: 32000, percent: 16 },
 				},
-				apiUsage: {
-					inputTokens: 45000,
-					outputTokens: 5000,
-					cacheReadTokens: 10000,
-					cacheCreationTokens: 5000,
-				},
-				source: 'merged',
+				source: 'context-command',
 				lastUpdated: Date.now(),
 			};
 
@@ -75,17 +69,11 @@ describe('Context Tracking Integration', () => {
 			const reloadedSession = env.db.getSession(sessionId);
 			expect(reloadedSession?.metadata.lastContextInfo).toBeDefined();
 			expect(reloadedSession?.metadata.lastContextInfo?.totalUsed).toBe(50000);
-			expect(reloadedSession?.metadata.lastContextInfo?.apiUsage?.inputTokens).toBe(45000);
 
 			// Create ContextTracker with restored data
-			const contextTracker = new ContextTracker(
-				sessionId,
-				session.config.model,
-				env.daemonHub,
-				(info: ContextInfo) => {
-					session.metadata.lastContextInfo = info;
-				}
-			);
+			const contextTracker = new ContextTracker(sessionId, (info: ContextInfo) => {
+				session.metadata.lastContextInfo = info;
+			});
 
 			// Restore from metadata
 			if (reloadedSession?.metadata.lastContextInfo) {
@@ -97,65 +85,34 @@ describe('Context Tracking Integration', () => {
 			expect(restoredContext).not.toBeNull();
 			expect(restoredContext?.totalUsed).toBe(50000);
 			expect(restoredContext?.breakdown['System prompt'].tokens).toBe(3000);
-			expect(restoredContext?.apiUsage?.inputTokens).toBe(45000);
 		});
 	});
 
-	describe('Context Info Broadcasting', () => {
-		it('should update context and emit event via DaemonHub', async () => {
+	describe('Context Info Persistence', () => {
+		it('should persist context info to DB when updated', async () => {
 			const sessionId = generateUUID();
 
-			// Create session
 			const session = createTestSession(env.testWorkspace, { id: sessionId });
 			env.db.createSession(session);
 
-			// Track DaemonHub emissions
-			const emittedEvents: Array<{ event: string; data: unknown }> = [];
-			env.daemonHub.on('context.updated', (data) => {
-				emittedEvents.push({ event: 'context.updated', data });
-			});
-
-			// Create ContextTracker with persistence callback
 			const contextTracker = new ContextTracker(
 				sessionId,
-				session.config.model,
-				env.daemonHub,
 				(contextInfo: ContextInfo) => {
 					session.metadata.lastContextInfo = contextInfo;
 					env.db.updateSession(sessionId, { metadata: session.metadata });
 				}
 			);
 
-			// Simulate stream event with usage
-			const streamEvent = {
-				type: 'message_start',
-				message: {
-					usage: {
-						input_tokens: 5000,
-						output_tokens: 0,
-					},
-				},
-			};
-
-			await contextTracker.processStreamEvent(streamEvent as never);
-
-			// Update with detailed breakdown
 			const detailedContext: ContextInfo = {
 				model: 'claude-sonnet-4-5-20250929',
 				totalUsed: 5000,
 				totalCapacity: 200000,
-				percentUsed: 2.5,
+				percentUsed: 3,
 				breakdown: {
 					'System prompt': { tokens: 3000, percent: 1.5 },
 					Messages: { tokens: 2000, percent: 1.0 },
 				},
-				apiUsage: {
-					inputTokens: 5000,
-					outputTokens: 0,
-					cacheReadTokens: 0,
-					cacheCreationTokens: 0,
-				},
-				source: 'merged',
+				source: 'context-command',
 				lastUpdated: Date.now(),
 			};
 
@@ -165,14 +122,7 @@ describe('Context Tracking Integration', () => {
 			const updatedSession = env.db.getSession(sessionId);
 			expect(updatedSession?.metadata.lastContextInfo).toBeDefined();
 			expect(updatedSession?.metadata.lastContextInfo?.totalUsed).toBe(5000);
-
-			// Verify DaemonHub emitted context.updated event
-			// Note: processStreamEvent triggers throttled update, so we may need to wait
-			await new Promise((resolve) => setTimeout(resolve, 300)); // Wait for throttle
-
-			expect(emittedEvents.length).toBeGreaterThan(0);
-			const contextEvent = emittedEvents.find((e) => e.event === 'context.updated');
-			expect(contextEvent).toBeDefined();
+			expect(updatedSession?.metadata.lastContextInfo?.source).toBe('context-command');
 		});
 	});
 });

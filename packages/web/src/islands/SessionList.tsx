@@ -15,7 +15,8 @@ interface SessionListProps {
 export function SessionList({ onSessionSelect }: SessionListProps) {
 	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_PAGE);
 
-	const sessionsList = sessions.value;
+	// Only show sessions that don't belong to a room
+	const sessionsList = sessions.value.filter((s) => !s.context?.roomId);
 	const showArchived = globalSettings.value?.showArchived ?? false;
 
 	// Pagination

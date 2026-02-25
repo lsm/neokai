@@ -64,9 +64,10 @@ class SessionStore {
 	);
 
 	/** Available slash commands */
-	readonly commandsData = computed<string[]>(
-		() => this.sessionState.value?.commandsData?.availableCommands || []
-	);
+	readonly commandsData = computed<string[]>(() => {
+		const cmds = this.sessionState.value?.commandsData?.availableCommands;
+		return Array.isArray(cmds) ? cmds : [];
+	});
 
 	/** Session error state */
 	readonly error = computed<{
@@ -197,8 +198,19 @@ class SessionStore {
 				this.sessionState.value = state;
 
 				// Sync slash commands signal (for autocomplete)
-				if (state.commandsData?.availableCommands) {
-					slashCommandsSignal.value = state.commandsData.availableCommands;
+				// Guard with Array.isArray: corrupted sessions may have a string stored in DB
+				// instead of an array, which would break the filter call in the hook.
+				const cmds = state.commandsData?.availableCommands;
+				if (Array.isArray(cmds) && cmds.length > 0) {
+					slashCommandsSignal.value = cmds;
+				}
+
+				// If state.session provided empty commands, restore from system:init SDK message.
+				// The daemon fallback broadcasts commandsData: [] which overwrites valid commands.
+				// The system:init message in sdkMessages is the authoritative source —
+				// same one SDKSystemMessage.tsx uses to show "Slash Commands (N)".
+				if (!Array.isArray(cmds) || cmds.length === 0) {
+					this._syncCommandsFromSDKMessages(this.sdkMessages.value);
 				}
 
 				// Handle error (show toast only for NEW errors that occurred after session was opened)
@@ -209,7 +221,17 @@ class SessionStore {
 			});
 			this.cleanupFunctions.push(unsubSessionState);
 
-			// 2. SDK messages delta (for incremental updates)
+			// 2. Context updates (fast path - bypasses full state.session round-trip)
+			// The daemon also sends context via state.session, but subscribing directly here
+			// ensures the UI updates as soon as context.updated fires on the session channel.
+			const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
+				if (this.sessionState.value) {
+					this.sessionState.value = { ...this.sessionState.value, contextInfo };
+				}
+			});
+			this.cleanupFunctions.push(unsubContextUpdated);
+
+			// 3. SDK messages delta (for incremental updates)
 			// Set up BEFORE fetching initial state to avoid race conditions
 			// FIX: Add deduplication to prevent double messages after Safari reconnection
 			// This can happen when events are queued during reconnection and replayed,
@@ -224,6 +246,8 @@ class SessionStore {
 					const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
 					if (newMessages.length > 0) {
 						this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
+						// Sync commands from any system:init message that just arrived
+						this._syncCommandsFromSDKMessages(newMessages);
 					}
 				}
 			});
@@ -258,8 +282,9 @@ class SessionStore {
 			// Update signals with initial state
 			if (sessionState) {
 				this.sessionState.value = sessionState;
-				if (sessionState.commandsData?.availableCommands) {
-					slashCommandsSignal.value = sessionState.commandsData.availableCommands;
+				const initialCmds = sessionState.commandsData?.availableCommands;
+				if (Array.isArray(initialCmds) && initialCmds.length > 0) {
+					slashCommandsSignal.value = initialCmds;
 				}
 			} else {
 				// sessionState RPC returned null - set error state so UI shows error instead of infinite loading
@@ -340,6 +365,10 @@ class SessionStore {
 					// No timestamp in response or first load, use snapshot directly
 					this.sdkMessages.value = initialSnapshot;
 				}
+
+				// Sync slash commands from system:init message in initial load.
+				// Handles sessions that already have messages (e.g., after page reload).
+				this._syncCommandsFromSDKMessages(this.sdkMessages.value);
 			}
 		} catch (err) {
 			logger.error('Failed to fetch initial state:', err);
@@ -356,6 +385,34 @@ class SessionStore {
 				},
 				timestamp: Date.now(),
 			};
+		}
+	}
+
+	/**
+	 * Sync slash commands from the system:init SDK message.
+	 *
+	 * The system:init message carries the authoritative slash commands list —
+	 * the same one SDKSystemMessage.tsx renders as "Slash Commands (N)".
+	 * When state.session events arrive with empty commandsData (e.g. from the
+	 * daemon fallback broadcast), this restores commands from the SDK message.
+	 */
+	private _syncCommandsFromSDKMessages(messages: SDKMessage[]): void {
+		for (const msg of messages) {
+			const m = msg as unknown as { type?: string; subtype?: string; slash_commands?: string[] };
+			if (
+				m.type === 'system' &&
+				m.subtype === 'init' &&
+				Array.isArray(m.slash_commands) &&
+				m.slash_commands.length > 0
+			) {
+				if (this.sessionState.value) {
+					this.sessionState.value = {
+						...this.sessionState.value,
+						commandsData: { availableCommands: m.slash_commands },
+					};
+				}
+				break;
+			}
 		}
 	}
 

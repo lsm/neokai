@@ -29,20 +29,14 @@ import { RoomManager } from '../room';
 // New split handlers for Neo functionality
 import { setupRoomHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
-import { setupLobbyHandlers } from './lobby-handlers';
 import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
 // New handlers for goals
 import { setupGoalHandlers, type GoalManagerFactory } from './goal-handlers';
-import { createGitHubAdapter } from '../lobby/adapters/github-adapter';
-import { LobbyAgentService } from '../lobby/lobby-agent-service';
+import { RoomRuntimeService } from '../room/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/goal-manager';
 import { setupDialogHandlers } from './dialog-handlers';
-// PHASE 3: Telemetry and feature flags
-import { registerTelemetryHandlers } from './telemetry-handlers';
-import { getFeatureFlagService } from '../config';
-import { WorkerTelemetry } from '../telemetry';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -53,8 +47,6 @@ export interface RPCHandlerDependencies {
 	daemonHub: DaemonHub;
 	db: Database;
 	gitHubService?: GitHubService;
-	/** Lobby agent service for lobby AI interaction */
-	lobbyAgentService?: LobbyAgentService;
 }
 
 const log = new Logger('rpc-handlers');
@@ -103,53 +95,20 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Goal handlers
 	setupGoalHandlers(deps.messageHub, deps.daemonHub, goalManagerFactory);
 
-	// Create LobbyAgentService if authenticated
-	let lobbyAgentService: LobbyAgentService | undefined = deps.lobbyAgentService;
-	if (!lobbyAgentService) {
-		try {
-			const apiKey =
-				deps.config.anthropicApiKey ||
-				deps.config.claudeCodeOAuthToken ||
-				deps.config.anthropicAuthToken;
-			if (apiKey) {
-				lobbyAgentService = new LobbyAgentService({
-					db: deps.db,
-					rawDb: deps.db.getDatabase(),
-					daemonHub: deps.daemonHub,
-					messageHub: deps.messageHub,
-					getApiKey: () => deps.authManager.getCurrentApiKey(),
-					roomManager,
-					defaultWorkspacePath: deps.config.workspaceRoot,
-					defaultModel: deps.config.defaultModel,
-				});
-
-				// Register GitHub adapter if GitHub is configured
-				if (deps.gitHubService) {
-					const gitHubAdapter = createGitHubAdapter({
-						db: deps.db,
-						daemonHub: deps.daemonHub,
-						config: deps.config,
-						apiKey,
-						githubToken: process.env.GITHUB_TOKEN,
-						onMessage: async (msg) => {
-							await lobbyAgentService!.processMessage(msg);
-						},
-					});
-					lobbyAgentService.registerAdapter(gitHubAdapter);
-				}
-
-				// Start the lobby agent
-				lobbyAgentService.start().catch((error) => {
-					log.error('Failed to start LobbyAgentService:', error);
-				});
-			}
-		} catch (error) {
-			log.error('Failed to initialize LobbyAgentService:', error);
-		}
-	}
-
-	// Lobby handlers
-	setupLobbyHandlers(deps.messageHub, deps.daemonHub, lobbyAgentService);
+	// Room Runtime Service
+	const roomRuntimeService = new RoomRuntimeService({
+		db: deps.db,
+		messageHub: deps.messageHub,
+		daemonHub: deps.daemonHub,
+		getApiKey: () => deps.authManager.getCurrentApiKey(),
+		roomManager,
+		sessionManager: deps.sessionManager,
+		defaultWorkspacePath: deps.config.workspaceRoot,
+		defaultModel: deps.config.defaultModel,
+	});
+	roomRuntimeService.start().catch((error) => {
+		log.error('Failed to start RoomRuntimeService:', error);
+	});
 
 	// GitHub handlers
 	setupGitHubHandlers(
@@ -163,22 +122,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
-	// PHASE 3: Initialize feature flag service
-	const featureFlagService = getFeatureFlagService(deps.db);
-
-	// PHASE 3: Initialize worker telemetry
-	const workerTelemetry = new WorkerTelemetry(deps.daemonHub);
-
-	// PHASE 3: Register telemetry and feature flag RPC handlers
-	registerTelemetryHandlers({
-		messageHub: deps.messageHub,
-		daemonHub: deps.daemonHub,
-		featureFlagService,
-		workerTelemetry,
-	});
-
 	// Return cleanup function to stop background services
 	return () => {
-		// TODO: Cleanup telemetry services if needed
+		roomRuntimeService.stop();
 	};
 }

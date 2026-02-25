@@ -23,6 +23,7 @@ import {
 const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
 const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
 const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
+const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 
 /**
  * Router state and configuration
@@ -271,6 +272,41 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 }
 
 /**
+ * Navigate to the /sessions page
+ * Shows the standalone sessions list (no room sessions)
+ */
+export function navigateToSessions(replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const currentPath = getCurrentPath();
+	if (currentPath === '/sessions') {
+		navSectionSignal.value = 'chats';
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ path: '/sessions' }, '', '/sessions');
+
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		navSectionSignal.value = 'chats';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Navigate to Chats section
  * Sets nav section to 'chats' and navigates home if needed
  */
@@ -315,7 +351,7 @@ function handlePopState(_event: PopStateEvent): void {
 	const roomSession = getRoomSessionIdFromPath(path);
 
 	// Update the signals to match the URL
-	// Room session route takes priority, then room, then session
+	// Room session route takes priority, then room, then session, then /sessions
 	if (roomSession) {
 		currentRoomIdSignal.value = roomSession.roomId;
 		currentRoomSessionIdSignal.value = roomSession.sessionId;
@@ -326,10 +362,18 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
+	} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'chats';
 	} else {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
+		if (!sessionId) {
+			navSectionSignal.value = 'home';
+		}
 	}
 }
 
@@ -352,7 +396,7 @@ export function initializeRouter(): string | null {
 	const initialRoomId = getRoomIdFromPath(initialPath);
 	const initialRoomSession = getRoomSessionIdFromPath(initialPath);
 
-	// Set initial signals - room session takes priority, then room, then session
+	// Set initial signals - room session takes priority, then room, then /sessions, then session
 	if (initialRoomSession) {
 		currentRoomIdSignal.value = initialRoomSession.roomId;
 		currentRoomSessionIdSignal.value = initialRoomSession.sessionId;
@@ -363,6 +407,11 @@ export function initializeRouter(): string | null {
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
+	} else if (SESSIONS_ROUTE_PATTERN.test(initialPath)) {
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'chats';
 	} else {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;

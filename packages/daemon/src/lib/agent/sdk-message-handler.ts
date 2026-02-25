@@ -27,6 +27,7 @@ import {
 	isSDKStatusMessage,
 	isSDKCompactBoundary,
 	isSDKSystemMessage,
+	isSDKSystemInit,
 } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
 import { Logger } from '../logger';
@@ -58,6 +59,9 @@ export interface SDKMessageHandlerContext {
 	// Mutable query state (needed to check if query is running)
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
+
+	// Called when the SDK init message provides the full slash commands list
+	onInitSlashCommands: (commands: string[]) => Promise<void>;
 }
 
 export class SDKMessageHandler {
@@ -72,6 +76,32 @@ export class SDKMessageHandler {
 
 	// Track UUIDs of internal /context commands to skip their result messages
 	private internalContextCommandIds: Set<string> = new Set();
+
+	/**
+	 * Check if this message is the replay response for an internally queued /context command.
+	 *
+	 * This is ID-based (not content-based) so loop prevention still works if SDK output format changes.
+	 */
+	private isInternalContextResponse(message: SDKMessage): boolean {
+		if (message.type !== 'user') return false;
+		const userMessage = message as { uuid?: string };
+		return !!userMessage.uuid && this.internalContextCommandIds.has(userMessage.uuid);
+	}
+
+	/**
+	 * Check if a successful result consumed zero tokens.
+	 * Internal slash-command turns (like /context) typically produce this shape.
+	 */
+	private isZeroTokenResult(message: SDKMessage): boolean {
+		if (!isSDKResultSuccess(message)) return false;
+		const usage = message.usage;
+		return (
+			usage.input_tokens === 0 &&
+			usage.output_tokens === 0 &&
+			usage.cache_read_input_tokens === 0 &&
+			usage.cache_creation_input_tokens === 0
+		);
+	}
 
 	constructor(private ctx: SDKMessageHandlerContext) {
 		const { session } = ctx;
@@ -198,6 +228,22 @@ export class SDKMessageHandler {
 		// Automatically update phase based on message type
 		await stateManager.detectPhaseFromMessage(message);
 
+		// First, correlate internal /context replay by message UUID.
+		// This avoids relying on brittle content markers that may change across SDK versions.
+		if (this.isInternalContextResponse(message)) {
+			await this.handleContextResponse(message);
+			// Skip:
+			// 1. Queuing another /context for the paired result
+			// 2. Saving/broadcasting this internal replay message
+			this.lastMessageWasContextResponse = true;
+
+			const userMsg = message as { uuid?: string };
+			if (userMsg.uuid) {
+				this.internalContextCommandIds.delete(userMsg.uuid);
+			}
+			return;
+		}
+
 		// Check if this is a /context response BEFORE saving/emitting
 		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
@@ -216,6 +262,15 @@ export class SDKMessageHandler {
 
 			// IMPORTANT: Return early to skip saving and emitting this message
 			// It's already been processed for context tracking
+			return;
+		}
+
+		// Fallback guard: if an internal /context command is pending and we get a
+		// zero-token result, treat it as the paired internal result even when replay
+		// correlation failed (SDK format/UUID drift). This prevents re-queue loops.
+		if (this.isZeroTokenResult(message) && this.internalContextCommandIds.size > 0) {
+			this.internalContextCommandIds.clear();
+			this.lastMessageWasContextResponse = false;
 			return;
 		}
 
@@ -280,7 +335,7 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Handle system message (capture SDK session ID)
+	 * Handle system message (capture SDK session ID and slash commands)
 	 */
 	private async handleSystemMessage(message: SDKMessage): Promise<void> {
 		const { session, db, daemonHub } = this.ctx;
@@ -305,6 +360,14 @@ export class SDKMessageHandler {
 				source: 'sdk-session',
 				session: { sdkSessionId: message.session_id },
 			});
+		}
+
+		// Capture the full slash commands list from the init message.
+		// This is the authoritative source — it includes all SDK built-ins plus
+		// any custom skills, and fires immediately when a query starts.
+		// Use isSDKSystemInit which narrows specifically to SDKSystemMessage (subtype: 'init').
+		if (isSDKSystemInit(message) && message.slash_commands?.length > 0) {
+			await this.ctx.onInitSlashCommands(message.slash_commands);
 		}
 	}
 
@@ -370,26 +433,16 @@ export class SDKMessageHandler {
 			},
 		});
 
-		// Update context tracker with final accurate usage
-		// SKIP for /context command's result - /context doesn't call the API, so it has 0 tokens
-		// We already have the correct context from parsing the /context response
-		if (!this.lastMessageWasContextResponse) {
-			await contextTracker.handleResultUsage(
-				{
-					input_tokens: usage.input_tokens,
-					output_tokens: usage.output_tokens,
-					cache_read_input_tokens: usage.cache_read_input_tokens,
-					cache_creation_input_tokens: usage.cache_creation_input_tokens,
-				},
-				message.modelUsage
-			);
-		}
-
 		// Queue /context command to get detailed breakdown (unless we just got one)
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
 		// Note: flag is reset when we process the result message (see early return above)
-		if (!this.lastMessageWasContextResponse) {
+		const isZeroTokenResult = this.isZeroTokenResult(message);
+		if (
+			!this.lastMessageWasContextResponse &&
+			!isZeroTokenResult &&
+			this.internalContextCommandIds.size === 0
+		) {
 			try {
 				// Queue as internal message (won't be saved to DB or broadcast as user message)
 				const messageId = await messageQueue.enqueue('/context', true);
@@ -480,7 +533,7 @@ export class SDKMessageHandler {
 
 	/**
 	 * Handle /context response
-	 * Parse the detailed breakdown and merge with stream-based context tracking
+	 * Parse the detailed breakdown and update context tracker
 	 */
 	private async handleContextResponse(message: SDKMessage): Promise<void> {
 		const { session, daemonHub, contextTracker } = this.ctx;
@@ -491,20 +544,16 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		// Merge with stream-based context
-		const streamContext = contextTracker.getContextInfo();
-		const mergedContext = this.contextFetcher.mergeWithStreamContext(parsedContext, streamContext);
+		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
 
-		// Update ContextTracker with merged data
-		// This makes it the source of truth for context info
-		// The tracker will persist to session metadata and emit the context:updated event
-		contextTracker.updateWithDetailedBreakdown(mergedContext);
+		// Update ContextTracker - persists to session metadata
+		contextTracker.updateWithDetailedBreakdown(contextInfo);
 
 		// Emit context update event via DaemonHub
 		// StateManager will broadcast this via state.session channel
 		await daemonHub.emit('context.updated', {
 			sessionId: session.id,
-			contextInfo: mergedContext,
+			contextInfo,
 		});
 	}
 }

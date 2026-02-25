@@ -443,3 +443,110 @@ test.describe('Slash Command Autocomplete - Edge Cases', () => {
 		expect(inputValue).toBe('/merge-session with some additional context');
 	});
 });
+
+test.describe('Slash Command Autocomplete - SDK Commands from system:init', () => {
+	/**
+	 * Regression tests for: slash commands not showing in autocomplete even though
+	 * the SDK system:init message has 10+ commands (visible in "Slash Commands (N)"
+	 * panel). Root cause: state.session fallback broadcast sent commandsData: []
+	 * which overwrote valid commands. Fix: sync commandsData from system:init SDK
+	 * message as the authoritative source.
+	 */
+
+	let sessionId: string | null = null;
+
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+
+		const newSessionButton = page.getByRole('button', {
+			name: 'New Session',
+			exact: true,
+		});
+		await newSessionButton.click();
+		sessionId = await waitForSessionCreated(page);
+
+		await waitForSlashCommandsLoaded(page);
+	});
+
+	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			try {
+				await cleanupTestSession(page, sessionId);
+			} catch (error) {
+				console.warn(`Failed to cleanup session ${sessionId}:`, error);
+			}
+			sessionId = null;
+		}
+	});
+
+	test('should show SDK commands in autocomplete after assistant response', async ({ page }) => {
+		// Send a message to trigger SDK query and receive system:init
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		// Wait for assistant to respond (system:init has arrived by this point)
+		await waitForAssistantResponse(page);
+
+		// SDK commands should now be in autocomplete via system:init sync
+		// (no artificial delay needed with the fix)
+		await typeInMessageInput(page, '/h');
+		await expect(page.locator('button:has-text("help")')).toBeVisible({ timeout: 5000 });
+	});
+
+	test('should show /context command after assistant response', async ({ page }) => {
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		await waitForAssistantResponse(page);
+
+		await typeInMessageInput(page, '/con');
+		await expect(page.locator('button:has-text("context")')).toBeVisible({ timeout: 5000 });
+	});
+
+	test('should show all commands matching / after assistant response', async ({ page }) => {
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		await waitForAssistantResponse(page);
+
+		// Type just / to see all commands — should have more than just /merge-session
+		await typeInMessageInput(page, '/');
+		const dropdown = getAutocompleteDropdown(page);
+		await expect(dropdown).toBeVisible({ timeout: 5000 });
+
+		// Should have multiple commands from SDK system:init (not just the built-in /merge-session)
+		const commandButtons = page.locator('[data-testid="command-autocomplete"] button, text=Slash Commands ~ button');
+		// Verify at least /help is present (from SDK, not from NeoKai built-ins)
+		await expect(page.locator('button:has-text("help")')).toBeVisible({ timeout: 5000 });
+	});
+
+	test('should restore SDK commands after state.session event with empty commandsData', async ({
+		page,
+	}) => {
+		// This test verifies the core bug fix:
+		// When state.session arrives with commandsData: [], commands are restored from system:init.
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		await waitForAssistantResponse(page);
+
+		// Send a second message — this triggers more state.session events including
+		// potential fallback broadcasts with empty commandsData.
+		await textarea.fill('what is 2+2');
+		await page.keyboard.press('Enter');
+		await waitForAssistantResponse(page);
+
+		// Commands should still be available after multiple state.session events
+		await typeInMessageInput(page, '/h');
+		await expect(page.locator('button:has-text("help")')).toBeVisible({ timeout: 5000 });
+	});
+});

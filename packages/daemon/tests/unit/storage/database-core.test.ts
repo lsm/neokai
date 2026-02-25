@@ -5,11 +5,11 @@
  * Tests initialization, configuration, backup, and close operations.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import { DatabaseCore } from '../../../src/storage/database-core';
-import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { existsSync, readdirSync, statSync, rmSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseCore } from '../../../src/storage/database-core';
 
 describe('DatabaseCore', () => {
 	let testDir: string;
@@ -362,6 +362,30 @@ describe('DatabaseCore', () => {
 			expect(tableNames).toContain('sessions');
 			expect(tableNames).toContain('sdk_messages');
 			expect(tableNames).toContain('auth_config');
+		});
+
+		it('should preserve rooms across restart when schema is compatible', async () => {
+			dbCore = new DatabaseCore(dbPath);
+			await dbCore.initialize();
+
+			const db = dbCore.getDb();
+			const now = Date.now();
+			db.prepare(
+				`INSERT INTO rooms (id, name, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)`
+			).run('room-persist-1', 'Persistent Room', 'active', now, now);
+
+			dbCore.close();
+
+			dbCore = new DatabaseCore(dbPath);
+			await dbCore.initialize();
+
+			const reopenedDb = dbCore.getDb();
+			const result = reopenedDb
+				.prepare(`SELECT COUNT(*) as count FROM rooms WHERE id = ?`)
+				.get('room-persist-1') as { count: number };
+
+			expect(result.count).toBe(1);
 		});
 	});
 });

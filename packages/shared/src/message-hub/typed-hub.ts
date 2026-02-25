@@ -277,11 +277,6 @@ export class TypedHub<TEventMap extends Record<string, BaseEventData>> {
 		};
 		const hubUnsub = this.hub.onEvent(event, hubHandler);
 
-		// Join the channel if sessionId is specified
-		if (sessionId) {
-			this.hub.joinChannel(sessionId);
-		}
-
 		// Track MessageHub subscription for cleanup
 		if (!this.hubSubscriptions.has(event)) {
 			this.hubSubscriptions.set(event, []);

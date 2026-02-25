@@ -186,6 +186,16 @@ export class QueryOptionsBuilder {
 		// Room chat sessions are orchestrators only — they must not
 		// have access to built-in file/shell tools or user-configured MCP servers.
 		if (this.ctx.session.type === 'room_chat') {
+			const roomAllowedBuiltinTools = [
+				'Read',
+				'Glob',
+				'Grep',
+				'WebFetch',
+				'WebSearch',
+				'ToolSearch',
+				'AskUserQuestion',
+				'Skill',
+			];
 			const restrictedBuiltinTools = [
 				'Task',
 				'TaskOutput',
@@ -195,6 +205,27 @@ export class QueryOptionsBuilder {
 				'Write',
 				'NotebookEdit',
 			];
+			// Room chat must not use Claude Code preset prompt by default.
+			const systemPrompt = queryOptions.systemPrompt;
+			if (
+				typeof systemPrompt === 'object' &&
+				systemPrompt !== null &&
+				(systemPrompt as ClaudeCodePreset).type === 'preset' &&
+				(systemPrompt as ClaudeCodePreset).preset === 'claude_code'
+			) {
+				queryOptions.systemPrompt = undefined;
+			}
+
+			// Restrict room chat to a safe, read-oriented built-in tool set.
+			queryOptions.tools = roomAllowedBuiltinTools;
+			queryOptions.allowedTools = [
+				...new Set([
+					...(queryOptions.allowedTools ?? []),
+					...roomAllowedBuiltinTools,
+					'room-agent-tools__*',
+				]),
+			];
+
 			queryOptions.disallowedTools = [
 				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
 			];
