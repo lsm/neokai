@@ -54,6 +54,39 @@ test.describe('Context Usage - Display', () => {
 		await expect(loadingIndicator).toBeVisible({ timeout: 10000 });
 	});
 
+	test('should show non-zero context percentage after message exchange', async ({ page }) => {
+		// Create a new session
+		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		sessionId = await waitForSessionCreated(page);
+
+		// Send a message to populate context data
+		const input = page.locator('textarea[placeholder*="Ask"]').first();
+		await input.fill('Hello, please respond with a brief greeting');
+		await page.keyboard.press('Enter');
+
+		// Wait for assistant response
+		await waitForAssistantResponse(page);
+
+		// Wait for context indicator to have data (title changes from "Context data loading...")
+		const contextIndicator = page.locator('[title="Click for context details"]');
+		await expect(contextIndicator).toBeVisible({ timeout: 15000 });
+
+		// Get the context percentage element by data-testid
+		const contextPercentage = page.getByTestId('context-percentage');
+
+		// Should be visible
+		await expect(contextPercentage).toBeVisible({ timeout: 5000 });
+
+		// Get the text content and verify it's NOT "0.0%"
+		const percentageText = await contextPercentage.textContent();
+		expect(percentageText).not.toBe('0.0%');
+
+		// Should have some actual percentage value (e.g., "1.2%", "5.3%", etc.)
+		// Parse the percentage to verify it's a number greater than 0
+		const percentageValue = parseFloat(percentageText?.replace('%', '') || '0');
+		expect(percentageValue).toBeGreaterThan(0);
+	});
+
 	test('should toggle dropdown when clicking indicator again', async ({ page }) => {
 		// Create a new session
 		await page.getByRole('button', { name: 'New Session', exact: true }).click();

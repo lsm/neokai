@@ -375,7 +375,14 @@ export class SDKMessageHandler {
 	 * Handle result message (end of turn)
 	 */
 	private async handleResultMessage(message: SDKMessage): Promise<void> {
-		const { session, db, daemonHub, contextTracker, stateManager, messageQueue } = this.ctx;
+		const {
+			session,
+			db,
+			daemonHub,
+			contextTracker: _contextTracker,
+			stateManager,
+			messageQueue,
+		} = this.ctx;
 
 		// Type guard to ensure this is a successful result
 		if (!isSDKResultSuccess(message)) return;

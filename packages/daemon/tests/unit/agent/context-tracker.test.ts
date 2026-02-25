@@ -35,7 +35,7 @@ describe('ContextTracker', () => {
 				percentUsed: 25,
 				breakdown: {
 					'System prompt': { tokens: 3000, percent: 1.5 },
-					'Messages': { tokens: 47000, percent: 23.5 },
+					Messages: { tokens: 47000, percent: 23.5 },
 					'Free space': { tokens: 150000, percent: 75 },
 				},
 			};
@@ -56,7 +56,7 @@ describe('ContextTracker', () => {
 				percentUsed: 15,
 				breakdown: {
 					'System prompt': { tokens: 5000, percent: 2.5 },
-					'Messages': { tokens: 25000, percent: 12.5 },
+					Messages: { tokens: 25000, percent: 12.5 },
 					'Free space': { tokens: 170000, percent: 85 },
 				},
 				source: 'context-command',

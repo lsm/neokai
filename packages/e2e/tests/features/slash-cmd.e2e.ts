@@ -522,7 +522,9 @@ test.describe('Slash Command Autocomplete - SDK Commands from system:init', () =
 		await expect(dropdown).toBeVisible({ timeout: 5000 });
 
 		// Should have multiple commands from SDK system:init (not just the built-in /merge-session)
-		const commandButtons = page.locator('[data-testid="command-autocomplete"] button, text=Slash Commands ~ button');
+		const commandButtons = page.locator(
+			'[data-testid="command-autocomplete"] button, text=Slash Commands ~ button'
+		);
 		// Verify at least /help is present (from SDK, not from NeoKai built-ins)
 		await expect(page.locator('button:has-text("help")')).toBeVisible({ timeout: 5000 });
 	});
