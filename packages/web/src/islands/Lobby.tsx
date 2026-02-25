@@ -46,9 +46,12 @@ export default function Lobby() {
 	const loading = lobbyStore.loading.value;
 	const rooms = lobbyStore.rooms.value;
 	const error = lobbyStore.error.value;
-	// Use globalStore.recentSessions which is already fetched at app startup
-	// and filtered to show active sessions sorted by lastActiveAt
-	const recentSessions = globalStore.activeSessions.value.slice(0, 5);
+	// Sessions belonging to any room
+	const roomSessionIds = new Set(rooms.flatMap((r) => r.sessionIds));
+	// Only show sessions not belonging to a room
+	const recentSessions = globalStore.activeSessions.value
+		.filter((s) => !roomSessionIds.has(s.id))
+		.slice(0, 5);
 	const recentPaths = getRecentPaths().map((p) => ({
 		path: p.path,
 		relativeTime: formatRelativeTime(p.usedAt),
@@ -167,8 +170,6 @@ export default function Lobby() {
 							</div>
 							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 								{recentSessions.map((session) => {
-									// Find room for this session
-									const room = rooms.find((r) => r.sessionIds.includes(session.id));
 									return (
 										<button
 											key={session.id}
@@ -199,11 +200,6 @@ export default function Lobby() {
 														{session.workspacePath}
 													</div>
 													<div class="flex items-center gap-2 mt-2">
-														{room && (
-															<span class="text-xs px-2 py-0.5 rounded-full bg-purple-900/30 text-purple-400">
-																{room.name}
-															</span>
-														)}
 														<span class="text-xs text-gray-500">
 															{formatRelativeTime(new Date(session.lastActiveAt))}
 														</span>
