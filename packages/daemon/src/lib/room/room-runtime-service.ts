@@ -12,6 +12,7 @@ import type { Room, McpServerConfig } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import type { SessionManager } from '../session-manager';
 import type { SessionFactory } from './task-pair-manager';
 import { RoomRuntime } from './room-runtime';
 import { SessionObserver } from './session-observer';
@@ -32,6 +33,7 @@ export interface RoomRuntimeServiceConfig {
 	daemonHub: DaemonHub;
 	getApiKey: () => Promise<string | null>;
 	roomManager: RoomManager;
+	sessionManager: SessionManager;
 	defaultWorkspacePath: string;
 	defaultModel: string;
 }
@@ -131,31 +133,30 @@ export class RoomRuntimeService {
 		taskManager: TaskManager,
 		goalManager: GoalManager
 	): void {
-		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
+		const roomChatSessionId = `room:chat:${room.id}`;
+		const roomAgentMcpServer = createRoomAgentMcpServer({
+			roomId: room.id,
+			goalManager,
+			taskManager,
+			taskPairRepo,
+		}) as unknown as McpServerConfig;
 
-		// Attach Room Agent tools to the existing room chat session.
-		// fromInit() only — no startStreamingQuery() since room chat is human-driven.
-		AgentSession.fromInit(
-			{
-				sessionId: `room:chat:${room.id}`,
-				workspacePath,
-				mcpServers: {
-					'room-agent-tools': createRoomAgentMcpServer({
-						roomId: room.id,
-						goalManager,
-						taskManager,
-						taskPairRepo,
-					}) as unknown as McpServerConfig,
-				},
-				type: 'room_chat',
-				context: { roomId: room.id },
-			},
-			this.ctx.db,
-			this.ctx.messageHub,
-			this.ctx.daemonHub,
-			this.ctx.getApiKey,
-			this.ctx.defaultModel
-		);
+		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate
+		// DaemonHub subscriptions and duplicate query execution.
+		void this.ctx.sessionManager
+			.getSessionAsync(roomChatSessionId)
+			.then((roomChatSession) => {
+				if (!roomChatSession) {
+					log.warn(`Room chat session not found for room ${room.id}`);
+					return;
+				}
+				roomChatSession.setRuntimeMcpServers({
+					'room-agent-tools': roomAgentMcpServer,
+				});
+			})
+			.catch((error) => {
+				log.error(`Failed to attach room MCP tools for room ${room.id}:`, error);
+			});
 	}
 
 	private subscribeToEvents(): void {

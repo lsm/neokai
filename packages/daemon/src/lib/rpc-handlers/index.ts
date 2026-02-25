@@ -102,6 +102,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		daemonHub: deps.daemonHub,
 		getApiKey: () => deps.authManager.getCurrentApiKey(),
 		roomManager,
+		sessionManager: deps.sessionManager,
 		defaultWorkspacePath: deps.config.workspaceRoot,
 		defaultModel: deps.config.defaultModel,
 	});
