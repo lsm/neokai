@@ -554,7 +554,11 @@ describe('RoomRuntime', () => {
 		it('should spawn the next pending task after first pair completes', async () => {
 			// Create two tasks under the same goal
 			const goal = await goalManager.createGoal({ title: 'Sprint 1', description: '' });
-			const task1 = await taskManager.createTask({ title: 'Task 1', description: 'First' });
+			const task1 = await taskManager.createTask({
+				title: 'Task 1',
+				description: 'First',
+				priority: 'high',
+			});
 			const task2 = await taskManager.createTask({ title: 'Task 2', description: 'Second' });
 			await goalManager.linkTaskToGoal(goal.id, task1.id);
 			await goalManager.linkTaskToGoal(goal.id, task2.id);
