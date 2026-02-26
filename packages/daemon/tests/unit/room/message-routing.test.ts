@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 import {
-	formatCraftToLeadEnvelope,
-	formatLeadToCraftFeedback,
-	formatLeadContractNudge,
+	formatWorkerToLeaderEnvelope,
+	formatLeaderToWorkerFeedback,
+	formatLeaderContractNudge,
 	priorityOrder,
 	sortTasksByPriority,
 } from '../../../src/lib/room/message-routing';
 
 describe('Message Routing', () => {
-	describe('formatCraftToLeadEnvelope', () => {
+	describe('formatWorkerToLeaderEnvelope', () => {
 		it('should format basic envelope', () => {
-			const result = formatCraftToLeadEnvelope({
+			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Add health endpoint',
 				terminalState: 'completed',
-				craftOutput: 'I added the /health endpoint.',
+				workerOutput: 'I added the /health endpoint.',
 			});
 
-			expect(result).toContain('[CRAFT OUTPUT] Iteration: 0');
+			expect(result).toContain('[WORKER OUTPUT] Iteration: 0');
 			expect(result).toContain('Task: Add health endpoint');
 			expect(result).toContain('Terminal state: success');
 			expect(result).toContain('---');
@@ -25,24 +25,24 @@ describe('Message Routing', () => {
 		});
 
 		it('should include task type when present', () => {
-			const result = formatCraftToLeadEnvelope({
+			const result = formatWorkerToLeaderEnvelope({
 				iteration: 1,
 				taskTitle: 'Fix bug',
 				taskType: 'coding',
 				terminalState: 'completed',
-				craftOutput: 'Fixed.',
+				workerOutput: 'Fixed.',
 			});
 
 			expect(result).toContain('Task type: coding');
 		});
 
 		it('should include tool call summaries when present', () => {
-			const result = formatCraftToLeadEnvelope({
+			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Task',
 				terminalState: 'completed',
 				toolCallSummaries: ['Edit src/auth.ts (+42 lines)', 'Bash: npm test'],
-				craftOutput: 'Done.',
+				workerOutput: 'Done.',
 			});
 
 			expect(result).toContain('Tool calls:');
@@ -50,43 +50,43 @@ describe('Message Routing', () => {
 		});
 
 		it('should map waiting_for_input to question', () => {
-			const result = formatCraftToLeadEnvelope({
+			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Task',
 				terminalState: 'waiting_for_input',
-				craftOutput: 'Which framework?',
+				workerOutput: 'Which framework?',
 			});
 
 			expect(result).toContain('Terminal state: question');
 		});
 
 		it('should map interrupted terminal state', () => {
-			const result = formatCraftToLeadEnvelope({
+			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Task',
 				terminalState: 'interrupted',
-				craftOutput: 'Was interrupted.',
+				workerOutput: 'Was interrupted.',
 			});
 
 			expect(result).toContain('Terminal state: interrupted');
 		});
 	});
 
-	describe('formatLeadToCraftFeedback', () => {
+	describe('formatLeaderToWorkerFeedback', () => {
 		it('should format feedback with iteration', () => {
-			const result = formatLeadToCraftFeedback('Fix the error handling', 1);
+			const result = formatLeaderToWorkerFeedback('Fix the error handling', 1);
 
-			expect(result).toContain('[LEAD FEEDBACK] Iteration: 1');
+			expect(result).toContain('[LEADER FEEDBACK] Iteration: 1');
 			expect(result).toContain('---');
 			expect(result).toContain('Fix the error handling');
 		});
 	});
 
-	describe('formatLeadContractNudge', () => {
+	describe('formatLeaderContractNudge', () => {
 		it('should return nudge message', () => {
-			const result = formatLeadContractNudge();
+			const result = formatLeaderContractNudge();
 
-			expect(result).toContain('send_to_craft');
+			expect(result).toContain('send_to_worker');
 			expect(result).toContain('complete_task');
 			expect(result).toContain('fail_task');
 		});

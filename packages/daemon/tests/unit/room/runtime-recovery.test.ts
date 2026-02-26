@@ -79,13 +79,14 @@ describe('Runtime Recovery', () => {
 				depends_on TEXT DEFAULT '[]',
 				task_type TEXT DEFAULT 'coding',
 				created_by_task_id TEXT,
+				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
-				group_type TEXT NOT NULL DEFAULT 'task_pair',
+				group_type TEXT NOT NULL DEFAULT 'task',
 				ref_id TEXT NOT NULL,
-				state TEXT NOT NULL DEFAULT 'awaiting_craft',
+				state TEXT NOT NULL DEFAULT 'awaiting_worker',
 				version INTEGER NOT NULL DEFAULT 0,
 				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL,
@@ -146,8 +147,8 @@ describe('Runtime Recovery', () => {
 			 VALUES (?, ?, ?, ?, ?, ?)`
 		).run(taskId, 'room-1', 'Test task', 'Description', taskStatus, now);
 
-		const group = groupRepo.createGroup(taskId, `craft:${taskId}`, `lead:${taskId}`);
-		if (groupState !== 'awaiting_craft') {
+		const group = groupRepo.createGroup(taskId, `worker:${taskId}`, `leader:${taskId}`);
+		if (groupState !== 'awaiting_worker') {
 			groupRepo.updateGroupState(group.id, groupState as never, group.version);
 		}
 
@@ -173,11 +174,11 @@ describe('Runtime Recovery', () => {
 		expect(result.failedGroups).toBe(0);
 	});
 
-	it('should fail groups with lost craft sessions', async () => {
-		const { taskId, group } = createTaskAndGroup('awaiting_craft');
+	it('should fail groups with lost worker sessions', async () => {
+		const { taskId, group } = createTaskAndGroup('awaiting_worker');
 
 		const checker: SessionStateChecker = {
-			sessionExists: (id) => !id.startsWith('craft:'),
+			sessionExists: (id) => !id.startsWith('worker:'),
 			isTerminalState: () => false,
 		};
 
@@ -198,11 +199,11 @@ describe('Runtime Recovery', () => {
 		expect(task!.status).toBe('failed');
 	});
 
-	it('should fail groups with lost lead sessions', async () => {
-		const { taskId, group } = createTaskAndGroup('awaiting_lead');
+	it('should fail groups with lost leader sessions', async () => {
+		const { taskId, group } = createTaskAndGroup('awaiting_leader');
 
 		const checker: SessionStateChecker = {
-			sessionExists: (id) => !id.startsWith('lead:'),
+			sessionExists: (id) => !id.startsWith('leader:'),
 			isTerminalState: () => false,
 		};
 
@@ -223,8 +224,8 @@ describe('Runtime Recovery', () => {
 		expect(task!.status).toBe('failed');
 	});
 
-	it('should reattach observers for active craft sessions', async () => {
-		const { group } = createTaskAndGroup('awaiting_craft');
+	it('should reattach observers for active worker sessions', async () => {
+		const { group } = createTaskAndGroup('awaiting_worker');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -241,11 +242,11 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.reattachedObservers).toBe(1);
-		expect(observer.isObserving(group!.craftSessionId)).toBe(true);
+		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
 	});
 
-	it('should reattach observers for active lead sessions', async () => {
-		const { group } = createTaskAndGroup('awaiting_lead');
+	it('should reattach observers for active leader sessions', async () => {
+		const { group } = createTaskAndGroup('awaiting_leader');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -262,15 +263,15 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.reattachedObservers).toBe(1);
-		expect(observer.isObserving(group!.leadSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
 	});
 
-	it('should process immediately terminal craft sessions', async () => {
-		const { group } = createTaskAndGroup('awaiting_craft');
+	it('should process immediately terminal worker sessions', async () => {
+		const { group } = createTaskAndGroup('awaiting_worker');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
-			isTerminalState: (id) => id.startsWith('craft:'),
+			isTerminalState: (id) => id.startsWith('worker:'),
 		};
 
 		const result = await recoverRuntime(
@@ -283,9 +284,9 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.immediateTerminals).toBe(1);
-		// Group should transition to awaiting_lead (craft output routed to lead)
+		// Group should transition to awaiting_leader (worker output routed to leader)
 		const updated = groupRepo.getGroup(group!.id);
-		expect(updated!.state).toBe('awaiting_lead');
+		expect(updated!.state).toBe('awaiting_leader');
 	});
 
 	it('should skip awaiting_human groups', async () => {
@@ -333,8 +334,8 @@ describe('Runtime Recovery', () => {
 	});
 
 	it('should handle multiple groups', async () => {
-		createTaskAndGroup('awaiting_craft');
-		createTaskAndGroup('awaiting_lead');
+		createTaskAndGroup('awaiting_worker');
+		createTaskAndGroup('awaiting_leader');
 		createTaskAndGroup('awaiting_human');
 
 		const checker: SessionStateChecker = {
@@ -352,7 +353,7 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.recoveredGroups).toBe(3);
-		// 2 groups need observers (awaiting_craft + awaiting_lead)
+		// 2 groups need observers (awaiting_worker + awaiting_leader)
 		expect(result.reattachedObservers).toBe(2);
 	});
 });

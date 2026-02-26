@@ -1,12 +1,16 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { TaskGroupManager, type SessionFactory } from '../../../src/lib/room/task-group-manager';
+import {
+	TaskGroupManager,
+	type SessionFactory,
+	type WorkerConfig,
+} from '../../../src/lib/room/task-group-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
 import { SessionObserver } from '../../../src/lib/room/session-observer';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
-import type { LeadToolCallbacks } from '../../../src/lib/room/lead-agent';
+import type { LeaderToolCallbacks } from '../../../src/lib/room/leader-agent';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 // Mock DaemonHub
@@ -52,9 +56,9 @@ function createMockSessionFactory() {
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
-function createMockLeadCallbacks(): LeadToolCallbacks {
+function createMockLeaderCallbacks(): LeaderToolCallbacks {
 	return {
-		async sendToCraft() {
+		async sendToWorker() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
 		async completeTask() {
@@ -111,6 +115,19 @@ function makeGoal(db: Database): RoomGoal {
 	};
 }
 
+function makeDefaultWorkerConfig(): WorkerConfig {
+	return {
+		role: 'coder',
+		initFactory: (workerSessionId) => ({
+			sessionId: workerSessionId,
+			workspacePath: '/workspace',
+			systemPrompt: 'test',
+			type: 'coder',
+			model: 'claude-sonnet-4-5-20250929',
+		}),
+	};
+}
+
 describe('TaskGroupManager', () => {
 	let db: Database;
 	let groupRepo: SessionGroupRepository;
@@ -143,12 +160,13 @@ describe('TaskGroupManager', () => {
 				depends_on TEXT DEFAULT '[]',
 				task_type TEXT DEFAULT 'coding',
 				created_by_task_id TEXT,
+				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
 				ref_id TEXT NOT NULL,
-				state TEXT NOT NULL DEFAULT 'awaiting_craft',
+				state TEXT NOT NULL DEFAULT 'awaiting_worker',
 				version INTEGER NOT NULL DEFAULT 0,
 				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL, completed_at INTEGER
@@ -201,56 +219,59 @@ describe('TaskGroupManager', () => {
 		it('should create a session group record', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			expect(group).toBeDefined();
 			expect(group.taskId).toBe(task.id);
-			expect(group.state).toBe('awaiting_craft');
+			expect(group.state).toBe('awaiting_worker');
 			expect(group.feedbackIteration).toBe(0);
 		});
 
-		it('should create both Craft and Lead sessions', async () => {
+		it('should create both Worker and Leader sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
 			await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const craftCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'craft'
+			const workerCalls = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'coder'
 			);
-			const leadCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'lead'
+			const leaderCalls = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
-			expect(craftCalls).toHaveLength(1);
-			expect(leadCalls).toHaveLength(1);
+			expect(workerCalls).toHaveLength(1);
+			expect(leaderCalls).toHaveLength(1);
 		});
 
 		it('should set task to in_progress', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
 			await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			const updated = await taskManager.getTask(task.id);
@@ -260,129 +281,135 @@ describe('TaskGroupManager', () => {
 		it('should observe both sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			expect(observer.isObserving(group.craftSessionId)).toBe(true);
-			expect(observer.isObserving(group.leadSessionId)).toBe(true);
+			expect(observer.isObserving(group.workerSessionId)).toBe(true);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
 		});
 	});
 
-	describe('routeCraftToLead', () => {
-		it('should inject message into Lead session', async () => {
+	describe('routeWorkerToLeader', () => {
+		it('should inject message into Leader session', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeCraftToLead(group.id, 'Craft output here');
+			await manager.routeWorkerToLeader(group.id, 'Worker output here');
 
 			const injectCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'injectMessage' && c.args[0] === group.leadSessionId
+				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
 			);
 			expect(injectCalls).toHaveLength(1);
-			expect(injectCalls[0].args[1]).toBe('Craft output here');
+			expect(injectCalls[0].args[1]).toBe('Worker output here');
 		});
 
-		it('should update group state to awaiting_lead', async () => {
+		it('should update group state to awaiting_leader', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const updated = await manager.routeCraftToLead(group.id, 'Craft output');
+			const updated = await manager.routeWorkerToLeader(group.id, 'Worker output');
 
-			expect(updated!.state).toBe('awaiting_lead');
+			expect(updated!.state).toBe('awaiting_leader');
 		});
 
-		it('should reset lead contract violations', async () => {
+		it('should reset leader contract violations', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			// Manually set violations
-			groupRepo.updateLeadContractViolations(group.id, 1, 'turn-1', group.version);
+			groupRepo.updateLeaderContractViolations(group.id, 1, 'turn-1', group.version);
 
-			const afterRoute = await manager.routeCraftToLead(group.id, 'Output');
+			const afterRoute = await manager.routeWorkerToLeader(group.id, 'Output');
 
-			expect(afterRoute!.leadContractViolations).toBe(0);
+			expect(afterRoute!.leaderContractViolations).toBe(0);
 		});
 
 		it('should return null for non-existent group', async () => {
-			const result = await manager.routeCraftToLead('nonexistent', 'output');
+			const result = await manager.routeWorkerToLeader('nonexistent', 'output');
 			expect(result).toBeNull();
 		});
 	});
 
-	describe('routeLeadToCraft', () => {
-		it('should inject message into Craft session', async () => {
+	describe('routeLeaderToWorker', () => {
+		it('should inject message into Worker session', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			// First route to Lead so group is in awaiting_lead state
-			await manager.routeCraftToLead(group.id, 'Craft output');
+			// First route to Leader so group is in awaiting_leader state
+			await manager.routeWorkerToLeader(group.id, 'Worker output');
 
-			await manager.routeLeadToCraft(group.id, 'Fix the tests');
+			await manager.routeLeaderToWorker(group.id, 'Fix the tests');
 
 			const feedbackCalls = sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === group.craftSessionId &&
+					c.args[0] === group.workerSessionId &&
 					c.args[1] === 'Fix the tests'
 			);
 			expect(feedbackCalls).toHaveLength(1);
 		});
 
-		it('should update group state to awaiting_craft and increment iteration', async () => {
+		it('should update group state to awaiting_worker and increment iteration', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeCraftToLead(group.id, 'Output');
-			const updated = await manager.routeLeadToCraft(group.id, 'Feedback');
+			await manager.routeWorkerToLeader(group.id, 'Output');
+			const updated = await manager.routeLeaderToWorker(group.id, 'Feedback');
 
-			expect(updated!.state).toBe('awaiting_craft');
+			expect(updated!.state).toBe('awaiting_worker');
 			expect(updated!.feedbackIteration).toBe(1);
 		});
 	});
@@ -391,13 +418,14 @@ describe('TaskGroupManager', () => {
 		it('should complete the group and task', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			const updated = await manager.complete(group.id, 'All done');
@@ -413,19 +441,20 @@ describe('TaskGroupManager', () => {
 		it('should stop observing sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			await manager.complete(group.id, 'Done');
 
-			expect(observer.isObserving(group.craftSessionId)).toBe(false);
-			expect(observer.isObserving(group.leadSessionId)).toBe(false);
+			expect(observer.isObserving(group.workerSessionId)).toBe(false);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(false);
 		});
 
 		it('should return null for non-existent group', async () => {
@@ -438,13 +467,14 @@ describe('TaskGroupManager', () => {
 		it('should fail the group and task', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			const updated = await manager.fail(group.id, 'Cannot complete');
@@ -459,19 +489,20 @@ describe('TaskGroupManager', () => {
 		it('should stop observing sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			await manager.fail(group.id, 'Failed');
 
-			expect(observer.isObserving(group.craftSessionId)).toBe(false);
-			expect(observer.isObserving(group.leadSessionId)).toBe(false);
+			expect(observer.isObserving(group.workerSessionId)).toBe(false);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(false);
 		});
 	});
 
@@ -479,13 +510,14 @@ describe('TaskGroupManager', () => {
 		it('should fail the group with cancel reason', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				(_groupId) => callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			const updated = await manager.cancel(group.id);

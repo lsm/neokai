@@ -50,15 +50,16 @@ describe('Room Agent Tools', () => {
 				depends_on TEXT DEFAULT '[]',
 				task_type TEXT DEFAULT 'coding',
 				created_by_task_id TEXT,
+				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
 				completed_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
-				group_type TEXT NOT NULL DEFAULT 'task_pair',
+				group_type TEXT NOT NULL DEFAULT 'task',
 				ref_id TEXT NOT NULL,
-				state TEXT NOT NULL DEFAULT 'awaiting_craft',
+				state TEXT NOT NULL DEFAULT 'awaiting_worker',
 				version INTEGER NOT NULL DEFAULT 0,
 				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL,

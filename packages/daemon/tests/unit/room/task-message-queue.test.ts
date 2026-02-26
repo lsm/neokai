@@ -4,7 +4,7 @@ import { TaskMessageQueue } from '../../../src/lib/room/task-message-queue';
 describe('TaskMessageQueue (MVP stub)', () => {
 	it('should return empty array from dequeuePending', () => {
 		const queue = new TaskMessageQueue();
-		expect(queue.dequeuePending('group-1', 'craft')).toEqual([]);
+		expect(queue.dequeuePending('group-1', 'worker')).toEqual([]);
 	});
 
 	it('should throw on enqueue (not implemented in MVP)', () => {
@@ -13,8 +13,8 @@ describe('TaskMessageQueue (MVP stub)', () => {
 			queue.enqueue({
 				groupId: 'group-1',
 				taskId: 'task-1',
-				fromRole: 'lead',
-				toRole: 'craft',
+				fromRole: 'leader',
+				toRole: 'worker',
 				toSessionId: 'sess-1',
 				payload: 'hello',
 			})
