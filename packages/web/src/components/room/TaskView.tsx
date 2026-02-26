@@ -2,13 +2,12 @@
  * TaskView Component
  *
  * Shows the task detail view with:
- * - Task header (title, status, progress, pair state)
+ * - Task header (title, status, progress, group state)
  * - Unified conversation timeline (Craft + Lead messages in sub-agent blocks)
  *
- * Uses the conversation session (conv:*) for a single merged timeline
- * instead of two separate ChatContainer panels.
+ * Uses session group messages for a single merged timeline.
  *
- * Subscribes to room.task.update events to refresh pair info when status changes.
+ * Subscribes to room.task.update events to refresh group info when status changes.
  */
 
 import { useEffect, useState } from 'preact/hooks';
@@ -17,13 +16,12 @@ import { useMessageHub } from '../../hooks/useMessageHub';
 import { navigateToRoom } from '../../lib/router';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
 
-interface TaskPairInfo {
+interface TaskGroupInfo {
 	id: string;
 	taskId: string;
 	craftSessionId: string;
 	leadSessionId: string;
-	conversationSessionId: string | null;
-	pairState: string;
+	state: string;
 	feedbackIteration: number;
 	createdAt: number;
 	completedAt: number | null;
@@ -34,7 +32,7 @@ interface TaskViewProps {
 	taskId: string;
 }
 
-const PAIR_STATE_LABELS: Record<string, string> = {
+const GROUP_STATE_LABELS: Record<string, string> = {
 	awaiting_craft: 'Craft working…',
 	awaiting_lead: 'Lead reviewing…',
 	awaiting_human: 'Needs human review',
@@ -55,19 +53,19 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
-	const [pair, setPair] = useState<TaskPairInfo | null>(null);
+	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
-	const fetchPair = async () => {
+	const fetchGroup = async () => {
 		try {
-			const res = await request<{ pair: TaskPairInfo | null }>('task.getPair', {
+			const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
 				roomId,
 				taskId,
 			});
-			setPair(res.pair);
+			setGroup(res.group);
 		} catch {
-			// Pair fetch failure is non-fatal — task may just not have a pair yet
+			// Group fetch failure is non-fatal — task may not have a group yet
 		}
 	};
 
@@ -79,7 +77,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			try {
 				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
 				setTask(taskRes.task);
-				await fetchPair();
+				await fetchGroup();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : 'Failed to load task');
 			} finally {
@@ -89,11 +87,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 		load();
 
-		// Re-fetch pair whenever the task status changes (e.g. pair spawned or completed)
+		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
 		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
 			if (event.task.id === taskId) {
 				setTask(event.task);
-				fetchPair();
+				fetchGroup();
 			}
 		});
 
@@ -152,10 +150,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							</span>
 						)}
 					</div>
-					{pair && (
+					{group && (
 						<p class="text-xs text-gray-500 mt-0.5">
-							{PAIR_STATE_LABELS[pair.pairState] ?? pair.pairState}
-							{pair.feedbackIteration > 0 && ` · iteration ${pair.feedbackIteration}`}
+							{GROUP_STATE_LABELS[group.state] ?? group.state}
+							{group.feedbackIteration > 0 && ` · iteration ${group.feedbackIteration}`}
 						</p>
 					)}
 				</div>
@@ -173,17 +171,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			</div>
 
 			{/* Conversation timeline */}
-			{pair?.conversationSessionId ? (
-				<TaskConversationRenderer
-					key={pair.conversationSessionId}
-					conversationSessionId={pair.conversationSessionId}
-				/>
+			{group ? (
+				<TaskConversationRenderer key={group.id} groupId={group.id} />
 			) : (
 				<div class="flex-1 flex items-center justify-center text-center p-8">
 					<div>
-						<p class="text-gray-400 mb-1">
-							{pair ? 'No conversation session' : 'No active agent pair'}
-						</p>
+						<p class="text-gray-400 mb-1">No active agent group</p>
 						<p class="text-sm text-gray-500">
 							{task.status === 'pending'
 								? 'Waiting for the runtime to pick up this task.'
@@ -191,7 +184,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									? 'This task has been completed.'
 									: task.status === 'failed'
 										? 'This task has failed.'
-										: 'No Craft/Lead pair has been spawned yet.'}
+										: 'No Craft/Lead group has been spawned yet.'}
 						</p>
 					</div>
 				</div>

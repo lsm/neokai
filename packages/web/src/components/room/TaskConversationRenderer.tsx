@@ -1,17 +1,17 @@
 /**
  * TaskConversationRenderer
  *
- * Renders a unified conversation timeline for a task pair.
- * Messages are fetched from the conversation session (conv:*) and grouped
- * by turn (using _taskMeta.turnId + _taskMeta.authorRole).
+ * Renders a unified conversation timeline for a task group.
+ * Messages are fetched from session_group_messages via task.getGroupMessages RPC
+ * and grouped by turn (using _taskMeta.turnId + _taskMeta.authorRole).
  *
  * Each turn is rendered as a collapsible block with a colored left border:
  * - Craft: blue border
  * - Lead: purple border
  * - System: gray centered divider
  *
- * This component manages its own message fetching and real-time subscriptions,
- * avoiding the global sessionStore singleton (which only supports one session).
+ * Subscribes to state.groupMessages.delta on channel group:{groupId} for
+ * real-time updates.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -35,8 +35,18 @@ interface TurnGroup {
 	messages: SDKMessage[];
 }
 
+interface GroupMessage {
+	id: number;
+	groupId: string;
+	sessionId: string | null;
+	role: string;
+	messageType: string;
+	content: string;
+	createdAt: number;
+}
+
 interface TaskConversationRendererProps {
-	conversationSessionId: string;
+	groupId: string;
 }
 
 const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: string }> = {
@@ -61,6 +71,17 @@ const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: s
 		labelColor: 'text-gray-500',
 	},
 };
+
+/**
+ * Parse a group message's content JSON into an SDKMessage with _taskMeta.
+ */
+function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
+	try {
+		return JSON.parse(msg.content) as SDKMessage;
+	} catch {
+		return null;
+	}
+}
 
 function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	const meta = (msg as SDKMessage & { _taskMeta?: TaskMeta })._taskMeta;
@@ -127,7 +148,7 @@ function groupMessagesByTurn(messages: SDKMessage[]): TurnGroup[] {
 	return groups;
 }
 
-export function TaskConversationRenderer({ conversationSessionId }: TaskConversationRendererProps) {
+export function TaskConversationRenderer({ groupId }: TaskConversationRendererProps) {
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -136,18 +157,20 @@ export function TaskConversationRenderer({ conversationSessionId }: TaskConversa
 
 	// Fetch initial messages and subscribe to updates
 	useEffect(() => {
-		const channel = `session:${conversationSessionId}`;
+		const channel = `group:${groupId}`;
 		joinRoom(channel);
 
 		const fetchMessages = async () => {
 			try {
-				const res = await request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
-					sessionId: conversationSessionId,
-					limit: 500,
+				const res = await request<{ messages: GroupMessage[] }>('task.getGroupMessages', {
+					groupId,
 				});
-				setMessages(res.sdkMessages);
+				const parsed = res.messages
+					.map(parseGroupMessage)
+					.filter((m): m is SDKMessage => m !== null);
+				setMessages(parsed);
 			} catch {
-				// Non-fatal: conversation session may not have messages yet
+				// Non-fatal: group may not have messages yet
 			} finally {
 				setLoading(false);
 			}
@@ -157,7 +180,7 @@ export function TaskConversationRenderer({ conversationSessionId }: TaskConversa
 
 		// Subscribe to real-time message deltas
 		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
-			'state.sdkMessages.delta',
+			'state.groupMessages.delta',
 			(event) => {
 				if (event.added && event.added.length > 0) {
 					setMessages((prev) => [...prev, ...event.added]);
@@ -176,13 +199,13 @@ export function TaskConversationRenderer({ conversationSessionId }: TaskConversa
 			unsub();
 			leaveRoom(channel);
 		};
-	}, [conversationSessionId]);
+	}, [groupId]);
 
 	// Group messages by turn
 	const turnGroups = useMemo(() => groupMessagesByTurn(messages), [messages]);
 
 	// Compute message maps for tool result rendering
-	const maps = useMessageMaps(messages, conversationSessionId);
+	const maps = useMessageMaps(messages, groupId);
 
 	// Auto-collapse previous turns when new ones arrive
 	useEffect(() => {
