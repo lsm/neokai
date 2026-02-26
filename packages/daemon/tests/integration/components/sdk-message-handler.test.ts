@@ -97,6 +97,8 @@ describe('SDKMessageHandler', () => {
 		// Mock ContextTracker
 		mockContextTracker = {
 			processStreamEvent: mock(async () => {}),
+			getContextInfo: mock(() => null),
+			updateWithDetailedBreakdown: mock(() => {}),
 		} as unknown as ContextTracker;
 
 		// Mock MessageQueue

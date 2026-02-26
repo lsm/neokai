@@ -361,6 +361,11 @@ describe('ContextPanel', () => {
 			render(<ContextPanel />);
 
 			const button = screen.getByRole('button', { name: /Create Room/i });
+
+			// Import the actual signal to check its value
+			const { createRoomModalSignal } = await import('../../lib/signals.ts');
+			createRoomModalSignal.value = false;
+
 			fireEvent.click(button);
 
 			// The button should open the modal by setting the signal to true
