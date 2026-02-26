@@ -17,6 +17,7 @@ import type {
 	AuthMethod,
 	ContextInfo,
 	MessageContent,
+	MessageDeliveryMode,
 	MessageImage,
 	GlobalSettings,
 	AgentProcessingState,
@@ -136,6 +137,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		messageId: string;
 		content: string;
 		images?: MessageImage[];
+		deliveryMode?: MessageDeliveryMode;
 	};
 	'message.persisted': {
 		sessionId: string;
@@ -144,6 +146,8 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		userMessageText: string;
 		needsWorkspaceInit: boolean;
 		hasDraftToClear: boolean;
+		sendStatus: 'saved' | 'queued' | 'sent';
+		deliveryMode: MessageDeliveryMode;
 	};
 
 	// Query mode events

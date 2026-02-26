@@ -10,7 +10,7 @@
  * - Emit events for downstream processing
  */
 
-import type { MessageContent, MessageHub, MessageImage } from '@neokai/shared';
+import type { MessageContent, MessageDeliveryMode, MessageHub, MessageImage } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../storage/database';
@@ -24,6 +24,7 @@ export interface MessagePersistenceData {
 	messageId: string;
 	content: string;
 	images?: MessageImage[];
+	deliveryMode?: MessageDeliveryMode;
 }
 
 export class MessagePersistence {
@@ -53,7 +54,7 @@ export class MessagePersistence {
 	 * 7. Emit 'message.persisted' event for downstream processing
 	 */
 	async persist(data: MessagePersistenceData): Promise<void> {
-		const { sessionId, messageId, content, images } = data;
+		const { sessionId, messageId, content, images, deliveryMode = 'current_turn' } = data;
 
 		const agentSession = await this.sessionCache.getAsync(sessionId);
 		if (!agentSession) {
@@ -104,32 +105,62 @@ export class MessagePersistence {
 				},
 			};
 
-			// 5. Save to database
-			this.db.saveSDKMessage(sessionId, sdkUserMessage);
+			// 5. Save to database with delivery-aware status
+			const processingState = agentSession.getProcessingState();
+			const isAgentBusy =
+				processingState.status === 'processing' || processingState.status === 'queued';
+			const isManualMode = session.config.queryMode === 'manual';
 
-			// 6. Publish to UI (fire-and-forget)
-			try {
-				this.messageHub.event(
-					'state.sdkMessages.delta',
-					{ added: [sdkUserMessage], timestamp: Date.now() },
-					{ channel: `session:${sessionId}` }
-				);
-			} catch (_err) {
-				/* v8 ignore next 2 */
-				this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
+			const effectiveDeliveryMode: MessageDeliveryMode =
+				deliveryMode === 'next_turn' && isAgentBusy ? 'next_turn' : 'current_turn';
+			const sendStatus: 'saved' | 'queued' | 'sent' = isManualMode
+				? 'saved'
+				: effectiveDeliveryMode === 'next_turn'
+					? 'saved'
+					: isAgentBusy
+						? 'queued'
+						: 'sent';
+			const shouldDispatchToQuery = !isManualMode && effectiveDeliveryMode === 'current_turn';
+
+			const dbMessageId = this.db.saveUserMessage(sessionId, sdkUserMessage, sendStatus);
+
+			// 6. Publish to UI immediately only when not currently in-flight.
+			// Busy-turn insertions are shown in the input overlay and rendered in chat once sent.
+			if (isManualMode || !isAgentBusy) {
+				try {
+					this.messageHub.event(
+						'state.sdkMessages.delta',
+						{ added: [sdkUserMessage], timestamp: Date.now() },
+						{ channel: `session:${sessionId}` }
+					);
+				} catch (_err) {
+					/* v8 ignore next 2 */
+					this.logger.error('[MessagePersistence] Error publishing message to UI:', _err);
+				}
 			}
+
+			// Broadcast status update for queue-aware UI
+			await this.eventBus.emit('messages.statusChanged', {
+				sessionId,
+				messageIds: [dbMessageId],
+				status: sendStatus,
+			});
 
 			// 7. Emit 'message.persisted' event for downstream processing
 			// AgentSession will start query and enqueue message
 			// SessionManager will handle title generation and draft clearing
-			await this.eventBus.emit('message.persisted', {
-				sessionId,
-				messageId,
-				messageContent,
-				userMessageText: content, // Original content (before expansion)
-				needsWorkspaceInit: !session.metadata.titleGenerated,
-				hasDraftToClear: session.metadata?.inputDraft === content.trim(),
-			});
+			if (shouldDispatchToQuery) {
+				await this.eventBus.emit('message.persisted', {
+					sessionId,
+					messageId,
+					messageContent,
+					userMessageText: content, // Original content (before expansion)
+					needsWorkspaceInit: !session.metadata.titleGenerated,
+					hasDraftToClear: session.metadata?.inputDraft === content.trim(),
+					sendStatus,
+					deliveryMode: effectiveDeliveryMode,
+				});
+			}
 		} catch (error) {
 			this.logger.error('[MessagePersistence] Error persisting message:', error);
 			throw error;

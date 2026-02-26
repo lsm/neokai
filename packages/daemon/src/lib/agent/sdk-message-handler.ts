@@ -27,6 +27,7 @@ import {
 	isSDKStatusMessage,
 	isSDKSystemInit,
 	isSDKSystemMessage,
+	isSDKUserMessage,
 	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import type { Database } from '../../storage/database';
@@ -69,6 +70,7 @@ export class SDKMessageHandler {
 	private logger: Logger;
 	private contextFetcher: ContextFetcher;
 	private circuitBreaker: ApiErrorCircuitBreaker;
+	private acknowledgedPersistedUserThisTurn: boolean = false;
 
 	// Track whether we just processed a context response to prevent infinite loop
 	// When true, we skip queuing /context for the next result message
@@ -210,6 +212,113 @@ export class SDKMessageHandler {
 	}
 
 	/**
+	 * Acknowledge a persisted user message when SDK replays it.
+	 *
+	 * For user messages already persisted in sdk_messages with send_status
+	 * (queued/saved), we should:
+	 * 1) transition send_status -> sent
+	 * 2) publish the user message to transcript
+	 * 3) avoid inserting a duplicate SDK message row
+	 */
+	private async acknowledgePersistedUserMessage(message: SDKMessage): Promise<boolean> {
+		const { session, db, daemonHub, messageHub } = this.ctx;
+		if (message.type !== 'user' || !message.uuid) {
+			return false;
+		}
+
+		const queuedMessage = db
+			.getMessagesByStatus(session.id, 'queued')
+			.find((queued) => queued.uuid === message.uuid);
+		if (queuedMessage) {
+			db.updateMessageStatus([queuedMessage.dbId], 'sent');
+			await daemonHub.emit('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [queuedMessage.dbId],
+				status: 'sent',
+			});
+			this.acknowledgedPersistedUserThisTurn = true;
+
+			messageHub.event(
+				'state.sdkMessages.delta',
+				{
+					added: [message],
+					timestamp: Date.now(),
+					version: ++this.sdkMessageDeltaVersion,
+				},
+				{ channel: `session:${session.id}` }
+			);
+
+			return true;
+		}
+
+		const savedMessage = db
+			.getMessagesByStatus(session.id, 'saved')
+			.find((saved) => saved.uuid === message.uuid);
+		if (savedMessage) {
+			db.updateMessageStatus([savedMessage.dbId], 'sent');
+			await daemonHub.emit('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [savedMessage.dbId],
+				status: 'sent',
+			});
+			this.acknowledgedPersistedUserThisTurn = true;
+
+			messageHub.event(
+				'state.sdkMessages.delta',
+				{
+					added: [message],
+					timestamp: Date.now(),
+					version: ++this.sdkMessageDeltaVersion,
+				},
+				{ channel: `session:${session.id}` }
+			);
+
+			return true;
+		}
+
+		const sentMessage = db
+			.getMessagesByStatus(session.id, 'sent')
+			.find((sent) => sent.uuid === message.uuid);
+		if (sentMessage) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Fallback acknowledgment when SDK doesn't replay user messages.
+	 * Marks exactly one oldest queued user message as sent at turn end.
+	 */
+	private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
+		const { session, db, daemonHub, messageHub } = this.ctx;
+		const oldestQueuedUser = db
+			.getMessagesByStatus(session.id, 'queued')
+			.find((queued) => isSDKUserMessage(queued));
+		if (!oldestQueuedUser) {
+			return;
+		}
+
+		db.updateMessageStatus([oldestQueuedUser.dbId], 'sent');
+		await daemonHub.emit('messages.statusChanged', {
+			sessionId: session.id,
+			messageIds: [oldestQueuedUser.dbId],
+			status: 'sent',
+		});
+
+		const { dbId: _dbId, timestamp: _timestamp, ...sdkUserMessage } = oldestQueuedUser;
+		messageHub.event(
+			'state.sdkMessages.delta',
+			{
+				added: [sdkUserMessage],
+				timestamp: Date.now(),
+				version: ++this.sdkMessageDeltaVersion,
+			},
+			{ channel: `session:${session.id}` }
+		);
+	}
+
+	/**
 	 * Main entry point - handle incoming SDK message
 	 *
 	 * NOTE: Stream events removed - the SDK's query() with AsyncGenerator yields
@@ -285,9 +394,12 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		// Mark all user messages from SDK as synthetic
-		// Real user messages are saved in the message generator, not here
-		// SDK only emits user messages for synthetic purposes (compaction, subagent context, etc.)
+		// For persisted user messages, mark sent + publish now and skip duplicate DB inserts.
+		if (await this.acknowledgePersistedUserMessage(message)) {
+			return;
+		}
+
+		// Mark unmatched SDK user messages as synthetic.
 		if (message.type === 'user') {
 			(message as SDKUserMessage & { isSynthetic: boolean }).isSynthetic = true;
 		}
@@ -470,6 +582,13 @@ export class SDKMessageHandler {
 			this.circuitBreaker.markSuccess();
 		}
 
+		// If SDK didn't replay the queued user message this turn, acknowledge one
+		// queued user message at turn end to keep status and transcript in sync.
+		if (!this.acknowledgedPersistedUserThisTurn) {
+			await this.acknowledgeOldestQueuedUserOnTurnEnd();
+		}
+		this.acknowledgedPersistedUserThisTurn = false;
+
 		// Clear any session errors since we successfully completed a turn
 		// This resolves persistent error banners that weren't being cleared
 		await daemonHub.emit('session.errorClear', {
@@ -479,6 +598,15 @@ export class SDKMessageHandler {
 		// Set state back to idle
 		// Note: Title generation now handled by TitleGenerationQueue (decoupled via EventBus)
 		await stateManager.setIdle();
+
+		// Auto-dispatch saved messages in immediate mode (next-turn queue replay)
+		if (session.config.queryMode !== 'manual') {
+			try {
+				await daemonHub.emit('query.trigger', { sessionId: session.id });
+			} catch (error) {
+				this.logger.warn('Failed to dispatch saved messages on turn end:', error);
+			}
+		}
 	}
 
 	/**

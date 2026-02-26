@@ -16,7 +16,6 @@ import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import { generateUUID } from '@neokai/shared';
-import { isSDKSystemMessage } from '@neokai/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
 import { Logger } from '../logger';
@@ -378,17 +377,6 @@ export class QueryRunner {
 	 * Public for testing
 	 */
 	async handleSDKMessage(message: SDKMessage): Promise<void> {
-		const { session, db } = this.ctx;
-
-		// Mark queued messages as 'sent' when we receive system:init
-		if (isSDKSystemMessage(message) && message.subtype === 'init') {
-			const queuedMessages = db.getMessagesByStatus(session.id, 'queued');
-			if (queuedMessages.length > 0) {
-				const dbIds = queuedMessages.map((m) => m.dbId);
-				db.updateMessageStatus(dbIds, 'sent');
-			}
-		}
-
 		// Delegate to callback
 		await this.ctx.onSDKMessage(message);
 		await this.ctx.onMarkApiSuccess();

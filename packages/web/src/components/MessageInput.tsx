@@ -7,9 +7,10 @@
  * Refactored to use shared hooks for better separation of concerns.
  */
 
-import { useCallback, useState } from 'preact/hooks';
-import type { MessageImage } from '@neokai/shared';
+import { useCallback, useEffect, useState } from 'preact/hooks';
+import type { MessageDeliveryMode, MessageImage } from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
+import { connectionManager } from '../lib/connection-manager';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
@@ -19,13 +20,16 @@ import {
 	useModelSwitcher,
 	useModal,
 	useCommandAutocomplete,
-	useInterrupt,
 	useFileAttachments,
 } from '../hooks';
 
 interface MessageInputProps {
 	sessionId: string;
-	onSend: (content: string, images?: MessageImage[]) => void;
+	onSend: (
+		content: string,
+		images?: MessageImage[],
+		deliveryMode?: MessageDeliveryMode
+	) => Promise<void>;
 	disabled?: boolean;
 	autoScroll?: boolean;
 	onAutoScrollChange?: (autoScroll: boolean) => void;
@@ -33,6 +37,14 @@ interface MessageInputProps {
 	onEnterRewindMode?: () => void;
 	rewindMode?: boolean;
 	onExitRewindMode?: () => void;
+}
+
+interface QueuedOverlayMessage {
+	dbId: string;
+	uuid: string;
+	text: string;
+	timestamp: number;
+	status: 'saved' | 'queued' | 'sent';
 }
 
 export default function MessageInput({
@@ -60,7 +72,6 @@ export default function MessageInput({
 		switchModel,
 	} = useModelSwitcher(sessionId);
 	const actionsMenu = useModal();
-	const { interrupting, handleInterrupt } = useInterrupt({ sessionId });
 	const {
 		attachments,
 		fileInputRef,
@@ -85,24 +96,92 @@ export default function MessageInput({
 		content,
 		onSelect: handleCommandSelect,
 	});
+	const agentWorking = isAgentWorking.value;
+	const [queuedForCurrentTurn, setQueuedForCurrentTurn] = useState<QueuedOverlayMessage[]>([]);
+	const [queuedForNextTurn, setQueuedForNextTurn] = useState<QueuedOverlayMessage[]>([]);
 
-	// Submit handler
-	const handleSubmit = useCallback(() => {
+	const extractOutgoingMessage = useCallback(() => {
 		const messageContent = content.trim();
-		if (!messageContent || isAgentWorking.value) {
+		if (!messageContent) {
+			return null;
+		}
+		return {
+			content: messageContent,
+			images: getImagesForSend(),
+		};
+	}, [content, getImagesForSend]);
+
+	const refreshQueuedMessages = useCallback(async () => {
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
 			return;
 		}
 
-		// Get images for sending
-		const images = getImagesForSend();
+		try {
+			const [queuedResponse, savedResponse] = (await Promise.all([
+				hub.request('session.messages.byStatus', {
+					sessionId,
+					status: 'queued',
+					limit: 20,
+				}),
+				hub.request('session.messages.byStatus', {
+					sessionId,
+					status: 'saved',
+					limit: 20,
+				}),
+			])) as [{ messages?: QueuedOverlayMessage[] }, { messages?: QueuedOverlayMessage[] }];
+			setQueuedForCurrentTurn(queuedResponse.messages ?? []);
+			setQueuedForNextTurn(savedResponse.messages ?? []);
+		} catch {
+			// Best-effort queue refresh
+		}
+	}, [sessionId]);
+
+	useEffect(() => {
+		void refreshQueuedMessages();
+	}, [refreshQueuedMessages]);
+
+	useEffect(() => {
+		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0) return;
+		const timer = setInterval(() => {
+			void refreshQueuedMessages();
+		}, 700);
+		return () => clearInterval(timer);
+	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
+
+	// Submit handler
+	const handleSubmit = useCallback(async (deliveryMode: MessageDeliveryMode = 'current_turn') => {
+		if (disabled) {
+			return;
+		}
+		const outgoing = extractOutgoingMessage();
+		if (!outgoing) return;
 
 		// Clear UI
 		clearDraft();
 		clearAttachments();
 
 		// Send message with images
-		onSend(messageContent, images);
-	}, [content, clearDraft, clearAttachments, onSend, getImagesForSend]);
+		await onSend(outgoing.content, outgoing.images, deliveryMode);
+		if (
+			agentWorking ||
+			deliveryMode === 'next_turn' ||
+			queuedForCurrentTurn.length > 0 ||
+			queuedForNextTurn.length > 0
+		) {
+			await refreshQueuedMessages();
+		}
+	}, [
+		disabled,
+		extractOutgoingMessage,
+		clearDraft,
+		clearAttachments,
+		onSend,
+		agentWorking,
+		queuedForCurrentTurn.length,
+		queuedForNextTurn.length,
+		refreshQueuedMessages,
+	]);
 
 	// Keyboard handler
 	const handleKeyDown = useCallback(
@@ -112,11 +191,17 @@ export default function MessageInput({
 				return;
 			}
 
+			if (e.key === 'Tab' && !e.shiftKey && agentWorking) {
+				e.preventDefault();
+				void handleSubmit('next_turn');
+				return;
+			}
+
 			// Handle Enter key behavior
 			if (e.key === 'Enter') {
 				if (e.metaKey || e.ctrlKey) {
 					e.preventDefault();
-					handleSubmit();
+					void handleSubmit('current_turn');
 					return;
 				}
 
@@ -127,11 +212,11 @@ export default function MessageInput({
 
 				if (!isTouchDevice && !e.shiftKey) {
 					e.preventDefault();
-					handleSubmit();
+					void handleSubmit('current_turn');
 				}
 			}
 		},
-		[commandAutocomplete, handleSubmit]
+		[commandAutocomplete, handleSubmit, agentWorking]
 	);
 
 	// Model switch handler
@@ -226,13 +311,54 @@ export default function MessageInput({
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
-						handleSubmit();
+						void handleSubmit('current_turn');
 					}}
 				>
 					{/* Attachment Preview */}
 					{attachments.length > 0 && (
 						<div class="mb-3">
 							<AttachmentPreview attachments={attachments} onRemove={handleRemove} />
+						</div>
+					)}
+
+					{(queuedForCurrentTurn.length > 0 || queuedForNextTurn.length > 0) && !disabled && (
+						<div class="mb-2 flex flex-col items-end gap-1.5" data-testid="queue-overlay">
+							{queuedForCurrentTurn.slice(0, 3).map((queued, index) => (
+								<div
+									key={queued.dbId}
+									class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
+									data-testid="queued-current-turn-bubble"
+								>
+									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+									<span class="truncate">
+										{index === 0 && <span class="mr-1 text-amber-300">Now</span>}
+										{queued.text}
+									</span>
+								</div>
+							))}
+							{queuedForNextTurn.slice(0, 3).map((queued, index) => (
+								<div
+									key={queued.dbId}
+									class="pointer-events-none inline-flex max-w-[22rem] items-center gap-2 rounded-full border border-dark-600/80 bg-dark-900/85 px-3 py-1 text-xs text-gray-200 backdrop-blur-sm"
+									data-testid="queued-next-turn-bubble"
+								>
+									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+									<span class="truncate">
+										{index === 0 && <span class="mr-1 text-blue-300">Next</span>}
+										{queued.text}
+									</span>
+								</div>
+							))}
+							{queuedForCurrentTurn.length > 3 && (
+								<p class="pointer-events-none text-xs text-amber-200/80">
+									+{queuedForCurrentTurn.length - 3} more pending
+								</p>
+							)}
+							{queuedForNextTurn.length > 3 && (
+								<p class="pointer-events-none text-xs text-blue-200/80">
+									+{queuedForNextTurn.length - 3} more queued
+								</p>
+							)}
 						</div>
 					)}
 
@@ -274,16 +400,16 @@ export default function MessageInput({
 							content={content}
 							onContentChange={setContent}
 							onKeyDown={handleKeyDown}
-							onSubmit={handleSubmit}
+							onSubmit={() => {
+								void handleSubmit('current_turn');
+							}}
 							disabled={disabled}
 							showCommandAutocomplete={commandAutocomplete.showAutocomplete}
 							filteredCommands={commandAutocomplete.filteredCommands}
 							selectedCommandIndex={commandAutocomplete.selectedIndex}
 							onCommandSelect={commandAutocomplete.handleSelect}
 							onCommandClose={commandAutocomplete.close}
-							isAgentWorking={isAgentWorking.value}
-							interrupting={interrupting}
-							onInterrupt={handleInterrupt}
+							isAgentWorking={agentWorking}
 							onPaste={disabled ? undefined : handlePaste}
 						/>
 					</div>

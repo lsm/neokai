@@ -6,7 +6,7 @@
  */
 
 import { useRef, useCallback } from 'preact/hooks';
-import type { Session, MessageImage } from '@neokai/shared';
+import type { Session, MessageDeliveryMode, MessageImage } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
@@ -15,13 +15,18 @@ export interface UseSendMessageOptions {
 	sessionId: string;
 	session: Session | null;
 	isSending: boolean;
+	allowQueueWhileProcessing?: boolean;
 	onSendStart: () => void;
 	onSendComplete: () => void;
 	onError: (error: string) => void;
 }
 
 export interface UseSendMessageResult {
-	sendMessage: (content: string, images?: MessageImage[]) => Promise<void>;
+	sendMessage: (
+		content: string,
+		images?: MessageImage[],
+		deliveryMode?: MessageDeliveryMode
+	) => Promise<void>;
 	clearSendTimeout: () => void;
 }
 
@@ -34,6 +39,7 @@ export function useSendMessage({
 	sessionId,
 	session,
 	isSending,
+	allowQueueWhileProcessing = false,
 	onSendStart,
 	onSendComplete,
 	onError,
@@ -48,8 +54,12 @@ export function useSendMessage({
 	}, []);
 
 	const sendMessage = useCallback(
-		async (content: string, images?: MessageImage[]) => {
-			if (!content.trim() || isSending) return;
+		async (
+			content: string,
+			images?: MessageImage[],
+			deliveryMode: MessageDeliveryMode = 'current_turn'
+		) => {
+			if (!content.trim() || (isSending && !allowQueueWhileProcessing)) return;
 
 			if (session?.status === 'archived') {
 				toast.error('Cannot send messages to archived sessions');
@@ -79,7 +89,18 @@ export function useSendMessage({
 					return;
 				}
 
-				await hub.request('message.send', { sessionId, content, images });
+				const requestPayload: {
+					sessionId: string;
+					content: string;
+					images?: MessageImage[];
+					deliveryMode?: MessageDeliveryMode;
+				} = { sessionId, content, images };
+
+				if (deliveryMode !== 'current_turn') {
+					requestPayload.deliveryMode = deliveryMode;
+				}
+
+				await hub.request('message.send', requestPayload);
 
 				// Clear timeout on successful send
 				clearSendTimeout();
@@ -91,7 +112,16 @@ export function useSendMessage({
 				clearSendTimeout();
 			}
 		},
-		[sessionId, session, isSending, onSendStart, onSendComplete, onError, clearSendTimeout]
+		[
+			sessionId,
+			session,
+			isSending,
+			allowQueueWhileProcessing,
+			onSendStart,
+			onSendComplete,
+			onError,
+			clearSendTimeout,
+		]
 	);
 
 	return {

@@ -8,6 +8,7 @@
  */
 
 import type { DaemonServerContext } from './daemon-server';
+import type { MessageDeliveryMode } from '@neokai/shared';
 
 /**
  * Send a message via RPC and return the messageId
@@ -18,6 +19,7 @@ export async function sendMessage(
 	content: string,
 	options: {
 		images?: Array<{ type: string; source: { type: string; data: string } }>;
+		deliveryMode?: MessageDeliveryMode;
 	} = {}
 ): Promise<{ messageId: string }> {
 	const result = (await daemon.messageHub.request('message.send', {

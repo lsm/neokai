@@ -200,7 +200,7 @@ describe('InputTextarea', () => {
 			expect(stopButton).toBeNull();
 		});
 
-		it('should show stop button when isAgentWorking is true', () => {
+		it('should keep send button visible when isAgentWorking is true', () => {
 			const { container } = render(
 				<InputTextarea
 					content="hello"
@@ -208,27 +208,24 @@ describe('InputTextarea', () => {
 					onKeyDown={() => {}}
 					onSubmit={() => {}}
 					isAgentWorking={true}
-					onInterrupt={() => {}}
 				/>
 			);
 
 			const sendButton = container.querySelector('[data-testid="send-button"]');
 			const stopButton = container.querySelector('[data-testid="stop-button"]');
 
-			expect(stopButton).toBeTruthy();
-			expect(sendButton).toBeNull();
+			expect(sendButton).toBeTruthy();
+			expect(stopButton).toBeNull();
 		});
 
-		it('should disable send button when isAgentWorking is true (in send button state)', () => {
-			// When agent is working but we somehow show send button,
-			// it should be disabled
+		it('should keep send button enabled with content when isAgentWorking is true', () => {
 			const { container } = render(
 				<InputTextarea
 					content="hello"
 					onContentChange={() => {}}
 					onKeyDown={() => {}}
 					onSubmit={() => {}}
-					isAgentWorking={false}
+					isAgentWorking={true}
 				/>
 			);
 
@@ -315,23 +312,22 @@ describe('InputTextarea', () => {
 			expect(onSubmit).toHaveBeenCalledTimes(1);
 		});
 
-		it('should call onInterrupt when stop button is clicked', () => {
-			const onInterrupt = vi.fn(() => {});
+		it('should call onSubmit when agent is working (queue mode)', () => {
+			const onSubmit = vi.fn(() => {});
 			const { container } = render(
 				<InputTextarea
 					content="hello"
 					onContentChange={() => {}}
 					onKeyDown={() => {}}
-					onSubmit={() => {}}
+					onSubmit={onSubmit}
 					isAgentWorking={true}
-					onInterrupt={onInterrupt}
 				/>
 			);
 
-			const stopButton = container.querySelector('[data-testid="stop-button"]')!;
-			fireEvent.click(stopButton);
+			const sendButton = container.querySelector('[data-testid="send-button"]')!;
+			fireEvent.click(sendButton);
 
-			expect(onInterrupt).toHaveBeenCalledTimes(1);
+			expect(onSubmit).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -558,8 +554,8 @@ describe('InputTextarea', () => {
 		});
 	});
 
-	describe('Interrupting State', () => {
-		it('should show spinner in stop button when interrupting', () => {
+	describe('Queue mode labeling', () => {
+		it('should use send aria-label when agent is working', () => {
 			const { container } = render(
 				<InputTextarea
 					content="hello"
@@ -567,46 +563,32 @@ describe('InputTextarea', () => {
 					onKeyDown={() => {}}
 					onSubmit={() => {}}
 					isAgentWorking={true}
-					interrupting={true}
-					onInterrupt={() => {}}
 				/>
 			);
 
-			const stopButton = container.querySelector(
-				'[data-testid="stop-button"]'
+			const sendButton = container.querySelector(
+				'[data-testid="send-button"]'
 			) as HTMLButtonElement;
-			expect(stopButton).toBeTruthy();
-			expect(stopButton?.disabled).toBe(true);
-
-			// Should contain spinner (animate-spin class)
-			const spinner = stopButton.querySelector('.animate-spin');
-			expect(spinner).toBeTruthy();
+			expect(sendButton).toBeTruthy();
+			expect(sendButton.getAttribute('aria-label')).toBe('Send message');
 		});
 
-		it('should show stop icon when not interrupting', () => {
+		it('should use send aria-label when agent is idle', () => {
 			const { container } = render(
 				<InputTextarea
 					content="hello"
 					onContentChange={() => {}}
 					onKeyDown={() => {}}
 					onSubmit={() => {}}
-					isAgentWorking={true}
-					interrupting={false}
-					onInterrupt={() => {}}
+					isAgentWorking={false}
 				/>
 			);
 
-			const stopButton = container.querySelector(
-				'[data-testid="stop-button"]'
+			const sendButton = container.querySelector(
+				'[data-testid="send-button"]'
 			) as HTMLButtonElement;
-			expect(stopButton).toBeTruthy();
-			expect(stopButton?.disabled).toBe(false);
-
-			// Should contain SVG stop icon, not spinner
-			const svg = stopButton.querySelector('svg');
-			expect(svg).toBeTruthy();
-			const spinner = stopButton.querySelector('.animate-spin');
-			expect(spinner).toBeNull();
+			expect(sendButton).toBeTruthy();
+			expect(sendButton.getAttribute('aria-label')).toBe('Send message');
 		});
 	});
 

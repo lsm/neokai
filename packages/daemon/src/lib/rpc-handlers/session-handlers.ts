@@ -7,11 +7,12 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub, MessageImage, Session } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageHub, MessageImage, Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import { clearModelsCache } from '../model-service';
 import {
 	archiveSDKSessionFiles,
@@ -23,6 +24,28 @@ import type { RoomManager } from '../room';
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
+
+function extractMessageText(content: unknown): string {
+	if (typeof content === 'string') {
+		return content;
+	}
+
+	if (!Array.isArray(content)) {
+		return '';
+	}
+
+	return content
+		.map((block) => {
+			if (typeof block !== 'object' || block === null) return '';
+			const record = block as Record<string, unknown>;
+			if (record.type === 'text' && typeof record.text === 'string') {
+				return record.text;
+			}
+			return '';
+		})
+		.filter(Boolean)
+		.join('\n');
+}
 
 export function setupSessionHandlers(
 	messageHub: MessageHub,
@@ -266,11 +289,17 @@ export function setupSessionHandlers(
 			sessionId: targetSessionId,
 			content,
 			images,
+			deliveryMode = 'current_turn',
 		} = data as {
 			sessionId: string;
 			content: string;
 			images?: MessageImage[];
+			deliveryMode?: MessageDeliveryMode;
 		};
+
+		if (deliveryMode !== 'current_turn' && deliveryMode !== 'next_turn') {
+			throw new Error('Invalid deliveryMode');
+		}
 
 		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -281,21 +310,15 @@ export function setupSessionHandlers(
 		// Generate messageId immediately for return
 		const messageId = generateUUID();
 
-		// Fire-and-forget: emit event, SessionManager handles persistence
-		// All heavy operations (message persistence, title gen, SDK query) handled by DaemonHub subscribers
-		daemonHub
-			.emit('message.sendRequest', {
-				sessionId: targetSessionId,
-				messageId,
-				content,
-				images,
-			})
-			.catch((error) => {
-				log.warn(`Failed to emit message.sendRequest for session ${targetSessionId}:`, error);
-			});
+		// Persist-before-ack for durable queue semantics
+		await daemonHub.emit('message.sendRequest', {
+			sessionId: targetSessionId,
+			messageId,
+			content,
+			images,
+			deliveryMode,
+		});
 
-		// Return immediately with messageId
-		// Client gets instant feedback, heavy processing continues async
 		return { messageId };
 	});
 
@@ -706,5 +729,38 @@ export function setupSessionHandlers(
 		const count = db.getMessageCountByStatus(session.id, status);
 
 		return { count };
+	});
+
+	// List user messages by send status for queue UX
+	messageHub.onRequest('session.messages.byStatus', async (data) => {
+		const { sessionId: targetSessionId, status, limit = 20 } = data as {
+			sessionId: string;
+			status: 'saved' | 'queued' | 'sent';
+			limit?: number;
+		};
+
+		if (!['saved', 'queued', 'sent'].includes(status)) {
+			throw new Error('Invalid status');
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+		const messages = db
+			.getMessagesByStatus(targetSessionId, status)
+			.filter((message) => isSDKUserMessage(message))
+			.slice(0, limit)
+			.map((message) => ({
+				dbId: message.dbId,
+				uuid: message.uuid ?? '',
+				timestamp: message.timestamp,
+				status,
+				text: extractMessageText(message.message.content),
+			}));
+
+		return { messages };
 	});
 }

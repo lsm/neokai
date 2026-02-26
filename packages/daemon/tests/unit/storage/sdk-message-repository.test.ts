@@ -269,6 +269,23 @@ describe('SDKMessageRepository', () => {
 			expect(messages.length).toBe(100);
 			expect(hasMore).toBe(true); // Can't know for sure, so assume there might be more
 		});
+
+		it('should exclude unsent user messages from transcript query', () => {
+			repository.saveUserMessage('session-1', createUserMessage('Saved user message'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Queued user message'), 'queued');
+			repository.saveUserMessage('session-1', createUserMessage('Sent user message'), 'sent');
+			repository.saveSDKMessage('session-1', createAssistantMessage('Assistant response'));
+
+			const { messages } = repository.getSDKMessages('session-1');
+			expect(messages.length).toBe(2);
+
+			const userContent = (
+				messages.find((m) => m.type === 'user') as {
+					message?: { content?: Array<{ type: string; text?: string }> };
+				}
+			).message?.content?.[0]?.text;
+			expect(userContent).toBe('Sent user message');
+		});
 	});
 
 	describe('getSDKMessagesByType', () => {
@@ -346,6 +363,15 @@ describe('SDKMessageRepository', () => {
 			const count = repository.getSDKMessageCount('non-existent');
 
 			expect(count).toBe(0);
+		});
+
+		it('should not count unsent user messages', () => {
+			repository.saveUserMessage('session-1', createUserMessage('Saved'), 'saved');
+			repository.saveUserMessage('session-1', createUserMessage('Queued'), 'queued');
+			repository.saveUserMessage('session-1', createUserMessage('Sent'), 'sent');
+
+			const count = repository.getSDKMessageCount('session-1');
+			expect(count).toBe(1);
 		});
 	});
 
