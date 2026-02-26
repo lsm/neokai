@@ -242,4 +242,43 @@ No table rows here.
 			expect(result).toBeNull();
 		});
 	});
+
+	describe('toContextInfo', () => {
+		it('should convert parsed context to ContextInfo', () => {
+			const parsedContext = {
+				model: 'claude-sonnet-4-5-20250929',
+				totalUsed: 3225,
+				totalCapacity: 200000,
+				percentUsed: 2,
+				breakdown: {
+					'System prompt': { tokens: 3200, percent: 1.6 },
+					Messages: { tokens: 25, percent: 0.0 },
+				},
+			};
+
+			const info = fetcher.toContextInfo(parsedContext);
+
+			expect(info.totalUsed).toBe(3225);
+			expect(info.breakdown).toEqual(parsedContext.breakdown);
+			expect(info.source).toBe('context-command');
+			expect(info.lastUpdated).toBeGreaterThan(0);
+		});
+
+		it('should set source to context-command', () => {
+			const parsedContext = {
+				model: 'claude-sonnet-4-5-20250929',
+				totalUsed: 3200,
+				totalCapacity: 200000,
+				percentUsed: 2,
+				breakdown: {
+					'System prompt': { tokens: 3200, percent: 1.6 },
+				},
+			};
+
+			const info = fetcher.toContextInfo(parsedContext);
+
+			expect(info.totalUsed).toBe(3200);
+			expect(info.source).toBe('context-command');
+		});
+	});
 });

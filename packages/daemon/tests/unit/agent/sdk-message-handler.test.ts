@@ -40,7 +40,6 @@ describe('SDKMessageHandler', () => {
 	let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
 	let setIdleSpy: ReturnType<typeof mock>;
 	let setCompactingSpy: ReturnType<typeof mock>;
-	let handleResultUsageSpy: ReturnType<typeof mock>;
 	let getContextInfoSpy: ReturnType<typeof mock>;
 	let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
 	let enqueueMessageSpy: ReturnType<typeof mock>;
@@ -108,11 +107,9 @@ describe('SDKMessageHandler', () => {
 		} as unknown as ProcessingStateManager;
 
 		// ContextTracker spies
-		handleResultUsageSpy = mock(async () => {});
 		getContextInfoSpy = mock(() => ({ totalTokens: 1000, maxTokens: 128000 }));
 		updateWithDetailedBreakdownSpy = mock(() => {});
 		mockContextTracker = {
-			handleResultUsage: handleResultUsageSpy,
 			getContextInfo: getContextInfoSpy,
 			updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
 		} as unknown as ContextTracker;
