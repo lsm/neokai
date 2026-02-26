@@ -10,14 +10,14 @@
  * - Failed
  */
 
-import { useState } from 'preact/hooks';
 import type { TaskSummary } from '@neokai/shared';
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
+	onTaskClick?: (taskId: string) => void;
 }
 
-export function RoomTasks({ tasks }: RoomTasksProps) {
+export function RoomTasks({ tasks, onTaskClick }: RoomTasksProps) {
 	if (tasks.length === 0) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
@@ -45,7 +45,7 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{inProgress.map((task) => (
-							<TaskItem key={task.id} task={task} />
+							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -59,7 +59,7 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{escalated.map((task) => (
-							<TaskItem key={task.id} task={task} />
+							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -73,7 +73,7 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{pending.map((task) => (
-							<TaskItem key={task.id} task={task} />
+							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -87,7 +87,7 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{draft.map((task) => (
-							<TaskItem key={task.id} task={task} />
+							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -101,7 +101,7 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
-							<TaskItem key={task.id} task={task} />
+							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -115,7 +115,7 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{failed.map((task) => (
-							<TaskItem key={task.id} task={task} />
+							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -124,18 +124,24 @@ export function RoomTasks({ tasks }: RoomTasksProps) {
 	);
 }
 
-function TaskItem({ task }: { task: TaskSummary }) {
-	const [_isExpanded, setIsExpanded] = useState(false);
+function TaskItem({ task, onClick }: { task: TaskSummary; onClick?: (taskId: string) => void }) {
+	const isClickable = !!onClick;
 
 	return (
-		<div class="px-4 py-3">
-			<div class="flex items-start justify-between" onClick={() => setIsExpanded((v) => !v)}>
+		<div
+			class={`px-4 py-3 ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
+			onClick={isClickable ? () => onClick(task.id) : undefined}
+		>
+			<div class="flex items-start justify-between">
 				<div class="flex-1 min-w-0">
 					<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
 				</div>
-				{task.progress !== undefined && (
-					<div class="ml-4 text-xs text-gray-400">{task.progress}%</div>
-				)}
+				<div class="ml-4 flex items-center gap-2 flex-shrink-0">
+					{task.progress !== undefined && (
+						<span class="text-xs text-gray-400">{task.progress}%</span>
+					)}
+					{isClickable && <span class="text-xs text-gray-600">→</span>}
+				</div>
 			</div>
 			{task.progress !== undefined && (
 				<div class="mt-2 h-1 bg-dark-700 rounded-full overflow-hidden">

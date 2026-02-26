@@ -2,6 +2,7 @@ import {
 	currentSessionIdSignal,
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
+	currentRoomTaskIdSignal,
 	navSectionSignal,
 	settingsSectionSignal,
 } from '../lib/signals.ts';
@@ -20,13 +21,16 @@ export default function MainContent() {
 	const sessionId = currentSessionIdSignal.value;
 	const roomId = currentRoomIdSignal.value;
 	const roomSessionId = currentRoomSessionIdSignal.value;
+	const roomTaskId = currentRoomTaskIdSignal.value;
 	const sessionsList = sessions.value;
 	const navSection = navSectionSignal.value;
 	const settingsSection = settingsSectionSignal.value;
 
-	// Room route takes priority - if viewing a session within room, pass sessionViewId
+	// Room route takes priority
 	if (roomId) {
-		return <Room key={roomId} roomId={roomId} sessionViewId={roomSessionId} />;
+		return (
+			<Room key={roomId} roomId={roomId} sessionViewId={roomSessionId} taskViewId={roomTaskId} />
+		);
 	}
 
 	// Validate that the current session actually exists in the sessions list

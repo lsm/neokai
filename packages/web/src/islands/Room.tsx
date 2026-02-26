@@ -14,6 +14,7 @@ import { navigateToHome } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomSettings } from '../components/room';
+import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { toast } from '../lib/toast';
@@ -23,9 +24,10 @@ type RoomTab = 'overview' | 'goals' | 'settings';
 interface RoomProps {
 	roomId: string;
 	sessionViewId?: string | null; // When set, show this session content instead of room tabs
+	taskViewId?: string | null; // When set, show TaskView (Craft + Lead) for this task
 }
 
-export default function Room({ roomId, sessionViewId }: RoomProps) {
+export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	const [initialLoad, setInitialLoad] = useState(true);
 	const [activeTab, setActiveTab] = useState<RoomTab>('overview');
 
@@ -115,8 +117,11 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 		<div class="flex-1 flex bg-dark-900 overflow-hidden">
 			{/* Main content area */}
 			<div class="flex-1 flex flex-col overflow-hidden">
-				{/* If viewing a session within the room, show session content */}
-				{sessionViewId ? (
+				{/* Task view: show Craft + Lead sessions for the selected task */}
+				{taskViewId ? (
+					<TaskView key={taskViewId} roomId={roomId} taskId={taskViewId} />
+				) : sessionViewId ? (
+					/* Session view: show a specific session within the room */
 					<ChatContainer key={sessionViewId} sessionId={sessionViewId} />
 				) : (
 					<>
@@ -195,8 +200,8 @@ export default function Room({ roomId, sessionViewId }: RoomProps) {
 				)}
 			</div>
 
-			{/* Room Chat Panel - only show when NOT viewing a session within the room */}
-			{!sessionViewId && (
+			{/* Room Chat Panel - only show when NOT viewing a session or task within the room */}
+			{!sessionViewId && !taskViewId && (
 				<div class="w-96 border-l border-dark-700 flex flex-col bg-dark-950">
 					<div class="flex-1 flex flex-col">
 						<ChatContainer sessionId={`room:chat:${roomId}`} />
