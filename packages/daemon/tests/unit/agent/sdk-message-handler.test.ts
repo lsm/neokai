@@ -410,7 +410,6 @@ describe('SDKMessageHandler', () => {
 
 			expect(handleResultUsageSpy).not.toHaveBeenCalled();
 		});
-
 		it('should queue /context command', async () => {
 			const message: SDKMessage = {
 				type: 'result',

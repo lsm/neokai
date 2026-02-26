@@ -117,12 +117,10 @@ export default function Lobby() {
 					</div>
 					{/* Desktop: full buttons with text */}
 					<div class="hidden md:flex gap-2 shrink-0">
-						<Button variant="secondary" onClick={newSessionModal.open} icon="+">
+						<Button variant="secondary" onClick={newSessionModal.open}>
 							New Session
 						</Button>
-						<Button onClick={() => (createRoomModalSignal.value = true)} icon="+">
-							Create Room
-						</Button>
+						<Button onClick={() => (createRoomModalSignal.value = true)}>Create Room</Button>
 					</div>
 					{/* Mobile: icon-only buttons */}
 					<div class="flex md:hidden gap-1.5 shrink-0">
@@ -175,6 +173,7 @@ export default function Lobby() {
 									return (
 										<button
 											key={session.id}
+											data-session-id={session.id}
 											onClick={() => navigateToSession(session.id)}
 											class="bg-dark-800 hover:bg-dark-750 border border-dark-700 rounded-lg p-4 text-left transition-colors"
 										>

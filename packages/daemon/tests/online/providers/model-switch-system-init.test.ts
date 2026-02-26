@@ -138,11 +138,21 @@ async function waitForSDKMessage(
 describe('Model Switch System Init Message', () => {
 	let daemon: DaemonServerContext;
 
+	// Skip all tests if no Anthropic credentials (model switching requires Claude SDK)
+	const hasAnthropicCredentials =
+		process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
 	beforeEach(async () => {
+		if (!hasAnthropicCredentials) {
+			return; // Skip setup if no credentials
+		}
 		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
+		if (!hasAnthropicCredentials) {
+			return; // Skip cleanup if no credentials
+		}
 		if (daemon) {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
@@ -150,6 +160,10 @@ describe('Model Switch System Init Message', () => {
 	}, 20000);
 
 	test('should show correct model in system:init after switching to opus', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
 		// 1. Create session with Sonnet model (default)
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-model-switch-system-init-${Date.now()}`,
@@ -213,6 +227,10 @@ describe('Model Switch System Init Message', () => {
 	}, 90000);
 
 	test('should show correct model in system:init when switching from sonnet to haiku', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
 		// Create session with Sonnet
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku-${Date.now()}`,
@@ -257,6 +275,10 @@ describe('Model Switch System Init Message', () => {
 	}, 90000);
 
 	test('should show correct model when switching before first message', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
 		// Create session
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-before-first-message-${Date.now()}`,
@@ -296,6 +318,10 @@ describe('Model Switch System Init Message', () => {
 	}, 90000);
 
 	test('should show correct model when switching AFTER query is already running', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
 		// Create session with Sonnet
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-after-running-${Date.now()}`,

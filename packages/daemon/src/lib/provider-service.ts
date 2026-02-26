@@ -505,6 +505,7 @@ export class ProviderService {
 			}
 		};
 
+		clear('ANTHROPIC_AUTH_TOKEN');
 		clear('ANTHROPIC_BASE_URL');
 		clear('API_TIMEOUT_MS');
 		clear('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');

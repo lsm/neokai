@@ -36,7 +36,6 @@ describe('SDKMessageHandler', () => {
 	let hubPublishSpy: ReturnType<typeof mock>;
 	let eventBusEmitSpy: ReturnType<typeof mock>;
 	let stateSetIdleSpy: ReturnType<typeof mock>;
-	let contextHandleResultSpy: ReturnType<typeof mock>;
 	let handleCircuitBreakerTripSpy: ReturnType<typeof mock>;
 
 	const testSessionId = generateUUID();
@@ -96,10 +95,8 @@ describe('SDKMessageHandler', () => {
 		} as unknown as ProcessingStateManager;
 
 		// Mock ContextTracker
-		contextHandleResultSpy = mock(async () => {});
 		mockContextTracker = {
 			processStreamEvent: mock(async () => {}),
-			handleResultUsage: contextHandleResultSpy,
 		} as unknown as ContextTracker;
 
 		// Mock MessageQueue
@@ -302,39 +299,6 @@ describe('SDKMessageHandler', () => {
 						totalCost: 0.05,
 					}),
 				})
-			);
-		});
-
-		it('should update context tracker with final usage', async () => {
-			const resultMessage = {
-				type: 'result',
-				subtype: 'success',
-				success: true,
-				usage: {
-					input_tokens: 10000,
-					output_tokens: 500,
-					cache_read_input_tokens: 2000,
-					cache_creation_input_tokens: 1000,
-				},
-				total_cost_usd: 0.05,
-				is_error: false,
-				num_turns: 1,
-				result: 'success',
-				duration_ms: 5000,
-				duration_api_ms: 4500,
-				session_id: testSessionId,
-			};
-
-			await handler.handleMessage(resultMessage);
-
-			expect(contextHandleResultSpy).toHaveBeenCalledWith(
-				expect.objectContaining({
-					input_tokens: 10000,
-					output_tokens: 500,
-					cache_read_input_tokens: 2000,
-					cache_creation_input_tokens: 1000,
-				}),
-				undefined
 			);
 		});
 	});

@@ -14,12 +14,11 @@ import { navSectionSignal } from '../../lib/signals.ts';
 // Mock the router functions
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSessions: vi.fn(),
-	navigateToRooms: vi.fn(),
 	navigateToSettings: vi.fn(),
 }));
 
 // Import mocked functions for assertions
-import { navigateToSessions, navigateToRooms, navigateToSettings } from '../../lib/router.ts';
+import { navigateToSessions, navigateToSettings } from '../../lib/router.ts';
 
 describe('NavRail', () => {
 	beforeEach(() => {
@@ -40,9 +39,8 @@ describe('NavRail', () => {
 			render(<NavRail />);
 
 			// Check all navigation buttons are rendered
+			expect(screen.getByTitle('Home')).toBeTruthy();
 			expect(screen.getByTitle('Chats')).toBeTruthy();
-			expect(screen.getByTitle('Rooms')).toBeTruthy();
-			expect(screen.getByTitle('Projects (Coming Soon)')).toBeTruthy();
 			expect(screen.getByTitle('Settings')).toBeTruthy();
 		});
 
@@ -50,18 +48,6 @@ describe('NavRail', () => {
 			render(<NavRail />);
 			const chatsButton = screen.getByRole('button', { name: 'Chats' });
 			expect(chatsButton).toBeTruthy();
-		});
-
-		it('should render Rooms button with correct label', () => {
-			render(<NavRail />);
-			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
-			expect(roomsButton).toBeTruthy();
-		});
-
-		it('should render Projects button with correct label', () => {
-			render(<NavRail />);
-			const projectsButton = screen.getByRole('button', { name: 'Projects (Coming Soon)' });
-			expect(projectsButton).toBeTruthy();
 		});
 
 		it('should render Settings button with correct label', () => {
@@ -78,22 +64,6 @@ describe('NavRail', () => {
 
 			const chatsButton = screen.getByRole('button', { name: 'Chats' });
 			expect(chatsButton.getAttribute('aria-pressed')).toBe('true');
-
-			// Other buttons should not be active
-			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
-			expect(roomsButton.getAttribute('aria-pressed')).toBe('false');
-		});
-
-		it('should highlight Rooms button when navSection is rooms', () => {
-			navSectionSignal.value = 'rooms';
-			render(<NavRail />);
-
-			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
-			expect(roomsButton.getAttribute('aria-pressed')).toBe('true');
-
-			// Chats should not be active
-			const chatsButton = screen.getByRole('button', { name: 'Chats' });
-			expect(chatsButton.getAttribute('aria-pressed')).toBe('false');
 		});
 
 		it('should highlight Settings button when navSection is settings', () => {
@@ -102,15 +72,6 @@ describe('NavRail', () => {
 
 			const settingsButton = screen.getByRole('button', { name: 'Settings' });
 			expect(settingsButton.getAttribute('aria-pressed')).toBe('true');
-		});
-
-		it('should show Projects as inactive even when navSection is projects', () => {
-			navSectionSignal.value = 'projects';
-			render(<NavRail />);
-
-			const projectsButton = screen.getByRole('button', { name: 'Projects (Coming Soon)' });
-			// Projects button has active={navSection === 'projects'} but is disabled
-			expect(projectsButton.getAttribute('aria-pressed')).toBe('true');
 		});
 	});
 
@@ -124,15 +85,6 @@ describe('NavRail', () => {
 			expect(navigateToSessions).toHaveBeenCalledTimes(1);
 		});
 
-		it('should call navigateToRooms when Rooms button is clicked', () => {
-			render(<NavRail />);
-
-			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
-			fireEvent.click(roomsButton);
-
-			expect(navigateToRooms).toHaveBeenCalledTimes(1);
-		});
-
 		it('should call navigateToSettings when Settings button is clicked', () => {
 			render(<NavRail />);
 
@@ -140,36 +92,6 @@ describe('NavRail', () => {
 			fireEvent.click(settingsButton);
 
 			expect(navigateToSettings).toHaveBeenCalledTimes(1);
-		});
-
-		it('should not call any navigate function when Projects button is clicked', () => {
-			render(<NavRail />);
-
-			// Projects button is disabled, so click should not trigger anything
-			const projectsButton = screen.getByRole('button', { name: 'Projects (Coming Soon)' });
-			fireEvent.click(projectsButton);
-
-			// Since the button is disabled, click events shouldn't trigger navigation
-			expect(navigateToSessions).not.toHaveBeenCalled();
-			expect(navigateToRooms).not.toHaveBeenCalled();
-			expect(navigateToSettings).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('Projects Button State', () => {
-		it('should have Projects button disabled', () => {
-			render(<NavRail />);
-
-			const projectsButton = screen.getByRole('button', { name: 'Projects (Coming Soon)' });
-			expect(projectsButton.hasAttribute('disabled')).toBe(true);
-		});
-
-		it('should have disabled styling on Projects button', () => {
-			render(<NavRail />);
-
-			const projectsButton = screen.getByRole('button', { name: 'Projects (Coming Soon)' });
-			expect(projectsButton.className).toContain('disabled:opacity-40');
-			expect(projectsButton.className).toContain('disabled:cursor-not-allowed');
 		});
 	});
 
@@ -262,13 +184,13 @@ describe('NavRail', () => {
 			expect(chatsButton.getAttribute('aria-pressed')).toBe('true');
 
 			// Change signal and rerender
-			navSectionSignal.value = 'rooms';
+			navSectionSignal.value = 'settings';
 			rerender(<NavRail />);
 
 			chatsButton = screen.getByRole('button', { name: 'Chats' });
-			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
+			const settingsButton = screen.getByRole('button', { name: 'Settings' });
 			expect(chatsButton.getAttribute('aria-pressed')).toBe('false');
-			expect(roomsButton.getAttribute('aria-pressed')).toBe('true');
+			expect(settingsButton.getAttribute('aria-pressed')).toBe('true');
 		});
 	});
 });

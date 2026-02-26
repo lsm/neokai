@@ -10,7 +10,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	waitForWebSocketConnected,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -32,8 +32,7 @@ test.describe('Error Scenarios', () => {
 
 	test('should prevent message send when connection is lost', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Verify session is loaded and working
 		const messageInput = await waitForElement(page, 'textarea');
@@ -73,8 +72,7 @@ test.describe('Error Scenarios', () => {
 	test.skip('should handle network disconnection during message send', async ({ page }) => {
 		// TODO: Flaky test - network simulation and recovery is unreliable
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		const messageInput = await waitForElement(page, 'textarea');
 		await messageInput.fill('Test network failure');
@@ -130,8 +128,7 @@ test.describe('Error Scenarios', () => {
 
 	test('should recover from temporary WebSocket disconnection', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Simulate WebSocket disconnection by going offline
 		await closeWebSocket(page);
@@ -154,8 +151,7 @@ test.describe('Error Scenarios', () => {
 
 	test('should handle rate limiting gracefully', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send many messages rapidly
 		const messageInput = await waitForElement(page, 'textarea');

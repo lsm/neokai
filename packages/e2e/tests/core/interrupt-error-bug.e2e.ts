@@ -17,7 +17,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	cleanupTestSession,
 	waitForSDKSystemInitMessage,
@@ -38,8 +38,7 @@ test.describe('Interrupt Error Bug', () => {
 			// ensureQueryStarted() to return early without starting a new query.
 
 			// Create a session
-			await page.getByRole('button', { name: 'New Session', exact: true }).click();
-			const sessionId = await waitForSessionCreated(page);
+			const sessionId = await createSessionViaUI(page);
 
 			// STEP 1: Send first message
 			const messageInput = await waitForElement(page, 'textarea');
