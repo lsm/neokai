@@ -1,0 +1,271 @@
+/**
+ * Planner Agent Factory
+ *
+ * Creates AgentSessionInit for Planner sessions that break goals into tasks.
+ *
+ * The Planner agent:
+ * - Examines the codebase to understand scope
+ * - Creates concrete, well-scoped tasks via the create_task MCP tool
+ * - Can update or remove draft tasks during plan polishing with Leader feedback
+ * - Tasks are created as 'draft' and tagged with createdByTaskId
+ * - Leader reviews the plan; on complete_task() the runtime promotes drafts to pending
+ */
+
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import type { AgentSessionInit } from '../agent/agent-session';
+import type {
+	Room,
+	RoomGoal,
+	NeoTask,
+	SessionFeatures,
+	McpServerConfig,
+	TaskPriority,
+	AgentType,
+} from '@neokai/shared';
+
+const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-5-20250929';
+
+const PLANNER_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
+export interface PlannerCreateTaskParams {
+	title: string;
+	description: string;
+	priority?: TaskPriority;
+	agent?: AgentType;
+}
+
+export interface PlannerAgentConfig {
+	task: NeoTask;
+	goal: RoomGoal;
+	room: Room;
+	sessionId: string;
+	workspacePath: string;
+	model?: string;
+	/** Callback to create a draft task linked to this planning task */
+	createDraftTask: (params: PlannerCreateTaskParams) => Promise<{ id: string; title: string }>;
+	/** Callback to update an existing draft task */
+	updateDraftTask: (
+		taskId: string,
+		updates: {
+			title?: string;
+			description?: string;
+			priority?: TaskPriority;
+			assignedAgent?: AgentType;
+		}
+	) => Promise<{ id: string; title: string }>;
+	/** Callback to remove a draft task */
+	removeDraftTask: (taskId: string) => Promise<boolean>;
+}
+
+/**
+ * Build system prompt for Planner agent.
+ */
+export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
+	const { goal, room } = config;
+	const sections: string[] = [];
+
+	sections.push(
+		`You are a Planner Agent responsible for breaking down a goal into concrete tasks.`
+	);
+	sections.push(
+		`\nYour job is to examine the codebase and produce a clear, ordered task breakdown.`
+	);
+	sections.push(
+		`Use the planning tools (\`create_task\`, \`update_task\`, \`remove_task\`) to manage your plan. Do NOT write code or make changes.`
+	);
+
+	sections.push(`\n## Goal to Plan\n`);
+	sections.push(`**Goal:** ${goal.title}`);
+	if (goal.description) {
+		sections.push(`**Description:** ${goal.description}`);
+	}
+
+	if (room.background) {
+		sections.push(`\n## Project Context\n`);
+		sections.push(room.background);
+	}
+	if (room.instructions) {
+		sections.push(`\n## Instructions\n`);
+		sections.push(room.instructions);
+	}
+
+	sections.push(`\n## Planning Guidelines\n`);
+	sections.push(`1. Read relevant files to understand the current codebase state`);
+	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
+	sections.push(`3. Order tasks by dependency (later tasks build on earlier ones)`);
+	sections.push(`4. Each task description must include clear acceptance criteria`);
+	sections.push(
+		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
+	);
+	sections.push(`6. Call \`create_task\` for each task — this is how you record your plan`);
+	sections.push(`7. When done creating all tasks, finish your response`);
+	sections.push(`8. Do NOT implement anything — only plan and call create_task`);
+	sections.push(
+		`9. If the Leader sends feedback, use \`update_task\` or \`remove_task\` to refine your plan, and \`create_task\` for new additions`
+	);
+
+	return sections.join('\n');
+}
+
+/**
+ * Create the MCP server with planning tools.
+ */
+function createPlannerMcpServer(config: PlannerAgentConfig) {
+	const tools = [
+		tool(
+			'create_task',
+			'Record a task in the plan. Call this for each task you identify.',
+			{
+				title: z
+					.string()
+					.describe('Short, action-oriented task title (e.g., "Add JWT auth middleware")'),
+				description: z
+					.string()
+					.describe('Detailed description with acceptance criteria — what "done" looks like'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.default('normal')
+					.describe('Task priority'),
+				agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.default('coder')
+					.describe('Which agent type should execute this task'),
+			},
+			async (args) => {
+				try {
+					const task = await config.createDraftTask({
+						title: args.title,
+						description: args.description,
+						priority: args.priority as TaskPriority | undefined,
+						agent: args.agent as AgentType | undefined,
+					});
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({ success: true, taskId: task.id, title: task.title }),
+							},
+						],
+					};
+				} catch (error) {
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({ success: false, error: String(error) }),
+							},
+						],
+					};
+				}
+			}
+		),
+		tool(
+			'update_task',
+			'Update an existing draft task. Use this to refine tasks based on Leader feedback.',
+			{
+				task_id: z.string().describe('The ID of the draft task to update'),
+				title: z.string().optional().describe('Updated task title'),
+				description: z.string().optional().describe('Updated task description'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.describe('Updated priority'),
+				agent: z.enum(['coder', 'general']).optional().describe('Updated agent type'),
+			},
+			async (args) => {
+				try {
+					const task = await config.updateDraftTask(args.task_id, {
+						title: args.title,
+						description: args.description,
+						priority: args.priority as TaskPriority | undefined,
+						assignedAgent: args.agent as AgentType | undefined,
+					});
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({ success: true, taskId: task.id, title: task.title }),
+							},
+						],
+					};
+				} catch (error) {
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({ success: false, error: String(error) }),
+							},
+						],
+					};
+				}
+			}
+		),
+		tool(
+			'remove_task',
+			'Remove a draft task from the plan.',
+			{
+				task_id: z.string().describe('The ID of the draft task to remove'),
+			},
+			async (args) => {
+				try {
+					const removed = await config.removeDraftTask(args.task_id);
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({ success: removed }),
+							},
+						],
+					};
+				} catch (error) {
+					return {
+						content: [
+							{
+								type: 'text' as const,
+								text: JSON.stringify({ success: false, error: String(error) }),
+							},
+						],
+					};
+				}
+			}
+		),
+	];
+
+	return createSdkMcpServer({ name: 'planner-tools', tools });
+}
+
+/**
+ * Create an AgentSessionInit for a Planner agent.
+ *
+ * Uses the Claude Code preset (for read/glob/grep codebase access) plus planning
+ * MCP tools. The system prompt instructs the agent to plan only, not implement.
+ */
+export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSessionInit {
+	const mcpServer = createPlannerMcpServer(config);
+
+	return {
+		sessionId: config.sessionId,
+		workspacePath: config.workspacePath,
+		systemPrompt: {
+			type: 'preset',
+			preset: 'claude_code',
+			append: buildPlannerSystemPrompt(config),
+		},
+		mcpServers: {
+			'planner-tools': mcpServer as unknown as McpServerConfig,
+		},
+		features: PLANNER_FEATURES,
+		context: { roomId: config.room.id },
+		type: 'planner',
+		model: config.model ?? DEFAULT_PLANNER_MODEL,
+	};
+}
