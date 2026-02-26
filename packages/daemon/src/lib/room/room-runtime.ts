@@ -1,9 +1,9 @@
 /**
  * RoomRuntime - Central orchestrator for autonomous room operation
  *
- * Manages the lifecycle of (Craft, Lead) agent pairs:
- * 1. Detects goals needing planning and spawns planning pairs
- * 2. Detects pending tasks and spawns execution pairs
+ * Manages the lifecycle of (Craft, Lead) session groups:
+ * 1. Detects goals needing planning and spawns planning groups
+ * 2. Detects pending tasks and spawns execution groups
  * 3. Routes Craft output to Lead for review
  * 4. Routes Lead feedback to Craft
  * 5. Handles Lead tool calls (complete_task, fail_task, send_to_craft)
@@ -14,14 +14,13 @@
  * All handlers are idempotent. Tick mutex prevents concurrent execution.
  */
 
-import type { Room, NeoTask, RoomGoal } from '@neokai/shared';
+import type { Room, NeoTask, RoomGoal, MessageHub } from '@neokai/shared';
 import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
 import type { TaskManager } from './task-manager';
 import type { GoalManager } from './goal-manager';
 import type { SessionObserver, TerminalState } from './session-observer';
-import type { SessionFactory } from './task-pair-manager';
-import { TaskPairManager } from './task-pair-manager';
-import type { ConversationSessionWriter } from './conversation-session';
+import type { SessionFactory } from './task-group-manager';
+import { TaskGroupManager } from './task-group-manager';
 import type { TurnTracker } from './turn-tracker';
 import type { DaemonHub } from '../daemon-hub';
 import type { LeadToolCallbacks, LeadToolResult } from './lead-agent';
@@ -59,8 +58,8 @@ export interface RoomRuntimeConfig {
 	sessionFactory: SessionFactory;
 	workspacePath: string;
 	model?: string;
-	/** Max concurrent pairs (default: 1 for MVP) */
-	maxConcurrentPairs?: number;
+	/** Max concurrent groups (default: 1 for MVP) */
+	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 5) */
 	maxFeedbackIterations?: number;
 	/** Tick interval in ms (default: 30000) */
@@ -73,8 +72,8 @@ export interface RoomRuntimeConfig {
 	getCraftMessages?: (sessionId: string, afterMessageId: string | null) => CraftMessage[];
 	/** DaemonHub for subscribing to sdk.message events (mirroring) */
 	daemonHub?: DaemonHub;
-	/** Writer for conversation sessions (legacy, unused) */
-	convWriter?: ConversationSessionWriter;
+	/** MessageHub for broadcasting group message deltas to frontend */
+	messageHub?: MessageHub;
 	/** Turn tracker for tagging mirrored messages */
 	turnTracker?: TurnTracker;
 }
@@ -95,18 +94,18 @@ export class RoomRuntime {
 	private readonly taskManager: TaskManager;
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
-	private readonly maxConcurrentPairs: number;
+	private readonly maxConcurrentGroups: number;
 	private readonly maxFeedbackIterations: number;
 	private readonly tickInterval: number;
 	private readonly getCraftMessages: RoomRuntimeConfig['getCraftMessages'];
 	private readonly daemonHub?: DaemonHub;
-	private readonly convWriter?: ConversationSessionWriter;
+	private readonly messageHub?: MessageHub;
 	private readonly turnTracker?: TurnTracker;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
 
-	readonly pairManager: TaskPairManager;
+	readonly taskGroupManager: TaskGroupManager;
 
 	constructor(config: RoomRuntimeConfig) {
 		this.room = config.room;
@@ -115,15 +114,15 @@ export class RoomRuntime {
 		this.taskManager = config.taskManager;
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
-		this.maxConcurrentPairs = config.maxConcurrentPairs ?? 1;
+		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 5;
 		this.tickInterval = config.tickInterval ?? 30_000;
 		this.getCraftMessages = config.getCraftMessages;
 		this.daemonHub = config.daemonHub;
-		this.convWriter = config.convWriter;
+		this.messageHub = config.messageHub;
 		this.turnTracker = config.turnTracker;
 
-		this.pairManager = new TaskPairManager({
+		this.taskGroupManager = new TaskGroupManager({
 			room: config.room,
 			groupRepo: config.groupRepo,
 			sessionObserver: config.sessionObserver,
@@ -132,7 +131,6 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
-			convWriter: config.convWriter,
 			turnTracker: config.turnTracker,
 		});
 	}
@@ -197,8 +195,8 @@ export class RoomRuntime {
 	 * Called when Craft reaches a terminal state.
 	 * Collects Craft output from session messages and routes to Lead.
 	 */
-	async onCraftTerminalState(pairId: string, terminalState: TerminalState): Promise<void> {
-		const group = this.groupRepo.getGroup(pairId);
+	async onCraftTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
+		const group = this.groupRepo.getGroup(groupId);
 		if (!group || group.state !== 'awaiting_craft') return;
 
 		// End Craft turn
@@ -237,37 +235,37 @@ export class RoomRuntime {
 		// Update last_forwarded_message_id to the last message we just forwarded
 		const lastMessage = craftMessages.at(-1);
 		if (lastMessage) {
-			this.groupRepo.updateLastForwardedMessageId(pairId, lastMessage.id, group.version);
+			this.groupRepo.updateLastForwardedMessageId(groupId, lastMessage.id, group.version);
 		}
 
 		// Insert status message into group timeline
 		this.groupRepo.appendMessage({
-			groupId: pairId,
+			groupId,
 			role: 'system',
 			messageType: 'status',
 			content: `Craft finished (${terminalState.kind}). Routing to Lead for review.`,
 		});
 
 		// Start Lead turn before routing
-		this.turnTracker?.startTurn(group.leadSessionId, pairId, group.feedbackIteration, 'lead');
+		this.turnTracker?.startTurn(group.leadSessionId, groupId, group.feedbackIteration, 'lead');
 
 		// Route to Lead
-		await this.pairManager.routeCraftToLead(pairId, envelope);
+		await this.taskGroupManager.routeCraftToLead(groupId, envelope);
 	}
 
 	/**
 	 * Called when Lead reaches a terminal state.
 	 * Validates Lead tool contract (retry-then-escalate).
 	 */
-	async onLeadTerminalState(pairId: string, _terminalState: TerminalState): Promise<void> {
-		const group = this.groupRepo.getGroup(pairId);
+	async onLeadTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
+		const group = this.groupRepo.getGroup(groupId);
 		if (!group || group.state !== 'awaiting_lead') return;
 
 		// End Lead turn
 		this.turnTracker?.endTurn(group.leadSessionId);
 
 		// Check if Lead called a tool (via in-memory map)
-		const calledTool = this.pairManager.leadCalledToolMap.get(pairId) ?? false;
+		const calledTool = this.taskGroupManager.leadCalledToolMap.get(groupId) ?? false;
 
 		if (calledTool) {
 			// Lead called a tool → success, no action needed
@@ -283,14 +281,14 @@ export class RoomRuntime {
 			const nudge = formatLeadContractNudge();
 			await this.sessionFactory.injectMessage(group.leadSessionId, nudge);
 			this.groupRepo.updateLeadContractViolations(
-				pairId,
+				groupId,
 				1,
 				'', // turn ID placeholder - MVP doesn't track turn IDs
 				group.version
 			);
 		} else {
 			// Second+ violation: auto-escalate
-			const updated = this.groupRepo.updateGroupState(pairId, 'awaiting_human', group.version);
+			const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
 			if (updated) {
 				await this.taskManager.escalateTask(
 					group.taskId,
@@ -309,13 +307,13 @@ export class RoomRuntime {
 	 * Returns the tool result to be sent back to the Lead agent.
 	 */
 	async handleLeadTool(
-		pairId: string,
+		groupId: string,
 		toolName: string,
 		params: { message?: string; summary?: string; reason?: string }
 	): Promise<LeadToolResult> {
-		const group = this.groupRepo.getGroup(pairId);
+		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
-			return jsonResult({ success: false, error: `Group not found: ${pairId}` });
+			return jsonResult({ success: false, error: `Group not found: ${groupId}` });
 		}
 
 		if (group.state !== 'awaiting_lead') {
@@ -326,13 +324,13 @@ export class RoomRuntime {
 		}
 
 		// Mark that Lead called a tool
-		this.pairManager.leadCalledToolMap.set(pairId, true);
+		this.taskGroupManager.leadCalledToolMap.set(groupId, true);
 
 		switch (toolName) {
 			case 'send_to_craft': {
 				// Enforce max feedback iterations
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
-					const updated = this.groupRepo.updateGroupState(pairId, 'awaiting_human', group.version);
+					const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
 					if (updated) {
 						await this.taskManager.escalateTask(
 							group.taskId,
@@ -350,16 +348,16 @@ export class RoomRuntime {
 
 				// Insert status message into group timeline
 				this.groupRepo.appendMessage({
-					groupId: pairId,
+					groupId,
 					role: 'system',
 					messageType: 'status',
 					content: `Lead sent feedback to Craft (iteration ${nextIteration}).`,
 				});
 
 				// Start new Craft turn before routing
-				this.turnTracker?.startTurn(group.craftSessionId, pairId, nextIteration, 'craft');
+				this.turnTracker?.startTurn(group.craftSessionId, groupId, nextIteration, 'craft');
 
-				await this.pairManager.routeLeadToCraft(pairId, feedback);
+				await this.taskGroupManager.routeLeadToCraft(groupId, feedback);
 				return jsonResult({
 					success: true,
 					message: 'Feedback sent to Craft. Waiting for next iteration.',
@@ -368,8 +366,8 @@ export class RoomRuntime {
 
 			case 'complete_task': {
 				const summary = params.summary ?? '';
-				await this.pairManager.completePair(pairId, summary);
-				this.cleanupMirroring(pairId, 'Task completed.');
+				await this.taskGroupManager.complete(groupId, summary);
+				this.cleanupMirroring(groupId, 'Task completed.');
 				// Phase 2c: If this was a planning task, promote its draft children to pending
 				await this.promoteDraftTasksIfPlanning(group.taskId);
 				this.scheduleTick();
@@ -378,8 +376,8 @@ export class RoomRuntime {
 
 			case 'fail_task': {
 				const reason = params.reason ?? '';
-				await this.pairManager.failPair(pairId, reason);
-				this.cleanupMirroring(pairId, `Task failed: ${reason}`);
+				await this.taskGroupManager.fail(groupId, reason);
+				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
 			}
@@ -392,16 +390,16 @@ export class RoomRuntime {
 	/**
 	 * Create LeadToolCallbacks that route through this runtime.
 	 */
-	createLeadCallbacks(pairId: string): LeadToolCallbacks {
+	createLeadCallbacks(groupId: string): LeadToolCallbacks {
 		return {
-			sendToCraft: async (_pairId: string, message: string) => {
-				return this.handleLeadTool(pairId, 'send_to_craft', { message });
+			sendToCraft: async (_groupId: string, message: string) => {
+				return this.handleLeadTool(groupId, 'send_to_craft', { message });
 			},
-			completeTask: async (_pairId: string, summary: string) => {
-				return this.handleLeadTool(pairId, 'complete_task', { summary });
+			completeTask: async (_groupId: string, summary: string) => {
+				return this.handleLeadTool(groupId, 'complete_task', { summary });
 			},
-			failTask: async (_pairId: string, reason: string) => {
-				return this.handleLeadTool(pairId, 'fail_task', { reason });
+			failTask: async (_groupId: string, reason: string) => {
+				return this.handleLeadTool(groupId, 'fail_task', { reason });
 			},
 		};
 	}
@@ -412,8 +410,11 @@ export class RoomRuntime {
 
 	/**
 	 * Set up message mirroring for a group's craft/lead sessions.
-	 * Subscribes to DaemonHub sdk.message events and appends messages into
-	 * the group's session_group_messages timeline.
+	 * Subscribes to DaemonHub sdk.message events and appends enriched messages
+	 * into the group's session_group_messages timeline.
+	 *
+	 * Messages are enriched with _taskMeta (authorRole, turnId, iteration) so
+	 * the frontend can render them with turn-based grouping and color-coding.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -428,13 +429,35 @@ export class RoomRuntime {
 				if (uuid && mirroredUuids.has(uuid)) return;
 				if (uuid) mirroredUuids.add(uuid);
 
+				const turnId =
+					this.turnTracker?.getCurrentTurnId(group.craftSessionId) ?? group.craftSessionId;
+				const enrichedContent = JSON.stringify({
+					...event.message,
+					_taskMeta: {
+						authorRole: 'craft',
+						authorSessionId: group.craftSessionId,
+						turnId,
+						iteration: group.feedbackIteration,
+					},
+				});
+
 				this.groupRepo.appendMessage({
 					groupId: group.id,
 					sessionId: group.craftSessionId,
 					role: 'craft',
 					messageType: event.message.type as string,
-					content: JSON.stringify(event.message),
+					content: enrichedContent,
 				});
+
+				// Broadcast delta to subscribed frontends
+				if (this.messageHub) {
+					const parsed = JSON.parse(enrichedContent);
+					this.messageHub.event(
+						'state.groupMessages.delta',
+						{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+						{ channel: `group:${group.id}` }
+					);
+				}
 			},
 			{ sessionId: group.craftSessionId }
 		);
@@ -447,13 +470,35 @@ export class RoomRuntime {
 				if (uuid && mirroredUuids.has(uuid)) return;
 				if (uuid) mirroredUuids.add(uuid);
 
+				const turnId =
+					this.turnTracker?.getCurrentTurnId(group.leadSessionId) ?? group.leadSessionId;
+				const enrichedContent = JSON.stringify({
+					...event.message,
+					_taskMeta: {
+						authorRole: 'lead',
+						authorSessionId: group.leadSessionId,
+						turnId,
+						iteration: group.feedbackIteration,
+					},
+				});
+
 				this.groupRepo.appendMessage({
 					groupId: group.id,
 					sessionId: group.leadSessionId,
 					role: 'lead',
 					messageType: event.message.type as string,
-					content: JSON.stringify(event.message),
+					content: enrichedContent,
 				});
+
+				// Broadcast delta to subscribed frontends
+				if (this.messageHub) {
+					const parsed = JSON.parse(enrichedContent);
+					this.messageHub.event(
+						'state.groupMessages.delta',
+						{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+						{ channel: `group:${group.id}` }
+					);
+				}
 			},
 			{ sessionId: group.leadSessionId }
 		);
@@ -528,16 +573,16 @@ export class RoomRuntime {
 	private async executeTick(): Promise<void> {
 		// Check capacity
 		const activeGroups = this.groupRepo.getActiveGroups(this.room.id);
-		const availableSlots = this.maxConcurrentPairs - activeGroups.length;
+		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
 
 		if (availableSlots <= 0) return;
 
 		// Phase 2b: Planning takes priority over execution.
-		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning pair first.
+		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning group first.
 		const goalForPlanning = await this.getNextGoalForPlanning();
 		if (goalForPlanning) {
-			await this.spawnPlanningPair(goalForPlanning);
-			return; // Don't start execution pairs in the same tick
+			await this.spawnPlanningGroup(goalForPlanning);
+			return; // Don't start execution groups in the same tick
 		}
 
 		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
@@ -548,11 +593,11 @@ export class RoomRuntime {
 		// Sort by priority
 		const sorted = sortTasksByPriority(executableTasks);
 
-		// Spawn pairs for available slots
+		// Spawn groups for available slots
 		const toSpawn = sorted.slice(0, availableSlots);
 
 		for (const task of toSpawn) {
-			await this.spawnPairForTask(task);
+			await this.spawnGroupForTask(task);
 		}
 	}
 
@@ -618,10 +663,10 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Spawn a planning (Craft, Lead) pair for a goal that has no tasks yet.
-	 * Creates a planning task, increments planning_attempts, and starts the pair.
+	 * Spawn a planning (Craft, Lead) group for a goal that has no tasks yet.
+	 * Creates a planning task, increments planning_attempts, and starts the group.
 	 */
-	private async spawnPlanningPair(goal: RoomGoal): Promise<void> {
+	private async spawnPlanningGroup(goal: RoomGoal): Promise<void> {
 		// Create the planning task itself
 		const planningTask = await this.taskManager.createTask({
 			title: `Plan: ${goal.title}`,
@@ -654,13 +699,13 @@ export class RoomRuntime {
 			return { id: task.id, title: task.title };
 		};
 
-		// Spawn the planning pair directly (bypasses the tick queue)
-		const group = await this.pairManager.spawnPair(
+		// Spawn the planning group directly (bypasses the tick queue)
+		const group = await this.taskGroupManager.spawn(
 			planningTask,
 			goal,
-			(pairId, state) => this.onCraftTerminalState(pairId, state),
-			(pairId, state) => this.onLeadTerminalState(pairId, state),
-			(pairId) => this.createLeadCallbacks(pairId),
+			(groupId, state) => this.onCraftTerminalState(groupId, state),
+			(groupId, state) => this.onLeadTerminalState(groupId, state),
+			(groupId) => this.createLeadCallbacks(groupId),
 			// Planning Craft agent init factory (overrides default coding agent)
 			(craftSessionId) =>
 				createPlanningCraftAgentInit({
@@ -668,8 +713,8 @@ export class RoomRuntime {
 					goal,
 					room: this.room,
 					sessionId: craftSessionId,
-					workspacePath: this.pairManager.workspacePath,
-					model: this.pairManager.model,
+					workspacePath: this.taskGroupManager.workspacePath,
+					model: this.taskGroupManager.model,
 					createDraftTask,
 				})
 		);
@@ -677,22 +722,22 @@ export class RoomRuntime {
 		this.setupMirroring(group);
 
 		log.info(
-			`Spawned planning pair for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}`
+			`Spawned planning group for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}`
 		);
 	}
 
-	private async spawnPairForTask(task: NeoTask): Promise<void> {
+	private async spawnGroupForTask(task: NeoTask): Promise<void> {
 		// Find the goal linked to this task
 		const goals = await this.goalManager.getGoalsForTask(task.id);
 		const goal = goals[0] ?? (await this.goalManager.getNextGoal());
 		if (!goal) return;
 
-		const group = await this.pairManager.spawnPair(
+		const group = await this.taskGroupManager.spawn(
 			task,
 			goal,
-			(pairId, state) => this.onCraftTerminalState(pairId, state),
-			(pairId, state) => this.onLeadTerminalState(pairId, state),
-			(pairId) => this.createLeadCallbacks(pairId)
+			(groupId, state) => this.onCraftTerminalState(groupId, state),
+			(groupId, state) => this.onLeadTerminalState(groupId, state),
+			(groupId) => this.createLeadCallbacks(groupId)
 		);
 
 		this.setupMirroring(group);

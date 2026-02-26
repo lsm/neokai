@@ -1,7 +1,7 @@
 /**
  * Lead Agent Factory - Creates AgentSessionInit for Lead (reviewer) sessions
  *
- * The Lead agent is the "reviewer" in a (Craft, Lead) pair. It reviews Craft's
+ * The Lead agent is the "reviewer" in a (Craft, Lead) group. It reviews Craft's
  * work and must call exactly one terminal tool per turn:
  * - send_to_craft(message) - Send feedback for another iteration
  * - complete_task(summary) - Accept work, mark task done
@@ -34,9 +34,9 @@ export interface LeadToolResult {
  * The RoomRuntime implements this to handle tool calls.
  */
 export interface LeadToolCallbacks {
-	sendToCraft(pairId: string, message: string): Promise<LeadToolResult>;
-	completeTask(pairId: string, summary: string): Promise<LeadToolResult>;
-	failTask(pairId: string, reason: string): Promise<LeadToolResult>;
+	sendToCraft(groupId: string, message: string): Promise<LeadToolResult>;
+	completeTask(groupId: string, summary: string): Promise<LeadToolResult>;
+	failTask(groupId: string, reason: string): Promise<LeadToolResult>;
 }
 
 export interface LeadAgentConfig {
@@ -45,7 +45,7 @@ export interface LeadAgentConfig {
 	room: Room;
 	sessionId: string;
 	workspacePath: string;
-	pairId: string;
+	groupId: string;
 	model?: string;
 }
 
@@ -106,16 +106,16 @@ export function buildLeadSystemPrompt(config: LeadAgentConfig): string {
  * Create testable Lead tool handler functions.
  * These delegate to the provided callbacks which route through RoomRuntime.
  */
-export function createLeadToolHandlers(pairId: string, callbacks: LeadToolCallbacks) {
+export function createLeadToolHandlers(groupId: string, callbacks: LeadToolCallbacks) {
 	return {
 		async send_to_craft(args: { message: string }): Promise<LeadToolResult> {
-			return callbacks.sendToCraft(pairId, args.message);
+			return callbacks.sendToCraft(groupId, args.message);
 		},
 		async complete_task(args: { summary: string }): Promise<LeadToolResult> {
-			return callbacks.completeTask(pairId, args.summary);
+			return callbacks.completeTask(groupId, args.summary);
 		},
 		async fail_task(args: { reason: string }): Promise<LeadToolResult> {
-			return callbacks.failTask(pairId, args.reason);
+			return callbacks.failTask(groupId, args.reason);
 		},
 	};
 }
@@ -124,8 +124,8 @@ export function createLeadToolHandlers(pairId: string, callbacks: LeadToolCallba
  * Create an MCP server with Lead review tools.
  * Tool callbacks route through the RoomRuntime via LeadToolCallbacks.
  */
-export function createLeadMcpServer(pairId: string, callbacks: LeadToolCallbacks) {
-	const handlers = createLeadToolHandlers(pairId, callbacks);
+export function createLeadMcpServer(groupId: string, callbacks: LeadToolCallbacks) {
+	const handlers = createLeadToolHandlers(groupId, callbacks);
 
 	const tools = [
 		tool(
@@ -169,7 +169,7 @@ export function createLeadAgentInit(
 	config: LeadAgentConfig,
 	callbacks: LeadToolCallbacks
 ): AgentSessionInit {
-	const mcpServer = createLeadMcpServer(config.pairId, callbacks);
+	const mcpServer = createLeadMcpServer(config.groupId, callbacks);
 
 	return {
 		sessionId: config.sessionId,

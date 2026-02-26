@@ -1,11 +1,11 @@
 /**
- * TaskPairManager - Creates and manages (Craft, Lead) session groups
+ * TaskGroupManager - Creates and manages (Craft, Lead) session groups
  *
- * Orchestrates the lifecycle of (Craft, Lead) pairs stored as session groups:
- * 1. Spawns (Craft, Lead) pairs for pending tasks
+ * Orchestrates the lifecycle of (Craft, Lead) session groups:
+ * 1. Spawns session groups for pending tasks
  * 2. Routes Craft terminal output to Lead for review
  * 3. Routes Lead feedback back to Craft
- * 4. Handles pair completion and failure
+ * 4. Handles group completion and failure
  *
  * Session creation is injected via SessionFactory for testability.
  */
@@ -16,7 +16,6 @@ import type { SessionGroupRepository, SessionGroup } from './session-group-repos
 import type { SessionObserver, TerminalState } from './session-observer';
 import type { TaskManager } from './task-manager';
 import type { GoalManager } from './goal-manager';
-import type { ConversationSessionWriter } from './conversation-session';
 import type { TurnTracker } from './turn-tracker';
 import type { CraftAgentConfig } from './craft-agent';
 import type { LeadAgentConfig, LeadToolCallbacks } from './lead-agent';
@@ -44,11 +43,11 @@ export type LeadCallbacksFactory = (groupId: string) => LeadToolCallbacks;
 /**
  * Optional factory to produce a custom Craft agent init.
  * When provided, overrides the default createCraftAgentInit.
- * Used by planning pairs to inject the planning Craft agent instead of the coding agent.
+ * Used by planning groups to inject the planning Craft agent instead of the coding agent.
  */
 export type CraftInitFactory = (craftSessionId: string) => ReturnType<typeof createCraftAgentInit>;
 
-export interface TaskPairManagerConfig {
+export interface TaskGroupManagerConfig {
 	room: Room;
 	groupRepo: SessionGroupRepository;
 	sessionObserver: SessionObserver;
@@ -57,11 +56,10 @@ export interface TaskPairManagerConfig {
 	sessionFactory: SessionFactory;
 	workspacePath: string;
 	model?: string;
-	convWriter?: ConversationSessionWriter;
 	turnTracker?: TurnTracker;
 }
 
-export class TaskPairManager {
+export class TaskGroupManager {
 	private readonly room: Room;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
@@ -70,13 +68,12 @@ export class TaskPairManager {
 	private readonly sessionFactory: SessionFactory;
 	readonly workspacePath: string;
 	readonly model?: string;
-	readonly convWriter?: ConversationSessionWriter;
 	readonly turnTracker?: TurnTracker;
 
 	/** In-memory map tracking whether Lead called a tool in current turn */
 	readonly leadCalledToolMap = new Map<string, boolean>();
 
-	constructor(config: TaskPairManagerConfig) {
+	constructor(config: TaskGroupManagerConfig) {
 		this.room = config.room;
 		this.groupRepo = config.groupRepo;
 		this.observer = config.sessionObserver;
@@ -85,12 +82,11 @@ export class TaskPairManager {
 		this.sessionFactory = config.sessionFactory;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
-		this.convWriter = config.convWriter;
 		this.turnTracker = config.turnTracker;
 	}
 
 	/**
-	 * Spawn a new (Craft, Lead) pair for a task.
+	 * Spawn a new (Craft, Lead) session group for a task.
 	 *
 	 * Flow:
 	 * 1. Create Craft session with task context
@@ -100,7 +96,7 @@ export class TaskPairManager {
 	 * 5. Start observing Craft session
 	 * 6. Start Craft session (kicks off work)
 	 */
-	async spawnPair(
+	async spawn(
 		task: NeoTask,
 		goal: RoomGoal,
 		onCraftTerminal: (groupId: string, state: TerminalState) => void,
@@ -136,7 +132,7 @@ export class TaskPairManager {
 			room: this.room,
 			sessionId: leadSessionId,
 			workspacePath: this.workspacePath,
-			pairId: group.id,
+			groupId: group.id,
 			model: this.model,
 		};
 		const leadInit = createLeadAgentInit(leadConfig, leadCallbacks);
@@ -223,7 +219,7 @@ export class TaskPairManager {
 	 *
 	 * Called when Lead calls complete_task(summary).
 	 */
-	async completePair(groupId: string, summary: string): Promise<SessionGroup | null> {
+	async complete(groupId: string, summary: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
@@ -247,7 +243,7 @@ export class TaskPairManager {
 	 *
 	 * Called when Lead calls fail_task(reason).
 	 */
-	async failPair(groupId: string, reason: string): Promise<SessionGroup | null> {
+	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
@@ -269,7 +265,7 @@ export class TaskPairManager {
 	/**
 	 * Cancel a group - urgent control from human.
 	 */
-	async cancelPair(groupId: string): Promise<SessionGroup | null> {
-		return this.failPair(groupId, 'Cancelled by user');
+	async cancel(groupId: string): Promise<SessionGroup | null> {
+		return this.fail(groupId, 'Cancelled by user');
 	}
 }

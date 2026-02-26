@@ -49,7 +49,7 @@ export interface Room {
 	background?: string;
 	/** Custom instructions for how the room agent should behave */
 	instructions?: string;
-	/** Runtime configuration (maxConcurrentPairs, taskTimeout, etc.) */
+	/** Runtime configuration (maxConcurrentGroups, taskTimeout, etc.) */
 	config?: Record<string, unknown>;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;

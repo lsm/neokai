@@ -28,8 +28,8 @@ export interface SessionStateChecker {
 }
 
 export interface RecoveryResult {
-	recoveredPairs: number;
-	failedPairs: number;
+	recoveredGroups: number;
+	failedGroups: number;
 	reattachedObservers: number;
 	immediateTerminals: number;
 }
@@ -49,8 +49,8 @@ export async function recoverRuntime(
 	runtime: RoomRuntime
 ): Promise<RecoveryResult> {
 	const result: RecoveryResult = {
-		recoveredPairs: 0,
-		failedPairs: 0,
+		recoveredGroups: 0,
+		failedGroups: 0,
 		reattachedObservers: 0,
 		immediateTerminals: 0,
 	};
@@ -59,7 +59,7 @@ export async function recoverRuntime(
 	const activeGroups = groupRepo.getActiveGroups(roomId);
 
 	for (const group of activeGroups) {
-		result.recoveredPairs++;
+		result.recoveredGroups++;
 
 		switch (group.state) {
 			case 'awaiting_craft':
@@ -108,7 +108,7 @@ async function recoverAwaitingCraft(
 	if (!sessionChecker.sessionExists(group.craftSessionId)) {
 		// Session lost - fail the group and task
 		await failGroupAndTask(group, groupRepo, taskManager, 'Craft session lost during restart');
-		result.failedPairs++;
+		result.failedGroups++;
 		return;
 	}
 
@@ -147,7 +147,7 @@ async function recoverAwaitingLead(
 	if (!sessionChecker.sessionExists(group.leadSessionId)) {
 		// Session lost - fail the group and task
 		await failGroupAndTask(group, groupRepo, taskManager, 'Lead session lost during restart');
-		result.failedPairs++;
+		result.failedGroups++;
 		return;
 	}
 

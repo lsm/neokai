@@ -1,8 +1,8 @@
 /**
  * SessionGroupRepository - CRUD for session_groups, session_group_members, session_group_messages
  *
- * Generic multi-agent collaboration groups. For (Craft, Lead) task pairs:
- *   group_type = 'task_pair', ref_id = task_id
+ * Generic multi-agent collaboration groups. For (Craft, Lead) task groups:
+ *   group_type = 'task', ref_id = task_id
  *   members: role='craft' + role='lead'
  *   state: awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
  *
@@ -23,8 +23,8 @@ export type GroupState =
 	| 'completed'
 	| 'failed';
 
-/** Type-specific metadata for task_pair groups */
-interface TaskPairMetadata {
+/** Type-specific metadata for task groups */
+interface TaskGroupMetadata {
 	feedbackIteration: number;
 	leadContractViolations: number;
 	lastProcessedLeadTurnId: string | null;
@@ -35,7 +35,7 @@ interface TaskPairMetadata {
 	tokensUsed: number;
 }
 
-function defaultMetadata(): TaskPairMetadata {
+function defaultMetadata(): TaskGroupMetadata {
 	return {
 		feedbackIteration: 0,
 		leadContractViolations: 0,
@@ -54,7 +54,7 @@ function defaultMetadata(): TaskPairMetadata {
  */
 export interface SessionGroup {
 	id: string;
-	/** ref_id — the task_id for task_pair groups */
+	/** ref_id — the task_id for task groups */
 	taskId: string;
 	groupType: string;
 	craftSessionId: string;
@@ -96,7 +96,7 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(
 				`INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at)
-			 VALUES (?, 'task_pair', ?, 'awaiting_craft', 0, ?, ?)`
+			 VALUES (?, 'task', ?, 'awaiting_craft', 0, ?, ?)`
 			)
 			.run(id, taskId, JSON.stringify(metadata), now);
 
@@ -139,7 +139,7 @@ export class SessionGroupRepository {
 				FROM session_groups sg
 				LEFT JOIN session_group_members craft ON craft.group_id = sg.id AND craft.role = 'craft'
 				LEFT JOIN session_group_members lead ON lead.group_id = sg.id AND lead.role = 'lead'
-				WHERE sg.ref_id = ? AND sg.group_type = 'task_pair'
+				WHERE sg.ref_id = ? AND sg.group_type IN ('task', 'task_pair')
 				ORDER BY sg.created_at DESC LIMIT 1`
 			)
 			.get(taskId) as Record<string, unknown> | undefined;
@@ -209,7 +209,7 @@ export class SessionGroupRepository {
 	private updateMetadata(
 		groupId: string,
 		expectedVersion: number,
-		patch: Partial<TaskPairMetadata>
+		patch: Partial<TaskGroupMetadata>
 	): SessionGroup | null {
 		const current = this.getGroup(groupId);
 		if (!current) return null;
@@ -343,10 +343,10 @@ export class SessionGroupRepository {
 
 	// ===== Private helpers =====
 
-	private parseMetadata(raw: string | null | undefined): TaskPairMetadata {
+	private parseMetadata(raw: string | null | undefined): TaskGroupMetadata {
 		if (!raw) return defaultMetadata();
 		try {
-			return { ...defaultMetadata(), ...(JSON.parse(raw) as Partial<TaskPairMetadata>) };
+			return { ...defaultMetadata(), ...(JSON.parse(raw) as Partial<TaskGroupMetadata>) };
 		} catch {
 			return defaultMetadata();
 		}

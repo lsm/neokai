@@ -11,7 +11,7 @@
 export interface TaskMessage {
 	id: string;
 	taskId: string;
-	pairId: string;
+	groupId: string;
 	fromRole: 'craft' | 'lead' | 'human';
 	toRole: 'craft' | 'lead';
 	toSessionId: string;
@@ -23,7 +23,7 @@ export interface TaskMessage {
 }
 
 export interface EnqueueParams {
-	pairId: string;
+	groupId: string;
 	taskId: string;
 	fromRole: 'craft' | 'lead' | 'human';
 	toRole: 'craft' | 'lead';
@@ -37,7 +37,7 @@ export class TaskMessageQueue {
 		throw new Error('TaskMessageQueue.enqueue is not implemented in MVP');
 	}
 
-	dequeuePending(_pairId: string, _toRole: 'craft' | 'lead'): TaskMessage[] {
+	dequeuePending(_groupId: string, _toRole: 'craft' | 'lead'): TaskMessage[] {
 		return [];
 	}
 
@@ -49,7 +49,7 @@ export class TaskMessageQueue {
 		// no-op in MVP
 	}
 
-	deadLetterAllForPair(_pairId: string): void {
+	deadLetterAllForGroup(_groupId: string): void {
 		// no-op in MVP
 	}
 }

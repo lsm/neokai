@@ -473,7 +473,7 @@ export class StateManager {
 		if (!agentSession) {
 			// Special handling for DB-only sessions (no AgentSession):
 			// - Room sessions (ID format: "room:{roomId}") — created when room agent starts
-			// - Conversation sessions (ID format: "conv:{roomId}:...") — task pair timelines
+			// - Conversation sessions (ID format: "conv:{roomId}:...") — task group timelines
 			if (sessionId.startsWith('room:') || sessionId.startsWith('conv:')) {
 				return {
 					sessionInfo: null,

@@ -321,7 +321,7 @@ export class GoalManager {
 
 	/**
 	 * Increment planning_attempts counter on a goal.
-	 * Called when the Runtime spawns a planning pair.
+	 * Called when the Runtime spawns a planning group.
 	 */
 	async incrementPlanningAttempts(goalId: string): Promise<RoomGoal> {
 		const goal = await this.getGoal(goalId);

@@ -332,8 +332,8 @@ export function setupTaskHandlers(
 		return { success: deleted };
 	});
 
-	// task.getPair - Get the active session group (Craft + Lead sessions) for a task
-	messageHub.onRequest('task.getPair', async (data) => {
+	// task.getGroup - Get the active session group (Craft + Lead sessions) for a task
+	messageHub.onRequest('task.getGroup', async (data) => {
 		const params = data as { roomId: string; taskId: string };
 
 		if (!params.roomId) {
@@ -347,11 +347,11 @@ export function setupTaskHandlers(
 		const group = groupRepo.getGroupByTaskId(params.taskId);
 
 		if (!group) {
-			return { pair: null };
+			return { group: null };
 		}
 
 		return {
-			pair: {
+			group: {
 				id: group.id,
 				taskId: group.taskId,
 				craftSessionId: group.craftSessionId,
@@ -362,5 +362,22 @@ export function setupTaskHandlers(
 				completedAt: group.completedAt,
 			},
 		};
+	});
+
+	// task.getGroupMessages - Get messages for a session group
+	messageHub.onRequest('task.getGroupMessages', async (data) => {
+		const params = data as { groupId: string; afterId?: number; limit?: number };
+
+		if (!params.groupId) {
+			throw new Error('Group ID is required');
+		}
+
+		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const result = groupRepo.getMessages(params.groupId, {
+			afterId: params.afterId,
+			limit: params.limit,
+		});
+
+		return { messages: result.messages, hasMore: result.hasMore };
 	});
 }

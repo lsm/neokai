@@ -70,6 +70,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 34: Transition from task_pairs to session_groups
 	runMigration34(db);
+
+	// Migration 35: Added 'task_conversation' type (now unused — kept for idempotency on existing DBs)
+	runMigration35(db);
 }
 
 /**
@@ -688,7 +691,7 @@ function runMigration32(db: BunDatabase): void {
 /**
  * Migration 33: Room Runtime schema
  *
- * Creates tables for the (Craft, Lead) agent pair architecture:
+ * Creates tables for the (Craft, Lead) agent group architecture:
  * - session_groups: Generic multi-agent collaboration groups (replaces task_pairs)
  * - session_group_members: Craft/Lead session membership
  * - session_group_messages: Unified message timeline for a group
@@ -912,5 +915,84 @@ function runMigration34(db: BunDatabase): void {
 			CREATE INDEX idx_task_messages_group ON task_messages(group_id, status);
 			CREATE INDEX idx_task_messages_task ON task_messages(task_id);
 		`);
+	}
+}
+
+/**
+ * Migration 35: Add 'task_conversation' type to sessions table
+ *
+ * NOTE: The 'task_conversation' type is no longer used — session groups now
+ * store messages directly in session_group_messages. This migration is kept
+ * for idempotency on databases that already ran it. New databases get the
+ * correct schema from createTables() which omits 'task_conversation'.
+ */
+function runMigration35(db: BunDatabase): void {
+	if (!tableExists(db, 'sessions')) return;
+
+	// Skip if already has task_conversation type (idempotent)
+	try {
+		db.exec(`PRAGMA ignore_check_constraints = 1`);
+		db.exec(`UPDATE sessions SET type = type WHERE type = 'task_conversation'`);
+		db.exec(`PRAGMA ignore_check_constraints = 0`);
+
+		// Try inserting and immediately deleting a sentinel row to test the constraint
+		// If it throws, we need to rebuild
+		const testId = '__migration35_test__';
+		try {
+			db.exec(
+				`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, type)
+				 VALUES ('${testId}', 'test', '/', datetime('now'), datetime('now'), 'active', '{}', '{}', 'task_conversation')`
+			);
+			db.exec(`DELETE FROM sessions WHERE id = '${testId}'`);
+			// CHECK already allows 'task_conversation' — no rebuild needed
+			return;
+		} catch {
+			// Fall through to rebuild
+		}
+	} catch {
+		// Ignore
+	}
+
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		db.exec(`
+			CREATE TABLE sessions_new (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				labels TEXT,
+				sub_session_order INTEGER DEFAULT 0,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby', 'task_conversation')),
+				session_context TEXT
+			)
+		`);
+		db.exec(`
+			INSERT INTO sessions_new
+			SELECT id, title, workspace_path, created_at, last_active_at,
+				status, config, metadata, is_worktree, worktree_path, main_repo_path,
+				worktree_branch, git_branch, sdk_session_id, available_commands,
+				processing_state, archived_at, parent_id, labels,
+				COALESCE(sub_session_order, 0), type, session_context
+			FROM sessions
+		`);
+		db.exec(`DROP TABLE sessions`);
+		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
 	}
 }

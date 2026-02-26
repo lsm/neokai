@@ -1,7 +1,7 @@
 /**
  * Craft Agent Factory - Creates AgentSessionInit for Craft (worker) sessions
  *
- * The Craft agent is the "doer" in a (Craft, Lead) pair. It receives a task
+ * The Craft agent is the "doer" in a (Craft, Lead) group. It receives a task
  * with context from the goal and room, then works using standard coding tools
  * (bash, edit, read, write, glob, grep) until it reaches a terminal state.
  *

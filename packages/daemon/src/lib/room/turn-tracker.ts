@@ -4,7 +4,7 @@
  * Maintains an in-memory map of sessionId → current turnId.
  * Used by the mirroring system to tag messages with the correct turn.
  *
- * Turn IDs are deterministic: `turn_{pairId}_{iteration}_{role}`
+ * Turn IDs are deterministic: `turn_{groupId}_{iteration}_{role}`
  * This allows dedup checks and recovery without persistent state.
  */
 
@@ -16,8 +16,8 @@ export class TurnTracker {
 	 * Start a new turn for a session.
 	 * Returns the generated turnId.
 	 */
-	startTurn(sessionId: string, pairId: string, iteration: number, role: 'craft' | 'lead'): string {
-		const turnId = `turn_${pairId}_${iteration}_${role}`;
+	startTurn(sessionId: string, groupId: string, iteration: number, role: 'craft' | 'lead'): string {
+		const turnId = `turn_${groupId}_${iteration}_${role}`;
 		this.activeTurns.set(sessionId, turnId);
 		return turnId;
 	}

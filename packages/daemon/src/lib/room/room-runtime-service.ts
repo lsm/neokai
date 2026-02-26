@@ -13,13 +13,12 @@ import type { Database } from '../../storage/database';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
-import type { SessionFactory } from './task-pair-manager';
+import type { SessionFactory } from './task-group-manager';
 import { RoomRuntime } from './room-runtime';
 import { SessionObserver } from './session-observer';
 import { SessionGroupRepository } from './session-group-repository';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
-import { ConversationSessionWriter } from './conversation-session';
 import { TurnTracker } from './turn-tracker';
 import { AgentSession } from '../agent/agent-session';
 import { createRoomAgentMcpServer } from './room-agent-tools';
@@ -108,7 +107,6 @@ export class RoomRuntimeService {
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
-		const convWriter = new ConversationSessionWriter(rawDb, this.ctx.messageHub);
 		const turnTracker = new TurnTracker();
 
 		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
@@ -125,7 +123,7 @@ export class RoomRuntimeService {
 			getCraftMessages: (sessionId, afterMessageId) =>
 				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
 			daemonHub: this.ctx.daemonHub,
-			convWriter,
+			messageHub: this.ctx.messageHub,
 			turnTracker,
 		});
 
@@ -150,6 +148,7 @@ export class RoomRuntimeService {
 			goalManager,
 			taskManager,
 			groupRepo,
+			daemonHub: this.ctx.daemonHub,
 		}) as unknown as McpServerConfig;
 
 		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate
@@ -218,7 +217,7 @@ export class RoomRuntimeService {
 
 		const checker: SessionStateChecker = {
 			sessionExists: (sessionId) => this.ctx.db.getSession(sessionId) !== null,
-			// Assume not terminal after restart — active pairs stuck post-restart
+			// Assume not terminal after restart — active groups stuck post-restart
 			// can be cancelled via the cancel_task Room Agent tool.
 			isTerminalState: () => false,
 		};
@@ -232,10 +231,10 @@ export class RoomRuntimeService {
 				checker,
 				runtime
 			);
-			if (result.recoveredPairs > 0) {
+			if (result.recoveredGroups > 0) {
 				log.info(
-					`Room ${roomId}: recovered ${result.recoveredPairs} pairs, ` +
-						`failed ${result.failedPairs}, reattached ${result.reattachedObservers} observers`
+					`Room ${roomId}: recovered ${result.recoveredGroups} groups, ` +
+						`failed ${result.failedGroups}, reattached ${result.reattachedObservers} observers`
 				);
 			}
 		} catch (error) {
