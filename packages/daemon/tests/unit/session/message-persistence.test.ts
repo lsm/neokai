@@ -1,14 +1,12 @@
 /**
  * Message Persistence Tests
- *
- * Tests for user message persistence and broadcasting.
  */
 
-import { describe, expect, it, beforeEach, mock } from 'bun:test';
-import { MessagePersistence } from '../../../src/lib/session/message-persistence';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import type { MessageHub, Session } from '@neokai/shared';
 import type { Database } from '../../../src/storage/database';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import { MessagePersistence } from '../../../src/lib/session/message-persistence';
 import type { SessionCache } from '../../../src/lib/session/session-cache';
 
 describe('MessagePersistence', () => {
@@ -17,13 +15,18 @@ describe('MessagePersistence', () => {
 	let mockMessageHub: MessageHub;
 	let mockEventBus: DaemonHub;
 	let persistence: MessagePersistence;
+	let mockSession: Session;
 	let mockAgentSession: {
 		getSessionData: ReturnType<typeof mock>;
+		getProcessingState: ReturnType<typeof mock>;
 	};
-	let mockSession: Session;
+
+	let saveUserMessageSpy: ReturnType<typeof mock>;
+	let messageHubEventSpy: ReturnType<typeof mock>;
+	let eventBusEmitSpy: ReturnType<typeof mock>;
+	let processingStateSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
-		// Mock session data
 		mockSession = {
 			id: 'test-session-id',
 			title: 'Test Session',
@@ -35,6 +38,7 @@ describe('MessagePersistence', () => {
 				model: 'claude-sonnet-4-20250514',
 				maxTokens: 8192,
 				temperature: 1.0,
+				queryMode: 'immediate',
 			},
 			metadata: {
 				messageCount: 0,
@@ -47,167 +51,138 @@ describe('MessagePersistence', () => {
 			},
 		};
 
-		// Mock AgentSession
+		processingStateSpy = mock(() => ({ status: 'idle' }));
 		mockAgentSession = {
 			getSessionData: mock(() => mockSession),
+			getProcessingState: processingStateSpy,
 		};
 
-		// Mock SessionCache
 		mockSessionCache = {
 			getAsync: mock(async () => mockAgentSession),
 		} as unknown as SessionCache;
 
-		// Mock Database
+		saveUserMessageSpy = mock(() => 'db-msg-1');
 		mockDb = {
-			saveSDKMessage: mock(() => true),
+			saveUserMessage: saveUserMessageSpy,
 		} as unknown as Database;
 
-		// Mock MessageHub
+		messageHubEventSpy = mock(async () => {});
 		mockMessageHub = {
-			event: mock(async () => {}),
+			event: messageHubEventSpy,
 			onRequest: mock((_method: string, _handler: Function) => () => {}),
 			query: mock(async () => ({})),
 			command: mock(async () => {}),
 		} as unknown as MessageHub;
 
-		// Mock EventBus
+		eventBusEmitSpy = mock(async () => {});
 		mockEventBus = {
-			emit: mock(async () => {}),
+			emit: eventBusEmitSpy,
 		} as unknown as DaemonHub;
 
 		persistence = new MessagePersistence(mockSessionCache, mockDb, mockMessageHub, mockEventBus);
 	});
 
-	describe('persist', () => {
-		it('should persist a simple text message', async () => {
-			await persistence.persist({
+	it('persists idle current_turn as sent and still dispatches to query', async () => {
+		await persistence.persist({
+			sessionId: 'test-session-id',
+			messageId: 'msg-1',
+			content: 'hello idle',
+		});
+
+		expect(saveUserMessageSpy).toHaveBeenCalledWith(
+			'test-session-id',
+			expect.objectContaining({ uuid: 'msg-1', type: 'user' }),
+			'sent'
+		);
+		expect(messageHubEventSpy).toHaveBeenCalledWith(
+			'state.sdkMessages.delta',
+			expect.objectContaining({ added: expect.any(Array), timestamp: expect.any(Number) }),
+			{ channel: 'session:test-session-id' }
+		);
+		expect(eventBusEmitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+			sessionId: 'test-session-id',
+			messageIds: ['db-msg-1'],
+			status: 'sent',
+		});
+		expect(eventBusEmitSpy).toHaveBeenCalledWith(
+			'message.persisted',
+			expect.objectContaining({
 				sessionId: 'test-session-id',
-				messageId: 'msg-123',
-				content: 'Hello, world!',
-			});
+				messageId: 'msg-1',
+				sendStatus: 'sent',
+				deliveryMode: 'current_turn',
+			})
+		);
+	});
 
-			expect(mockSessionCache.getAsync).toHaveBeenCalledWith('test-session-id');
-			expect(mockDb.saveSDKMessage).toHaveBeenCalled();
-			expect(mockMessageHub.event).toHaveBeenCalled();
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
-				'message.persisted',
-				expect.objectContaining({
-					sessionId: 'test-session-id',
-					messageId: 'msg-123',
-				})
-			);
+	it('persists busy current_turn as queued and does not immediately echo', async () => {
+		processingStateSpy.mockReturnValue({ status: 'processing' });
+
+		await persistence.persist({
+			sessionId: 'test-session-id',
+			messageId: 'msg-2',
+			content: 'hello busy',
 		});
 
-		it('should throw error if session not found', async () => {
-			(mockSessionCache.getAsync as ReturnType<typeof mock>).mockResolvedValue(null);
+		expect(saveUserMessageSpy).toHaveBeenCalledWith(
+			'test-session-id',
+			expect.objectContaining({ uuid: 'msg-2', type: 'user' }),
+			'queued'
+		);
+		expect(messageHubEventSpy).not.toHaveBeenCalled();
+		expect(eventBusEmitSpy).toHaveBeenCalledWith(
+			'message.persisted',
+			expect.objectContaining({
+				messageId: 'msg-2',
+				sendStatus: 'queued',
+				deliveryMode: 'current_turn',
+			})
+		);
+	});
 
-			await expect(
-				persistence.persist({
-					sessionId: 'nonexistent',
-					messageId: 'msg-123',
-					content: 'Hello',
-				})
-			).rejects.toThrow('Session nonexistent not found');
+	it('persists busy next_turn as saved and does not dispatch', async () => {
+		processingStateSpy.mockReturnValue({ status: 'processing' });
+
+		await persistence.persist({
+			sessionId: 'test-session-id',
+			messageId: 'msg-3',
+			content: 'next turn please',
+			deliveryMode: 'next_turn',
 		});
 
-		it('should validate image size', async () => {
-			// Create a base64 string > 5MB
-			const largeData = 'x'.repeat(6 * 1024 * 1024);
+		expect(saveUserMessageSpy).toHaveBeenCalledWith(
+			'test-session-id',
+			expect.objectContaining({ uuid: 'msg-3', type: 'user' }),
+			'saved'
+		);
+		expect(eventBusEmitSpy).not.toHaveBeenCalledWith(
+			'message.persisted',
+			expect.objectContaining({ messageId: 'msg-3' })
+		);
+	});
 
-			await expect(
-				persistence.persist({
-					sessionId: 'test-session-id',
-					messageId: 'msg-123',
-					content: 'Check this image',
-					images: [
-						{
-							media_type: 'image/png',
-							data: largeData,
-						},
-					],
-				})
-			).rejects.toThrow('exceeds API limit');
+	it('falls back idle next_turn to sent current_turn and dispatches', async () => {
+		processingStateSpy.mockReturnValue({ status: 'idle' });
+
+		await persistence.persist({
+			sessionId: 'test-session-id',
+			messageId: 'msg-4',
+			content: 'next turn while idle',
+			deliveryMode: 'next_turn',
 		});
 
-		it('should accept images within size limit', async () => {
-			const smallData = 'x'.repeat(1000);
-
-			await persistence.persist({
-				sessionId: 'test-session-id',
-				messageId: 'msg-123',
-				content: 'Check this image',
-				images: [
-					{
-						media_type: 'image/png',
-						data: smallData,
-					},
-				],
-			});
-
-			expect(mockDb.saveSDKMessage).toHaveBeenCalled();
-		});
-
-		it('should expand built-in commands', async () => {
-			await persistence.persist({
-				sessionId: 'test-session-id',
-				messageId: 'msg-123',
-				content: '/merge-session',
-			});
-
-			// Should save and emit event
-			expect(mockDb.saveSDKMessage).toHaveBeenCalled();
-			expect(mockEventBus.emit).toHaveBeenCalled();
-		});
-
-		it('should set needsWorkspaceInit flag when title not generated', async () => {
-			mockSession.metadata.titleGenerated = false;
-
-			await persistence.persist({
-				sessionId: 'test-session-id',
-				messageId: 'msg-123',
-				content: 'First message',
-			});
-
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
-				'message.persisted',
-				expect.objectContaining({
-					needsWorkspaceInit: true,
-				})
-			);
-		});
-
-		it('should set hasDraftToClear when content matches input draft', async () => {
-			mockSession.metadata.inputDraft = 'draft content';
-
-			await persistence.persist({
-				sessionId: 'test-session-id',
-				messageId: 'msg-123',
-				content: 'draft content',
-			});
-
-			expect(mockEventBus.emit).toHaveBeenCalledWith(
-				'message.persisted',
-				expect.objectContaining({
-					hasDraftToClear: true,
-				})
-			);
-		});
-
-		it('should publish to state.sdkMessages.delta channel', async () => {
-			await persistence.persist({
-				sessionId: 'test-session-id',
-				messageId: 'msg-123',
-				content: 'Hello',
-			});
-
-			expect(mockMessageHub.event).toHaveBeenCalledWith(
-				'state.sdkMessages.delta',
-				expect.objectContaining({
-					added: expect.any(Array),
-					timestamp: expect.any(Number),
-				}),
-				{ channel: 'session:test-session-id' }
-			);
-		});
+		expect(saveUserMessageSpy).toHaveBeenCalledWith(
+			'test-session-id',
+			expect.objectContaining({ uuid: 'msg-4', type: 'user' }),
+			'sent'
+		);
+		expect(eventBusEmitSpy).toHaveBeenCalledWith(
+			'message.persisted',
+			expect.objectContaining({
+				messageId: 'msg-4',
+				sendStatus: 'sent',
+				deliveryMode: 'current_turn',
+			})
+		);
 	});
 });

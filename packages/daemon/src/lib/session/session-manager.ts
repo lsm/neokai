@@ -119,13 +119,14 @@ export class SessionManager {
 		// Subscribe to message send requests (from RPC handler)
 		// Handles message persistence: expand commands → build content → save DB → publish UI
 		const unsubMessageSendRequest = this.eventBus.on('message.sendRequest', async (data) => {
-			const { sessionId, messageId, content, images } = data;
+			const { sessionId, messageId, content, images, deliveryMode } = data;
 
 			await this.messagePersistence.persist({
 				sessionId,
 				messageId,
 				content,
 				images,
+				deliveryMode,
 			});
 		});
 		this.eventBusUnsubscribers.push(unsubMessageSendRequest);

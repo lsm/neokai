@@ -292,6 +292,17 @@ export class AgentSession
 
 		// Setup event subscriptions (moved callbacks into EventSubscriptionSetup)
 		this.eventSubscriptionSetup.setup();
+
+		// Replay persisted pending messages after startup/recovery in immediate mode.
+		// Priority: queued/current-turn first, then saved/next-turn.
+		const restoredState = this.stateManager.getState();
+		if (session.config.queryMode !== 'manual' && restoredState.status !== 'waiting_for_input') {
+			queueMicrotask(() => {
+				this.queryModeHandler.replayPendingMessagesForImmediateMode().catch((error) => {
+					this.logger.warn('Failed to replay pending messages after startup:', error);
+				});
+			});
+		}
 	}
 
 	// ============================================================================

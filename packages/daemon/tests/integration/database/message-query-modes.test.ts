@@ -35,7 +35,7 @@ describe('Database', () => {
 			const messageId = db.saveUserMessage('session-1', sdkMessage);
 			assertExists(messageId);
 
-			// Messages should appear in getSDKMessages (which gets all messages)
+			// Sent user messages should appear in transcript query
 			const { messages } = db.getSDKMessages('session-1');
 			assertEquals(messages.length, 1);
 
@@ -95,6 +95,35 @@ describe('Database', () => {
 			// Check counts
 			assertEquals(db.getMessageCountByStatus('session-1', 'queued'), 1);
 			assertEquals(db.getMessageCountByStatus('session-1', 'sent'), 0);
+
+			// Queued user messages should not appear in transcript query yet
+			const { messages } = db.getSDKMessages('session-1');
+			assertEquals(messages.length, 0);
+
+			db.close();
+		});
+
+		test('should hide saved user messages from transcript query until sent', async () => {
+			const db = await createTestDb();
+
+			const session = createTestSession('session-1');
+			db.createSession(session);
+
+			const sdkMessage = {
+				type: 'user' as const,
+				message: {
+					role: 'user' as const,
+					content: 'Saved but not sent',
+				},
+				parent_tool_use_id: null,
+				uuid: '00000000-0000-0000-0000-000000000009' as const,
+				session_id: 'session-1',
+			};
+
+			db.saveUserMessage('session-1', sdkMessage, 'saved');
+
+			const { messages } = db.getSDKMessages('session-1');
+			assertEquals(messages.length, 0);
 
 			db.close();
 		});

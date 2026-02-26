@@ -31,22 +31,20 @@ export class MessageRecoveryHandler {
 	/**
 	 * Recover orphaned sent messages
 	 *
-	 * Detects messages that are stuck in 'queued' or marked as 'sent' but never
-	 * received a response from the SDK. This happens when:
-	 * 1. Message is enqueued to SDK (status: 'saved' → 'queued')
-	 * 2. SDK crashes before sending system:init
-	 * 3. No system:init or assistant response is emitted
+	 * Recovery strategy:
+	 * 1. For sent messages, detect orphaned ones with no system:init boundary after send
+	 *    and reset them to saved for retry.
 	 *
-	 * Recovery: Reset these messages to 'saved' status so they can be retried.
+	 * This allows startup replay logic to re-dispatch recoverable messages safely.
 	 */
 	recoverOrphanedSentMessages(): void {
 		const { session, db, logger } = this;
 
 		try {
-			// Get all messages with status 'queued' or 'sent'
-			const queuedMessages = db.getMessagesByStatus(session.id, 'queued');
+			// Sent messages may need recovery if they never got a corresponding
+			// system:init/response boundary after being marked sent.
 			const sentMessages = db.getMessagesByStatus(session.id, 'sent');
-			const allStuckMessages = [...queuedMessages, ...sentMessages];
+			const allStuckMessages = [...sentMessages];
 
 			if (allStuckMessages.length === 0) {
 				return;

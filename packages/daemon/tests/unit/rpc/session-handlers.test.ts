@@ -602,6 +602,38 @@ describe('Session RPC Handlers', () => {
 			expect(result).toHaveProperty('messageId');
 		});
 
+		it('passes deliveryMode to message.sendRequest', async () => {
+			const handler = messageHubData.handlers.get('message.send');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{
+					sessionId: 'session-123',
+					content: 'Queue this',
+					deliveryMode: 'next_turn',
+				},
+				{}
+			);
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'message.sendRequest',
+				expect.objectContaining({
+					sessionId: 'session-123',
+					content: 'Queue this',
+					deliveryMode: 'next_turn',
+				})
+			);
+		});
+
+		it('throws on invalid deliveryMode', async () => {
+			const handler = messageHubData.handlers.get('message.send');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ sessionId: 'session-123', content: 'x', deliveryMode: 'invalid' }, {})
+			).rejects.toThrow('Invalid deliveryMode');
+		});
+
 		it('throws error when session not found', async () => {
 			const handler = messageHubData.handlers.get('message.send');
 			expect(handler).toBeDefined();
@@ -1063,6 +1095,42 @@ describe('Session RPC Handlers', () => {
 			await expect(handler!({ sessionId: 'non-existent', status: 'saved' }, {})).rejects.toThrow(
 				'Session not found'
 			);
+		});
+	});
+
+	describe('session.messages.byStatus', () => {
+		it('returns user message summaries for saved status', async () => {
+			const handler = messageHubData.handlers.get('session.messages.byStatus');
+			expect(handler).toBeDefined();
+
+			sessionManagerData.mocks.getDatabase.mockReturnValueOnce({
+				getMessagesByStatus: mock(() => [
+					{
+						dbId: 'db-1',
+						uuid: 'msg-1',
+						timestamp: 123,
+						type: 'user',
+						message: {
+							role: 'user',
+							content: [{ type: 'text', text: 'queued message' }],
+						},
+					},
+				]),
+			} as unknown as ReturnType<typeof mock> extends ReturnType<typeof mock> ? object : never);
+
+			const result = await handler!({ sessionId: 'session-123', status: 'saved' }, {});
+
+			expect(result).toEqual({
+				messages: [
+					{
+						dbId: 'db-1',
+						uuid: 'msg-1',
+						timestamp: 123,
+						status: 'saved',
+						text: 'queued message',
+					},
+				],
+			});
 		});
 	});
 });

@@ -574,6 +574,8 @@ export interface MessageImage {
 	media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 }
 
+export type MessageDeliveryMode = 'current_turn' | 'next_turn';
+
 // Tool types
 export interface Tool {
 	name: string;

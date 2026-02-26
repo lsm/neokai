@@ -80,17 +80,16 @@ describe('MessageRecoveryHandler', () => {
 			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
 		});
 
-		it('should check both queued and sent messages', () => {
+		it('should check sent messages for recovery', () => {
 			getMessagesByStatusSpy.mockReturnValue([]);
 
 			handler.recoverOrphanedSentMessages();
 
-			expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'queued');
 			expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'sent');
 		});
 
 		it('should find orphaned user messages without system:init response', () => {
-			const queuedUserMessage: SDKMessage = {
+			const sentUserMessage: SDKMessage = {
 				dbId: 'db-1',
 				uuid: 'uuid-12345678',
 				type: 'user',
@@ -98,8 +97,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 2000,
 			} as unknown as SDKMessage;
 
-			// First call returns queued messages, second returns empty sent
-			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
 
 			// All messages including system:init
 			const systemInitMessage: SDKMessage = {
@@ -118,8 +116,8 @@ describe('MessageRecoveryHandler', () => {
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
 		});
 
-		it('should not recover messages that have system:init after them', () => {
-			const queuedUserMessage: SDKMessage = {
+		it('should not recover sent messages that have system:init after them', () => {
+			const sentUserMessage: SDKMessage = {
 				dbId: 'db-1',
 				uuid: 'uuid-12345678',
 				type: 'user',
@@ -127,7 +125,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 1000,
 			} as unknown as SDKMessage;
 
-			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
 
 			// System:init came AFTER the user message
 			const systemInitMessage: SDKMessage = {
@@ -146,6 +144,16 @@ describe('MessageRecoveryHandler', () => {
 			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
 		});
 
+		it('should not rewrite queued messages during recovery', () => {
+			getMessagesByStatusSpy.mockReturnValue([]);
+			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
+
+			handler.recoverOrphanedSentMessages();
+
+			expect(getMessagesByStatusSpy).not.toHaveBeenCalledWith('test-session-id', 'queued');
+			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+		});
+
 		it('should skip non-user messages', () => {
 			const assistantMessage: SDKMessage = {
 				dbId: 'db-1',
@@ -155,7 +163,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 2000,
 			} as unknown as SDKMessage;
 
-			getMessagesByStatusSpy.mockReturnValueOnce([assistantMessage]).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue([assistantMessage]);
 
 			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
 
@@ -165,7 +173,7 @@ describe('MessageRecoveryHandler', () => {
 		});
 
 		it('should recover multiple orphaned messages', () => {
-			const queuedMessages: SDKMessage[] = [
+			const sentMessages: SDKMessage[] = [
 				{
 					dbId: 'db-1',
 					uuid: 'uuid-11111111',
@@ -182,7 +190,7 @@ describe('MessageRecoveryHandler', () => {
 				} as unknown as SDKMessage,
 			];
 
-			getMessagesByStatusSpy.mockReturnValueOnce(queuedMessages).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue(sentMessages);
 
 			const systemInitMessage: SDKMessage = {
 				dbId: 'db-0',
@@ -213,8 +221,8 @@ describe('MessageRecoveryHandler', () => {
 			);
 		});
 
-		it('should handle messages without timestamps', () => {
-			const queuedUserMessage: SDKMessage = {
+		it('should handle sent messages without timestamps', () => {
+			const sentUserMessage: SDKMessage = {
 				dbId: 'db-1',
 				uuid: 'uuid-12345678',
 				type: 'user',
@@ -222,7 +230,7 @@ describe('MessageRecoveryHandler', () => {
 				// No timestamp
 			} as unknown as SDKMessage;
 
-			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
 
 			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
 
@@ -234,7 +242,7 @@ describe('MessageRecoveryHandler', () => {
 		});
 
 		it('should handle messages without uuid', () => {
-			const queuedUserMessage: SDKMessage = {
+			const sentUserMessage: SDKMessage = {
 				dbId: 'db-1',
 				// No uuid
 				type: 'user',
@@ -242,7 +250,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 2000,
 			} as unknown as SDKMessage;
 
-			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
 
 			getSDKMessagesSpy.mockReturnValue({ messages: [], hasMore: false });
 
@@ -251,8 +259,8 @@ describe('MessageRecoveryHandler', () => {
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
 		});
 
-		it('should find latest system:init timestamp', () => {
-			const queuedUserMessage: SDKMessage = {
+		it('should find latest system:init timestamp for sent messages', () => {
+			const sentUserMessage: SDKMessage = {
 				dbId: 'db-1',
 				uuid: 'uuid-12345678',
 				type: 'user',
@@ -260,7 +268,7 @@ describe('MessageRecoveryHandler', () => {
 				timestamp: 2500,
 			} as unknown as SDKMessage;
 
-			getMessagesByStatusSpy.mockReturnValueOnce([queuedUserMessage]).mockReturnValueOnce([]);
+			getMessagesByStatusSpy.mockReturnValue([sentUserMessage]);
 
 			// Multiple system:init messages
 			const systemInitMessages: SDKMessage[] = [

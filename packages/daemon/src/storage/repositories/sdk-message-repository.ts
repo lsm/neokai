@@ -87,7 +87,11 @@ export class SDKMessageRepository {
 		since?: number
 	): { messages: SDKMessage[]; hasMore: boolean } {
 		// Step 1: Get top-level messages (excluding subagent messages)
-		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`;
+		// Only show user messages that are already sent to SDK.
+		let query = `SELECT sdk_message, timestamp FROM sdk_messages
+      WHERE session_id = ?
+        AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+        AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')`;
 		const params: SQLiteValue[] = [sessionId];
 
 		// Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
@@ -144,8 +148,10 @@ export class SDKMessageRepository {
 				.map(() => '?')
 				.join(',');
 			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
-       ORDER BY timestamp ASC`;
+       WHERE session_id = ?
+         AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
+         AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')
+        ORDER BY timestamp ASC`;
 			const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 
 			const subagentStmt = this.db.prepare(subagentQuery);
@@ -201,7 +207,9 @@ export class SDKMessageRepository {
 	getSDKMessageCount(sessionId: string): number {
 		const stmt = this.db.prepare(
 			`SELECT COUNT(*) as count FROM sdk_messages
-       WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`
+       WHERE session_id = ?
+         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+         AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')`
 		);
 		const result = stmt.get(sessionId) as { count: number };
 		return result.count;

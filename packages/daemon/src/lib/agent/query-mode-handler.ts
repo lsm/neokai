@@ -108,6 +108,9 @@ export class QueryModeHandler {
 				return;
 			}
 
+			// Ensure query is running before replaying queued messages.
+			await this.ctx.ensureQueryStarted();
+
 			// Enqueue each message
 			for (const msg of queuedMessages) {
 				if (!isSDKUserMessage(msg)) {
@@ -125,6 +128,15 @@ export class QueryModeHandler {
 		} catch (error) {
 			logger.error('Failed to send queued messages on turn end:', error);
 		}
+	}
+
+	/**
+	 * Replay persisted pending messages for immediate mode startup/recovery.
+	 * Priority: current-turn queued messages first, then next-turn saved messages.
+	 */
+	async replayPendingMessagesForImmediateMode(): Promise<void> {
+		await this.sendQueuedMessagesOnTurnEnd();
+		await this.handleQueryTrigger();
 	}
 
 	/**
