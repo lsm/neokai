@@ -354,8 +354,8 @@ export function setupTaskHandlers(
 			group: {
 				id: group.id,
 				taskId: group.taskId,
-				craftSessionId: group.craftSessionId,
-				leadSessionId: group.leadSessionId,
+				workerSessionId: group.workerSessionId,
+				leaderSessionId: group.leaderSessionId,
 				state: group.state,
 				feedbackIteration: group.feedbackIteration,
 				createdAt: group.createdAt,

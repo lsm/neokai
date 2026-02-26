@@ -19,7 +19,6 @@ import { SessionObserver } from './session-observer';
 import { SessionGroupRepository } from './session-group-repository';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
-import { TurnTracker } from './turn-tracker';
 import { AgentSession } from '../agent/agent-session';
 import { createRoomAgentMcpServer } from './room-agent-tools';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -43,7 +42,7 @@ export interface RoomRuntimeServiceConfig {
 export class RoomRuntimeService {
 	private runtimes = new Map<string, RoomRuntime>();
 	private observers = new Map<string, SessionObserver>();
-	private craftLeadSessions = new Map<string, AgentSession>();
+	private agentSessions = new Map<string, AgentSession>();
 	private unsubscribers: Array<() => void> = [];
 
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
@@ -60,7 +59,7 @@ export class RoomRuntimeService {
 		}
 		this.runtimes.clear();
 		this.observers.clear();
-		this.craftLeadSessions.clear();
+		this.agentSessions.clear();
 
 		for (const unsub of this.unsubscribers) {
 			unsub();
@@ -71,7 +70,7 @@ export class RoomRuntimeService {
 
 	private createSessionFactory(): SessionFactory {
 		const ctx = this.ctx;
-		const craftLeadSessions = this.craftLeadSessions;
+		const agentSessions = this.agentSessions;
 
 		return {
 			createAndStartSession: async (init, _role) => {
@@ -83,11 +82,11 @@ export class RoomRuntimeService {
 					ctx.getApiKey,
 					ctx.defaultModel
 				);
-				craftLeadSessions.set(init.sessionId, session);
+				agentSessions.set(init.sessionId, session);
 				await session.startStreamingQuery();
 			},
 			injectMessage: async (sessionId, message) => {
-				const session = craftLeadSessions.get(sessionId);
+				const session = agentSessions.get(sessionId);
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
@@ -107,7 +106,6 @@ export class RoomRuntimeService {
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
-		const turnTracker = new TurnTracker();
 
 		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
 
@@ -120,11 +118,10 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: this.ctx.defaultModel,
-			getCraftMessages: (sessionId, afterMessageId) =>
+			getWorkerMessages: (sessionId, afterMessageId) =>
 				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
 			daemonHub: this.ctx.daemonHub,
 			messageHub: this.ctx.messageHub,
-			turnTracker,
 		});
 
 		this.runtimes.set(room.id, runtime);

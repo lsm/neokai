@@ -1,10 +1,12 @@
 /**
  * SessionGroupRepository - CRUD for session_groups, session_group_members, session_group_messages
  *
- * Generic multi-agent collaboration groups. For (Craft, Lead) task groups:
+ * Generic multi-agent collaboration groups. For (Worker, Leader) task groups:
  *   group_type = 'task', ref_id = task_id
- *   members: role='craft' + role='lead'
- *   state: awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
+ *   members: role='worker' + role='leader'
+ *   state: awaiting_worker | awaiting_leader | awaiting_human | hibernated | completed | failed
+ *
+ * The actual worker type (planner, coder, general) is stored in metadata.workerRole.
  *
  * Orchestration state (feedbackIteration, lastForwardedMessageId, etc.) is stored
  * as JSON in the metadata column — no schema change needed for new fields.
@@ -16,8 +18,8 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
 
 export type GroupState =
-	| 'awaiting_craft'
-	| 'awaiting_lead'
+	| 'awaiting_worker'
+	| 'awaiting_leader'
 	| 'awaiting_human'
 	| 'hibernated'
 	| 'completed'
@@ -26,20 +28,22 @@ export type GroupState =
 /** Type-specific metadata for task groups */
 interface TaskGroupMetadata {
 	feedbackIteration: number;
-	leadContractViolations: number;
-	lastProcessedLeadTurnId: string | null;
+	leaderContractViolations: number;
+	lastProcessedLeaderTurnId: string | null;
 	lastForwardedMessageId: string | null;
 	activeWorkStartedAt: number | null;
 	activeWorkElapsed: number;
 	hibernatedAt: number | null;
 	tokensUsed: number;
+	/** The specific worker agent type (planner, coder, general) */
+	workerRole?: string;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
 	return {
 		feedbackIteration: 0,
-		leadContractViolations: 0,
-		lastProcessedLeadTurnId: null,
+		leaderContractViolations: 0,
+		lastProcessedLeaderTurnId: null,
 		lastForwardedMessageId: null,
 		activeWorkStartedAt: null,
 		activeWorkElapsed: 0,
@@ -50,19 +54,21 @@ function defaultMetadata(): TaskGroupMetadata {
 
 /**
  * Flattened view of a session group that combines session_groups +
- * session_group_members (craft/lead roles) for ease of use in runtime code.
+ * session_group_members (worker/leader roles) for ease of use in runtime code.
  */
 export interface SessionGroup {
 	id: string;
 	/** ref_id — the task_id for task groups */
 	taskId: string;
 	groupType: string;
-	craftSessionId: string;
-	leadSessionId: string;
+	workerSessionId: string;
+	leaderSessionId: string;
+	/** The specific worker agent type: 'planner', 'coder', 'general' */
+	workerRole: string;
 	state: GroupState;
 	feedbackIteration: number;
-	leadContractViolations: number;
-	lastProcessedLeadTurnId: string | null;
+	leaderContractViolations: number;
+	lastProcessedLeaderTurnId: string | null;
 	lastForwardedMessageId: string | null;
 	activeWorkStartedAt: number | null;
 	activeWorkElapsed: number;
@@ -88,24 +94,29 @@ export class SessionGroupRepository {
 
 	// ===== Group lifecycle =====
 
-	createGroup(taskId: string, craftSessionId: string, leadSessionId: string): SessionGroup {
+	createGroup(
+		taskId: string,
+		workerSessionId: string,
+		leaderSessionId: string,
+		workerRole: string = 'coder'
+	): SessionGroup {
 		const id = generateUUID();
 		const now = Date.now();
-		const metadata = defaultMetadata();
+		const metadata: TaskGroupMetadata = { ...defaultMetadata(), workerRole };
 
 		this.db
 			.prepare(
 				`INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at)
-			 VALUES (?, 'task', ?, 'awaiting_craft', 0, ?, ?)`
+			 VALUES (?, 'task', ?, 'awaiting_worker', 0, ?, ?)`
 			)
 			.run(id, taskId, JSON.stringify(metadata), now);
 
 		this.db
 			.prepare(
 				`INSERT INTO session_group_members (group_id, session_id, role, joined_at)
-			 VALUES (?, ?, 'craft', ?), (?, ?, 'lead', ?)`
+			 VALUES (?, ?, 'worker', ?), (?, ?, 'leader', ?)`
 			)
-			.run(id, craftSessionId, now, id, leadSessionId, now);
+			.run(id, workerSessionId, now, id, leaderSessionId, now);
 
 		return this.getGroup(id)!;
 	}
@@ -116,11 +127,11 @@ export class SessionGroupRepository {
 				`SELECT
 					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
-					craft.session_id AS craft_session_id,
-					lead.session_id AS lead_session_id
+					worker.session_id AS worker_session_id,
+					leader.session_id AS leader_session_id
 				FROM session_groups sg
-				LEFT JOIN session_group_members craft ON craft.group_id = sg.id AND craft.role = 'craft'
-				LEFT JOIN session_group_members lead ON lead.group_id = sg.id AND lead.role = 'lead'
+				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
+				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
 				WHERE sg.id = ?`
 			)
 			.get(groupId) as Record<string, unknown> | undefined;
@@ -134,11 +145,11 @@ export class SessionGroupRepository {
 				`SELECT
 					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
-					craft.session_id AS craft_session_id,
-					lead.session_id AS lead_session_id
+					worker.session_id AS worker_session_id,
+					leader.session_id AS leader_session_id
 				FROM session_groups sg
-				LEFT JOIN session_group_members craft ON craft.group_id = sg.id AND craft.role = 'craft'
-				LEFT JOIN session_group_members lead ON lead.group_id = sg.id AND lead.role = 'lead'
+				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
+				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
 				WHERE sg.ref_id = ? AND sg.group_type IN ('task', 'task_pair')
 				ORDER BY sg.created_at DESC LIMIT 1`
 			)
@@ -153,12 +164,12 @@ export class SessionGroupRepository {
 				`SELECT
 					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
-					craft.session_id AS craft_session_id,
-					lead.session_id AS lead_session_id
+					worker.session_id AS worker_session_id,
+					leader.session_id AS leader_session_id
 				FROM session_groups sg
 				JOIN tasks t ON sg.ref_id = t.id
-				LEFT JOIN session_group_members craft ON craft.group_id = sg.id AND craft.role = 'craft'
-				LEFT JOIN session_group_members lead ON lead.group_id = sg.id AND lead.role = 'lead'
+				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
+				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
 				WHERE t.room_id = ? AND sg.state NOT IN ('completed', 'failed')`
 			)
 			.all(roomId) as Record<string, unknown>[];
@@ -258,21 +269,21 @@ export class SessionGroupRepository {
 		return this.getGroup(groupId);
 	}
 
-	updateLeadContractViolations(
+	updateLeaderContractViolations(
 		groupId: string,
 		violations: number,
 		lastTurnId: string,
 		expectedVersion: number
 	): SessionGroup | null {
 		return this.updateMetadata(groupId, expectedVersion, {
-			leadContractViolations: violations,
-			lastProcessedLeadTurnId: lastTurnId,
+			leaderContractViolations: violations,
+			lastProcessedLeaderTurnId: lastTurnId,
 		});
 	}
 
-	resetLeadContractViolations(groupId: string, expectedVersion: number): SessionGroup | null {
+	resetLeaderContractViolations(groupId: string, expectedVersion: number): SessionGroup | null {
 		return this.updateMetadata(groupId, expectedVersion, {
-			leadContractViolations: 0,
+			leaderContractViolations: 0,
 		});
 	}
 
@@ -346,7 +357,20 @@ export class SessionGroupRepository {
 	private parseMetadata(raw: string | null | undefined): TaskGroupMetadata {
 		if (!raw) return defaultMetadata();
 		try {
-			return { ...defaultMetadata(), ...(JSON.parse(raw) as Partial<TaskGroupMetadata>) };
+			const parsed = JSON.parse(raw) as Partial<TaskGroupMetadata>;
+			// Handle migration from old field names
+			const compat = parsed as Record<string, unknown>;
+			return {
+				...defaultMetadata(),
+				...parsed,
+				// Migrate old field names if present
+				leaderContractViolations:
+					parsed.leaderContractViolations ?? (compat.leadContractViolations as number) ?? 0,
+				lastProcessedLeaderTurnId:
+					parsed.lastProcessedLeaderTurnId ??
+					(compat.lastProcessedLeadTurnId as string | null) ??
+					null,
+			};
 		} catch {
 			return defaultMetadata();
 		}
@@ -358,12 +382,13 @@ export class SessionGroupRepository {
 			id: row.id as string,
 			taskId: row.ref_id as string,
 			groupType: row.group_type as string,
-			craftSessionId: (row.craft_session_id as string) ?? '',
-			leadSessionId: (row.lead_session_id as string) ?? '',
+			workerSessionId: (row.worker_session_id as string) ?? '',
+			leaderSessionId: (row.leader_session_id as string) ?? '',
+			workerRole: meta.workerRole ?? 'coder',
 			state: row.state as GroupState,
 			feedbackIteration: meta.feedbackIteration,
-			leadContractViolations: meta.leadContractViolations,
-			lastProcessedLeadTurnId: meta.lastProcessedLeadTurnId,
+			leaderContractViolations: meta.leaderContractViolations,
+			lastProcessedLeaderTurnId: meta.lastProcessedLeaderTurnId,
 			lastForwardedMessageId: meta.lastForwardedMessageId,
 			activeWorkStartedAt: meta.activeWorkStartedAt,
 			activeWorkElapsed: meta.activeWorkElapsed,

@@ -2,7 +2,7 @@
  * TaskMessageQueue - Stub for MVP
  *
  * The task_messages table exists for schema forward-compatibility but is
- * not used in MVP. Lead->Craft routing is synchronous (direct injection).
+ * not used in MVP. Leader->Worker routing is synchronous (direct injection).
  *
  * This stub will be replaced with write-ahead queue semantics when
  * human message queueing and interrupts are implemented.
@@ -12,8 +12,8 @@ export interface TaskMessage {
 	id: string;
 	taskId: string;
 	groupId: string;
-	fromRole: 'craft' | 'lead' | 'human';
-	toRole: 'craft' | 'lead';
+	fromRole: 'worker' | 'leader' | 'human';
+	toRole: 'worker' | 'leader';
 	toSessionId: string;
 	messageType: 'normal' | 'interrupt' | 'escalation_context';
 	payload: string;
@@ -25,8 +25,8 @@ export interface TaskMessage {
 export interface EnqueueParams {
 	groupId: string;
 	taskId: string;
-	fromRole: 'craft' | 'lead' | 'human';
-	toRole: 'craft' | 'lead';
+	fromRole: 'worker' | 'leader' | 'human';
+	toRole: 'worker' | 'leader';
 	toSessionId: string;
 	payload: string;
 	messageType?: 'normal' | 'interrupt' | 'escalation_context';
@@ -37,7 +37,7 @@ export class TaskMessageQueue {
 		throw new Error('TaskMessageQueue.enqueue is not implemented in MVP');
 	}
 
-	dequeuePending(_groupId: string, _toRole: 'craft' | 'lead'): TaskMessage[] {
+	dequeuePending(_groupId: string, _toRole: 'worker' | 'leader'): TaskMessage[] {
 		return [];
 	}
 

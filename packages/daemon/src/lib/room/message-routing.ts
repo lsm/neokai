@@ -1,36 +1,37 @@
 /**
- * Message Routing - Formats messages between Craft and Lead agents
+ * Message Routing - Formats messages between Worker and Leader agents
  *
- * Handles the structured envelope format for Craft → Lead routing
- * and the feedback format for Lead → Craft routing.
+ * Handles the structured envelope format for Worker → Leader routing
+ * and the feedback format for Leader → Worker routing.
  */
 
 import type { TerminalStateKind } from './session-observer';
+import type { NeoTask } from '@neokai/shared';
 
-export interface CraftOutputEnvelopeParams {
+export interface WorkerOutputEnvelopeParams {
 	/** Current feedback iteration number */
 	iteration: number;
 	/** Task title for context */
 	taskTitle: string;
 	/** Task type (coding, planning, etc.) */
 	taskType?: string;
-	/** How Craft's turn ended */
+	/** How the worker's turn ended */
 	terminalState: TerminalStateKind;
-	/** Summary of tool calls made by Craft */
+	/** Summary of tool calls made by worker */
 	toolCallSummaries?: string[];
-	/** The actual Craft assistant output */
-	craftOutput: string;
+	/** The actual worker assistant output */
+	workerOutput: string;
 }
 
 /**
- * Format Craft output as a structured envelope for Lead review.
+ * Format worker output as a structured envelope for Leader review.
  *
- * This is injected into the Lead session as a user message.
+ * This is injected into the Leader session as a user message.
  */
-export function formatCraftToLeadEnvelope(params: CraftOutputEnvelopeParams): string {
+export function formatWorkerToLeaderEnvelope(params: WorkerOutputEnvelopeParams): string {
 	const lines: string[] = [];
 
-	lines.push(`[CRAFT OUTPUT] Iteration: ${params.iteration}`);
+	lines.push(`[WORKER OUTPUT] Iteration: ${params.iteration}`);
 	lines.push(`Task: ${params.taskTitle}`);
 	if (params.taskType) {
 		lines.push(`Task type: ${params.taskType}`);
@@ -40,7 +41,7 @@ export function formatCraftToLeadEnvelope(params: CraftOutputEnvelopeParams): st
 		lines.push(`Tool calls: ${JSON.stringify(params.toolCallSummaries)}`);
 	}
 	lines.push('---');
-	lines.push(params.craftOutput);
+	lines.push(params.workerOutput);
 
 	return lines.join('\n');
 }
@@ -56,21 +57,66 @@ function terminalStateLabel(kind: TerminalStateKind): string {
 	}
 }
 
-/**
- * Format Lead feedback for injection into Craft session.
- *
- * This is injected into the Craft session as a user message.
- */
-export function formatLeadToCraftFeedback(feedback: string, iteration: number): string {
-	return `[LEAD FEEDBACK] Iteration: ${iteration}\n---\n${feedback}`;
+export interface PlanEnvelopeParams {
+	/** Current feedback iteration number */
+	iteration: number;
+	/** Goal title for context */
+	goalTitle: string;
+	/** How the planner's turn ended */
+	terminalState: TerminalStateKind;
+	/** The actual planner assistant output */
+	workerOutput: string;
+	/** Draft tasks created by the planner */
+	draftTasks: Array<Pick<NeoTask, 'id' | 'title' | 'description' | 'priority' | 'assignedAgent'>>;
 }
 
 /**
- * Format the Lead contract nudge message.
- * Injected when Lead fails to call a required tool.
+ * Format planner output as a structured envelope for Leader review.
+ * Includes the list of draft tasks so the Leader can evaluate the plan.
  */
-export function formatLeadContractNudge(): string {
-	return 'You must call exactly one of: send_to_craft, complete_task, or fail_task. Do NOT respond with only text.';
+export function formatPlanEnvelope(params: PlanEnvelopeParams): string {
+	const lines: string[] = [];
+
+	lines.push(`[PLANNER OUTPUT] Iteration: ${params.iteration}`);
+	lines.push(`Goal: ${params.goalTitle}`);
+	lines.push(`Tasks created: ${params.draftTasks.length}`);
+	lines.push(`Terminal state: ${terminalStateLabel(params.terminalState)}`);
+	lines.push('---');
+	lines.push(params.workerOutput);
+
+	if (params.draftTasks.length > 0) {
+		lines.push('');
+		lines.push('## Current Plan');
+		lines.push('');
+		for (let i = 0; i < params.draftTasks.length; i++) {
+			const t = params.draftTasks[i];
+			lines.push(
+				`${i + 1}. **${t.title}** (agent: ${t.assignedAgent ?? 'coder'}, priority: ${t.priority})`
+			);
+			lines.push(`   ${t.description}`);
+			lines.push(`   _Task ID: ${t.id}_`);
+			lines.push('');
+		}
+	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Format Leader feedback for injection into worker session.
+ *
+ * This is injected into the worker session as a user message.
+ */
+export function formatLeaderToWorkerFeedback(feedback: string, iteration: number): string {
+	return `[LEADER FEEDBACK] Iteration: ${iteration}\n---\n${feedback}`;
+}
+
+/**
+ * Format the Leader contract nudge message.
+ * Injected when Leader fails to call a required tool.
+ */
+export function formatLeaderContractNudge(): string {
+	return 'You must call exactly one of: send_to_worker, complete_task, or fail_task. Do NOT respond with only text.';
 }
 
 /**

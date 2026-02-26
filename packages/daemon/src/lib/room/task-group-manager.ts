@@ -1,51 +1,52 @@
 /**
- * TaskGroupManager - Creates and manages (Craft, Lead) session groups
+ * TaskGroupManager - Creates and manages (Worker, Leader) session groups
  *
- * Orchestrates the lifecycle of (Craft, Lead) session groups:
+ * Orchestrates the lifecycle of session groups:
  * 1. Spawns session groups for pending tasks
- * 2. Routes Craft terminal output to Lead for review
- * 3. Routes Lead feedback back to Craft
+ * 2. Routes worker terminal output to Leader for review
+ * 3. Routes Leader feedback back to worker
  * 4. Handles group completion and failure
  *
  * Session creation is injected via SessionFactory for testability.
+ * The worker role is configurable via WorkerConfig (planner, coder, general).
  */
 
 import { generateUUID } from '@neokai/shared';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
+import type { AgentSessionInit } from '../agent/agent-session';
 import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
 import type { SessionObserver, TerminalState } from './session-observer';
 import type { TaskManager } from './task-manager';
 import type { GoalManager } from './goal-manager';
-import type { TurnTracker } from './turn-tracker';
-import type { CraftAgentConfig } from './craft-agent';
-import type { LeadAgentConfig, LeadToolCallbacks } from './lead-agent';
-import { createCraftAgentInit } from './craft-agent';
-import { createLeadAgentInit } from './lead-agent';
+import type { LeaderToolCallbacks } from './leader-agent';
+import { createLeaderAgentInit } from './leader-agent';
+import type { LeaderAgentConfig, ReviewContext } from './leader-agent';
 
 /**
  * Abstract session interface for testability.
  * The real implementation delegates to AgentSession.fromInit + startStreamingQuery.
  */
 export interface SessionFactory {
-	createAndStartSession(
-		init: ReturnType<typeof createCraftAgentInit>,
-		role: 'craft' | 'lead'
-	): Promise<void>;
+	createAndStartSession(init: AgentSessionInit, role: string): Promise<void>;
 	injectMessage(sessionId: string, message: string): Promise<void>;
 }
 
 /**
  * Factory that receives the actual group ID once the DB record is created.
- * This ensures Lead callbacks reference the correct group.id, not a pre-generated UUID.
+ * This ensures Leader callbacks reference the correct group.id, not a pre-generated UUID.
  */
-export type LeadCallbacksFactory = (groupId: string) => LeadToolCallbacks;
+export type LeaderCallbacksFactory = (groupId: string) => LeaderToolCallbacks;
 
 /**
- * Optional factory to produce a custom Craft agent init.
- * When provided, overrides the default createCraftAgentInit.
- * Used by planning groups to inject the planning Craft agent instead of the coding agent.
+ * Configuration for the worker agent in a group.
+ * Determines which agent type and factory to use.
  */
-export type CraftInitFactory = (craftSessionId: string) => ReturnType<typeof createCraftAgentInit>;
+export interface WorkerConfig {
+	/** The specific agent role: 'planner', 'coder', 'general' */
+	role: string;
+	/** Factory that produces the AgentSessionInit for the worker */
+	initFactory: (workerSessionId: string) => AgentSessionInit;
+}
 
 export interface TaskGroupManagerConfig {
 	room: Room;
@@ -56,7 +57,6 @@ export interface TaskGroupManagerConfig {
 	sessionFactory: SessionFactory;
 	workspacePath: string;
 	model?: string;
-	turnTracker?: TurnTracker;
 }
 
 export class TaskGroupManager {
@@ -68,10 +68,9 @@ export class TaskGroupManager {
 	private readonly sessionFactory: SessionFactory;
 	readonly workspacePath: string;
 	readonly model?: string;
-	readonly turnTracker?: TurnTracker;
 
-	/** In-memory map tracking whether Lead called a tool in current turn */
-	readonly leadCalledToolMap = new Map<string, boolean>();
+	/** In-memory map tracking whether Leader called a tool in current turn */
+	readonly leaderCalledToolMap = new Map<string, boolean>();
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.room = config.room;
@@ -82,131 +81,122 @@ export class TaskGroupManager {
 		this.sessionFactory = config.sessionFactory;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
-		this.turnTracker = config.turnTracker;
 	}
 
 	/**
-	 * Spawn a new (Craft, Lead) session group for a task.
+	 * Spawn a new (Worker, Leader) session group for a task.
 	 *
 	 * Flow:
-	 * 1. Create Craft session with task context
-	 * 2. Create Lead session with review tools
-	 * 3. Create session_groups DB record (state: awaiting_craft)
+	 * 1. Create worker session via workerConfig
+	 * 2. Create Leader session with review tools
+	 * 3. Create session_groups DB record (state: awaiting_worker)
 	 * 4. Set task status to in_progress
-	 * 5. Start observing Craft session
-	 * 6. Start Craft session (kicks off work)
+	 * 5. Start observing both sessions
+	 * 6. Kick off worker (inject initial message)
 	 */
 	async spawn(
 		task: NeoTask,
 		goal: RoomGoal,
-		onCraftTerminal: (groupId: string, state: TerminalState) => void,
-		onLeadTerminal: (groupId: string, state: TerminalState) => void,
-		leadCallbacksFactory: LeadCallbacksFactory,
-		craftInitFactory?: CraftInitFactory
+		onWorkerTerminal: (groupId: string, state: TerminalState) => void,
+		onLeaderTerminal: (groupId: string, state: TerminalState) => void,
+		leaderCallbacksFactory: LeaderCallbacksFactory,
+		workerConfig: WorkerConfig,
+		reviewContext?: ReviewContext
 	): Promise<SessionGroup> {
-		const craftSessionId = `craft:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
-		const leadSessionId = `lead:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
+		const workerSessionId = `${workerConfig.role}:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
+		const leaderSessionId = `leader:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 
-		// Build Craft init — use the provided factory if given (e.g. planning agent),
-		// otherwise fall back to the default coding agent.
-		const craftInit = craftInitFactory
-			? craftInitFactory(craftSessionId)
-			: createCraftAgentInit({
-					task,
-					goal,
-					room: this.room,
-					sessionId: craftSessionId,
-					workspacePath: this.workspacePath,
-					model: this.model,
-				} satisfies CraftAgentConfig);
+		// Build worker init from the provided config
+		const workerInit = workerConfig.initFactory(workerSessionId);
 
-		// Create session_groups record first so we have the real group.id for Lead callbacks.
-		// This is critical: Lead MCP tool callbacks must reference group.id, not task.id.
-		const group = this.groupRepo.createGroup(task.id, craftSessionId, leadSessionId);
+		// Create session_groups record first so we have the real group.id for Leader callbacks.
+		// This is critical: Leader MCP tool callbacks must reference group.id, not task.id.
+		const group = this.groupRepo.createGroup(
+			task.id,
+			workerSessionId,
+			leaderSessionId,
+			workerConfig.role
+		);
 
-		// Build Lead init using the actual group.id from the DB record
-		const leadCallbacks = leadCallbacksFactory(group.id);
-		const leadConfig: LeadAgentConfig = {
+		// Build Leader init using the actual group.id from the DB record
+		const leaderCallbacks = leaderCallbacksFactory(group.id);
+		const leaderConfig: LeaderAgentConfig = {
 			task,
 			goal,
 			room: this.room,
-			sessionId: leadSessionId,
+			sessionId: leaderSessionId,
 			workspacePath: this.workspacePath,
 			groupId: group.id,
 			model: this.model,
+			reviewContext,
 		};
-		const leadInit = createLeadAgentInit(leadConfig, leadCallbacks);
+		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
 		// Set task status to in_progress
 		await this.taskManager.startTask(task.id);
 
-		// Create sessions (but don't start Lead yet)
-		await this.sessionFactory.createAndStartSession(craftInit, 'craft');
-		await this.sessionFactory.createAndStartSession(leadInit, 'lead');
+		// Create sessions
+		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
+		await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
 
-		// Kick off Craft so the SDK streaming loop starts processing immediately
+		// Kick off worker so the SDK streaming loop starts processing immediately
 		await this.sessionFactory.injectMessage(
-			craftSessionId,
+			workerSessionId,
 			'Please begin working on the task described in your system prompt.'
 		);
 
-		// Start tracking the initial Craft turn
-		if (this.turnTracker) {
-			this.turnTracker.startTurn(craftSessionId, group.id, 0, 'craft');
-		}
-
-		// Observe Craft session for terminal state
-		this.observer.observe(craftSessionId, (state) => {
-			onCraftTerminal(group.id, state);
+		// Observe worker session for terminal state
+		this.observer.observe(workerSessionId, (state) => {
+			onWorkerTerminal(group.id, state);
 		});
 
-		// Observe Lead session for terminal state (contract validation)
-		this.observer.observe(leadSessionId, (state) => {
-			onLeadTerminal(group.id, state);
+		// Observe Leader session for terminal state (contract validation)
+		this.observer.observe(leaderSessionId, (state) => {
+			onLeaderTerminal(group.id, state);
 		});
 
 		return group;
 	}
 
 	/**
-	 * Route Craft terminal output to Lead for review.
+	 * Route worker terminal output to Leader for review.
 	 *
-	 * Called when Craft reaches a terminal state (completed, error, waiting).
-	 * Formats output and injects into Lead session as user message.
+	 * Called when worker reaches a terminal state (completed, error, waiting).
+	 * Formats output and injects into Leader session as user message.
 	 */
-	async routeCraftToLead(groupId: string, craftOutput: string): Promise<SessionGroup | null> {
+	async routeWorkerToLeader(groupId: string, workerOutput: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		// Inject craft output into Lead session
-		await this.sessionFactory.injectMessage(group.leadSessionId, craftOutput);
+		// Inject worker output into Leader session
+		await this.sessionFactory.injectMessage(group.leaderSessionId, workerOutput);
 
-		// Update group state to awaiting_lead
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_lead', group.version);
+		// Update group state to awaiting_leader
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
 
-		// Reset lead contract violations for the new review round
+		// Reset leader contract violations for the new review round
 		if (updated) {
-			this.groupRepo.resetLeadContractViolations(groupId, updated.version);
-			this.leadCalledToolMap.delete(groupId);
+			this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
+			this.leaderCalledToolMap.delete(groupId);
 		}
 
 		return this.groupRepo.getGroup(groupId);
 	}
 
 	/**
-	 * Route Lead feedback to Craft for another iteration.
+	 * Route Leader feedback to worker for another iteration.
 	 *
-	 * Called when Lead calls send_to_craft(message).
+	 * Called when Leader calls send_to_worker(message).
 	 */
-	async routeLeadToCraft(groupId: string, message: string): Promise<SessionGroup | null> {
+	async routeLeaderToWorker(groupId: string, message: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		// Inject feedback into Craft session
-		await this.sessionFactory.injectMessage(group.craftSessionId, message);
+		// Inject feedback into worker session
+		await this.sessionFactory.injectMessage(group.workerSessionId, message);
 
 		// Update group state and increment feedback iteration
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_craft', group.version);
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
 		if (updated) {
 			this.groupRepo.incrementFeedbackIteration(groupId, updated.version);
 		}
@@ -217,7 +207,7 @@ export class TaskGroupManager {
 	/**
 	 * Complete a group - task is done.
 	 *
-	 * Called when Lead calls complete_task(summary).
+	 * Called when Leader calls complete_task(summary).
 	 */
 	async complete(groupId: string, summary: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -231,9 +221,9 @@ export class TaskGroupManager {
 		await this.taskManager.completeTask(group.taskId, summary);
 
 		// Stop observing sessions
-		this.observer.unobserve(group.craftSessionId);
-		this.observer.unobserve(group.leadSessionId);
-		this.leadCalledToolMap.delete(groupId);
+		this.observer.unobserve(group.workerSessionId);
+		this.observer.unobserve(group.leaderSessionId);
+		this.leaderCalledToolMap.delete(groupId);
 
 		return updated;
 	}
@@ -241,7 +231,7 @@ export class TaskGroupManager {
 	/**
 	 * Fail a group - task cannot be completed.
 	 *
-	 * Called when Lead calls fail_task(reason).
+	 * Called when Leader calls fail_task(reason).
 	 */
 	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -255,9 +245,9 @@ export class TaskGroupManager {
 		await this.taskManager.failTask(group.taskId, reason);
 
 		// Stop observing sessions
-		this.observer.unobserve(group.craftSessionId);
-		this.observer.unobserve(group.leadSessionId);
-		this.leadCalledToolMap.delete(groupId);
+		this.observer.unobserve(group.workerSessionId);
+		this.observer.unobserve(group.leaderSessionId);
+		this.leaderCalledToolMap.delete(groupId);
 
 		return updated;
 	}

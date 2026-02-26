@@ -1,35 +1,37 @@
 /**
  * RoomRuntime - Central orchestrator for autonomous room operation
  *
- * Manages the lifecycle of (Craft, Lead) session groups:
+ * Manages the lifecycle of (Worker, Leader) session groups:
  * 1. Detects goals needing planning and spawns planning groups
  * 2. Detects pending tasks and spawns execution groups
- * 3. Routes Craft output to Lead for review
- * 4. Routes Lead feedback to Craft
- * 5. Handles Lead tool calls (complete_task, fail_task, send_to_craft)
- * 6. Enforces Lead tool contract (retry-then-escalate)
+ * 3. Routes Worker output to Leader for review
+ * 4. Routes Leader feedback to Worker
+ * 5. Handles Leader tool calls (complete_task, fail_task, send_to_worker)
+ * 6. Enforces Leader tool contract (retry-then-escalate)
  * 7. Promotes draft tasks to pending when planning completes
  * 8. Periodic tick as safety net
  *
  * All handlers are idempotent. Tick mutex prevents concurrent execution.
  */
 
-import type { Room, NeoTask, RoomGoal, MessageHub } from '@neokai/shared';
+import type { Room, NeoTask, RoomGoal, MessageHub, TaskPriority, AgentType } from '@neokai/shared';
 import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
 import type { TaskManager } from './task-manager';
 import type { GoalManager } from './goal-manager';
 import type { SessionObserver, TerminalState } from './session-observer';
-import type { SessionFactory } from './task-group-manager';
+import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
-import type { TurnTracker } from './turn-tracker';
 import type { DaemonHub } from '../daemon-hub';
-import type { LeadToolCallbacks, LeadToolResult } from './lead-agent';
-import type { PlanningCraftCreateTaskParams } from './planning-craft-agent';
-import { createPlanningCraftAgentInit } from './planning-craft-agent';
+import type { LeaderToolCallbacks, LeaderToolResult } from './leader-agent';
+import type { PlannerCreateTaskParams } from './planner-agent';
+import { createPlannerAgentInit } from './planner-agent';
+import { createCoderAgentInit } from './coder-agent';
+import { createGeneralAgentInit } from './general-agent';
 import {
-	formatCraftToLeadEnvelope,
-	formatLeadToCraftFeedback,
-	formatLeadContractNudge,
+	formatWorkerToLeaderEnvelope,
+	formatPlanEnvelope,
+	formatLeaderToWorkerFeedback,
+	formatLeaderContractNudge,
 	sortTasksByPriority,
 } from './message-routing';
 import { Logger } from '../logger';
@@ -40,7 +42,7 @@ const MAX_PLANNING_ATTEMPTS = 3;
 
 export type RuntimeState = 'running' | 'paused' | 'stopped';
 
-export interface CraftMessage {
+export interface WorkerMessage {
 	/** DB row ID in sdk_messages — used to track last_forwarded_message_id */
 	id: string;
 	/** Extracted assistant text */
@@ -65,20 +67,18 @@ export interface RoomRuntimeConfig {
 	/** Tick interval in ms (default: 30000) */
 	tickInterval?: number;
 	/**
-	 * Fetch Craft assistant messages for forwarding to Lead.
+	 * Fetch Worker assistant messages for forwarding to Leader.
 	 * Returns messages after (exclusive) the message with afterMessageId.
 	 * If afterMessageId is null, returns all messages for the session.
 	 */
-	getCraftMessages?: (sessionId: string, afterMessageId: string | null) => CraftMessage[];
+	getWorkerMessages?: (sessionId: string, afterMessageId: string | null) => WorkerMessage[];
 	/** DaemonHub for subscribing to sdk.message events (mirroring) */
 	daemonHub?: DaemonHub;
 	/** MessageHub for broadcasting group message deltas to frontend */
 	messageHub?: MessageHub;
-	/** Turn tracker for tagging mirrored messages */
-	turnTracker?: TurnTracker;
 }
 
-function jsonResult(data: Record<string, unknown>): LeadToolResult {
+function jsonResult(data: Record<string, unknown>): LeaderToolResult {
 	return { content: [{ type: 'text', text: JSON.stringify(data) }] };
 }
 
@@ -97,10 +97,9 @@ export class RoomRuntime {
 	private readonly maxConcurrentGroups: number;
 	private readonly maxFeedbackIterations: number;
 	private readonly tickInterval: number;
-	private readonly getCraftMessages: RoomRuntimeConfig['getCraftMessages'];
+	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
-	private readonly turnTracker?: TurnTracker;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -117,10 +116,9 @@ export class RoomRuntime {
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 5;
 		this.tickInterval = config.tickInterval ?? 30_000;
-		this.getCraftMessages = config.getCraftMessages;
+		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
-		this.turnTracker = config.turnTracker;
 
 		this.taskGroupManager = new TaskGroupManager({
 			room: config.room,
@@ -131,7 +129,6 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
-			turnTracker: config.turnTracker,
 		});
 	}
 
@@ -165,7 +162,6 @@ export class RoomRuntime {
 			cleanup();
 		}
 		this.mirroringCleanups.clear();
-		this.turnTracker?.clear();
 		this.observer.dispose();
 	}
 
@@ -192,48 +188,59 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Called when Craft reaches a terminal state.
-	 * Collects Craft output from session messages and routes to Lead.
+	 * Called when Worker reaches a terminal state.
+	 * Collects Worker output from session messages and routes to Leader.
 	 */
-	async onCraftTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
+	async onWorkerTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_craft') return;
-
-		// End Craft turn
-		this.turnTracker?.endTurn(group.craftSessionId);
+		if (!group || group.state !== 'awaiting_worker') return;
 
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
 
-		// Collect Craft messages since last forwarded message
-		const craftMessages = this.getCraftMessages
-			? this.getCraftMessages(group.craftSessionId, group.lastForwardedMessageId)
+		// Collect Worker messages since last forwarded message
+		const workerMessages = this.getWorkerMessages
+			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
 			: [];
 
-		// Build the craft output text
-		const craftOutputText =
-			craftMessages.length > 0
-				? craftMessages
+		// Build the worker output text
+		const workerOutputText =
+			workerMessages.length > 0
+				? workerMessages
 						.map((m) => m.text)
 						.filter(Boolean)
 						.join('\n\n')
-				: `[Craft session ${group.craftSessionId} reached terminal state: ${terminalState.kind}]`;
+				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
 
 		// Collect tool call summaries across all messages
-		const toolCallNames = craftMessages.flatMap((m) => m.toolCallNames);
+		const toolCallNames = workerMessages.flatMap((m) => m.toolCallNames);
 
-		// Format craft output envelope for Lead review
-		const envelope = formatCraftToLeadEnvelope({
-			iteration: group.feedbackIteration,
-			taskTitle: task.title,
-			taskType: task.taskType,
-			terminalState: terminalState.kind,
-			craftOutput: craftOutputText,
-			toolCallSummaries: toolCallNames.length > 0 ? toolCallNames : undefined,
-		});
+		// Format output envelope for Leader review
+		// Use plan envelope for planning groups, standard envelope for others
+		let envelope: string;
+		if (group.workerRole === 'planner') {
+			const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
+			const goal = (await this.goalManager.getGoalsForTask(group.taskId))[0];
+			envelope = formatPlanEnvelope({
+				iteration: group.feedbackIteration,
+				goalTitle: goal?.title ?? task.title,
+				terminalState: terminalState.kind,
+				workerOutput: workerOutputText,
+				draftTasks,
+			});
+		} else {
+			envelope = formatWorkerToLeaderEnvelope({
+				iteration: group.feedbackIteration,
+				taskTitle: task.title,
+				taskType: task.taskType,
+				terminalState: terminalState.kind,
+				workerOutput: workerOutputText,
+				toolCallSummaries: toolCallNames.length > 0 ? toolCallNames : undefined,
+			});
+		}
 
 		// Update last_forwarded_message_id to the last message we just forwarded
-		const lastMessage = craftMessages.at(-1);
+		const lastMessage = workerMessages.at(-1);
 		if (lastMessage) {
 			this.groupRepo.updateLastForwardedMessageId(groupId, lastMessage.id, group.version);
 		}
@@ -243,44 +250,38 @@ export class RoomRuntime {
 			groupId,
 			role: 'system',
 			messageType: 'status',
-			content: `Craft finished (${terminalState.kind}). Routing to Lead for review.`,
+			content: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
 		});
 
-		// Start Lead turn before routing
-		this.turnTracker?.startTurn(group.leadSessionId, groupId, group.feedbackIteration, 'lead');
-
-		// Route to Lead
-		await this.taskGroupManager.routeCraftToLead(groupId, envelope);
+		// Route to Leader
+		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope);
 	}
 
 	/**
-	 * Called when Lead reaches a terminal state.
-	 * Validates Lead tool contract (retry-then-escalate).
+	 * Called when Leader reaches a terminal state.
+	 * Validates Leader tool contract (retry-then-escalate).
 	 */
-	async onLeadTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
+	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_lead') return;
+		if (!group || group.state !== 'awaiting_leader') return;
 
-		// End Lead turn
-		this.turnTracker?.endTurn(group.leadSessionId);
-
-		// Check if Lead called a tool (via in-memory map)
-		const calledTool = this.taskGroupManager.leadCalledToolMap.get(groupId) ?? false;
+		// Check if Leader called a tool (via in-memory map)
+		const calledTool = this.taskGroupManager.leaderCalledToolMap.get(groupId) ?? false;
 
 		if (calledTool) {
-			// Lead called a tool → success, no action needed
+			// Leader called a tool → success, no action needed
 			// (The tool handler already processed the action)
 			return;
 		}
 
-		// Contract violation: Lead reached terminal without calling a tool
-		const violations = group.leadContractViolations;
+		// Contract violation: Leader reached terminal without calling a tool
+		const violations = group.leaderContractViolations;
 
 		if (violations === 0) {
 			// First violation: nudge
-			const nudge = formatLeadContractNudge();
-			await this.sessionFactory.injectMessage(group.leadSessionId, nudge);
-			this.groupRepo.updateLeadContractViolations(
+			const nudge = formatLeaderContractNudge();
+			await this.sessionFactory.injectMessage(group.leaderSessionId, nudge);
+			this.groupRepo.updateLeaderContractViolations(
 				groupId,
 				1,
 				'', // turn ID placeholder - MVP doesn't track turn IDs
@@ -292,42 +293,42 @@ export class RoomRuntime {
 			if (updated) {
 				await this.taskManager.escalateTask(
 					group.taskId,
-					'Lead failed to call required tool after nudge'
+					'Leader failed to call required tool after nudge'
 				);
 			}
 		}
 	}
 
 	// =========================================================================
-	// Lead Tool Handling (called from MCP tool callbacks)
+	// Leader Tool Handling (called from MCP tool callbacks)
 	// =========================================================================
 
 	/**
-	 * Handle a Lead tool call. Called synchronously from MCP tool handler.
-	 * Returns the tool result to be sent back to the Lead agent.
+	 * Handle a Leader tool call. Called synchronously from MCP tool handler.
+	 * Returns the tool result to be sent back to the Leader agent.
 	 */
-	async handleLeadTool(
+	async handleLeaderTool(
 		groupId: string,
 		toolName: string,
 		params: { message?: string; summary?: string; reason?: string }
-	): Promise<LeadToolResult> {
+	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
 			return jsonResult({ success: false, error: `Group not found: ${groupId}` });
 		}
 
-		if (group.state !== 'awaiting_lead') {
+		if (group.state !== 'awaiting_leader') {
 			return jsonResult({
 				success: false,
-				error: `Group not in awaiting_lead state (current: ${group.state})`,
+				error: `Group not in awaiting_leader state (current: ${group.state})`,
 			});
 		}
 
-		// Mark that Lead called a tool
-		this.taskGroupManager.leadCalledToolMap.set(groupId, true);
+		// Mark that Leader called a tool
+		this.taskGroupManager.leaderCalledToolMap.set(groupId, true);
 
 		switch (toolName) {
-			case 'send_to_craft': {
+			case 'send_to_worker': {
 				// Enforce max feedback iterations
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
 					const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
@@ -344,23 +345,20 @@ export class RoomRuntime {
 				}
 				const message = params.message ?? '';
 				const nextIteration = group.feedbackIteration + 1;
-				const feedback = formatLeadToCraftFeedback(message, nextIteration);
+				const feedback = formatLeaderToWorkerFeedback(message, nextIteration);
 
 				// Insert status message into group timeline
 				this.groupRepo.appendMessage({
 					groupId,
 					role: 'system',
 					messageType: 'status',
-					content: `Lead sent feedback to Craft (iteration ${nextIteration}).`,
+					content: `Leader sent feedback to Worker (iteration ${nextIteration}).`,
 				});
 
-				// Start new Craft turn before routing
-				this.turnTracker?.startTurn(group.craftSessionId, groupId, nextIteration, 'craft');
-
-				await this.taskGroupManager.routeLeadToCraft(groupId, feedback);
+				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
 				return jsonResult({
 					success: true,
-					message: 'Feedback sent to Craft. Waiting for next iteration.',
+					message: 'Feedback sent to Worker. Waiting for next iteration.',
 				});
 			}
 
@@ -368,7 +366,7 @@ export class RoomRuntime {
 				const summary = params.summary ?? '';
 				await this.taskGroupManager.complete(groupId, summary);
 				this.cleanupMirroring(groupId, 'Task completed.');
-				// Phase 2c: If this was a planning task, promote its draft children to pending
+				// If this was a planning task, promote its draft children to pending
 				await this.promoteDraftTasksIfPlanning(group.taskId);
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task completed successfully.' });
@@ -388,18 +386,18 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Create LeadToolCallbacks that route through this runtime.
+	 * Create LeaderToolCallbacks that route through this runtime.
 	 */
-	createLeadCallbacks(groupId: string): LeadToolCallbacks {
+	createLeaderCallbacks(groupId: string): LeaderToolCallbacks {
 		return {
-			sendToCraft: async (_groupId: string, message: string) => {
-				return this.handleLeadTool(groupId, 'send_to_craft', { message });
+			sendToWorker: async (_groupId: string, message: string) => {
+				return this.handleLeaderTool(groupId, 'send_to_worker', { message });
 			},
 			completeTask: async (_groupId: string, summary: string) => {
-				return this.handleLeadTool(groupId, 'complete_task', { summary });
+				return this.handleLeaderTool(groupId, 'complete_task', { summary });
 			},
 			failTask: async (_groupId: string, reason: string) => {
-				return this.handleLeadTool(groupId, 'fail_task', { reason });
+				return this.handleLeaderTool(groupId, 'fail_task', { reason });
 			},
 		};
 	}
@@ -409,103 +407,75 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Set up message mirroring for a group's craft/lead sessions.
+	 * Set up message mirroring for a group's worker/leader sessions.
 	 * Subscribes to DaemonHub sdk.message events and appends enriched messages
 	 * into the group's session_group_messages timeline.
 	 *
 	 * Messages are enriched with _taskMeta (authorRole, turnId, iteration) so
 	 * the frontend can render them with turn-based grouping and color-coding.
+	 *
+	 * turnId is computed deterministically: `turn_{groupId}_{iteration}_{shortSessionId}`
+	 * This avoids in-memory state and survives daemon restarts.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
 
 		const mirroredUuids = new Set<string>();
 
-		const unsubCraft = this.daemonHub.on(
-			'sdk.message',
-			(event) => {
-				if (event.sessionId !== group.craftSessionId) return;
-				const uuid = 'uuid' in event.message ? (event.message.uuid as string) : null;
-				if (uuid && mirroredUuids.has(uuid)) return;
-				if (uuid) mirroredUuids.add(uuid);
+		const mirrorSession = (sessionId: string, role: string) => {
+			const shortSessionId = sessionId.slice(0, 8);
 
-				const turnId =
-					this.turnTracker?.getCurrentTurnId(group.craftSessionId) ?? group.craftSessionId;
-				const enrichedContent = JSON.stringify({
-					...event.message,
-					_taskMeta: {
-						authorRole: 'craft',
-						authorSessionId: group.craftSessionId,
-						turnId,
-						iteration: group.feedbackIteration,
-					},
-				});
+			return this.daemonHub!.on(
+				'sdk.message',
+				(event) => {
+					if (event.sessionId !== sessionId) return;
+					const uuid = 'uuid' in event.message ? (event.message.uuid as string) : null;
+					if (uuid && mirroredUuids.has(uuid)) return;
+					if (uuid) mirroredUuids.add(uuid);
 
-				this.groupRepo.appendMessage({
-					groupId: group.id,
-					sessionId: group.craftSessionId,
-					role: 'craft',
-					messageType: event.message.type as string,
-					content: enrichedContent,
-				});
+					// Read current iteration from DB to stay accurate across feedback cycles
+					const currentGroup = this.groupRepo.getGroup(group.id);
+					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
+					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-				// Broadcast delta to subscribed frontends
-				if (this.messageHub) {
-					const parsed = JSON.parse(enrichedContent);
-					this.messageHub.event(
-						'state.groupMessages.delta',
-						{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
-						{ channel: `group:${group.id}` }
-					);
-				}
-			},
-			{ sessionId: group.craftSessionId }
-		);
+					const enrichedContent = JSON.stringify({
+						...event.message,
+						_taskMeta: {
+							authorRole: role,
+							authorSessionId: sessionId,
+							turnId,
+							iteration,
+						},
+					});
 
-		const unsubLead = this.daemonHub.on(
-			'sdk.message',
-			(event) => {
-				if (event.sessionId !== group.leadSessionId) return;
-				const uuid = 'uuid' in event.message ? (event.message.uuid as string) : null;
-				if (uuid && mirroredUuids.has(uuid)) return;
-				if (uuid) mirroredUuids.add(uuid);
+					this.groupRepo.appendMessage({
+						groupId: group.id,
+						sessionId,
+						role,
+						messageType: event.message.type as string,
+						content: enrichedContent,
+					});
 
-				const turnId =
-					this.turnTracker?.getCurrentTurnId(group.leadSessionId) ?? group.leadSessionId;
-				const enrichedContent = JSON.stringify({
-					...event.message,
-					_taskMeta: {
-						authorRole: 'lead',
-						authorSessionId: group.leadSessionId,
-						turnId,
-						iteration: group.feedbackIteration,
-					},
-				});
+					// Broadcast delta to subscribed frontends
+					if (this.messageHub) {
+						const parsed = JSON.parse(enrichedContent);
+						this.messageHub.event(
+							'state.groupMessages.delta',
+							{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+							{ channel: `group:${group.id}` }
+						);
+					}
+				},
+				{ sessionId }
+			);
+		};
 
-				this.groupRepo.appendMessage({
-					groupId: group.id,
-					sessionId: group.leadSessionId,
-					role: 'lead',
-					messageType: event.message.type as string,
-					content: enrichedContent,
-				});
-
-				// Broadcast delta to subscribed frontends
-				if (this.messageHub) {
-					const parsed = JSON.parse(enrichedContent);
-					this.messageHub.event(
-						'state.groupMessages.delta',
-						{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
-						{ channel: `group:${group.id}` }
-					);
-				}
-			},
-			{ sessionId: group.leadSessionId }
-		);
+		const unsubWorker = mirrorSession(group.workerSessionId, group.workerRole);
+		const unsubLeader = mirrorSession(group.leaderSessionId, 'leader');
 
 		this.mirroringCleanups.set(group.id, () => {
-			unsubCraft();
-			unsubLead();
+			unsubWorker();
+			unsubLeader();
 			mirroredUuids.clear();
 		});
 	}
@@ -528,15 +498,6 @@ export class RoomRuntime {
 				messageType: 'status',
 				content: statusText,
 			});
-		}
-
-		// Clean up turn tracking for this group's sessions
-		if (this.turnTracker) {
-			const group = this.groupRepo.getGroup(groupId);
-			if (group) {
-				this.turnTracker.endTurn(group.craftSessionId);
-				this.turnTracker.endTurn(group.leadSessionId);
-			}
 		}
 	}
 
@@ -577,7 +538,7 @@ export class RoomRuntime {
 
 		if (availableSlots <= 0) return;
 
-		// Phase 2b: Planning takes priority over execution.
+		// Planning takes priority over execution.
 		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning group first.
 		const goalForPlanning = await this.getNextGoalForPlanning();
 		if (goalForPlanning) {
@@ -663,7 +624,7 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Spawn a planning (Craft, Lead) group for a goal that has no tasks yet.
+	 * Spawn a planning (Planner, Leader) group for a goal that has no tasks yet.
 	 * Creates a planning task, increments planning_attempts, and starts the group.
 	 */
 	private async spawnPlanningGroup(goal: RoomGoal): Promise<void> {
@@ -681,9 +642,9 @@ export class RoomRuntime {
 		// Increment planning attempts BEFORE spawning (counts attempts, not outcomes)
 		await this.goalManager.incrementPlanningAttempts(goal.id);
 
-		// Build create_draft_task callback for the planning Craft agent MCP tool
+		// Build create_draft_task callback for the Planner agent MCP tool
 		const createDraftTask = async (
-			params: PlanningCraftCreateTaskParams
+			params: PlannerCreateTaskParams
 		): Promise<{ id: string; title: string }> => {
 			const task = await this.taskManager.createTask({
 				title: params.title,
@@ -692,6 +653,7 @@ export class RoomRuntime {
 				taskType: 'coding', // default for planning-created tasks
 				status: 'draft',
 				createdByTaskId: planningTask.id,
+				assignedAgent: params.agent,
 			});
 			// Link the draft task to the goal so it appears in the room
 			await this.goalManager.linkTaskToGoal(goal.id, task.id);
@@ -699,24 +661,49 @@ export class RoomRuntime {
 			return { id: task.id, title: task.title };
 		};
 
+		// Build update/remove callbacks for plan polishing
+		const updateDraftTask = async (
+			taskId: string,
+			updates: {
+				title?: string;
+				description?: string;
+				priority?: TaskPriority;
+				assignedAgent?: AgentType;
+			}
+		): Promise<{ id: string; title: string }> => {
+			return this.taskManager.updateDraftTask(taskId, updates);
+		};
+
+		const removeDraftTask = async (taskId: string): Promise<boolean> => {
+			return this.taskManager.removeDraftTask(taskId);
+		};
+
+		// Build WorkerConfig for the Planner agent
+		const workerConfig: WorkerConfig = {
+			role: 'planner',
+			initFactory: (workerSessionId) =>
+				createPlannerAgentInit({
+					task: planningTask,
+					goal,
+					room: this.room,
+					sessionId: workerSessionId,
+					workspacePath: this.taskGroupManager.workspacePath,
+					model: this.taskGroupManager.model,
+					createDraftTask,
+					updateDraftTask,
+					removeDraftTask,
+				}),
+		};
+
 		// Spawn the planning group directly (bypasses the tick queue)
 		const group = await this.taskGroupManager.spawn(
 			planningTask,
 			goal,
-			(groupId, state) => this.onCraftTerminalState(groupId, state),
-			(groupId, state) => this.onLeadTerminalState(groupId, state),
-			(groupId) => this.createLeadCallbacks(groupId),
-			// Planning Craft agent init factory (overrides default coding agent)
-			(craftSessionId) =>
-				createPlanningCraftAgentInit({
-					task: planningTask,
-					goal,
-					room: this.room,
-					sessionId: craftSessionId,
-					workspacePath: this.taskGroupManager.workspacePath,
-					model: this.taskGroupManager.model,
-					createDraftTask,
-				})
+			(groupId, state) => this.onWorkerTerminalState(groupId, state),
+			(groupId, state) => this.onLeaderTerminalState(groupId, state),
+			(groupId) => this.createLeaderCallbacks(groupId),
+			workerConfig,
+			'plan_review'
 		);
 
 		this.setupMirroring(group);
@@ -726,25 +713,73 @@ export class RoomRuntime {
 		);
 	}
 
+	/**
+	 * Spawn an execution (Coder/General, Leader) group for a task.
+	 * Reads task.assignedAgent to pick the appropriate worker factory.
+	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
 		// Find the goal linked to this task
 		const goals = await this.goalManager.getGoalsForTask(task.id);
 		const goal = goals[0] ?? (await this.goalManager.getNextGoal());
 		if (!goal) return;
 
+		// Get summaries of previously completed tasks for context
+		const completedTasks = await this.taskManager.listTasks({ status: 'completed' });
+		const goalLinkedIds = new Set(goal.linkedTaskIds ?? []);
+		const previousTaskSummaries = completedTasks
+			.filter((t) => goalLinkedIds.has(t.id) && t.id !== task.id)
+			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);
+
+		// Determine worker config based on assigned agent type
+		const agentType = task.assignedAgent ?? 'coder';
+		let workerConfig: WorkerConfig;
+
+		if (agentType === 'general') {
+			workerConfig = {
+				role: 'general',
+				initFactory: (workerSessionId) =>
+					createGeneralAgentInit({
+						task,
+						goal,
+						room: this.room,
+						sessionId: workerSessionId,
+						workspacePath: this.taskGroupManager.workspacePath,
+						model: this.taskGroupManager.model,
+						previousTaskSummaries,
+					}),
+			};
+		} else {
+			// Default to coder
+			workerConfig = {
+				role: 'coder',
+				initFactory: (workerSessionId) =>
+					createCoderAgentInit({
+						task,
+						goal,
+						room: this.room,
+						sessionId: workerSessionId,
+						workspacePath: this.taskGroupManager.workspacePath,
+						model: this.taskGroupManager.model,
+						previousTaskSummaries,
+					}),
+			};
+		}
+
 		const group = await this.taskGroupManager.spawn(
 			task,
 			goal,
-			(groupId, state) => this.onCraftTerminalState(groupId, state),
-			(groupId, state) => this.onLeadTerminalState(groupId, state),
-			(groupId) => this.createLeadCallbacks(groupId)
+			(groupId, state) => this.onWorkerTerminalState(groupId, state),
+			(groupId, state) => this.onLeaderTerminalState(groupId, state),
+			(groupId) => this.createLeaderCallbacks(groupId),
+			workerConfig,
+			'code_review'
 		);
 
 		this.setupMirroring(group);
 	}
 
 	// =========================================================================
-	// Phase 2c: Draft task promotion
+	// Draft task promotion
 	// =========================================================================
 
 	/**
