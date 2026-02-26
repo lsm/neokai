@@ -178,6 +178,14 @@ export class TaskManager {
 	}
 
 	/**
+	 * Promote all draft tasks created by a planning task to pending.
+	 * Called when a planning task completes so its children enter the execution queue.
+	 */
+	async promoteDraftTasks(creatorTaskId: string): Promise<number> {
+		return this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+	}
+
+	/**
 	 * Delete task
 	 */
 	async deleteTask(taskId: string): Promise<boolean> {

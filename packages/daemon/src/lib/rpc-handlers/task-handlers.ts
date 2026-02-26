@@ -21,6 +21,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/room-manager';
 import { TaskManager } from '../room';
+import { SessionGroupRepository } from '../room/session-group-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
@@ -329,5 +330,37 @@ export function setupTaskHandlers(
 		emitRoomOverview(params.roomId);
 
 		return { success: deleted };
+	});
+
+	// task.getPair - Get the active session group (Craft + Lead sessions) for a task
+	messageHub.onRequest('task.getPair', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const group = groupRepo.getGroupByTaskId(params.taskId);
+
+		if (!group) {
+			return { pair: null };
+		}
+
+		return {
+			pair: {
+				id: group.id,
+				taskId: group.taskId,
+				craftSessionId: group.craftSessionId,
+				leadSessionId: group.leadSessionId,
+				state: group.state,
+				feedbackIteration: group.feedbackIteration,
+				createdAt: group.createdAt,
+				completedAt: group.completedAt,
+			},
+		};
 	});
 }

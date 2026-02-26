@@ -16,11 +16,14 @@ import type { SessionManager } from '../session-manager';
 import type { SessionFactory } from './task-pair-manager';
 import { RoomRuntime } from './room-runtime';
 import { SessionObserver } from './session-observer';
-import { TaskPairRepository } from './task-pair-repository';
+import { SessionGroupRepository } from './session-group-repository';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
+import { ConversationSessionWriter } from './conversation-session';
+import { TurnTracker } from './turn-tracker';
 import { AgentSession } from '../agent/agent-session';
 import { createRoomAgentMcpServer } from './room-agent-tools';
+import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from './room-manager';
 import { Logger } from '../logger';
@@ -99,29 +102,37 @@ export class RoomRuntimeService {
 		if (existing) return existing;
 
 		const rawDb = this.ctx.db.getDatabase();
-		const taskPairRepo = new TaskPairRepository(rawDb);
+		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, room.id);
 		const goalManager = new GoalManager(rawDb, room.id);
+		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
+		const convWriter = new ConversationSessionWriter(rawDb, this.ctx.messageHub);
+		const turnTracker = new TurnTracker();
 
 		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
 
 		const runtime = new RoomRuntime({
 			room,
-			taskPairRepo,
+			groupRepo,
 			sessionObserver: observer,
 			taskManager,
 			goalManager,
 			sessionFactory,
 			workspacePath,
 			model: this.ctx.defaultModel,
+			getCraftMessages: (sessionId, afterMessageId) =>
+				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
+			daemonHub: this.ctx.daemonHub,
+			convWriter,
+			turnTracker,
 		});
 
 		this.runtimes.set(room.id, runtime);
 		this.observers.set(room.id, observer);
 
-		this.setupRoomAgentSession(room, taskPairRepo, taskManager, goalManager);
+		this.setupRoomAgentSession(room, groupRepo, taskManager, goalManager);
 		runtime.start();
 
 		return runtime;
@@ -129,7 +140,7 @@ export class RoomRuntimeService {
 
 	private setupRoomAgentSession(
 		room: Room,
-		taskPairRepo: TaskPairRepository,
+		groupRepo: SessionGroupRepository,
 		taskManager: TaskManager,
 		goalManager: GoalManager
 	): void {
@@ -138,7 +149,7 @@ export class RoomRuntimeService {
 			roomId: room.id,
 			goalManager,
 			taskManager,
-			taskPairRepo,
+			groupRepo,
 		}) as unknown as McpServerConfig;
 
 		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate
@@ -202,7 +213,7 @@ export class RoomRuntimeService {
 		observer: SessionObserver
 	): Promise<void> {
 		const rawDb = this.ctx.db.getDatabase();
-		const taskPairRepo = new TaskPairRepository(rawDb);
+		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, roomId);
 
 		const checker: SessionStateChecker = {
@@ -215,7 +226,7 @@ export class RoomRuntimeService {
 		try {
 			const result = await recoverRuntime(
 				roomId,
-				taskPairRepo,
+				groupRepo,
 				taskManager,
 				observer,
 				checker,

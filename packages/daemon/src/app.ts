@@ -143,7 +143,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		eventBus // FIX: Listens to events instead of being called directly
+		eventBus, // FIX: Listens to events instead of being called directly
+		db
 	);
 
 	// Initialize GitHub service if configured

@@ -2,18 +2,18 @@
  * Runtime Recovery - Restores room runtime state after daemon restart
  *
  * On startup:
- * 1. Find all in-progress tasks with active pairs
- * 2. For each pair, check session existence and state
+ * 1. Find all in-progress tasks with active groups
+ * 2. For each group, check session existence and state
  * 3. Re-attach observers for active sessions
- * 4. Fail pairs with lost sessions
+ * 4. Fail groups with lost sessions
  * 5. Resume tick loop
  *
  * Key insight: Recovery is proactive - checks current state before subscribing
- * to future events, so pairs that completed right before crash are processed
+ * to future events, so groups that completed right before crash are processed
  * immediately rather than waiting for the safety net timer.
  */
 
-import type { TaskPairRepository, TaskPair } from './task-pair-repository';
+import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
 import type { SessionObserver, TerminalState } from './session-observer';
 import type { TaskManager } from './task-manager';
 import type { RoomRuntime } from './room-runtime';
@@ -37,12 +37,12 @@ export interface RecoveryResult {
 /**
  * Recover room runtime state after daemon restart.
  *
- * Scans active pairs and either re-attaches observers or fails
- * pairs with lost sessions.
+ * Scans active groups and either re-attaches observers or fails
+ * groups with lost sessions.
  */
 export async function recoverRuntime(
 	roomId: string,
-	taskPairRepo: TaskPairRepository,
+	groupRepo: SessionGroupRepository,
 	taskManager: TaskManager,
 	observer: SessionObserver,
 	sessionChecker: SessionStateChecker,
@@ -55,17 +55,17 @@ export async function recoverRuntime(
 		immediateTerminals: 0,
 	};
 
-	// Find all active pairs for this room
-	const activePairs = taskPairRepo.getActivePairs(roomId);
+	// Find all active groups for this room
+	const activeGroups = groupRepo.getActiveGroups(roomId);
 
-	for (const pair of activePairs) {
+	for (const group of activeGroups) {
 		result.recoveredPairs++;
 
-		switch (pair.pairState) {
+		switch (group.state) {
 			case 'awaiting_craft':
 				await recoverAwaitingCraft(
-					pair,
-					taskPairRepo,
+					group,
+					groupRepo,
 					taskManager,
 					observer,
 					sessionChecker,
@@ -76,8 +76,8 @@ export async function recoverRuntime(
 
 			case 'awaiting_lead':
 				await recoverAwaitingLead(
-					pair,
-					taskPairRepo,
+					group,
+					groupRepo,
 					taskManager,
 					observer,
 					sessionChecker,
@@ -97,89 +97,89 @@ export async function recoverRuntime(
 }
 
 async function recoverAwaitingCraft(
-	pair: TaskPair,
-	taskPairRepo: TaskPairRepository,
+	group: SessionGroup,
+	groupRepo: SessionGroupRepository,
 	taskManager: TaskManager,
 	observer: SessionObserver,
 	sessionChecker: SessionStateChecker,
 	runtime: RoomRuntime,
 	result: RecoveryResult
 ): Promise<void> {
-	if (!sessionChecker.sessionExists(pair.craftSessionId)) {
-		// Session lost - fail the pair and task
-		await failPairAndTask(pair, taskPairRepo, taskManager, 'Craft session lost during restart');
+	if (!sessionChecker.sessionExists(group.craftSessionId)) {
+		// Session lost - fail the group and task
+		await failGroupAndTask(group, groupRepo, taskManager, 'Craft session lost during restart');
 		result.failedPairs++;
 		return;
 	}
 
-	if (sessionChecker.isTerminalState(pair.craftSessionId)) {
+	if (sessionChecker.isTerminalState(group.craftSessionId)) {
 		// Already terminal - process immediately
 		result.immediateTerminals++;
-		await runtime.onCraftTerminalState(pair.id, {
-			sessionId: pair.craftSessionId,
+		await runtime.onCraftTerminalState(group.id, {
+			sessionId: group.craftSessionId,
 			kind: 'completed',
 		});
 	} else {
 		// Still active - observe for future terminal state
-		observer.observe(pair.craftSessionId, (state: TerminalState) => {
-			runtime.onCraftTerminalState(pair.id, state);
+		observer.observe(group.craftSessionId, (state: TerminalState) => {
+			runtime.onCraftTerminalState(group.id, state);
 		});
 		result.reattachedObservers++;
 	}
 
 	// Also observe Lead for when it becomes active
-	if (sessionChecker.sessionExists(pair.leadSessionId)) {
-		observer.observe(pair.leadSessionId, (state: TerminalState) => {
-			runtime.onLeadTerminalState(pair.id, state);
+	if (sessionChecker.sessionExists(group.leadSessionId)) {
+		observer.observe(group.leadSessionId, (state: TerminalState) => {
+			runtime.onLeadTerminalState(group.id, state);
 		});
 	}
 }
 
 async function recoverAwaitingLead(
-	pair: TaskPair,
-	taskPairRepo: TaskPairRepository,
+	group: SessionGroup,
+	groupRepo: SessionGroupRepository,
 	taskManager: TaskManager,
 	observer: SessionObserver,
 	sessionChecker: SessionStateChecker,
 	runtime: RoomRuntime,
 	result: RecoveryResult
 ): Promise<void> {
-	if (!sessionChecker.sessionExists(pair.leadSessionId)) {
-		// Session lost - fail the pair and task
-		await failPairAndTask(pair, taskPairRepo, taskManager, 'Lead session lost during restart');
+	if (!sessionChecker.sessionExists(group.leadSessionId)) {
+		// Session lost - fail the group and task
+		await failGroupAndTask(group, groupRepo, taskManager, 'Lead session lost during restart');
 		result.failedPairs++;
 		return;
 	}
 
-	if (sessionChecker.isTerminalState(pair.leadSessionId)) {
+	if (sessionChecker.isTerminalState(group.leadSessionId)) {
 		// Already terminal - process immediately
 		result.immediateTerminals++;
-		await runtime.onLeadTerminalState(pair.id, {
-			sessionId: pair.leadSessionId,
+		await runtime.onLeadTerminalState(group.id, {
+			sessionId: group.leadSessionId,
 			kind: 'completed',
 		});
 	} else {
 		// Still active - observe for future terminal state
-		observer.observe(pair.leadSessionId, (state: TerminalState) => {
-			runtime.onLeadTerminalState(pair.id, state);
+		observer.observe(group.leadSessionId, (state: TerminalState) => {
+			runtime.onLeadTerminalState(group.id, state);
 		});
 		result.reattachedObservers++;
 	}
 
 	// Also observe Craft for if it becomes active again
-	if (sessionChecker.sessionExists(pair.craftSessionId)) {
-		observer.observe(pair.craftSessionId, (state: TerminalState) => {
-			runtime.onCraftTerminalState(pair.id, state);
+	if (sessionChecker.sessionExists(group.craftSessionId)) {
+		observer.observe(group.craftSessionId, (state: TerminalState) => {
+			runtime.onCraftTerminalState(group.id, state);
 		});
 	}
 }
 
-async function failPairAndTask(
-	pair: TaskPair,
-	taskPairRepo: TaskPairRepository,
+async function failGroupAndTask(
+	group: SessionGroup,
+	groupRepo: SessionGroupRepository,
 	taskManager: TaskManager,
 	reason: string
 ): Promise<void> {
-	taskPairRepo.failPair(pair.id, pair.version);
-	await taskManager.failTask(pair.taskId, reason);
+	groupRepo.failGroup(group.id, group.version);
+	await taskManager.failTask(group.taskId, reason);
 }
