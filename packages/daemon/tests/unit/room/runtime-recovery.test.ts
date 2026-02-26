@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { recoverRuntime, type SessionStateChecker } from '../../../src/lib/room/runtime-recovery';
 import { RoomRuntime } from '../../../src/lib/room/room-runtime';
-import { TaskPairRepository } from '../../../src/lib/room/task-pair-repository';
+import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
 import { SessionObserver } from '../../../src/lib/room/session-observer';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
@@ -50,7 +50,7 @@ function makeRoom(): Room {
 
 describe('Runtime Recovery', () => {
 	let db: Database;
-	let taskPairRepo: TaskPairRepository;
+	let groupRepo: SessionGroupRepository;
 	let observer: SessionObserver;
 	let taskManager: TaskManager;
 	let goalManager: GoalManager;
@@ -77,28 +77,41 @@ describe('Runtime Recovery', () => {
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER,
 				current_step TEXT, result TEXT, error TEXT,
 				depends_on TEXT DEFAULT '[]',
+				task_type TEXT DEFAULT 'coding',
+				created_by_task_id TEXT,
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
 			);
-			CREATE TABLE task_pairs (
-				id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
-				craft_session_id TEXT NOT NULL, lead_session_id TEXT NOT NULL,
-				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
-				feedback_iteration INTEGER NOT NULL DEFAULT 0,
-				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
-				last_processed_lead_turn_id TEXT,
-				last_forwarded_message_id TEXT,
-				active_work_started_at INTEGER,
-				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
-				hibernated_at INTEGER,
+			CREATE TABLE session_groups (
+				id TEXT PRIMARY KEY,
+				group_type TEXT NOT NULL DEFAULT 'task_pair',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_craft',
 				version INTEGER NOT NULL DEFAULT 0,
-				tokens_used INTEGER NOT NULL DEFAULT 0,
-				created_at INTEGER NOT NULL, completed_at INTEGER
+				metadata TEXT NOT NULL DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				completed_at INTEGER
+			);
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				joined_at INTEGER NOT NULL,
+				PRIMARY KEY (group_id, role)
+			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				content TEXT NOT NULL,
+				created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		const mockHub = createMockDaemonHub();
-		taskPairRepo = new TaskPairRepository(db as never);
+		groupRepo = new SessionGroupRepository(db as never);
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
 		taskManager = new TaskManager(db as never, 'room-1');
 		goalManager = new GoalManager(db as never, 'room-1');
@@ -106,7 +119,7 @@ describe('Runtime Recovery', () => {
 
 		runtime = new RoomRuntime({
 			room: makeRoom(),
-			taskPairRepo,
+			groupRepo,
 			sessionObserver: observer,
 			taskManager,
 			goalManager,
@@ -121,11 +134,11 @@ describe('Runtime Recovery', () => {
 		db.close();
 	});
 
-	/** Helper: create a task and pair directly in DB */
-	function createTaskAndPair(
-		pairState: string,
+	/** Helper: create a task and group directly in DB */
+	function createTaskAndGroup(
+		groupState: string,
 		taskStatus = 'in_progress'
-	): { taskId: string; pair: ReturnType<typeof taskPairRepo.getPair> } {
+	): { taskId: string; group: ReturnType<typeof groupRepo.getGroup> } {
 		const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 		const now = Date.now();
 		db.prepare(
@@ -133,15 +146,15 @@ describe('Runtime Recovery', () => {
 			 VALUES (?, ?, ?, ?, ?, ?)`
 		).run(taskId, 'room-1', 'Test task', 'Description', taskStatus, now);
 
-		const pair = taskPairRepo.createPair(taskId, `craft:${taskId}`, `lead:${taskId}`);
-		if (pairState !== 'awaiting_craft') {
-			taskPairRepo.updatePairState(pair.id, pairState as never, pair.version);
+		const group = groupRepo.createGroup(taskId, `craft:${taskId}`, `lead:${taskId}`);
+		if (groupState !== 'awaiting_craft') {
+			groupRepo.updateGroupState(group.id, groupState as never, group.version);
 		}
 
-		return { taskId, pair: taskPairRepo.getPair(pair.id) };
+		return { taskId, group: groupRepo.getGroup(group.id) };
 	}
 
-	it('should return empty result when no active pairs', async () => {
+	it('should return empty result when no active groups', async () => {
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
 			isTerminalState: () => false,
@@ -149,7 +162,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -160,8 +173,8 @@ describe('Runtime Recovery', () => {
 		expect(result.failedPairs).toBe(0);
 	});
 
-	it('should fail pairs with lost craft sessions', async () => {
-		const { taskId, pair } = createTaskAndPair('awaiting_craft');
+	it('should fail groups with lost craft sessions', async () => {
+		const { taskId, group } = createTaskAndGroup('awaiting_craft');
 
 		const checker: SessionStateChecker = {
 			sessionExists: (id) => !id.startsWith('craft:'),
@@ -170,7 +183,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -178,15 +191,15 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.failedPairs).toBe(1);
-		const updatedPair = taskPairRepo.getPair(pair!.id);
-		expect(updatedPair!.pairState).toBe('failed');
+		const updatedGroup = groupRepo.getGroup(group!.id);
+		expect(updatedGroup!.state).toBe('failed');
 
 		const task = await taskManager.getTask(taskId);
 		expect(task!.status).toBe('failed');
 	});
 
-	it('should fail pairs with lost lead sessions', async () => {
-		const { taskId, pair } = createTaskAndPair('awaiting_lead');
+	it('should fail groups with lost lead sessions', async () => {
+		const { taskId, group } = createTaskAndGroup('awaiting_lead');
 
 		const checker: SessionStateChecker = {
 			sessionExists: (id) => !id.startsWith('lead:'),
@@ -195,7 +208,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -203,12 +216,15 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.failedPairs).toBe(1);
-		const updatedPair = taskPairRepo.getPair(pair!.id);
-		expect(updatedPair!.pairState).toBe('failed');
+		const updatedGroup = groupRepo.getGroup(group!.id);
+		expect(updatedGroup!.state).toBe('failed');
+
+		const task = await taskManager.getTask(taskId);
+		expect(task!.status).toBe('failed');
 	});
 
 	it('should reattach observers for active craft sessions', async () => {
-		const { pair } = createTaskAndPair('awaiting_craft');
+		const { group } = createTaskAndGroup('awaiting_craft');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -217,7 +233,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -225,11 +241,11 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.reattachedObservers).toBe(1);
-		expect(observer.isObserving(pair!.craftSessionId)).toBe(true);
+		expect(observer.isObserving(group!.craftSessionId)).toBe(true);
 	});
 
 	it('should reattach observers for active lead sessions', async () => {
-		const { pair } = createTaskAndPair('awaiting_lead');
+		const { group } = createTaskAndGroup('awaiting_lead');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -238,7 +254,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -246,11 +262,11 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.reattachedObservers).toBe(1);
-		expect(observer.isObserving(pair!.leadSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leadSessionId)).toBe(true);
 	});
 
 	it('should process immediately terminal craft sessions', async () => {
-		const { pair } = createTaskAndPair('awaiting_craft');
+		const { group } = createTaskAndGroup('awaiting_craft');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -259,7 +275,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -267,13 +283,13 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.immediateTerminals).toBe(1);
-		// Pair should transition to awaiting_lead (craft output routed to lead)
-		const updated = taskPairRepo.getPair(pair!.id);
-		expect(updated!.pairState).toBe('awaiting_lead');
+		// Group should transition to awaiting_lead (craft output routed to lead)
+		const updated = groupRepo.getGroup(group!.id);
+		expect(updated!.state).toBe('awaiting_lead');
 	});
 
-	it('should skip awaiting_human pairs', async () => {
-		createTaskAndPair('awaiting_human');
+	it('should skip awaiting_human groups', async () => {
+		createTaskAndGroup('awaiting_human');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -282,7 +298,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -294,8 +310,8 @@ describe('Runtime Recovery', () => {
 		expect(result.reattachedObservers).toBe(0);
 	});
 
-	it('should skip hibernated pairs', async () => {
-		createTaskAndPair('hibernated');
+	it('should skip hibernated groups', async () => {
+		createTaskAndGroup('hibernated');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -304,7 +320,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -316,10 +332,10 @@ describe('Runtime Recovery', () => {
 		expect(result.reattachedObservers).toBe(0);
 	});
 
-	it('should handle multiple pairs', async () => {
-		createTaskAndPair('awaiting_craft');
-		createTaskAndPair('awaiting_lead');
-		createTaskAndPair('awaiting_human');
+	it('should handle multiple groups', async () => {
+		createTaskAndGroup('awaiting_craft');
+		createTaskAndGroup('awaiting_lead');
+		createTaskAndGroup('awaiting_human');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
@@ -328,7 +344,7 @@ describe('Runtime Recovery', () => {
 
 		const result = await recoverRuntime(
 			'room-1',
-			taskPairRepo,
+			groupRepo,
 			taskManager,
 			observer,
 			checker,
@@ -336,7 +352,7 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.recoveredPairs).toBe(3);
-		// 2 pairs need observers (awaiting_craft + awaiting_lead)
+		// 2 groups need observers (awaiting_craft + awaiting_lead)
 		expect(result.reattachedObservers).toBe(2);
 	});
 });

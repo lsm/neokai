@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { RoomRuntime } from '../../../src/lib/room/room-runtime';
-import { TaskPairRepository } from '../../../src/lib/room/task-pair-repository';
+import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
 import { SessionObserver } from '../../../src/lib/room/session-observer';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
@@ -68,7 +68,7 @@ describe('RoomRuntime', () => {
 	let runtime: RoomRuntime;
 	let taskManager: TaskManager;
 	let goalManager: GoalManager;
-	let taskPairRepo: TaskPairRepository;
+	let groupRepo: SessionGroupRepository;
 	let sessionFactory: ReturnType<typeof createMockSessionFactory>;
 	let observer: SessionObserver;
 
@@ -84,7 +84,8 @@ describe('RoomRuntime', () => {
 				description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER DEFAULT 0,
 				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
-				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -92,28 +93,34 @@ describe('RoomRuntime', () => {
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER,
 				current_step TEXT, result TEXT, error TEXT,
 				depends_on TEXT DEFAULT '[]',
+				task_type TEXT DEFAULT 'coding',
+				created_by_task_id TEXT,
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
 			);
-			CREATE TABLE task_pairs (
-				id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
-				craft_session_id TEXT NOT NULL, lead_session_id TEXT NOT NULL,
-				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
-				feedback_iteration INTEGER NOT NULL DEFAULT 0,
-				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
-				last_processed_lead_turn_id TEXT,
-				last_forwarded_message_id TEXT,
-				active_work_started_at INTEGER,
-				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
-				hibernated_at INTEGER,
+			CREATE TABLE session_groups (
+				id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task_pair',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_craft',
 				version INTEGER NOT NULL DEFAULT 0,
-				tokens_used INTEGER NOT NULL DEFAULT 0,
+				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL, completed_at INTEGER
+			);
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
+				PRIMARY KEY (group_id, role)
+			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT, role TEXT NOT NULL, message_type TEXT NOT NULL,
+				content TEXT NOT NULL, created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		const mockHub = createMockDaemonHub();
-		taskPairRepo = new TaskPairRepository(db as never);
+		groupRepo = new SessionGroupRepository(db as never);
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
 		taskManager = new TaskManager(db as never, 'room-1');
 		goalManager = new GoalManager(db as never, 'room-1');
@@ -121,7 +128,7 @@ describe('RoomRuntime', () => {
 
 		runtime = new RoomRuntime({
 			room: makeRoom(),
-			taskPairRepo,
+			groupRepo,
 			sessionObserver: observer,
 			taskManager,
 			goalManager,
@@ -181,11 +188,11 @@ describe('RoomRuntime', () => {
 			await createGoalAndTask();
 			await runtime.tick();
 
-			// No pairs should be spawned since runtime is paused
+			// No groups should be spawned since runtime is paused
 			expect(sessionFactory.calls).toHaveLength(0);
 		});
 
-		it('should spawn a pair for pending task when running', async () => {
+		it('should spawn a group for pending task when running', async () => {
 			const { task } = await createGoalAndTask();
 			runtime.start();
 			await runtime.tick();
@@ -218,14 +225,14 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			// Only 1 pair should be spawned (maxConcurrentPairs = 1)
+			// Only 1 group should be spawned (maxConcurrentPairs = 1)
 			const craftCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'craft'
 			);
 			expect(craftCalls).toHaveLength(1);
 		});
 
-		it('should not spawn pair when no pending tasks', async () => {
+		it('should not spawn group when no pending tasks', async () => {
 			runtime.start();
 			await runtime.tick();
 
@@ -237,11 +244,11 @@ describe('RoomRuntime', () => {
 			runtime.start();
 
 			// Run two ticks concurrently
-			const [result1, result2] = await Promise.all([runtime.tick(), runtime.tick()]);
+			await Promise.all([runtime.tick(), runtime.tick()]);
 
-			// Only one pair should be spawned
-			const activePairs = taskPairRepo.getActivePairs('room-1');
-			expect(activePairs).toHaveLength(1);
+			// Only one group should be spawned
+			const activeGroups = groupRepo.getActiveGroups('room-1');
+			expect(activeGroups).toHaveLength(1);
 		});
 	});
 
@@ -251,18 +258,18 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			expect(pairs).toHaveLength(1);
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			const group = groups[0];
 
 			// Route craft output to lead first
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
 			// Now handle complete_task from Lead
-			const result = await runtime.handleLeadTool(pair.id, 'complete_task', {
+			const result = await runtime.handleLeadTool(group.id, 'complete_task', {
 				summary: 'Health endpoint added',
 			});
 
@@ -279,16 +286,16 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
 			// Route to lead
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
-			const result = await runtime.handleLeadTool(pair.id, 'fail_task', {
+			const result = await runtime.handleLeadTool(group.id, 'fail_task', {
 				reason: 'Cannot be done',
 			});
 
@@ -300,20 +307,20 @@ describe('RoomRuntime', () => {
 		});
 
 		it('should handle send_to_craft', async () => {
-			const { task } = await createGoalAndTask();
+			await createGoalAndTask();
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
 			// Route craft to lead
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
-			const result = await runtime.handleLeadTool(pair.id, 'send_to_craft', {
+			const result = await runtime.handleLeadTool(group.id, 'send_to_craft', {
 				message: 'Fix the tests',
 			});
 
@@ -327,16 +334,16 @@ describe('RoomRuntime', () => {
 			expect(injectCalls.length).toBeGreaterThan(0);
 		});
 
-		it('should reject if pair not in awaiting_lead state', async () => {
+		it('should reject if group not in awaiting_lead state', async () => {
 			await createGoalAndTask();
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
-			// Pair is in awaiting_craft (haven't routed to lead yet)
-			const result = await runtime.handleLeadTool(pair.id, 'complete_task', {
+			// Group is in awaiting_craft (haven't routed to lead yet)
+			const result = await runtime.handleLeadTool(group.id, 'complete_task', {
 				summary: 'Done',
 			});
 
@@ -345,7 +352,7 @@ describe('RoomRuntime', () => {
 			expect(parsed.error).toContain('awaiting_lead');
 		});
 
-		it('should reject for non-existent pair', async () => {
+		it('should reject for non-existent group', async () => {
 			const result = await runtime.handleLeadTool('nonexistent', 'complete_task', {
 				summary: 'Done',
 			});
@@ -360,42 +367,42 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
-			// Pair should transition to awaiting_lead
-			const updated = taskPairRepo.getPair(pair.id);
-			expect(updated!.pairState).toBe('awaiting_lead');
+			// Group should transition to awaiting_lead
+			const updated = groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_lead');
 		});
 
-		it('should ignore if pair not in awaiting_craft', async () => {
+		it('should ignore if group not in awaiting_craft', async () => {
 			await createGoalAndTask();
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
 			// Route to lead first
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
 			// Try again - should be idempotent (now in awaiting_lead)
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
 			// Still awaiting_lead, no error
-			const updated = taskPairRepo.getPair(pair.id);
-			expect(updated!.pairState).toBe('awaiting_lead');
+			const updated = groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_lead');
 		});
 	});
 
@@ -404,30 +411,30 @@ describe('RoomRuntime', () => {
 			const { task } = await createGoalAndTask();
 			runtime.start();
 
-			// Step 1: tick spawns the pair
+			// Step 1: tick spawns the group
 			await runtime.tick();
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			expect(pairs).toHaveLength(1);
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			const group = groups[0];
 
 			// Step 2: Craft finishes — runtime routes output to Lead
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_lead');
 
 			// Step 3: Lead reviews and approves
-			const result = await runtime.handleLeadTool(pair.id, 'complete_task', {
+			const result = await runtime.handleLeadTool(group.id, 'complete_task', {
 				summary: 'Endpoint added successfully',
 			});
 			expect(JSON.parse(result.content[0].text).success).toBe(true);
 
-			// Pair and task are both done
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+			// Group and task are both done
+			expect(groupRepo.getGroup(group.id)!.state).toBe('completed');
 			expect((await taskManager.getTask(task.id))!.status).toBe('completed');
 
-			// Tick should not spawn a new pair (no more pending tasks)
+			// Tick should not spawn a new group (no more pending tasks)
 			sessionFactory.calls.length = 0;
 			await runtime.tick();
 			expect(sessionFactory.calls.filter((c) => c.method === 'createAndStartSession')).toHaveLength(
@@ -441,48 +448,48 @@ describe('RoomRuntime', () => {
 
 			// Spawn
 			await runtime.tick();
-			const pair = taskPairRepo.getActivePairs('room-1')[0];
-			expect(pair.feedbackIteration).toBe(0);
+			const group = groupRepo.getActiveGroups('room-1')[0];
+			expect(group.feedbackIteration).toBe(0);
 
 			// Iteration 1: Craft done → Lead sends feedback
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_lead');
 
-			await runtime.handleLeadTool(pair.id, 'send_to_craft', {
+			await runtime.handleLeadTool(group.id, 'send_to_craft', {
 				message: 'Add error handling to the endpoint',
 			});
 
-			// Pair is back to awaiting_craft with iteration bumped
-			const afterFeedback = taskPairRepo.getPair(pair.id)!;
-			expect(afterFeedback.pairState).toBe('awaiting_craft');
+			// Group is back to awaiting_craft with iteration bumped
+			const afterFeedback = groupRepo.getGroup(group.id)!;
+			expect(afterFeedback.state).toBe('awaiting_craft');
 			expect(afterFeedback.feedbackIteration).toBe(1);
 
 			// Feedback message was injected into Craft
 			const feedbackInjects = sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === pair.craftSessionId &&
+					c.args[0] === group.craftSessionId &&
 					(c.args[1] as string).includes('LEAD FEEDBACK')
 			);
 			expect(feedbackInjects).toHaveLength(1);
 
 			// Iteration 2: Craft finishes again → Lead completes
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_lead');
 
-			const result = await runtime.handleLeadTool(pair.id, 'complete_task', {
+			const result = await runtime.handleLeadTool(group.id, 'complete_task', {
 				summary: 'Error handling added',
 			});
 			expect(JSON.parse(result.content[0].text).success).toBe(true);
 
 			// Final state
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+			expect(groupRepo.getGroup(group.id)!.state).toBe('completed');
 			const finalTask = await taskManager.getTask(task.id);
 			expect(finalTask!.status).toBe('completed');
 			expect(finalTask!.result).toBe('Error handling added');
@@ -492,66 +499,66 @@ describe('RoomRuntime', () => {
 			await createGoalAndTask();
 			runtime.start();
 			await runtime.tick();
-			const pair = taskPairRepo.getActivePairs('room-1')[0];
+			const group = groupRepo.getActiveGroups('room-1')[0];
 
 			// Iterations 1 and 2: Lead sends feedback each time
 			for (let i = 0; i < 2; i++) {
-				await runtime.onCraftTerminalState(pair.id, {
-					sessionId: pair.craftSessionId,
+				await runtime.onCraftTerminalState(group.id, {
+					sessionId: group.craftSessionId,
 					kind: 'completed',
 				});
-				await runtime.handleLeadTool(pair.id, 'send_to_craft', {
+				await runtime.handleLeadTool(group.id, 'send_to_craft', {
 					message: `Feedback round ${i + 1}`,
 				});
-				expect(taskPairRepo.getPair(pair.id)!.feedbackIteration).toBe(i + 1);
+				expect(groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
 			// Iteration 3: Lead completes
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
-			await runtime.handleLeadTool(pair.id, 'complete_task', { summary: 'All done' });
+			await runtime.handleLeadTool(group.id, 'complete_task', { summary: 'All done' });
 
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
-			expect(taskPairRepo.getPair(pair.id)!.feedbackIteration).toBe(2);
+			expect(groupRepo.getGroup(group.id)!.state).toBe('completed');
+			expect(groupRepo.getGroup(group.id)!.feedbackIteration).toBe(2);
 		});
 
 		it('should reset lead contract violations on each new craft→lead round', async () => {
 			await createGoalAndTask();
 			runtime.start();
 			await runtime.tick();
-			const pair = taskPairRepo.getActivePairs('room-1')[0];
+			const group = groupRepo.getActiveGroups('room-1')[0];
 
 			// Craft done → Lead violates contract once
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
-			await runtime.onLeadTerminalState(pair.id, {
-				sessionId: pair.leadSessionId,
+			await runtime.onLeadTerminalState(group.id, {
+				sessionId: group.leadSessionId,
 				kind: 'completed',
 			});
-			expect(taskPairRepo.getPair(pair.id)!.leadContractViolations).toBe(1);
+			expect(groupRepo.getGroup(group.id)!.leadContractViolations).toBe(1);
 
-			// Lead sends feedback — pair goes back to awaiting_craft, violations stay until next round
-			await runtime.handleLeadTool(pair.id, 'send_to_craft', { message: 'Redo this' });
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_craft');
+			// Lead sends feedback — group goes back to awaiting_craft, violations stay until next round
+			await runtime.handleLeadTool(group.id, 'send_to_craft', { message: 'Redo this' });
+			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_craft');
 
 			// Iteration 2: Craft done → routeCraftToLead resets violations to 0
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
-			expect(taskPairRepo.getPair(pair.id)!.leadContractViolations).toBe(0);
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('awaiting_lead');
+			expect(groupRepo.getGroup(group.id)!.leadContractViolations).toBe(0);
+			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_lead');
 
 			// Lead finishes cleanly
-			await runtime.handleLeadTool(pair.id, 'complete_task', { summary: 'Done' });
-			expect(taskPairRepo.getPair(pair.id)!.pairState).toBe('completed');
+			await runtime.handleLeadTool(group.id, 'complete_task', { summary: 'Done' });
+			expect(groupRepo.getGroup(group.id)!.state).toBe('completed');
 		});
 
-		it('should spawn the next pending task after first pair completes', async () => {
+		it('should spawn the next pending task after first group completes', async () => {
 			// Create two tasks under the same goal
 			const goal = await goalManager.createGoal({ title: 'Sprint 1', description: '' });
 			const task1 = await taskManager.createTask({
@@ -567,18 +574,18 @@ describe('RoomRuntime', () => {
 
 			// Tick 1: picks up task1 (maxConcurrentPairs = 1)
 			await runtime.tick();
-			const pair1 = taskPairRepo.getActivePairs('room-1')[0];
-			expect(pair1).toBeDefined();
+			const group1 = groupRepo.getActiveGroups('room-1')[0];
+			expect(group1).toBeDefined();
 
-			// Complete pair1 directly via pairManager (avoids scheduleTick microtask timing)
-			await runtime.pairManager.completePair(pair1.id, 'Task 1 done');
+			// Complete group1 directly via pairManager (avoids scheduleTick microtask timing)
+			await runtime.pairManager.completePair(group1.id, 'Task 1 done');
 			expect((await taskManager.getTask(task1.id))!.status).toBe('completed');
-			expect(taskPairRepo.getActivePairs('room-1')).toHaveLength(0);
+			expect(groupRepo.getActiveGroups('room-1')).toHaveLength(0);
 
 			// Tick 2: picks up task2 now that slot is free
 			await runtime.tick();
-			expect(taskPairRepo.getActivePairs('room-1')).toHaveLength(1);
-			expect(taskPairRepo.getActivePairs('room-1')[0].id).not.toBe(pair1.id);
+			expect(groupRepo.getActiveGroups('room-1')).toHaveLength(1);
+			expect(groupRepo.getActiveGroups('room-1')[0].id).not.toBe(group1.id);
 			expect((await taskManager.getTask(task2.id))!.status).toBe('in_progress');
 		});
 	});
@@ -589,18 +596,18 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
 			// Route to lead
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
 			// Lead reaches terminal without calling a tool
-			await runtime.onLeadTerminalState(pair.id, {
-				sessionId: pair.leadSessionId,
+			await runtime.onLeadTerminalState(group.id, {
+				sessionId: group.leadSessionId,
 				kind: 'completed',
 			});
 
@@ -608,13 +615,13 @@ describe('RoomRuntime', () => {
 			const nudgeCalls = sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === pair.leadSessionId &&
+					c.args[0] === group.leadSessionId &&
 					(c.args[1] as string).includes('must call exactly one')
 			);
 			expect(nudgeCalls).toHaveLength(1);
 
 			// Violations should be 1
-			const updated = taskPairRepo.getPair(pair.id);
+			const updated = groupRepo.getGroup(group.id);
 			expect(updated!.leadContractViolations).toBe(1);
 		});
 
@@ -623,30 +630,30 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
 			// Route to lead
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
 			// First violation
-			await runtime.onLeadTerminalState(pair.id, {
-				sessionId: pair.leadSessionId,
+			await runtime.onLeadTerminalState(group.id, {
+				sessionId: group.leadSessionId,
 				kind: 'completed',
 			});
 
 			// Second violation
-			await runtime.onLeadTerminalState(pair.id, {
-				sessionId: pair.leadSessionId,
+			await runtime.onLeadTerminalState(group.id, {
+				sessionId: group.leadSessionId,
 				kind: 'completed',
 			});
 
-			// Pair should be awaiting_human
-			const updated = taskPairRepo.getPair(pair.id);
-			expect(updated!.pairState).toBe('awaiting_human');
+			// Group should be awaiting_human
+			const updated = groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_human');
 		});
 
 		it('should not fire if Lead called a tool', async () => {
@@ -654,22 +661,22 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			const pairs = taskPairRepo.getActivePairs('room-1');
-			const pair = pairs[0];
+			const groups = groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
 
 			// Route to lead
-			await runtime.onCraftTerminalState(pair.id, {
-				sessionId: pair.craftSessionId,
+			await runtime.onCraftTerminalState(group.id, {
+				sessionId: group.craftSessionId,
 				kind: 'completed',
 			});
 
 			// Lead calls complete_task (which sets leadCalledToolMap)
-			await runtime.handleLeadTool(pair.id, 'complete_task', { summary: 'Done' });
+			await runtime.handleLeadTool(group.id, 'complete_task', { summary: 'Done' });
 
 			// Lead terminal state should be no-op (tool was called)
-			// Pair is already completed, so this is safe
-			const updated = taskPairRepo.getPair(pair.id);
-			expect(updated!.pairState).toBe('completed');
+			// Group is already completed, so this is safe
+			const updated = groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('completed');
 		});
 	});
 });

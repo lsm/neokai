@@ -55,7 +55,7 @@ export type {
  * - 'lead': Lead agent session (Room Runtime v0.19)
  * - 'lobby': Instance-level agent session
  */
-export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
+export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby' | 'task_conversation';
 
 /**
  * Context for room/lobby sessions

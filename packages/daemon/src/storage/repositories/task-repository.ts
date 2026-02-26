@@ -21,8 +21,8 @@ export class TaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, created_by_task_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -30,13 +30,28 @@ export class TaskRepository {
 			params.roomId,
 			params.title,
 			params.description,
-			'pending',
+			params.status ?? 'pending',
 			params.priority ?? 'normal',
 			JSON.stringify(params.dependsOn ?? []),
+			params.taskType ?? 'coding',
+			params.createdByTaskId ?? null,
 			now
 		);
 
 		return this.getTask(id)!;
+	}
+
+	/**
+	 * Promote draft tasks created by a planning task to pending.
+	 * Called atomically when a planning task's Lead calls complete_task().
+	 */
+	promoteDraftTasksByCreator(createdByTaskId: string): number {
+		const result = this.db
+			.prepare(
+				`UPDATE tasks SET status = 'pending' WHERE created_by_task_id = ? AND status = 'draft'`
+			)
+			.run(createdByTaskId);
+		return result.changes;
 	}
 
 	/**
@@ -182,6 +197,8 @@ export class TaskRepository {
 			description: row.description as string,
 			status: row.status as NeoTask['status'],
 			priority: row.priority as NeoTask['priority'],
+			taskType: ((row.task_type as string | null) ?? 'coding') as NeoTask['taskType'],
+			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,
 			result: (row.result as string | null) ?? undefined,

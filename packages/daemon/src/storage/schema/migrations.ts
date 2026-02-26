@@ -65,8 +65,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 32: v0.19 cleanup - drop old room orchestration tables
 	runMigration32(db);
 
-	// Migration 33: Room Runtime schema - task_pairs, task_messages, room_audit_log tables
+	// Migration 33: Room Runtime schema - session groups, task_messages, room_audit_log tables
 	runMigration33(db);
+
+	// Migration 34: Transition from task_pairs to session_groups
+	runMigration34(db);
 }
 
 /**
@@ -608,6 +611,9 @@ function runMigration32(db: BunDatabase): void {
 			// Legacy/incompatible room schema detected - reset room-domain tables.
 			db.exec(`DROP TABLE IF EXISTS task_messages`);
 			db.exec(`DROP TABLE IF EXISTS task_pairs`);
+			db.exec(`DROP TABLE IF EXISTS session_group_messages`);
+			db.exec(`DROP TABLE IF EXISTS session_group_members`);
+			db.exec(`DROP TABLE IF EXISTS session_groups`);
 			db.exec(`DROP TABLE IF EXISTS room_audit_log`);
 			db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
 			db.exec(`DROP TABLE IF EXISTS prompt_templates`);
@@ -683,7 +689,9 @@ function runMigration32(db: BunDatabase): void {
  * Migration 33: Room Runtime schema
  *
  * Creates tables for the (Craft, Lead) agent pair architecture:
- * - task_pairs: Tracks (Craft, Lead) session pairs per task
+ * - session_groups: Generic multi-agent collaboration groups (replaces task_pairs)
+ * - session_group_members: Craft/Lead session membership
+ * - session_group_messages: Unified message timeline for a group
  * - task_messages: Message queue for inter-agent delivery (stub for MVP)
  * - room_audit_log: Observability for Runtime tick/state changes
  *
@@ -695,32 +703,52 @@ function runMigration32(db: BunDatabase): void {
 function runMigration33(db: BunDatabase): void {
 	// --- New tables ---
 
-	if (!tableExists(db, 'task_pairs')) {
+	if (!tableExists(db, 'session_groups')) {
 		db.exec(`
-			CREATE TABLE task_pairs (
+			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
-				task_id TEXT NOT NULL REFERENCES tasks(id),
-				craft_session_id TEXT NOT NULL,
-				lead_session_id TEXT NOT NULL,
-				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft'
-					CHECK(pair_state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
-				feedback_iteration INTEGER NOT NULL DEFAULT 0,
-				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
-				last_processed_lead_turn_id TEXT,
-				last_forwarded_message_id TEXT,
-				active_work_started_at INTEGER,
-				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
-				hibernated_at INTEGER,
+				group_type TEXT NOT NULL DEFAULT 'task_pair',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_craft'
+					CHECK(state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
 				version INTEGER NOT NULL DEFAULT 0,
-				tokens_used INTEGER NOT NULL DEFAULT 0,
+				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL,
 				completed_at INTEGER
 			);
 
-			CREATE INDEX idx_task_pairs_task ON task_pairs(task_id);
-			CREATE INDEX idx_task_pairs_state ON task_pairs(pair_state);
-			CREATE INDEX idx_task_pairs_craft ON task_pairs(craft_session_id);
-			CREATE INDEX idx_task_pairs_lead ON task_pairs(lead_session_id);
+			CREATE INDEX idx_session_groups_ref ON session_groups(ref_id);
+			CREATE INDEX idx_session_groups_state ON session_groups(state);
+		`);
+	}
+
+	if (!tableExists(db, 'session_group_members')) {
+		db.exec(`
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				joined_at INTEGER NOT NULL,
+				PRIMARY KEY (group_id, role)
+			);
+
+			CREATE INDEX idx_sgm_session ON session_group_members(session_id);
+		`);
+	}
+
+	if (!tableExists(db, 'session_group_messages')) {
+		db.exec(`
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				content TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			);
+
+			CREATE INDEX idx_sgmsg_group ON session_group_messages(group_id, id);
 		`);
 	}
 
@@ -729,7 +757,7 @@ function runMigration33(db: BunDatabase): void {
 			CREATE TABLE task_messages (
 				id TEXT PRIMARY KEY,
 				task_id TEXT NOT NULL REFERENCES tasks(id),
-				pair_id TEXT NOT NULL REFERENCES task_pairs(id),
+				group_id TEXT NOT NULL REFERENCES session_groups(id),
 				from_role TEXT NOT NULL CHECK(from_role IN ('craft', 'lead', 'human')),
 				to_role TEXT NOT NULL CHECK(to_role IN ('craft', 'lead')),
 				to_session_id TEXT NOT NULL,
@@ -742,7 +770,7 @@ function runMigration33(db: BunDatabase): void {
 				delivered_at INTEGER
 			);
 
-			CREATE INDEX idx_task_messages_pair ON task_messages(pair_id, status);
+			CREATE INDEX idx_task_messages_group ON task_messages(group_id, status);
 			CREATE INDEX idx_task_messages_task ON task_messages(task_id);
 		`);
 	}
@@ -790,5 +818,99 @@ function runMigration33(db: BunDatabase): void {
 		if (!tableHasColumn(db, 'rooms', 'config')) {
 			db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
 		}
+	}
+}
+
+/**
+ * Migration 34: Transition from task_pairs to session_groups
+ *
+ * Drops the old task_pairs table (and task_messages with pair_id FK) and
+ * creates session_groups, session_group_members, session_group_messages,
+ * and a new task_messages with group_id FK. No data migration is needed
+ * since task_pairs data is ephemeral runtime state.
+ */
+function runMigration34(db: BunDatabase): void {
+	// Drop old task_pairs if it exists (databases that ran the old migration 33)
+	if (tableExists(db, 'task_pairs')) {
+		db.exec(`PRAGMA foreign_keys = OFF`);
+		try {
+			db.exec(`DROP TABLE IF EXISTS task_messages`);
+			db.exec(`DROP TABLE IF EXISTS task_pairs`);
+		} finally {
+			db.exec(`PRAGMA foreign_keys = ON`);
+		}
+	}
+
+	// Ensure session_groups tables exist (idempotent — runMigration33 may have already created them)
+	if (!tableExists(db, 'session_groups')) {
+		db.exec(`
+			CREATE TABLE session_groups (
+				id TEXT PRIMARY KEY,
+				group_type TEXT NOT NULL DEFAULT 'task_pair',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_craft'
+					CHECK(state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+				version INTEGER NOT NULL DEFAULT 0,
+				metadata TEXT NOT NULL DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				completed_at INTEGER
+			);
+
+			CREATE INDEX idx_session_groups_ref ON session_groups(ref_id);
+			CREATE INDEX idx_session_groups_state ON session_groups(state);
+		`);
+	}
+
+	if (!tableExists(db, 'session_group_members')) {
+		db.exec(`
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				joined_at INTEGER NOT NULL,
+				PRIMARY KEY (group_id, role)
+			);
+
+			CREATE INDEX idx_sgm_session ON session_group_members(session_id);
+		`);
+	}
+
+	if (!tableExists(db, 'session_group_messages')) {
+		db.exec(`
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				content TEXT NOT NULL,
+				created_at INTEGER NOT NULL
+			);
+
+			CREATE INDEX idx_sgmsg_group ON session_group_messages(group_id, id);
+		`);
+	}
+
+	if (!tableExists(db, 'task_messages')) {
+		db.exec(`
+			CREATE TABLE task_messages (
+				id TEXT PRIMARY KEY,
+				task_id TEXT NOT NULL REFERENCES tasks(id),
+				group_id TEXT NOT NULL REFERENCES session_groups(id),
+				from_role TEXT NOT NULL CHECK(from_role IN ('craft', 'lead', 'human')),
+				to_role TEXT NOT NULL CHECK(to_role IN ('craft', 'lead')),
+				to_session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL DEFAULT 'normal'
+					CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
+				payload TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'delivered', 'dead_letter')),
+				created_at INTEGER NOT NULL,
+				delivered_at INTEGER
+			);
+
+			CREATE INDEX idx_task_messages_group ON task_messages(group_id, status);
+			CREATE INDEX idx_task_messages_task ON task_messages(task_id);
+		`);
 	}
 }

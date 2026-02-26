@@ -446,6 +446,88 @@ export class SDKMessageRepository {
 	}
 
 	/**
+	 * Get assistant messages from a session since a specific message (by DB row ID).
+	 *
+	 * Used by Room Runtime to collect Craft output for forwarding to Lead.
+	 * - If afterMessageId is null: returns all assistant messages for the session.
+	 * - Otherwise: returns messages whose timestamp is after the row with afterMessageId.
+	 *
+	 * Returns structured objects ready for envelope formatting.
+	 */
+	getAssistantMessagesSince(
+		sessionId: string,
+		afterMessageId: string | null
+	): Array<{ id: string; text: string; toolCallNames: string[] }> {
+		let query: string;
+		let params: Array<string>;
+
+		if (afterMessageId) {
+			// Get timestamp of the reference message, then fetch messages after it
+			query = `
+				SELECT id, sdk_message FROM sdk_messages
+				WHERE session_id = ?
+				  AND message_type = 'assistant'
+				  AND timestamp > (
+				      SELECT timestamp FROM sdk_messages WHERE id = ?
+				  )
+				ORDER BY timestamp ASC
+			`;
+			params = [sessionId, afterMessageId];
+		} else {
+			query = `
+				SELECT id, sdk_message FROM sdk_messages
+				WHERE session_id = ? AND message_type = 'assistant'
+				ORDER BY timestamp ASC
+			`;
+			params = [sessionId];
+		}
+
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(...params) as Array<{ id: string; sdk_message: string }>;
+
+		return rows.map((row) => {
+			const msg = JSON.parse(row.sdk_message) as Record<string, unknown>;
+			const text = this.extractAssistantText(msg);
+			const toolCallNames = this.extractToolCallNames(msg);
+			return { id: row.id, text, toolCallNames };
+		});
+	}
+
+	private extractAssistantText(msg: Record<string, unknown>): string {
+		const parts: string[] = [];
+		const message = msg.message as Record<string, unknown> | undefined;
+		const content = message?.content;
+		if (Array.isArray(content)) {
+			for (const block of content as Array<Record<string, unknown>>) {
+				if (block.type === 'text' && typeof block.text === 'string') {
+					parts.push(block.text);
+				}
+			}
+		} else if (typeof content === 'string') {
+			parts.push(content);
+		}
+		// Also capture result text from SDK result messages
+		if (msg.type === 'result' && typeof msg.result === 'string') {
+			parts.push(msg.result);
+		}
+		return parts.join('\n\n').trim();
+	}
+
+	private extractToolCallNames(msg: Record<string, unknown>): string[] {
+		const names: string[] = [];
+		const message = msg.message as Record<string, unknown> | undefined;
+		const content = message?.content;
+		if (Array.isArray(content)) {
+			for (const block of content as Array<Record<string, unknown>>) {
+				if (block.type === 'tool_use' && typeof block.name === 'string') {
+					names.push(block.name);
+				}
+			}
+		}
+		return names;
+	}
+
+	/**
 	 * Count messages after a specific timestamp
 	 *
 	 * Used by rewind to show how many messages will be deleted.
