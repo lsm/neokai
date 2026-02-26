@@ -7,7 +7,7 @@ import { SessionObserver } from '../../../src/lib/room/session-observer';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
 import type { Room } from '@neokai/shared';
-import type { SessionFactory } from '../../../src/lib/room/task-pair-manager';
+import type { SessionFactory } from '../../../src/lib/room/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 function createMockDaemonHub() {
@@ -169,8 +169,8 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.recoveredPairs).toBe(0);
-		expect(result.failedPairs).toBe(0);
+		expect(result.recoveredGroups).toBe(0);
+		expect(result.failedGroups).toBe(0);
 	});
 
 	it('should fail groups with lost craft sessions', async () => {
@@ -190,7 +190,7 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.failedPairs).toBe(1);
+		expect(result.failedGroups).toBe(1);
 		const updatedGroup = groupRepo.getGroup(group!.id);
 		expect(updatedGroup!.state).toBe('failed');
 
@@ -215,7 +215,7 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.failedPairs).toBe(1);
+		expect(result.failedGroups).toBe(1);
 		const updatedGroup = groupRepo.getGroup(group!.id);
 		expect(updatedGroup!.state).toBe('failed');
 
@@ -305,8 +305,8 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.recoveredPairs).toBe(1);
-		expect(result.failedPairs).toBe(0);
+		expect(result.recoveredGroups).toBe(1);
+		expect(result.failedGroups).toBe(0);
 		expect(result.reattachedObservers).toBe(0);
 	});
 
@@ -327,8 +327,8 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.recoveredPairs).toBe(1);
-		expect(result.failedPairs).toBe(0);
+		expect(result.recoveredGroups).toBe(1);
+		expect(result.failedGroups).toBe(0);
 		expect(result.reattachedObservers).toBe(0);
 	});
 
@@ -351,7 +351,7 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.recoveredPairs).toBe(3);
+		expect(result.recoveredGroups).toBe(3);
 		// 2 groups need observers (awaiting_craft + awaiting_lead)
 		expect(result.reattachedObservers).toBe(2);
 	});

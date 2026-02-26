@@ -59,7 +59,7 @@ function makeConfig(overrides?: Partial<LeadAgentConfig>): LeadAgentConfig {
 		room: makeRoom(),
 		sessionId: 'lead:room-1:task-1',
 		workspacePath: '/workspace',
-		pairId: 'pair-1',
+		groupId: 'group-1',
 		...overrides,
 	};
 }
@@ -70,16 +70,16 @@ function makeCallbacks(): LeadToolCallbacks & {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	return {
 		calls,
-		async sendToCraft(pairId: string, message: string) {
-			calls.push({ method: 'sendToCraft', args: [pairId, message] });
+		async sendToCraft(groupId: string, message: string) {
+			calls.push({ method: 'sendToCraft', args: [groupId, message] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async completeTask(pairId: string, summary: string) {
-			calls.push({ method: 'completeTask', args: [pairId, summary] });
+		async completeTask(groupId: string, summary: string) {
+			calls.push({ method: 'completeTask', args: [groupId, summary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async failTask(pairId: string, reason: string) {
-			calls.push({ method: 'failTask', args: [pairId, reason] });
+		async failTask(groupId: string, reason: string) {
+			calls.push({ method: 'failTask', args: [groupId, reason] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 	};
@@ -122,37 +122,37 @@ describe('Lead Agent', () => {
 	});
 
 	describe('createLeadToolHandlers', () => {
-		it('should route send_to_craft to callback with pairId', async () => {
+		it('should route send_to_craft to callback with groupId', async () => {
 			const callbacks = makeCallbacks();
-			const handlers = createLeadToolHandlers('pair-1', callbacks);
+			const handlers = createLeadToolHandlers('group-1', callbacks);
 
 			await handlers.send_to_craft({ message: 'Fix the error handling' });
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToCraft');
-			expect(callbacks.calls[0].args).toEqual(['pair-1', 'Fix the error handling']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling']);
 		});
 
-		it('should route complete_task to callback with pairId', async () => {
+		it('should route complete_task to callback with groupId', async () => {
 			const callbacks = makeCallbacks();
-			const handlers = createLeadToolHandlers('pair-1', callbacks);
+			const handlers = createLeadToolHandlers('group-1', callbacks);
 
 			await handlers.complete_task({ summary: 'All requirements met' });
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('completeTask');
-			expect(callbacks.calls[0].args).toEqual(['pair-1', 'All requirements met']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'All requirements met']);
 		});
 
-		it('should route fail_task to callback with pairId', async () => {
+		it('should route fail_task to callback with groupId', async () => {
 			const callbacks = makeCallbacks();
-			const handlers = createLeadToolHandlers('pair-1', callbacks);
+			const handlers = createLeadToolHandlers('group-1', callbacks);
 
 			await handlers.fail_task({ reason: 'API does not support this' });
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('failTask');
-			expect(callbacks.calls[0].args).toEqual(['pair-1', 'API does not support this']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this']);
 		});
 	});
 

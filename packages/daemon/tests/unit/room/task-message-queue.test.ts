@@ -4,14 +4,14 @@ import { TaskMessageQueue } from '../../../src/lib/room/task-message-queue';
 describe('TaskMessageQueue (MVP stub)', () => {
 	it('should return empty array from dequeuePending', () => {
 		const queue = new TaskMessageQueue();
-		expect(queue.dequeuePending('pair-1', 'craft')).toEqual([]);
+		expect(queue.dequeuePending('group-1', 'craft')).toEqual([]);
 	});
 
 	it('should throw on enqueue (not implemented in MVP)', () => {
 		const queue = new TaskMessageQueue();
 		expect(() =>
 			queue.enqueue({
-				pairId: 'pair-1',
+				groupId: 'group-1',
 				taskId: 'task-1',
 				fromRole: 'lead',
 				toRole: 'craft',
@@ -25,6 +25,6 @@ describe('TaskMessageQueue (MVP stub)', () => {
 		const queue = new TaskMessageQueue();
 		expect(() => queue.markDelivered('msg-1')).not.toThrow();
 		expect(() => queue.markDeadLetter('msg-1')).not.toThrow();
-		expect(() => queue.deadLetterAllForPair('pair-1')).not.toThrow();
+		expect(() => queue.deadLetterAllForGroup('group-1')).not.toThrow();
 	});
 });

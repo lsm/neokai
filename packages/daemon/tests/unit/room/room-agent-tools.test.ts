@@ -212,11 +212,11 @@ describe('Room Agent Tools', () => {
 			const status = result.status as {
 				goals: { total: number };
 				tasks: { total: number };
-				activePairs: number;
+				activeGroups: number;
 			};
 			expect(status.goals.total).toBe(1);
 			expect(status.tasks.total).toBe(1);
-			expect(status.activePairs).toBe(0);
+			expect(status.activeGroups).toBe(0);
 		});
 	});
 });

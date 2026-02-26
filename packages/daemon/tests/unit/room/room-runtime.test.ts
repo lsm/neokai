@@ -6,7 +6,7 @@ import { SessionObserver } from '../../../src/lib/room/session-observer';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
 import type { Room } from '@neokai/shared';
-import type { SessionFactory } from '../../../src/lib/room/task-pair-manager';
+import type { SessionFactory } from '../../../src/lib/room/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 function createMockDaemonHub() {
@@ -134,7 +134,7 @@ describe('RoomRuntime', () => {
 			goalManager,
 			sessionFactory,
 			workspacePath: '/workspace',
-			maxConcurrentPairs: 1,
+			maxConcurrentGroups: 1,
 			maxFeedbackIterations: 5,
 			tickInterval: 60_000, // Long interval so timer doesn't fire during tests
 		});
@@ -212,7 +212,7 @@ describe('RoomRuntime', () => {
 			expect(updated!.status).toBe('in_progress');
 		});
 
-		it('should respect maxConcurrentPairs', async () => {
+		it('should respect maxConcurrentGroups', async () => {
 			await createGoalAndTask();
 			// Create second task
 			const task2 = await taskManager.createTask({
@@ -225,7 +225,7 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			// Only 1 group should be spawned (maxConcurrentPairs = 1)
+			// Only 1 group should be spawned (maxConcurrentGroups = 1)
 			const craftCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'craft'
 			);
@@ -572,13 +572,13 @@ describe('RoomRuntime', () => {
 
 			runtime.start();
 
-			// Tick 1: picks up task1 (maxConcurrentPairs = 1)
+			// Tick 1: picks up task1 (maxConcurrentGroups = 1)
 			await runtime.tick();
 			const group1 = groupRepo.getActiveGroups('room-1')[0];
 			expect(group1).toBeDefined();
 
-			// Complete group1 directly via pairManager (avoids scheduleTick microtask timing)
-			await runtime.pairManager.completePair(group1.id, 'Task 1 done');
+			// Complete group1 directly via taskGroupManager (avoids scheduleTick microtask timing)
+			await runtime.taskGroupManager.complete(group1.id, 'Task 1 done');
 			expect((await taskManager.getTask(task1.id))!.status).toBe('completed');
 			expect(groupRepo.getActiveGroups('room-1')).toHaveLength(0);
 
