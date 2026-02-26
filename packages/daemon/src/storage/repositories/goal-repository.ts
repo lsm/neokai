@@ -25,6 +25,7 @@ export interface UpdateGoalParams {
 	progress?: number;
 	linkedTaskIds?: string[];
 	metrics?: Record<string, number>;
+	planning_attempts?: number;
 }
 
 export class GoalRepository {
@@ -130,6 +131,10 @@ export class GoalRepository {
 			fields.push('metrics = ?');
 			values.push(JSON.stringify(params.metrics));
 		}
+		if (params.planning_attempts !== undefined) {
+			fields.push('planning_attempts = ?');
+			values.push(params.planning_attempts);
+		}
 
 		if (fields.length === 0) {
 			return this.getGoal(id);
@@ -214,6 +219,8 @@ export class GoalRepository {
 			progress: row.progress as number,
 			linkedTaskIds: JSON.parse(row.linked_task_ids as string) as string[],
 			metrics: JSON.parse(row.metrics as string) as Record<string, number>,
+			planning_attempts: (row.planning_attempts as number | null) ?? 0,
+			goal_review_attempts: (row.goal_review_attempts as number | null) ?? 0,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 			completedAt: row.completed_at as number | undefined,

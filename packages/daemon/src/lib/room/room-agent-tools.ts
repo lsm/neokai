@@ -14,13 +14,15 @@ import { z } from 'zod';
 import type { TaskStatus } from '@neokai/shared';
 import type { GoalManager } from './goal-manager';
 import type { TaskManager } from './task-manager';
-import type { TaskPairRepository } from './task-pair-repository';
+import type { SessionGroupRepository } from './session-group-repository';
+import type { DaemonHub } from '../daemon-hub';
 
 export interface RoomAgentToolsConfig {
 	roomId: string;
 	goalManager: GoalManager;
 	taskManager: TaskManager;
-	taskPairRepo: TaskPairRepository;
+	groupRepo: SessionGroupRepository;
+	daemonHub?: DaemonHub;
 }
 
 interface ToolResult {
@@ -36,7 +38,7 @@ function jsonResult(data: Record<string, unknown>): ToolResult {
  * Returns a map of tool name -> handler function.
  */
 export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
-	const { goalManager, taskManager, taskPairRepo, roomId } = config;
+	const { goalManager, taskManager, groupRepo, roomId, daemonHub } = config;
 
 	return {
 		async create_goal(args: {
@@ -49,6 +51,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				description: args.description,
 				priority: args.priority,
 			});
+			// Notify runtime so it schedules a tick immediately (instead of waiting for the timer)
+			if (daemonHub) {
+				void daemonHub.emit('goal.created', {
+					sessionId: `room:${roomId}`,
+					roomId,
+					goalId: goal.id,
+					goal,
+				});
+			}
 			return jsonResult({ success: true, goalId: goal.id, goal });
 		},
 
@@ -89,6 +100,14 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			});
 			if (args.goal_id) {
 				await goalManager.linkTaskToGoal(args.goal_id, task.id);
+			}
+			// Notify runtime so it schedules a tick immediately
+			if (daemonHub) {
+				void daemonHub.emit('room.task.update', {
+					sessionId: `room:${roomId}`,
+					roomId,
+					task,
+				});
 			}
 			return jsonResult({ success: true, taskId: task.id, task });
 		},
@@ -131,7 +150,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 		async get_room_status(): Promise<ToolResult> {
 			const goals = await goalManager.listGoals();
 			const tasks = await taskManager.listTasks();
-			const activePairs = taskPairRepo.getActivePairs(roomId);
+			const activeGroups = groupRepo.getActiveGroups(roomId);
 
 			return jsonResult({
 				success: true,
@@ -150,12 +169,12 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						completed: tasks.filter((t) => t.status === 'completed').length,
 						failed: tasks.filter((t) => t.status === 'failed').length,
 					},
-					activePairs: activePairs.length,
-					pairs: activePairs.map((p) => ({
-						id: p.id,
-						taskId: p.taskId,
-						state: p.pairState,
-						iteration: p.feedbackIteration,
+					activeGroups: activeGroups.length,
+					groups: activeGroups.map((g) => ({
+						id: g.id,
+						taskId: g.taskId,
+						state: g.state,
+						iteration: g.feedbackIteration,
 					})),
 				},
 			});
@@ -239,7 +258,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'get_room_status',
-			'Get an overview of the room state including goals, tasks, and active pairs',
+			'Get an overview of the room state including goals, tasks, and active groups',
 			{},
 			() => handlers.get_room_status()
 		),

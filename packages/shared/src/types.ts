@@ -51,11 +51,20 @@ export type {
  * Session type for unified session architecture
  * - 'worker': Standard coding session with full Claude Code system prompt
  * - 'room_chat': User-facing room chat interface (room:chat:${roomId})
- * - 'craft': Craft agent session (Room Runtime v0.19)
- * - 'lead': Lead agent session (Room Runtime v0.19)
+ * - 'planner': Planner agent session (Room Runtime)
+ * - 'coder': Coder agent session (Room Runtime)
+ * - 'leader': Leader agent session (Room Runtime)
+ * - 'general': General-purpose agent session (Room Runtime)
  * - 'lobby': Instance-level agent session
  */
-export type SessionType = 'worker' | 'room_chat' | 'craft' | 'lead' | 'lobby';
+export type SessionType =
+	| 'worker'
+	| 'room_chat'
+	| 'planner'
+	| 'coder'
+	| 'leader'
+	| 'general'
+	| 'lobby';
 
 /**
  * Context for room/lobby sessions
@@ -514,7 +523,7 @@ export interface SessionMetadata {
 	};
 	// Session architecture fields
 	/** Type of session in architecture context */
-	sessionType?: 'room_chat' | 'craft' | 'lead' | 'worker' | 'lobby';
+	sessionType?: 'room_chat' | 'planner' | 'coder' | 'leader' | 'general' | 'worker' | 'lobby';
 	/** For manager/worker: ID of the paired session */
 	pairedSessionId?: string;
 	/** For manager/worker: ID of the parent RoomSession */

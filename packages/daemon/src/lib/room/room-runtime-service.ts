@@ -13,14 +13,15 @@ import type { Database } from '../../storage/database';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
-import type { SessionFactory } from './task-pair-manager';
+import type { SessionFactory } from './task-group-manager';
 import { RoomRuntime } from './room-runtime';
 import { SessionObserver } from './session-observer';
-import { TaskPairRepository } from './task-pair-repository';
+import { SessionGroupRepository } from './session-group-repository';
 import { TaskManager } from './task-manager';
 import { GoalManager } from './goal-manager';
 import { AgentSession } from '../agent/agent-session';
 import { createRoomAgentMcpServer } from './room-agent-tools';
+import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from './room-manager';
 import { Logger } from '../logger';
@@ -41,7 +42,7 @@ export interface RoomRuntimeServiceConfig {
 export class RoomRuntimeService {
 	private runtimes = new Map<string, RoomRuntime>();
 	private observers = new Map<string, SessionObserver>();
-	private craftLeadSessions = new Map<string, AgentSession>();
+	private agentSessions = new Map<string, AgentSession>();
 	private unsubscribers: Array<() => void> = [];
 
 	constructor(private ctx: RoomRuntimeServiceConfig) {}
@@ -58,7 +59,7 @@ export class RoomRuntimeService {
 		}
 		this.runtimes.clear();
 		this.observers.clear();
-		this.craftLeadSessions.clear();
+		this.agentSessions.clear();
 
 		for (const unsub of this.unsubscribers) {
 			unsub();
@@ -69,7 +70,7 @@ export class RoomRuntimeService {
 
 	private createSessionFactory(): SessionFactory {
 		const ctx = this.ctx;
-		const craftLeadSessions = this.craftLeadSessions;
+		const agentSessions = this.agentSessions;
 
 		return {
 			createAndStartSession: async (init, _role) => {
@@ -81,11 +82,11 @@ export class RoomRuntimeService {
 					ctx.getApiKey,
 					ctx.defaultModel
 				);
-				craftLeadSessions.set(init.sessionId, session);
+				agentSessions.set(init.sessionId, session);
 				await session.startStreamingQuery();
 			},
 			injectMessage: async (sessionId, message) => {
-				const session = craftLeadSessions.get(sessionId);
+				const session = agentSessions.get(sessionId);
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
@@ -99,9 +100,10 @@ export class RoomRuntimeService {
 		if (existing) return existing;
 
 		const rawDb = this.ctx.db.getDatabase();
-		const taskPairRepo = new TaskPairRepository(rawDb);
+		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, room.id);
 		const goalManager = new GoalManager(rawDb, room.id);
+		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();
 
@@ -109,19 +111,23 @@ export class RoomRuntimeService {
 
 		const runtime = new RoomRuntime({
 			room,
-			taskPairRepo,
+			groupRepo,
 			sessionObserver: observer,
 			taskManager,
 			goalManager,
 			sessionFactory,
 			workspacePath,
 			model: this.ctx.defaultModel,
+			getWorkerMessages: (sessionId, afterMessageId) =>
+				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
+			daemonHub: this.ctx.daemonHub,
+			messageHub: this.ctx.messageHub,
 		});
 
 		this.runtimes.set(room.id, runtime);
 		this.observers.set(room.id, observer);
 
-		this.setupRoomAgentSession(room, taskPairRepo, taskManager, goalManager);
+		this.setupRoomAgentSession(room, groupRepo, taskManager, goalManager);
 		runtime.start();
 
 		return runtime;
@@ -129,7 +135,7 @@ export class RoomRuntimeService {
 
 	private setupRoomAgentSession(
 		room: Room,
-		taskPairRepo: TaskPairRepository,
+		groupRepo: SessionGroupRepository,
 		taskManager: TaskManager,
 		goalManager: GoalManager
 	): void {
@@ -138,7 +144,8 @@ export class RoomRuntimeService {
 			roomId: room.id,
 			goalManager,
 			taskManager,
-			taskPairRepo,
+			groupRepo,
+			daemonHub: this.ctx.daemonHub,
 		}) as unknown as McpServerConfig;
 
 		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate
@@ -202,12 +209,12 @@ export class RoomRuntimeService {
 		observer: SessionObserver
 	): Promise<void> {
 		const rawDb = this.ctx.db.getDatabase();
-		const taskPairRepo = new TaskPairRepository(rawDb);
+		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, roomId);
 
 		const checker: SessionStateChecker = {
 			sessionExists: (sessionId) => this.ctx.db.getSession(sessionId) !== null,
-			// Assume not terminal after restart — active pairs stuck post-restart
+			// Assume not terminal after restart — active groups stuck post-restart
 			// can be cancelled via the cancel_task Room Agent tool.
 			isTerminalState: () => false,
 		};
@@ -215,16 +222,16 @@ export class RoomRuntimeService {
 		try {
 			const result = await recoverRuntime(
 				roomId,
-				taskPairRepo,
+				groupRepo,
 				taskManager,
 				observer,
 				checker,
 				runtime
 			);
-			if (result.recoveredPairs > 0) {
+			if (result.recoveredGroups > 0) {
 				log.info(
-					`Room ${roomId}: recovered ${result.recoveredPairs} pairs, ` +
-						`failed ${result.failedPairs}, reattached ${result.reattachedObservers} observers`
+					`Room ${roomId}: recovered ${result.recoveredGroups} groups, ` +
+						`failed ${result.failedGroups}, reattached ${result.reattachedObservers} observers`
 				);
 			}
 		} catch (error) {

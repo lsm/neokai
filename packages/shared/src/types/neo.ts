@@ -49,7 +49,7 @@ export interface Room {
 	background?: string;
 	/** Custom instructions for how the room agent should behave */
 	instructions?: string;
-	/** Runtime configuration (maxConcurrentPairs, taskTimeout, etc.) */
+	/** Runtime configuration (maxConcurrentGroups, taskTimeout, etc.) */
 	config?: Record<string, unknown>;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
@@ -150,6 +150,16 @@ export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'escalated' | 'co
 export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 
 /**
+ * Task type — determines which agent preset and tools are used
+ */
+export type TaskType = 'planning' | 'coding' | 'research' | 'design' | 'goal_review';
+
+/**
+ * Agent type that should execute a task
+ */
+export type AgentType = 'coder' | 'general';
+
+/**
  * A task managed within a room
  */
 export interface NeoTask {
@@ -165,6 +175,12 @@ export interface NeoTask {
 	status: TaskStatus;
 	/** Priority level */
 	priority: TaskPriority;
+	/** Task type — determines agent preset (default: 'coding') */
+	taskType?: TaskType;
+	/** Which agent type should execute this task (default: 'coder') */
+	assignedAgent?: AgentType;
+	/** ID of the planning task that created this task (for draft→pending promotion) */
+	createdByTaskId?: string;
 	/** Progress percentage (0-100) */
 	progress?: number;
 	/** Description of current step */
@@ -200,6 +216,14 @@ export interface CreateTaskParams {
 	description: string;
 	priority?: TaskPriority;
 	dependsOn?: string[];
+	/** Task type — defaults to 'coding' */
+	taskType?: TaskType;
+	/** Which agent type should execute this task (default: 'coder') */
+	assignedAgent?: AgentType;
+	/** Initial status — defaults to 'pending'. Use 'draft' for planning-created tasks. */
+	status?: TaskStatus;
+	/** ID of planning task that created this task (for draft→pending promotion) */
+	createdByTaskId?: string;
 }
 
 /**

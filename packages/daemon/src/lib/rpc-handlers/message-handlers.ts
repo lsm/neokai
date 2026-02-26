@@ -16,8 +16,14 @@ import {
 } from '@neokai/shared/sdk';
 import type { SessionManager } from '../session-manager';
 import { removeToolResultFromSessionFile } from '../sdk-session-file-manager';
+import type { Database } from '../../storage/database';
+import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 
-export function setupMessageHandlers(messageHub: MessageHub, sessionManager: SessionManager): void {
+export function setupMessageHandlers(
+	messageHub: MessageHub,
+	sessionManager: SessionManager,
+	db?: Database
+): void {
 	// Remove large task output from a message to reduce session size
 	// This modifies the .jsonl file in ~/.claude/projects/ (SDK session storage)
 	// No SDK initialization required - only file system operations
@@ -84,6 +90,17 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
 		if (!agentSession) {
+			// DB-only sessions (conversation sessions): read directly from DB
+			if (targetSessionId.startsWith('conv:') && db) {
+				const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
+				const { messages: sdkMessages, hasMore } = sdkMessageRepo.getSDKMessages(
+					targetSessionId,
+					limit,
+					before,
+					since
+				);
+				return { sdkMessages, hasMore };
+			}
 			throw new Error('Session not found');
 		}
 
@@ -98,6 +115,12 @@ export function setupMessageHandlers(messageHub: MessageHub, sessionManager: Ses
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 
 		if (!agentSession) {
+			// DB-only sessions (conversation sessions): count from DB
+			if (targetSessionId.startsWith('conv:') && db) {
+				const sdkMessageRepo = new SDKMessageRepository(db.getDatabase());
+				const count = sdkMessageRepo.getSDKMessageCount(targetSessionId);
+				return { count };
+			}
 			throw new Error('Session not found');
 		}
 

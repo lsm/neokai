@@ -21,6 +21,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/room-manager';
 import { TaskManager } from '../room';
+import { SessionGroupRepository } from '../room/session-group-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
@@ -329,5 +330,54 @@ export function setupTaskHandlers(
 		emitRoomOverview(params.roomId);
 
 		return { success: deleted };
+	});
+
+	// task.getGroup - Get the active session group (Craft + Lead sessions) for a task
+	messageHub.onRequest('task.getGroup', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const group = groupRepo.getGroupByTaskId(params.taskId);
+
+		if (!group) {
+			return { group: null };
+		}
+
+		return {
+			group: {
+				id: group.id,
+				taskId: group.taskId,
+				workerSessionId: group.workerSessionId,
+				leaderSessionId: group.leaderSessionId,
+				state: group.state,
+				feedbackIteration: group.feedbackIteration,
+				createdAt: group.createdAt,
+				completedAt: group.completedAt,
+			},
+		};
+	});
+
+	// task.getGroupMessages - Get messages for a session group
+	messageHub.onRequest('task.getGroupMessages', async (data) => {
+		const params = data as { groupId: string; afterId?: number; limit?: number };
+
+		if (!params.groupId) {
+			throw new Error('Group ID is required');
+		}
+
+		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const result = groupRepo.getMessages(params.groupId, {
+			afterId: params.afterId,
+			limit: params.limit,
+		});
+
+		return { messages: result.messages, hasMore: result.hasMore };
 	});
 }

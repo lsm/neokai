@@ -14,7 +14,7 @@
  *
  * Test Coverage:
  * 1. /context command is queued after each turn
- * 2. /context response is detected and parsed correctly (source === 'merged')
+ * 2. /context response is detected and parsed correctly (source === 'context-command')
  * 3. SDK format categories are parsed (including integer k-notation like '18k')
  * 4. Sub-table rows (e.g. Skills breakdown) don't pollute category breakdown
  * 5. Context info is persisted to session metadata
@@ -67,7 +67,7 @@ describe('Context Command Online Tests', () => {
 	);
 
 	describe('Automatic /context at turn end', () => {
-		test('should parse /context replay and produce source=merged with SDK categories', async () => {
+		test('should parse /context replay and produce source=context-command with SDK categories', async () => {
 			if (!hasAnthropicCredentials) {
 				console.log('Skipping - no Anthropic API credentials');
 				return;
@@ -96,9 +96,9 @@ describe('Context Command Online Tests', () => {
 
 			const contextInfo = metadata?.lastContextInfo as ContextInfo;
 
-			// source === 'merged' proves the /context replay message was received and
-			// successfully parsed by ContextFetcher — not just stream-based fallback.
-			expect(contextInfo.source).toBe('merged');
+			// source === 'context-command' proves the /context replay message was received and
+			// successfully parsed by ContextFetcher.
+			expect(contextInfo.source).toBe('context-command');
 
 			// Basic numeric sanity
 			expect(contextInfo.model).toBeString();

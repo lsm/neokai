@@ -2,14 +2,14 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
-import { TaskPairRepository } from '../../../src/lib/room/task-pair-repository';
+import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
 import { createRoomAgentToolHandlers } from '../../../src/lib/room/room-agent-tools';
 
 describe('Room Agent Tools', () => {
 	let db: Database;
 	let goalManager: GoalManager;
 	let taskManager: TaskManager;
-	let taskPairRepo: TaskPairRepository;
+	let groupRepo: SessionGroupRepository;
 	let handlers: ReturnType<typeof createRoomAgentToolHandlers>;
 	const roomId = 'room-1';
 
@@ -48,35 +48,46 @@ describe('Room Agent Tools', () => {
 				result TEXT,
 				error TEXT,
 				depends_on TEXT DEFAULT '[]',
+				task_type TEXT DEFAULT 'coding',
+				created_by_task_id TEXT,
+				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
 				completed_at INTEGER
 			);
-			CREATE TABLE task_pairs (
+			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
-				task_id TEXT NOT NULL,
-				craft_session_id TEXT NOT NULL,
-				lead_session_id TEXT NOT NULL,
-				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
-				feedback_iteration INTEGER NOT NULL DEFAULT 0,
-				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
-				last_processed_lead_turn_id TEXT,
-				last_forwarded_message_id TEXT,
-				active_work_started_at INTEGER,
-				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
-				hibernated_at INTEGER,
+				group_type TEXT NOT NULL DEFAULT 'task',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_worker',
 				version INTEGER NOT NULL DEFAULT 0,
-				tokens_used INTEGER NOT NULL DEFAULT 0,
+				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL,
 				completed_at INTEGER
+			);
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT NOT NULL,
+				role TEXT NOT NULL,
+				joined_at INTEGER NOT NULL,
+				PRIMARY KEY (group_id, role)
+			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT,
+				role TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				content TEXT NOT NULL,
+				created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		goalManager = new GoalManager(db as never, roomId);
 		taskManager = new TaskManager(db as never, roomId);
-		taskPairRepo = new TaskPairRepository(db as never);
-		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, taskPairRepo });
+		groupRepo = new SessionGroupRepository(db as never);
+		handlers = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
 	});
 
 	afterEach(() => {
@@ -202,11 +213,11 @@ describe('Room Agent Tools', () => {
 			const status = result.status as {
 				goals: { total: number };
 				tasks: { total: number };
-				activePairs: number;
+				activeGroups: number;
 			};
 			expect(status.goals.total).toBe(1);
 			expect(status.tasks.total).toBe(1);
-			expect(status.activePairs).toBe(0);
+			expect(status.activeGroups).toBe(0);
 		});
 	});
 });

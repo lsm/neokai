@@ -303,7 +303,7 @@ export class SDKMessageHandler {
 			return;
 		}
 
-		// Broadcast SDK message delta (only channel - sdk.message removed as redundant)
+		// Broadcast SDK message delta to frontend clients
 		messageHub.event(
 			'state.sdkMessages.delta',
 			{
@@ -313,6 +313,12 @@ export class SDKMessageHandler {
 			},
 			{ channel: `session:${session.id}` }
 		);
+
+		// Emit on DaemonHub for server-side listeners (e.g. conversation session mirroring)
+		await this.ctx.daemonHub.emit('sdk.message', {
+			sessionId: session.id,
+			message,
+		});
 
 		// Handle specific message types
 		if (isSDKSystemMessage(message)) {

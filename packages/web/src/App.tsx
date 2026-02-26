@@ -11,6 +11,7 @@ import {
 	currentSessionIdSignal,
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
+	currentRoomTaskIdSignal,
 	navRailOpenSignal,
 } from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
@@ -21,10 +22,12 @@ import {
 	navigateToSession,
 	navigateToRoom,
 	navigateToRoomSession,
+	navigateToRoomTask,
 	navigateToHome,
 	createSessionPath,
 	createRoomPath,
 	createRoomSessionPath,
+	createRoomTaskPath,
 } from './lib/router.ts';
 
 export function App() {
@@ -78,20 +81,25 @@ export function App() {
 			const sessionId = currentSessionIdSignal.value;
 			const roomId = currentRoomIdSignal.value;
 			const roomSessionId = currentRoomSessionIdSignal.value;
+			const roomTaskId = currentRoomTaskIdSignal.value;
 			const currentPath = window.location.pathname;
 			const expectedPath = sessionId
 				? createSessionPath(sessionId)
-				: roomSessionId && roomId
-					? createRoomSessionPath(roomId, roomSessionId)
-					: roomId
-						? createRoomPath(roomId)
-						: '/';
+				: roomTaskId && roomId
+					? createRoomTaskPath(roomId, roomTaskId)
+					: roomSessionId && roomId
+						? createRoomSessionPath(roomId, roomSessionId)
+						: roomId
+							? createRoomPath(roomId)
+							: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
 			if (currentPath !== expectedPath) {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
+				} else if (roomTaskId && roomId) {
+					navigateToRoomTask(roomId, roomTaskId, true);
 				} else if (roomSessionId && roomId) {
 					navigateToRoomSession(roomId, roomSessionId, true);
 				} else if (roomId) {

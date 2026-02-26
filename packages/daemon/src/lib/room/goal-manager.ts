@@ -320,6 +320,24 @@ export class GoalManager {
 	}
 
 	/**
+	 * Increment planning_attempts counter on a goal.
+	 * Called when the Runtime spawns a planning group.
+	 */
+	async incrementPlanningAttempts(goalId: string): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+		const updatedGoal = this.goalRepo.updateGoal(goalId, {
+			planning_attempts: (goal.planning_attempts ?? 0) + 1,
+		});
+		if (!updatedGoal) {
+			throw new Error(`Failed to update planning_attempts for goal: ${goalId}`);
+		}
+		return updatedGoal;
+	}
+
+	/**
 	 * Delete a goal
 	 */
 	async deleteGoal(goalId: string): Promise<boolean> {

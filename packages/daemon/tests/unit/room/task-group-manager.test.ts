@@ -1,12 +1,16 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { TaskPairManager, type SessionFactory } from '../../../src/lib/room/task-pair-manager';
-import { TaskPairRepository } from '../../../src/lib/room/task-pair-repository';
-import { SessionObserver, type TerminalState } from '../../../src/lib/room/session-observer';
+import {
+	TaskGroupManager,
+	type SessionFactory,
+	type WorkerConfig,
+} from '../../../src/lib/room/task-group-manager';
+import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
+import { SessionObserver } from '../../../src/lib/room/session-observer';
 import { GoalManager } from '../../../src/lib/room/goal-manager';
 import { TaskManager } from '../../../src/lib/room/task-manager';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
-import type { LeadToolCallbacks } from '../../../src/lib/room/lead-agent';
+import type { LeaderToolCallbacks } from '../../../src/lib/room/leader-agent';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 // Mock DaemonHub
@@ -52,9 +56,9 @@ function createMockSessionFactory() {
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
-function createMockLeadCallbacks() {
+function createMockLeaderCallbacks(): LeaderToolCallbacks {
 	return {
-		async sendToCraft() {
+		async sendToWorker() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
 		async completeTask() {
@@ -63,7 +67,7 @@ function createMockLeadCallbacks() {
 		async failTask() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
-	} satisfies LeadToolCallbacks;
+	};
 }
 
 function makeRoom(): Room {
@@ -111,14 +115,27 @@ function makeGoal(db: Database): RoomGoal {
 	};
 }
 
-describe('TaskPairManager', () => {
+function makeDefaultWorkerConfig(): WorkerConfig {
+	return {
+		role: 'coder',
+		initFactory: (workerSessionId) => ({
+			sessionId: workerSessionId,
+			workspacePath: '/workspace',
+			systemPrompt: 'test',
+			type: 'coder',
+			model: 'claude-sonnet-4-5-20250929',
+		}),
+	};
+}
+
+describe('TaskGroupManager', () => {
 	let db: Database;
-	let taskPairRepo: TaskPairRepository;
+	let groupRepo: SessionGroupRepository;
 	let observer: SessionObserver;
 	let taskManager: TaskManager;
 	let goalManager: GoalManager;
 	let sessionFactory: ReturnType<typeof createMockSessionFactory>;
-	let manager: TaskPairManager;
+	let manager: TaskGroupManager;
 	const room = makeRoom();
 
 	beforeEach(() => {
@@ -141,36 +158,43 @@ describe('TaskPairManager', () => {
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER,
 				current_step TEXT, result TEXT, error TEXT,
 				depends_on TEXT DEFAULT '[]',
+				task_type TEXT DEFAULT 'coding',
+				created_by_task_id TEXT,
+				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
 			);
-			CREATE TABLE task_pairs (
-				id TEXT PRIMARY KEY, task_id TEXT NOT NULL,
-				craft_session_id TEXT NOT NULL, lead_session_id TEXT NOT NULL,
-				pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
-				feedback_iteration INTEGER NOT NULL DEFAULT 0,
-				lead_contract_violations INTEGER NOT NULL DEFAULT 0,
-				last_processed_lead_turn_id TEXT,
-				last_forwarded_message_id TEXT,
-				active_work_started_at INTEGER,
-				active_work_elapsed INTEGER NOT NULL DEFAULT 0,
-				hibernated_at INTEGER,
+			CREATE TABLE session_groups (
+				id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_worker',
 				version INTEGER NOT NULL DEFAULT 0,
-				tokens_used INTEGER NOT NULL DEFAULT 0,
+				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL, completed_at INTEGER
+			);
+			CREATE TABLE session_group_members (
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
+				PRIMARY KEY (group_id, role)
+			);
+			CREATE TABLE session_group_messages (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+				session_id TEXT, role TEXT NOT NULL, message_type TEXT NOT NULL,
+				content TEXT NOT NULL, created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
 		const mockHub = createMockDaemonHub();
-		taskPairRepo = new TaskPairRepository(db as never);
+		groupRepo = new SessionGroupRepository(db as never);
 		observer = new SessionObserver(mockHub as unknown as DaemonHub);
 		taskManager = new TaskManager(db as never, 'room-1');
 		goalManager = new GoalManager(db as never, 'room-1');
 		sessionFactory = createMockSessionFactory();
 
-		manager = new TaskPairManager({
+		manager = new TaskGroupManager({
 			room,
-			taskPairRepo,
+			groupRepo,
 			sessionObserver: observer,
 			taskManager,
 			goalManager,
@@ -191,60 +215,63 @@ describe('TaskPairManager', () => {
 		});
 	}
 
-	describe('spawnPair', () => {
-		it('should create a task pair record', async () => {
+	describe('spawn', () => {
+		it('should create a session group record', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
-			const pair = await manager.spawnPair(
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			expect(pair).toBeDefined();
-			expect(pair.taskId).toBe(task.id);
-			expect(pair.pairState).toBe('awaiting_craft');
-			expect(pair.feedbackIteration).toBe(0);
+			expect(group).toBeDefined();
+			expect(group.taskId).toBe(task.id);
+			expect(group.state).toBe('awaiting_worker');
+			expect(group.feedbackIteration).toBe(0);
 		});
 
-		it('should create both Craft and Lead sessions', async () => {
+		it('should create both Worker and Leader sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
-			await manager.spawnPair(
+			await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const craftCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'craft'
+			const workerCalls = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'coder'
 			);
-			const leadCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'lead'
+			const leaderCalls = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
-			expect(craftCalls).toHaveLength(1);
-			expect(leadCalls).toHaveLength(1);
+			expect(workerCalls).toHaveLength(1);
+			expect(leaderCalls).toHaveLength(1);
 		});
 
 		it('should set task to in_progress', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
-			await manager.spawnPair(
+			await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			const updated = await taskManager.getTask(task.id);
@@ -254,149 +281,156 @@ describe('TaskPairManager', () => {
 		it('should observe both sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
+			const callbacks = createMockLeaderCallbacks();
 
-			const pair = await manager.spawnPair(
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			expect(observer.isObserving(pair.craftSessionId)).toBe(true);
-			expect(observer.isObserving(pair.leadSessionId)).toBe(true);
+			expect(observer.isObserving(group.workerSessionId)).toBe(true);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
 		});
 	});
 
-	describe('routeCraftToLead', () => {
-		it('should inject message into Lead session', async () => {
+	describe('routeWorkerToLeader', () => {
+		it('should inject message into Leader session', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeCraftToLead(pair.id, 'Craft output here');
+			await manager.routeWorkerToLeader(group.id, 'Worker output here');
 
 			const injectCalls = sessionFactory.calls.filter(
-				(c) => c.method === 'injectMessage' && c.args[0] === pair.leadSessionId
+				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
 			);
 			expect(injectCalls).toHaveLength(1);
-			expect(injectCalls[0].args[1]).toBe('Craft output here');
+			expect(injectCalls[0].args[1]).toBe('Worker output here');
 		});
 
-		it('should update pair state to awaiting_lead', async () => {
+		it('should update group state to awaiting_leader', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const updated = await manager.routeCraftToLead(pair.id, 'Craft output');
+			const updated = await manager.routeWorkerToLeader(group.id, 'Worker output');
 
-			expect(updated!.pairState).toBe('awaiting_lead');
+			expect(updated!.state).toBe('awaiting_leader');
 		});
 
-		it('should reset lead contract violations', async () => {
+		it('should reset leader contract violations', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
 			// Manually set violations
-			taskPairRepo.updateLeadContractViolations(pair.id, 1, 'turn-1', pair.version);
+			groupRepo.updateLeaderContractViolations(group.id, 1, 'turn-1', group.version);
 
-			const afterRoute = await manager.routeCraftToLead(pair.id, 'Output');
+			const afterRoute = await manager.routeWorkerToLeader(group.id, 'Output');
 
-			expect(afterRoute!.leadContractViolations).toBe(0);
+			expect(afterRoute!.leaderContractViolations).toBe(0);
 		});
 
-		it('should return null for non-existent pair', async () => {
-			const result = await manager.routeCraftToLead('nonexistent', 'output');
+		it('should return null for non-existent group', async () => {
+			const result = await manager.routeWorkerToLeader('nonexistent', 'output');
 			expect(result).toBeNull();
 		});
 	});
 
-	describe('routeLeadToCraft', () => {
-		it('should inject message into Craft session', async () => {
+	describe('routeLeaderToWorker', () => {
+		it('should inject message into Worker session', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			// First route to Lead so pair is in awaiting_lead state
-			await manager.routeCraftToLead(pair.id, 'Craft output');
+			// First route to Leader so group is in awaiting_leader state
+			await manager.routeWorkerToLeader(group.id, 'Worker output');
 
-			await manager.routeLeadToCraft(pair.id, 'Fix the tests');
+			await manager.routeLeaderToWorker(group.id, 'Fix the tests');
 
 			const feedbackCalls = sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === pair.craftSessionId &&
+					c.args[0] === group.workerSessionId &&
 					c.args[1] === 'Fix the tests'
 			);
 			expect(feedbackCalls).toHaveLength(1);
 		});
 
-		it('should update pair state to awaiting_craft and increment iteration', async () => {
+		it('should update group state to awaiting_worker and increment iteration', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeCraftToLead(pair.id, 'Output');
-			const updated = await manager.routeLeadToCraft(pair.id, 'Feedback');
+			await manager.routeWorkerToLeader(group.id, 'Output');
+			const updated = await manager.routeLeaderToWorker(group.id, 'Feedback');
 
-			expect(updated!.pairState).toBe('awaiting_craft');
+			expect(updated!.state).toBe('awaiting_worker');
 			expect(updated!.feedbackIteration).toBe(1);
 		});
 	});
 
-	describe('completePair', () => {
-		it('should complete the pair and task', async () => {
+	describe('complete', () => {
+		it('should complete the group and task', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const updated = await manager.completePair(pair.id, 'All done');
+			const updated = await manager.complete(group.id, 'All done');
 
-			expect(updated!.pairState).toBe('completed');
+			expect(updated!.state).toBe('completed');
 			expect(updated!.completedAt).toBeDefined();
 
 			const taskResult = await taskManager.getTask(task.id);
@@ -407,43 +441,45 @@ describe('TaskPairManager', () => {
 		it('should stop observing sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			await manager.completePair(pair.id, 'Done');
+			await manager.complete(group.id, 'Done');
 
-			expect(observer.isObserving(pair.craftSessionId)).toBe(false);
-			expect(observer.isObserving(pair.leadSessionId)).toBe(false);
+			expect(observer.isObserving(group.workerSessionId)).toBe(false);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(false);
 		});
 
-		it('should return null for non-existent pair', async () => {
-			const result = await manager.completePair('nonexistent', 'Done');
+		it('should return null for non-existent group', async () => {
+			const result = await manager.complete('nonexistent', 'Done');
 			expect(result).toBeNull();
 		});
 	});
 
-	describe('failPair', () => {
-		it('should fail the pair and task', async () => {
+	describe('fail', () => {
+		it('should fail the group and task', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const updated = await manager.failPair(pair.id, 'Cannot complete');
+			const updated = await manager.fail(group.id, 'Cannot complete');
 
-			expect(updated!.pairState).toBe('failed');
+			expect(updated!.state).toBe('failed');
 			expect(updated!.completedAt).toBeDefined();
 
 			const taskResult = await taskManager.getTask(task.id);
@@ -453,38 +489,40 @@ describe('TaskPairManager', () => {
 		it('should stop observing sessions', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			await manager.failPair(pair.id, 'Failed');
+			await manager.fail(group.id, 'Failed');
 
-			expect(observer.isObserving(pair.craftSessionId)).toBe(false);
-			expect(observer.isObserving(pair.leadSessionId)).toBe(false);
+			expect(observer.isObserving(group.workerSessionId)).toBe(false);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(false);
 		});
 	});
 
-	describe('cancelPair', () => {
-		it('should fail the pair with cancel reason', async () => {
+	describe('cancel', () => {
+		it('should fail the group with cancel reason', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
-			const callbacks = createMockLeadCallbacks();
-			const pair = await manager.spawnPair(
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
 				task,
 				goal,
 				() => {},
 				() => {},
-				callbacks
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
 			);
 
-			const updated = await manager.cancelPair(pair.id);
+			const updated = await manager.cancel(group.id);
 
-			expect(updated!.pairState).toBe('failed');
+			expect(updated!.state).toBe('failed');
 		});
 	});
 });

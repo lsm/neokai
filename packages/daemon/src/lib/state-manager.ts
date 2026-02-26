@@ -17,6 +17,7 @@ import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
 import type { Config } from '../config';
+import type { Database } from '../storage/database';
 import { Logger } from './logger';
 import type {
 	SessionsState,
@@ -31,6 +32,7 @@ import type {
 } from '@neokai/shared';
 import type { Session, ContextInfo } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
+import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 
 const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';
@@ -64,7 +66,8 @@ export class StateManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
-		private eventBus: DaemonHub
+		private eventBus: DaemonHub,
+		private db?: Database
 	) {
 		this.setupHandlers();
 		this.setupEventListeners();
@@ -468,11 +471,10 @@ export class StateManager {
 	private async getSessionState(sessionId: string): Promise<SessionState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
-			// Special handling for room sessions that haven't been started yet
-			// Room sessions (ID format: "room:{roomId}") are created when the room agent starts,
-			// but the UI may try to load the session before the agent is started.
-			if (sessionId.startsWith('room:')) {
-				// Return a placeholder state for not-yet-started room agents
+			// Special handling for DB-only sessions (no AgentSession):
+			// - Room sessions (ID format: "room:{roomId}") — created when room agent starts
+			// - Conversation sessions (ID format: "conv:{roomId}:...") — task group timelines
+			if (sessionId.startsWith('room:') || sessionId.startsWith('conv:')) {
 				return {
 					sessionInfo: null,
 					agentState: { status: 'idle' },
@@ -511,16 +513,18 @@ export class StateManager {
 	private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
-			// Special handling for room sessions that haven't been started yet
-			// Room sessions (ID format: "room:{roomId}") are created when the room agent starts,
-			// but the UI may try to load messages before the agent is started.
-			if (sessionId.startsWith('room:')) {
-				// Return empty state for not-yet-started room agents
-				return {
-					sdkMessages: [],
-					hasMore: false,
-					timestamp: Date.now(),
-				};
+			// DB-only sessions: read directly from sdk_messages table
+			// - Room sessions (room:*) may have no messages yet
+			// - Conversation sessions (conv:*) have mirrored messages
+			if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {
+				const sdkMessageRepo = new SDKMessageRepository(this.db.getDatabase());
+				const { messages: sdkMessages, hasMore } = sdkMessageRepo.getSDKMessages(
+					sessionId,
+					100,
+					undefined,
+					since
+				);
+				return { sdkMessages, hasMore, timestamp: Date.now() };
 			}
 			throw new Error('Session not found');
 		}

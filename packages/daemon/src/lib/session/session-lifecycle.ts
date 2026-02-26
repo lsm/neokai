@@ -42,10 +42,12 @@ export interface CreateSessionParams {
 	// Session types:
 	// - 'worker': Standard coding session with Claude Code system prompt
 	// - 'room_chat': User-facing room chat interface (room:chat:${roomId})
-	// - 'craft': Craft agent session (Room Runtime v0.19)
-	// - 'lead': Lead agent session (Room Runtime v0.19)
+	// - 'planner': Planner agent session (Room Runtime)
+	// - 'coder': Coder agent session (Room Runtime)
+	// - 'leader': Leader agent session (Room Runtime)
+	// - 'general': General agent session (Room Runtime)
 	// - 'lobby': Instance-level agent session
-	sessionType?: 'room_chat' | 'craft' | 'lead' | 'worker' | 'lobby';
+	sessionType?: 'room_chat' | 'planner' | 'coder' | 'leader' | 'general' | 'worker' | 'lobby';
 	pairedSessionId?: string;
 	parentSessionId?: string;
 	currentTaskId?: string;
@@ -161,7 +163,7 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
-			// Session type: defaults to 'worker', can be set to 'room_chat', 'craft', 'lead', or 'lobby'
+			// Session type: defaults to 'worker', can be set to 'room_chat', 'planner', 'coder', 'leader', 'general', or 'lobby'
 			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID

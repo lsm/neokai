@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
-	buildCraftSystemPrompt,
-	createCraftAgentInit,
-	type CraftAgentConfig,
-} from '../../../src/lib/room/craft-agent';
+	buildCoderSystemPrompt,
+	createCoderAgentInit,
+	type CoderAgentConfig,
+} from '../../../src/lib/room/coder-agent';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
 
 function makeRoom(overrides?: Partial<Room>): Room {
@@ -50,33 +50,33 @@ function makeTask(overrides?: Partial<NeoTask>): NeoTask {
 	};
 }
 
-function makeConfig(overrides?: Partial<CraftAgentConfig>): CraftAgentConfig {
+function makeConfig(overrides?: Partial<CoderAgentConfig>): CoderAgentConfig {
 	return {
 		task: makeTask(),
 		goal: makeGoal(),
 		room: makeRoom(),
-		sessionId: 'craft:room-1:task-1',
+		sessionId: 'coder:room-1:task-1',
 		workspacePath: '/workspace',
 		...overrides,
 	};
 }
 
-describe('Craft Agent', () => {
-	describe('buildCraftSystemPrompt', () => {
+describe('Coder Agent', () => {
+	describe('buildCoderSystemPrompt', () => {
 		it('should include task title and description', () => {
-			const prompt = buildCraftSystemPrompt(makeConfig());
+			const prompt = buildCoderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Add GET /health endpoint');
 			expect(prompt).toContain('GET /health endpoint that returns 200 OK');
 		});
 
 		it('should include goal context', () => {
-			const prompt = buildCraftSystemPrompt(makeConfig());
+			const prompt = buildCoderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Implement health check');
 			expect(prompt).toContain('health check endpoint to the API');
 		});
 
 		it('should include room background when present', () => {
-			const prompt = buildCraftSystemPrompt(
+			const prompt = buildCoderSystemPrompt(
 				makeConfig({
 					room: makeRoom({ background: 'This is a Node.js REST API project' }),
 				})
@@ -85,7 +85,7 @@ describe('Craft Agent', () => {
 		});
 
 		it('should include room instructions when present', () => {
-			const prompt = buildCraftSystemPrompt(
+			const prompt = buildCoderSystemPrompt(
 				makeConfig({
 					room: makeRoom({ instructions: 'Always write tests first' }),
 				})
@@ -94,7 +94,7 @@ describe('Craft Agent', () => {
 		});
 
 		it('should include previous task summaries when provided', () => {
-			const prompt = buildCraftSystemPrompt(
+			const prompt = buildCoderSystemPrompt(
 				makeConfig({
 					previousTaskSummaries: [
 						'Set up Express server with basic routing',
@@ -108,19 +108,19 @@ describe('Craft Agent', () => {
 		});
 
 		it('should omit previous work section when no summaries', () => {
-			const prompt = buildCraftSystemPrompt(makeConfig());
+			const prompt = buildCoderSystemPrompt(makeConfig());
 			expect(prompt).not.toContain('Previous Work');
 		});
 	});
 
-	describe('createCraftAgentInit', () => {
+	describe('createCoderAgentInit', () => {
 		it('should create init with correct session type', () => {
-			const init = createCraftAgentInit(makeConfig());
-			expect(init.type).toBe('craft');
+			const init = createCoderAgentInit(makeConfig());
+			expect(init.type).toBe('coder');
 		});
 
 		it('should use claude_code preset with appended prompt', () => {
-			const init = createCraftAgentInit(makeConfig());
+			const init = createCoderAgentInit(makeConfig());
 			expect(init.systemPrompt).toEqual({
 				type: 'preset',
 				preset: 'claude_code',
@@ -129,28 +129,28 @@ describe('Craft Agent', () => {
 		});
 
 		it('should use provided session ID and workspace path', () => {
-			const init = createCraftAgentInit(
+			const init = createCoderAgentInit(
 				makeConfig({
-					sessionId: 'craft:room-99:task-42',
+					sessionId: 'coder:room-99:task-42',
 					workspacePath: '/custom/path',
 				})
 			);
-			expect(init.sessionId).toBe('craft:room-99:task-42');
+			expect(init.sessionId).toBe('coder:room-99:task-42');
 			expect(init.workspacePath).toBe('/custom/path');
 		});
 
 		it('should use default model when not specified', () => {
-			const init = createCraftAgentInit(makeConfig());
+			const init = createCoderAgentInit(makeConfig());
 			expect(init.model).toBe('claude-sonnet-4-5-20250929');
 		});
 
 		it('should use custom model when specified', () => {
-			const init = createCraftAgentInit(makeConfig({ model: 'claude-opus-4-6' }));
+			const init = createCoderAgentInit(makeConfig({ model: 'claude-opus-4-6' }));
 			expect(init.model).toBe('claude-opus-4-6');
 		});
 
 		it('should disable all features', () => {
-			const init = createCraftAgentInit(makeConfig());
+			const init = createCoderAgentInit(makeConfig());
 			expect(init.features).toEqual({
 				rewind: false,
 				worktree: false,
@@ -161,7 +161,7 @@ describe('Craft Agent', () => {
 		});
 
 		it('should include room ID in context', () => {
-			const init = createCraftAgentInit(makeConfig());
+			const init = createCoderAgentInit(makeConfig());
 			expect(init.context).toEqual({ roomId: 'room-1' });
 		});
 	});

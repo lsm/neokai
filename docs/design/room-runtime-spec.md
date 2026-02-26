@@ -1,7 +1,7 @@
 # Room Autonomy Design Spec — Fresh Start
 
-Status: Draft v0.21
-Date: 2026-02-23
+Status: Draft v0.22
+Date: 2026-02-25
 
 ## Context
 
@@ -142,7 +142,7 @@ Lead Agent has a focused tool set, all routed through Room Runtime:
 
 ### Task Chat View: Sub-Agent Blocks
 
-The (Craft, Lead) pair is rendered in the UI as a **single conversation** using **sub-agent blocks**. Each agent's complete turn (thinking + tool uses + result) is grouped into one collapsible block:
+The (Craft, Lead) pair is rendered in the UI as a **single conversation** using **sub-agent blocks**, reading from the **session group messages** timeline. Each agent's complete turn (thinking + tool uses + result) is grouped into one collapsible block:
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -197,17 +197,23 @@ The (Craft, Lead) pair is rendered in the UI as a **single conversation** using 
 └─────────────────────────────────────────────────┘
 ```
 
+**Data source**: The unified conversation is read from `session_group_messages` — every SDK message from Craft and Lead sessions is written here in real-time by the Room Runtime (via DaemonHub `sdk.message` subscription). Human messages and system status annotations are also stored. Content is self-contained (full JSON inline), so the timeline survives session deletion.
+
 **Rendering rules**:
-- **Craft Agent turns** → sub-agent block with 🔨 icon, assistant color scheme. Each complete turn (all thinking + tool uses + result) is one collapsible block.
-- **Lead Agent turns** → sub-agent block with 👁 icon, distinct color scheme. Each complete turn is one block.
-- **Human messages** → standard user message style (not in a sub-agent block)
-- **Turns are interleaved chronologically** from both sessions
+- **Craft Agent turns** (role='craft') → sub-agent block with 🔨 icon, blue color scheme. Consecutive messages from the same session form a turn. Each turn is one collapsible block.
+- **Lead Agent turns** (role='lead') → sub-agent block with 👁 icon, violet color scheme. Each complete turn is one block.
+- **Human messages** (role='human') → standard user message style (not in a sub-agent block)
+- **System status** (role='system') → small muted annotation line (centered, gray text). Shows turn transitions: "Lead reviewing — iteration 2", "Task completed", etc.
+- **Display-time filtering**: skip `user` messages (Runtime-injected routing), skip `system` init messages. All messages are saved; display decides what to show.
+- **Turn grouping**: Consecutive messages from the same `session_id` form a "turn". No `turn_id` needed in schema — turns are computed from the message sequence at display time.
 
 **Behind the scenes**:
+- Room Runtime subscribes to DaemonHub `sdk.message` events for each member session → writes every message to `session_group_messages` → broadcasts delta to UI
 - Craft Agent session: receives Lead feedback and Human messages as user messages
 - Lead Agent session: receives Craft output (all assistant messages from last turn) as user messages from Runtime
 - Human messages to Craft are real user messages in the Craft session
 - Lead's `send_to_craft()` tool calls route through Runtime → injected as user messages in Craft session
+- Runtime writes status annotations at orchestration boundaries (group spawned, turn transitions, completion)
 
 ---
 
@@ -274,7 +280,7 @@ The Room Runtime is the **scheduler and router**. It's a simple loop driven by t
 **Counter semantics** (deterministic increment/reset rules):
 - `planning_attempts`: incremented when Runtime **spawns** a planning (Craft, Lead) pair (not on completion or failure). This counts attempts, not outcomes. Reset to 0 when human marks goal `active` via `needs_human` recovery
 - Goal review cycle count: tracked as `goal_review_attempts` on the goal (add to schema). Incremented when Runtime spawns a goal-review pair. Max 2 before `needs_human`. Reset to 0 when human marks goal `active`
-- `feedback_iteration` on task_pairs: incremented each time Lead calls `send_to_craft()`. Already tracked per-pair
+- `feedback_iteration` in session group metadata: incremented each time Lead calls `send_to_craft()`. Already tracked per-group
 
 **Routing rules**:
 - When Craft Agent reaches terminal state → collect all assistant messages from its last turn → send to Lead Agent as user message. **If a human sent messages to Craft during this iteration**, include them in the forwarding with a note: `[Human intervened: "{message}"]` so Lead understands why Craft may have changed direction
@@ -321,7 +327,7 @@ The Room Agent is NOT the scheduler. It's the human interface. When the human cr
 
 **Context compaction**: Room Agent is a long-lived session that accumulates conversation over days/weeks. It uses the existing AgentSession compaction mechanism. Since Room Agent primarily does CRUD via tools (not deep reasoning), aggressive compaction of older conversations is safe — retain recent exchanges and a summary of older ones. **Important**: recent tool-call results (e.g., newly created goal/task IDs) must survive compaction so the human can reference them in follow-up messages.
 
-**Coordination with Runtime**: Room Agent tools that modify task state (`cancel_task`, `retry_task`, `update_task`) use **optimistic locking** — they check `task.version` before writing, and fail gracefully if Runtime has already transitioned the task. This prevents races where Room Agent cancels a task that Runtime just completed. On conflict, the tool returns the current state so Room Agent can inform the human. **Version protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment the version column — both Runtime and Room Agent tools follow this protocol. Without this, optimistic locking is meaningless.
+**Coordination with Runtime**: Room Agent tools that modify task state (`cancel_task`, `retry_task`, `update_task`) use **optimistic locking** — they check `task.version` before writing, and fail gracefully if Runtime has already transitioned the task. This prevents races where Room Agent cancels a task that Runtime just completed. On conflict, the tool returns the current state so Room Agent can inform the human. **Version protocol**: ALL writes to `tasks.version` and `session_groups.version` must increment the version column — both Runtime and Room Agent tools follow this protocol. Without this, optimistic locking is meaningless.
 
 #### 3. Craft Agent (on-demand AgentSession — per task)
 
@@ -409,11 +415,11 @@ The Lead Agent is triggered when Room Runtime sends it a user message containing
 
 **Lead tool contract**: Lead Agent must call **exactly one terminal tool** per turn: `complete_task`, `fail_task`, `escalate`, or `send_to_craft`. If Lead emits text with no tool call, or calls multiple conflicting tools, Runtime treats it as an error: it retries once with a system nudge ("You must call exactly one of: send_to_craft, complete_task, fail_task, or escalate"). If the second attempt also fails, Runtime escalates to human.
 
-**Lead tool execution guard**: Before executing ANY Lead tool call, Runtime validates: (1) `pair_state == awaiting_lead`, (2) task status and version match expected values, (3) no queued interrupts for this pair. If validation fails (e.g., task was cancelled while Lead was generating), the tool call is rejected as stale and discarded. If a queued interrupt exists, Runtime defers the tool call, delivers the interrupt to Lead as a user message, and lets Lead re-evaluate before calling a terminal tool again. This prevents stale Lead actions from overriding urgent human controls.
+**Lead tool execution guard**: Before executing ANY Lead tool call, Runtime validates: (1) group state == `awaiting_lead`, (2) task status and version match expected values, (3) no queued interrupts for this group. If validation fails (e.g., task was cancelled while Lead was generating), the tool call is rejected as stale and discarded. If a queued interrupt exists, Runtime defers the tool call, delivers the interrupt to Lead as a user message, and lets Lead re-evaluate before calling a terminal tool again. This prevents stale Lead actions from overriding urgent human controls.
 
-**Lead Agent question handling**: If Lead Agent itself triggers `AskUserQuestion`, Runtime transitions the pair to `awaiting_human` and routes the question directly to the human (unlike Craft questions which route to Lead first). This is because Lead is already the review layer — there's no higher agent to route to. When the human responds, the pair transitions back to `awaiting_lead` and the response is delivered to Lead. Lead's `AskUserQuestion` follows the same escalation SLA timeout as `escalate()` — if no human response within 2h, pair hibernates.
+**Lead Agent question handling**: If Lead Agent itself triggers `AskUserQuestion`, Runtime transitions the group to `awaiting_human` and routes the question directly to the human (unlike Craft questions which route to Lead first). This is because Lead is already the review layer — there's no higher agent to route to. When the human responds, the group transitions back to `awaiting_lead` and the response is delivered to Lead. Lead's `AskUserQuestion` follows the same escalation SLA timeout as `escalate()` — if no human response within 2h, group hibernates.
 
-**Turn boundary tracking**: Task pairs track `last_forwarded_message_id` — the ID of the last Craft message forwarded to Lead. When Craft reaches a terminal state, Runtime collects all assistant messages with ID > `last_forwarded_message_id`, forwards them, and updates the marker. This prevents duplicate or skipped reviews across restarts.
+**Turn boundary tracking**: Session groups track `metadata.lastForwardedMessageId` — the ID of the last Craft message forwarded to Lead. When Craft reaches a terminal state, Runtime collects all assistant messages with ID > `lastForwardedMessageId`, forwards them, and updates the marker. This prevents duplicate or skipped reviews across restarts.
 
 **Loop termination guards**:
 - `max_feedback_iterations`: default 10 per task. After N `send_to_craft` cycles without `complete_task`/`fail_task`, Runtime auto-escalates to human
@@ -491,7 +497,7 @@ Human intervention is NOT a special state. It works at multiple levels:
 
 **Tasks**: `draft` | `pending` | `in_progress` | `escalated` | `completed` | `failed`
 
-**Task pair lifecycle** (explicit state machine for deterministic recovery):
+**Session group lifecycle** (explicit state machine for deterministic recovery — stored in `session_groups.state`):
 
 ```mermaid
 stateDiagram-v2
@@ -509,12 +515,12 @@ stateDiagram-v2
     awaiting_craft --> awaiting_lead : Craft errors (sent to Lead)
 ```
 
-| Pair state | Meaning | Who acts next |
+| Group state | Meaning | Who acts next |
 |---|---|---|
 | `awaiting_craft` | Craft Agent is working or about to receive feedback | Craft |
 | `awaiting_lead` | Craft output collected, waiting for Lead review | Lead |
-| `awaiting_human` | Escalated or Lead asked question, pair paused until human responds | Human |
-| `hibernated` | Escalation SLA expired, pair preserved but not observed | Human (eventually) |
+| `awaiting_human` | Escalated or Lead asked question, group paused until human responds | Human |
+| `hibernated` | Escalation SLA expired, group preserved but not observed | Human (eventually) |
 | `completed` | Lead accepted, task done | — |
 | `failed` | Lead rejected or unrecoverable error | — |
 
@@ -609,17 +615,18 @@ When all tasks for a goal are terminal (`completed` or `failed`) and at least on
 Runtime state is **reconstructed from DB on startup**. No in-memory-only state.
 
 **Recovery procedure**:
-1. On daemon start, Runtime queries DB for all non-terminal tasks (`in_progress`, `escalated`) with active task pairs (pair state NOT IN `completed`, `failed`)
-2. For each task pair, check pair state and session status:
-   - **Pair `awaiting_craft`**: Check Craft session — re-observe if idle, attach observer if processing, re-route if waiting_for_input
-   - **Pair `awaiting_lead`**: Check Lead session — re-observe if idle, attach observer if processing
-   - **Pair `awaiting_human`**: No action needed — pair is waiting for human input, just register for human message events
-   - **Pair `hibernated`**: No action needed — pair is preserved but not actively observed, just register for human reactivation
+1. On daemon start, Runtime queries DB for all non-terminal tasks (`in_progress`, `escalated`) with active session groups (group state NOT IN `completed`, `failed`)
+2. For each session group, check group state and session status:
+   - **Group `awaiting_craft`**: Check Craft session — re-observe if idle, attach observer if processing, re-route if waiting_for_input. Re-subscribe to DaemonHub `sdk.message` for message mirroring
+   - **Group `awaiting_lead`**: Check Lead session — re-observe if idle, attach observer if processing. Re-subscribe to DaemonHub `sdk.message` for message mirroring
+   - **Group `awaiting_human`**: No action needed — group is waiting for human input, just register for human message events
+   - **Group `hibernated`**: No action needed — group is preserved but not actively observed, just register for human reactivation
    - **Session gone** (process crashed): Mark task as `failed` with reason `session_lost`
-3. **Active work time recovery**: For pairs in `awaiting_craft`/`awaiting_lead`, `active_work_started_at` was set before the crash but the elapsed time was never accumulated into `active_work_elapsed` (no state transition occurred). Computing `now - active_work_started_at` would count crash downtime as work time. **MVP approach**: reset `active_work_started_at = now()` on recovery — crash time is not counted as active work. If precision matters later, Recovery can estimate crash duration from the daemon's last audit log entry
-4. Runtime resumes `running` state and continues normal tick loop
+3. **Active work time recovery**: For groups in `awaiting_craft`/`awaiting_lead`, `metadata.activeWorkStartedAt` was set before the crash but the elapsed time was never accumulated into `metadata.activeWorkElapsed` (no state transition occurred). Computing `now - activeWorkStartedAt` would count crash downtime as work time. **MVP approach**: reset `activeWorkStartedAt = now()` on recovery — crash time is not counted as active work. If precision matters later, Recovery can estimate crash duration from the daemon's last audit log entry
+4. **Message mirroring catch-up**: For each recovered group, compare last message timestamp in `session_group_messages` vs member sessions' `sdk_messages` → mirror any gap to ensure the conversation timeline is complete
+5. Runtime resumes `running` state and continues normal tick loop
 
-**Message queue recovery**: On restart, Runtime scans `task_messages` for entries with `status = 'pending'` and reprocesses them in `created_at` order. Since messages are scoped to `pair_id` + `to_session_id`, only messages for still-active pairs are delivered. Messages targeting sessions that no longer exist are marked `dead_letter`.
+**Message queue recovery**: On restart, Runtime scans `task_messages` for entries with `status = 'pending'` and reprocesses them in `created_at` order. Since messages are scoped to `group_id` + `to_session_id`, only messages for still-active groups are delivered. Messages targeting sessions that no longer exist are marked `dead_letter`.
 
 **Delivery idempotency**: For Craft→Lead forwarding, `last_forwarded_message_id` serves as an idempotency guard — if a message ID is already ≤ the marker, it's skipped. For Lead→Craft messages via the queue, Runtime checks `task_messages.status` before injecting: only `pending` messages are delivered. After successful injection into the AgentSession, Runtime updates the message status to `delivered` with a `delivered_at` timestamp. On crash recovery, the restart scan re-processes `pending` messages — any that were actually delivered but not marked (crash window) result in a duplicate message to the agent. Sending to an AgentSession is an external side effect that cannot be atomically committed with SQLite, so true exactly-once delivery is not achievable; the design accepts at-most-once-duplicate as the failure mode. A `processing` intermediate state is deferred to parallel mode.
 
@@ -627,7 +634,7 @@ Runtime state is **reconstructed from DB on startup**. No in-memory-only state.
 
 **Non-idempotent task recovery**: When a Craft session is lost after it has already made changes (edited files, ran commands), blind retry is dangerous — it could duplicate side effects. For lost sessions, Runtime marks the task `failed` and **does not auto-retry**. The human must acknowledge and decide: retry (if workspace state is safe) or manually intervene. Room Agent surfaces these failures prominently.
 
-**Key invariant**: All state that matters (goals, tasks, task pairs, session IDs) lives in the DB. Runtime is stateless and reconstructable.
+**Key invariant**: All state that matters (goals, tasks, session groups, session IDs) lives in the DB. Runtime is stateless and reconstructable.
 
 ### Message Queue (Prerequisite)
 
@@ -635,7 +642,7 @@ The message routing between agents requires a **DB-backed queue system** to ensu
 
 - Messages between Craft and Lead must survive daemon restarts
 - Human messages sent during Lead review must be queued and delivered in order
-- Messages are scoped to a specific `pair_id` + `to_session_id` to prevent misdelivery on task retry
+- Messages are scoped to a specific `group_id` + `to_session_id` to prevent misdelivery on task retry
 - Urgent control actions (cancel, pause) bypass the queue entirely
 
 This is a **prerequisite component** that should be designed and implemented before the Craft→Lead loop.
@@ -644,7 +651,7 @@ This is a **prerequisite component** that should be designed and implemented bef
 
 - `maxConcurrentPairs`: configurable per room (default: 1 for MVP)
 - Runtime only spawns (Craft, Lead) pairs when below capacity
-- **`awaiting_human` and `hibernated` pairs do NOT count** toward the concurrency limit — they're idle and blocking them would stall the queue for up to 2h. Only `awaiting_craft` and `awaiting_lead` pairs count as active
+- **`awaiting_human` and `hibernated` groups do NOT count** toward the concurrency limit — they're idle and blocking them would stall the queue for up to 2h. Only `awaiting_craft` and `awaiting_lead` groups count as active
 - Each tick checks capacity before spawning — pending tasks wait without wasted ticks
 - Tasks execute sequentially (MVP)
 
@@ -677,29 +684,60 @@ ALTER TABLE tasks ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE goals ADD COLUMN planning_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE goals ADD COLUMN goal_review_attempts INTEGER NOT NULL DEFAULT 0;
 
--- Task pairs: tracks the (Craft, Lead) sessions for each task
-CREATE TABLE task_pairs (
+-- Session groups: generic multi-agent collaboration groups (replaces task_pairs)
+-- A session group unifies multiple agent sessions into one conversation timeline.
+-- For task pairs, group_type='task_pair' and ref_id=task_id.
+-- The pattern is generic — adding a 3rd/4th agent = insert a member row.
+CREATE TABLE session_groups (
     id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL REFERENCES tasks(id),
-    craft_session_id TEXT NOT NULL,
-    lead_session_id TEXT NOT NULL,
-    pair_state TEXT NOT NULL DEFAULT 'awaiting_craft',
-        -- awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
-    last_forwarded_message_id TEXT,  -- turn boundary marker
-    feedback_iteration INTEGER NOT NULL DEFAULT 0,
-    active_work_started_at INTEGER,  -- tracks active work time for soft timeout
-    active_work_elapsed INTEGER NOT NULL DEFAULT 0,  -- accumulated ms in awaiting_craft + awaiting_lead
-    hibernated_at INTEGER,  -- when pair entered hibernated state (for SLA tracking)
+    group_type TEXT NOT NULL,          -- 'task_pair', 'goal_review', 'planning', etc.
+    ref_id TEXT,                       -- owning entity (task_id, goal_id, etc.)
+    state TEXT NOT NULL DEFAULT 'active',
+        -- For task pairs: awaiting_craft | awaiting_lead | awaiting_human | hibernated | completed | failed
     version INTEGER NOT NULL DEFAULT 0,  -- optimistic locking (both Runtime and Room Agent tools increment on write)
+    metadata TEXT,                     -- JSON: type-specific orchestration state
+        -- For task pairs: { feedbackIteration, leadContractViolations, lastForwardedMessageId,
+        --   activeWorkStartedAt, activeWorkElapsed, tokensUsed, hibernatedAt }
     created_at INTEGER NOT NULL,
     completed_at INTEGER
 );
+
+CREATE INDEX idx_session_groups_ref ON session_groups(ref_id);
+CREATE INDEX idx_session_groups_state ON session_groups(state);
+
+-- Session group members: who's in the group
+CREATE TABLE session_group_members (
+    group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,              -- 'craft', 'lead', 'tester', etc.
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (group_id, session_id)
+);
+
+CREATE INDEX idx_sgm_session ON session_group_members(session_id);
+
+-- Session group messages: the unified conversation timeline
+-- Every SDK message from member sessions is written here in real-time.
+-- Human messages and system status annotations are also stored.
+-- Content is self-contained (full JSON inline, no FK to sdk_messages).
+CREATE TABLE session_group_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
+    session_id TEXT,                 -- NULL for human/system entries
+    role TEXT NOT NULL,              -- denormalized: 'craft', 'lead', 'human', 'system'
+    message_type TEXT NOT NULL,      -- SDK type ('assistant','result','user','system') or 'human','status'
+    content TEXT NOT NULL,           -- full SDK message JSON or plain text
+    created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_sgmsg_group ON session_group_messages(group_id, id);
+CREATE INDEX idx_sgmsg_session ON session_group_messages(session_id);
 
 -- Message queue: reliable inter-agent message delivery
 CREATE TABLE task_messages (
     id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL REFERENCES tasks(id),
-    pair_id TEXT NOT NULL REFERENCES task_pairs(id),
+    group_id TEXT NOT NULL REFERENCES session_groups(id),
     from_role TEXT NOT NULL,       -- 'craft' | 'lead' | 'human'
     to_role TEXT NOT NULL,         -- 'craft' | 'lead'
     to_session_id TEXT NOT NULL,   -- target session (prevents misdelivery on retry)
@@ -713,11 +751,11 @@ CREATE TABLE task_messages (
     delivered_at INTEGER
 );
 
--- Task messages retention: messages are retained for the lifetime of the pair.
--- When a pair reaches terminal state (completed/failed), delivered and dead_letter
--- messages can be purged. Pending messages on terminal pairs are dead-lettered first.
+-- Task messages retention: messages are retained for the lifetime of the group.
+-- When a group reaches terminal state (completed/failed), delivered and dead_letter
+-- messages can be purged. Pending messages on terminal groups are dead-lettered first.
 -- This is separate from audit log retention (7 days) — task messages have no
--- time-based TTL. Long-lived hibernated pairs retain their pending messages
+-- time-based TTL. Long-lived hibernated groups retain their pending messages
 -- indefinitely until reactivation or manual cleanup.
 
 -- Audit log: observability for debugging Runtime behavior
@@ -725,18 +763,13 @@ CREATE TABLE task_messages (
 CREATE TABLE room_audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     room_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,  -- 'tick' | 'pair_state_change' | 'message_delivery' | 'notification'
+    event_type TEXT NOT NULL,  -- 'tick' | 'group_state_change' | 'message_delivery' | 'notification'
     detail TEXT NOT NULL,      -- JSON: what happened, trigger, outcome
     created_at INTEGER NOT NULL
 );
 ```
 
-Add `tokens_used` to task_pairs for cost tracking from day one:
-```sql
-ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
-    -- Accumulated input + output tokens across both Craft and Lead sessions
-    -- Updated after each agent turn (per-turn for accuracy)
-```
+`tokens_used` is tracked in `session_groups.metadata` for cost tracking from day one (accumulated input + output tokens across all member sessions, updated after each agent turn).
 
 ---
 
@@ -755,17 +788,18 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 - **Room agent tools MCP** → new Room Agent tools (goal/task CRUD, room state queries)
 - **RoomSelfLifecycleManager** → not needed (only 2 states)
 - **Worker tools (worker_complete_task etc.)** → Lead Agent tools instead
-- **WorkerManager** → replaced by (Craft, Lead) pair manager
+- **WorkerManager** → replaced by session group manager
 
 ## New Components
 
 1. **RoomRuntime** — deterministic scheduler loop + message router
 2. **Room Agent tools** — MCP tools for goal/task CRUD, room state queries, task cancel/retry
 3. **Lead Agent tools** — MCP tools: `send_to_craft`, `complete_task`, `fail_task`, `escalate`, `read_craft_messages`
-4. **Task pair manager** — creates and tracks (Craft, Lead) pairs for tasks
+4. **Session group manager** — creates and tracks session groups (Craft, Lead, etc.) for tasks. Generic pattern: `session_groups` + `session_group_members` replaces task-specific pair tracking
 5. **Session observer** — detects terminal states (Result/Error/AskQuestion) + cron safety net
 6. **DB-backed message queue** — reliable inter-agent message delivery with human message queueing
-7. **Task Chat View UI** — unified chat rendering with sub-agent blocks for (Craft, Lead, Human)
+7. **Session group messages** — unified conversation timeline. Every SDK message from member sessions is written in real-time via DaemonHub subscription. Self-contained content (full JSON inline). Display layer filters at read time
+8. **Task Chat View UI** — unified chat rendering with sub-agent blocks for (Craft, Lead, Human), reading from session group messages
 
 ## Design Decisions (Resolved)
 
@@ -776,7 +810,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 5. **Craft Agents have no completion-signaling tools**: They just work and reach terminal state. Activity-specific tools (e.g., `create_task` for planning) are allowed.
 11. **Naming**: Craft Agent (does the work) + Lead Agent (reviews and directs).
 18. **Model selection**: Use room default model for both Craft and Lead (configurable later).
-20. **Explicit pair state machine**: Pairs have 6 states (`awaiting_craft`, `awaiting_lead`, `awaiting_human`, `hibernated`, `completed`, `failed`) for deterministic recovery.
+20. **Explicit group state machine**: Session groups have 6 states (`awaiting_craft`, `awaiting_lead`, `awaiting_human`, `hibernated`, `completed`, `failed`) for deterministic recovery.
 34. **Room Agent is on-demand**: "Always available" means session exists in DB, not persistently-running LLM. Only costs tokens when human chats.
 36. **Task type determines agent behavior**: `task_type` field on tasks determines Craft's tool set and Lead's activity-specific review prompt.
 58. **Craft Agent system prompt defined**: Includes task description, goal context, room instructions, and previous task summaries. Does NOT include Lead awareness — Craft focuses on quality, not gaming approval.
@@ -785,10 +819,10 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 ### Scheduling & Task Selection
 1. **Task execution**: Sequential only. One (Craft, Lead) pair at a time (MVP).
 19. **Tick idempotency**: Single-flight mutex prevents concurrent ticks from double-spawning or double-delivering.
-51. **`awaiting_human`/`hibernated` don't count toward concurrency**: Idle pairs free the concurrency slot immediately, preventing 2h queue blocking on escalation.
+51. **`awaiting_human`/`hibernated` don't count toward concurrency**: Idle groups free the concurrency slot immediately, preventing 2h queue blocking on escalation.
 60. **Task selection ordering**: By `priority` descending (higher = more important), then `created_at` ascending (oldest first). Applies across goals.
 77. **Task selection deterministic tiebreaker**: priority DESC → created_at ASC → id ASC. Handles same-tick creation.
-81. **Counter increment on spawn**: `planning_attempts` and `goal_review_attempts` increment when pair is spawned (counts attempts, not outcomes). `feedback_iteration` increments on each `send_to_craft`.
+81. **Counter increment on spawn**: `planning_attempts` and `goal_review_attempts` increment when group is spawned (counts attempts, not outcomes). `feedbackIteration` in group metadata increments on each `send_to_craft`.
 83. **Scheduler precedence: goal review before re-planning**: Tick evaluates goal review first. Goal review: `task_count > 0` AND all tasks terminal AND at least one `completed`. Planning: goal has zero tasks OR all tasks `failed`. No overlap possible.
 
 ### Craft→Lead Loop & Message Routing
@@ -797,7 +831,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 8. **Lead session created once, reused**: Lead Agent is created when the task starts and reused across all feedback iterations, maintaining full review context.
 12. **AskUserQuestion routes to Lead first**: When Craft asks a question, Runtime sends it to Lead. Lead can answer or escalate to human.
 13. **Human messages queued during Lead review**: Prevents race conditions. Messages delivered after Lead's current review cycle.
-22. **Turn boundary tracking**: `last_forwarded_message_id` on task pairs prevents duplicate/skipped reviews.
+22. **Turn boundary tracking**: `metadata.lastForwardedMessageId` on session groups prevents duplicate/skipped reviews.
 37. **Human interventions forwarded to Lead**: When human sends messages to Craft during an iteration, those messages are included in the Craft→Lead forwarding so Lead understands context changes.
 39. **Structured Craft→Lead message format**: Runtime sends structured envelope with iteration number, task description, tool call summary, terminal state, and human interventions.
 40. **Structured compaction**: Lead compaction preserves feedback→resolution pairs, not generic summaries.
@@ -810,7 +844,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 31. **Lead answer policy**: Lead may answer Craft's architectural/technical questions but must escalate secrets, credentials, permissions, and subjective preferences.
 49. **`run_verification` restricted to allowlist**: Commands scoped to room's `allowed_verification_commands` config (default: test/lint). Not arbitrary bash.
 69. **Verification consecutive failure escalation**: If same verification check fails 3 times consecutively, Lead must escalate instead of continuing feedback loop.
-78. **Lead tool execution guard**: Before executing any Lead tool, Runtime validates pair_state, task version, and checks for queued interrupts. Stale calls rejected, interrupts take precedence over terminal actions.
+78. **Lead tool execution guard**: Before executing any Lead tool, Runtime validates group state, task version, and checks for queued interrupts. Stale calls rejected, interrupts take precedence over terminal actions.
 87. **Interrupt tool rejection semantics**: "Deferred" means tool call is rejected with a reason result ("human interrupt received, re-evaluate"), then the interrupt is delivered as a follow-up user message. This is standard SDK tool rejection, not pause-and-resume.
 
 ### Planning & Goal Lifecycle
@@ -828,7 +862,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 
 ### Human Intervention & Interrupts
 9. **Human interface**: Room Agent is always-on department head. Humans can also join any task's group chat.
-10. **Task Chat View**: (Craft, Lead) pair rendered as unified conversation with sub-agent blocks per turn.
+10. **Task Chat View**: (Craft, Lead) session group rendered as unified conversation with sub-agent blocks per turn, reading from `session_group_messages`.
 28. **Urgent controls bypass queue**: `cancel_task`, `pause runtime` execute immediately, not queued.
 29. **Lead questions route to human**: Lead Agent's `AskUserQuestion` goes directly to human (no higher review layer).
 32. **Human interrupt**: Human can interrupt Lead mid-review for redirect messages (not just cancel). Delivered after Lead's turn completes, pair stays in `awaiting_lead`. Interrupt takes precedence over in-flight terminal tools via the Lead tool execution guard.
@@ -868,21 +902,29 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 
 ### Schema, Versioning & Data
 25. **Optimistic locking**: Room Agent tools check `task.version` to prevent races with Runtime state transitions.
-55. **Pair state write ownership**: Runtime is the **primary** writer of pair state for normal lifecycle transitions (`awaiting_craft` → `awaiting_lead` → `completed`/`failed`). Room Agent control-plane tools (`cancel_task`, `retry_task`) are **authorized writers** for urgent operations — they use optimistic locking (version check) to prevent races with Runtime. Both Runtime and Room Agent tools increment `task_pairs.version` on every write. This is not "sole writer" — it's "primary writer with authorized control-plane overrides."
-63. **`version` on tasks table**: Optimistic locking for Room Agent tools modifying task state. Separate from `task_pairs.version`.
-65. **Audit log**: `room_audit_log` table for tick decisions, pair state changes, message delivery. Essential for debugging.
-66. **Token tracking**: `tokens_used` on task_pairs from day one for cost visibility.
-71. **Version bumping protocol**: ALL writes to `tasks.version` and `task_pairs.version` must increment version. Both Runtime and Room Agent tools follow this.
+55. **Group state write ownership**: Runtime is the **primary** writer of group state for normal lifecycle transitions (`awaiting_craft` → `awaiting_lead` → `completed`/`failed`). Room Agent control-plane tools (`cancel_task`, `retry_task`) are **authorized writers** for urgent operations — they use optimistic locking (version check) to prevent races with Runtime. Both Runtime and Room Agent tools increment `session_groups.version` on every write. This is not "sole writer" — it's "primary writer with authorized control-plane overrides."
+63. **`version` on tasks table**: Optimistic locking for Room Agent tools modifying task state. Separate from `session_groups.version`.
+65. **Audit log**: `room_audit_log` table for tick decisions, group state changes, message delivery. Essential for debugging.
+66. **Token tracking**: `tokens_used` in session group metadata from day one for cost visibility.
+71. **Version bumping protocol**: ALL writes to `tasks.version` and `session_groups.version` must increment version. Both Runtime and Room Agent tools follow this.
 73. **Room config stored as JSON column**: `rooms.config` JSON column holds all room-level settings (verification commands, timeouts, caps, concurrency).
 74. **Audit log retention**: 7-day TTL, cleanup job deletes older entries.
-75. **Token tracking per-turn**: `tokens_used` updated after each Craft/Lead turn for accuracy.
-86. **Task messages retention: pair-scoped, not time-based**: Messages retained for pair lifetime. Purged on terminal state. No time-based TTL — long-lived hibernated pairs keep their pending messages. Separate from audit log 7-day retention.
+75. **Token tracking per-turn**: `metadata.tokensUsed` updated after each Craft/Lead turn for accuracy.
+86. **Task messages retention: group-scoped, not time-based**: Messages retained for group lifetime. Purged on terminal state. No time-based TTL — long-lived hibernated groups keep their pending messages. Separate from audit log 7-day retention.
 89. **`message_type` column on task_messages**: Explicit type (`normal`/`interrupt`/`escalation_context`) for efficient queue scanning. Enables Lead tool execution guard to check for interrupts without JSON parsing.
 90. **Goal review requires `task_count > 0`**: Prevents brand-new goals with zero tasks from vacuously matching "all tasks completed." Goal review predicate: `task_count > 0 AND all tasks terminal AND at least one completed`.
 91. **Failed tasks don't block goal review**: Goal review triggers when all tasks are terminal (`completed`/`failed`) with at least one `completed`. The goal review Craft assesses whether the goal is met despite failures. Re-planning only triggers when ALL tasks are `failed` (nothing succeeded).
 92. **Planning duplicate mitigation**: Runtime includes `task_messages.id` as header in injected messages. Lead reviews drafts before promotion. Draft promotion scoped to `created_by_task_id`. Soft guards; `processing` state (deferred) would close the window fully.
-93. **Pair state write ownership clarified**: Runtime is **primary** writer for normal lifecycle. Room Agent tools are **authorized writers** for control-plane (`cancel_task`, `retry_task`). Both use optimistic locking. Replaces the overly-strong "sole writer" claim.
+93. **Group state write ownership clarified**: Runtime is **primary** writer for normal lifecycle. Room Agent tools are **authorized writers** for control-plane (`cancel_task`, `retry_task`). Both use optimistic locking. Replaces the overly-strong "sole writer" claim.
 94. **Lead session replacement retargets queued messages**: When Lead is replaced after 3 consecutive failures, pending messages in `task_messages` are retargeted from old to new Lead session ID. Prevents queued interrupts from being dead-lettered due to session ID mismatch.
+
+### Session Groups & Conversation Timeline
+95. **Session groups replace task_pairs**: Generic `session_groups` + `session_group_members` + `session_group_messages` tables replace the task-specific `task_pairs` table. A session group unifies multiple agent sessions into one conversation timeline. Adding a 3rd/4th agent = insert a member row. The pattern works for any multi-agent collaboration (task pairs, goal review, planning, etc.).
+96. **Save everything, filter at read time**: Every SDK message from member sessions is written to `session_group_messages` in real-time via DaemonHub `sdk.message` subscription. No write-time filtering. Display and routing layers filter independently at read time. This preserves full audit trail and allows different views of the same data.
+97. **Self-contained messages**: `session_group_messages.content` stores full SDK message JSON inline (no FK references to `sdk_messages`). The conversation timeline survives session deletion.
+98. **DaemonHub `sdk.message` emission**: `SDKMessageHandler` emits `sdk.message` on DaemonHub (internal) after saving to `sdk_messages` and broadcasting to WebSocket clients. Room Runtime subscribes to this for message mirroring into session group messages.
+99. **Turn grouping at display time**: Consecutive messages from the same `session_id` form a "turn". No `turn_id` or `seq` columns needed in schema — turns are computed from the message sequence at display time.
+100. **Type-specific metadata in JSON**: Session group orchestration state (feedbackIteration, leadContractViolations, lastForwardedMessageId, activeWorkStartedAt, activeWorkElapsed, tokensUsed, hibernatedAt) is stored as JSON in `session_groups.metadata`. Different group types can store different metadata without schema changes.
 
 ### Meta
 82. **Resolved decisions kept in sync**: Decisions #15, #32, #55, #83 updated to match body changes.
@@ -902,7 +944,7 @@ ALTER TABLE task_pairs ADD COLUMN tokens_used INTEGER NOT NULL DEFAULT 0;
 
 ### Phase 0: Prerequisites
 - DB-backed message queue system (task_messages table + queue logic)
-- Database schema additions (task_pairs, task_messages tables)
+- Database schema additions (session_groups, session_group_members, session_group_messages, task_messages tables)
 
 ### Phase 1: Foundation
 - RoomRuntime scheduler loop (tick loop, event-driven + timer fallback)

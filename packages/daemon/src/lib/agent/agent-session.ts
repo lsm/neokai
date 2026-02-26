@@ -443,13 +443,17 @@ export class AgentSession
 			title:
 				type === 'room_chat'
 					? 'Room Chat'
-					: type === 'craft'
-						? 'Craft Agent'
-						: type === 'lead'
-							? 'Lead Agent'
-							: type === 'lobby'
-								? 'Lobby Agent'
-								: 'New Session',
+					: type === 'coder'
+						? 'Coder Agent'
+						: type === 'planner'
+							? 'Planner Agent'
+							: type === 'leader'
+								? 'Leader Agent'
+								: type === 'general'
+									? 'General Agent'
+									: type === 'lobby'
+										? 'Lobby Agent'
+										: 'New Session',
 			workspacePath: init.workspacePath,
 			createdAt: now,
 			lastActiveAt: now,

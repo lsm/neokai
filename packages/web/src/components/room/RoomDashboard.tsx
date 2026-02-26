@@ -8,12 +8,14 @@
  */
 
 import { roomStore } from '../../lib/room-store';
+import { navigateToRoomTask } from '../../lib/router';
 import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
 
 export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
 	const sessions = roomStore.sessions.value;
+	const roomId = roomStore.roomId.value;
 	const pendingTasks = tasks.filter((t) => t.status === 'pending');
 	const activeTasks = tasks.filter((t) => t.status === 'in_progress');
 	const completedTasks = tasks.filter((t) => t.status === 'completed');
@@ -43,7 +45,10 @@ export function RoomDashboard() {
 			{/* Tasks list */}
 			<div class="space-y-2">
 				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
-				<RoomTasks tasks={tasks} />
+				<RoomTasks
+					tasks={tasks}
+					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+				/>
 			</div>
 
 			{/* Sessions list */}

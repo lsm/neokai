@@ -1,19 +1,19 @@
 /**
- * Craft Agent Factory - Creates AgentSessionInit for Craft (worker) sessions
+ * General Agent Factory - Creates AgentSessionInit for General (fallback worker) sessions
  *
- * The Craft agent is the "doer" in a (Craft, Lead) pair. It receives a task
- * with context from the goal and room, then works using standard coding tools
- * (bash, edit, read, write, glob, grep) until it reaches a terminal state.
+ * The General agent handles non-coding tasks within a session group. It has access
+ * to the same Claude Code tools as the Coder agent but uses a more generic system
+ * prompt that doesn't assume a coding context.
  *
- * No special MCP tools are needed - Craft just works until done.
+ * Used when the Planner assigns a task that doesn't fit a specific agent type.
  */
 
 import type { AgentSessionInit } from '../agent/agent-session';
 import type { Room, RoomGoal, NeoTask, SessionFeatures } from '@neokai/shared';
 
-const DEFAULT_CRAFT_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_GENERAL_MODEL = 'claude-sonnet-4-5-20250929';
 
-const CRAFT_FEATURES: SessionFeatures = {
+const GENERAL_FEATURES: SessionFeatures = {
 	rewind: false,
 	worktree: false,
 	coordinator: false,
@@ -21,7 +21,7 @@ const CRAFT_FEATURES: SessionFeatures = {
 	sessionInfo: false,
 };
 
-export interface CraftAgentConfig {
+export interface GeneralAgentConfig {
 	task: NeoTask;
 	goal: RoomGoal;
 	room: Room;
@@ -33,19 +33,20 @@ export interface CraftAgentConfig {
 }
 
 /**
- * Build a system prompt for the Craft agent.
+ * Build a system prompt for the General agent.
  *
- * Includes task context, goal context, room instructions, and
- * summaries of previous work on the same goal.
+ * Similar to Coder but with a generic framing that doesn't assume coding work.
  */
-export function buildCraftSystemPrompt(config: CraftAgentConfig): string {
+export function buildGeneralSystemPrompt(config: GeneralAgentConfig): string {
 	const { task, goal, room, previousTaskSummaries } = config;
 
 	const sections: string[] = [];
 
-	sections.push(`You are a Craft Agent working on a specific task within a larger goal.`);
+	sections.push(`You are a General Agent working on a task within a larger goal.`);
 	sections.push(`Your job is to complete the task described below to the best of your ability.`);
-	sections.push(`Work carefully and thoroughly. When you are done, simply finish your response.`);
+	sections.push(
+		`Use whatever tools are appropriate for the task. When you are done, simply finish your response.`
+	);
 
 	// Task context
 	sections.push(`\n## Task\n`);
@@ -85,23 +86,23 @@ export function buildCraftSystemPrompt(config: CraftAgentConfig): string {
 }
 
 /**
- * Create an AgentSessionInit for a Craft agent session.
+ * Create an AgentSessionInit for a General agent session.
  *
- * The Craft agent uses the Claude Code preset (standard coding tools)
- * with a custom system prompt appended for task context.
+ * The General agent uses the Claude Code preset (standard tools)
+ * with a generic system prompt appended for task context.
  */
-export function createCraftAgentInit(config: CraftAgentConfig): AgentSessionInit {
+export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSessionInit {
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildCraftSystemPrompt(config),
+			append: buildGeneralSystemPrompt(config),
 		},
-		features: CRAFT_FEATURES,
+		features: GENERAL_FEATURES,
 		context: { roomId: config.room.id },
-		type: 'craft',
-		model: config.model ?? DEFAULT_CRAFT_MODEL,
+		type: 'general',
+		model: config.model ?? DEFAULT_GENERAL_MODEL,
 	};
 }
