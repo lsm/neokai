@@ -72,7 +72,7 @@ describe('Context Command Online Tests', () => {
 				console.log('Skipping - no Anthropic API credentials');
 				return;
 			}
-	const createResult = (await daemon.messageHub.request('session.create', {
+			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
 				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
