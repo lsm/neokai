@@ -3,7 +3,7 @@
  *
  * Shows the task detail view with:
  * - Task header (title, status, progress, group state)
- * - Unified conversation timeline (Craft + Lead messages in sub-agent blocks)
+ * - Unified conversation timeline (Worker + Leader messages in sub-agent blocks)
  *
  * Uses session group messages for a single merged timeline.
  *
@@ -19,8 +19,9 @@ import { TaskConversationRenderer } from './TaskConversationRenderer';
 interface TaskGroupInfo {
 	id: string;
 	taskId: string;
-	craftSessionId: string;
-	leadSessionId: string;
+	workerSessionId: string;
+	leaderSessionId: string;
+	workerRole: string;
 	state: string;
 	feedbackIteration: number;
 	createdAt: number;
@@ -33,12 +34,15 @@ interface TaskViewProps {
 }
 
 const GROUP_STATE_LABELS: Record<string, string> = {
-	awaiting_craft: 'Craft working…',
-	awaiting_lead: 'Lead reviewing…',
+	awaiting_worker: 'Worker active…',
+	awaiting_leader: 'Leader reviewing…',
 	awaiting_human: 'Needs human review',
 	hibernated: 'Hibernated',
 	completed: 'Completed',
 	failed: 'Failed',
+	// Backward compat
+	awaiting_craft: 'Worker active…',
+	awaiting_lead: 'Leader reviewing…',
 };
 
 const TASK_STATUS_COLORS: Record<string, string> = {
@@ -184,7 +188,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									? 'This task has been completed.'
 									: task.status === 'failed'
 										? 'This task has failed.'
-										: 'No Craft/Lead group has been spawned yet.'}
+										: 'No agent group has been spawned yet.'}
 						</p>
 					</div>
 				</div>

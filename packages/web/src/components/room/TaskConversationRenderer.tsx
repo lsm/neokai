@@ -6,8 +6,10 @@
  * and grouped by turn (using _taskMeta.turnId + _taskMeta.authorRole).
  *
  * Each turn is rendered as a collapsible block with a colored left border:
- * - Craft: blue border
- * - Lead: purple border
+ * - Planner: teal border
+ * - Coder: blue border
+ * - General: slate border
+ * - Leader: purple border
  * - System: gray centered divider
  *
  * Subscribes to state.groupMessages.delta on channel group:{groupId} for
@@ -22,7 +24,7 @@ import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
 
 interface TaskMeta {
-	authorRole: 'craft' | 'lead' | 'human' | 'system';
+	authorRole: 'planner' | 'coder' | 'general' | 'leader' | 'craft' | 'lead' | 'human' | 'system';
 	authorSessionId: string;
 	turnId: string;
 	iteration: number;
@@ -50,14 +52,24 @@ interface TaskConversationRendererProps {
 }
 
 const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: string }> = {
-	craft: {
+	planner: {
+		border: 'border-l-teal-500',
+		label: 'Planner',
+		labelColor: 'text-teal-400',
+	},
+	coder: {
 		border: 'border-l-blue-500',
-		label: 'Craft',
+		label: 'Coder',
 		labelColor: 'text-blue-400',
 	},
-	lead: {
+	general: {
+		border: 'border-l-slate-400',
+		label: 'General',
+		labelColor: 'text-slate-400',
+	},
+	leader: {
 		border: 'border-l-purple-500',
-		label: 'Lead',
+		label: 'Leader',
 		labelColor: 'text-purple-400',
 	},
 	human: {
@@ -69,6 +81,17 @@ const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: s
 		border: '',
 		label: '',
 		labelColor: 'text-gray-500',
+	},
+	// Backward compat for messages already in DB from before the rename
+	craft: {
+		border: 'border-l-blue-500',
+		label: 'Craft',
+		labelColor: 'text-blue-400',
+	},
+	lead: {
+		border: 'border-l-purple-500',
+		label: 'Lead',
+		labelColor: 'text-purple-400',
 	},
 };
 
@@ -123,7 +146,9 @@ function countToolUses(messages: SDKMessage[]): number {
 }
 
 /**
- * Group messages by turn using _taskMeta.
+ * Group messages by turn using _taskMeta.turnId alone.
+ * turnId is deterministic: `turn_{groupId}_{iteration}_{shortSessionId}`
+ * so it uniquely identifies each agent's turn without needing authorRole in the key.
  * Messages without _taskMeta are placed in an 'unknown' group.
  */
 function groupMessagesByTurn(messages: SDKMessage[]): TurnGroup[] {
@@ -136,8 +161,8 @@ function groupMessagesByTurn(messages: SDKMessage[]): TurnGroup[] {
 		const authorRole = meta?.authorRole ?? 'system';
 		const iteration = meta?.iteration ?? 0;
 
-		// Start a new group when turnId or authorRole changes
-		if (!currentGroup || currentGroup.turnId !== turnId || currentGroup.authorRole !== authorRole) {
+		// Start a new group when turnId changes
+		if (!currentGroup || currentGroup.turnId !== turnId) {
 			currentGroup = { turnId, authorRole, iteration, messages: [] };
 			groups.push(currentGroup);
 		}
@@ -213,8 +238,7 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 			const toCollapse = new Set<string>();
 			// Collapse all turns except the last one
 			for (let i = 0; i < turnGroups.length - 1; i++) {
-				const key = `${turnGroups[i].turnId}:${turnGroups[i].authorRole}`;
-				toCollapse.add(key);
+				toCollapse.add(turnGroups[i].turnId);
 			}
 			setCollapsedTurns(toCollapse);
 		}
@@ -251,14 +275,13 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 	return (
 		<div ref={scrollRef} class="flex-1 overflow-y-auto px-4 py-3 space-y-2">
 			{turnGroups.map((group) => {
-				const turnKey = `${group.turnId}:${group.authorRole}`;
 				const style = ROLE_STYLES[group.authorRole] ?? ROLE_STYLES.system;
-				const isCollapsed = collapsedTurns.has(turnKey);
+				const isCollapsed = collapsedTurns.has(group.turnId);
 
 				// System messages: render as centered dividers
 				if (group.authorRole === 'system') {
 					return (
-						<div key={turnKey} class="flex items-center gap-3 py-1.5">
+						<div key={group.turnId} class="flex items-center gap-3 py-1.5">
 							<div class="flex-1 h-px bg-dark-700" />
 							<span class="text-xs text-gray-500 whitespace-nowrap">
 								{getMessagePreview(group.messages) ?? 'Status update'}
@@ -272,12 +295,12 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 				const preview = isCollapsed ? getMessagePreview(group.messages) : null;
 
 				return (
-					<div key={turnKey} class={`border-l-2 ${style.border} bg-dark-850/50 rounded-r`}>
+					<div key={group.turnId} class={`border-l-2 ${style.border} bg-dark-850/50 rounded-r`}>
 						{/* Turn header */}
 						<button
 							type="button"
 							class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-dark-800/50 transition-colors"
-							onClick={() => toggleTurn(turnKey)}
+							onClick={() => toggleTurn(group.turnId)}
 						>
 							<span class="text-[10px] text-gray-600 select-none">{isCollapsed ? '▶' : '▼'}</span>
 							<span class={`text-xs font-semibold uppercase tracking-wide ${style.labelColor}`}>
