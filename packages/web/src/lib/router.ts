@@ -179,6 +179,8 @@ export function navigateToHome(replace = false): void {
 	if (currentPath === '/') {
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		return;
 	}
 
@@ -190,6 +192,8 @@ export function navigateToHome(replace = false): void {
 
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
@@ -217,6 +221,7 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		// Still update the signal in case it's out of sync
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		return;
 	}
@@ -232,9 +237,10 @@ export function navigateToRoom(roomId: string, replace = false): void {
 			targetPath
 		);
 
-		// Update the signals - room takes priority, clear session and room session
+		// Update the signals - room takes priority, clear session, room session, and task
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} finally {
@@ -266,6 +272,7 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		// Still update the signal in case it's out of sync
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = sessionId;
+		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		return;
 	}
@@ -284,6 +291,7 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		// Update the signals
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = sessionId;
+		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} finally {
