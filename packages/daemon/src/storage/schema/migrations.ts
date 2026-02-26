@@ -73,6 +73,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 35: Added 'task_conversation' type (now unused — kept for idempotency on existing DBs)
 	runMigration35(db);
+
+	// Migration 36: Multi-agent architecture — rename craft/lead to worker/leader, add assigned_agent
+	runMigration36(db);
 }
 
 /**
@@ -992,6 +995,194 @@ function runMigration35(db: BunDatabase): void {
 		`);
 		db.exec(`DROP TABLE sessions`);
 		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 36: Multi-agent architecture
+ *
+ * - Add assigned_agent column to tasks table
+ * - Rename session_groups states: awaiting_craft → awaiting_worker, awaiting_lead → awaiting_leader
+ * - Rename session_group_members roles: craft → worker, lead → leader
+ * - Update task_messages role CHECK constraints
+ * - Update sessions type CHECK to include planner, coder, leader, general
+ */
+function runMigration36(db: BunDatabase): void {
+	// 1. Add assigned_agent to tasks (idempotent)
+	if (tableExists(db, 'tasks')) {
+		try {
+			db.exec(`ALTER TABLE tasks ADD COLUMN assigned_agent TEXT DEFAULT 'coder'`);
+		} catch {
+			// Column already exists
+		}
+	}
+
+	// 2. Rebuild session_groups with updated state CHECK
+	if (tableExists(db, 'session_groups')) {
+		// Check if migration already applied
+		try {
+			const testRow = db
+				.prepare(`SELECT state FROM session_groups WHERE state = 'awaiting_worker' LIMIT 1`)
+				.get();
+			// If we find 'awaiting_worker' rows, or no rows with old states, check if already migrated
+			const oldRows = db
+				.prepare(
+					`SELECT COUNT(*) as c FROM session_groups WHERE state IN ('awaiting_craft', 'awaiting_lead')`
+				)
+				.get() as { c: number };
+			if (oldRows.c === 0 && testRow !== undefined) {
+				// Already migrated, skip session_groups rebuild
+			} else {
+				rebuildSessionGroups(db);
+			}
+		} catch {
+			rebuildSessionGroups(db);
+		}
+	}
+
+	// 3. Update session_group_members roles
+	if (tableExists(db, 'session_group_members')) {
+		db.exec(`UPDATE session_group_members SET role = 'worker' WHERE role = 'craft'`);
+		db.exec(`UPDATE session_group_members SET role = 'leader' WHERE role = 'lead'`);
+	}
+
+	// 4. Rebuild task_messages with updated CHECK constraints
+	if (tableExists(db, 'task_messages')) {
+		db.exec(`PRAGMA foreign_keys = OFF`);
+		try {
+			db.exec(`
+				CREATE TABLE task_messages_new (
+					id TEXT PRIMARY KEY,
+					task_id TEXT NOT NULL REFERENCES tasks(id),
+					group_id TEXT NOT NULL REFERENCES session_groups(id),
+					from_role TEXT NOT NULL CHECK(from_role IN ('worker', 'leader', 'human')),
+					to_role TEXT NOT NULL CHECK(to_role IN ('worker', 'leader')),
+					to_session_id TEXT NOT NULL,
+					message_type TEXT NOT NULL DEFAULT 'normal'
+						CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
+					payload TEXT NOT NULL,
+					status TEXT NOT NULL DEFAULT 'pending'
+						CHECK(status IN ('pending', 'delivered', 'dead_letter')),
+					created_at INTEGER NOT NULL,
+					delivered_at INTEGER
+				)
+			`);
+			db.exec(`
+				INSERT INTO task_messages_new
+				SELECT id, task_id, group_id,
+					CASE from_role WHEN 'craft' THEN 'worker' WHEN 'lead' THEN 'leader' ELSE from_role END,
+					CASE to_role WHEN 'craft' THEN 'worker' WHEN 'lead' THEN 'leader' ELSE to_role END,
+					to_session_id, message_type, payload, status, created_at, delivered_at
+				FROM task_messages
+			`);
+			db.exec(`DROP TABLE task_messages`);
+			db.exec(`ALTER TABLE task_messages_new RENAME TO task_messages`);
+			db.exec(`CREATE INDEX idx_task_messages_group ON task_messages(group_id, status)`);
+			db.exec(`CREATE INDEX idx_task_messages_task ON task_messages(task_id)`);
+		} finally {
+			db.exec(`PRAGMA foreign_keys = ON`);
+		}
+	}
+
+	// 5. Rebuild sessions table with updated type CHECK
+	if (tableExists(db, 'sessions')) {
+		// Check if new types already allowed
+		const testId = '__migration36_test__';
+		try {
+			db.exec(
+				`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, type)
+				 VALUES ('${testId}', 'test', '/', datetime('now'), datetime('now'), 'active', '{}', '{}', 'planner')`
+			);
+			db.exec(`DELETE FROM sessions WHERE id = '${testId}'`);
+			// Already has new types, just migrate data
+			db.exec(`UPDATE sessions SET type = 'coder' WHERE type = 'craft'`);
+			db.exec(`UPDATE sessions SET type = 'leader' WHERE type = 'lead'`);
+			return;
+		} catch {
+			// Need to rebuild
+		}
+
+		db.exec(`PRAGMA foreign_keys = OFF`);
+		try {
+			db.exec(`
+				CREATE TABLE sessions_new (
+					id TEXT PRIMARY KEY,
+					title TEXT NOT NULL,
+					workspace_path TEXT NOT NULL,
+					created_at TEXT NOT NULL,
+					last_active_at TEXT NOT NULL,
+					status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+					config TEXT NOT NULL,
+					metadata TEXT NOT NULL,
+					is_worktree INTEGER DEFAULT 0,
+					worktree_path TEXT,
+					main_repo_path TEXT,
+					worktree_branch TEXT,
+					git_branch TEXT,
+					sdk_session_id TEXT,
+					available_commands TEXT,
+					processing_state TEXT,
+					archived_at TEXT,
+					parent_id TEXT,
+					labels TEXT,
+					sub_session_order INTEGER DEFAULT 0,
+					type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')),
+					session_context TEXT
+				)
+			`);
+			db.exec(`
+				INSERT INTO sessions_new
+				SELECT id, title, workspace_path, created_at, last_active_at,
+					status, config, metadata, is_worktree, worktree_path, main_repo_path,
+					worktree_branch, git_branch, sdk_session_id, available_commands,
+					processing_state, archived_at, parent_id, labels,
+					COALESCE(sub_session_order, 0),
+					CASE type WHEN 'craft' THEN 'coder' WHEN 'lead' THEN 'leader' ELSE type END,
+					session_context
+				FROM sessions
+			`);
+			db.exec(`DROP TABLE sessions`);
+			db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+		} finally {
+			db.exec(`PRAGMA foreign_keys = ON`);
+		}
+	}
+}
+
+/** Helper for migration 36: rebuild session_groups table */
+function rebuildSessionGroups(db: BunDatabase): void {
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		db.exec(`
+			CREATE TABLE session_groups_new (
+				id TEXT PRIMARY KEY,
+				group_type TEXT NOT NULL DEFAULT 'task',
+				ref_id TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'awaiting_worker'
+					CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+				version INTEGER NOT NULL DEFAULT 0,
+				metadata TEXT NOT NULL DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				completed_at INTEGER
+			)
+		`);
+		db.exec(`
+			INSERT INTO session_groups_new
+			SELECT id, group_type, ref_id,
+				CASE state
+					WHEN 'awaiting_craft' THEN 'awaiting_worker'
+					WHEN 'awaiting_lead' THEN 'awaiting_leader'
+					ELSE state
+				END,
+				version, metadata, created_at, completed_at
+			FROM session_groups
+		`);
+		db.exec(`DROP TABLE session_groups`);
+		db.exec(`ALTER TABLE session_groups_new RENAME TO session_groups`);
+		db.exec(`CREATE INDEX idx_session_groups_ref ON session_groups(ref_id)`);
+		db.exec(`CREATE INDEX idx_session_groups_state ON session_groups(state)`);
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
 	}

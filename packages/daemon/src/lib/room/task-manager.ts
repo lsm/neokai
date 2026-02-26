@@ -16,6 +16,7 @@ import type {
 	TaskPriority,
 	TaskFilter,
 	CreateTaskParams,
+	AgentType,
 } from '@neokai/shared';
 
 export class TaskManager {
@@ -38,6 +39,10 @@ export class TaskManager {
 			description: params.description,
 			priority: params.priority,
 			dependsOn: params.dependsOn,
+			taskType: params.taskType,
+			assignedAgent: params.assignedAgent,
+			status: params.status,
+			createdByTaskId: params.createdByTaskId,
 		});
 
 		return task;
@@ -183,6 +188,77 @@ export class TaskManager {
 	 */
 	async promoteDraftTasks(creatorTaskId: string): Promise<number> {
 		return this.taskRepo.promoteDraftTasksByCreator(creatorTaskId);
+	}
+
+	/**
+	 * Update a draft task (only allowed for tasks in 'draft' status).
+	 * Used by the Planner agent during plan polishing with Leader feedback.
+	 */
+	async updateDraftTask(
+		taskId: string,
+		updates: {
+			title?: string;
+			description?: string;
+			priority?: TaskPriority;
+			assignedAgent?: AgentType;
+		}
+	): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+		if (task.status !== 'draft') {
+			throw new Error(
+				`Can only update draft tasks, but task ${taskId} has status '${task.status}'`
+			);
+		}
+
+		const updateParams: Record<string, unknown> = {};
+		if (updates.title !== undefined) updateParams.title = updates.title;
+		if (updates.description !== undefined) updateParams.description = updates.description;
+		if (updates.priority !== undefined) updateParams.priority = updates.priority;
+
+		const updatedTask = this.taskRepo.updateTask(taskId, updateParams);
+		if (!updatedTask) {
+			throw new Error(`Failed to update draft task: ${taskId}`);
+		}
+
+		// Handle assignedAgent separately since it's not in UpdateTaskParams
+		if (updates.assignedAgent !== undefined) {
+			this.db
+				.prepare(`UPDATE tasks SET assigned_agent = ? WHERE id = ?`)
+				.run(updates.assignedAgent, taskId);
+			return (await this.getTask(taskId))!;
+		}
+
+		return updatedTask;
+	}
+
+	/**
+	 * Remove a draft task (only allowed for tasks in 'draft' status).
+	 * Used by the Planner agent during plan polishing with Leader feedback.
+	 */
+	async removeDraftTask(taskId: string): Promise<boolean> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			return false;
+		}
+		if (task.status !== 'draft') {
+			throw new Error(
+				`Can only remove draft tasks, but task ${taskId} has status '${task.status}'`
+			);
+		}
+
+		this.taskRepo.deleteTask(taskId);
+		return true;
+	}
+
+	/**
+	 * Get all draft tasks created by a specific planning task.
+	 * Used to build the plan envelope for Leader review.
+	 */
+	async getDraftTasksByCreator(creatorTaskId: string): Promise<NeoTask[]> {
+		return this.taskRepo.getDraftTasksByCreator(creatorTaskId);
 	}
 
 	/**

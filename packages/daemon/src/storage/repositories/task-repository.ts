@@ -21,8 +21,8 @@ export class TaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, created_by_task_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -34,6 +34,7 @@ export class TaskRepository {
 			params.priority ?? 'normal',
 			JSON.stringify(params.dependsOn ?? []),
 			params.taskType ?? 'coding',
+			params.assignedAgent ?? 'coder',
 			params.createdByTaskId ?? null,
 			now
 		);
@@ -189,6 +190,18 @@ export class TaskRepository {
 	/**
 	 * Convert a database row to a NeoTask object
 	 */
+	/**
+	 * Get draft tasks created by a specific planning task
+	 */
+	getDraftTasksByCreator(createdByTaskId: string): NeoTask[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM tasks WHERE created_by_task_id = ? AND status = 'draft' ORDER BY created_at ASC`
+			)
+			.all(createdByTaskId) as Record<string, unknown>[];
+		return rows.map((r) => this.rowToTask(r));
+	}
+
 	private rowToTask(row: Record<string, unknown>): NeoTask {
 		return {
 			id: row.id as string,
@@ -198,6 +211,7 @@ export class TaskRepository {
 			status: row.status as NeoTask['status'],
 			priority: row.priority as NeoTask['priority'],
 			taskType: ((row.task_type as string | null) ?? 'coding') as NeoTask['taskType'],
+			assignedAgent: ((row.assigned_agent as string | null) ?? 'coder') as NeoTask['assignedAgent'],
 			createdByTaskId: (row.created_by_task_id as string | null) ?? undefined,
 			progress: (row.progress as number | null) ?? undefined,
 			currentStep: (row.current_step as string | null) ?? undefined,

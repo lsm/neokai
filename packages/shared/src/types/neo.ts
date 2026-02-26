@@ -155,6 +155,11 @@ export type TaskPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type TaskType = 'planning' | 'coding' | 'research' | 'design' | 'goal_review';
 
 /**
+ * Agent type that should execute a task
+ */
+export type AgentType = 'coder' | 'general';
+
+/**
  * A task managed within a room
  */
 export interface NeoTask {
@@ -172,6 +177,8 @@ export interface NeoTask {
 	priority: TaskPriority;
 	/** Task type — determines agent preset (default: 'coding') */
 	taskType?: TaskType;
+	/** Which agent type should execute this task (default: 'coder') */
+	assignedAgent?: AgentType;
 	/** ID of the planning task that created this task (for draft→pending promotion) */
 	createdByTaskId?: string;
 	/** Progress percentage (0-100) */
@@ -211,6 +218,8 @@ export interface CreateTaskParams {
 	dependsOn?: string[];
 	/** Task type — defaults to 'coding' */
 	taskType?: TaskType;
+	/** Which agent type should execute this task (default: 'coder') */
+	assignedAgent?: AgentType;
 	/** Initial status — defaults to 'pending'. Use 'draft' for planning-created tasks. */
 	status?: TaskStatus;
 	/** ID of planning task that created this task (for draft→pending promotion) */

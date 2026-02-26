@@ -43,7 +43,7 @@ export function createTables(db: BunDatabase): void {
         parent_id TEXT,
         labels TEXT,
         sub_session_order INTEGER DEFAULT 0,
-        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'craft', 'lead', 'lobby')),
+        type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')),
         session_context TEXT
       )
     `);
@@ -168,6 +168,7 @@ export function createTables(db: BunDatabase): void {
         started_at INTEGER,
         completed_at INTEGER,
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+        assigned_agent TEXT DEFAULT 'coder',
         version INTEGER DEFAULT 0,
         created_by_task_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
@@ -241,10 +242,10 @@ export function createTables(db: BunDatabase): void {
 	db.exec(`
       CREATE TABLE IF NOT EXISTS session_groups (
         id TEXT PRIMARY KEY,
-        group_type TEXT NOT NULL DEFAULT 'task_pair',
+        group_type TEXT NOT NULL DEFAULT 'task',
         ref_id TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'awaiting_craft'
-          CHECK(state IN ('awaiting_craft', 'awaiting_lead', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+        state TEXT NOT NULL DEFAULT 'awaiting_worker'
+          CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'hibernated', 'completed', 'failed')),
         version INTEGER NOT NULL DEFAULT 0,
         metadata TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
@@ -279,8 +280,8 @@ export function createTables(db: BunDatabase): void {
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL REFERENCES tasks(id),
         group_id TEXT NOT NULL REFERENCES session_groups(id),
-        from_role TEXT NOT NULL CHECK(from_role IN ('craft', 'lead', 'human')),
-        to_role TEXT NOT NULL CHECK(to_role IN ('craft', 'lead')),
+        from_role TEXT NOT NULL CHECK(from_role IN ('worker', 'leader', 'human')),
+        to_role TEXT NOT NULL CHECK(to_role IN ('worker', 'leader')),
         to_session_id TEXT NOT NULL,
         message_type TEXT NOT NULL DEFAULT 'normal'
           CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
