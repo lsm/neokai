@@ -2,7 +2,7 @@
  * InputTextarea Component
  *
  * iOS 26-style floating textarea input pill with auto-resize,
- * character counter, and send/stop buttons.
+ * character counter, and send button.
  * Extracted from MessageInput.tsx for better separation of concerns.
  *
  * CURSOR PRESERVATION FIX:
@@ -44,9 +44,6 @@ export interface InputTextareaProps {
 	onCommandClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
-	// Interrupt
-	interrupting?: boolean;
-	onInterrupt?: () => void;
 	onPaste?: (e: ClipboardEvent) => void;
 }
 
@@ -66,8 +63,6 @@ export function InputTextarea({
 	onCommandSelect,
 	onCommandClose,
 	isAgentWorking = false,
-	interrupting = false,
-	onInterrupt,
 	onPaste,
 }: InputTextareaProps) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -163,6 +158,7 @@ export function InputTextarea({
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
+					disabled={disabled}
 					placeholder="Ask or make anything..."
 					maxLength={maxChars}
 					rows={1}
@@ -189,60 +185,39 @@ export function InputTextarea({
 					</div>
 				)}
 
-				{/* Send/Stop Button */}
-				{isAgentWorking || interrupting ? (
-					<button
-						type="button"
-						onClick={onInterrupt}
-						disabled={interrupting}
-						title="Stop generation"
-						aria-label="Stop generation"
-						data-testid="stop-button"
-						class={cn(
-							'absolute right-1.5',
-							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
-							interrupting
-								? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-								: 'bg-red-500 text-white hover:bg-red-600 active:scale-95'
-						)}
+				{/* Send/Queue Button */}
+				<button
+					type="button"
+					onClick={onSubmit}
+					disabled={disabled || !hasContent}
+					title={
+						isMobileDevice.current
+							? 'Send message'
+							: isAgentWorking
+								? 'Send message now (Tab queues next turn)'
+								: 'Send message (Enter or Cmd+Enter)'
+					}
+					aria-label="Send message"
+					data-testid="send-button"
+					class={cn(
+						'absolute right-1.5',
+						isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
+						'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
+						hasContent && !disabled
+							? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+							: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+					)}
+				>
+					<svg
+						class="w-4.5 h-4.5"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+						stroke-width={2.5}
 					>
-						{interrupting ? (
-							<div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-						) : (
-							<svg class="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 24 24">
-								<rect x="5" y="5" width="14" height="14" rx="1.5" />
-							</svg>
-						)}
-					</button>
-				) : (
-					<button
-						type="button"
-						onClick={onSubmit}
-						disabled={isAgentWorking || !hasContent}
-						title={isMobileDevice.current ? 'Send message' : 'Send message (Enter or Cmd+Enter)'}
-						aria-label="Send message"
-						data-testid="send-button"
-						class={cn(
-							'absolute right-1.5',
-							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
-							hasContent && !disabled
-								? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
-								: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-						)}
-					>
-						<svg
-							class="w-4.5 h-4.5"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-							stroke-width={2.5}
-						>
-							<path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
-						</svg>
-					</button>
-				)}
+						<path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+					</svg>
+				</button>
 			</div>
 		</div>
 	);

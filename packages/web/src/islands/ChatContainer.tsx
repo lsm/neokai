@@ -16,7 +16,7 @@
  * agent state from state.session channel.
  */
 
-import type { MessageImage, ResolvedQuestion, SessionFeatures } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, ResolvedQuestion, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES, DEFAULT_ROOM_CHAT_FEATURES } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
@@ -48,6 +48,7 @@ import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
+import { getMessagesBottomPaddingPx, MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
@@ -66,6 +67,8 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const footerContainerRef = useRef<HTMLDivElement>(null);
+	const previousMessagesBottomPaddingRef = useRef<number>(MIN_MESSAGES_BOTTOM_PADDING_PX);
 	// Store scroll position info to restore after older messages are loaded
 	const scrollPositionRestoreRef = useRef<{
 		oldScrollHeight: number;
@@ -86,6 +89,9 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [messagesBottomPadding, setMessagesBottomPadding] = useState(
+		MIN_MESSAGES_BOTTOM_PADDING_PX
+	);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
@@ -457,6 +463,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		sessionId,
 		session,
 		isSending: isProcessing,
+		allowQueueWhileProcessing: true,
 		onSendStart: useCallback(() => {
 			setLocalError(null);
 			sessionStore.clearError();
@@ -517,10 +524,36 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		});
 	}, [messages.length, loadingOlder]);
 
+	useEffect(() => {
+		const footer = footerContainerRef.current;
+		if (!footer) return;
+
+		const updatePadding = () => {
+			const queueOverlay = footer.querySelector('[data-testid="queue-overlay"]');
+			const queueOverlayRows = queueOverlay instanceof HTMLElement ? queueOverlay.children.length : 0;
+			setMessagesBottomPadding(
+				getMessagesBottomPaddingPx(footer.getBoundingClientRect().height, queueOverlayRows)
+			);
+		};
+
+		updatePadding();
+
+		if (typeof ResizeObserver !== 'undefined') {
+			const observer = new ResizeObserver(() => {
+				updatePadding();
+			});
+			observer.observe(footer);
+			return () => observer.disconnect();
+		}
+
+		window.addEventListener('resize', updatePadding);
+		return () => window.removeEventListener('resize', updatePadding);
+	}, []);
+
 	// ========================================
 	// Auto-scroll
 	// ========================================
-	const { showScrollButton, scrollToBottom } = useAutoScroll({
+	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
 		enabled: autoScroll,
@@ -528,6 +561,21 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		isInitialLoad,
 		loadingOlder,
 	});
+
+	useEffect(() => {
+		const previousPadding = previousMessagesBottomPaddingRef.current;
+		if (
+			messagesBottomPadding > previousPadding &&
+			autoScroll &&
+			!loadingOlder &&
+			(isNearBottom || !showScrollButton)
+		) {
+			requestAnimationFrame(() => {
+				scrollToBottom();
+			});
+		}
+		previousMessagesBottomPaddingRef.current = messagesBottomPadding;
+	}, [messagesBottomPadding, autoScroll, loadingOlder, isNearBottom, showScrollButton, scrollToBottom]);
 
 	// ========================================
 	// Message Maps (for tool results/inputs)
@@ -554,7 +602,11 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	// Handlers
 	// ========================================
 	const handleSendMessage = useCallback(
-		async (content: string, images?: MessageImage[]) => {
+		async (
+			content: string,
+			images?: MessageImage[],
+			deliveryMode: MessageDeliveryMode = 'current_turn'
+		) => {
 			// If session is pending worktree choice, set the mode first
 			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
 				try {
@@ -574,7 +626,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				}
 			}
 
-			await sendMessage(content, images);
+			await sendMessage(content, images, deliveryMode);
 		},
 		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
 	);
@@ -658,7 +710,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	const { currentAction, streamingPhase } = useMemo(() => {
 		// Handle queued state
 		if (agentState.status === 'queued') {
-			return { currentAction: 'Queued...', streamingPhase: null };
+			return { currentAction: 'Message queued...', streamingPhase: null };
 		}
 
 		// Handle interrupted state
@@ -827,8 +879,11 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
-					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y pb-32"
-					style={{ WebkitOverflowScrolling: 'touch' }}
+					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
+					style={{
+						WebkitOverflowScrolling: 'touch',
+						paddingBottom: `${messagesBottomPadding}px`,
+					}}
 				>
 					{/* Worktree Choice Inline */}
 					{showWorktreeChoice && session && (
@@ -958,6 +1013,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			{/* Footer - Floating Status Bar */}
 			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
 				<div
+					ref={footerContainerRef}
 					class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"
 					style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
 				>
@@ -1015,7 +1071,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 							<MessageInput
 								sessionId={sessionId}
 								onSend={handleSendMessage}
-								disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
+								disabled={isCompacting || isWaitingForInput || !isConnected}
 								autoScroll={autoScroll}
 								onAutoScrollChange={handleAutoScrollChange}
 								onOpenTools={toolsModal.open}
