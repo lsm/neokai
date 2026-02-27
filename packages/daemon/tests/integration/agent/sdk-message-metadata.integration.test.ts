@@ -65,6 +65,7 @@ describe('SDK Message Metadata Broadcasting', () => {
 			// Create mock MessageQueue
 			const mockMessageQueue = {
 				enqueue: mock(async () => generateUUID()),
+				enqueueWithId: mock(async () => {}),
 			} as unknown as MessageQueue;
 
 			// Create mock CheckpointTracker
@@ -173,6 +174,7 @@ describe('SDK Message Metadata Broadcasting', () => {
 			// Create mock MessageQueue
 			const mockMessageQueue = {
 				enqueue: mock(async () => generateUUID()),
+				enqueueWithId: mock(async () => {}),
 			} as unknown as MessageQueue;
 
 			// Create mock CheckpointTracker

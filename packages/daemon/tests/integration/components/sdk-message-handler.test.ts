@@ -106,6 +106,7 @@ describe('SDKMessageHandler', () => {
 		// Mock MessageQueue
 		mockMessageQueue = {
 			enqueue: mock(async () => 'message-id'),
+			enqueueWithId: mock(async () => {}),
 		} as unknown as MessageQueue;
 
 		// Mock CheckpointTracker
