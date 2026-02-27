@@ -856,9 +856,9 @@ export class RoomRuntime {
 		const cancelledCount = await this.taskManager.cancelPendingTasks(pendingTasks.map((t) => t.id));
 		log.info(`Cancelled ${cancelledCount} pending tasks for replan`);
 
-		// Gather context for the replanner
+		// Gather context for the replanner (exclude planning tasks from completed list)
 		const completedTasks = validTasks
-			.filter((t) => t.status === 'completed')
+			.filter((t) => t.status === 'completed' && t.taskType !== 'planning')
 			.map((t) => ({ title: t.title, result: t.result ?? 'completed' }));
 
 		const replanContext: ReplanContext = {
