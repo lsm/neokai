@@ -208,6 +208,7 @@ jobs:
           - mcp
           - providers
           - rewind
+          - room
           - rpc
           - sdk
         include:
@@ -238,6 +239,9 @@ jobs:
             test_path: tests/online/lifecycle
           - module: rewind
             test_path: tests/online/rewind
+          - module: room
+            test_path: tests/online/room
+            timeout: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -261,8 +265,8 @@ jobs:
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
           GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ matrix.module == 'features' && secrets.ANTHROPIC_API_KEY || '' }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.module == 'features' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ (matrix.module == 'features' || matrix.module == 'room') && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.module == 'features' || matrix.module == 'room') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           DEFAULT_PROVIDER: ${{ matrix.default_provider || 'glm' }}
 
       - name: Fix coverage paths and strip test utilities
