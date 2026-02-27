@@ -626,8 +626,8 @@ export class StateManager {
 					const fallbackState = {
 						sessionInfo: cachedSession,
 						agentState: cachedProcessingState,
-						commandsData: { availableCommands: [] },
-						contextInfo: null,
+						commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
+						contextInfo: this.contextCache.get(sessionId) || null,
 						error: null,
 						timestamp: Date.now(),
 						version,
