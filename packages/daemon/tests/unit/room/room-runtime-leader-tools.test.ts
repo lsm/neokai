@@ -252,6 +252,115 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.error).toContain('No goal linked');
 		});
 
+		it('should create planning task with "Replan:" title prefix', async () => {
+			const { goal, task1 } = await setupGoalWithMultipleTasks();
+			await ctx.goalManager.incrementPlanningAttempts(goal.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			await ctx.runtime.handleLeaderTool(group.id, 'replan_goal', {
+				reason: 'Need different approach',
+			});
+
+			const allTasks = await ctx.taskManager.listTasks({});
+			const planningTasks = allTasks.filter((t) => t.taskType === 'planning');
+			expect(planningTasks).toHaveLength(1);
+			expect(planningTasks[0].title).toStartWith('Replan:');
+		});
+
+		it('should pass completed tasks and failed task in replan context', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Build auth system',
+				description: 'Implement authentication',
+			});
+			const task1 = await ctx.taskManager.createTask({
+				title: 'Add login endpoint',
+				description: 'POST /login',
+				priority: 'high',
+			});
+			const task2 = await ctx.taskManager.createTask({
+				title: 'Add signup endpoint',
+				description: 'POST /signup',
+			});
+			const task3 = await ctx.taskManager.createTask({
+				title: 'Add logout endpoint',
+				description: 'POST /logout',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task1.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, task2.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, task3.id);
+
+			// Mark task1 as completed with a result
+			await ctx.taskManager.completeTask(task1.id, 'Login endpoint implemented with JWT');
+
+			// task2 is the one being worked on (will be failed by replan)
+			await ctx.goalManager.incrementPlanningAttempts(goal.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			await ctx.runtime.handleLeaderTool(group.id, 'replan_goal', {
+				reason: 'Signup flow needs OAuth, not password',
+			});
+
+			// Verify the planner session was created with replan context in the init
+			const createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			// Last createAndStartSession call is the replanning planner
+			const lastCreate = createCalls[createCalls.length - 1];
+			const init = lastCreate.args[0] as { systemPrompt: { append: string } };
+			const prompt = init.systemPrompt.append;
+
+			// Replan context should include the completed task
+			expect(prompt).toContain('Replanning Context');
+			expect(prompt).toContain('Add login endpoint');
+			expect(prompt).toContain('Login endpoint implemented with JWT');
+			// Failed task info
+			expect(prompt).toContain('Signup flow needs OAuth, not password');
+		});
+
+		it('should increment planning_attempts on the goal', async () => {
+			const { goal, task1 } = await setupGoalWithMultipleTasks();
+			await ctx.goalManager.incrementPlanningAttempts(goal.id);
+			const beforeAttempts = (await ctx.goalManager.listGoals())[0].planning_attempts;
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			await ctx.runtime.handleLeaderTool(group.id, 'replan_goal', {
+				reason: 'Wrong approach',
+			});
+
+			const afterAttempts = (await ctx.goalManager.listGoals())[0].planning_attempts;
+			expect(afterAttempts).toBe(beforeAttempts + 1);
+		});
+
 		it('fail_task should NOT trigger automatic replanning', async () => {
 			const { goal, task1, task2, task3 } = await setupGoalWithMultipleTasks();
 			await ctx.goalManager.incrementPlanningAttempts(goal.id);
