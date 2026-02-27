@@ -213,3 +213,35 @@ export async function getSession(
 export async function interrupt(daemon: DaemonServerContext, sessionId: string): Promise<void> {
 	await daemon.messageHub.request('client.interrupt', { sessionId });
 }
+
+/**
+ * Wait for SDK messages to be available (handles persistence race)
+ *
+ * After waitForIdle() returns, SDK messages may not yet be fully
+ * persisted to the database. This helper retries the query until
+ * the expected number of messages appear.
+ */
+export async function waitForSdkMessages(
+	daemon: DaemonServerContext,
+	sessionId: string,
+	options: { minCount?: number; timeout?: number } = {}
+): Promise<{ sdkMessages: Array<Record<string, unknown>>; hasMore: boolean }> {
+	const { minCount = 1, timeout = 5000 } = options;
+	const start = Date.now();
+
+	while (Date.now() - start < timeout) {
+		const result = (await daemon.messageHub.request('message.sdkMessages', {
+			sessionId,
+		})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+
+		if (result.sdkMessages.length >= minCount) {
+			return result;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+
+	// Return whatever we have on timeout (let the test assertion fail with useful context)
+	return (await daemon.messageHub.request('message.sdkMessages', {
+		sessionId,
+	})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+}

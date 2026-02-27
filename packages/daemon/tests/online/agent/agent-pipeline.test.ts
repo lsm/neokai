@@ -11,7 +11,12 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-actions';
+import {
+	sendMessage,
+	waitForIdle,
+	getProcessingState,
+	waitForSdkMessages,
+} from '../../helpers/daemon-actions';
 import {
 	simpleTextResponse,
 	errorResponse,
@@ -58,9 +63,7 @@ describe('Agent Pipeline', () => {
 				await waitForIdle(daemon, sessionId);
 
 				// Verify messages were persisted and queryable via RPC
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-				})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+				const result = await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
 				expect(result.sdkMessages.length).toBeGreaterThanOrEqual(2);
 
@@ -107,9 +110,7 @@ describe('Agent Pipeline', () => {
 				await sendMessage(daemon, sessionId, 'Hi');
 				await waitForIdle(daemon, sessionId);
 
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-				})) as { sdkMessages: Array<Record<string, unknown>> };
+				const result = await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
 				const systemMsg = result.sdkMessages.find((m) => m.type === 'system');
 				expect(systemMsg).toBeDefined();
@@ -130,9 +131,7 @@ describe('Agent Pipeline', () => {
 				await sendMessage(daemon, sessionId, 'Read test.ts');
 				await waitForIdle(daemon, sessionId);
 
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-				})) as { sdkMessages: Array<Record<string, unknown>> };
+				const result = await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
 				const toolMsg = result.sdkMessages.find(
 					(m) =>
@@ -180,9 +179,7 @@ describe('Agent Pipeline', () => {
 				await waitForIdle(daemon, sessionId);
 
 				// Both responses should be queryable
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-				})) as { sdkMessages: Array<Record<string, unknown>> };
+				const result = await waitForSdkMessages(daemon, sessionId, { minCount: 4 });
 
 				const assistantMsgs = result.sdkMessages.filter((m) => m.type === 'assistant');
 				expect(assistantMsgs.length).toBe(2);
@@ -200,12 +197,10 @@ describe('Agent Pipeline', () => {
 				await sendMessage(daemon, sessionId, 'Hi');
 				await waitForIdle(daemon, sessionId);
 
-				const result = (await daemon.messageHub.request('message.sdkMessages', {
-					sessionId,
-				})) as { sdkMessages: Array<{ type: string }>; hasMore: boolean };
+				const result = await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
 				expect(result.sdkMessages.length).toBeGreaterThan(0);
-				const types = result.sdkMessages.map((m) => m.type);
+				const types = result.sdkMessages.map((m: Record<string, unknown>) => m.type);
 				expect(types).toContain('assistant');
 			},
 			TIMEOUT
