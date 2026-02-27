@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
+import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 
 // Tests that send messages to mock SDK need longer timeout on CI
 const TIMEOUT = 15000;
@@ -42,6 +42,9 @@ describe('Message RPC Handlers', () => {
 		// Send a message — mock SDK will respond with assistant text + result
 		await sendMessage(daemon, sessionId, 'Hello, world!');
 		await waitForIdle(daemon, sessionId);
+
+		// Wait for SDK messages to be persisted (handles race on slow CI)
+		await waitForSdkMessages(daemon, sessionId, { minCount: 2 });
 
 		return sessionId;
 	}
