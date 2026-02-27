@@ -6,14 +6,14 @@
  * Stage 1: Goal creation triggers planning group
  * Stage 2: Planning produces execution tasks
  * Stage 3: Execution completes task via leader review
+ * Stage 4: Feedback iteration tracking
  *
  * Each test is isolated and verifies a specific lifecycle stage,
  * so failures pinpoint exactly which stage broke.
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
- * - Tests are slow (~60-180s each) due to multi-agent roundtrips
+ * - Makes real API calls — correctness over cost
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -232,12 +232,13 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 	test(
 		'Stage 2: planning produces execution tasks after review',
 		async () => {
-			// Create a goal with a clear, simple description
+			// Create a goal that requires real planning with multiple steps
 			const goalResult = (await daemon.messageHub.request('goal.create', {
 				roomId,
-				title: 'Simple file creation',
+				title: 'Add a health check endpoint',
 				description:
-					'Create a single file called hello.txt with the text "hello world". This is a trivial task.',
+					'Create a GET /health endpoint that returns 200 OK with {"status":"ok","uptime":<seconds>}. ' +
+					'Include a unit test that verifies the response format.',
 			})) as { goal: RoomGoal };
 
 			const goalId = goalResult.goal.id;
@@ -280,13 +281,14 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 	test(
 		'Stage 3: execution task completes through worker → leader cycle',
 		async () => {
-			// Create a goal with a trivially simple task to minimize API cost
+			// Create a goal — full cycle: planning → execution → leader review → completion
 			const goalResult = (await daemon.messageHub.request('goal.create', {
 				roomId,
-				title: 'Echo test',
+				title: 'Create a utility module',
 				description:
-					'Create a file called test-output.txt containing exactly "test passed". ' +
-					'This is a single trivial task — no complex planning needed.',
+					'Create a string utility module at src/utils/strings.ts with functions: ' +
+					'capitalize(str), truncate(str, maxLen), and slugify(str). ' +
+					'Include a test file that covers all three functions.',
 			})) as { goal: RoomGoal };
 
 			const goalId = goalResult.goal.id;
@@ -317,6 +319,9 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 				groupId: group.id,
 			})) as { messages: unknown[]; hasMore: boolean };
 			expect(messagesResult.messages.length).toBeGreaterThan(0);
+
+			// Verify task has a meaningful result summary from the leader
+			expect(completedTask.result!.length).toBeGreaterThan(10);
 		},
 		{ timeout: 360_000 }
 	);
@@ -328,11 +333,13 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 	test(
 		'Stage 4: session group tracks feedback iterations',
 		async () => {
-			// Create a goal — we just verify iteration tracking works
+			// Create a realistic goal to exercise the feedback loop
 			const goalResult = (await daemon.messageHub.request('goal.create', {
 				roomId,
-				title: 'Iteration tracking test',
-				description: 'Create a file called iteration-test.txt with "iteration test". Simple task.',
+				title: 'Add input validation',
+				description:
+					'Add input validation to a user registration form: validate email format, ' +
+					'password strength (min 8 chars, mixed case, number), and username uniqueness check.',
 			})) as { goal: RoomGoal };
 
 			// Wait for an execution task to start (gets a group)
