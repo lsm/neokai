@@ -73,6 +73,9 @@ function createMockLeaderCallbacks(): LeaderToolCallbacks {
 		async failTask() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
+		async replanGoal() {
+			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
+		},
 	};
 }
 

@@ -5,6 +5,7 @@
  * - send_to_worker(message) - Send feedback for another iteration
  * - complete_task(summary) - Accept work, mark task done
  * - fail_task(reason) - Task is not achievable
+ * - replan_goal(reason) - Fail task and trigger replanning with context
  *
  * Leader tools are MCP callbacks that route through the RoomRuntime.
  * The Leader adapts its review focus based on reviewContext:
@@ -41,6 +42,7 @@ export interface LeaderToolCallbacks {
 	sendToWorker(groupId: string, message: string): Promise<LeaderToolResult>;
 	completeTask(groupId: string, summary: string): Promise<LeaderToolResult>;
 	failTask(groupId: string, reason: string): Promise<LeaderToolResult>;
+	replanGoal(groupId: string, reason: string): Promise<LeaderToolResult>;
 }
 
 export interface LeaderAgentConfig {
@@ -82,7 +84,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	sections.push(`You MUST call exactly one tool per turn:`);
 	sections.push(`- \`send_to_worker\` — Send feedback if the work needs changes`);
 	sections.push(`- \`complete_task\` — Accept the work if it meets all requirements`);
-	sections.push(`- \`fail_task\` — Mark the task as not achievable\n`);
+	sections.push(`- \`fail_task\` — Mark the task as not achievable`);
+	sections.push(
+		`- \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried\n`
+	);
 	sections.push(`Do NOT respond with only text. You MUST call one of the above tools.`);
 
 	// Task context
@@ -134,7 +139,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		sections.push(
 			`7. If the plan is comprehensive and well-structured, use \`complete_task\` with a summary`
 		);
-		sections.push(`8. Only use \`fail_task\` if the goal is fundamentally not plannable`);
+		sections.push(`8. Use \`fail_task\` only if the goal is fundamentally not plannable`);
+		sections.push(
+			`9. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
+		);
 	} else {
 		sections.push(`\n## Review Guidelines\n`);
 		sections.push(`1. Check that the implementation matches the task description`);
@@ -143,7 +151,12 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			`3. If issues are found, use \`send_to_worker\` with specific actionable feedback`
 		);
 		sections.push(`4. If the work is complete and correct, use \`complete_task\` with a summary`);
-		sections.push(`5. Only use \`fail_task\` if the task is fundamentally not achievable`);
+		sections.push(
+			`5. Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound`
+		);
+		sections.push(
+			`6. Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`
+		);
 	}
 
 	return sections.join('\n');
@@ -163,6 +176,9 @@ export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolC
 		},
 		async fail_task(args: { reason: string }): Promise<LeaderToolResult> {
 			return callbacks.failTask(groupId, args.reason);
+		},
+		async replan_goal(args: { reason: string }): Promise<LeaderToolResult> {
+			return callbacks.replanGoal(groupId, args.reason);
 		},
 	};
 }
@@ -200,6 +216,16 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 				reason: z.string().describe('Explanation of why the task cannot be completed'),
 			},
 			(args) => handlers.fail_task(args)
+		),
+		tool(
+			'replan_goal',
+			'Fail this task and trigger replanning — use when the overall approach needs rethinking',
+			{
+				reason: z
+					.string()
+					.describe('What was tried, what went wrong, and why a different approach is needed'),
+			},
+			(args) => handlers.replan_goal(args)
 		),
 	];
 

@@ -82,6 +82,10 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'failTask', args: [groupId, reason] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
+		async replanGoal(groupId: string, reason: string) {
+			calls.push({ method: 'replanGoal', args: [groupId, reason] });
+			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
+		},
 	};
 }
 
@@ -93,6 +97,7 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('send_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
+			expect(prompt).toContain('replan_goal');
 		});
 
 		it('should include task context', () => {
@@ -124,6 +129,13 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			expect(prompt).toContain('Plan Review Guidelines');
 			expect(prompt).toContain('task breakdown');
+			expect(prompt).toContain('replan_goal');
+		});
+
+		it('should include replan_goal guidance in code review guidelines', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('replan_goal');
+			expect(prompt).toContain('overall approach needs rethinking');
 		});
 	});
 
@@ -159,6 +171,20 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('failTask');
 			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this']);
+		});
+
+		it('should route replan_goal to callback with groupId', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.replan_goal({ reason: 'Wrong approach, need different strategy' });
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('replanGoal');
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'Wrong approach, need different strategy',
+			]);
 		});
 	});
 
