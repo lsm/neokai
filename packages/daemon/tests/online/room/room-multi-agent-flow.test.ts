@@ -15,103 +15,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import type { NeoTask, RoomGoal } from '@neokai/shared';
+import type { RoomGoal } from '@neokai/shared';
+import { waitForTask, waitForTaskCount, waitForGroupState } from './room-test-helpers';
 
 // Use Sonnet for room agents (default model may be GLM in CI)
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
-
-// =========================================================================
-// Polling Helpers
-// =========================================================================
-
-async function waitForTask(
-	daemon: DaemonServerContext,
-	roomId: string,
-	filter: { taskType?: string; status?: string | string[] },
-	timeout = 120_000
-): Promise<NeoTask> {
-	const start = Date.now();
-	const statusArray = filter.status
-		? Array.isArray(filter.status)
-			? filter.status
-			: [filter.status]
-		: undefined;
-
-	while (Date.now() - start < timeout) {
-		const result = (await daemon.messageHub.request('task.list', { roomId })) as {
-			tasks: NeoTask[];
-		};
-		const match = result.tasks.find(
-			(t) =>
-				(!filter.taskType || t.taskType === filter.taskType) &&
-				(!statusArray || statusArray.includes(t.status))
-		);
-		if (match) return match;
-		await new Promise((r) => setTimeout(r, 1000));
-	}
-	throw new Error(
-		`Timeout (${timeout}ms) waiting for task matching ${JSON.stringify(filter)} in room ${roomId}`
-	);
-}
-
-async function waitForTaskCount(
-	daemon: DaemonServerContext,
-	roomId: string,
-	filter: { taskType?: string; status?: string | string[] },
-	minCount: number,
-	timeout = 120_000
-): Promise<NeoTask[]> {
-	const start = Date.now();
-	const statusArray = filter.status
-		? Array.isArray(filter.status)
-			? filter.status
-			: [filter.status]
-		: undefined;
-
-	while (Date.now() - start < timeout) {
-		const result = (await daemon.messageHub.request('task.list', { roomId })) as {
-			tasks: NeoTask[];
-		};
-		const matches = result.tasks.filter(
-			(t) =>
-				(!filter.taskType || t.taskType === filter.taskType) &&
-				(!statusArray || statusArray.includes(t.status))
-		);
-		if (matches.length >= minCount) return matches;
-		await new Promise((r) => setTimeout(r, 1000));
-	}
-	throw new Error(
-		`Timeout (${timeout}ms) waiting for ${minCount}+ tasks matching ${JSON.stringify(filter)}`
-	);
-}
-
-async function waitForGroupState(
-	daemon: DaemonServerContext,
-	roomId: string,
-	taskId: string,
-	targetStates: string[],
-	timeout = 120_000
-): Promise<{ id: string; state: string; feedbackIteration: number }> {
-	const start = Date.now();
-
-	while (Date.now() - start < timeout) {
-		const result = (await daemon.messageHub.request('task.getGroup', { roomId, taskId })) as {
-			group: { id: string; state: string; feedbackIteration: number } | null;
-		};
-		if (result.group && targetStates.includes(result.group.state)) {
-			return result.group;
-		}
-		await new Promise((r) => setTimeout(r, 1000));
-	}
-	throw new Error(
-		`Timeout (${timeout}ms) waiting for group state ${targetStates.join('|')} on task ${taskId}`
-	);
-}
-
-// =========================================================================
-// Tests
-// =========================================================================
 
 describe('Room Multi-Agent Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
