@@ -1,0 +1,187 @@
+/**
+ * Agent Pipeline Tests
+ *
+ * Tests the full agent harness via WebSocket using mock SDK:
+ * - Message flow: send → process → persist → query back
+ * - State transitions: idle → processing → idle
+ * - Multi-turn conversations
+ * - Error result handling
+ * - SDK message types (system init, tool use, result)
+ */
+
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-actions';
+import {
+	simpleTextResponse,
+	errorResponse,
+	sdkSystemInit,
+	sdkAssistantText,
+	sdkAssistantToolUse,
+	sdkResultSuccess,
+	sdkResultError,
+} from '../../helpers/mock-sdk';
+
+describe('Agent Pipeline', () => {
+	let daemon: DaemonServerContext;
+
+	beforeEach(async () => {
+		daemon = await createDaemonServer();
+	});
+
+	afterEach(async () => {
+		await daemon.waitForExit();
+	});
+
+	async function createSession(): Promise<string> {
+		const { sessionId } = (await daemon.messageHub.request('session.create', {
+			workspacePath: `/test/pipeline-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+			title: 'Pipeline Test', // Skip title generation
+		})) as { sessionId: string };
+		daemon.trackSession(sessionId);
+		return sessionId;
+	}
+
+	describe('basic message flow', () => {
+		test('should process response through full pipeline', async () => {
+			daemon.mockControls?.setDefaultResponses(simpleTextResponse('Hello from mock SDK!'));
+			const sessionId = await createSession();
+
+			const { messageId } = await sendMessage(daemon, sessionId, 'Hi there');
+			expect(messageId).toBeString();
+
+			await waitForIdle(daemon, sessionId);
+
+			// Verify messages were persisted and queryable via RPC
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+			})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+
+			expect(result.sdkMessages.length).toBeGreaterThanOrEqual(2);
+
+			// Verify assistant message
+			const assistantMsg = result.sdkMessages.find((m) => m.type === 'assistant');
+			expect(assistantMsg).toBeDefined();
+			const content = (assistantMsg!.message as { content: Array<{ text: string }> }).content;
+			expect(content[0].text).toBe('Hello from mock SDK!');
+
+			// Verify result message
+			const resultMsg = result.sdkMessages.find((m) => m.type === 'result');
+			expect(resultMsg).toBeDefined();
+		});
+
+		test('should return to idle state after processing', async () => {
+			const sessionId = await createSession();
+
+			await sendMessage(daemon, sessionId, 'Do something');
+			await waitForIdle(daemon, sessionId);
+
+			const state = await getProcessingState(daemon, sessionId);
+			expect(state.status).toBe('idle');
+		});
+	});
+
+	describe('SDK message handling', () => {
+		test('should persist system init message', async () => {
+			const sdkSessionId = 'sdk-session-' + Date.now();
+			daemon.mockControls?.setDefaultResponses([
+				sdkSystemInit({ sessionId: sdkSessionId }),
+				sdkAssistantText('Hello'),
+				sdkResultSuccess(),
+			]);
+			const sessionId = await createSession();
+
+			await sendMessage(daemon, sessionId, 'Hi');
+			await waitForIdle(daemon, sessionId);
+
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+			})) as { sdkMessages: Array<Record<string, unknown>> };
+
+			const systemMsg = result.sdkMessages.find((m) => m.type === 'system');
+			expect(systemMsg).toBeDefined();
+		});
+
+		test('should persist tool use messages', async () => {
+			daemon.mockControls?.setDefaultResponses([
+				sdkSystemInit(),
+				sdkAssistantToolUse('Read', { file_path: '/test.ts' }),
+				sdkResultSuccess(),
+			]);
+			const sessionId = await createSession();
+
+			await sendMessage(daemon, sessionId, 'Read test.ts');
+			await waitForIdle(daemon, sessionId);
+
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+			})) as { sdkMessages: Array<Record<string, unknown>> };
+
+			const toolMsg = result.sdkMessages.find(
+				(m) =>
+					m.type === 'assistant' &&
+					(m.message as { content: Array<{ type: string }> }).content.some(
+						(b) => b.type === 'tool_use'
+					)
+			);
+			expect(toolMsg).toBeDefined();
+		});
+	});
+
+	describe('error scenarios', () => {
+		test('should handle error result and return to idle', async () => {
+			daemon.mockControls?.setDefaultResponses(errorResponse('Something went wrong'));
+			const sessionId = await createSession();
+
+			await sendMessage(daemon, sessionId, 'Do something big');
+			await waitForIdle(daemon, sessionId);
+
+			const state = await getProcessingState(daemon, sessionId);
+			expect(state.status).toBe('idle');
+		}, 15000);
+	});
+
+	describe('multi-turn conversations', () => {
+		test('should handle sequential messages', async () => {
+			let turnCount = 0;
+			daemon.mockControls?.setDefaultResponses(() => {
+				turnCount++;
+				return simpleTextResponse(`Response ${turnCount}`);
+			});
+			const sessionId = await createSession();
+
+			// First message
+			await sendMessage(daemon, sessionId, 'First');
+			await waitForIdle(daemon, sessionId);
+
+			// Second message
+			await sendMessage(daemon, sessionId, 'Second');
+			await waitForIdle(daemon, sessionId);
+
+			// Both responses should be queryable
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+			})) as { sdkMessages: Array<Record<string, unknown>> };
+
+			const assistantMsgs = result.sdkMessages.filter((m) => m.type === 'assistant');
+			expect(assistantMsgs.length).toBe(2);
+		});
+	});
+
+	describe('message query', () => {
+		test('should return persisted messages via message.sdkMessages', async () => {
+			const sessionId = await createSession();
+
+			await sendMessage(daemon, sessionId, 'Hi');
+			await waitForIdle(daemon, sessionId);
+
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+			})) as { sdkMessages: Array<{ type: string }>; hasMore: boolean };
+
+			expect(result.sdkMessages.length).toBeGreaterThan(0);
+			const types = result.sdkMessages.map((m) => m.type);
+			expect(types).toContain('assistant');
+		});
+	});
+});
