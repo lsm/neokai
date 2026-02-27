@@ -36,7 +36,7 @@ export function formatWorkerToLeaderEnvelope(params: WorkerOutputEnvelopeParams)
 	if (params.taskType) {
 		lines.push(`Task type: ${params.taskType}`);
 	}
-	lines.push(`Terminal state: ${terminalStateLabel(params.terminalState)}`);
+	lines.push(`Terminal state: ${params.terminalState}`);
 	if (params.toolCallSummaries && params.toolCallSummaries.length > 0) {
 		lines.push(`Tool calls: ${JSON.stringify(params.toolCallSummaries)}`);
 	}
@@ -44,17 +44,6 @@ export function formatWorkerToLeaderEnvelope(params: WorkerOutputEnvelopeParams)
 	lines.push(params.workerOutput);
 
 	return lines.join('\n');
-}
-
-function terminalStateLabel(kind: TerminalStateKind): string {
-	switch (kind) {
-		case 'completed':
-			return 'success';
-		case 'waiting_for_input':
-			return 'question';
-		case 'interrupted':
-			return 'interrupted';
-	}
 }
 
 export interface PlanEnvelopeParams {
@@ -80,7 +69,7 @@ export function formatPlanEnvelope(params: PlanEnvelopeParams): string {
 	lines.push(`[PLANNER OUTPUT] Iteration: ${params.iteration}`);
 	lines.push(`Goal: ${params.goalTitle}`);
 	lines.push(`Tasks created: ${params.draftTasks.length}`);
-	lines.push(`Terminal state: ${terminalStateLabel(params.terminalState)}`);
+	lines.push(`Terminal state: ${params.terminalState}`);
 	lines.push('---');
 	lines.push(params.workerOutput);
 

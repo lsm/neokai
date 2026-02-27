@@ -106,6 +106,18 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		sections.push(room.instructions);
 	}
 
+	// Handling worker questions
+	sections.push(`\n## Handling Worker Questions\n`);
+	sections.push(
+		`If the worker output shows \`Terminal state: waiting_for_input\`, the worker is asking a question.`
+	);
+	sections.push(
+		`- If you can answer the question from the goal/task context, use \`send_to_worker\` with the answer`
+	);
+	sections.push(
+		`- If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`
+	);
+
 	// Context-specific review guidelines
 	if (isPlanReview) {
 		sections.push(`\n## Plan Review Guidelines\n`);
