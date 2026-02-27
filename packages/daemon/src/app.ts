@@ -68,6 +68,11 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const logInfo = verbose ? console.log : () => {};
 	const logError = verbose ? console.error : () => {};
 
+	// Clear CLAUDECODE env var so SDK subprocesses don't refuse to start.
+	// The daemon may run inside a Claude Code session (e.g., during development),
+	// but its spawned agent sessions are independent and must not be blocked.
+	delete process.env.CLAUDECODE;
+
 	// Initialize database
 	const db = new Database(config.dbPath);
 	await db.initialize();
@@ -258,6 +263,14 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 						'Content-Type': 'application/json',
 						'Access-Control-Allow-Origin': '*',
 					},
+				});
+			}
+
+			// Hello world endpoint
+			if (url.pathname === '/hello' && req.method === 'GET') {
+				return new Response('Hello World', {
+					status: 200,
+					headers: { 'Access-Control-Allow-Origin': '*' },
 				});
 			}
 
