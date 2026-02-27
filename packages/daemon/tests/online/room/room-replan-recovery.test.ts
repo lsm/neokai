@@ -88,10 +88,14 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				});
 			}
 
-			// Verify all tasks are now failed
+			// Verify the original tasks are now failed (new tasks may have
+			// already been spawned by the runtime tick since task.fail emits
+			// room.task.update → immediate scheduleTick())
 			const tasksAfterFail = await listTasks(daemon, roomId);
 			for (const task of tasksAfterFail) {
-				expect(task.status).toBe('failed');
+				if (existingTaskIds.has(task.id)) {
+					expect(task.status).toBe('failed');
+				}
 			}
 
 			// --- Phase 3: Wait for runtime tick to detect all-failed and auto-replan ---
