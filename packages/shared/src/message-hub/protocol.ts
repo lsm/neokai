@@ -109,13 +109,6 @@ export interface HubMessage {
 	version?: string;
 
 	/**
-	 * Sequence number for message ordering (optional)
-	 * Monotonically increasing per-session sequence number
-	 * Allows detection of out-of-order messages
-	 */
-	sequence?: number;
-
-	/**
 	 * Optional channel identifier for scoped messaging
 	 */
 	channel?: string;

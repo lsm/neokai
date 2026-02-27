@@ -1057,7 +1057,7 @@ describe('Multi-Transport Support', () => {
 		// This test verifies that with multiple transports, the primary transport client
 		// can complete RPC calls. Without a router, responses go to the primary transport.
 
-		const serverHub = new MessageHub({ defaultSessionId: 'global', warnOnSequenceGap: false });
+		const serverHub = new MessageHub({ defaultSessionId: 'global' });
 
 		// Primary (websocket) client
 		const [wsClient, wsServer] = InProcessTransport.createPair({ name: 'ws' });
