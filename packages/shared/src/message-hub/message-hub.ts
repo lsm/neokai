@@ -79,16 +79,6 @@ export class MessageHub {
 	// Event handler recursion tracking (prevents infinite loops)
 	private eventDepthMap = new Map<string, number>(); // messageId -> depth
 
-	// Message sequencing for ordering guarantees
-	private messageSequence = 0;
-
-	// FIX P1.3: Message sequence tracking
-	// Client-side: tracks server's global sequence (all messages from server use one counter)
-	// Server-side: tracks per-client sequences (each client has its own counter)
-	private expectedSequence: number | null = null; // For client-side global tracking
-	private expectedSequencePerClient = new Map<string, number>(); // For server-side per-client tracking
-	private readonly warnOnSequenceGap: boolean;
-
 	// FIX P1.4: Event handler error handling mode
 	private readonly stopOnEventHandlerError: boolean;
 
@@ -103,7 +93,6 @@ export class MessageHub {
 		this.defaultTimeout = options.timeout || 10000;
 		this.maxPendingCalls = options.maxPendingCalls || 1000;
 		this.maxEventDepth = options.maxEventDepth || 10;
-		this.warnOnSequenceGap = options.warnOnSequenceGap ?? true; // FIX P1.3: Enable sequence gap warnings by default
 		this.stopOnEventHandlerError = options.stopOnEventHandlerError ?? false; // FIX P1.4: Continue on handler errors by default
 	}
 
@@ -152,14 +141,6 @@ export class MessageHub {
 			this.notifyConnectionStateHandlers(state, error);
 		});
 
-		// Subscribe to client disconnect events (server-side only, for per-client cleanup)
-		let unsubClientDisconnect: (() => void) | undefined;
-		if (transport.onClientDisconnect) {
-			unsubClientDisconnect = transport.onClientDisconnect((clientId) => {
-				this.cleanupClientSequence(clientId);
-			});
-		}
-
 		// Return unregister function
 		return () => {
 			this.transports.delete(transportName);
@@ -169,7 +150,6 @@ export class MessageHub {
 			}
 			unsubMessage();
 			unsubConnection();
-			unsubClientDisconnect?.();
 			this.logDebug(`Transport unregistered: ${transportName}`);
 		};
 	}
@@ -452,7 +432,6 @@ export class MessageHub {
 
 	/**
 	 * Handle incoming message from transport
-	 * FIX P1.3: Validate message sequence to detect out-of-order or missing messages
 	 */
 	private async handleIncomingMessage(message: HubMessage): Promise<void> {
 		// Validate message structure
@@ -462,52 +441,6 @@ export class MessageHub {
 		}
 
 		this.logDebug(`← Incoming: ${message.type} ${message.method}`, message);
-
-		// FIX P1.3: Validate message sequence (if present)
-		// Server-side: track per-client (each client has its own sequence counter)
-		// Client-side: track globally (server uses one global counter for all outgoing messages)
-		if (typeof message.sequence === 'number' && this.warnOnSequenceGap) {
-			const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
-
-			if (this.router && clientId) {
-				// Server-side: use per-client tracking
-				const expectedSeq = this.expectedSequencePerClient.get(clientId);
-				if (expectedSeq !== undefined) {
-					if (message.sequence < expectedSeq) {
-						log.warn(
-							`Out-of-order message from client ${clientId}: ` +
-								`received sequence ${message.sequence}, expected >= ${expectedSeq}`
-						);
-					} else if (message.sequence > expectedSeq) {
-						const gap = message.sequence - expectedSeq;
-						log.warn(
-							`Message sequence gap from client ${clientId}: ` +
-								`received sequence ${message.sequence}, expected ${expectedSeq} (gap: ${gap} messages)`
-						);
-					}
-				}
-				// Update expected sequence for this client
-				this.expectedSequencePerClient.set(clientId, message.sequence + 1);
-			} else {
-				// Client-side: use global tracking (server uses single counter)
-				if (this.expectedSequence !== null) {
-					if (message.sequence < this.expectedSequence) {
-						log.warn(
-							`Out-of-order message detected: ` +
-								`received sequence ${message.sequence}, expected >= ${this.expectedSequence}`
-						);
-					} else if (message.sequence > this.expectedSequence) {
-						const gap = message.sequence - this.expectedSequence;
-						log.warn(
-							`Message sequence gap detected: ` +
-								`received sequence ${message.sequence}, expected ${this.expectedSequence} (gap: ${gap} messages)`
-						);
-					}
-				}
-				// Update expected sequence for next message (global)
-				this.expectedSequence = message.sequence + 1;
-			}
-		}
 
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'in');
@@ -740,13 +673,7 @@ export class MessageHub {
 	 *   Transport broadcasts directly
 	 */
 	private async sendMessage(message: HubMessage): Promise<void> {
-		// Add sequence number
-		message.sequence = this.messageSequence++;
-
-		this.logDebug(
-			`→ Outgoing: ${message.type} ${message.method} [seq=${message.sequence}]`,
-			message
-		);
+		this.logDebug(`→ Outgoing: ${message.type} ${message.method}`, message);
 
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'out');
@@ -795,9 +722,6 @@ export class MessageHub {
 	 * Server-side only - routes the response to the client that made the request
 	 */
 	private async sendResponseToClient(message: HubMessage, clientId?: string): Promise<void> {
-		// Add sequence number for ordering guarantees
-		message.sequence = this.messageSequence++;
-
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'out');
 
@@ -866,7 +790,6 @@ export class MessageHub {
 
 	/**
 	 * Cleanup all state
-	 * FIX P1.3: Clear sequence tracking map
 	 */
 	cleanup(): void {
 		// Reject all pending calls
@@ -883,10 +806,6 @@ export class MessageHub {
 		this.connectionStateHandlers.clear();
 		this.eventDepthMap.clear();
 
-		// FIX P1.3: Clear sequence tracking
-		this.expectedSequence = null;
-		this.expectedSequencePerClient.clear();
-
 		// Clear transports
 		this.transports.clear();
 		this.primaryTransportName = null;
@@ -897,14 +816,6 @@ export class MessageHub {
 	// ========================================
 	// Utilities
 	// ========================================
-
-	/**
-	 * Clean up sequence tracking for a disconnected client (server-side only)
-	 * Call this when a client disconnects to free up memory
-	 */
-	cleanupClientSequence(clientId: string): void {
-		this.expectedSequencePerClient.delete(clientId);
-	}
 
 	/**
 	 * Debug logging - uses unified logger

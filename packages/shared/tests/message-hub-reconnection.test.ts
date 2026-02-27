@@ -180,46 +180,6 @@ describe('MessageHub Reconnection', () => {
 		expect(eventReceived).toBe(true);
 	});
 
-	it('should reset sequence number tracking on reconnection', async () => {
-		// 1. Setup
-		hub.registerTransport(transport);
-		await transport.initialize();
-
-		// 2. Send some messages to increment sequence counter
-		hub.event('test.cmd', {});
-
-		// Wait for message
-		await new Promise((resolve) => setTimeout(resolve, 10));
-
-		// 3. Simulate disconnect + reconnect
-		transport.simulateDisconnect();
-		transport.simulateReconnect();
-
-		await new Promise((resolve) => setTimeout(resolve, 10));
-
-		// 4. Receive a message with low sequence number (simulating server restart)
-		const testEvent: HubMessage = {
-			id: 'event-1',
-			type: MessageType.EVENT,
-			method: 'test.event',
-			sessionId: 'test-session',
-			data: { message: 'test' },
-			timestamp: new Date().toISOString(),
-			sequence: 0, // Server restarted, sequence reset to 0
-		};
-
-		// Register handler to verify event is processed
-		let eventReceived = false;
-		hub.onEvent('test.event', () => {
-			eventReceived = true;
-		});
-
-		transport.receiveMessage(testEvent);
-		await new Promise((resolve) => setTimeout(resolve, 10));
-
-		expect(eventReceived).toBe(true);
-	});
-
 	it('should timeout pending queries on disconnect', async () => {
 		// 1. Setup
 		hub.registerTransport(transport);
