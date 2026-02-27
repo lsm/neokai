@@ -117,7 +117,7 @@ async function recoverAwaitingWorker(
 		result.immediateTerminals++;
 		await runtime.onWorkerTerminalState(group.id, {
 			sessionId: group.workerSessionId,
-			kind: 'completed',
+			kind: 'idle',
 		});
 	} else {
 		// Still active - observe for future terminal state
@@ -156,7 +156,7 @@ async function recoverAwaitingLeader(
 		result.immediateTerminals++;
 		await runtime.onLeaderTerminalState(group.id, {
 			sessionId: group.leaderSessionId,
-			kind: 'completed',
+			kind: 'idle',
 		});
 	} else {
 		// Still active - observe for future terminal state
