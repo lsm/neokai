@@ -1,17 +1,17 @@
 # CI - Build, test, and quality checks
 #
 # On PRs to dev:
-# 1. Code quality checks + unit/integration tests (parallel)
+# 1. Code quality checks + unit/online tests (parallel)
 # 2. Build, binary compilation, and E2E tests are SKIPPED for faster feedback
 #
 # On push to dev (after merge) and all main branch activity:
-# 1. Code quality checks + unit/integration tests (parallel)
+# 1. Code quality checks + unit/online tests (parallel)
 # 2. Build linux-x64 binary + smoke test (after tests pass)
 # 3. Run full E2E test matrix against the binary
 # 4. "All Tests Pass" gate (used by release.yml to verify CI status)
 #
 # Release is handled separately in release.yml (triggered by version tags).
-# Test coverage (unit, integration online/offline, web) is uploaded to Coveralls.
+# Test coverage (unit, online, web) is uploaded to Coveralls.
 
 name: CI
 
@@ -99,85 +99,6 @@ jobs:
           echo "  Knip: ${{ steps.knip.outcome }}"
           echo "  Typecheck: ${{ steps.typecheck.outcome }}"
           exit 1
-
-  # ============================================
-  # DAEMON TESTS (Matrix by module for parallelization)
-  # ============================================
-
-  test-daemon-offline:
-    name: Daemon Offline (${{ matrix.module }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - agent
-          - session
-          - rpc
-          - database
-          - filesystem
-          - git
-          - components
-        include:
-          - module: agent
-            test_path: tests/integration/agent
-          - module: session
-            test_path: tests/integration/session
-          - module: rpc
-            test_path: tests/integration/rpc
-          - module: database
-            test_path: tests/integration/database
-          - module: filesystem
-            test_path: tests/integration/filesystem
-          - module: git
-            test_path: tests/integration/git
-          - module: components
-            test_path: tests/integration/components
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: ./.github/actions/setup-bun
-        with:
-          bun-version: 1.3.9
-
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Run daemon tests (${{ matrix.module }})
-        working-directory: packages/daemon
-        run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-${{ matrix.module }}
-        env:
-          GLM_API_KEY: ""
-          CLAUDE_CODE_OAUTH_TOKEN: ""
-
-      - name: Fix coverage paths and strip test utilities
-        working-directory: packages/daemon
-        run: |
-          LCOV=coverage-${{ matrix.module }}/lcov.info
-          # Fix paths: Bun generates relative to package dir, need repo root paths
-          sed -i 's|^SF:src/|SF:packages/daemon/src/|g' $LCOV || true
-          sed -i 's|^SF:\.\./shared/|SF:packages/shared/|g' $LCOV || true
-          # Strip test utility coverage (helpers, fixtures, mocks)
-          awk '/^SF:(packages\/daemon\/)?tests\//{skip=1} /^end_of_record/{if(skip){skip=0;next}} !skip' $LCOV > ${LCOV}.clean && mv ${LCOV}.clean $LCOV || true
-
-      - name: Upload to Coveralls (parallel)
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          file: packages/daemon/coverage-${{ matrix.module }}/lcov.info
-          flag-name: daemon-offline-${{ matrix.module }}
-          parallel: true
-          fail-on-error: false
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
@@ -420,7 +341,7 @@ jobs:
   coveralls-finalize:
     name: Finalize Coveralls
     runs-on: ubuntu-latest
-    needs: [test-daemon-shared-unit, test-web, test-daemon-offline, test-daemon-online]
+    needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     if: false # temporarily disabled
     timeout-minutes: 1
 
@@ -521,13 +442,13 @@ jobs:
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
-  # Runs after all unit/integration tests pass
+  # Runs after all unit/online tests pass
   # ============================================
 
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [check, test-daemon-offline, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
     timeout-minutes: 10
 
@@ -827,7 +748,7 @@ jobs:
           retention-days: 7
 
   # ============================================
-  # GATE - All tests (unit, integration, E2E) must pass
+  # GATE - All tests (unit, online, E2E) must pass
   # ============================================
 
   all-tests-pass:
@@ -837,7 +758,6 @@ jobs:
     if: always()
     needs:
       - check
-      - test-daemon-offline
       - test-daemon-online
       - test-daemon-shared-unit
       - test-web
@@ -850,7 +770,6 @@ jobs:
       - name: Check all jobs passed
         run: |
           if [[ "${{ needs.check.result }}" != "success" ]] || \
-             [[ "${{ needs.test-daemon-offline.result }}" != "success" ]] || \
              [[ "${{ needs.test-daemon-online.result }}" != "success" ]] || \
              [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
              [[ "${{ needs.test-web.result }}" != "success" ]] || \
@@ -860,7 +779,6 @@ jobs:
              [[ "${{ needs.e2e-llm.result }}" != "success" && "${{ needs.e2e-llm.result }}" != "skipped" ]]; then
             echo "One or more jobs failed:"
             echo "  check: ${{ needs.check.result }}"
-            echo "  test-daemon-offline: ${{ needs.test-daemon-offline.result }}"
             echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"

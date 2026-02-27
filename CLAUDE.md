@@ -95,8 +95,7 @@ MessageHub protocol provides unified RPC + pub/sub over WebSocket between web cl
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
-- `packages/daemon/tests/integration/` — Integration tests (matrixized by module: agent, session, rpc, database, filesystem, websocket, git, components, mcp)
-- `packages/daemon/tests/online/` — Tests requiring API credentials
+- `packages/daemon/tests/online/` — Online tests (matrixized by module, mock SDK by default, real API with NEOKAI_TEST_ONLINE=true)
 - `packages/e2e/tests/` — Browser automation tests
 
 #### E2E Test Rules

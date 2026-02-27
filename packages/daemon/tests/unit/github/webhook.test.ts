@@ -1,7 +1,7 @@
 /**
- * GitHub Webhook Integration Tests
+ * GitHub Webhook Tests
  *
- * Integration tests for webhook handling:
+ * Tests for webhook handling:
  * - Test valid webhook signature is accepted
  * - Test invalid webhook signature is rejected
  * - Test event parsing for different event types
