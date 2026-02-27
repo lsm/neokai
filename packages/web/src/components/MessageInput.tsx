@@ -142,7 +142,8 @@ export default function MessageInput({
 	}, [refreshQueuedMessages]);
 
 	useEffect(() => {
-		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0) return;
+		if (!agentWorking && queuedForCurrentTurn.length === 0 && queuedForNextTurn.length === 0)
+			return;
 		const timer = setInterval(() => {
 			void refreshQueuedMessages();
 		}, 700);
@@ -150,38 +151,41 @@ export default function MessageInput({
 	}, [agentWorking, queuedForCurrentTurn.length, queuedForNextTurn.length, refreshQueuedMessages]);
 
 	// Submit handler
-	const handleSubmit = useCallback(async (deliveryMode: MessageDeliveryMode = 'current_turn') => {
-		if (disabled) {
-			return;
-		}
-		const outgoing = extractOutgoingMessage();
-		if (!outgoing) return;
+	const handleSubmit = useCallback(
+		async (deliveryMode: MessageDeliveryMode = 'current_turn') => {
+			if (disabled) {
+				return;
+			}
+			const outgoing = extractOutgoingMessage();
+			if (!outgoing) return;
 
-		// Clear UI
-		clearDraft();
-		clearAttachments();
+			// Clear UI
+			clearDraft();
+			clearAttachments();
 
-		// Send message with images
-		await onSend(outgoing.content, outgoing.images, deliveryMode);
-		if (
-			agentWorking ||
-			deliveryMode === 'next_turn' ||
-			queuedForCurrentTurn.length > 0 ||
-			queuedForNextTurn.length > 0
-		) {
-			await refreshQueuedMessages();
-		}
-	}, [
-		disabled,
-		extractOutgoingMessage,
-		clearDraft,
-		clearAttachments,
-		onSend,
-		agentWorking,
-		queuedForCurrentTurn.length,
-		queuedForNextTurn.length,
-		refreshQueuedMessages,
-	]);
+			// Send message with images
+			await onSend(outgoing.content, outgoing.images, deliveryMode);
+			if (
+				agentWorking ||
+				deliveryMode === 'next_turn' ||
+				queuedForCurrentTurn.length > 0 ||
+				queuedForNextTurn.length > 0
+			) {
+				await refreshQueuedMessages();
+			}
+		},
+		[
+			disabled,
+			extractOutgoingMessage,
+			clearDraft,
+			clearAttachments,
+			onSend,
+			agentWorking,
+			queuedForCurrentTurn.length,
+			queuedForNextTurn.length,
+			refreshQueuedMessages,
+		]
+	);
 
 	// Keyboard handler
 	const handleKeyDown = useCallback(

@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-	getMessagesBottomPaddingPx,
-	MIN_MESSAGES_BOTTOM_PADDING_PX,
-} from '../layout-metrics';
+import { getMessagesBottomPaddingPx, MIN_MESSAGES_BOTTOM_PADDING_PX } from '../layout-metrics';
 
 describe('layout-metrics', () => {
 	it('keeps a safe minimum padding for normal footer heights', () => {

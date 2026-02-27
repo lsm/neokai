@@ -16,7 +16,12 @@
  * agent state from state.session channel.
  */
 
-import type { MessageDeliveryMode, MessageImage, ResolvedQuestion, SessionFeatures } from '@neokai/shared';
+import type {
+	MessageDeliveryMode,
+	MessageImage,
+	ResolvedQuestion,
+	SessionFeatures,
+} from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES, DEFAULT_ROOM_CHAT_FEATURES } from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
@@ -48,7 +53,10 @@ import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
-import { getMessagesBottomPaddingPx, MIN_MESSAGES_BOTTOM_PADDING_PX } from '../lib/layout-metrics.ts';
+import {
+	getMessagesBottomPaddingPx,
+	MIN_MESSAGES_BOTTOM_PADDING_PX,
+} from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
@@ -530,7 +538,8 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 		const updatePadding = () => {
 			const queueOverlay = footer.querySelector('[data-testid="queue-overlay"]');
-			const queueOverlayRows = queueOverlay instanceof HTMLElement ? queueOverlay.children.length : 0;
+			const queueOverlayRows =
+				queueOverlay instanceof HTMLElement ? queueOverlay.children.length : 0;
 			setMessagesBottomPadding(
 				getMessagesBottomPaddingPx(footer.getBoundingClientRect().height, queueOverlayRows)
 			);
@@ -575,7 +584,14 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			});
 		}
 		previousMessagesBottomPaddingRef.current = messagesBottomPadding;
-	}, [messagesBottomPadding, autoScroll, loadingOlder, isNearBottom, showScrollButton, scrollToBottom]);
+	}, [
+		messagesBottomPadding,
+		autoScroll,
+		loadingOlder,
+		isNearBottom,
+		showScrollButton,
+		scrollToBottom,
+	]);
 
 	// ========================================
 	// Message Maps (for tool results/inputs)

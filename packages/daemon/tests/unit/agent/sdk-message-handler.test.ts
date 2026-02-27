@@ -405,7 +405,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(handleResultUsageSpy).not.toHaveBeenCalled();
+			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
 		});
 		it('should queue /context command', async () => {
 			const message: SDKMessage = {
