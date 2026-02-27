@@ -1,40 +1,34 @@
 /**
  * Room Multi-Agent Flow (API-dependent)
  *
- * Verifies the end-to-end room lifecycle through real API calls:
+ * Verifies the end-to-end room lifecycle through a single goal that
+ * progresses through all stages: planning → task promotion → execution → completion.
  *
- * Stage 1: Goal creation triggers planning group
- * Stage 2: Planning produces execution tasks
- * Stage 3: Execution completes task via leader review
- * Stage 4: Feedback iteration tracking
- *
- * Each test is isolated and verifies a specific lifecycle stage,
- * so failures pinpoint exactly which stage broke.
+ * Uses a shared daemon. Assertions at each checkpoint pinpoint exactly
+ * which stage broke.
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls — correctness over cost
+ * - Makes real API calls
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
+
+// Use Sonnet for room agents (default model may be GLM in CI)
+const savedModel = process.env.DEFAULT_MODEL;
+process.env.DEFAULT_MODEL = 'sonnet';
 
 // =========================================================================
 // Polling Helpers
 // =========================================================================
 
-/**
- * Poll task.list until at least one task matches the filter criteria.
- */
 async function waitForTask(
 	daemon: DaemonServerContext,
 	roomId: string,
-	filter: {
-		taskType?: string;
-		status?: string | string[];
-	},
+	filter: { taskType?: string; status?: string | string[] },
 	timeout = 120_000
 ): Promise<NeoTask> {
 	const start = Date.now();
@@ -54,16 +48,13 @@ async function waitForTask(
 				(!statusArray || statusArray.includes(t.status))
 		);
 		if (match) return match;
-		await new Promise((r) => setTimeout(r, 2000));
+		await new Promise((r) => setTimeout(r, 1000));
 	}
 	throw new Error(
 		`Timeout (${timeout}ms) waiting for task matching ${JSON.stringify(filter)} in room ${roomId}`
 	);
 }
 
-/**
- * Poll task.list until tasks matching filter reach a target count.
- */
 async function waitForTaskCount(
 	daemon: DaemonServerContext,
 	roomId: string,
@@ -88,16 +79,13 @@ async function waitForTaskCount(
 				(!statusArray || statusArray.includes(t.status))
 		);
 		if (matches.length >= minCount) return matches;
-		await new Promise((r) => setTimeout(r, 2000));
+		await new Promise((r) => setTimeout(r, 1000));
 	}
 	throw new Error(
 		`Timeout (${timeout}ms) waiting for ${minCount}+ tasks matching ${JSON.stringify(filter)}`
 	);
 }
 
-/**
- * Poll task.getGroup until the group reaches a target state.
- */
 async function waitForGroupState(
 	daemon: DaemonServerContext,
 	roomId: string,
@@ -114,36 +102,10 @@ async function waitForGroupState(
 		if (result.group && targetStates.includes(result.group.state)) {
 			return result.group;
 		}
-		await new Promise((r) => setTimeout(r, 2000));
+		await new Promise((r) => setTimeout(r, 1000));
 	}
 	throw new Error(
 		`Timeout (${timeout}ms) waiting for group state ${targetStates.join('|')} on task ${taskId}`
-	);
-}
-
-/**
- * Poll goal.get until goal reaches target status.
- */
-async function waitForGoalStatus(
-	daemon: DaemonServerContext,
-	roomId: string,
-	goalId: string,
-	targetStatuses: string[],
-	timeout = 120_000
-): Promise<RoomGoal> {
-	const start = Date.now();
-
-	while (Date.now() - start < timeout) {
-		const result = (await daemon.messageHub.request('goal.get', { roomId, goalId })) as {
-			goal: RoomGoal;
-		};
-		if (targetStatuses.includes(result.goal.status)) {
-			return result.goal;
-		}
-		await new Promise((r) => setTimeout(r, 2000));
-	}
-	throw new Error(
-		`Timeout (${timeout}ms) waiting for goal ${goalId} status ${targetStatuses.join('|')}`
 	);
 }
 
@@ -155,18 +117,24 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 	let roomId: string;
 
-	beforeEach(async () => {
+	beforeAll(async () => {
 		daemon = await createDaemonServer();
 
-		// Create a room for each test
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `Multi-Agent Flow ${Date.now()}`,
 		})) as { room: { id: string } };
 		roomId = result.room.id;
 	}, 30_000);
 
-	afterEach(
+	afterAll(
 		async () => {
+			// Restore model
+			if (savedModel !== undefined) {
+				process.env.DEFAULT_MODEL = savedModel;
+			} else {
+				delete process.env.DEFAULT_MODEL;
+			}
+
 			if (daemon) {
 				daemon.kill('SIGTERM');
 				await daemon.waitForExit();
@@ -175,84 +143,54 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 		{ timeout: 20_000 }
 	);
 
-	// -----------------------------------------------------------------
-	// Stage 1: Goal creation triggers planning group
-	// -----------------------------------------------------------------
-
 	test(
-		'Stage 1: creating a goal triggers a planning task',
+		'goal → planning → execution → completion lifecycle',
 		async () => {
-			// Create a goal — the RoomRuntime should detect it and spawn a planning group
+			// --- Create goal ---
 			const goalResult = (await daemon.messageHub.request('goal.create', {
 				roomId,
-				title: 'Add a health check endpoint',
-				description: 'Create GET /health that returns 200 OK with {"status":"ok"}',
+				title: 'Add a capitalize utility',
+				description: 'Create src/capitalize.ts that exports capitalize(str: string): string.',
 			})) as { goal: RoomGoal };
 
 			const goalId = goalResult.goal.id;
 			expect(goalId).toBeTruthy();
 
-			// Wait for a planning task to appear (the runtime creates one)
+			// --- Stage 1: Planning task appears ---
 			const planningTask = await waitForTask(
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['pending', 'in_progress'] },
 				60_000
 			);
-			expect(planningTask).toBeTruthy();
 			expect(planningTask.taskType).toBe('planning');
 			expect(planningTask.title).toContain('Plan:');
 
-			// Verify planning_attempts was incremented
-			const updatedGoal = (
+			const goalAfterPlanning = (
 				(await daemon.messageHub.request('goal.get', { roomId, goalId })) as {
 					goal: RoomGoal;
 				}
 			).goal;
-			expect(updatedGoal.planning_attempts).toBeGreaterThanOrEqual(1);
+			expect(goalAfterPlanning.planning_attempts).toBeGreaterThanOrEqual(1);
 
-			// Verify a session group was created for this planning task
-			const group = await waitForGroupState(
+			const planningGroup = await waitForGroupState(
 				daemon,
 				roomId,
 				planningTask.id,
 				['awaiting_worker', 'awaiting_leader', 'completed', 'failed'],
 				30_000
 			);
-			expect(group).toBeTruthy();
-			expect(group.id).toBeTruthy();
-		},
-		{ timeout: 120_000 }
-	);
+			expect(planningGroup.id).toBeTruthy();
 
-	// -----------------------------------------------------------------
-	// Stage 2: Planning completes and produces execution tasks
-	// -----------------------------------------------------------------
-
-	test(
-		'Stage 2: planning produces execution tasks after review',
-		async () => {
-			// Create a goal that requires real planning with multiple steps
-			const goalResult = (await daemon.messageHub.request('goal.create', {
-				roomId,
-				title: 'Add a health check endpoint',
-				description:
-					'Create a GET /health endpoint that returns 200 OK with {"status":"ok","uptime":<seconds>}. ' +
-					'Include a unit test that verifies the response format.',
-			})) as { goal: RoomGoal };
-
-			const goalId = goalResult.goal.id;
-
-			// Wait for planning task to complete (planner creates tasks, leader approves)
-			const planningTask = await waitForTask(
+			// --- Stage 2: Planning completes, execution tasks promoted ---
+			const completedPlanning = await waitForTask(
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: 'completed' },
 				180_000
 			);
-			expect(planningTask.status).toBe('completed');
+			expect(completedPlanning.status).toBe('completed');
 
-			// After planning completes, execution tasks should be promoted to pending
 			const execTasks = await waitForTaskCount(
 				daemon,
 				roomId,
@@ -262,105 +200,41 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			);
 			expect(execTasks.length).toBeGreaterThanOrEqual(1);
 
-			// Verify the goal still has the tasks linked
-			const updatedGoal = (
+			const goalAfterExecPromotion = (
 				(await daemon.messageHub.request('goal.get', { roomId, goalId })) as {
 					goal: RoomGoal;
 				}
 			).goal;
-			// Planning task + at least 1 execution task
-			expect((updatedGoal.linkedTaskIds ?? []).length).toBeGreaterThanOrEqual(2);
-		},
-		{ timeout: 240_000 }
-	);
+			expect((goalAfterExecPromotion.linkedTaskIds ?? []).length).toBeGreaterThanOrEqual(2);
 
-	// -----------------------------------------------------------------
-	// Stage 3: Execution completes task via leader review
-	// -----------------------------------------------------------------
-
-	test(
-		'Stage 3: execution task completes through worker → leader cycle',
-		async () => {
-			// Create a goal — full cycle: planning → execution → leader review → completion
-			const goalResult = (await daemon.messageHub.request('goal.create', {
-				roomId,
-				title: 'Create a utility module',
-				description:
-					'Create a string utility module at src/utils/strings.ts with functions: ' +
-					'capitalize(str), truncate(str, maxLen), and slugify(str). ' +
-					'Include a test file that covers all three functions.',
-			})) as { goal: RoomGoal };
-
-			const goalId = goalResult.goal.id;
-
-			// Wait for at least one execution task to complete
-			// (planning + execution cycle must both finish)
+			// --- Stage 3: Execution completes through worker → leader cycle ---
 			const completedTask = await waitForTask(
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: 'completed' },
-				300_000
+				180_000
 			);
 			expect(completedTask.status).toBe('completed');
 			expect(completedTask.result).toBeTruthy();
+			expect(completedTask.result!.length).toBeGreaterThan(10);
 
-			// Verify the group reached completed state
-			const group = await waitForGroupState(
+			const execGroup = await waitForGroupState(
 				daemon,
 				roomId,
 				completedTask.id,
 				['completed'],
 				10_000
 			);
-			expect(group.state).toBe('completed');
+			expect(execGroup.state).toBe('completed');
 
-			// Verify we can retrieve group messages (the mirrored timeline)
+			// Verify group messages exist (the mirrored worker↔leader timeline)
 			const messagesResult = (await daemon.messageHub.request('task.getGroupMessages', {
-				groupId: group.id,
+				groupId: execGroup.id,
 			})) as { messages: unknown[]; hasMore: boolean };
 			expect(messagesResult.messages.length).toBeGreaterThan(0);
 
-			// Verify task has a meaningful result summary from the leader
-			expect(completedTask.result!.length).toBeGreaterThan(10);
-		},
-		{ timeout: 360_000 }
-	);
-
-	// -----------------------------------------------------------------
-	// Stage 4: Leader uses feedback loop (multi-iteration)
-	// -----------------------------------------------------------------
-
-	test(
-		'Stage 4: session group tracks feedback iterations',
-		async () => {
-			// Create a realistic goal to exercise the feedback loop
-			const goalResult = (await daemon.messageHub.request('goal.create', {
-				roomId,
-				title: 'Add input validation',
-				description:
-					'Add input validation to a user registration form: validate email format, ' +
-					'password strength (min 8 chars, mixed case, number), and username uniqueness check.',
-			})) as { goal: RoomGoal };
-
-			// Wait for an execution task to start (gets a group)
-			const execTask = await waitForTask(
-				daemon,
-				roomId,
-				{ taskType: 'coding', status: ['in_progress', 'completed'] },
-				180_000
-			);
-
-			// Get the group and verify iteration tracking
-			const group = await waitForGroupState(
-				daemon,
-				roomId,
-				execTask.id,
-				['awaiting_leader', 'completed', 'failed', 'awaiting_human'],
-				120_000
-			);
-			// feedbackIteration tracks how many worker→leader rounds occurred
-			// At minimum 1 (the initial round)
-			expect(group.feedbackIteration).toBeGreaterThanOrEqual(1);
+			// Verify feedback iteration tracking (at least 1 worker→leader round)
+			expect(execGroup.feedbackIteration).toBeGreaterThanOrEqual(1);
 		},
 		{ timeout: 360_000 }
 	);
