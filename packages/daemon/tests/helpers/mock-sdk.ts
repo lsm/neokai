@@ -11,9 +11,22 @@
  * `mockAgentSessionWithResponses()` replaces `queryRunner.start()` on the
  * AgentSession with a mock that:
  * 1. Starts the message queue (same as real)
- * 2. Consumes the user message from the queue (triggers state transitions)
+ * 2. Consumes user messages from the queue (triggers state transitions)
  * 3. Feeds scripted SDK messages through `messageHandler.handleMessage()`
- * 4. Cleans up (stops queue, clears pending messages)
+ * 4. Yields to event loop between messages (matches real async stream behavior)
+ * 5. Cleans up (stops queue, clears pending messages)
+ *
+ * ## Multi-turn Support
+ *
+ * Pass `SDKMessage[][]` to script multi-turn conversations. Each inner array
+ * is one turn's response. The mock consumes one user message per turn:
+ *
+ * ```ts
+ * mockAgentSessionWithResponses(sessionManager, sessionId, [
+ *   simpleTextResponse('First reply'),   // Turn 1
+ *   simpleTextResponse('Second reply'),  // Turn 2
+ * ]);
+ * ```
  *
  * ## Usage — Transparent Mode (recommended)
  *
@@ -41,7 +54,6 @@ import type { UUID } from 'crypto';
 import { randomUUID } from 'crypto';
 import type { SDKMessage } from '@neokai/shared/sdk';
 import type { SessionManager } from '../../src/lib/session-manager';
-import type { TestContext } from './test-app';
 
 // ============================================================================
 // Message Builders
@@ -82,15 +94,16 @@ export function sdkAssistantText(text: string): SDKMessage {
 export function sdkAssistantToolUse(
 	toolName: string,
 	input: Record<string, unknown>,
-	opts?: { text?: string }
+	opts?: { text?: string; toolUseId?: string }
 ): SDKMessage {
 	const content: unknown[] = [];
 	if (opts?.text) {
 		content.push({ type: 'text', text: opts.text });
 	}
+	const toolUseId = opts?.toolUseId || `toolu_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
 	content.push({
 		type: 'tool_use',
-		id: `toolu_${randomUUID().replace(/-/g, '').slice(0, 20)}`,
+		id: toolUseId,
 		name: toolName,
 		input,
 	});
@@ -103,6 +116,33 @@ export function sdkAssistantToolUse(
 		message: {
 			role: 'assistant',
 			content,
+		},
+	} as unknown as SDKMessage;
+}
+
+/**
+ * Create a tool result message (response to a tool use)
+ */
+export function sdkToolResult(
+	toolUseId: string,
+	output: string,
+	opts?: { isError?: boolean }
+): SDKMessage {
+	return {
+		type: 'assistant',
+		uuid: randomUUID() as UUID,
+		session_id: '',
+		parent_tool_use_id: toolUseId,
+		message: {
+			role: 'user',
+			content: [
+				{
+					type: 'tool_result',
+					tool_use_id: toolUseId,
+					content: output,
+					is_error: opts?.isError ?? false,
+				},
+			],
 		},
 	} as unknown as SDKMessage;
 }
@@ -202,10 +242,57 @@ export function toolUseResponse(
 }
 
 /**
+ * Full tool use flow: init → tool call → tool result → assistant text → result
+ */
+export function toolUseWithResultResponse(
+	toolName: string,
+	input: Record<string, unknown>,
+	output: string,
+	opts?: { finalText?: string }
+): SDKMessage[] {
+	const toolUseId = `toolu_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+	return [
+		sdkSystemInit(),
+		sdkAssistantToolUse(toolName, input, { toolUseId }),
+		sdkToolResult(toolUseId, output),
+		sdkAssistantText(opts?.finalText ?? `Tool ${toolName} completed.`),
+		sdkResultSuccess(),
+	];
+}
+
+/**
  * Error response: init → error result
  */
 export function errorResponse(errorMessage?: string): SDKMessage[] {
 	return [sdkSystemInit(), sdkResultError('error_during_execution', errorMessage)];
+}
+
+// ============================================================================
+// Types
+// ============================================================================
+
+/**
+ * Response factory type — produces SDK messages for each query.
+ * Can be:
+ * - SDKMessage[]   — single-turn, same response every time
+ * - SDKMessage[][]  — multi-turn, each inner array is one turn
+ * - () => SDKMessage[] | SDKMessage[][] — factory called per query
+ */
+export type MockResponseFactory =
+	| SDKMessage[]
+	| SDKMessage[][]
+	| (() => SDKMessage[] | SDKMessage[][]);
+
+/**
+ * Normalize response factory output to multi-turn format (SDKMessage[][]).
+ * Single-turn SDKMessage[] is wrapped into [[...messages]].
+ */
+function normalizeTurns(messages: SDKMessage[] | SDKMessage[][]): SDKMessage[][] {
+	if (messages.length === 0) return [[]];
+	// If first element is an array, it's already multi-turn
+	if (Array.isArray(messages[0])) return messages as SDKMessage[][];
+	// Single-turn: wrap in outer array
+	return [messages as SDKMessage[]];
 }
 
 // ============================================================================
@@ -225,15 +312,18 @@ export function errorResponse(errorMessage?: string): SDKMessage[] {
  * - Circuit breaker
  * - Session update events
  *
+ * Messages are fed asynchronously with event loop yields between each,
+ * matching the real SDK's `for await` stream behavior.
+ *
  * @param sessionManager - The SessionManager instance
  * @param sessionId - The session ID to mock
- * @param messages - SDK messages to feed, or a factory function for per-call messages
+ * @param messages - SDK messages: SDKMessage[] for single-turn, SDKMessage[][] for multi-turn
  * @returns The mocked AgentSession or null if not found
  */
 export function mockAgentSessionWithResponses(
 	sessionManager: SessionManager,
 	sessionId: string,
-	messages: SDKMessage[] | (() => SDKMessage[])
+	messages: SDKMessage[] | SDKMessage[][] | (() => SDKMessage[] | SDKMessage[][])
 ): ReturnType<typeof sessionManager.getSession> | null {
 	const agentSession = sessionManager.getSession(sessionId);
 	if (!agentSession) return null;
@@ -256,25 +346,34 @@ export function mockAgentSessionWithResponses(
 
 		ctx.queryPromise = (async () => {
 			const gen = messageQueue.messageGenerator(sessionId);
-			const sdkMessages = getMessages();
+			const turns = normalizeTurns(getMessages());
+
 			try {
-				// Wait for and consume the first user message from the queue.
-				// This unblocks the enqueueWithId promise and triggers state transitions.
-				const first = await gen.next();
-				if (first.value && !first.done) {
-					const { message, onSent } = first.value;
+				// Process each turn by consuming one user message per turn
+				for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
+					// Wait for and consume a user message from the queue.
+					// This unblocks the enqueueWithId promise and triggers state transitions.
+					const next = await gen.next();
+					if (!next.value || next.done) break;
+
+					const { message, onSent } = next.value;
 					const isInternal = (message as Record<string, unknown>).internal || false;
 					if (!isInternal) {
 						await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
 					}
 					onSent();
-				}
 
-				ctx.firstMessageReceived = true;
+					ctx.firstMessageReceived = true;
 
-				// Feed scripted SDK messages through the real handler pipeline
-				for (const msg of sdkMessages) {
-					await messageHandler.handleMessage(msg);
+					// Feed scripted SDK messages for this turn
+					const turnMessages = turns[turnIndex];
+
+					for (const msg of turnMessages) {
+						// Yield to event loop between messages — matches real SDK's
+						// `for await` stream behavior where each message arrives asynchronously
+						await Bun.sleep(0);
+						await messageHandler.handleMessage(msg);
+					}
 				}
 			} catch (error) {
 				// Mimics real QueryRunner error handling
@@ -313,27 +412,26 @@ export function mockAgentSessionWithResponses(
 // ============================================================================
 
 /**
- * Response factory type — produces SDK messages for each query.
- * Can be:
- * - SDKMessage[] — same response every time
- * - () => SDKMessage[] — factory called fresh for each query
+ * Minimal interface for installAutoMock — works with both TestContext and DaemonAppContext.
  */
-export type MockResponseFactory = SDKMessage[] | (() => SDKMessage[]);
+export interface MockableContext {
+	sessionManager: SessionManager;
+	eventBus: { on: (event: string, handler: (data: { sessionId: string }) => void) => void };
+}
 
 /**
- * Install auto-mocking on a TestContext so every new session automatically
- * gets its query runner replaced with the mock pipeline.
+ * Install auto-mocking so every new session automatically gets its query
+ * runner replaced with the mock pipeline.
  *
  * After calling this, test code is completely transparent — identical to
  * online tests. No `mockAgentSessionWithResponses()` calls needed.
  *
- * @param ctx - TestContext from createTestApp()
+ * @param ctx - Any context with sessionManager and eventBus (TestContext, DaemonAppContext)
  * @param responses - Default responses for all sessions
  * @returns Controls object to change responses per-session or globally
  *
  * @example
  * ```ts
- * ctx = await createTestApp();
  * const mock = installAutoMock(ctx, simpleTextResponse('Hello!'));
  *
  * // Test code looks identical to online tests
@@ -345,7 +443,10 @@ export type MockResponseFactory = SDKMessage[] | (() => SDKMessage[]);
  * mock.setResponses(sessionId, errorResponse('Boom'));
  * ```
  */
-export function installAutoMock(ctx: TestContext, responses: MockResponseFactory): MockControls {
+export function installAutoMock(
+	ctx: MockableContext,
+	responses: MockResponseFactory
+): MockControls {
 	const controls = new MockControls(responses);
 
 	// Listen for session.created and auto-apply mock
