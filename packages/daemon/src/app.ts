@@ -38,6 +38,7 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
 	transport: WebSocketServerTransport;
+	eventBus: Awaited<ReturnType<typeof createDaemonHub>>;
 	/**
 	 * GitHub service instance (null if not configured)
 	 */
@@ -390,6 +391,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
+		eventBus,
 		gitHubService,
 		cleanup,
 	};
