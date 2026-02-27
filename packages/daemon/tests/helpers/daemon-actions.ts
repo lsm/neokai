@@ -41,7 +41,7 @@ export async function sendMessage(
 		} catch {
 			// Ignore transient RPC failures while query bootstraps
 		}
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await new Promise((resolve) => setTimeout(resolve, 10));
 	}
 
 	return result;
@@ -118,7 +118,7 @@ async function waitForProcessingState(
 			} catch {
 				// Ignore polling errors
 			}
-		}, 500);
+		}, 50);
 
 		// Join room, then re-check state to close the primary race window.
 		// The re-check AFTER joinRoom ensures: if state changed before join completed,
