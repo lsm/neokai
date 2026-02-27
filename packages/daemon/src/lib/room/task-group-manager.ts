@@ -2,8 +2,8 @@
  * TaskGroupManager - Creates and manages (Worker, Leader) session groups
  *
  * Orchestrates the lifecycle of session groups:
- * 1. Spawns session groups for pending tasks
- * 2. Routes worker terminal output to Leader for review
+ * 1. Spawns worker session immediately, defers leader creation until needed
+ * 2. Routes worker terminal output to Leader for review (lazy-starts leader)
  * 3. Routes Leader feedback back to worker
  * 4. Handles group completion and failure
  *
@@ -29,6 +29,12 @@ import type { LeaderAgentConfig, ReviewContext } from './leader-agent';
 export interface SessionFactory {
 	createAndStartSession(init: AgentSessionInit, role: string): Promise<void>;
 	injectMessage(sessionId: string, message: string): Promise<void>;
+	hasSession(sessionId: string): boolean;
+	/**
+	 * Answer a pending AskUserQuestion on the session.
+	 * Returns true if a question was pending and answered, false otherwise.
+	 */
+	answerQuestion(sessionId: string, answer: string): Promise<boolean>;
 }
 
 /**
@@ -59,6 +65,13 @@ export interface TaskGroupManagerConfig {
 	model?: string;
 }
 
+/** Deferred leader session info stored until first routeWorkerToLeader call */
+interface PendingLeaderInfo {
+	init: AgentSessionInit;
+	sessionId: string;
+	onTerminal: (groupId: string, state: TerminalState) => void;
+}
+
 export class TaskGroupManager {
 	private readonly room: Room;
 	private readonly groupRepo: SessionGroupRepository;
@@ -69,8 +82,8 @@ export class TaskGroupManager {
 	readonly workspacePath: string;
 	readonly model?: string;
 
-	/** In-memory map tracking whether Leader called a tool in current turn */
-	readonly leaderCalledToolMap = new Map<string, boolean>();
+	/** Deferred leader inits — created in spawn(), consumed in routeWorkerToLeader() */
+	private pendingLeaderInits = new Map<string, PendingLeaderInfo>();
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.room = config.room;
@@ -87,11 +100,11 @@ export class TaskGroupManager {
 	 * Spawn a new (Worker, Leader) session group for a task.
 	 *
 	 * Flow:
-	 * 1. Create worker session via workerConfig
-	 * 2. Create Leader session with review tools
+	 * 1. Create worker session via workerConfig and start it immediately
+	 * 2. Build leader init but DEFER creation until first review round
 	 * 3. Create session_groups DB record (state: awaiting_worker)
 	 * 4. Set task status to in_progress
-	 * 5. Start observing both sessions
+	 * 5. Observe worker session for terminal state
 	 * 6. Kick off worker (inject initial message)
 	 */
 	async spawn(
@@ -118,7 +131,7 @@ export class TaskGroupManager {
 			workerConfig.role
 		);
 
-		// Build Leader init using the actual group.id from the DB record
+		// Build Leader init using the actual group.id from the DB record — but don't start yet.
 		const leaderCallbacks = leaderCallbacksFactory(group.id);
 		const leaderConfig: LeaderAgentConfig = {
 			task,
@@ -132,12 +145,18 @@ export class TaskGroupManager {
 		};
 		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
+		// Store leader init for deferred creation in routeWorkerToLeader
+		this.pendingLeaderInits.set(group.id, {
+			init: leaderInit,
+			sessionId: leaderSessionId,
+			onTerminal: onLeaderTerminal,
+		});
+
 		// Set task status to in_progress
 		await this.taskManager.startTask(task.id);
 
-		// Create sessions
+		// Create and start ONLY the worker session
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
-		await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
 
 		// Kick off worker so the SDK streaming loop starts processing immediately
 		await this.sessionFactory.injectMessage(
@@ -150,23 +169,35 @@ export class TaskGroupManager {
 			onWorkerTerminal(group.id, state);
 		});
 
-		// Observe Leader session for terminal state (contract validation)
-		this.observer.observe(leaderSessionId, (state) => {
-			onLeaderTerminal(group.id, state);
-		});
-
 		return group;
 	}
 
 	/**
 	 * Route worker terminal output to Leader for review.
 	 *
-	 * Called when worker reaches a terminal state (completed, error, waiting).
-	 * Formats output and injects into Leader session as user message.
+	 * Lazy-starts the leader session on first call (deferred from spawn).
+	 * Increments feedbackIteration to track review rounds (1-based).
+	 *
+	 * Called when worker reaches a terminal state (idle, waiting_for_input, interrupted).
 	 */
 	async routeWorkerToLeader(groupId: string, workerOutput: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
+
+		// Lazy-start leader session if this is the first review round
+		const pending = this.pendingLeaderInits.get(groupId);
+		if (pending) {
+			await this.sessionFactory.createAndStartSession(pending.init, 'leader');
+			this.observer.observe(pending.sessionId, (state) => {
+				pending.onTerminal(groupId, state);
+			});
+			this.pendingLeaderInits.delete(groupId);
+		} else if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
+			// After restart: pending init lost and leader session doesn't exist.
+			// Fail the group — task will be re-queued on next tick.
+			await this.fail(groupId, 'Leader session lost during restart; task will be re-queued');
+			return null;
+		}
 
 		// Inject worker output into Leader session
 		await this.sessionFactory.injectMessage(group.leaderSessionId, workerOutput);
@@ -174,10 +205,14 @@ export class TaskGroupManager {
 		// Update group state to awaiting_leader
 		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
 
-		// Reset leader contract violations for the new review round
 		if (updated) {
-			this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
-			this.leaderCalledToolMap.delete(groupId);
+			// Increment feedback iteration (1-based: first review = iteration 1)
+			this.groupRepo.incrementFeedbackIteration(groupId, updated.version);
+			// Reset leader contract state for the new review round
+			const afterIncrement = this.groupRepo.getGroup(groupId);
+			if (afterIncrement) {
+				this.groupRepo.resetLeaderContractViolations(groupId, afterIncrement.version);
+			}
 		}
 
 		return this.groupRepo.getGroup(groupId);
@@ -187,19 +222,22 @@ export class TaskGroupManager {
 	 * Route Leader feedback to worker for another iteration.
 	 *
 	 * Called when Leader calls send_to_worker(message).
+	 * feedbackIteration is NOT incremented here — it's incremented in routeWorkerToLeader
+	 * when the next review round starts.
 	 */
 	async routeLeaderToWorker(groupId: string, message: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		// Inject feedback into worker session
-		await this.sessionFactory.injectMessage(group.workerSessionId, message);
-
-		// Update group state and increment feedback iteration
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
-		if (updated) {
-			this.groupRepo.incrementFeedbackIteration(groupId, updated.version);
+		// If worker is waiting for input (AskUserQuestion), answer the question.
+		// Otherwise inject feedback as a regular message.
+		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
+		if (!answered) {
+			await this.sessionFactory.injectMessage(group.workerSessionId, message);
 		}
+
+		// Update group state back to awaiting_worker
+		this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -223,7 +261,7 @@ export class TaskGroupManager {
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
-		this.leaderCalledToolMap.delete(groupId);
+		this.pendingLeaderInits.delete(groupId);
 
 		return updated;
 	}
@@ -247,7 +285,7 @@ export class TaskGroupManager {
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
-		this.leaderCalledToolMap.delete(groupId);
+		this.pendingLeaderInits.delete(groupId);
 
 		return updated;
 	}

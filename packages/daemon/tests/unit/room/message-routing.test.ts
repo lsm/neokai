@@ -13,13 +13,13 @@ describe('Message Routing', () => {
 			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Add health endpoint',
-				terminalState: 'completed',
+				terminalState: 'idle',
 				workerOutput: 'I added the /health endpoint.',
 			});
 
 			expect(result).toContain('[WORKER OUTPUT] Iteration: 0');
 			expect(result).toContain('Task: Add health endpoint');
-			expect(result).toContain('Terminal state: success');
+			expect(result).toContain('Terminal state: idle');
 			expect(result).toContain('---');
 			expect(result).toContain('I added the /health endpoint.');
 		});
@@ -29,7 +29,7 @@ describe('Message Routing', () => {
 				iteration: 1,
 				taskTitle: 'Fix bug',
 				taskType: 'coding',
-				terminalState: 'completed',
+				terminalState: 'idle',
 				workerOutput: 'Fixed.',
 			});
 
@@ -40,7 +40,7 @@ describe('Message Routing', () => {
 			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Task',
-				terminalState: 'completed',
+				terminalState: 'idle',
 				toolCallSummaries: ['Edit src/auth.ts (+42 lines)', 'Bash: npm test'],
 				workerOutput: 'Done.',
 			});
@@ -49,7 +49,7 @@ describe('Message Routing', () => {
 			expect(result).toContain('Edit src/auth.ts (+42 lines)');
 		});
 
-		it('should map waiting_for_input to question', () => {
+		it('should pass waiting_for_input terminal state directly', () => {
 			const result = formatWorkerToLeaderEnvelope({
 				iteration: 0,
 				taskTitle: 'Task',
@@ -57,7 +57,7 @@ describe('Message Routing', () => {
 				workerOutput: 'Which framework?',
 			});
 
-			expect(result).toContain('Terminal state: question');
+			expect(result).toContain('Terminal state: waiting_for_input');
 		});
 
 		it('should map interrupted terminal state', () => {

@@ -90,7 +90,25 @@ export class RoomRuntimeService {
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
-				await session.messageQueue.enqueue(message, true);
+				await session.messageQueue.enqueue(message);
+			},
+			hasSession: (sessionId) => {
+				return agentSessions.has(sessionId);
+			},
+			answerQuestion: async (sessionId, answer) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return false;
+				const state = session.getProcessingState();
+				if (state.status !== 'waiting_for_input') return false;
+				const { toolUseId, questions } = state.pendingQuestion;
+				// Answer all questions with the leader's text as customText
+				const responses = questions.map((_, i) => ({
+					questionIndex: i,
+					selectedLabels: [] as string[],
+					customText: answer,
+				}));
+				await session.handleQuestionResponse(toolUseId, responses);
+				return true;
 			},
 		};
 	}
