@@ -9,12 +9,6 @@
  * - SDK message types (system init, tool use, result)
  */
 
-// This test requires mock SDK — set before any imports that read the env
-process.env.NEOKAI_AGENT_SDK_MOCK = 'true';
-// Ensure mock SDK path is used regardless of CI provider config
-process.env.ANTHROPIC_API_KEY = 'mock-key';
-delete process.env.DEFAULT_PROVIDER;
-
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import {
@@ -38,13 +32,31 @@ const TIMEOUT = 15000;
 
 describe('Agent Pipeline', () => {
 	let daemon: DaemonServerContext;
+	const savedEnv: Record<string, string | undefined> = {};
 
 	beforeEach(async () => {
+		// Save and override env for mock SDK (scoped to avoid leaking to other test files)
+		for (const key of ['NEOKAI_AGENT_SDK_MOCK', 'ANTHROPIC_API_KEY', 'DEFAULT_PROVIDER']) {
+			savedEnv[key] = process.env[key];
+		}
+		process.env.NEOKAI_AGENT_SDK_MOCK = 'true';
+		process.env.ANTHROPIC_API_KEY = 'mock-key';
+		delete process.env.DEFAULT_PROVIDER;
+
 		daemon = await createDaemonServer();
 	});
 
 	afterEach(async () => {
 		await daemon.waitForExit();
+
+		// Restore original env
+		for (const [key, value] of Object.entries(savedEnv)) {
+			if (value === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = value;
+			}
+		}
 	});
 
 	async function createSession(): Promise<string> {
