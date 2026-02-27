@@ -195,11 +195,14 @@ describe('Leader Agent', () => {
 			expect(init.type).toBe('leader');
 		});
 
-		it('should use custom system prompt (not Claude Code preset)', () => {
+		it('should use Claude Code preset with leader prompt appended', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
-			expect(typeof init.systemPrompt).toBe('string');
-			expect(init.systemPrompt as string).toContain('Leader Agent');
+			expect(init.systemPrompt).toEqual({
+				type: 'preset',
+				preset: 'claude_code',
+				append: expect.stringContaining('Leader Agent'),
+			});
 		});
 
 		it('should include leader-agent-tools MCP server', () => {

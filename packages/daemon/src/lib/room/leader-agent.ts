@@ -235,8 +235,8 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 /**
  * Create an AgentSessionInit for a Leader agent session.
  *
- * The Leader agent does NOT use the Claude Code preset - it uses a custom
- * system prompt with review-specific instructions and MCP tools.
+ * Uses the Claude Code preset (for read/glob/grep codebase access to review work)
+ * plus leader-specific MCP tools for routing decisions.
  */
 export function createLeaderAgentInit(
 	config: LeaderAgentConfig,
@@ -247,7 +247,11 @@ export function createLeaderAgentInit(
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
-		systemPrompt: buildLeaderSystemPrompt(config),
+		systemPrompt: {
+			type: 'preset',
+			preset: 'claude_code',
+			append: buildLeaderSystemPrompt(config),
+		},
 		mcpServers: {
 			'leader-agent-tools': mcpServer as unknown as McpServerConfig,
 		},
