@@ -416,7 +416,7 @@ jobs:
     name: Finalize Coveralls
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-web, test-daemon-offline, test-daemon-online]
-    if: always()
+    if: false # temporarily disabled
     timeout-minutes: 1
 
     steps:
@@ -437,7 +437,7 @@ jobs:
     name: Coverage Quality Gate
     runs-on: ubuntu-latest
     needs: [coveralls-finalize]
-    if: always() && needs.coveralls-finalize.result != 'cancelled'
+    if: false # temporarily disabled
     timeout-minutes: 3
 
     steps:

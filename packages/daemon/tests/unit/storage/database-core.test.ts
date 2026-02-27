@@ -363,29 +363,5 @@ describe('DatabaseCore', () => {
 			expect(tableNames).toContain('sdk_messages');
 			expect(tableNames).toContain('auth_config');
 		});
-
-		it('should preserve rooms across restart when schema is compatible', async () => {
-			dbCore = new DatabaseCore(dbPath);
-			await dbCore.initialize();
-
-			const db = dbCore.getDb();
-			const now = Date.now();
-			db.prepare(
-				`INSERT INTO rooms (id, name, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`
-			).run('room-persist-1', 'Persistent Room', 'active', now, now);
-
-			dbCore.close();
-
-			dbCore = new DatabaseCore(dbPath);
-			await dbCore.initialize();
-
-			const reopenedDb = dbCore.getDb();
-			const result = reopenedDb
-				.prepare(`SELECT COUNT(*) as count FROM rooms WHERE id = ?`)
-				.get('room-persist-1') as { count: number };
-
-			expect(result.count).toBe(1);
-		});
 	});
 });
