@@ -95,14 +95,14 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			}
 
 			// --- Phase 3: Wait for runtime tick to detect all-failed and auto-replan ---
-			// Runtime tick interval is 30s. The tick's getNextGoalForPlanning()
-			// detects all tasks failed → spawns new planning group.
+			// task.fail emits room.task.update → scheduleTick(), but the planning
+			// API call itself can be slow in CI. Allow 120s.
 			const newPlanningTask = await waitForNewTask(
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['pending', 'in_progress', 'completed'] },
 				existingTaskIds,
-				60_000
+				120_000
 			);
 			expect(newPlanningTask.id).not.toBe(tasksBefore.find((t) => t.taskType === 'planning')?.id);
 
