@@ -12,9 +12,8 @@
  */
 
 import type { DaemonHub } from '../daemon-hub';
-import type { AgentProcessingState } from '@neokai/shared';
 
-export type TerminalStateKind = 'completed' | 'waiting_for_input' | 'interrupted';
+export type TerminalStateKind = 'idle' | 'waiting_for_input' | 'interrupted';
 
 export interface TerminalState {
 	sessionId: string;
@@ -26,14 +25,16 @@ export type TerminalStateCallback = (state: TerminalState) => void;
 export class SessionObserver {
 	/** Map of sessionId → unsubscribe function */
 	private subscriptions = new Map<string, () => void>();
-	/** Track last known processing status per session to detect transitions */
-	private lastStatus = new Map<string, string>();
 
 	constructor(private daemonHub: DaemonHub) {}
 
 	/**
 	 * Start observing a session for terminal states.
 	 * Calls onTerminal when the session reaches idle, waiting_for_input, or interrupted.
+	 *
+	 * This is a stateless relay — no transition tracking. Every terminal-status
+	 * event fires the callback. Consumers must be idempotent (guard via group
+	 * state + optimistic locking).
 	 */
 	observe(sessionId: string, onTerminal: TerminalStateCallback): void {
 		// Don't double-subscribe
@@ -45,7 +46,10 @@ export class SessionObserver {
 			'session.updated',
 			(event) => {
 				if (!event.processingState) return;
-				this.handleStateChange(sessionId, event.processingState, onTerminal);
+				const status = event.processingState.status;
+				if (status === 'idle' || status === 'waiting_for_input' || status === 'interrupted') {
+					onTerminal({ sessionId, kind: status });
+				}
 			},
 			{ sessionId }
 		);
@@ -61,7 +65,6 @@ export class SessionObserver {
 		if (unsub) {
 			unsub();
 			this.subscriptions.delete(sessionId);
-			this.lastStatus.delete(sessionId);
 		}
 	}
 
@@ -86,29 +89,5 @@ export class SessionObserver {
 	 */
 	get observedCount(): number {
 		return this.subscriptions.size;
-	}
-
-	private handleStateChange(
-		sessionId: string,
-		state: AgentProcessingState,
-		onTerminal: TerminalStateCallback
-	): void {
-		const prevStatus = this.lastStatus.get(sessionId);
-		const newStatus = state.status;
-
-		// Update tracked status
-		this.lastStatus.set(sessionId, newStatus);
-
-		// Only fire on transitions TO terminal states
-		// (idle after processing, waiting_for_input, interrupted)
-		if (prevStatus === newStatus) return;
-
-		if (newStatus === 'idle' && prevStatus && prevStatus !== 'idle') {
-			onTerminal({ sessionId, kind: 'completed' });
-		} else if (newStatus === 'waiting_for_input') {
-			onTerminal({ sessionId, kind: 'waiting_for_input' });
-		} else if (newStatus === 'interrupted') {
-			onTerminal({ sessionId, kind: 'interrupted' });
-		}
 	}
 }

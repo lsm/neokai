@@ -115,31 +115,38 @@ describe('SessionObserver', () => {
 		});
 	});
 
-	describe('terminal state detection', () => {
-		it('should detect transition to idle (completed)', () => {
+	describe('terminal state detection (stateless relay)', () => {
+		it('should fire for idle status', () => {
 			observer.observe('s1', onTerminal);
 
-			// Processing → idle = completed
-			mockHub.fire('session.updated', {
-				sessionId: 's1',
-				processingState: { status: 'processing', messageId: 'm1', phase: 'streaming' },
-			});
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
 				processingState: { status: 'idle' },
 			});
 
 			expect(terminalStates).toHaveLength(1);
-			expect(terminalStates[0]).toEqual({ sessionId: 's1', kind: 'completed' });
+			expect(terminalStates[0]).toEqual({ sessionId: 's1', kind: 'idle' });
 		});
 
-		it('should detect waiting_for_input state', () => {
+		it('should fire for every idle event (no dedup)', () => {
 			observer.observe('s1', onTerminal);
 
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
-				processingState: { status: 'processing', messageId: 'm1', phase: 'streaming' },
+				processingState: { status: 'idle' },
 			});
+			mockHub.fire('session.updated', {
+				sessionId: 's1',
+				processingState: { status: 'idle' },
+			});
+
+			// Stateless: both fire, consumer handles idempotency
+			expect(terminalStates).toHaveLength(2);
+		});
+
+		it('should fire for waiting_for_input status', () => {
+			observer.observe('s1', onTerminal);
+
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
 				processingState: {
@@ -152,13 +159,9 @@ describe('SessionObserver', () => {
 			expect(terminalStates[0]).toEqual({ sessionId: 's1', kind: 'waiting_for_input' });
 		});
 
-		it('should detect interrupted state', () => {
+		it('should fire for interrupted status', () => {
 			observer.observe('s1', onTerminal);
 
-			mockHub.fire('session.updated', {
-				sessionId: 's1',
-				processingState: { status: 'processing', messageId: 'm1', phase: 'thinking' },
-			});
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
 				processingState: { status: 'interrupted' },
@@ -168,24 +171,7 @@ describe('SessionObserver', () => {
 			expect(terminalStates[0]).toEqual({ sessionId: 's1', kind: 'interrupted' });
 		});
 
-		it('should not fire for duplicate status', () => {
-			observer.observe('s1', onTerminal);
-
-			mockHub.fire('session.updated', {
-				sessionId: 's1',
-				processingState: { status: 'idle' },
-			});
-			// idle → idle should not fire (no previous processing)
-			mockHub.fire('session.updated', {
-				sessionId: 's1',
-				processingState: { status: 'idle' },
-			});
-
-			// First idle with no previous status doesn't fire (no transition from processing)
-			expect(terminalStates).toHaveLength(0);
-		});
-
-		it('should not fire for processing → processing transitions', () => {
+		it('should not fire for processing status', () => {
 			observer.observe('s1', onTerminal);
 
 			mockHub.fire('session.updated', {
@@ -226,20 +212,9 @@ describe('SessionObserver', () => {
 			observer.observe('s1', onTerminal);
 			observer.observe('s2', onTerminal);
 
-			// s1: processing → idle
-			mockHub.fire('session.updated', {
-				sessionId: 's1',
-				processingState: { status: 'processing', messageId: 'm1', phase: 'streaming' },
-			});
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
 				processingState: { status: 'idle' },
-			});
-
-			// s2: processing → waiting
-			mockHub.fire('session.updated', {
-				sessionId: 's2',
-				processingState: { status: 'processing', messageId: 'm2', phase: 'streaming' },
 			});
 			mockHub.fire('session.updated', {
 				sessionId: 's2',
@@ -250,14 +225,14 @@ describe('SessionObserver', () => {
 			});
 
 			expect(terminalStates).toHaveLength(2);
-			expect(terminalStates[0]).toEqual({ sessionId: 's1', kind: 'completed' });
+			expect(terminalStates[0]).toEqual({ sessionId: 's1', kind: 'idle' });
 			expect(terminalStates[1]).toEqual({ sessionId: 's2', kind: 'waiting_for_input' });
 		});
 
-		it('should fire again after re-processing cycle', () => {
+		it('should fire for each terminal event in a processing cycle', () => {
 			observer.observe('s1', onTerminal);
 
-			// First cycle: processing → idle
+			// First cycle
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
 				processingState: { status: 'processing', messageId: 'm1', phase: 'streaming' },
@@ -267,7 +242,7 @@ describe('SessionObserver', () => {
 				processingState: { status: 'idle' },
 			});
 
-			// Second cycle: processing → idle
+			// Second cycle
 			mockHub.fire('session.updated', {
 				sessionId: 's1',
 				processingState: { status: 'processing', messageId: 'm2', phase: 'streaming' },
@@ -278,8 +253,8 @@ describe('SessionObserver', () => {
 			});
 
 			expect(terminalStates).toHaveLength(2);
-			expect(terminalStates[0].kind).toBe('completed');
-			expect(terminalStates[1].kind).toBe('completed');
+			expect(terminalStates[0].kind).toBe('idle');
+			expect(terminalStates[1].kind).toBe('idle');
 		});
 	});
 });
