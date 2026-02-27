@@ -84,8 +84,8 @@ export class Database {
 		return this.sessionRepo.getSession(id);
 	}
 
-	listSessions(): Session[] {
-		return this.sessionRepo.listSessions();
+	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+		return this.sessionRepo.listSessions(options);
 	}
 
 	updateSession(id: string, updates: Partial<Session>): void {

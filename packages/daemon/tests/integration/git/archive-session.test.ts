@@ -532,7 +532,7 @@ describe('Archive Session Integration', () => {
 			expect(result.session.archivedAt).toBeString();
 		});
 
-		test('archived sessions should appear in session.list', async () => {
+		test('archived sessions should appear in session.list with status filter', async () => {
 			// Create and archive a session
 			const created = await callRPCHandler(ctx.messageHub, 'session.create', {
 				workspacePath: `${TMP_DIR}/test-list-archived-${Date.now()}`,
@@ -542,9 +542,18 @@ describe('Archive Session Integration', () => {
 				sessionId: created.sessionId,
 			});
 
-			// List sessions
-			const result = await callRPCHandler(ctx.messageHub, 'session.list', {});
+			// Default list should NOT include archived sessions
+			const defaultResult = await callRPCHandler(ctx.messageHub, 'session.list', {});
+			expect(defaultResult.sessions).toBeArray();
+			const notFound = defaultResult.sessions.find(
+				(s: Record<string, unknown>) => s.id === created.sessionId
+			);
+			expect(notFound).toBeUndefined();
 
+			// List with status=archived should include only archived sessions
+			const result = await callRPCHandler(ctx.messageHub, 'session.list', {
+				status: 'archived',
+			});
 			expect(result.sessions).toBeArray();
 			const archivedSession = result.sessions.find(
 				(s: Record<string, unknown>) => s.id === created.sessionId

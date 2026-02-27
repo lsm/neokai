@@ -234,8 +234,8 @@ export class SessionManager {
 		return this.sessionCache.getAsync(sessionId);
 	}
 
-	listSessions(): Session[] {
-		return this.db.listSessions();
+	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+		return this.db.listSessions(options);
 	}
 
 	async updateSession(sessionId: string, updates: Partial<Session>): Promise<void> {
@@ -267,7 +267,7 @@ export class SessionManager {
 	}
 
 	getTotalSessions(): number {
-		return this.db.listSessions().length;
+		return this.db.listSessions({ includeArchived: true }).length;
 	}
 
 	// ==================== Tools Configuration ====================
