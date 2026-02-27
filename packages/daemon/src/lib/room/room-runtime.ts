@@ -380,10 +380,13 @@ export class RoomRuntime {
 				const reason = params.reason ?? '';
 				await this.taskGroupManager.fail(groupId, reason);
 				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
-				// Check if mid-execution replanning is needed
-				await this.checkAndTriggerReplan(group.taskId, reason);
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
+			}
+
+			case 'replan_goal': {
+				const reason = params.reason ?? '';
+				return this.handleReplanGoal(group.taskId, groupId, reason);
 			}
 
 			default:
@@ -404,6 +407,9 @@ export class RoomRuntime {
 			},
 			failTask: async (_groupId: string, reason: string) => {
 				return this.handleLeaderTool(groupId, 'fail_task', { reason });
+			},
+			replanGoal: async (_groupId: string, reason: string) => {
+				return this.handleLeaderTool(groupId, 'replan_goal', { reason });
 			},
 		};
 	}
@@ -809,52 +815,73 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Check if a failed execution task should trigger mid-execution replanning.
+	 * Handle the replan_goal leader tool.
 	 *
-	 * Replan conditions:
-	 * 1. Failed task is an execution task (not planning)
-	 * 2. Goal still has remaining pending tasks (plan not fully executed)
-	 * 3. planning_attempts < MAX_PLANNING_ATTEMPTS
+	 * Fails the current task, cancels remaining pending sibling tasks,
+	 * and spawns a new planning group with context about what was tried.
 	 *
-	 * If triggered: cancel remaining pending tasks and spawn a new planning group
-	 * with enriched context (completed work + failure info).
+	 * Guards:
+	 * - Task must be an execution task (not planning)
+	 * - Goal must be active with remaining pending tasks
+	 * - planning_attempts < MAX_PLANNING_ATTEMPTS
 	 */
-	private async checkAndTriggerReplan(failedTaskId: string, failureReason: string): Promise<void> {
-		const failedTask = await this.taskManager.getTask(failedTaskId);
-		if (!failedTask) return;
+	private async handleReplanGoal(
+		taskId: string,
+		groupId: string,
+		reason: string
+	): Promise<LeaderToolResult> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) {
+			return jsonResult({ success: false, error: `Task not found: ${taskId}` });
+		}
 
-		// Don't replan for planning tasks themselves
-		if (failedTask.taskType === 'planning') return;
+		if (task.taskType === 'planning') {
+			return jsonResult({
+				success: false,
+				error: 'Cannot replan from a planning task. Use fail_task instead.',
+			});
+		}
 
-		const goals = await this.goalManager.getGoalsForTask(failedTaskId);
-		if (goals.length === 0) return;
+		const goals = await this.goalManager.getGoalsForTask(taskId);
+		if (goals.length === 0) {
+			return jsonResult({ success: false, error: 'No goal linked to this task.' });
+		}
 
 		const goal = goals[0];
-		if (goal.status !== 'active') return;
+		if (goal.status !== 'active') {
+			return jsonResult({
+				success: false,
+				error: `Goal is not active (status: ${goal.status}).`,
+			});
+		}
 
+		const attempts = goal.planning_attempts ?? 0;
+		if (attempts >= MAX_PLANNING_ATTEMPTS) {
+			// Fail the task and escalate instead of replanning
+			await this.taskGroupManager.fail(groupId, reason);
+			this.cleanupMirroring(groupId, `Task failed: ${reason}`);
+			await this.goalManager.updateGoalStatus(goal.id, 'needs_human');
+			this.scheduleTick();
+			return jsonResult({
+				success: false,
+				error: `Max planning attempts (${MAX_PLANNING_ATTEMPTS}) reached. Goal escalated to human.`,
+			});
+		}
+
+		// Fail the current task
+		await this.taskGroupManager.fail(groupId, reason);
+		this.cleanupMirroring(groupId, `Task failed (replanning): ${reason}`);
+
+		// Cancel remaining pending sibling tasks
 		const linkedTaskIds = goal.linkedTaskIds ?? [];
 		const linkedTasks = await Promise.all(linkedTaskIds.map((id) => this.taskManager.getTask(id)));
 		const validTasks = linkedTasks.filter(Boolean) as NeoTask[];
-
-		// Check if there are remaining pending tasks (stale plan)
 		const pendingTasks = validTasks.filter((t) => t.status === 'pending');
-		if (pendingTasks.length === 0) return;
 
-		// Check planning attempts budget
-		const attempts = goal.planning_attempts ?? 0;
-		if (attempts >= MAX_PLANNING_ATTEMPTS) {
-			log.warn(`Goal ${goal.id} exceeded max planning attempts, skipping replan`);
-			return;
-		}
-
-		log.info(
-			`Task ${failedTaskId} failed with ${pendingTasks.length} pending tasks remaining. ` +
-				`Triggering replan for goal ${goal.id} (attempt ${attempts + 1})`
-		);
-
-		// Cancel remaining pending tasks (based on stale plan)
 		const cancelledCount = await this.taskManager.cancelPendingTasks(pendingTasks.map((t) => t.id));
-		log.info(`Cancelled ${cancelledCount} pending tasks for replan`);
+		log.info(
+			`Replan: cancelled ${cancelledCount} pending tasks for goal ${goal.id} (attempt ${attempts + 1})`
+		);
 
 		// Gather context for the replanner (exclude planning tasks from completed list)
 		const completedTasks = validTasks
@@ -863,11 +890,17 @@ export class RoomRuntime {
 
 		const replanContext: ReplanContext = {
 			completedTasks,
-			failedTask: { title: failedTask.title, error: failureReason },
+			failedTask: { title: task.title, error: reason },
 			attempt: attempts + 1,
 		};
 
 		await this.spawnPlanningGroup(goal, replanContext);
+		this.scheduleTick();
+
+		return jsonResult({
+			success: true,
+			message: `Replanning triggered for goal "${goal.title}" (attempt ${attempts + 1}). ${cancelledCount} pending tasks cancelled.`,
+		});
 	}
 
 	private scheduleTick(): void {
