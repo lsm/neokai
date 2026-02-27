@@ -126,6 +126,7 @@ describe('SDKMessageHandler', () => {
 		messageQueueClearSpy = mock(() => {});
 		mockMessageQueue = {
 			enqueue: enqueueMessageSpy,
+			enqueueWithId: mock(async () => {}),
 			clear: messageQueueClearSpy,
 		} as unknown as MessageQueue;
 
@@ -423,7 +424,11 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(enqueueMessageSpy).toHaveBeenCalledWith('/context', true);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledWith(
+				expect.any(String),
+				'/context',
+				true
+			);
 		});
 
 		it('should fallback-ack oldest queued user on turn end when replay is absent', async () => {
@@ -496,7 +501,7 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(enqueueMessageSpy).not.toHaveBeenCalled();
+			expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
 		});
 
 		it('should set state to idle', async () => {
@@ -1000,13 +1005,17 @@ describe('SDKMessageHandler', () => {
 				modelUsage: {},
 			} as unknown as SDKMessage;
 
-			// First normal result queues internal /context with mock ID "context-id"
+			// First normal result queues internal /context via fire-and-forget enqueueWithId
 			await handler.handleMessage(normalResult);
+
+			// Capture the generated UUID that was passed to enqueueWithId
+			const contextMessageId = (mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mock
+				.calls[0][0] as string;
 
 			// Simulate SDK replay for that internal /context with changed/unexpected output format
 			const changedFormatReplay: SDKMessage = {
 				type: 'user',
-				uuid: 'context-id',
+				uuid: contextMessageId,
 				isReplay: true,
 				message: {
 					role: 'user',
@@ -1034,8 +1043,12 @@ describe('SDKMessageHandler', () => {
 			// Only the first real result should persist/broadcast and queue /context once
 			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
 			expect(publishSpy).toHaveBeenCalledTimes(1);
-			expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
-			expect(enqueueMessageSpy).toHaveBeenCalledWith('/context', true);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledWith(
+				expect.any(String),
+				'/context',
+				true
+			);
 		});
 
 		it('should suppress zero-token internal result when replay correlation fails', async () => {
@@ -1084,7 +1097,7 @@ describe('SDKMessageHandler', () => {
 			// normal result + replay persisted, but internal zero-token result suppressed
 			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(2);
 			expect(publishSpy).toHaveBeenCalledTimes(2);
-			expect(enqueueMessageSpy).toHaveBeenCalledTimes(1);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
 		});
 	});
 

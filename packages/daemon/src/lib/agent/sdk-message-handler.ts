@@ -569,15 +569,18 @@ export class SDKMessageHandler {
 			!isZeroTokenResult &&
 			this.internalContextCommandIds.size === 0
 		) {
-			try {
-				// Queue as internal message (won't be saved to DB or broadcast as user message)
-				const messageId = await messageQueue.enqueue('/context', true);
-				// Track this ID so we can skip the result message
-				this.internalContextCommandIds.add(messageId);
-			} catch (error) {
-				// Non-critical - just log the error
+			// Fire-and-forget: don't await the enqueue. Awaiting blocks
+			// handleResultMessage (and the for-await SDK output loop) until the
+			// SDK consumes /context from the prompt generator. If other user
+			// messages are ahead in the queue, they must be processed first,
+			// which can exceed the 30s MESSAGE_QUEUE_TIMEOUT and cause those
+			// messages to be dropped + reset.
+			const contextMessageId = generateUUID();
+			this.internalContextCommandIds.add(contextMessageId);
+			messageQueue.enqueueWithId(contextMessageId, '/context', true).catch((error) => {
+				this.internalContextCommandIds.delete(contextMessageId);
 				this.logger.warn('Failed to queue /context:', error);
-			}
+			});
 		}
 
 		// Mark successful API interaction - resets circuit breaker error tracking
