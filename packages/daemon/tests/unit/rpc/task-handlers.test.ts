@@ -647,6 +647,20 @@ describe('Task RPC Handlers', () => {
 			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
 			expect(daemonHubData.emit).toHaveBeenCalled();
 		});
+
+		it('emits room.task.update event', async () => {
+			const handler = messageHubData.handlers.get('task.complete');
+			expect(handler).toBeDefined();
+
+			await handler!({ roomId: 'room-123', taskId: 'task-123', result: 'Done' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'room.task.update',
+				expect.objectContaining({
+					roomId: 'room-123',
+				})
+			);
+		});
 	});
 
 	describe('task.fail', () => {
@@ -707,6 +721,20 @@ describe('Task RPC Handlers', () => {
 
 			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
 			expect(daemonHubData.emit).toHaveBeenCalled();
+		});
+
+		it('emits room.task.update event', async () => {
+			const handler = messageHubData.handlers.get('task.fail');
+			expect(handler).toBeDefined();
+
+			await handler!({ roomId: 'room-123', taskId: 'task-123', error: 'Failed' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'room.task.update',
+				expect.objectContaining({
+					roomId: 'room-123',
+				})
+			);
 		});
 	});
 
