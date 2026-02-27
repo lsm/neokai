@@ -11,6 +11,9 @@
 
 // This test requires mock SDK — set before any imports that read the env
 process.env.NEOKAI_AGENT_SDK_MOCK = 'true';
+// Ensure mock SDK path is used regardless of CI provider config
+process.env.ANTHROPIC_API_KEY = 'mock-key';
+delete process.env.DEFAULT_PROVIDER;
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
