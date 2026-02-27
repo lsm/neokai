@@ -259,7 +259,7 @@ export function createTables(db: BunDatabase): void {
         session_id TEXT NOT NULL,
         role TEXT NOT NULL,
         joined_at INTEGER NOT NULL,
-        PRIMARY KEY (group_id, role)
+        PRIMARY KEY (group_id, session_id)
       )
     `);
 

@@ -32,6 +32,12 @@ function createMockSessionFactory() {
 		async injectMessage(sessionId: string, message: string) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message] });
 		},
+		hasSession(_sessionId: string) {
+			return true;
+		},
+		async answerQuestion(_sessionId: string, _answer: string) {
+			return false;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
@@ -97,7 +103,7 @@ describe('Runtime Recovery', () => {
 				session_id TEXT NOT NULL,
 				role TEXT NOT NULL,
 				joined_at INTEGER NOT NULL,
-				PRIMARY KEY (group_id, role)
+				PRIMARY KEY (group_id, session_id)
 			);
 			CREATE TABLE session_group_messages (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,

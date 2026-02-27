@@ -53,6 +53,12 @@ function createMockSessionFactory() {
 		async injectMessage(sessionId: string, message: string) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message] });
 		},
+		hasSession(_sessionId: string) {
+			return true;
+		},
+		async answerQuestion(_sessionId: string, _answer: string) {
+			return false;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
@@ -174,7 +180,7 @@ describe('TaskGroupManager', () => {
 			CREATE TABLE session_group_members (
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
 				session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
-				PRIMARY KEY (group_id, role)
+				PRIMARY KEY (group_id, session_id)
 			);
 			CREATE TABLE session_group_messages (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -236,7 +242,7 @@ describe('TaskGroupManager', () => {
 			expect(group.feedbackIteration).toBe(0);
 		});
 
-		it('should create both Worker and Leader sessions', async () => {
+		it('should create Worker session immediately and defer Leader', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -256,8 +262,9 @@ describe('TaskGroupManager', () => {
 			const leaderCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
+			// Worker starts immediately, Leader is deferred until routeWorkerToLeader
 			expect(workerCalls).toHaveLength(1);
-			expect(leaderCalls).toHaveLength(1);
+			expect(leaderCalls).toHaveLength(0);
 		});
 
 		it('should set task to in_progress', async () => {
@@ -293,7 +300,8 @@ describe('TaskGroupManager', () => {
 			);
 
 			expect(observer.isObserving(group.workerSessionId)).toBe(true);
-			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
+			// Leader observation is deferred until routeWorkerToLeader (lazy start)
+			expect(observer.isObserving(group.leaderSessionId)).toBe(false);
 		});
 	});
 
