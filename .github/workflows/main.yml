@@ -118,10 +118,8 @@ jobs:
           - rpc
           - database
           - filesystem
-          - websocket
           - git
           - components
-          - mcp
         include:
           - module: agent
             test_path: tests/integration/agent
@@ -133,14 +131,10 @@ jobs:
             test_path: tests/integration/database
           - module: filesystem
             test_path: tests/integration/filesystem
-          - module: websocket
-            test_path: tests/integration/websocket
           - module: git
             test_path: tests/integration/git
           - module: components
             test_path: tests/integration/components
-          - module: mcp
-            test_path: tests/integration/mcp
 
     steps:
       - uses: actions/checkout@v4
@@ -204,6 +198,7 @@ jobs:
           - coordinator
           - convo
           - features
+          - git
           - lifecycle
           - mcp
           - providers
@@ -211,12 +206,16 @@ jobs:
           - room
           - rpc
           - sdk
+          - websocket
         include:
           - module: components
             test_path: tests/online/components
           # GLM online tests disabled due to flakiness
           # - module: glm
           #   test_path: tests/online/glm
+          - module: git
+            test_path: tests/online/git
+            timeout: 10
           - module: mcp
             test_path: tests/online/mcp
           - module: providers
@@ -242,6 +241,8 @@ jobs:
           - module: room
             test_path: tests/online/room
             timeout: 10
+          - module: websocket
+            test_path: tests/online/websocket
 
     steps:
       - uses: actions/checkout@v4
