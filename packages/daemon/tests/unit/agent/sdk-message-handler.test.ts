@@ -83,6 +83,7 @@ describe('SDKMessageHandler', () => {
 			updateSession: updateSessionSpy,
 			getMessagesByStatus: getMessagesByStatusSpy,
 			updateMessageStatus: updateMessageStatusSpy,
+			updateMessageTimestamp: mock(() => {}),
 		} as unknown as Database;
 
 		// MessageHub spies

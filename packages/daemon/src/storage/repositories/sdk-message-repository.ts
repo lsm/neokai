@@ -306,6 +306,19 @@ export class SDKMessageRepository {
 	}
 
 	/**
+	 * Update the timestamp of a message to the current time.
+	 *
+	 * Used when a queued/saved user message is acknowledged by the SDK, so that
+	 * its DB position matches where it actually appeared in the conversation
+	 * (after already-streamed assistant messages) rather than when the user
+	 * originally typed it.
+	 */
+	updateMessageTimestamp(messageId: string): void {
+		const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
+		stmt.run(new Date().toISOString(), messageId);
+	}
+
+	/**
 	 * Get count of messages by status for a session
 	 * Useful for UI display (e.g., "3 messages pending")
 	 */

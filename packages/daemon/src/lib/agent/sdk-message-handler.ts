@@ -231,6 +231,10 @@ export class SDKMessageHandler {
 			.find((queued) => queued.uuid === message.uuid);
 		if (queuedMessage) {
 			db.updateMessageStatus([queuedMessage.dbId], 'sent');
+			// Update DB timestamp to now so the message's position in the DB matches
+			// where the SDK placed it in the conversation (after already-streamed
+			// assistant messages), not when the user originally typed it.
+			db.updateMessageTimestamp(queuedMessage.dbId);
 			await daemonHub.emit('messages.statusChanged', {
 				sessionId: session.id,
 				messageIds: [queuedMessage.dbId],
@@ -256,6 +260,7 @@ export class SDKMessageHandler {
 			.find((saved) => saved.uuid === message.uuid);
 		if (savedMessage) {
 			db.updateMessageStatus([savedMessage.dbId], 'sent');
+			db.updateMessageTimestamp(savedMessage.dbId);
 			await daemonHub.emit('messages.statusChanged', {
 				sessionId: session.id,
 				messageIds: [savedMessage.dbId],
@@ -300,6 +305,7 @@ export class SDKMessageHandler {
 		}
 
 		db.updateMessageStatus([oldestQueuedUser.dbId], 'sent');
+		db.updateMessageTimestamp(oldestQueuedUser.dbId);
 		await daemonHub.emit('messages.statusChanged', {
 			sessionId: session.id,
 			messageIds: [oldestQueuedUser.dbId],

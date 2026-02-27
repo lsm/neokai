@@ -142,6 +142,10 @@ export class Database {
 		this.sdkMessageRepo.updateMessageStatus(messageIds, newStatus);
 	}
 
+	updateMessageTimestamp(messageId: string): void {
+		this.sdkMessageRepo.updateMessageTimestamp(messageId);
+	}
+
 	getMessageCountByStatus(sessionId: string, status: SendStatus): number {
 		return this.sdkMessageRepo.getMessageCountByStatus(sessionId, status);
 	}
