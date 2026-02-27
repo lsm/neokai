@@ -8,6 +8,9 @@
  * - message.send error handling
  */
 
+// This test requires mock SDK — set before any imports that read the env
+process.env.NEOKAI_AGENT_SDK_MOCK = 'true';
+
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';

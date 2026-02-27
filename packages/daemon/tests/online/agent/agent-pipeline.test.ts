@@ -9,6 +9,9 @@
  * - SDK message types (system init, tool use, result)
  */
 
+// This test requires mock SDK — set before any imports that read the env
+process.env.NEOKAI_AGENT_SDK_MOCK = 'true';
+
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import {
