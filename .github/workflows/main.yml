@@ -129,34 +129,44 @@ jobs:
           - sdk
           - websocket
         include:
+          # mock_sdk: true → uses NEOKAI_AGENT_SDK_MOCK instead of real API calls.
+          # These modules test infrastructure/plumbing and don't need real AI responses.
+          # To run with real API locally, just omit the env var.
           - module: components
             test_path: tests/online/components
+            mock_sdk: true
           # GLM online tests disabled due to flakiness
           # - module: glm
           #   test_path: tests/online/glm
           - module: git
             test_path: tests/online/git
             timeout: 10
+            mock_sdk: true
           - module: mcp
             test_path: tests/online/mcp
+            mock_sdk: true
           - module: providers
             test_path: tests/online/providers
           - module: rpc
             test_path: tests/online/rpc
+            mock_sdk: true
           - module: sdk
             test_path: tests/online/sdk
+            mock_sdk: true
           - module: agent
             test_path: tests/online/agent
           - module: coordinator
             test_path: tests/online/coordinator
             timeout: 10
+            mock_sdk: true
           - module: convo
             test_path: tests/online/convo
           - module: features
             test_path: tests/online/features
-            default_provider: anthropic
+            mock_sdk: true
           - module: lifecycle
             test_path: tests/online/lifecycle
+            mock_sdk: true
           - module: rewind
             test_path: tests/online/rewind
           - module: room
@@ -164,6 +174,7 @@ jobs:
             timeout: 10
           - module: websocket
             test_path: tests/online/websocket
+            mock_sdk: true
 
     steps:
       - uses: actions/checkout@v4
@@ -186,10 +197,11 @@ jobs:
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ (matrix.module == 'features' || matrix.module == 'room') && secrets.ANTHROPIC_API_KEY || '' }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ (matrix.module == 'features' || matrix.module == 'room') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          DEFAULT_PROVIDER: ${{ matrix.default_provider || 'glm' }}
+          NEOKAI_AGENT_SDK_MOCK: ${{ matrix.mock_sdk == true && 'true' || '' }}
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((matrix.module == 'features' || matrix.module == 'room') && secrets.ANTHROPIC_API_KEY || '') }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (matrix.module == 'features' || matrix.module == 'room') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
+          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || 'glm') || '' }}
 
       - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon
