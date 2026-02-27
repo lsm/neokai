@@ -1,9 +1,5 @@
 /**
  * Shared test utilities for database tests
- *
- * Consolidated from:
- * - tests/integration/database/fixtures/database-test-utils.ts
- * - tests/integration/database/processing-state/test-utils.ts
  */
 
 import type { Session } from '@neokai/shared';
@@ -120,6 +116,3 @@ export function createPersistablePendingQuestion() {
 		draftResponses: [{ questionIndex: 0, selectedLabels: ['A'] }],
 	};
 }
-
-// Re-export assertions for convenience
-export { assertEquals, assertExists } from './test-app';
