@@ -172,12 +172,19 @@ describe('StateManager', () => {
 		});
 
 		it('should filter archived sessions when showArchived is false', async () => {
-			const mockSessions: Session[] = [
+			const allSessions: Session[] = [
 				{ id: '1', status: 'active', metadata: {} } as Session,
 				{ id: '2', status: 'archived', metadata: {} } as Session,
 				{ id: '3', status: 'active', metadata: {} } as Session,
 			];
-			(mockSessionManager.listSessions as ReturnType<typeof mock>).mockReturnValue(mockSessions);
+			const activeSessions = allSessions.filter((s) => s.status !== 'archived');
+
+			// Server-side filtering: listSessions() returns different results based on params
+			(mockSessionManager.listSessions as ReturnType<typeof mock>).mockImplementation(
+				(options?: { includeArchived?: boolean }) => {
+					return options?.includeArchived ? allSessions : activeSessions;
+				}
+			);
 			(mockSettingsManager.getGlobalSettings as ReturnType<typeof mock>).mockReturnValue({
 				...DEFAULT_GLOBAL_SETTINGS,
 				showArchived: false,

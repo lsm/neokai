@@ -89,40 +89,33 @@ describe('Session Filtering', () => {
 		});
 
 		test('filters work with multiple archived sessions', async () => {
-			const sessionIds: string[] = [];
-			for (let i = 0; i < 5; i++) {
-				sessionIds.push(await createSession(`/test/filter-5-${i}`));
-			}
+			const s1 = await createSession('/test/filter-multi-a');
+			const s2 = await createSession('/test/filter-multi-b');
+			const s3 = await createSession('/test/filter-multi-c');
 
-			// Archive sessions at indices 1, 2, and 4
-			await archiveSession(sessionIds[1]);
-			await archiveSession(sessionIds[2]);
-			await archiveSession(sessionIds[4]);
+			await archiveSession(s2);
+			await archiveSession(s3);
 
-			// Default: should show only 2 active sessions
+			// Default: only active sessions
 			let sessions = await listSessions();
 			let ids = sessions.map((s) => s.id);
-			expect(ids).toContain(sessionIds[0]);
-			expect(ids).toContain(sessionIds[3]);
-			expect(ids).not.toContain(sessionIds[1]);
-			expect(ids).not.toContain(sessionIds[2]);
-			expect(ids).not.toContain(sessionIds[4]);
+			expect(ids).toContain(s1);
+			expect(ids).not.toContain(s2);
+			expect(ids).not.toContain(s3);
 
-			// includeArchived: should show all 5
+			// includeArchived: all sessions
 			sessions = await listSessions({ includeArchived: true });
 			ids = sessions.map((s) => s.id);
-			for (const id of sessionIds) {
-				expect(ids).toContain(id);
-			}
+			expect(ids).toContain(s1);
+			expect(ids).toContain(s2);
+			expect(ids).toContain(s3);
 
-			// status=archived: should show only the 3 archived
+			// status=archived: only archived
 			sessions = await listSessions({ status: 'archived' });
 			ids = sessions.map((s) => s.id);
-			expect(ids).toContain(sessionIds[1]);
-			expect(ids).toContain(sessionIds[2]);
-			expect(ids).toContain(sessionIds[4]);
-			expect(ids).not.toContain(sessionIds[0]);
-			expect(ids).not.toContain(sessionIds[3]);
+			expect(ids).toContain(s2);
+			expect(ids).toContain(s3);
+			expect(ids).not.toContain(s1);
 		});
 	});
 
