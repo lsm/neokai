@@ -733,7 +733,11 @@ export function setupSessionHandlers(
 
 	// List user messages by send status for queue UX
 	messageHub.onRequest('session.messages.byStatus', async (data) => {
-		const { sessionId: targetSessionId, status, limit = 20 } = data as {
+		const {
+			sessionId: targetSessionId,
+			status,
+			limit = 20,
+		} = data as {
 			sessionId: string;
 			status: 'saved' | 'queued' | 'sent';
 			limit?: number;

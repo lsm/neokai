@@ -372,10 +372,9 @@ describe('QueryModeHandler', () => {
 					message: { role: 'user', content: 'Next turn (saved)' },
 				} as unknown as SDKMessage,
 			];
-			getMessagesByStatusSpy
-				.mockImplementation((_: string, status: string) =>
-					status === 'queued' ? queuedMessages : savedMessages
-				);
+			getMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+				status === 'queued' ? queuedMessages : savedMessages
+			);
 			handler = createHandler();
 
 			await handler.replayPendingMessagesForImmediateMode();
