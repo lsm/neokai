@@ -205,6 +205,12 @@ class SessionStore {
 			const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
 				this.sessionState.value = state;
 
+				// FIX: Persist contextInfo to direct signal so it survives subsequent
+				// state.session events that might have contextInfo: null (e.g. fallback broadcasts)
+				if (state.contextInfo) {
+					this._contextInfo.value = state.contextInfo;
+				}
+
 				// Sync slash commands signal (for autocomplete)
 				// Guard with Array.isArray: corrupted sessions may have a string stored in DB
 				// instead of an array, which would break the filter call in the hook.
@@ -290,6 +296,16 @@ class SessionStore {
 			// Update signals with initial state
 			if (sessionState) {
 				this.sessionState.value = sessionState;
+
+				// FIX: Persist contextInfo to direct signal so it survives page refresh.
+				// Without this, _contextInfo stays null until the next context.updated event
+				// (which only fires after a new agent turn). The contextInfo computed signal
+				// falls back to sessionState.value?.contextInfo, but that can be overwritten
+				// by subsequent state.session broadcasts with contextInfo: null.
+				if (sessionState.contextInfo) {
+					this._contextInfo.value = sessionState.contextInfo;
+				}
+
 				const initialCmds = sessionState.commandsData?.availableCommands;
 				if (Array.isArray(initialCmds) && initialCmds.length > 0) {
 					slashCommandsSignal.value = initialCmds;
