@@ -248,7 +248,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.completeTask(params.taskId, params.result ?? '');
 
-		// Emit room overview for task completion (significant status change)
+		emitTaskUpdate(params.roomId, task);
 		emitRoomOverview(params.roomId);
 
 		return { task };
@@ -268,7 +268,7 @@ export function setupTaskHandlers(
 		const taskManager = taskManagerFactory(db, params.roomId);
 		const task = await taskManager.failTask(params.taskId, params.error ?? '');
 
-		// Emit room overview for task failure (significant status change)
+		emitTaskUpdate(params.roomId, task);
 		emitRoomOverview(params.roomId);
 
 		return { task };

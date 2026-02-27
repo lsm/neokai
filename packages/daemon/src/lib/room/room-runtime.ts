@@ -597,8 +597,12 @@ export class RoomRuntime {
 				// No tasks at all: brand new goal
 				needsPlanning = true;
 			} else {
-				// Check whether all linked tasks are terminal (completed or failed)
-				// and there are no active tasks
+				// Check whether execution tasks need replanning.
+				// A goal needs replanning when:
+				// - No active (pending/in_progress/draft/escalated) tasks remain
+				// - All execution tasks (non-planning) are failed
+				// This handles both "all tasks failed" and "planning succeeded but
+				// all execution tasks failed" scenarios.
 				const linkedTasks = await Promise.all(
 					linkedTaskIds.map((id) => this.taskManager.getTask(id))
 				);
@@ -610,10 +614,14 @@ export class RoomRuntime {
 						t.status as 'pending' | 'in_progress' | 'draft' | 'escalated'
 					)
 				);
+				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
+				const allExecutionFailed =
+					executionTasks.length > 0 && executionTasks.every((t) => t.status === 'failed');
 				const allFailed = validTasks.length > 0 && validTasks.every((t) => t.status === 'failed');
 
-				// Re-plan if all tasks failed and none are active
-				needsPlanning = !hasActiveTask && allFailed;
+				// Re-plan if no active tasks and either all tasks failed or
+				// all execution tasks failed (planning may have succeeded)
+				needsPlanning = !hasActiveTask && (allFailed || allExecutionFailed);
 			}
 
 			if (!needsPlanning) continue;
