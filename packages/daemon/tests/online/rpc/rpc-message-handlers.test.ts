@@ -12,6 +12,9 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
+// Tests that send messages to mock SDK need longer timeout on CI
+const TIMEOUT = 15000;
+
 describe('Message RPC Handlers', () => {
 	let daemon: DaemonServerContext;
 
@@ -44,29 +47,37 @@ describe('Message RPC Handlers', () => {
 	}
 
 	describe('message.sdkMessages', () => {
-		test('should get SDK messages for a session', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should get SDK messages for a session',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			const result = (await daemon.messageHub.request('message.sdkMessages', {
-				sessionId,
-			})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+				const result = (await daemon.messageHub.request('message.sdkMessages', {
+					sessionId,
+				})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
 
-			expect(result.sdkMessages).toBeDefined();
-			expect(Array.isArray(result.sdkMessages)).toBe(true);
-			expect(result.sdkMessages.length).toBeGreaterThan(0);
-		});
+				expect(result.sdkMessages).toBeDefined();
+				expect(Array.isArray(result.sdkMessages)).toBe(true);
+				expect(result.sdkMessages.length).toBeGreaterThan(0);
+			},
+			TIMEOUT
+		);
 
-		test('should support limit parameter', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should support limit parameter',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			const result = (await daemon.messageHub.request('message.sdkMessages', {
-				sessionId,
-				limit: 1,
-			})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
+				const result = (await daemon.messageHub.request('message.sdkMessages', {
+					sessionId,
+					limit: 1,
+				})) as { sdkMessages: Array<Record<string, unknown>>; hasMore: boolean };
 
-			expect(result.sdkMessages).toBeDefined();
-			expect(result.sdkMessages.length).toBeLessThanOrEqual(1);
-		});
+				expect(result.sdkMessages).toBeDefined();
+				expect(result.sdkMessages.length).toBeLessThanOrEqual(1);
+			},
+			TIMEOUT
+		);
 
 		test('should throw for invalid session', async () => {
 			await expect(
@@ -78,16 +89,20 @@ describe('Message RPC Handlers', () => {
 	});
 
 	describe('message.count', () => {
-		test('should get message count', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should get message count',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			const result = (await daemon.messageHub.request('message.count', {
-				sessionId,
-			})) as { count: number };
+				const result = (await daemon.messageHub.request('message.count', {
+					sessionId,
+				})) as { count: number };
 
-			expect(result.count).toBeDefined();
-			expect(result.count).toBeGreaterThan(0);
-		});
+				expect(result.count).toBeDefined();
+				expect(result.count).toBeGreaterThan(0);
+			},
+			TIMEOUT
+		);
 
 		test('should throw for invalid session', async () => {
 			await expect(
@@ -99,62 +114,81 @@ describe('Message RPC Handlers', () => {
 	});
 
 	describe('session.export', () => {
-		test('should export session as markdown by default', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should export session as markdown by default',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			// Set a title first for the export
-			await daemon.messageHub.request('session.update', {
-				sessionId,
-				title: 'Test Export Session',
-			});
+				// Set a title first for the export
+				await daemon.messageHub.request('session.update', {
+					sessionId,
+					title: 'Test Export Session',
+				});
 
-			const result = (await daemon.messageHub.request('session.export', {
-				sessionId,
-			})) as { markdown: string };
+				const result = (await daemon.messageHub.request('session.export', {
+					sessionId,
+				})) as { markdown: string };
 
-			expect(result.markdown).toBeDefined();
-			expect(typeof result.markdown).toBe('string');
-			expect(result.markdown).toContain('# Test Export Session');
-			expect(result.markdown).toContain('**Session ID:**');
-		});
+				expect(result.markdown).toBeDefined();
+				expect(typeof result.markdown).toBe('string');
+				expect(result.markdown).toContain('# Test Export Session');
+				expect(result.markdown).toContain('**Session ID:**');
+			},
+			TIMEOUT
+		);
 
-		test('should export session as markdown explicitly', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should export session as markdown explicitly',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			const result = (await daemon.messageHub.request('session.export', {
-				sessionId,
-				format: 'markdown',
-			})) as { markdown: string };
+				const result = (await daemon.messageHub.request('session.export', {
+					sessionId,
+					format: 'markdown',
+				})) as { markdown: string };
 
-			expect(result.markdown).toBeDefined();
-			expect(typeof result.markdown).toBe('string');
-		});
+				expect(result.markdown).toBeDefined();
+				expect(typeof result.markdown).toBe('string');
+			},
+			TIMEOUT
+		);
 
-		test('should export session as JSON', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should export session as JSON',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			const result = (await daemon.messageHub.request('session.export', {
-				sessionId,
-				format: 'json',
-			})) as { session: Record<string, unknown>; messages: Array<Record<string, unknown>> };
+				const result = (await daemon.messageHub.request('session.export', {
+					sessionId,
+					format: 'json',
+				})) as {
+					session: Record<string, unknown>;
+					messages: Array<Record<string, unknown>>;
+				};
 
-			expect(result.session).toBeDefined();
-			expect(result.messages).toBeDefined();
-			expect(Array.isArray(result.messages)).toBe(true);
-		});
+				expect(result.session).toBeDefined();
+				expect(result.messages).toBeDefined();
+				expect(Array.isArray(result.messages)).toBe(true);
+			},
+			TIMEOUT
+		);
 
-		test('should include assistant response in markdown export', async () => {
-			const sessionId = await createSessionWithMessages();
+		test(
+			'should include assistant response in markdown export',
+			async () => {
+				const sessionId = await createSessionWithMessages();
 
-			const result = (await daemon.messageHub.request('session.export', {
-				sessionId,
-				format: 'markdown',
-			})) as { markdown: string };
+				const result = (await daemon.messageHub.request('session.export', {
+					sessionId,
+					format: 'markdown',
+				})) as { markdown: string };
 
-			// Mock SDK responds with 'mock response' by default
-			expect(result.markdown).toContain('## Assistant');
-			expect(result.markdown).toContain('mock response');
-		});
+				// Mock SDK responds with 'mock response' by default
+				expect(result.markdown).toContain('## Assistant');
+				expect(result.markdown).toContain('mock response');
+			},
+			TIMEOUT
+		);
 
 		test('should throw for invalid session', async () => {
 			await expect(
