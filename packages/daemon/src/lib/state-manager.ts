@@ -418,16 +418,14 @@ export class StateManager {
 	}
 
 	private async getSessionsState(): Promise<SessionsState> {
-		const allSessions = this.sessionManager.listSessions();
 		const settings = this.settingsManager.getGlobalSettings();
 
 		// Check if there are any archived sessions in the database
+		const allSessions = this.sessionManager.listSessions({ includeArchived: true });
 		const hasArchivedSessions = allSessions.some((s) => s.status === 'archived');
 
-		// Filter out archived sessions unless showArchived is enabled
-		const sessions = settings.showArchived
-			? allSessions
-			: allSessions.filter((s) => s.status !== 'archived');
+		// Server-side filtering: only include archived when setting is enabled
+		const sessions = settings.showArchived ? allSessions : this.sessionManager.listSessions();
 
 		return {
 			sessions,

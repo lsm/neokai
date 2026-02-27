@@ -107,10 +107,16 @@ export function setupSessionHandlers(
 		return { success: true, session: updatedSession };
 	});
 
-	messageHub.onRequest('session.list', async () => {
-		const sessions = sessionManager.listSessions();
-		return { sessions };
-	});
+	messageHub.onRequest(
+		'session.list',
+		async (data: { status?: string; includeArchived?: boolean } | undefined) => {
+			const sessions = sessionManager.listSessions({
+				status: data?.status,
+				includeArchived: data?.includeArchived,
+			});
+			return { sessions };
+		}
+	);
 
 	messageHub.onRequest('session.get', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
@@ -588,8 +594,8 @@ export function setupSessionHandlers(
 		// Scan SDK project directory
 		const files = scanSDKSessionFiles(workspacePath);
 
-		// Get session categories from database
-		const sessions = sessionManager.listSessions();
+		// Get session categories from database (need all sessions for orphan detection)
+		const sessions = sessionManager.listSessions({ includeArchived: true });
 		const activeIds = new Set(sessions.filter((s) => s.status === 'active').map((s) => s.id));
 		const archivedIds = new Set(sessions.filter((s) => s.status === 'archived').map((s) => s.id));
 

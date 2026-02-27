@@ -58,13 +58,26 @@ export class SessionRepository {
 	}
 
 	/**
-	 * List all sessions ordered by last active time (most recent first)
+	 * List sessions ordered by last active time (most recent first)
+	 *
+	 * @param options.status - Filter by status ('active', 'archived'). If omitted, excludes archived.
+	 * @param options.includeArchived - If true, returns all sessions regardless of status.
 	 */
-	listSessions(): Session[] {
-		const stmt = this.db.prepare(
-			`SELECT * FROM sessions WHERE type != 'lobby' ORDER BY last_active_at DESC`
-		);
-		const rows = stmt.all() as Record<string, unknown>[];
+	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+		let sql = `SELECT * FROM sessions WHERE type != 'lobby'`;
+		const params: string[] = [];
+
+		if (options?.status) {
+			sql += ` AND status = ?`;
+			params.push(options.status);
+		} else if (!options?.includeArchived) {
+			sql += ` AND status != 'archived'`;
+		}
+
+		sql += ` ORDER BY last_active_at DESC`;
+
+		const stmt = this.db.prepare(sql);
+		const rows = stmt.all(...params) as Record<string, unknown>[];
 
 		return rows.map((r) => this.rowToSession(r));
 	}
