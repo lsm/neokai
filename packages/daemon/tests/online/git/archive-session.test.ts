@@ -21,13 +21,14 @@ const TMP_DIR = process.env.TMPDIR || '/tmp';
 describe('Archive Session', () => {
 	let daemon: DaemonServerContext;
 
+	// Worktree tests need longer hook timeouts on CI (daemon cleanup after worktree ops)
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, 15000);
 
 	afterEach(async () => {
 		await daemon.waitForExit();
-	});
+	}, 15000);
 
 	async function createSession(workspacePath: string): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
