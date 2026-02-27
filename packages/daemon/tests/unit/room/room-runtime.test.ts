@@ -47,6 +47,12 @@ function createMockSessionFactory() {
 		async injectMessage(sessionId: string, message: string) {
 			calls.push({ method: 'injectMessage', args: [sessionId, message] });
 		},
+		hasSession(_sessionId: string) {
+			return true;
+		},
+		async answerQuestion(_sessionId: string, _answer: string) {
+			return false;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
@@ -109,7 +115,7 @@ describe('RoomRuntime', () => {
 			CREATE TABLE session_group_members (
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
 				session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
-				PRIMARY KEY (group_id, role)
+				PRIMARY KEY (group_id, session_id)
 			);
 			CREATE TABLE session_group_messages (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -198,7 +204,7 @@ describe('RoomRuntime', () => {
 			runtime.start();
 			await runtime.tick();
 
-			// Should have created worker and leader sessions
+			// Worker starts immediately, leader is deferred until routeWorkerToLeader
 			const workerCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'coder'
 			);
@@ -206,7 +212,7 @@ describe('RoomRuntime', () => {
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
 			expect(workerCalls).toHaveLength(1);
-			expect(leaderCalls).toHaveLength(1);
+			expect(leaderCalls).toHaveLength(0);
 
 			// Task should be in_progress
 			const updated = await taskManager.getTask(task.id);
@@ -266,7 +272,7 @@ describe('RoomRuntime', () => {
 			// Route worker output to leader first
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Now handle complete_task from Leader
@@ -293,7 +299,7 @@ describe('RoomRuntime', () => {
 			// Route to leader
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			const result = await runtime.handleLeaderTool(group.id, 'fail_task', {
@@ -318,7 +324,7 @@ describe('RoomRuntime', () => {
 			// Route worker to leader
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			const result = await runtime.handleLeaderTool(group.id, 'send_to_worker', {
@@ -373,7 +379,7 @@ describe('RoomRuntime', () => {
 
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Group should transition to awaiting_leader
@@ -392,13 +398,13 @@ describe('RoomRuntime', () => {
 			// Route to leader first
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Try again - should be idempotent (now in awaiting_leader)
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Still awaiting_leader, no error
@@ -421,7 +427,7 @@ describe('RoomRuntime', () => {
 			// Step 2: Worker finishes — runtime routes output to Leader
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
@@ -455,7 +461,7 @@ describe('RoomRuntime', () => {
 			// Iteration 1: Worker done → Leader sends feedback
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
@@ -480,7 +486,7 @@ describe('RoomRuntime', () => {
 			// Iteration 2: Worker finishes again → Leader completes
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
@@ -506,7 +512,7 @@ describe('RoomRuntime', () => {
 			for (let i = 0; i < 2; i++) {
 				await runtime.onWorkerTerminalState(group.id, {
 					sessionId: group.workerSessionId,
-					kind: 'completed',
+					kind: 'idle',
 				});
 				await runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
@@ -517,12 +523,13 @@ describe('RoomRuntime', () => {
 			// Iteration 3: Leader completes
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			await runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'All done' });
 
 			expect(groupRepo.getGroup(group.id)!.state).toBe('completed');
-			expect(groupRepo.getGroup(group.id)!.feedbackIteration).toBe(2);
+			// 3 calls to onWorkerTerminalState → 3 increments in routeWorkerToLeader
+			expect(groupRepo.getGroup(group.id)!.feedbackIteration).toBe(3);
 		});
 
 		it('should reset leader contract violations on each new worker→leader round', async () => {
@@ -534,11 +541,11 @@ describe('RoomRuntime', () => {
 			// Worker done → Leader violates contract once
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			await runtime.onLeaderTerminalState(group.id, {
 				sessionId: group.leaderSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			expect(groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(1);
 
@@ -549,7 +556,7 @@ describe('RoomRuntime', () => {
 			// Iteration 2: Worker done → routeWorkerToLeader resets violations to 0
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 			expect(groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(0);
 			expect(groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
@@ -603,13 +610,13 @@ describe('RoomRuntime', () => {
 			// Route to leader
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Leader reaches terminal without calling a tool
 			await runtime.onLeaderTerminalState(group.id, {
 				sessionId: group.leaderSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Should inject nudge message
@@ -637,19 +644,19 @@ describe('RoomRuntime', () => {
 			// Route to leader
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// First violation
 			await runtime.onLeaderTerminalState(group.id, {
 				sessionId: group.leaderSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Second violation
 			await runtime.onLeaderTerminalState(group.id, {
 				sessionId: group.leaderSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
 			// Group should be awaiting_human
@@ -668,10 +675,10 @@ describe('RoomRuntime', () => {
 			// Route to leader
 			await runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
-				kind: 'completed',
+				kind: 'idle',
 			});
 
-			// Leader calls complete_task (which sets leaderCalledToolMap)
+			// Leader calls complete_task (which persists leaderCalledTool in DB)
 			await runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'Done' });
 
 			// Leader terminal state should be no-op (tool was called)
