@@ -1,0 +1,44 @@
+/**
+ * Interrupt RPC Handlers Tests
+ *
+ * Tests for client interrupt functionality via WebSocket:
+ * - client.interrupt
+ */
+
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
+
+describe('Interrupt RPC Handlers', () => {
+	let daemon: DaemonServerContext;
+
+	beforeAll(async () => {
+		daemon = await createDaemonServer();
+	});
+
+	afterAll(async () => {
+		await daemon.waitForExit();
+	});
+
+	describe('client.interrupt', () => {
+		test('should return error for non-existent session', async () => {
+			await expect(
+				daemon.messageHub.request('client.interrupt', {
+					sessionId: 'non-existent',
+				})
+			).rejects.toThrow();
+		});
+
+		test('should successfully interrupt an existing session', async () => {
+			const { sessionId } = (await daemon.messageHub.request('session.create', {
+				workspacePath: '/test/interrupt',
+			})) as { sessionId: string };
+			daemon.trackSession(sessionId);
+
+			const result = (await daemon.messageHub.request('client.interrupt', {
+				sessionId,
+			})) as { accepted: boolean };
+
+			expect(result.accepted).toBe(true);
+		});
+	});
+});
