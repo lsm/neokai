@@ -29,6 +29,8 @@ export type GroupState =
 interface TaskGroupMetadata {
 	feedbackIteration: number;
 	leaderContractViolations: number;
+	/** Whether the leader called a tool in the current review turn (persisted for restart safety) */
+	leaderCalledTool: boolean;
 	lastProcessedLeaderTurnId: string | null;
 	lastForwardedMessageId: string | null;
 	activeWorkStartedAt: number | null;
@@ -43,6 +45,7 @@ function defaultMetadata(): TaskGroupMetadata {
 	return {
 		feedbackIteration: 0,
 		leaderContractViolations: 0,
+		leaderCalledTool: false,
 		lastProcessedLeaderTurnId: null,
 		lastForwardedMessageId: null,
 		activeWorkStartedAt: null,
@@ -68,6 +71,7 @@ export interface SessionGroup {
 	state: GroupState;
 	feedbackIteration: number;
 	leaderContractViolations: number;
+	leaderCalledTool: boolean;
 	lastProcessedLeaderTurnId: string | null;
 	lastForwardedMessageId: string | null;
 	activeWorkStartedAt: number | null;
@@ -284,7 +288,26 @@ export class SessionGroupRepository {
 	resetLeaderContractViolations(groupId: string, expectedVersion: number): SessionGroup | null {
 		return this.updateMetadata(groupId, expectedVersion, {
 			leaderContractViolations: 0,
+			leaderCalledTool: false,
 		});
+	}
+
+	/**
+	 * Set leaderCalledTool flag without version check.
+	 * This is a soft signal — safe to race with state transitions.
+	 */
+	setLeaderCalledTool(groupId: string, called: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, leaderCalledTool: called };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
 	}
 
 	updateLastForwardedMessageId(
@@ -388,6 +411,7 @@ export class SessionGroupRepository {
 			state: row.state as GroupState,
 			feedbackIteration: meta.feedbackIteration,
 			leaderContractViolations: meta.leaderContractViolations,
+			leaderCalledTool: meta.leaderCalledTool ?? false,
 			lastProcessedLeaderTurnId: meta.lastProcessedLeaderTurnId,
 			lastForwardedMessageId: meta.lastForwardedMessageId,
 			activeWorkStartedAt: meta.activeWorkStartedAt,

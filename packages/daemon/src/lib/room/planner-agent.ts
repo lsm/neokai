@@ -41,6 +41,16 @@ export interface PlannerCreateTaskParams {
 	agent?: AgentType;
 }
 
+/** Context passed to the planner when replanning after a task failure */
+export interface ReplanContext {
+	/** Tasks that completed successfully (DO NOT redo) */
+	completedTasks: Array<{ title: string; result: string }>;
+	/** The task that just failed */
+	failedTask: { title: string; error: string };
+	/** Planning attempt number (1-indexed) */
+	attempt: number;
+}
+
 export interface PlannerAgentConfig {
 	task: NeoTask;
 	goal: RoomGoal;
@@ -62,6 +72,8 @@ export interface PlannerAgentConfig {
 	) => Promise<{ id: string; title: string }>;
 	/** Callback to remove a draft task */
 	removeDraftTask: (taskId: string) => Promise<boolean>;
+	/** If set, this is a replanning session with context from previous attempt */
+	replanContext?: ReplanContext;
 }
 
 /**
@@ -110,6 +122,29 @@ export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
 	sections.push(
 		`9. If the Leader sends feedback, use \`update_task\` or \`remove_task\` to refine your plan, and \`create_task\` for new additions`
 	);
+
+	// Replanning context — enriched info when replanning after task failure
+	if (config.replanContext) {
+		const rc = config.replanContext;
+		sections.push(`\n## Replanning Context (Attempt ${rc.attempt})\n`);
+		sections.push(
+			`This is a REPLAN. A previous plan partially executed. Build on what succeeded.\n`
+		);
+
+		if (rc.completedTasks.length > 0) {
+			sections.push(`### Completed Tasks (DO NOT redo these)\n`);
+			for (const t of rc.completedTasks) {
+				sections.push(`- **${t.title}**: ${t.result}`);
+			}
+			sections.push('');
+		}
+
+		sections.push(`### Failed Task\n`);
+		sections.push(`- **${rc.failedTask.title}**: ${rc.failedTask.error}`);
+		sections.push('');
+		sections.push(`Create new tasks that address the failure and complete the remaining goal.`);
+		sections.push(`Do NOT create tasks for work that already completed successfully.`);
+	}
 
 	return sections.join('\n');
 }

@@ -23,7 +23,7 @@ import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../daemon-hub';
 import type { LeaderToolCallbacks, LeaderToolResult } from './leader-agent';
-import type { PlannerCreateTaskParams } from './planner-agent';
+import type { PlannerCreateTaskParams, ReplanContext } from './planner-agent';
 import { createPlannerAgentInit } from './planner-agent';
 import { createCoderAgentInit } from './coder-agent';
 import { createGeneralAgentInit } from './general-agent';
@@ -62,7 +62,7 @@ export interface RoomRuntimeConfig {
 	model?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
-	/** Max feedback iterations before auto-escalation (default: 5) */
+	/** Max feedback iterations before auto-escalation (default: 10) */
 	maxFeedbackIterations?: number;
 	/** Tick interval in ms (default: 30000) */
 	tickInterval?: number;
@@ -114,7 +114,7 @@ export class RoomRuntime {
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
-		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 5;
+		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 10;
 		this.tickInterval = config.tickInterval ?? 30_000;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
@@ -217,12 +217,15 @@ export class RoomRuntime {
 
 		// Format output envelope for Leader review
 		// Use plan envelope for planning groups, standard envelope for others
+		// Iteration is 1-based: feedbackIteration + 1 = the review round about to start
+		// (routeWorkerToLeader will persist this increment in DB)
+		const reviewIteration = group.feedbackIteration + 1;
 		let envelope: string;
 		if (group.workerRole === 'planner') {
 			const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
 			const goal = (await this.goalManager.getGoalsForTask(group.taskId))[0];
 			envelope = formatPlanEnvelope({
-				iteration: group.feedbackIteration,
+				iteration: reviewIteration,
 				goalTitle: goal?.title ?? task.title,
 				terminalState: terminalState.kind,
 				workerOutput: workerOutputText,
@@ -230,7 +233,7 @@ export class RoomRuntime {
 			});
 		} else {
 			envelope = formatWorkerToLeaderEnvelope({
-				iteration: group.feedbackIteration,
+				iteration: reviewIteration,
 				taskTitle: task.title,
 				taskType: task.taskType,
 				terminalState: terminalState.kind,
@@ -265,8 +268,8 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group || group.state !== 'awaiting_leader') return;
 
-		// Check if Leader called a tool (via in-memory map)
-		const calledTool = this.taskGroupManager.leaderCalledToolMap.get(groupId) ?? false;
+		// Check if Leader called a tool (persisted in DB metadata)
+		const calledTool = group.leaderCalledTool;
 
 		if (calledTool) {
 			// Leader called a tool → success, no action needed
@@ -324,8 +327,8 @@ export class RoomRuntime {
 			});
 		}
 
-		// Mark that Leader called a tool
-		this.taskGroupManager.leaderCalledToolMap.set(groupId, true);
+		// Mark that Leader called a tool (persisted immediately for restart safety)
+		this.groupRepo.setLeaderCalledTool(groupId, true);
 
 		switch (toolName) {
 			case 'send_to_worker': {
@@ -344,15 +347,16 @@ export class RoomRuntime {
 					});
 				}
 				const message = params.message ?? '';
-				const nextIteration = group.feedbackIteration + 1;
-				const feedback = formatLeaderToWorkerFeedback(message, nextIteration);
+				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
+				const currentIteration = group.feedbackIteration;
+				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
 
 				// Insert status message into group timeline
 				this.groupRepo.appendMessage({
 					groupId,
 					role: 'system',
 					messageType: 'status',
-					content: `Leader sent feedback to Worker (iteration ${nextIteration}).`,
+					content: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
 				});
 
 				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
@@ -376,6 +380,8 @@ export class RoomRuntime {
 				const reason = params.reason ?? '';
 				await this.taskGroupManager.fail(groupId, reason);
 				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
+				// Check if mid-execution replanning is needed
+				await this.checkAndTriggerReplan(group.taskId, reason);
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
 			}
@@ -627,11 +633,14 @@ export class RoomRuntime {
 	 * Spawn a planning (Planner, Leader) group for a goal that has no tasks yet.
 	 * Creates a planning task, increments planning_attempts, and starts the group.
 	 */
-	private async spawnPlanningGroup(goal: RoomGoal): Promise<void> {
+	private async spawnPlanningGroup(goal: RoomGoal, replanContext?: ReplanContext): Promise<void> {
+		const isReplan = !!replanContext;
 		// Create the planning task itself
 		const planningTask = await this.taskManager.createTask({
-			title: `Plan: ${goal.title}`,
-			description: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
+			title: isReplan ? `Replan: ${goal.title}` : `Plan: ${goal.title}`,
+			description: isReplan
+				? `Replan the goal "${goal.title}" after task failure. Build on completed work.`
+				: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
 			taskType: 'planning',
 			status: 'pending',
 		});
@@ -692,6 +701,7 @@ export class RoomRuntime {
 					createDraftTask,
 					updateDraftTask,
 					removeDraftTask,
+					replanContext,
 				}),
 		};
 
@@ -796,6 +806,68 @@ export class RoomRuntime {
 				`Promoted ${promoted} draft task(s) to pending after planning task ${taskId} completed`
 			);
 		}
+	}
+
+	/**
+	 * Check if a failed execution task should trigger mid-execution replanning.
+	 *
+	 * Replan conditions:
+	 * 1. Failed task is an execution task (not planning)
+	 * 2. Goal still has remaining pending tasks (plan not fully executed)
+	 * 3. planning_attempts < MAX_PLANNING_ATTEMPTS
+	 *
+	 * If triggered: cancel remaining pending tasks and spawn a new planning group
+	 * with enriched context (completed work + failure info).
+	 */
+	private async checkAndTriggerReplan(failedTaskId: string, failureReason: string): Promise<void> {
+		const failedTask = await this.taskManager.getTask(failedTaskId);
+		if (!failedTask) return;
+
+		// Don't replan for planning tasks themselves
+		if (failedTask.taskType === 'planning') return;
+
+		const goals = await this.goalManager.getGoalsForTask(failedTaskId);
+		if (goals.length === 0) return;
+
+		const goal = goals[0];
+		if (goal.status !== 'active') return;
+
+		const linkedTaskIds = goal.linkedTaskIds ?? [];
+		const linkedTasks = await Promise.all(linkedTaskIds.map((id) => this.taskManager.getTask(id)));
+		const validTasks = linkedTasks.filter(Boolean) as NeoTask[];
+
+		// Check if there are remaining pending tasks (stale plan)
+		const pendingTasks = validTasks.filter((t) => t.status === 'pending');
+		if (pendingTasks.length === 0) return;
+
+		// Check planning attempts budget
+		const attempts = goal.planning_attempts ?? 0;
+		if (attempts >= MAX_PLANNING_ATTEMPTS) {
+			log.warn(`Goal ${goal.id} exceeded max planning attempts, skipping replan`);
+			return;
+		}
+
+		log.info(
+			`Task ${failedTaskId} failed with ${pendingTasks.length} pending tasks remaining. ` +
+				`Triggering replan for goal ${goal.id} (attempt ${attempts + 1})`
+		);
+
+		// Cancel remaining pending tasks (based on stale plan)
+		const cancelledCount = await this.taskManager.cancelPendingTasks(pendingTasks.map((t) => t.id));
+		log.info(`Cancelled ${cancelledCount} pending tasks for replan`);
+
+		// Gather context for the replanner
+		const completedTasks = validTasks
+			.filter((t) => t.status === 'completed')
+			.map((t) => ({ title: t.title, result: t.result ?? 'completed' }));
+
+		const replanContext: ReplanContext = {
+			completedTasks,
+			failedTask: { title: failedTask.title, error: failureReason },
+			attempt: attempts + 1,
+		};
+
+		await this.spawnPlanningGroup(goal, replanContext);
 	}
 
 	private scheduleTick(): void {

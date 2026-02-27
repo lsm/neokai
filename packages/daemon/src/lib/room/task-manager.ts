@@ -262,6 +262,22 @@ export class TaskManager {
 	}
 
 	/**
+	 * Cancel all pending tasks in the given list.
+	 * Used during mid-execution replanning to clear stale plan.
+	 */
+	async cancelPendingTasks(taskIds: string[]): Promise<number> {
+		let cancelled = 0;
+		for (const taskId of taskIds) {
+			const task = await this.getTask(taskId);
+			if (task && task.status === 'pending') {
+				await this.failTask(taskId, 'Cancelled: goal replanning triggered');
+				cancelled++;
+			}
+		}
+		return cancelled;
+	}
+
+	/**
 	 * Delete task
 	 */
 	async deleteTask(taskId: string): Promise<boolean> {
