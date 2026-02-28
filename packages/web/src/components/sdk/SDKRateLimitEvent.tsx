@@ -9,7 +9,8 @@ function formatResetTime(resetsAt: number): string {
 	return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function formatRateLimitType(type: string): string {
+function formatRateLimitType(type: string | undefined): string {
+	if (!type) return 'Rate Limit';
 	return type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
@@ -56,15 +57,17 @@ export function SDKRateLimitEvent({ message }: Props) {
 						{isRejected ? 'rejected' : 'allowed'}
 					</span>
 				</span>
-				<span
-					class={
-						isRejected
-							? 'text-red-700/80 dark:text-red-300/80'
-							: 'text-amber-700/80 dark:text-amber-300/80'
-					}
-				>
-					Resets at {formatResetTime(info.resetsAt)}
-				</span>
+				{info.resetsAt !== undefined && (
+					<span
+						class={
+							isRejected
+								? 'text-red-700/80 dark:text-red-300/80'
+								: 'text-amber-700/80 dark:text-amber-300/80'
+						}
+					>
+						Resets at {formatResetTime(info.resetsAt)}
+					</span>
+				)}
 				{overageRejected && info.overageDisabledReason && (
 					<span
 						class={

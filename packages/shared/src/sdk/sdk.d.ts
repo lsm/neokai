@@ -1848,8 +1848,8 @@ export declare type SDKRateLimitEvent = {
     type: 'rate_limit_event';
     rate_limit_info: {
         status: 'allowed' | 'rejected';
-        resetsAt: number;
-        rateLimitType: string;
+        resetsAt?: number;
+        rateLimitType?: string;
         overageStatus: 'allowed' | 'rejected';
         overageDisabledReason: string | null;
         isUsingOverage: boolean;
