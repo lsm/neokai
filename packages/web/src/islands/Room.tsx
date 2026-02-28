@@ -13,13 +13,13 @@ import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
-import { GoalsEditor, RoomSettings } from '../components/room';
+import { GoalsEditor, RoomContext, RoomSettings } from '../components/room';
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'overview' | 'goals' | 'settings';
+type RoomTab = 'overview' | 'context' | 'goals' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -144,6 +144,16 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'context'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('context')}
+							>
+								Context
+							</button>
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'goals'
 										? 'text-blue-400 border-b-2 border-blue-400'
 										: 'text-gray-400 hover:text-gray-200'
@@ -169,6 +179,11 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							{activeTab === 'overview' && (
 								<div class="h-full overflow-y-auto">
 									<RoomDashboard />
+								</div>
+							)}
+							{activeTab === 'context' && (
+								<div class="h-full overflow-y-auto p-4">
+									<RoomContext room={room} />
 								</div>
 							)}
 							{activeTab === 'goals' && (
