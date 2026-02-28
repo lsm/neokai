@@ -264,9 +264,15 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					createdAt: '',
 					lastActiveAt: '',
 					workspacePath: '/test',
+					metadata: {
+						lastContextInfo: {
+							totalTokens: 1000,
+							inputTokens: 500,
+							outputTokens: 500,
+						} as ContextInfo,
+					},
 				} as Session,
 				agentState: { status: 'processing' },
-				contextInfo: { totalTokens: 1000, inputTokens: 500, outputTokens: 500 } as ContextInfo,
 				commandsData: { availableCommands: ['/test', '/help'] },
 			};
 		});

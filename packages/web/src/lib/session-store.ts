@@ -60,7 +60,10 @@ class SessionStore {
 
 	/** Context info (token usage) - uses direct signal to avoid race condition */
 	readonly contextInfo = computed<ContextInfo | null>(
-		() => this._contextInfo.value || this.sessionState.value?.contextInfo || null
+		() =>
+			this._contextInfo.value ||
+			this.sessionState.value?.sessionInfo?.metadata?.lastContextInfo ||
+			null
 	);
 
 	/** Available slash commands */
@@ -201,14 +204,14 @@ class SessionStore {
 			// Join the session room first - this subscribes to all session-scoped events
 			hub.joinChannel(`session:${sessionId}`);
 
-			// 1. Session state subscription (unified: metadata + agent + commands + context + error)
+			// 1. Session state subscription (unified: metadata + agent + commands + error)
 			const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
 				this.sessionState.value = state;
 
-				// FIX: Persist contextInfo to direct signal so it survives subsequent
-				// state.session events that might have contextInfo: null (e.g. fallback broadcasts)
-				if (state.contextInfo) {
-					this._contextInfo.value = state.contextInfo;
+				// Sync contextInfo from metadata to direct signal for fast access.
+				// The metadata.lastContextInfo is the persisted source of truth.
+				if (state.sessionInfo?.metadata?.lastContextInfo) {
+					this._contextInfo.value = state.sessionInfo.metadata.lastContextInfo;
 				}
 
 				// Sync slash commands signal (for autocomplete)
@@ -297,13 +300,11 @@ class SessionStore {
 			if (sessionState) {
 				this.sessionState.value = sessionState;
 
-				// FIX: Persist contextInfo to direct signal so it survives page refresh.
+				// Persist contextInfo from metadata to direct signal so it survives page refresh.
 				// Without this, _contextInfo stays null until the next context.updated event
-				// (which only fires after a new agent turn). The contextInfo computed signal
-				// falls back to sessionState.value?.contextInfo, but that can be overwritten
-				// by subsequent state.session broadcasts with contextInfo: null.
-				if (sessionState.contextInfo) {
-					this._contextInfo.value = sessionState.contextInfo;
+				// (which only fires after a new agent turn).
+				if (sessionState.sessionInfo?.metadata?.lastContextInfo) {
+					this._contextInfo.value = sessionState.sessionInfo.metadata.lastContextInfo;
 				}
 
 				const initialCmds = sessionState.commandsData?.availableCommands;
@@ -317,7 +318,6 @@ class SessionStore {
 					sessionInfo: null,
 					agentState: { status: 'idle' },
 					commandsData: { availableCommands: [] },
-					contextInfo: null,
 					error: {
 						message: 'Session not found',
 						details: { sessionId },
@@ -401,7 +401,6 @@ class SessionStore {
 				sessionInfo: null,
 				agentState: { status: 'idle' },
 				commandsData: { availableCommands: [] },
-				contextInfo: null,
 				error: {
 					message: 'Failed to load session',
 					details: err,
