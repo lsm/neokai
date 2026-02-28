@@ -562,17 +562,10 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
 		db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
 		db.exec(`DROP TABLE IF EXISTS prompt_templates`);
 
-		// Drop room runtime tables — createTables() recreates with correct schema
-		db.exec(`DROP TABLE IF EXISTS task_messages`);
-		db.exec(`DROP TABLE IF EXISTS session_group_messages`);
-		db.exec(`DROP TABLE IF EXISTS session_group_members`);
-		db.exec(`DROP TABLE IF EXISTS session_groups`);
-		db.exec(`DROP TABLE IF EXISTS room_audit_log`);
-		db.exec(`DROP TABLE IF EXISTS inbox_items`);
-		db.exec(`DROP TABLE IF EXISTS room_github_mappings`);
-		db.exec(`DROP TABLE IF EXISTS goals`);
-		db.exec(`DROP TABLE IF EXISTS tasks`);
-		db.exec(`DROP TABLE IF EXISTS rooms`);
+		// Room runtime tables (rooms, tasks, goals, session_groups, etc.) are now
+		// production tables with real data — do NOT drop them here.
+		// createTables() uses CREATE TABLE IF NOT EXISTS, so they will be created
+		// on first run and preserved on subsequent runs.
 
 		if (!tableExists(db, 'sessions')) return;
 
