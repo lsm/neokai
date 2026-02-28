@@ -70,6 +70,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Validate online test matrix coverage
+        run: bash scripts/validate-online-test-matrix.sh
+
       - name: Run linter
         id: lint
         run: bun run lint
@@ -118,60 +121,104 @@ jobs:
           - components
           - coordinator
           - convo
-          - features
+          - features-1
+          - features-2
           - git
           - lifecycle
           - mcp
           - providers
           - rewind
-          - room
-          - rpc
+          - room-1
+          - room-2
+          - rpc-1
+          - rpc-2
+          - rpc-3
           - sdk
           - websocket
         include:
           # mock_sdk: true → uses NEOKAI_AGENT_SDK_MOCK instead of real API calls.
           # These modules test infrastructure/plumbing and don't need real AI responses.
           # To run with real API locally, just omit the env var.
+          #
+          # Modules with directory-level test_path auto-discover new test files.
+          # Split modules (rpc-*, room-*, features-*) use explicit file lists.
+          # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
+          - module: agent
+            test_path: tests/online/agent
           - module: components
             test_path: tests/online/components
             mock_sdk: true
           # GLM online tests disabled due to flakiness
           # - module: glm
           #   test_path: tests/online/glm
+          - module: convo
+            test_path: tests/online/convo
+          - module: coordinator
+            test_path: tests/online/coordinator
+            timeout: 10
+            mock_sdk: true
+          - module: features-1
+            test_path: >-
+              tests/online/features/auto-title.test.ts
+              tests/online/features/message-delivery-mode-queue.test.ts
+            mock_sdk: true
+          - module: features-2
+            test_path: tests/online/features/message-persistence.test.ts
+            mock_sdk: true
           - module: git
             test_path: tests/online/git
             timeout: 10
+            mock_sdk: true
+          - module: lifecycle
+            test_path: tests/online/lifecycle
             mock_sdk: true
           - module: mcp
             test_path: tests/online/mcp
             mock_sdk: true
           - module: providers
             test_path: tests/online/providers
-          - module: rpc
-            test_path: tests/online/rpc
+          - module: rewind
+            test_path: tests/online/rewind
+          - module: room-1
+            test_path: >-
+              tests/online/room/room-advanced-scenarios.test.ts
+              tests/online/room/room-chat-agent-tools.test.ts
+              tests/online/room/room-chat-constraints.test.ts
+            timeout: 10
+          - module: room-2
+            test_path: >-
+              tests/online/room/room-multi-agent-flow.test.ts
+              tests/online/room/room-replan-recovery.test.ts
+            timeout: 10
+          - module: rpc-1
+            test_path: >-
+              tests/online/rpc/rpc-agent-handlers.test.ts
+              tests/online/rpc/rpc-config-handlers.test.ts
+              tests/online/rpc/rpc-draft-handlers.test.ts
+              tests/online/rpc/rpc-file-handlers.test.ts
+              tests/online/rpc/rpc-interrupt-handlers.test.ts
+              tests/online/rpc/rpc-mcp-toggle.test.ts
+            mock_sdk: true
+          - module: rpc-2
+            test_path: >-
+              tests/online/rpc/rpc-message-handlers.test.ts
+              tests/online/rpc/rpc-model-handlers.test.ts
+              tests/online/rpc/rpc-model-switching.test.ts
+              tests/online/rpc/rpc-remove-output.test.ts
+              tests/online/rpc/rpc-rewind-handlers.test.ts
+              tests/online/rpc/rpc-session-filtering.test.ts
+            mock_sdk: true
+          - module: rpc-3
+            test_path: >-
+              tests/online/rpc/rpc-session-handlers-extended.test.ts
+              tests/online/rpc/rpc-session-workflow.test.ts
+              tests/online/rpc/rpc-settings-handlers.test.ts
+              tests/online/rpc/rpc-state-sync.test.ts
+              tests/online/rpc/session-handlers.test.ts
             mock_sdk: true
           - module: sdk
             test_path: tests/online/sdk
             mock_sdk: true
-          - module: agent
-            test_path: tests/online/agent
-          - module: coordinator
-            test_path: tests/online/coordinator
-            timeout: 10
-            mock_sdk: true
-          - module: convo
-            test_path: tests/online/convo
-          - module: features
-            test_path: tests/online/features
-            mock_sdk: true
-          - module: lifecycle
-            test_path: tests/online/lifecycle
-            mock_sdk: true
-          - module: rewind
-            test_path: tests/online/rewind
-          - module: room
-            test_path: tests/online/room
-            timeout: 10
           - module: websocket
             test_path: tests/online/websocket
             mock_sdk: true
@@ -198,8 +245,8 @@ jobs:
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
           NEOKAI_AGENT_SDK_MOCK: ${{ matrix.mock_sdk == true && 'true' || '' }}
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((matrix.module == 'features' || matrix.module == 'room') && secrets.ANTHROPIC_API_KEY || '') }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (matrix.module == 'features' || matrix.module == 'room') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.ANTHROPIC_API_KEY || '') }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room')) && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || 'glm') || '' }}
 
