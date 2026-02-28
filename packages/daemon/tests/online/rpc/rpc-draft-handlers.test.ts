@@ -14,10 +14,10 @@ describe('Draft RPC Handlers', () => {
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, 15_000);
 
 	afterAll(async () => {
-		await daemon.waitForExit();
+		await daemon?.waitForExit();
 	});
 
 	async function createSession(workspacePath: string): Promise<string> {

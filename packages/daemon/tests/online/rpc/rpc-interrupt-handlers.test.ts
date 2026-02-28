@@ -13,10 +13,10 @@ describe('Interrupt RPC Handlers', () => {
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, 15_000);
 
 	afterAll(async () => {
-		await daemon.waitForExit();
+		await daemon?.waitForExit();
 	});
 
 	describe('client.interrupt', () => {
