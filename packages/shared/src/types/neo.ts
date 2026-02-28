@@ -242,6 +242,15 @@ export interface UpdateTaskParams {
 }
 
 // ============================================================================
+// Runtime Types
+// ============================================================================
+
+/**
+ * Runtime state for a room's autonomous execution engine
+ */
+export type RuntimeState = 'running' | 'paused' | 'stopped';
+
+// ============================================================================
 // Summary Types (for API responses)
 // ============================================================================
 
@@ -272,7 +281,12 @@ export interface TaskSummary {
 export interface RoomOverview {
 	room: Room;
 	sessions: SessionSummary[];
+	/** Non-completed/non-failed tasks (backward compat) */
 	activeTasks: TaskSummary[];
+	/** All tasks including completed and failed */
+	allTasks?: TaskSummary[];
+	/** Current runtime state */
+	runtimeState?: RuntimeState;
 }
 
 /**
