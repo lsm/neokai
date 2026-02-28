@@ -295,7 +295,7 @@ export interface IMessageTransport {
 
 	/**
 	 * Register handler for client disconnect events (server-side only)
-	 * Used for per-client cleanup like sequence tracking
+	 * Used for per-client cleanup
 	 */
 	onClientDisconnect?(handler: (clientId: string) => void): () => void;
 }

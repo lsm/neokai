@@ -3,7 +3,6 @@
  *
  * Tests for features in the new simplified API:
  * - Runtime message validation
- * - Message sequence numbers
  * - PING/PONG handlers
  * - Method name validation
  */
