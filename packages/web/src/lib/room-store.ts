@@ -25,6 +25,7 @@ import type {
 	RoomGoal,
 	GoalPriority,
 	WorkspacePath,
+	RuntimeState,
 } from '@neokai/shared';
 
 /**
@@ -84,6 +85,13 @@ class RoomStore {
 
 	/** Goals loading state */
 	readonly goalsLoading = signal<boolean>(false);
+
+	// ========================================
+	// Runtime State Signal
+	// ========================================
+
+	/** Runtime state for this room (running/paused/stopped) */
+	readonly runtimeState = signal<RuntimeState | null>(null);
 
 	// ========================================
 	// Computed Accessors
@@ -162,6 +170,7 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goals.value = [];
+		this.runtimeState.value = null;
 
 		// 3. Update active room
 		this.roomId.value = roomId;
@@ -199,7 +208,7 @@ class RoomStore {
 				if (overview.room.id === roomId) {
 					this.room.value = overview.room;
 					this.sessions.value = overview.sessions;
-					this.tasks.value = overview.activeTasks;
+					this.tasks.value = overview.allTasks ?? overview.activeTasks;
 				}
 			});
 			this.cleanupFunctions.push(unsubRoomOverview);
@@ -272,7 +281,18 @@ class RoomStore {
 			});
 			this.cleanupFunctions.push(unsubGoalCompleted);
 
-			// 4. Fetch initial state via RPC
+			// 4. Runtime state changes
+			const unsubRuntimeState = hub.onEvent<{ roomId: string; state: RuntimeState }>(
+				'room.runtime.stateChanged',
+				(event) => {
+					if (event.roomId === roomId) {
+						this.runtimeState.value = event.state;
+					}
+				}
+			);
+			this.cleanupFunctions.push(unsubRuntimeState);
+
+			// 5. Fetch initial state via RPC
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
@@ -294,12 +314,22 @@ class RoomStore {
 			if (overview) {
 				this.room.value = overview.room;
 				this.sessions.value = overview.sessions;
-				this.tasks.value = overview.activeTasks;
+				this.tasks.value = overview.allTasks ?? overview.activeTasks;
 			} else {
 				this.error.value = 'Room not found';
 			}
 
 			await this.fetchGoals();
+
+			// Fetch runtime state
+			try {
+				const { state } = await hub.request<{ state: RuntimeState }>('room.runtime.state', {
+					roomId,
+				});
+				this.runtimeState.value = state;
+			} catch {
+				// Runtime may not exist yet
+			}
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -526,6 +556,42 @@ class RoomStore {
 			logger.error('Failed to link task to goal:', err);
 			throw err;
 		}
+	}
+
+	// ========================================
+	// Runtime Control Methods
+	// ========================================
+
+	async pauseRuntime(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		await hub.request('room.runtime.pause', { roomId });
+	}
+
+	async resumeRuntime(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		await hub.request('room.runtime.resume', { roomId });
+	}
+
+	async stopRuntime(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		await hub.request('room.runtime.stop', { roomId });
+	}
+
+	async startRuntime(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		await hub.request('room.runtime.start', { roomId });
 	}
 
 	// ========================================

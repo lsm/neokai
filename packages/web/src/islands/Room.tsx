@@ -10,7 +10,7 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
-import { navigateToHome } from '../lib/router';
+import { navigateToHome, navigateToRoomTask } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomSettings } from '../components/room';
@@ -176,6 +176,8 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 									<GoalsEditor
 										roomId={roomId}
 										goals={roomStore.goals.value}
+										tasks={roomStore.tasks.value}
+										onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
 										onCreateGoal={handleCreateGoal}
 										onUpdateGoal={handleUpdateGoal}
 										onDeleteGoal={handleDeleteGoal}

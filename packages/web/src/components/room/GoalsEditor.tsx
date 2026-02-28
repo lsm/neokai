@@ -11,7 +11,7 @@
  */
 
 import { useState } from 'preact/hooks';
-import type { RoomGoal, GoalPriority, GoalStatus } from '@neokai/shared';
+import type { RoomGoal, GoalPriority, GoalStatus, TaskSummary, TaskStatus } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
@@ -24,6 +24,10 @@ export interface GoalsEditorProps {
 	roomId?: string;
 	/** List of goals to display */
 	goals: RoomGoal[];
+	/** Tasks for resolving linked task titles */
+	tasks?: TaskSummary[];
+	/** Handler for clicking a linked task */
+	onTaskClick?: (taskId: string) => void;
 	/** Handler for creating a new goal */
 	onCreateGoal: (goal: {
 		title: string;
@@ -134,6 +138,29 @@ function ProgressBar({ progress }: { progress: number }) {
 			</div>
 			<span class="text-xs text-gray-400 w-8 text-right">{progress}%</span>
 		</div>
+	);
+}
+
+// Task status badge for linked tasks
+function TaskStatusBadge({ status }: { status: TaskStatus }) {
+	const styles: Record<string, string> = {
+		pending: 'bg-gray-700 text-gray-300',
+		in_progress: 'bg-yellow-900/50 text-yellow-300',
+		completed: 'bg-green-900/50 text-green-300',
+		failed: 'bg-red-900/50 text-red-300',
+		draft: 'bg-dark-600 text-gray-400',
+		escalated: 'bg-orange-900/50 text-orange-300',
+	};
+	const label = status === 'in_progress' ? 'active' : status;
+	return (
+		<span
+			class={cn(
+				'px-1.5 py-0.5 text-[10px] font-medium rounded capitalize',
+				styles[status] ?? styles.pending
+			)}
+		>
+			{label}
+		</span>
 	);
 }
 
@@ -250,6 +277,8 @@ function GoalForm({
 // Goal Item Component
 interface GoalItemProps {
 	goal: RoomGoal;
+	tasks?: TaskSummary[];
+	onTaskClick?: (taskId: string) => void;
 	onUpdate: (updates: Partial<RoomGoal>) => Promise<void>;
 	onDelete: () => Promise<void>;
 	onLinkTask: (taskId: string) => Promise<void>;
@@ -259,6 +288,8 @@ interface GoalItemProps {
 
 function GoalItem({
 	goal,
+	tasks,
+	onTaskClick,
 	onUpdate,
 	onDelete,
 	onLinkTask,
@@ -411,27 +442,38 @@ function GoalItem({
 							<h5 class="text-xs font-medium text-gray-400 uppercase mb-2">Linked Tasks</h5>
 							{goal.linkedTaskIds.length > 0 ? (
 								<div class="space-y-1">
-									{goal.linkedTaskIds.map((taskId) => (
-										<div
-											key={taskId}
-											class="flex items-center gap-2 text-sm text-gray-300 bg-dark-700 rounded px-3 py-1.5"
-										>
-											<svg
-												class="w-4 h-4 text-gray-500"
-												fill="none"
-												viewBox="0 0 24 24"
-												stroke="currentColor"
+									{goal.linkedTaskIds.map((taskId) => {
+										const task = tasks?.find((t) => t.id === taskId);
+										const title = task?.title ?? taskId;
+										const isClickable = !!onTaskClick;
+										return (
+											<div
+												key={taskId}
+												class={cn(
+													'flex items-center gap-2 text-sm bg-dark-700 rounded px-3 py-1.5',
+													isClickable && 'cursor-pointer hover:bg-dark-600 transition-colors'
+												)}
+												onClick={isClickable ? () => onTaskClick(taskId) : undefined}
 											>
-												<path
-													stroke-linecap="round"
-													stroke-linejoin="round"
-													stroke-width={2}
-													d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-												/>
-											</svg>
-											<span class="font-mono text-xs">{taskId}</span>
-										</div>
-									))}
+												<svg
+													class="w-4 h-4 text-gray-500 flex-shrink-0"
+													fill="none"
+													viewBox="0 0 24 24"
+													stroke="currentColor"
+												>
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+													/>
+												</svg>
+												<span class="text-gray-300 truncate flex-1">{title}</span>
+												{task?.status && <TaskStatusBadge status={task.status} />}
+												{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
+											</div>
+										);
+									})}
 								</div>
 							) : (
 								<p class="text-sm text-gray-500">No tasks linked</p>
@@ -535,6 +577,8 @@ function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 
 export function GoalsEditor({
 	goals,
+	tasks,
+	onTaskClick,
 	onCreateGoal,
 	onUpdateGoal,
 	onDeleteGoal,
@@ -600,6 +644,8 @@ export function GoalsEditor({
 						<GoalItem
 							key={goal.id}
 							goal={goal}
+							tasks={tasks}
+							onTaskClick={onTaskClick}
 							onUpdate={(updates) => onUpdateGoal(goal.id, updates)}
 							onDelete={() => onDeleteGoal(goal.id)}
 							onLinkTask={(taskId) => onLinkTask(goal.id, taskId)}
