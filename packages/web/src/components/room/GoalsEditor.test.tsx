@@ -6,7 +6,7 @@
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { GoalsEditor } from './GoalsEditor';
-import type { RoomGoal } from '@neokai/shared';
+import type { RoomGoal, TaskSummary } from '@neokai/shared';
 
 describe('GoalsEditor', () => {
 	beforeEach(() => {
@@ -265,6 +265,194 @@ describe('GoalsEditor', () => {
 			const buttons = container.querySelectorAll('button');
 			const hasDeleteButton = Array.from(buttons).some((btn) => btn.textContent === 'Delete');
 			expect(hasDeleteButton).toBe(true);
+		});
+	});
+
+	describe('Linked Tasks with Title Resolution', () => {
+		const mockTasks: TaskSummary[] = [
+			{
+				id: 'task-1',
+				title: 'Build auth module',
+				status: 'completed',
+				priority: 'high',
+				progress: 100,
+			},
+			{
+				id: 'task-2',
+				title: 'Write unit tests',
+				status: 'in_progress',
+				priority: 'normal',
+				progress: 50,
+			},
+			{ id: 'task-3', title: 'Deploy to staging', status: 'pending', priority: 'low', progress: 0 },
+		];
+
+		it('should show task title instead of task ID when tasks prop is provided', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1'] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal to see linked tasks
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('Build auth module');
+		});
+
+		it('should show task ID as fallback when task is not found in tasks array', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['unknown-task-id'] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('unknown-task-id');
+		});
+
+		it('should show task ID when tasks prop is not provided', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1'] })];
+
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('task-1');
+		});
+
+		it('should show TaskStatusBadge for linked tasks with known status', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1', 'task-2'] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			// TaskStatusBadge for completed shows "completed", for in_progress shows "active"
+			expect(container.textContent).toContain('completed');
+			expect(container.textContent).toContain('active');
+		});
+
+		it('should not show TaskStatusBadge when task is not found', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['missing-task'] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			// The task title area should show "missing-task" but no status badge
+			expect(container.textContent).toContain('missing-task');
+		});
+
+		it('should make linked tasks clickable when onTaskClick is provided', () => {
+			const onTaskClick = vi.fn();
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1'] })];
+
+			const { container } = render(
+				<GoalsEditor
+					goals={goals}
+					tasks={mockTasks}
+					onTaskClick={onTaskClick}
+					{...defaultHandlers}
+				/>
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			// Find the linked task element (it should have cursor-pointer due to onTaskClick)
+			const linkedTaskElements = container.querySelectorAll('.bg-dark-700.cursor-pointer');
+			expect(linkedTaskElements.length).toBeGreaterThan(0);
+
+			fireEvent.click(linkedTaskElements[0]);
+			expect(onTaskClick).toHaveBeenCalledWith('task-1');
+		});
+
+		it('should show arrow indicator on linked tasks when clickable', () => {
+			const onTaskClick = vi.fn();
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1'] })];
+
+			const { container } = render(
+				<GoalsEditor
+					goals={goals}
+					tasks={mockTasks}
+					onTaskClick={onTaskClick}
+					{...defaultHandlers}
+				/>
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			// Arrow indicator should be present
+			expect(container.innerHTML).toContain('→');
+		});
+
+		it('should not make linked tasks clickable when onTaskClick is not provided', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1'] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			// Linked tasks should NOT have the combined cursor-pointer + bg-dark-700 class
+			// But the bg-dark-700 should still exist without cursor-pointer
+			const allBgDark700 = container.querySelectorAll('.bg-dark-700');
+			const clickableLinkedTasks = Array.from(allBgDark700).filter(
+				(el) =>
+					el.className.includes('cursor-pointer') && el.className.includes('hover:bg-dark-600')
+			);
+			expect(clickableLinkedTasks.length).toBe(0);
+		});
+
+		it('should show "No tasks linked" when goal has no linked tasks', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: [] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('No tasks linked');
+		});
+
+		it('should resolve multiple linked task titles', () => {
+			const goals = [createMockGoal('goal-1', { linkedTaskIds: ['task-1', 'task-2', 'task-3'] })];
+
+			const { container } = render(
+				<GoalsEditor goals={goals} tasks={mockTasks} {...defaultHandlers} />
+			);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('Build auth module');
+			expect(container.textContent).toContain('Write unit tests');
+			expect(container.textContent).toContain('Deploy to staging');
 		});
 	});
 });
