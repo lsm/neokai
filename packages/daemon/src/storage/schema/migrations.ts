@@ -62,6 +62,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Room cleanup: drop all room experiment tables and fix sessions schema if outdated
 	// (consolidates former migrations 25–36, which covered features never shipped to production)
 	runMigrationRoomCleanup(db);
+
+	// Migration 14: Drop events table and unused session columns (labels, sub_session_order)
+	runMigration14(db);
 }
 
 /**
@@ -393,8 +396,8 @@ function runMigration13(db: BunDatabase): void {
 		// We do this by trying to insert a test row with status='pending_worktree_choice'
 		const testId = '__migration_test_pending_worktree_choice_status__';
 		db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id, labels, sub_session_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		).run(
 			testId,
 			'Test',
@@ -413,9 +416,7 @@ function runMigration13(db: BunDatabase): void {
 			null,
 			null,
 			null,
-			null,
-			null,
-			0
+			null
 		);
 		// If we got here, the constraint already includes 'pending_worktree_choice', clean up and skip migration
 		db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
@@ -429,6 +430,11 @@ function runMigration13(db: BunDatabase): void {
 		db.exec('PRAGMA foreign_keys = OFF');
 
 		try {
+			// Determine which optional columns exist before rebuild (they may or may not be present
+			// depending on which migrations ran before this one)
+			const hasLabels = tableHasColumn(db, 'sessions', 'labels');
+			const hasSubOrder = tableHasColumn(db, 'sessions', 'sub_session_order');
+
 			// SQLite table recreation pattern for modifying constraints
 			db.exec(`
 				-- Create new table with updated CHECK constraint
@@ -450,17 +456,14 @@ function runMigration13(db: BunDatabase): void {
 					available_commands TEXT,
 					processing_state TEXT,
 					archived_at TEXT,
-					parent_id TEXT,
-					labels TEXT,
-					sub_session_order INTEGER DEFAULT 0
+					parent_id TEXT
 				);
 
 				-- Copy all data from old table to new table
 				INSERT INTO sessions_new
 				SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
 					   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
-					   sdk_session_id, available_commands, processing_state, archived_at,
-					   parent_id, labels, sub_session_order
+					   sdk_session_id, available_commands, processing_state, archived_at, parent_id
 				FROM sessions;
 
 				-- Drop old table (safe now that foreign_keys is OFF)
@@ -469,10 +472,40 @@ function runMigration13(db: BunDatabase): void {
 				-- Rename new table to original name
 				ALTER TABLE sessions_new RENAME TO sessions;
 			`);
+
+			// Re-add labels and sub_session_order if they existed in the old table
+			// (Migration 14 will drop them, but we preserve them here so M14 can do it cleanly)
+			if (hasLabels) {
+				db.exec(`ALTER TABLE sessions ADD COLUMN labels TEXT`);
+			}
+			if (hasSubOrder) {
+				db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
+			}
 		} finally {
 			// Re-enable foreign keys
 			db.exec('PRAGMA foreign_keys = ON');
 		}
+	}
+}
+
+/**
+ * Migration 14: Drop events table and unused session columns
+ *
+ * - events table was never used (EventBus handles events in-memory)
+ * - labels and sub_session_order columns were added in Migration 11 but never used
+ *
+ * ALTER TABLE DROP COLUMN requires SQLite 3.35+; Bun ships SQLite 3.46+.
+ */
+function runMigration14(db: BunDatabase): void {
+	db.exec(`DROP TABLE IF EXISTS events`);
+	db.exec(`DROP INDEX IF EXISTS idx_events_session`);
+
+	if (!tableExists(db, 'sessions')) return;
+	if (tableHasColumn(db, 'sessions', 'labels')) {
+		db.exec(`ALTER TABLE sessions DROP COLUMN labels`);
+	}
+	if (tableHasColumn(db, 'sessions', 'sub_session_order')) {
+		db.exec(`ALTER TABLE sessions DROP COLUMN sub_session_order`);
 	}
 }
 
@@ -594,8 +627,6 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
 				processing_state TEXT,
 				archived_at TEXT,
 				parent_id TEXT,
-				labels TEXT,
-				sub_session_order INTEGER DEFAULT 0,
 				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')),
 				session_context TEXT
 			)
@@ -605,8 +636,7 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
 			SELECT id, title, workspace_path, created_at, last_active_at,
 				status, config, metadata, is_worktree, worktree_path, main_repo_path,
 				worktree_branch, git_branch, sdk_session_id, available_commands,
-				processing_state, archived_at, parent_id, labels,
-				COALESCE(sub_session_order, 0), type, session_context
+				processing_state, archived_at, parent_id, type, session_context
 			FROM sessions
 		`);
 		db.exec(`DROP TABLE sessions`);
