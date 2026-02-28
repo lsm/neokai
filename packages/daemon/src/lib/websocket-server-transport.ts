@@ -273,7 +273,7 @@ export class WebSocketServerTransport implements IMessageTransport {
 		// Unregister from router
 		this.router.unregisterConnection(clientId);
 
-		// Notify client disconnect handlers (for per-client cleanup like sequence tracking)
+		// Notify client disconnect handlers (for per-client cleanup)
 		for (const handler of this.clientDisconnectHandlers) {
 			try {
 				handler(clientId);
