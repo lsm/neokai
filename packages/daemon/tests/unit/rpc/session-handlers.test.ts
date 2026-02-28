@@ -428,10 +428,8 @@ describe('Session RPC Handlers', () => {
 			const result = await handler!({ sessionId: 'session-123' }, {});
 
 			expect(mocks.getSessionData).toHaveBeenCalled();
-			expect(mocks.getContextInfo).toHaveBeenCalled();
 			expect(result).toHaveProperty('session');
 			expect(result).toHaveProperty('context');
-			expect(result).toHaveProperty('contextInfo');
 		});
 
 		it('throws error when session not found', async () => {

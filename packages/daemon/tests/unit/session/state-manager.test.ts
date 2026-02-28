@@ -263,7 +263,6 @@ describe('StateManager', () => {
 			expect(result).toHaveProperty('sessionInfo');
 			expect(result).toHaveProperty('agentState');
 			expect(result).toHaveProperty('commandsData');
-			expect(result).toHaveProperty('contextInfo');
 			expect(result).toHaveProperty('error');
 			expect(result).toHaveProperty('timestamp');
 		});

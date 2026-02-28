@@ -96,32 +96,49 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Safely stringify an object, handling circular references
-	 * Converts circular references to [Circular] placeholders
+	 * Safely stringify an object, handling circular references.
+	 *
+	 * Uses plain JSON.stringify first (which correctly serializes shared object
+	 * references). Only falls back to circular-reference handling when needed.
+	 *
+	 * The previous WeakSet-based approach incorrectly replaced shared (non-circular)
+	 * references with "[Circular]". For example, the same contextInfo object appears
+	 * in both sessionInfo.metadata.lastContextInfo and the top-level contextInfo
+	 * field — this is a shared reference, not circular, and must be serialized twice.
 	 */
 	private safeStringify(obj: unknown): string {
-		const seen = new WeakSet();
+		try {
+			return JSON.stringify(obj);
+		} catch {
+			// JSON.stringify throws on actual circular references or BigInt values.
+			// Fall back to a replacer that strips only true circular references
+			// by tracking the current ancestor chain (not all visited objects).
+			const ancestors: unknown[] = [];
+			return JSON.stringify(obj, function (_key, value) {
+				if (typeof value !== 'object' || value === null) {
+					return value;
+				}
 
-		return JSON.stringify(obj, (_key, value) => {
-			// Handle primitive types
-			if (typeof value !== 'object' || value === null) {
+				// Handle specific types that may contain non-serializable data
+				if (value.constructor?.name === 'AgentSession') {
+					return '[AgentSession]';
+				}
+
+				// Pop ancestors that are no longer on the current path.
+				// `this` is the holder object containing the current key.
+				while (ancestors.length > 0 && ancestors.at(-1) !== this) {
+					ancestors.pop();
+				}
+
+				// True circular reference: this object is an ancestor of itself
+				if (ancestors.includes(value)) {
+					return '[Circular]';
+				}
+
+				ancestors.push(value);
 				return value;
-			}
-
-			// Detect circular references
-			if (seen.has(value)) {
-				return '[Circular]';
-			}
-
-			// Track this object
-			seen.add(value);
-
-			// Handle specific types that may contain non-serializable data
-			if (value.constructor?.name === 'AgentSession') {
-				return `[AgentSession]`;
-			}
-			return value;
-		});
+			});
+		}
 	}
 
 	/**

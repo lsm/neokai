@@ -27,7 +27,7 @@ class TestSessionStore {
 	}
 
 	get contextInfo() {
-		return this.sessionState.value?.contextInfo || null;
+		return this.sessionState.value?.sessionInfo?.metadata?.lastContextInfo || null;
 	}
 
 	get commandsData(): string[] {
@@ -122,7 +122,7 @@ describe('SessionStore', () => {
 					status: 'active',
 				} as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -137,7 +137,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'processing', phase: 'thinking' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -159,7 +159,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: { availableCommands: ['/help', '/clear', '/reset'] },
 				error: null,
 			};
@@ -178,7 +178,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: errorInfo,
 			};
@@ -191,7 +191,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -202,7 +202,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'processing', phase: 'thinking' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -217,7 +217,7 @@ describe('SessionStore', () => {
 					phase: 'finalizing',
 					isCompacting: true,
 				},
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -230,7 +230,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -241,7 +241,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'processing', phase: 'thinking' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -252,7 +252,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'queued' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -263,7 +263,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: null as unknown as import('@neokai/shared').Session,
 				agentState: { status: 'interrupted' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -281,7 +281,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: { id: 'old' } as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};
@@ -327,7 +327,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: { id: 'test' } as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: { message: 'Test error', occurredAt: Date.now() },
 			};
@@ -343,7 +343,7 @@ describe('SessionStore', () => {
 			store.sessionState.value = {
 				sessionInfo: { id: 'test' } as import('@neokai/shared').Session,
 				agentState: { status: 'idle' },
-				contextInfo: null,
+
 				commandsData: null,
 				error: null,
 			};

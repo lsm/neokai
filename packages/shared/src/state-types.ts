@@ -4,7 +4,7 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, SessionInfo, HealthStatus, ContextInfo } from './types.ts';
+import type { AuthStatus, SessionInfo, HealthStatus } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
@@ -189,9 +189,6 @@ export interface SessionState {
 
 	// Available slash commands
 	commandsData: CommandsData;
-
-	// Context information
-	contextInfo: ContextInfo | null;
 
 	// Error state (folded from session.error event)
 	error: SessionError | null;

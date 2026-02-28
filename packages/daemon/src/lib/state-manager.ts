@@ -54,7 +54,6 @@ export class StateManager {
 	private sessionCache = new Map<string, Session>();
 	private processingStateCache = new Map<string, AgentProcessingState>();
 	private commandsCache = new Map<string, string[]>();
-	private contextCache = new Map<string, ContextInfo>();
 	private errorCache = new Map<
 		string,
 		{ message: string; details?: unknown; occurredAt: number } | null
@@ -140,7 +139,6 @@ export class StateManager {
 			this.sessionCache.delete(sessionId);
 			this.processingStateCache.delete(sessionId);
 			this.commandsCache.delete(sessionId);
-			this.contextCache.delete(sessionId);
 
 			// Broadcast
 			await this.broadcastSessionsDelta({
@@ -174,18 +172,19 @@ export class StateManager {
 			}
 		);
 
-		// Context updated - cache and broadcast
+		// Context updated - broadcast dedicated event and full session state
+		// Context data is persisted in session.metadata.lastContextInfo (by ContextTracker),
+		// so no separate cache needed here. The dedicated event provides a fast path
+		// for the frontend to update the context bar immediately.
 		this.eventBus.on(
 			'context.updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
-				this.contextCache.set(data.sessionId, data.contextInfo);
-
-				// Publish dedicated context.updated event
+				// Publish dedicated context.updated event (fast path for UI)
 				this.messageHub.event('context.updated', data.contextInfo, {
 					channel: `session:${data.sessionId}`,
 				});
 
-				// Also update unified session state
+				// Also update unified session state (includes metadata.lastContextInfo)
 				await this.broadcastSessionStateChange(data.sessionId);
 			}
 		);
@@ -477,7 +476,6 @@ export class StateManager {
 					sessionInfo: null,
 					agentState: { status: 'idle' },
 					commandsData: { availableCommands: [] },
-					contextInfo: null,
 					error: null,
 					timestamp: Date.now(),
 				};
@@ -490,11 +488,12 @@ export class StateManager {
 		const agentState = agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
 
-		// Get context info (null before first /context command response)
-		const contextInfo = agentSession.getContextInfo();
-
 		// Get error from cache (null if no error or error has been cleared)
 		const error = this.errorCache.get(sessionId) || null;
+
+		// Context info lives in sessionData.metadata.lastContextInfo
+		// (persisted by ContextTracker, restored on session load)
+		// No separate top-level field needed.
 
 		return {
 			sessionInfo: sessionData,
@@ -502,7 +501,6 @@ export class StateManager {
 			commandsData: {
 				availableCommands: commands,
 			},
-			contextInfo: contextInfo,
 			error: error,
 			timestamp: Date.now(),
 		};
@@ -625,7 +623,6 @@ export class StateManager {
 						sessionInfo: cachedSession,
 						agentState: cachedProcessingState,
 						commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
-						contextInfo: this.contextCache.get(sessionId) || null,
 						error: null,
 						timestamp: Date.now(),
 						version,

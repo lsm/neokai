@@ -13,7 +13,6 @@ import {
 	createSessionViaUI,
 	cleanupTestSession,
 	waitForAssistantResponse,
-	waitForSessionCreated,
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
@@ -56,8 +55,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should show non-zero context percentage after message exchange', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -120,8 +118,7 @@ test.describe('Context Usage - Display', () => {
 
 	test('should persist context data after page refresh', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to populate context data
 		const input = page.locator('textarea[placeholder*="Ask"]').first();
@@ -387,8 +384,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 		});
 	});
 
-	test.skip('should close dropdown with Escape key', async ({ page }) => {
-		// TODO: Escape key close not implemented in dropdown
+	test('should close dropdown with Escape key', async ({ page }) => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
@@ -409,6 +405,9 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 		await expect(page.locator('text=Context Usage')).toBeVisible({
 			timeout: 5000,
 		});
+
+		// Wait for useEffect to register keydown handler (runs async after render)
+		await page.waitForTimeout(200);
 
 		// Press Escape
 		await page.keyboard.press('Escape');
@@ -419,8 +418,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 		});
 	});
 
-	test.skip('should close dropdown when clicking outside', async ({ page }) => {
-		// TODO: Click outside close not working reliably
+	test('should close dropdown when clicking outside', async ({ page }) => {
 		// Create a new session
 		sessionId = await createSessionViaUI(page);
 
@@ -442,9 +440,11 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 			timeout: 5000,
 		});
 
-		// Click outside the dropdown by clicking at a fixed position on the page
-		// Use mouse.click to click at coordinates in the center-left of the screen
-		await page.mouse.click(100, 300);
+		// Wait for useEffect to register click-outside handler (runs async after render)
+		await page.waitForTimeout(200);
+
+		// Click outside the dropdown (on the chat area background)
+		await page.locator('textarea[placeholder*="Ask"]').first().click();
 
 		// Dropdown should close
 		await expect(page.locator('text=Context Usage')).not.toBeVisible({

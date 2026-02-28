@@ -127,7 +127,6 @@ export function setupSessionHandlers(
 		}
 
 		const session = agentSession.getSessionData();
-		const contextInfo = agentSession.getContextInfo();
 
 		return {
 			session,
@@ -137,8 +136,7 @@ export function setupSessionHandlers(
 				files: [],
 				workingDirectory: session.workspacePath,
 			},
-			// Token usage context info (for StatusIndicator)
-			contextInfo,
+			// Context info is in session.metadata.lastContextInfo
 		};
 	});
 
