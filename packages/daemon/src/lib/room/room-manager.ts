@@ -144,15 +144,16 @@ export class RoomManager {
 		if (!room) return null;
 
 		const tasks = this.taskRepo.listTasks(roomId);
-		const taskSummaries: TaskSummary[] = tasks
-			.filter((task) => task.status !== 'completed' && task.status !== 'failed')
-			.map((task) => ({
-				id: task.id,
-				title: task.title,
-				status: task.status,
-				priority: task.priority,
-				progress: task.progress,
-			}));
+		const allTaskSummaries: TaskSummary[] = tasks.map((task) => ({
+			id: task.id,
+			title: task.title,
+			status: task.status,
+			priority: task.priority,
+			progress: task.progress,
+		}));
+		const taskSummaries = allTaskSummaries.filter(
+			(task) => task.status !== 'completed' && task.status !== 'failed'
+		);
 
 		// Build session summaries from actual session data
 		// Filter out room-specific sessions (chat, craft, lead)
@@ -186,6 +187,7 @@ export class RoomManager {
 			room,
 			sessions,
 			activeTasks: taskSummaries,
+			allTasks: allTaskSummaries,
 		};
 	}
 

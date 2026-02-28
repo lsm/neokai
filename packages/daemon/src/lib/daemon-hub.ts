@@ -194,6 +194,12 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		room: Room;
 		sessions: { id: string; title: string; status: string; lastActiveAt: number }[];
 		activeTasks: TaskSummary[];
+		allTasks?: TaskSummary[];
+	};
+	'room.runtime.stateChanged': {
+		sessionId: string; // 'room:${roomId}' for channel routing
+		roomId: string;
+		state: import('@neokai/shared').RuntimeState;
 	};
 	'room.task.update': {
 		sessionId: string; // 'room:${roomId}' for channel routing

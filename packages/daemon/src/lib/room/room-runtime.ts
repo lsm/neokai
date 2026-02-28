@@ -14,7 +14,15 @@
  * All handlers are idempotent. Tick mutex prevents concurrent execution.
  */
 
-import type { Room, NeoTask, RoomGoal, MessageHub, TaskPriority, AgentType } from '@neokai/shared';
+import type {
+	Room,
+	NeoTask,
+	RoomGoal,
+	MessageHub,
+	TaskPriority,
+	AgentType,
+	RuntimeState,
+} from '@neokai/shared';
 import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
 import type { TaskManager } from './task-manager';
 import type { GoalManager } from './goal-manager';
@@ -40,7 +48,7 @@ const log = new Logger('room-runtime');
 
 const MAX_PLANNING_ATTEMPTS = 3;
 
-export type RuntimeState = 'running' | 'paused' | 'stopped';
+export type { RuntimeState } from '@neokai/shared';
 
 export interface WorkerMessage {
 	/** DB row ID in sdk_messages — used to track last_forwarded_message_id */
