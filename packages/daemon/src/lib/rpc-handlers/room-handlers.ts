@@ -16,6 +16,7 @@
 import type { MessageHub, WorkspacePath } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
+import type { RoomRuntimeService } from '../room/room-runtime-service';
 import type { SessionManager } from '../session-manager';
 import { Logger } from '../logger';
 
@@ -326,5 +327,83 @@ export function setupRoomHandlers(
 		}
 
 		return { room };
+	});
+}
+
+export function setupRoomRuntimeHandlers(
+	messageHub: MessageHub,
+	daemonHub: DaemonHub,
+	roomRuntimeService: RoomRuntimeService
+): void {
+	// room.runtime.state - Get runtime state for a room
+	messageHub.onRequest('room.runtime.state', async (data) => {
+		const params = data as { roomId: string };
+		if (!params.roomId) throw new Error('Room ID is required');
+		const state = roomRuntimeService.getRuntimeState(params.roomId);
+		return { state: state ?? 'stopped' };
+	});
+
+	// room.runtime.pause - Pause runtime
+	messageHub.onRequest('room.runtime.pause', async (data) => {
+		const params = data as { roomId: string };
+		if (!params.roomId) throw new Error('Room ID is required');
+		const success = roomRuntimeService.pauseRuntime(params.roomId);
+		if (!success) throw new Error(`No runtime for room: ${params.roomId}`);
+		daemonHub
+			.emit('room.runtime.stateChanged', {
+				sessionId: `room:${params.roomId}`,
+				roomId: params.roomId,
+				state: 'paused',
+			})
+			.catch(() => {});
+		return { success: true, state: 'paused' };
+	});
+
+	// room.runtime.resume - Resume runtime
+	messageHub.onRequest('room.runtime.resume', async (data) => {
+		const params = data as { roomId: string };
+		if (!params.roomId) throw new Error('Room ID is required');
+		const success = roomRuntimeService.resumeRuntime(params.roomId);
+		if (!success) throw new Error(`No runtime for room: ${params.roomId}`);
+		daemonHub
+			.emit('room.runtime.stateChanged', {
+				sessionId: `room:${params.roomId}`,
+				roomId: params.roomId,
+				state: 'running',
+			})
+			.catch(() => {});
+		return { success: true, state: 'running' };
+	});
+
+	// room.runtime.stop - Stop runtime
+	messageHub.onRequest('room.runtime.stop', async (data) => {
+		const params = data as { roomId: string };
+		if (!params.roomId) throw new Error('Room ID is required');
+		const success = roomRuntimeService.stopRuntime(params.roomId);
+		if (!success) throw new Error(`No runtime for room: ${params.roomId}`);
+		daemonHub
+			.emit('room.runtime.stateChanged', {
+				sessionId: `room:${params.roomId}`,
+				roomId: params.roomId,
+				state: 'stopped',
+			})
+			.catch(() => {});
+		return { success: true, state: 'stopped' };
+	});
+
+	// room.runtime.start - Start (or restart) runtime
+	messageHub.onRequest('room.runtime.start', async (data) => {
+		const params = data as { roomId: string };
+		if (!params.roomId) throw new Error('Room ID is required');
+		const success = roomRuntimeService.startRuntime(params.roomId);
+		if (!success) throw new Error(`Room not found: ${params.roomId}`);
+		daemonHub
+			.emit('room.runtime.stateChanged', {
+				sessionId: `room:${params.roomId}`,
+				roomId: params.roomId,
+				state: 'running',
+			})
+			.catch(() => {});
+		return { success: true, state: 'running' };
 	});
 }

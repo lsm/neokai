@@ -8,7 +8,7 @@
  * Follows the LobbyAgentService pattern.
  */
 
-import type { Room, McpServerConfig } from '@neokai/shared';
+import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
@@ -51,6 +51,55 @@ export class RoomRuntimeService {
 		this.subscribeToEvents();
 		await this.initializeExistingRooms();
 		log.info('RoomRuntimeService started');
+	}
+
+	getRuntimeState(roomId: string): RuntimeState | null {
+		const runtime = this.runtimes.get(roomId);
+		return runtime ? runtime.getState() : null;
+	}
+
+	pauseRuntime(roomId: string): boolean {
+		const runtime = this.runtimes.get(roomId);
+		if (!runtime) return false;
+		runtime.pause();
+		return true;
+	}
+
+	resumeRuntime(roomId: string): boolean {
+		const runtime = this.runtimes.get(roomId);
+		if (!runtime) return false;
+		runtime.resume();
+		return true;
+	}
+
+	stopRuntime(roomId: string): boolean {
+		const runtime = this.runtimes.get(roomId);
+		if (!runtime) return false;
+		runtime.stop();
+		return true;
+	}
+
+	/**
+	 * Start (or restart) a runtime for a room.
+	 * After stop(), the old runtime is disposed, so we remove it and create a fresh one.
+	 */
+	startRuntime(roomId: string): boolean {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return false;
+
+		// Remove old stopped runtime if it exists
+		const existing = this.runtimes.get(roomId);
+		if (existing) {
+			if (existing.getState() !== 'stopped') {
+				existing.stop();
+			}
+			this.runtimes.delete(roomId);
+			this.observers.delete(roomId);
+		}
+
+		// Create a fresh runtime (which calls start() internally)
+		this.createOrGetRuntime(room);
+		return true;
 	}
 
 	stop(): void {

@@ -27,7 +27,7 @@ import { setupTestHandlers } from './test-handlers';
 import { setupRewindHandlers } from './rewind-handlers';
 import { RoomManager } from '../room';
 // New split handlers for Neo functionality
-import { setupRoomHandlers } from './room-handlers';
+import { setupRoomHandlers, setupRoomRuntimeHandlers } from './room-handlers';
 import { setupTaskHandlers } from './task-handlers';
 import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
@@ -109,6 +109,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	roomRuntimeService.start().catch((error) => {
 		log.error('Failed to start RoomRuntimeService:', error);
 	});
+	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService);
 
 	// GitHub handlers
 	setupGitHubHandlers(
