@@ -41,8 +41,6 @@ export function createTables(db: BunDatabase): void {
         processing_state TEXT,
         archived_at TEXT,
         parent_id TEXT,
-        labels TEXT,
-        sub_session_order INTEGER DEFAULT 0,
         type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')),
         session_context TEXT
       )
@@ -50,18 +48,6 @@ export function createTables(db: BunDatabase): void {
 
 	// Messages and tool_calls tables removed - we now only use sdk_messages table
 	// This provides a cleaner design with single source of truth
-
-	// Events table
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        type TEXT NOT NULL,
-        data TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-      )
-    `);
 
 	// Authentication configuration table (stores current auth method and credentials)
 	db.exec(`
@@ -144,9 +130,7 @@ export function createTables(db: BunDatabase): void {
         session_ids TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        context_version INTEGER DEFAULT 0,
-        config TEXT
+        updated_at INTEGER NOT NULL
       )
     `);
 
@@ -169,7 +153,6 @@ export function createTables(db: BunDatabase): void {
         completed_at INTEGER,
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
         assigned_agent TEXT DEFAULT 'coder',
-        version INTEGER DEFAULT 0,
         created_by_task_id TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
@@ -193,7 +176,6 @@ export function createTables(db: BunDatabase): void {
         updated_at INTEGER NOT NULL,
         completed_at INTEGER,
         planning_attempts INTEGER DEFAULT 0,
-        goal_review_attempts INTEGER DEFAULT 0,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -275,34 +257,6 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS task_messages (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL REFERENCES tasks(id),
-        group_id TEXT NOT NULL REFERENCES session_groups(id),
-        from_role TEXT NOT NULL CHECK(from_role IN ('worker', 'leader', 'human')),
-        to_role TEXT NOT NULL CHECK(to_role IN ('worker', 'leader')),
-        to_session_id TEXT NOT NULL,
-        message_type TEXT NOT NULL DEFAULT 'normal'
-          CHECK(message_type IN ('normal', 'interrupt', 'escalation_context')),
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending'
-          CHECK(status IN ('pending', 'delivered', 'dead_letter')),
-        created_at INTEGER NOT NULL,
-        delivered_at INTEGER
-      )
-    `);
-
-	db.exec(`
-      CREATE TABLE IF NOT EXISTS room_audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        room_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      )
-    `);
-
 	// Create indexes
 	createIndexes(db);
 }
@@ -311,8 +265,6 @@ export function createTables(db: BunDatabase): void {
  * Create database indexes for performance
  */
 function createIndexes(db: BunDatabase): void {
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_events_session
-      ON events(session_id, timestamp)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session
       ON sdk_messages(session_id, timestamp)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_type
@@ -339,9 +291,4 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgmsg_group ON session_group_messages(group_id, id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_messages_group ON task_messages(group_id, status)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_task_messages_task ON task_messages(task_id)`);
-	db.exec(
-		`CREATE INDEX IF NOT EXISTS idx_room_audit_log_room ON room_audit_log(room_id, created_at)`
-	);
 }
