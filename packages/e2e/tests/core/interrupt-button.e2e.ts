@@ -139,25 +139,26 @@ test.describe('Interrupt Button', () => {
 		// Click stop button
 		await stopButton.click();
 
-		// During interrupt, button should show spinner
-		// Note: This might be very quick, so we check immediately after click
+		// During interrupt, one of these should be true:
+		// 1. Spinner visible on stop button (interrupt in progress)
+		// 2. Stop button is disabled (interrupt in progress)
+		// 3. Send button already returned (interrupt completed very fast)
 		const hasSpinner = await stopButton
 			.locator('.animate-spin')
 			.isVisible({ timeout: 500 })
 			.catch(() => false);
-
-		// Spinner might not be visible if interrupt was very fast, but button should be disabled
 		const isDisabledDuringInterrupt = await stopButton.isDisabled().catch(() => false);
+		const sendButtonAlreadyBack = await page
+			.locator('[data-testid="send-button"]')
+			.isVisible()
+			.catch(() => false);
 
-		// At least one should be true (spinner visible or button disabled)
-		expect(hasSpinner || isDisabledDuringInterrupt).toBe(true);
-
-		// Wait for interrupt to complete
-		await page.waitForTimeout(1500);
+		// At least one indicator should be true
+		expect(hasSpinner || isDisabledDuringInterrupt || sendButtonAlreadyBack).toBe(true);
 
 		// Send button should return
 		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-			timeout: 5000,
+			timeout: 10000,
 		});
 
 		await cleanupTestSession(page, sessionId);

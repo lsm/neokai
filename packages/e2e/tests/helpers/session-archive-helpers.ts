@@ -86,11 +86,19 @@ export async function archiveSession(page: Page, sessionId: string): Promise<voi
 }
 
 /**
- * Navigate to home page and wait for WebSocket connection
+ * Navigate to home page and wait for WebSocket connection.
+ * Clicks "Chats" in NavRail to ensure the session list is visible.
  */
 export async function goToHomePage(page: Page): Promise<void> {
 	await page.goto('/');
 	await waitForWebSocketConnected(page);
+
+	// Click Chats in NavRail to show session list (Lobby shows RoomList by default)
+	const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
+	if (await chatsButton.isVisible().catch(() => false)) {
+		await chatsButton.click();
+		await page.waitForTimeout(300);
+	}
 }
 
 /**

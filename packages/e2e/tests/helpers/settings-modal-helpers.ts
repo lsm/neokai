@@ -18,7 +18,7 @@ export async function openSettingsModal(page: Page): Promise<void> {
 	await settingsButton.click();
 
 	// Wait for Settings section to appear in ContextPanel
-	await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 5000 });
+	await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'visible', timeout: 5000 });
 }
 
 /**
@@ -30,5 +30,5 @@ export async function closeSettingsModal(page: Page): Promise<void> {
 	await closeButton.click();
 
 	// Wait for modal to close
-	await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 5000 });
+	await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'hidden', timeout: 5000 });
 }

@@ -14,26 +14,17 @@ test.describe('Authentication Status', () => {
 		await waitForWebSocketConnected(page);
 	});
 
-	test('should show authentication status in sidebar', async ({ page }) => {
-		// Check for auth status indicator
-		const authStatus = page.locator('text=/OAuth Token|API Key|Not configured/i').first();
-		await expect(authStatus).toBeVisible({ timeout: 5000 });
+	test('should show daemon connection status indicator', async ({ page }) => {
+		// The daemon status indicator shows connection state via aria-label
+		// Possible states: "Daemon: Connected", "Daemon: Connecting...", "Daemon: Offline", "Daemon: Error"
+		const daemonIndicator = page.locator(
+			'[aria-label^="Daemon:"]'
+		);
+		await expect(daemonIndicator).toBeVisible({ timeout: 5000 });
 
-		// If authenticated, should show green indicator
-		const isAuthenticated = await page
-			.locator('.bg-green-500')
-			.first()
-			.isVisible()
-			.catch(() => false);
-
-		// If not authenticated, should show yellow indicator
-		const notAuthenticated = await page
-			.locator('.bg-yellow-500')
-			.first()
-			.isVisible()
-			.catch(() => false);
-
-		// Should have one or the other
-		expect(isAuthenticated || notAuthenticated).toBe(true);
+		// Should show connected state (green indicator)
+		await expect(
+			page.locator('[aria-label="Daemon: Connected"]')
+		).toBeVisible({ timeout: 10000 });
 	});
 });
