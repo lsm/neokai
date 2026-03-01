@@ -44,6 +44,7 @@ export interface InputTextareaProps {
 	onCommandClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
+	onStop?: () => void;
 	onPaste?: (e: ClipboardEvent) => void;
 }
 
@@ -63,6 +64,7 @@ export function InputTextarea({
 	onCommandSelect,
 	onCommandClose,
 	isAgentWorking = false,
+	onStop,
 	onPaste,
 }: InputTextareaProps) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -126,6 +128,7 @@ export function InputTextarea({
 	const charCount = content.length;
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
+	const showStop = isAgentWorking && !hasContent && !!onStop;
 
 	return (
 		<div class="relative flex-1">
@@ -185,39 +188,62 @@ export function InputTextarea({
 					</div>
 				)}
 
-				{/* Send/Queue Button */}
-				<button
-					type="button"
-					onClick={onSubmit}
-					disabled={disabled || !hasContent}
-					title={
-						isMobileDevice.current
-							? 'Send message'
-							: isAgentWorking
-								? 'Send message now (Tab queues next turn)'
-								: 'Send message (Enter or Cmd+Enter)'
-					}
-					aria-label="Send message"
-					data-testid="send-button"
-					class={cn(
-						'absolute right-1.5',
-						isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
-						'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
-						hasContent && !disabled
-							? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
-							: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-					)}
-				>
-					<svg
-						class="w-4.5 h-4.5"
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke="currentColor"
-						stroke-width={2.5}
+				{/* Send or Stop Button */}
+				{showStop ? (
+					<button
+						type="button"
+						onClick={onStop}
+						disabled={disabled}
+						title="Stop generation (Esc)"
+						aria-label="Stop generation"
+						data-testid="stop-button"
+						class={cn(
+							'absolute right-1.5',
+							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
+							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
+							!disabled
+								? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
+								: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+						)}
 					>
-						<path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
-					</svg>
-				</button>
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+							<rect x="6" y="6" width="12" height="12" rx="2" />
+						</svg>
+					</button>
+				) : (
+					<button
+						type="button"
+						onClick={onSubmit}
+						disabled={disabled || !hasContent}
+						title={
+							isMobileDevice.current
+								? 'Send message'
+								: isAgentWorking
+									? 'Send message now (Tab queues next turn)'
+									: 'Send message (Enter or Cmd+Enter)'
+						}
+						aria-label="Send message"
+						data-testid="send-button"
+						class={cn(
+							'absolute right-1.5',
+							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
+							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
+							hasContent && !disabled
+								? 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+								: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
+						)}
+					>
+						<svg
+							class="w-4.5 h-4.5"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+							stroke-width={2.5}
+						>
+							<path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+						</svg>
+					</button>
+				)}
 			</div>
 		</div>
 	);

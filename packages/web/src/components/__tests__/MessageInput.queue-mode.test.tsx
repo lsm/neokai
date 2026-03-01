@@ -78,6 +78,10 @@ vi.mock('../../hooks', () => ({
 		getImagesForSend: mockGetImagesForSend,
 		handlePaste: vi.fn(() => {}),
 	}),
+	useInterrupt: () => ({
+		interrupting: false,
+		handleInterrupt: vi.fn(async () => {}),
+	}),
 }));
 
 vi.mock('../../lib/connection-manager', () => ({
