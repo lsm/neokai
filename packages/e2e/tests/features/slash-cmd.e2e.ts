@@ -262,14 +262,10 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 		// Wait for dropdown to be fully visible and event listeners mounted
 		await expect(getAutocompleteDropdown(page)).toBeVisible();
 
-		// Dispatch a mousedown event on the document body (outside the dropdown).
-		// The handleClickOutside handler in CommandAutocomplete listens for mousedown
-		// on the document and closes the dropdown when the target is not inside it.
-		await page.evaluate(() => {
-			document.body.dispatchEvent(
-				new MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 })
-			);
-		});
+		// Click on the session heading in the chat header (outside the dropdown).
+		// Using Playwright's native click generates real mousedown events that trigger
+		// the handleClickOutside handler in CommandAutocomplete.
+		await page.getByRole('heading', { level: 2 }).last().click({ force: true });
 
 		// Dropdown should close
 		await page.waitForTimeout(500);
