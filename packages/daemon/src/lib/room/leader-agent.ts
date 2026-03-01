@@ -148,11 +148,14 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			`6. If the plan needs changes, use \`send_to_worker\` with specific feedback on what to add, remove, or modify`
 		);
 		sections.push(
-			`7. If the plan is comprehensive and well-structured, use \`complete_task\` with a summary`
+			`7. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
 		);
-		sections.push(`8. Use \`fail_task\` only if the goal is fundamentally not plannable`);
 		sections.push(
-			`9. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
+			`8. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
+		);
+		sections.push(`9. Use \`fail_task\` only if the goal is fundamentally not plannable`);
+		sections.push(
+			`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
 		);
 	} else {
 		// Check if room has reviewer agents configured

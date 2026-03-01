@@ -3,7 +3,7 @@
  *
  * Displays tasks grouped by status:
  * - In Progress
- * - Review
+ * - Review (with Approve button)
  * - Pending
  * - Draft
  * - Completed
@@ -15,9 +15,10 @@ import type { TaskSummary } from '@neokai/shared';
 interface RoomTasksProps {
 	tasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
+	onApprove?: (taskId: string) => void;
 }
 
-export function RoomTasks({ tasks, onTaskClick }: RoomTasksProps) {
+export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 	if (tasks.length === 0) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
@@ -59,7 +60,12 @@ export function RoomTasks({ tasks, onTaskClick }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{review.map((task) => (
-							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								onClick={onTaskClick}
+								onApprove={onApprove}
+							/>
 						))}
 					</div>
 				</div>
@@ -124,8 +130,17 @@ export function RoomTasks({ tasks, onTaskClick }: RoomTasksProps) {
 	);
 }
 
-function TaskItem({ task, onClick }: { task: TaskSummary; onClick?: (taskId: string) => void }) {
+function TaskItem({
+	task,
+	onClick,
+	onApprove,
+}: {
+	task: TaskSummary;
+	onClick?: (taskId: string) => void;
+	onApprove?: (taskId: string) => void;
+}) {
 	const isClickable = !!onClick;
+	const showApprove = task.status === 'review' && !!onApprove;
 
 	return (
 		<div
@@ -140,7 +155,18 @@ function TaskItem({ task, onClick }: { task: TaskSummary; onClick?: (taskId: str
 					{task.progress !== undefined && (
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					)}
-					{isClickable && <span class="text-xs text-gray-600">→</span>}
+					{showApprove && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onApprove(task.id);
+							}}
+							class="px-2 py-1 text-xs font-medium text-green-400 bg-green-900/20 hover:bg-green-900/40 border border-green-700/50 rounded transition-colors"
+						>
+							Approve
+						</button>
+					)}
+					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
 			{task.progress !== undefined && (

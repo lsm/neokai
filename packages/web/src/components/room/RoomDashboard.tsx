@@ -144,6 +144,7 @@ export function RoomDashboard() {
 				<RoomTasks
 					tasks={tasks}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+					onApprove={roomId ? (taskId) => roomStore.approveTask(taskId) : undefined}
 				/>
 			</div>
 

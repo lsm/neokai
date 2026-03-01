@@ -403,6 +403,38 @@ class RoomStore {
 		return task;
 	}
 
+	/**
+	 * Approve a task in review status (human approval).
+	 * For planning tasks, this promotes draft children to pending.
+	 */
+	async approveTask(taskId: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		const { task } = await hub.request<{ task: NeoTask }>('task.approve', {
+			roomId,
+			taskId,
+		});
+
+		if (task) {
+			const idx = this.tasks.value.findIndex((t) => t.id === task.id);
+			if (idx >= 0) {
+				this.tasks.value = [
+					...this.tasks.value.slice(0, idx),
+					task,
+					...this.tasks.value.slice(idx + 1),
+				];
+			}
+		}
+	}
+
 	// ========================================
 	// Session Methods
 	// ========================================
