@@ -264,6 +264,21 @@ export class QueryRunner {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const isAbortError = error instanceof Error && error.name === 'AbortError';
 
+			// If startup timed out while trying to resume a session, clear sdkSessionId
+			// so the next attempt (Reset Agent, or sending a message) starts a fresh SDK
+			// session instead of repeatedly failing on the same problematic session file.
+			if (
+				errorMessage.includes('SDK startup timeout') &&
+				session.sdkSessionId
+			) {
+				logger.error(
+					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
+						'Next query will start fresh without resume.'
+				);
+				session.sdkSessionId = undefined;
+				this.ctx.db.updateSession(session.id, { sdkSessionId: undefined });
+			}
+
 			if (!isAbortError) {
 				const apiErrorHandled = await this.handleApiValidationError(error);
 
@@ -311,24 +326,28 @@ export class QueryRunner {
 				await stateManager.setIdle();
 			}
 		} finally {
-			// Always clear startup timer to avoid late timeout callbacks affecting later queries.
-			const timer = this.ctx.startupTimeoutTimer;
-			if (timer) {
-				clearTimeout(timer);
-				this.ctx.startupTimeoutTimer = null;
-			}
-
-			// Cleanup abort controller
-			const abortController = this.ctx.queryAbortController;
-			if (abortController) {
-				abortController.abort();
-				this.ctx.queryAbortController = null;
-			}
-
-			// Check for stale query
+			// Check for stale query FIRST to avoid race conditions.
+			// When a query is restarted (e.g., model switch), the old query's finally block
+			// must not touch shared state (abort controller, timers) that belongs to the new query.
 			const isStaleQuery = this.ctx.getQueryGeneration() !== queryGeneration;
 
 			if (!isStaleQuery) {
+				// This is the current query — safe to clean up shared state
+
+				// Clear startup timer
+				const timer = this.ctx.startupTimeoutTimer;
+				if (timer) {
+					clearTimeout(timer);
+					this.ctx.startupTimeoutTimer = null;
+				}
+
+				// Cleanup abort controller
+				const abortController = this.ctx.queryAbortController;
+				if (abortController) {
+					abortController.abort();
+					this.ctx.queryAbortController = null;
+				}
+
 				messageQueue.stop();
 				this.ctx.queryPromise = null;
 
@@ -346,9 +365,8 @@ export class QueryRunner {
 				if (!this.ctx.isCleaningUp()) {
 					await stateManager.setIdle();
 				}
-			} else {
-				// Stale query detected - skip cleanup
 			}
+			// Stale query: skip all cleanup — new query owns shared state
 		}
 	}
 
