@@ -158,67 +158,93 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
 		);
 	} else {
-		// Check if room has reviewer agents configured
+		// Check if room has sub-agents configured for leader
 		const roomConfig = room.config ?? {};
-		const reviewerConfigs = roomConfig.reviewers as ReviewerConfig[] | undefined;
+		const reviewerConfigs = getLeaderSubagents(roomConfig);
 		const hasReviewers = reviewerConfigs && reviewerConfigs.length > 0;
 
 		if (hasReviewers) {
-			// Full review orchestration workflow with coordinator sub-agents
-			sections.push(`\n## Review Orchestration Workflow\n`);
+			// Full review orchestration workflow with reviewer sub-agents
+			sections.push(`\n## Review Orchestration Workflow (MANDATORY)\n`);
 			sections.push(
-				`You are running in coordinator mode with reviewer sub-agents. Follow this workflow:\n`
+				`You have reviewer sub-agents available via the Task tool. You MUST dispatch these reviewers before calling \`complete_task\`. The runtime enforces this — \`complete_task\` will be rejected if no reviews have been posted on the PR.\n`
 			);
-			sections.push(`### Step 1: Review Worker Output`);
-			sections.push(`Read the worker's output to understand what was implemented.`);
-			sections.push(`Check if the worker created a PR (look for PR URL in the output).\n`);
+			sections.push(
+				`Each reviewer will thoroughly review the code in this worktree — not just the diff, but the full implementation — to verify the original request was correctly achieved.\n`
+			);
+
+			sections.push(`### Step 1: Understand What Was Done`);
+			sections.push(`Read the worker's output to understand:`);
+			sections.push(`- What was the original request/task?`);
+			sections.push(`- What did the worker implement?`);
+			sections.push(`- Which files were changed or created?`);
+			sections.push(
+				`\nExtract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
+			);
+			sections.push(
+				`If no PR was created, use \`send_to_worker\` asking the worker to create one before review can proceed.\n`
+			);
 
 			sections.push(`### Step 2: Spawn Reviewer Sub-agents`);
 			sections.push(
-				`Use the \`Task\` tool to spawn each reviewer sub-agent. Available reviewers:`
+				`Use the \`Task\` tool to spawn each reviewer. Available reviewers:\n`
 			);
 			for (const reviewer of reviewerConfigs!) {
 				const name = `reviewer-${reviewer.model.replace(/[^a-zA-Z0-9-]/g, '-')}`;
-				sections.push(`- \`${name}\` — ${reviewer.model} reviewer`);
+				const type = reviewer.type === 'cli' ? ' (CLI)' : '';
+				sections.push(`- **${name}**${type} — Reviews using ${reviewer.model}`);
 			}
+
+			sections.push(`\nFor each reviewer, use the Task tool like this:`);
+			sections.push('```');
 			sections.push(
-				`\nTell each reviewer the PR number/URL and ask them to review the changes and post findings as PR comments using \`gh pr comment\`.`
+				`Task(subagent_type: "reviewer-<model-name>", prompt: "Review the code in this worktree for PR #<NUMBER>. The original request was: <task description>. The worker implemented: <summary of what was done>. Review the implementation thoroughly — read the full files, not just diffs — and verify the original request is correctly and completely achieved.")`
+			);
+			sections.push('```');
+			sections.push(
+				`\nSpawn all reviewers in parallel by making multiple Task calls in the same turn.`
 			);
 			sections.push(
-				`Each reviewer should return a structured verdict with issues by severity: P0 (blocking), P1 (should-fix), P2 (suggestion).\n`
+				`Each reviewer will review the codebase comprehensively, post findings as PR comments, and return a structured verdict.\n`
 			);
 
-			sections.push(`### Step 3: Evaluate Verdicts`);
+			sections.push(`### Step 3: Parse Verdicts`);
 			sections.push(
-				`Collect all reviewer verdicts. Consolidate findings by severity:\n`
+				`Each reviewer returns a verdict block between \`---VERDICT---\` and \`---END_VERDICT---\` markers.`
 			);
-			sections.push(`- **P0 (blocking):** Must be fixed before merging`);
-			sections.push(`- **P1 (should-fix):** Should be fixed, may warrant sending back`);
-			sections.push(`- **P2 (suggestion):** Nice-to-have, don't block on these\n`);
+			sections.push(`Parse each verdict for:\n`);
+			sections.push(`- **recommendation**: APPROVE, REQUEST_CHANGES, or COMMENT_ONLY`);
+			sections.push(`- **P0**: Blocking — bugs, security vulnerabilities, data loss, broken functionality`);
+			sections.push(`- **P1**: Should-fix — poor patterns, missing error handling, test gaps`);
+			sections.push(`- **P2**: Important suggestion — meaningful quality/readability improvements`);
+			sections.push(`- **P3**: Nit — style issues, minor cosmetic, optional documentation\n`);
 
-			sections.push(`### Step 4: Decide Next Action`);
+			sections.push(`### Step 4: Decide Next Action\n`);
 			sections.push(
-				`- If P0/P1 issues exist: use \`send_to_worker\` with consolidated, actionable feedback`
+				`Consolidate all reviewer findings and make ONE decision:\n`
 			);
 			sections.push(
-				`- If only P2 or no issues: use \`submit_for_review\` with the PR URL to park for human approval`
+				`- **Any P0, P1, or P2 issues exist** → use \`send_to_worker\` with consolidated feedback. List each issue with file:line and what to fix. All P0, P1, and P2 issues must be resolved.`
 			);
 			sections.push(
-				`- If the task is fundamentally broken: use \`fail_task\` or \`replan_goal\`\n`
+				`- **Only P3 nits or no issues** → use \`submit_for_review\` with the PR URL to park for human approval.`
+			);
+			sections.push(
+				`- **Task is fundamentally broken** → use \`fail_task\` or \`replan_goal\`.\n`
 			);
 
 			sections.push(`### Subsequent Rounds`);
 			sections.push(
-				`When the worker pushes fixes and you receive their output again:`
+				`When the worker pushes fixes and you receive their updated output:\n`
 			);
 			sections.push(
-				`- Use \`Task(resume: <agentId>)\` to continue each reviewer's session with full prior context preserved`
+				`1. Resume each reviewer using \`Task(resume: <agentId>)\` — this preserves their prior context`
 			);
 			sections.push(
-				`- Tell the resumed reviewer: "Fixes have been pushed. Please re-review the changes."`
+				`2. Tell each resumed reviewer: "Fixes have been pushed for PR #<NUMBER>. Please re-review the code and verify your previous findings were addressed. Also check that the fixes didn't introduce new issues."`
 			);
 			sections.push(
-				`- This is more efficient than spawning new reviewers — they remember previous findings.\n`
+				`3. Parse the new verdicts and decide again.\n`
 			);
 		} else {
 			// Simple review guidelines without coordinator sub-agents
@@ -229,7 +255,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`3. If issues are found, use \`send_to_worker\` with specific actionable feedback`
 			);
 			sections.push(
-				`4. If the work is complete and correct, use \`complete_task\` with a summary`
+				`4. If the work is complete, correct, and a PR was created, use \`submit_for_review\` with the PR URL`
+			);
+			sections.push(
+				`5. If no PR is needed (non-coding tasks), use \`complete_task\` with a summary`
 			);
 		}
 
@@ -326,10 +355,11 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 }
 
 /**
- * Reviewer configuration from Room.config.reviewers
+ * Sub-agent configuration (used in room.config.agentSubagents.{role})
+ * Backward-compatible with the legacy room.config.reviewers format.
  */
-interface ReviewerConfig {
-	/** Model ID (e.g., 'claude-opus-4-6', 'glm-5') */
+interface SubagentConfig {
+	/** Model ID (e.g., 'claude-opus-4-6', 'glm-5') or CLI agent ID */
 	model: string;
 	/** Provider name (e.g., 'anthropic', 'glm') */
 	provider?: string;
@@ -337,6 +367,24 @@ interface ReviewerConfig {
 	type?: 'cli';
 	/** Model to use as driver when type is 'cli' */
 	driver_model?: string;
+}
+
+/**
+ * Read leader sub-agents from room config with backward compatibility.
+ * New path: room.config.agentSubagents.leader
+ * Legacy path: room.config.reviewers
+ */
+function getLeaderSubagents(
+	roomConfig: Record<string, unknown>
+): SubagentConfig[] | undefined {
+	const agentSubagents = roomConfig.agentSubagents as
+		| Record<string, SubagentConfig[]>
+		| undefined;
+	if (agentSubagents?.leader && agentSubagents.leader.length > 0) {
+		return agentSubagents.leader;
+	}
+	// Fallback to legacy flat reviewers
+	return roomConfig.reviewers as SubagentConfig[] | undefined;
 }
 
 /** Restricted tools for reviewer sub-agents (read-only + gh CLI) */
@@ -349,12 +397,109 @@ const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 	'WebSearch',
 ];
 
+const REVIEWER_VERDICT_FORMAT = `
+## Required Output Format
+
+You MUST end your response with a structured verdict in exactly this format:
+
+---VERDICT---
+issues_found: <number>
+recommendation: APPROVE | REQUEST_CHANGES | COMMENT_ONLY
+p0:
+- <file:line> <description of blocking issue>
+p1:
+- <file:line> <description of should-fix issue>
+p2:
+- <file:line> <description of important suggestion>
+p3:
+- <file:line> <description of minor nit>
+---END_VERDICT---
+
+Severity levels:
+- P0 (blocking): Bugs, security vulnerabilities, data loss risks, broken functionality
+- P1 (should-fix): Poor patterns, missing error handling, test gaps, unclear code
+- P2 (important suggestion): Meaningful improvements to quality, readability, maintainability
+- P3 (nit): Style nits, minor cosmetic issues, optional documentation
+
+Decision rules:
+- Use "REQUEST_CHANGES" when any P0, P1, or P2 issues exist — all must be addressed
+- Use "APPROVE" when only P3 issues or no issues exist
+- Use "COMMENT_ONLY" when you only have P3 nits and the code is otherwise good
+- List "none" under a severity level if there are no issues at that level`;
+
 /**
- * Build reviewer AgentDefinition records from Room.config.reviewers.
- * Each reviewer becomes a named sub-agent the leader can spawn via Task tool.
+ * Build prompt for an SDK-native reviewer agent (reviews code directly).
+ */
+function buildSdkReviewerPrompt(): string {
+	return `You are a thorough code reviewer. Your job is to review the codebase in this worktree to verify that the requested work was correctly implemented.
+
+## Review Process
+
+1. Read the task prompt carefully — it describes what was requested and what was implemented
+2. Understand the original ask: what was the goal? What should the final result look like?
+3. Explore the codebase thoroughly (use Read, Grep, Glob to understand the full picture):
+   - Read the changed/new files completely, not just diffs
+   - Read surrounding code to understand integration points
+   - Check imports, exports, and cross-file dependencies
+   - Look at test files to verify coverage
+4. Evaluate the implementation holistically:
+   - **Correctness**: Does the code actually achieve the original ask?
+   - **Completeness**: Are all aspects of the request addressed? Any missing pieces?
+   - **Bugs & edge cases**: Logic errors, off-by-one, null handling, race conditions
+   - **Security**: Injection, XSS, SSRF, path traversal, auth bypass, data exposure
+   - **Architecture**: Does this fit the existing patterns? Any unnecessary coupling?
+   - **Error handling**: Are failures handled gracefully at system boundaries?
+   - **Tests**: Do tests actually verify the new behavior? Are edge cases covered?
+   - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
+5. Post your review as a PR comment using: gh pr comment <PR_NUMBER> --body "<review>"
+6. Return your verdict in the structured format below
+
+## Guidelines
+
+- Review the code as a whole, not just the diff — understand how changes integrate with the existing codebase
+- Verify the original request is fully achieved, not just partially implemented
+- Be constructive and specific — always include file paths and line numbers
+- Focus on issues that matter — don't nitpick formatting or style if a linter handles it
+- Check that tests actually test the new/changed behavior, not just exist
+${REVIEWER_VERDICT_FORMAT}`;
+}
+
+/**
+ * Build prompt for a CLI-based reviewer agent (drives an external CLI tool).
+ */
+function buildCliReviewerPrompt(cliTool: string): string {
+	return `You are a code reviewer that uses the ${cliTool} CLI tool to perform thorough code review.
+
+## Review Process
+
+1. Read the task prompt carefully — it describes what was requested and what was implemented
+2. Understand the original ask: what was the goal? What should the final result look like?
+3. Explore the codebase to identify changed and related files (use Read, Grep, Glob)
+4. Run the ${cliTool} CLI tool via Bash to review the code:
+   - Pass the relevant files or directories as input
+   - Capture the tool's output
+5. Supplement the CLI tool's output with your own review:
+   - Read surrounding code to understand integration points
+   - Verify the original request is fully achieved
+   - Check for issues the CLI tool may have missed
+6. Post findings as a PR comment using: gh pr comment <PR_NUMBER> --body "<review>"
+7. Return your verdict in the structured format below
+
+## Guidelines
+
+- Map the CLI tool's output to severity levels (P0/P1/P2/P3)
+- Add context from the codebase if the tool's findings need clarification
+- Review comprehensively — don't limit yourself to just what the CLI tool found
+- Be specific about file paths and line numbers
+${REVIEWER_VERDICT_FORMAT}`;
+}
+
+/**
+ * Build reviewer AgentDefinition records from sub-agent configs.
+ * Each sub-agent becomes a named agent the leader can spawn via Task tool.
  */
 export function buildReviewerAgents(
-	reviewers: ReviewerConfig[]
+	reviewers: SubagentConfig[]
 ): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
 
@@ -367,14 +512,7 @@ export function buildReviewerAgents(
 				description: `Code reviewer using ${reviewer.model} CLI. Runs the CLI tool via Bash and posts findings as PR comments.`,
 				tools: REVIEWER_TOOLS,
 				model: (reviewer.driver_model ?? 'sonnet') as AgentDefinition['model'],
-				prompt: `You are a code reviewer that uses the ${reviewer.model} CLI tool.
-
-1. Run the ${reviewer.model} tool via Bash to review the code changes
-2. Parse the output for issues and suggestions
-3. Post findings as a PR comment using: gh pr comment <PR_NUMBER> --body "<review>"
-4. Return a structured verdict: list issues by severity (P0=blocking, P1=should-fix, P2=suggestion)
-
-Be specific about file paths and line numbers. Distinguish critical issues from minor suggestions.`,
+				prompt: buildCliReviewerPrompt(reviewer.model),
 			};
 		} else {
 			// Direct SDK reviewer: uses the specified model natively
@@ -382,18 +520,7 @@ Be specific about file paths and line numbers. Distinguish critical issues from 
 				description: `Code reviewer using ${reviewer.model}. Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
 				model: reviewer.model as AgentDefinition['model'],
-				prompt: `You are a code reviewer. Your job is to review code changes for correctness, quality, security, and adherence to best practices.
-
-When given a task:
-1. Read the changed files carefully (use Read, Grep, Glob to examine the codebase)
-2. Check for bugs, logic errors, and edge cases
-3. Look for security issues (injection, XSS, etc.)
-4. Verify the changes follow existing patterns
-5. Check for unnecessary complexity or over-engineering
-6. Post your review as a PR comment using: gh pr comment <PR_NUMBER> --body "<review>"
-7. Return a structured verdict: list issues by severity (P0=blocking, P1=should-fix, P2=suggestion)
-
-Be constructive and specific. Include file paths and line numbers.`,
+				prompt: buildSdkReviewerPrompt(),
 			};
 		}
 	}
@@ -407,8 +534,10 @@ Be constructive and specific. Include file paths and line numbers.`,
  * Uses the Claude Code preset (for read/glob/grep codebase access to review work)
  * plus leader-specific MCP tools for routing decisions.
  *
- * When Room.config.reviewers is configured, enables coordinator mode so the leader
- * can spawn reviewer sub-agents via the Task tool.
+ * When Room.config.agentSubagents.leader (or legacy Room.config.reviewers) is configured,
+ * reviewer agents are passed via `agents` so the leader can spawn them via the Task tool.
+ * We intentionally do NOT use coordinatorMode here — the Coordinator agent would
+ * override the leader's system prompt and restrict its MCP tools.
  */
 export function createLeaderAgentInit(
 	config: LeaderAgentConfig,
@@ -418,12 +547,11 @@ export function createLeaderAgentInit(
 
 	// Build reviewer agents from room config (if any)
 	const roomConfig = config.room.config ?? {};
-	const reviewerConfigs = roomConfig.reviewers as ReviewerConfig[] | undefined;
+	const reviewerConfigs = getLeaderSubagents(roomConfig);
 	const reviewerAgents =
 		reviewerConfigs && reviewerConfigs.length > 0
 			? buildReviewerAgents(reviewerConfigs)
 			: undefined;
-	const hasReviewers = reviewerAgents && Object.keys(reviewerAgents).length > 0;
 
 	return {
 		sessionId: config.sessionId,
@@ -440,8 +568,8 @@ export function createLeaderAgentInit(
 		context: { roomId: config.room.id },
 		type: 'leader',
 		model: config.model ?? DEFAULT_LEADER_MODEL,
-		// Enable coordinator mode when reviewers are configured
-		coordinatorMode: hasReviewers ? true : undefined,
+		// Pass reviewer agents directly — the SDK Task tool can spawn them
+		// without needing coordinatorMode (which would conflict with leader's own tools)
 		agents: reviewerAgents,
 	};
 }

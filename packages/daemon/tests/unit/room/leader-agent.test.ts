@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
 	buildLeaderSystemPrompt,
+	buildReviewerAgents,
 	createLeaderToolHandlers,
 	createLeaderAgentInit,
 	type LeaderAgentConfig,
@@ -137,6 +138,66 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('replan_goal');
 			expect(prompt).toContain('overall approach needs rethinking');
 		});
+
+		it('should include orchestration workflow when sub-agents configured', () => {
+			const prompt = buildLeaderSystemPrompt(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [
+									{ model: 'claude-opus-4-6' },
+									{ model: 'claude-sonnet-4-6' },
+								],
+							},
+						},
+					}),
+				})
+			);
+			expect(prompt).toContain('Review Orchestration Workflow');
+			expect(prompt).toContain('reviewer-claude-opus-4-6');
+			expect(prompt).toContain('reviewer-claude-sonnet-4-6');
+			expect(prompt).toContain('---VERDICT---');
+			expect(prompt).toContain('REQUEST_CHANGES');
+			expect(prompt).toContain('Task(subagent_type:');
+			// P3 severity level and comprehensive review
+			expect(prompt).toContain('P3');
+			expect(prompt).toContain('P0, P1, or P2 issues exist');
+			expect(prompt).toContain('not just diffs');
+		});
+
+		it('should use simple review guidelines without sub-agents', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('Review Guidelines');
+			expect(prompt).not.toContain('Review Orchestration Workflow');
+			expect(prompt).not.toContain('---VERDICT---');
+		});
+
+		it('includes MANDATORY review orchestration when sub-agents configured', () => {
+			const prompt = buildLeaderSystemPrompt(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [
+									{ model: 'claude-opus-4-6' },
+									{ model: 'claude-sonnet-4-6' },
+								],
+							},
+						},
+					}),
+				})
+			);
+			expect(prompt).toContain('Review Orchestration Workflow (MANDATORY)');
+			expect(prompt).toContain('MUST dispatch these reviewers');
+			expect(prompt).toContain('complete_task` will be rejected');
+		});
+
+		it('recommends submit_for_review in simple review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('submit_for_review');
+			expect(prompt).toContain('non-coding tasks');
+		});
 	});
 
 	describe('createLeaderToolHandlers', () => {
@@ -247,6 +308,112 @@ describe('Leader Agent', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.context).toEqual({ roomId: 'room-1' });
+		});
+
+		it('should pass reviewer agents from agentSubagents.leader without coordinatorMode', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'claude-opus-4-6' }],
+							},
+						},
+					}),
+				}),
+				callbacks
+			);
+			// coordinatorMode should NOT be set — leader uses its own prompt/tools
+			expect(init.coordinatorMode).toBeUndefined();
+			expect(init.agents).toBeDefined();
+			expect(Object.keys(init.agents!)).toContain('reviewer-claude-opus-4-6');
+		});
+
+		it('should fallback to legacy reviewers config', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							reviewers: [{ model: 'claude-sonnet-4-6' }],
+						},
+					}),
+				}),
+				callbacks
+			);
+			expect(init.coordinatorMode).toBeUndefined();
+			expect(init.agents).toBeDefined();
+			expect(Object.keys(init.agents!)).toContain('reviewer-claude-sonnet-4-6');
+		});
+
+		it('should prefer agentSubagents.leader over legacy reviewers', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'new-model' }],
+							},
+							reviewers: [{ model: 'old-model' }],
+						},
+					}),
+				}),
+				callbacks
+			);
+			expect(init.coordinatorMode).toBeUndefined();
+			expect(Object.keys(init.agents!)).toContain('reviewer-new-model');
+			expect(Object.keys(init.agents!)).not.toContain('reviewer-old-model');
+		});
+
+		it('should not set agents when no reviewers configured', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(makeConfig(), callbacks);
+			expect(init.coordinatorMode).toBeUndefined();
+			expect(init.agents).toBeUndefined();
+		});
+	});
+
+	describe('buildReviewerAgents', () => {
+		it('should create SDK reviewer with structured verdict format in prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const agent = agents['reviewer-claude-opus-4-6'];
+			expect(agent).toBeDefined();
+			expect(agent.prompt).toContain('---VERDICT---');
+			expect(agent.prompt).toContain('---END_VERDICT---');
+			expect(agent.prompt).toContain('APPROVE');
+			expect(agent.prompt).toContain('REQUEST_CHANGES');
+			expect(agent.prompt).toContain('COMMENT_ONLY');
+			// P3 severity level
+			expect(agent.prompt).toContain('p3:');
+			expect(agent.prompt).toContain('P3 (nit)');
+			// Comprehensive review, not just diff
+			expect(agent.prompt).toContain('not just diffs');
+			expect(agent.prompt).toContain('original request');
+		});
+
+		it('should create CLI reviewer with structured verdict format in prompt', () => {
+			const agents = buildReviewerAgents([
+				{ model: 'custom-cli', type: 'cli', driver_model: 'haiku' },
+			]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent).toBeDefined();
+			expect(agent.model).toBe('haiku');
+			expect(agent.prompt).toContain('custom-cli');
+			expect(agent.prompt).toContain('---VERDICT---');
+			expect(agent.prompt).toContain('---END_VERDICT---');
+		});
+
+		it('should include read-only tools for reviewers', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const agent = agents['reviewer-claude-opus-4-6'];
+			expect(agent.tools).toContain('Read');
+			expect(agent.tools).toContain('Grep');
+			expect(agent.tools).toContain('Glob');
+			expect(agent.tools).toContain('Bash');
+			expect(agent.tools).not.toContain('Edit');
+			expect(agent.tools).not.toContain('Write');
 		});
 	});
 });
