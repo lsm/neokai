@@ -274,7 +274,7 @@ describe('RoomRuntime flow', () => {
 			expect(updated!.leaderContractViolations).toBe(1);
 		});
 
-		it('should escalate on second contract violation', async () => {
+		it('should fail group on second contract violation', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			// First violation
@@ -289,9 +289,9 @@ describe('RoomRuntime flow', () => {
 				kind: 'idle',
 			});
 
-			// Group should be awaiting_human
+			// Group should be failed after second contract violation
 			const updated = ctx.groupRepo.getGroup(group.id);
-			expect(updated!.state).toBe('awaiting_human');
+			expect(updated!.state).toBe('failed');
 		});
 
 		it('should not fire if Leader called a tool', async () => {
