@@ -35,6 +35,11 @@ export interface SessionFactory {
 	 * Returns true if a question was pending and answered, false otherwise.
 	 */
 	answerQuestion(sessionId: string, answer: string): Promise<boolean>;
+	/**
+	 * Create a git worktree for task isolation.
+	 * Returns the worktree path, or null if not in a git repo.
+	 */
+	createWorktree(basePath: string, sessionId: string): Promise<string | null>;
 }
 
 /**
@@ -100,12 +105,13 @@ export class TaskGroupManager {
 	 * Spawn a new (Worker, Leader) session group for a task.
 	 *
 	 * Flow:
-	 * 1. Create worker session via workerConfig and start it immediately
-	 * 2. Build leader init but DEFER creation until first review round
-	 * 3. Create session_groups DB record (state: awaiting_worker)
-	 * 4. Set task status to in_progress
-	 * 5. Observe worker session for terminal state
-	 * 6. Kick off worker (inject initial message)
+	 * 1. Create worktree for task isolation (coder tasks only)
+	 * 2. Create worker session via workerConfig and start it immediately
+	 * 3. Build leader init but DEFER creation until first review round
+	 * 4. Create session_groups DB record (state: awaiting_worker)
+	 * 5. Set task status to in_progress
+	 * 6. Observe worker session for terminal state
+	 * 7. Kick off worker (inject initial message)
 	 */
 	async spawn(
 		task: NeoTask,
@@ -119,8 +125,24 @@ export class TaskGroupManager {
 		const workerSessionId = `${workerConfig.role}:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 		const leaderSessionId = `leader:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 
-		// Build worker init from the provided config
+		// Create an isolated worktree for coder tasks so each group works in its own branch.
+		// Planner and general tasks don't modify the repo, so they use the base workspace.
+		let groupWorkspacePath = this.workspacePath;
+		if (workerConfig.role === 'coder') {
+			const worktreePath = await this.sessionFactory.createWorktree(
+				this.workspacePath,
+				workerSessionId
+			);
+			if (worktreePath) {
+				groupWorkspacePath = worktreePath;
+			}
+		}
+
+		// Build worker init from the provided config, using the group workspace path
 		const workerInit = workerConfig.initFactory(workerSessionId);
+		if (groupWorkspacePath !== this.workspacePath) {
+			workerInit.workspacePath = groupWorkspacePath;
+		}
 
 		// Create session_groups record first so we have the real group.id for Leader callbacks.
 		// This is critical: Leader MCP tool callbacks must reference group.id, not task.id.
@@ -128,17 +150,19 @@ export class TaskGroupManager {
 			task.id,
 			workerSessionId,
 			leaderSessionId,
-			workerConfig.role
+			workerConfig.role,
+			groupWorkspacePath !== this.workspacePath ? groupWorkspacePath : undefined
 		);
 
 		// Build Leader init using the actual group.id from the DB record — but don't start yet.
+		// Leader reuses the worker's worktree path (no separate worktree).
 		const leaderCallbacks = leaderCallbacksFactory(group.id);
 		const leaderConfig: LeaderAgentConfig = {
 			task,
 			goal,
 			room: this.room,
 			sessionId: leaderSessionId,
-			workspacePath: this.workspacePath,
+			workspacePath: groupWorkspacePath,
 			groupId: group.id,
 			model: this.model,
 			reviewContext,
@@ -281,6 +305,31 @@ export class TaskGroupManager {
 
 		// Fail the task
 		await this.taskManager.failTask(group.taskId, reason);
+
+		// Stop observing sessions
+		this.observer.unobserve(group.workerSessionId);
+		this.observer.unobserve(group.leaderSessionId);
+		this.pendingLeaderInits.delete(groupId);
+
+		return updated;
+	}
+
+	/**
+	 * Submit a group for human review - work is done, PR awaits human approval.
+	 *
+	 * Called when Leader calls submit_for_review(pr_url).
+	 * Completes the group (frees the slot) and moves the task to 'review' status.
+	 */
+	async submitForReview(groupId: string, prUrl: string): Promise<SessionGroup | null> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) return null;
+
+		// Complete the group (free the slot for the next task)
+		const updated = this.groupRepo.completeGroup(groupId, group.version);
+		if (!updated) return null;
+
+		// Move task to review status with PR URL
+		await this.taskManager.reviewTask(group.taskId, prUrl);
 
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);

@@ -21,7 +21,6 @@ export type GroupState =
 	| 'awaiting_worker'
 	| 'awaiting_leader'
 	| 'awaiting_human'
-	| 'hibernated'
 	| 'completed'
 	| 'failed';
 
@@ -39,6 +38,8 @@ interface TaskGroupMetadata {
 	tokensUsed: number;
 	/** The specific worker agent type (planner, coder, general) */
 	workerRole?: string;
+	/** Workspace path for this group (may be a worktree path, different from room default) */
+	workspacePath?: string;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -79,6 +80,8 @@ export interface SessionGroup {
 	hibernatedAt: number | null;
 	version: number;
 	tokensUsed: number;
+	/** Workspace path for this group (may differ from room default when using worktrees) */
+	workspacePath?: string;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -102,11 +105,12 @@ export class SessionGroupRepository {
 		taskId: string,
 		workerSessionId: string,
 		leaderSessionId: string,
-		workerRole: string = 'coder'
+		workerRole: string = 'coder',
+		workspacePath?: string
 	): SessionGroup {
 		const id = generateUUID();
 		const now = Date.now();
-		const metadata: TaskGroupMetadata = { ...defaultMetadata(), workerRole };
+		const metadata: TaskGroupMetadata = { ...defaultMetadata(), workerRole, workspacePath };
 
 		this.db
 			.prepare(
@@ -419,6 +423,7 @@ export class SessionGroupRepository {
 			hibernatedAt: meta.hibernatedAt,
 			version: row.version as number,
 			tokensUsed: meta.tokensUsed,
+			workspacePath: meta.workspacePath,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

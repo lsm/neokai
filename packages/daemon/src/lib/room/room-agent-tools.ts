@@ -135,7 +135,16 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (args.priority) {
 				await taskManager.updateTaskPriority(args.task_id, args.priority);
 			}
-			return jsonResult({ success: true, task: await taskManager.getTask(args.task_id) });
+			const updated = await taskManager.getTask(args.task_id);
+			// Notify UI of the update
+			if (daemonHub && updated) {
+				void daemonHub.emit('room.task.update', {
+					sessionId: `room:${roomId}`,
+					roomId,
+					task: updated,
+				});
+			}
+			return jsonResult({ success: true, task: updated });
 		},
 
 		async cancel_task(args: { task_id: string }): Promise<ToolResult> {
@@ -143,7 +152,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			await taskManager.failTask(args.task_id, 'Cancelled by user');
+			const updated = await taskManager.failTask(args.task_id, 'Cancelled by user');
+			// Notify UI of the status change
+			if (daemonHub) {
+				void daemonHub.emit('room.task.update', {
+					sessionId: `room:${roomId}`,
+					roomId,
+					task: updated,
+				});
+			}
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
 		},
 
@@ -165,7 +182,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						total: tasks.length,
 						pending: tasks.filter((t) => t.status === 'pending').length,
 						inProgress: tasks.filter((t) => t.status === 'in_progress').length,
-						escalated: tasks.filter((t) => t.status === 'escalated').length,
+						review: tasks.filter((t) => t.status === 'review').length,
 						completed: tasks.filter((t) => t.status === 'completed').length,
 						failed: tasks.filter((t) => t.status === 'failed').length,
 					},
@@ -235,7 +252,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
-					.enum(['draft', 'pending', 'in_progress', 'escalated', 'completed', 'failed'])
+					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed'])
 					.optional()
 					.describe('Filter by status'),
 			},

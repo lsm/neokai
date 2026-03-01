@@ -4,7 +4,7 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (draft -> pending -> in_progress -> completed/failed/escalated)
+ * - Status transitions (draft -> pending -> in_progress -> completed/failed/review)
  * - Task assignment to sessions
  */
 
@@ -143,20 +143,11 @@ export class TaskManager {
 	}
 
 	/**
-	 * Escalate task (needs human intervention)
+	 * Move task to review (work done, awaiting human approval)
 	 */
-	async escalateTask(taskId: string, reason?: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'escalated', {
-			currentStep: reason,
-		});
-	}
-
-	/**
-	 * De-escalate task (return to pending)
-	 */
-	async deescalateTask(taskId: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'pending', {
-			currentStep: undefined,
+	async reviewTask(taskId: string, prUrl?: string): Promise<NeoTask> {
+		return this.updateTaskStatus(taskId, 'review', {
+			currentStep: prUrl,
 		});
 	}
 

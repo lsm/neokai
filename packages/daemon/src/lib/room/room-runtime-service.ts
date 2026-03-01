@@ -24,6 +24,7 @@ import { createRoomAgentMcpServer } from './room-agent-tools';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from './room-manager';
+import { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('room-runtime-service');
@@ -120,6 +121,7 @@ export class RoomRuntimeService {
 	private createSessionFactory(): SessionFactory {
 		const ctx = this.ctx;
 		const agentSessions = this.agentSessions;
+		const worktreeManager = new WorktreeManager();
 
 		return {
 			createAndStartSession: async (init, _role) => {
@@ -158,6 +160,18 @@ export class RoomRuntimeService {
 				}));
 				await session.handleQuestionResponse(toolUseId, responses);
 				return true;
+			},
+			createWorktree: async (basePath, sessionId) => {
+				try {
+					const result = await worktreeManager.createWorktree({
+						sessionId,
+						repoPath: basePath,
+					});
+					return result?.worktreePath ?? null;
+				} catch (error) {
+					log.warn(`Failed to create worktree for ${sessionId}:`, error);
+					return null;
+				}
 			},
 		};
 	}

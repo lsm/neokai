@@ -9,8 +9,7 @@
  * - task.start - Start a task (assign to session)
  * - task.complete - Complete a task
  * - task.fail - Fail a task
- * - task.escalate - Escalate a task (needs human input)
- * - task.deescalate - De-escalate a task (return to pending)
+ * - task.review - Move a task to review (awaiting human approval)
  * - task.delete - Delete a task
  *
  * Renamed from neo.task.* to task.* for cleaner API.
@@ -36,8 +35,7 @@ export type TaskManagerLike = Pick<
 	| 'startTask'
 	| 'completeTask'
 	| 'failTask'
-	| 'escalateTask'
-	| 'deescalateTask'
+	| 'reviewTask'
 	| 'deleteTask'
 >;
 
@@ -275,9 +273,9 @@ export function setupTaskHandlers(
 		return { task };
 	});
 
-	// task.escalate - Escalate a task (needs human input)
-	messageHub.onRequest('task.escalate', async (data) => {
-		const params = data as { roomId: string; taskId: string; reason?: string };
+	// task.review - Move a task to review (awaiting human approval)
+	messageHub.onRequest('task.review', async (data) => {
+		const params = data as { roomId: string; taskId: string; prUrl?: string };
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
@@ -287,26 +285,7 @@ export function setupTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.escalateTask(params.taskId, params.reason);
-
-		emitTaskUpdate(params.roomId, task);
-
-		return { task };
-	});
-
-	// task.deescalate - De-escalate a task (return to pending)
-	messageHub.onRequest('task.deescalate', async (data) => {
-		const params = data as { roomId: string; taskId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.taskId) {
-			throw new Error('Task ID is required');
-		}
-
-		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.deescalateTask(params.taskId);
+		const task = await taskManager.reviewTask(params.taskId, params.prUrl);
 
 		emitTaskUpdate(params.roomId, task);
 

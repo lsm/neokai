@@ -18,6 +18,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/room-manager';
 import type { RoomRuntimeService } from '../room/room-runtime-service';
 import type { SessionManager } from '../session-manager';
+import { getCliAgents, refresh as refreshCliAgents } from '../room/cli-agent-registry';
 import { Logger } from '../logger';
 
 const log = new Logger('room-handlers');
@@ -124,6 +125,7 @@ export function setupRoomHandlers(
 			allowedModels?: string[];
 			background?: string;
 			instructions?: string;
+			config?: Record<string, unknown>;
 		};
 
 		if (!params.roomId) {
@@ -138,6 +140,7 @@ export function setupRoomHandlers(
 			allowedModels: params.allowedModels,
 			background: params.background,
 			instructions: params.instructions,
+			config: params.config,
 		});
 
 		if (!room) {
@@ -327,6 +330,15 @@ export function setupRoomHandlers(
 		}
 
 		return { room };
+	});
+
+	// agents.cli.list - List detected CLI agents with install/auth status
+	messageHub.onRequest('agents.cli.list', async (data) => {
+		const params = data as { refresh?: boolean } | undefined;
+		if (params?.refresh) {
+			refreshCliAgents();
+		}
+		return { agents: getCliAgents() };
 	});
 }
 

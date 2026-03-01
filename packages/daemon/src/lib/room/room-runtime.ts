@@ -114,6 +114,27 @@ export class RoomRuntime {
 
 	readonly taskGroupManager: TaskGroupManager;
 
+	/**
+	 * Emit a room.task.update event so the frontend UI updates in real time.
+	 * Called after every task status change within the runtime path.
+	 */
+	private emitTaskUpdate(task: NeoTask): void {
+		if (!this.daemonHub) return;
+		void this.daemonHub.emit('room.task.update', {
+			sessionId: `room:${this.room.id}`,
+			roomId: this.room.id,
+			task,
+		});
+	}
+
+	/**
+	 * Fetch a task by ID and emit its update event.
+	 */
+	private async emitTaskUpdateById(taskId: string): Promise<void> {
+		const task = await this.taskManager.getTask(taskId);
+		if (task) this.emitTaskUpdate(task);
+	}
+
 	constructor(config: RoomRuntimeConfig) {
 		this.room = config.room;
 		this.groupRepo = config.groupRepo;
@@ -197,7 +218,7 @@ export class RoomRuntime {
 
 	/**
 	 * Called when Worker reaches a terminal state.
-	 * Collects Worker output from session messages and routes to Leader.
+	 * Checks worktree cleanliness, then collects Worker output and routes to Leader.
 	 */
 	async onWorkerTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -205,6 +226,31 @@ export class RoomRuntime {
 
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
+
+		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
+		// Only applies to non-planning groups (planners don't modify the worktree).
+		if (group.workerRole !== 'planner') {
+			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
+			const dirty = await this.isWorktreeDirty(groupWorkspace);
+			if (dirty) {
+				log.info(
+					`Worktree dirty for group ${groupId} — sending worker back to clean up.`
+				);
+				this.groupRepo.appendMessage({
+					groupId,
+					role: 'system',
+					messageType: 'status',
+					content: 'Worktree has uncommitted changes. Sending worker back to clean up.',
+				});
+				await this.sessionFactory.injectMessage(
+					group.workerSessionId,
+					'Your worktree has uncommitted changes or untracked files. ' +
+						'Make logical commits for changes you want to keep and clean up unused files. ' +
+						'Run `git status` to see what needs attention, then commit or remove files as appropriate.'
+				);
+				return; // Stay in awaiting_worker state
+			}
+		}
 
 		// Collect Worker messages since last forwarded message
 		const workerMessages = this.getWorkerMessages
@@ -270,7 +316,7 @@ export class RoomRuntime {
 
 	/**
 	 * Called when Leader reaches a terminal state.
-	 * Validates Leader tool contract (retry-then-escalate).
+	 * Validates Leader tool contract (retry-then-fail).
 	 */
 	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -299,14 +345,14 @@ export class RoomRuntime {
 				group.version
 			);
 		} else {
-			// Second+ violation: auto-escalate
-			const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
-			if (updated) {
-				await this.taskManager.escalateTask(
-					group.taskId,
-					'Leader failed to call required tool after nudge'
-				);
-			}
+			// Second+ violation: fail the group
+			await this.taskGroupManager.fail(
+				groupId,
+				'Leader failed to call required tool after nudge'
+			);
+			this.cleanupMirroring(groupId, 'Leader contract violation — task failed.');
+			await this.emitTaskUpdateById(group.taskId);
+			this.scheduleTick();
 		}
 	}
 
@@ -321,7 +367,7 @@ export class RoomRuntime {
 	async handleLeaderTool(
 		groupId: string,
 		toolName: string,
-		params: { message?: string; summary?: string; reason?: string }
+		params: { message?: string; summary?: string; reason?: string; pr_url?: string }
 	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
@@ -342,16 +388,16 @@ export class RoomRuntime {
 			case 'send_to_worker': {
 				// Enforce max feedback iterations
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
-					const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
-					if (updated) {
-						await this.taskManager.escalateTask(
-							group.taskId,
-							`Max feedback iterations (${this.maxFeedbackIterations}) reached`
-						);
-					}
+					await this.taskGroupManager.fail(
+						groupId,
+						`Max feedback iterations (${this.maxFeedbackIterations}) reached`
+					);
+					this.cleanupMirroring(groupId, 'Max feedback iterations reached — task failed.');
+					await this.emitTaskUpdateById(group.taskId);
+					this.scheduleTick();
 					return jsonResult({
 						success: false,
-						error: `Max feedback iterations reached. Task escalated to human.`,
+						error: `Max feedback iterations reached. Task failed.`,
 					});
 				}
 				const message = params.message ?? '';
@@ -378,6 +424,7 @@ export class RoomRuntime {
 				const summary = params.summary ?? '';
 				await this.taskGroupManager.complete(groupId, summary);
 				this.cleanupMirroring(groupId, 'Task completed.');
+				await this.emitTaskUpdateById(group.taskId);
 				// If this was a planning task, promote its draft children to pending
 				await this.promoteDraftTasksIfPlanning(group.taskId);
 				this.scheduleTick();
@@ -388,6 +435,7 @@ export class RoomRuntime {
 				const reason = params.reason ?? '';
 				await this.taskGroupManager.fail(groupId, reason);
 				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
+				await this.emitTaskUpdateById(group.taskId);
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
 			}
@@ -395,6 +443,18 @@ export class RoomRuntime {
 			case 'replan_goal': {
 				const reason = params.reason ?? '';
 				return this.handleReplanGoal(group.taskId, groupId, reason);
+			}
+
+			case 'submit_for_review': {
+				const prUrl = params.pr_url ?? '';
+				await this.taskGroupManager.submitForReview(groupId, prUrl);
+				this.cleanupMirroring(groupId, `Task submitted for review: ${prUrl}`);
+				await this.emitTaskUpdateById(group.taskId);
+				this.scheduleTick();
+				return jsonResult({
+					success: true,
+					message: `Task submitted for human review. PR: ${prUrl}`,
+				});
 			}
 
 			default:
@@ -418,6 +478,9 @@ export class RoomRuntime {
 			},
 			replanGoal: async (_groupId: string, reason: string) => {
 				return this.handleLeaderTool(groupId, 'replan_goal', { reason });
+			},
+			submitForReview: async (_groupId: string, prUrl: string) => {
+				return this.handleLeaderTool(groupId, 'submit_for_review', { pr_url: prUrl });
 			},
 		};
 	}
@@ -618,8 +681,8 @@ export class RoomRuntime {
 					(typeof linkedTasks)[number]
 				>[];
 				const hasActiveTask = validTasks.some((t) =>
-					(['pending', 'in_progress', 'draft', 'escalated'] as const).includes(
-						t.status as 'pending' | 'in_progress' | 'draft' | 'escalated'
+					(['pending', 'in_progress', 'draft', 'review'] as const).includes(
+						t.status as 'pending' | 'in_progress' | 'draft' | 'review'
 					)
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
@@ -727,6 +790,9 @@ export class RoomRuntime {
 				}),
 		};
 
+		// Notify UI: planning task created
+		this.emitTaskUpdate(planningTask);
+
 		// Spawn the planning group directly (bypasses the tick queue)
 		const group = await this.taskGroupManager.spawn(
 			planningTask,
@@ -738,6 +804,8 @@ export class RoomRuntime {
 			'plan_review'
 		);
 
+		// Notify UI: planning task is now in_progress
+		await this.emitTaskUpdateById(planningTask.id);
 		this.setupMirroring(group);
 
 		log.info(
@@ -807,6 +875,8 @@ export class RoomRuntime {
 			'code_review'
 		);
 
+		// Notify UI: task is now in_progress
+		await this.emitTaskUpdateById(task.id);
 		this.setupMirroring(group);
 	}
 
@@ -827,6 +897,11 @@ export class RoomRuntime {
 			log.info(
 				`Promoted ${promoted} draft task(s) to pending after planning task ${taskId} completed`
 			);
+			// Notify UI about all newly promoted tasks
+			const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
+			for (const t of pendingTasks) {
+				this.emitTaskUpdate(t);
+			}
 		}
 	}
 
@@ -876,6 +951,7 @@ export class RoomRuntime {
 			// Fail the task and escalate instead of replanning
 			await this.taskGroupManager.fail(groupId, reason);
 			this.cleanupMirroring(groupId, `Task failed: ${reason}`);
+			await this.emitTaskUpdateById(taskId);
 			await this.goalManager.updateGoalStatus(goal.id, 'needs_human');
 			this.scheduleTick();
 			return jsonResult({
@@ -887,6 +963,7 @@ export class RoomRuntime {
 		// Fail the current task
 		await this.taskGroupManager.fail(groupId, reason);
 		this.cleanupMirroring(groupId, `Task failed (replanning): ${reason}`);
+		await this.emitTaskUpdateById(taskId);
 
 		// Cancel remaining pending sibling tasks
 		const linkedTaskIds = goal.linkedTaskIds ?? [];
@@ -895,6 +972,10 @@ export class RoomRuntime {
 		const pendingTasks = validTasks.filter((t) => t.status === 'pending');
 
 		const cancelledCount = await this.taskManager.cancelPendingTasks(pendingTasks.map((t) => t.id));
+		// Notify UI about cancelled tasks
+		for (const t of pendingTasks) {
+			await this.emitTaskUpdateById(t.id);
+		}
 		log.info(
 			`Replan: cancelled ${cancelledCount} pending tasks for goal ${goal.id} (attempt ${attempts + 1})`
 		);
@@ -923,5 +1004,25 @@ export class RoomRuntime {
 		if (this.state !== 'running') return;
 		// Use queueMicrotask for non-blocking tick scheduling
 		queueMicrotask(() => this.tick());
+	}
+
+	/**
+	 * Check if a worktree has uncommitted changes or untracked files.
+	 * Returns true if dirty (has changes), false if clean.
+	 */
+	private async isWorktreeDirty(workspacePath: string): Promise<boolean> {
+		try {
+			const proc = Bun.spawn(['git', 'status', '--porcelain'], {
+				cwd: workspacePath,
+				stdout: 'pipe',
+				stderr: 'pipe',
+			});
+			const output = await new Response(proc.stdout).text();
+			await proc.exited;
+			return output.trim().length > 0;
+		} catch {
+			// If git status fails (e.g., not a git repo), treat as clean
+			return false;
+		}
 	}
 }

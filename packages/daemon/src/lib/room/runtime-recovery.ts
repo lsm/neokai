@@ -87,7 +87,6 @@ export async function recoverRuntime(
 				break;
 
 			case 'awaiting_human':
-			case 'hibernated':
 				// No action needed - waiting for external input
 				break;
 		}

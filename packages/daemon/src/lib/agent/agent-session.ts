@@ -122,6 +122,12 @@ export interface AgentSessionInit {
 
 	/** Model ID - defaults to default model */
 	model?: string;
+
+	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
+	coordinatorMode?: boolean;
+
+	/** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
+	agents?: Record<string, import('@neokai/shared').AgentDefinition>;
 }
 
 // Extracted components
@@ -440,6 +446,9 @@ export class AgentSession
 			features,
 			// Default tools config for non-worker sessions
 			tools: type !== 'worker' ? { useClaudeCodePreset: false } : undefined,
+			// Coordinator mode — leader sessions use this with reviewer sub-agents
+			coordinatorMode: init.coordinatorMode,
+			agents: init.agents,
 		};
 
 		const metadata: SessionMetadata = {
