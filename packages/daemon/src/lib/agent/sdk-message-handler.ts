@@ -366,11 +366,13 @@ export class SDKMessageHandler {
 			// Handle saved message the same way
 			db.updateMessageStatus([savedMessage.dbId], 'sent');
 			db.updateMessageTimestamp(savedMessage.dbId, sentAt);
-			daemonHub.emit('messages.statusChanged', {
-				sessionId: session.id,
-				messageIds: [savedMessage.dbId],
-				status: 'sent',
-			}).catch(() => {});
+			daemonHub
+				.emit('messages.statusChanged', {
+					sessionId: session.id,
+					messageIds: [savedMessage.dbId],
+					status: 'sent',
+				})
+				.catch(() => {});
 			this.acknowledgedPersistedUserThisTurn = true;
 
 			const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = savedMessage;
@@ -391,11 +393,13 @@ export class SDKMessageHandler {
 		db.updateMessageTimestamp(queuedMessage.dbId, sentAt);
 
 		// Emit status change event (for queue overlay polling)
-		daemonHub.emit('messages.statusChanged', {
-			sessionId: session.id,
-			messageIds: [queuedMessage.dbId],
-			status: 'sent',
-		}).catch(() => {});
+		daemonHub
+			.emit('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [queuedMessage.dbId],
+				status: 'sent',
+			})
+			.catch(() => {});
 
 		// Mark as acknowledged so fallback path doesn't fire again
 		this.acknowledgedPersistedUserThisTurn = true;
