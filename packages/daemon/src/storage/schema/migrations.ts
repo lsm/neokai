@@ -69,7 +69,8 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
 	runMigration15(db);
 
-	// Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups
+	// Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups,
+	// add config column to rooms table
 	runMigration16(db);
 }
 
@@ -564,10 +565,12 @@ function runMigration15(db: BunDatabase): void {
 
 /**
  * Migration 16: Replace 'escalated' with 'review' in tasks CHECK constraint,
- * remove 'hibernated' from session_groups CHECK constraint.
+ * remove 'hibernated' from session_groups CHECK constraint,
+ * add config column to rooms table.
  *
  * - Tasks: 'escalated' → 'review' (existing escalated rows mapped to 'failed')
  * - Session groups: remove 'hibernated' (existing hibernated rows mapped to 'failed')
+ * - Rooms: add config TEXT column for agent sub-agents and other room config
  */
 function runMigration16(db: BunDatabase): void {
 	// --- Tasks table: replace 'escalated' with 'review' ---
@@ -691,6 +694,11 @@ function runMigration16(db: BunDatabase): void {
 				db.exec('PRAGMA foreign_keys = ON');
 			}
 		}
+	}
+
+	// --- Rooms table: add config column ---
+	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'config')) {
+		db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
 	}
 }
 

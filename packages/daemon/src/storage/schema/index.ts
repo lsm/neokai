@@ -129,6 +129,7 @@ export function createTables(db: BunDatabase): void {
         allowed_models TEXT DEFAULT '[]',
         session_ids TEXT DEFAULT '[]',
         status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+        config TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
