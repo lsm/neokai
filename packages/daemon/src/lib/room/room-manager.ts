@@ -21,6 +21,7 @@ import type {
 	UpdateRoomParams,
 	RoomOverview,
 	TaskSummary,
+	NeoTask,
 } from '@neokai/shared';
 
 export class RoomManager {
@@ -144,16 +145,16 @@ export class RoomManager {
 		if (!room) return null;
 
 		const tasks = this.taskRepo.listTasks(roomId);
-		const allTaskSummaries: TaskSummary[] = tasks.map((task) => ({
+		const toSummary = (task: NeoTask): TaskSummary => ({
 			id: task.id,
 			title: task.title,
 			status: task.status,
 			priority: task.priority,
 			progress: task.progress,
-		}));
-		const taskSummaries = allTaskSummaries.filter(
-			(task) => task.status !== 'completed' && task.status !== 'failed'
-		);
+		});
+		const nonTerminal = tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed');
+		const taskSummaries = nonTerminal.map(toSummary);
+		const allTaskSummaries = tasks.map(toSummary);
 
 		// Build session summaries from actual session data
 		// Filter out room-specific sessions (chat, craft, lead)
