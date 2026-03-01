@@ -21,6 +21,7 @@ import {
 	useModal,
 	useCommandAutocomplete,
 	useFileAttachments,
+	useInterrupt,
 } from '../hooks';
 
 interface MessageInputProps {
@@ -83,6 +84,7 @@ export default function MessageInput({
 		getImagesForSend,
 		handlePaste,
 	} = useFileAttachments();
+	const { handleInterrupt } = useInterrupt({ sessionId });
 
 	// Command autocomplete
 	const handleCommandSelect = useCallback(
@@ -414,6 +416,7 @@ export default function MessageInput({
 							onCommandSelect={commandAutocomplete.handleSelect}
 							onCommandClose={commandAutocomplete.close}
 							isAgentWorking={agentWorking}
+							onStop={handleInterrupt}
 							onPaste={disabled ? undefined : handlePaste}
 						/>
 					</div>

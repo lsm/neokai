@@ -368,10 +368,6 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Derived processing state
 	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
-	const isCompacting =
-		agentState.status === 'processing' &&
-		'isCompacting' in agentState &&
-		agentState.isCompacting === true;
 	const isWaitingForInput = agentState.status === 'waiting_for_input';
 	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
@@ -1087,7 +1083,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 							<MessageInput
 								sessionId={sessionId}
 								onSend={handleSendMessage}
-								disabled={isCompacting || isWaitingForInput || !isConnected}
+								disabled={isWaitingForInput || !isConnected}
 								autoScroll={autoScroll}
 								onAutoScrollChange={handleAutoScrollChange}
 								onOpenTools={toolsModal.open}
