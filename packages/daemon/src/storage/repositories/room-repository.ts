@@ -102,6 +102,10 @@ export class RoomRepository {
 			fields.push('instructions = ?');
 			values.push(params.instructions ?? null);
 		}
+		if (params.config !== undefined) {
+			fields.push('config = ?');
+			values.push(JSON.stringify(params.config));
+		}
 
 		if (fields.length > 0) {
 			fields.push('updated_at = ?');
@@ -238,6 +242,9 @@ export class RoomRepository {
 
 		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
 
+		const rawConfig = row.config as string | null;
+		const config = rawConfig ? (JSON.parse(rawConfig) as Record<string, unknown>) : undefined;
+
 		return {
 			id: row.id as string,
 			name: row.name as string,
@@ -249,6 +256,7 @@ export class RoomRepository {
 			status: row.status as 'active' | 'archived',
 			background: (row.background_context as string | null) ?? undefined,
 			instructions: (row.instructions as string | null) ?? undefined,
+			config,
 			createdAt: row.created_at as number,
 			updatedAt: row.updated_at as number,
 		};

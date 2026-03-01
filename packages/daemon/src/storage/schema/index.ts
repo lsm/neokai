@@ -141,7 +141,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'escalated', 'completed', 'failed')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -227,7 +227,7 @@ export function createTables(db: BunDatabase): void {
         group_type TEXT NOT NULL DEFAULT 'task',
         ref_id TEXT NOT NULL,
         state TEXT NOT NULL DEFAULT 'awaiting_worker'
-          CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+          CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'completed', 'failed')),
         version INTEGER NOT NULL DEFAULT 0,
         metadata TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,

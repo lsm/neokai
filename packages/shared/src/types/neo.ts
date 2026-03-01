@@ -133,6 +133,8 @@ export interface UpdateRoomParams {
 	background?: string | null;
 	/** Custom instructions for the room agent */
 	instructions?: string | null;
+	/** Runtime configuration (reviewers, maxReviewRounds, etc.) */
+	config?: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -142,7 +144,7 @@ export interface UpdateRoomParams {
 /**
  * Task status
  */
-export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'escalated' | 'completed' | 'failed';
+export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'review' | 'completed' | 'failed';
 
 /**
  * Task priority

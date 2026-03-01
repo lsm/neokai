@@ -68,6 +68,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
 	runMigration15(db);
+
+	// Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups
+	runMigration16(db);
 }
 
 /**
@@ -556,6 +559,138 @@ function runMigration15(db: BunDatabase): void {
 		);
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 16: Replace 'escalated' with 'review' in tasks CHECK constraint,
+ * remove 'hibernated' from session_groups CHECK constraint.
+ *
+ * - Tasks: 'escalated' → 'review' (existing escalated rows mapped to 'failed')
+ * - Session groups: remove 'hibernated' (existing hibernated rows mapped to 'failed')
+ */
+function runMigration16(db: BunDatabase): void {
+	// --- Tasks table: replace 'escalated' with 'review' ---
+	if (tableExists(db, 'tasks')) {
+		// Test if migration is needed by trying to insert a 'review' status
+		const testId = '__migration15_task_test__';
+		let needsTaskMigration = false;
+		try {
+			db.prepare(
+				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
+				 VALUES (?, 'test', 'test', 'test', 'review', 'normal', '[]', 0)`
+			).run(testId);
+			db.prepare(`DELETE FROM tasks WHERE id = ?`).run(testId);
+		} catch {
+			needsTaskMigration = true;
+		}
+
+		if (needsTaskMigration) {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				// Map any existing 'escalated' tasks to 'failed'
+				db.exec(`PRAGMA ignore_check_constraints = 1`);
+				db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'escalated'`);
+				db.exec(`PRAGMA ignore_check_constraints = 0`);
+
+				// Drop leftover temp table from a previous crashed migration attempt
+				db.exec(`DROP TABLE IF EXISTS tasks_new`);
+
+				db.exec(`
+					CREATE TABLE tasks_new (
+						id TEXT PRIMARY KEY,
+						room_id TEXT NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT NOT NULL,
+						status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed')),
+						priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+						progress INTEGER,
+						current_step TEXT,
+						result TEXT,
+						error TEXT,
+						depends_on TEXT DEFAULT '[]',
+						created_at INTEGER NOT NULL,
+						started_at INTEGER,
+						completed_at INTEGER,
+						task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+						assigned_agent TEXT DEFAULT 'coder',
+						created_by_task_id TEXT,
+						FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+					)
+				`);
+				// Build column list dynamically — old schemas may not have all columns
+				const cols = [
+					'id', 'room_id', 'title', 'description', 'status', 'priority', 'progress',
+					'current_step', 'result', 'error', 'depends_on', 'created_at', 'started_at',
+					'completed_at',
+				];
+				const optionalCols = ['task_type', 'assigned_agent', 'created_by_task_id'];
+				for (const col of optionalCols) {
+					if (tableHasColumn(db, 'tasks', col)) cols.push(col);
+				}
+				const selectCols = cols.join(', ');
+				db.exec(`INSERT INTO tasks_new (${selectCols}) SELECT ${selectCols} FROM tasks`);
+				db.exec(`DROP TABLE tasks`);
+				db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
+
+	// --- Session groups table: remove 'hibernated' ---
+	if (tableExists(db, 'session_groups')) {
+		const testId = '__migration15_sg_test__';
+		let needsGroupMigration = false;
+		try {
+			// Try inserting 'hibernated' — if it succeeds, the constraint still allows it
+			db.prepare(
+				`INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at)
+				 VALUES (?, 'task', 'test', 'hibernated', 0, '{}', 0)`
+			).run(testId);
+			db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(testId);
+			needsGroupMigration = true; // 'hibernated' is still allowed, need to remove it
+		} catch {
+			// 'hibernated' already not allowed — migration done
+		}
+
+		if (needsGroupMigration) {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				// Map any existing 'hibernated' groups to 'failed'
+				db.exec(`UPDATE session_groups SET state = 'failed' WHERE state = 'hibernated'`);
+
+				// Drop leftover temp table from a previous crashed migration attempt
+				db.exec(`DROP TABLE IF EXISTS session_groups_new`);
+
+				db.exec(`
+					CREATE TABLE session_groups_new (
+						id TEXT PRIMARY KEY,
+						group_type TEXT NOT NULL DEFAULT 'task',
+						ref_id TEXT NOT NULL,
+						state TEXT NOT NULL DEFAULT 'awaiting_worker'
+							CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'completed', 'failed')),
+						version INTEGER NOT NULL DEFAULT 0,
+						metadata TEXT NOT NULL DEFAULT '{}',
+						created_at INTEGER NOT NULL,
+						completed_at INTEGER
+					)
+				`);
+				db.exec(`
+					INSERT INTO session_groups_new
+					SELECT id, group_type, ref_id, state, version, metadata, created_at, completed_at
+					FROM session_groups
+				`);
+				db.exec(`DROP TABLE session_groups`);
+				db.exec(`ALTER TABLE session_groups_new RENAME TO session_groups`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
 	}
 }
 
