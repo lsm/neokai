@@ -550,8 +550,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(agentNames).toContain('Reviewer');
 			expect(agentNames).toContain('VCS');
 			expect(agentNames).toContain('Verifier');
-			expect(agentNames).toContain('Executor');
-			expect(agentNames).toHaveLength(8);
+			expect(agentNames).toHaveLength(7);
 		});
 
 		it('should NOT set agent or specialist agents when coordinatorMode is false', async () => {
@@ -584,7 +583,7 @@ describe('QueryOptionsBuilder', () => {
 			const builderOn = new QueryOptionsBuilder(mockContext);
 			const optionsOn = await builderOn.build();
 			expect(optionsOn.agent).toBe('Coordinator');
-			expect(Object.keys(optionsOn.agents!)).toHaveLength(8);
+			expect(Object.keys(optionsOn.agents!)).toHaveLength(7);
 		});
 
 		it('should transition ON -> OFF -> ON correctly', async () => {
@@ -602,7 +601,7 @@ describe('QueryOptionsBuilder', () => {
 			mockSession.config.coordinatorMode = true;
 			options = await new QueryOptionsBuilder(mockContext).build();
 			expect(options.agent).toBe('Coordinator');
-			expect(Object.keys(options.agents!)).toHaveLength(8);
+			expect(Object.keys(options.agents!)).toHaveLength(7);
 		});
 
 		it('should preserve user-defined agents alongside coordinator agents', async () => {
