@@ -401,7 +401,6 @@ jobs:
     name: Finalize Coveralls
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-web, test-daemon-online]
-    if: false # temporarily disabled
     timeout-minutes: 1
 
     steps:
@@ -422,7 +421,6 @@ jobs:
     name: Coverage Quality Gate
     runs-on: ubuntu-latest
     needs: [coveralls-finalize]
-    if: false # temporarily disabled
     timeout-minutes: 3
 
     steps:
@@ -571,10 +569,16 @@ jobs:
         run: |
           # Tests that require LLM API round-trips (send messages, wait for agent responses)
           # Format: subdir/name (matching the subdirectory structure under packages/e2e/tests/)
-          # Reduced to 2 critical tests to minimize CI time and rate limit issues
+          # These tests need a real LLM provider (GLM) to process messages
           LLM_TESTS=(
             core/message-flow
+            core/interrupt-button
+            core/interrupt-error-bug
+            core/context-features
+            features/archive
+            features/file-operations
             features/rewind-features
+            settings/auto-title
           )
 
           # Tests to exclude entirely (disabled, pending refactor)
@@ -722,7 +726,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix:
         test: ${{ fromJson(needs.discover.outputs.tests_llm) }}
 

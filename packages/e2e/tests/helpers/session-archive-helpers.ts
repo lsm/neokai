@@ -6,7 +6,7 @@
 
 import type { Page } from '@playwright/test';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForWebSocketConnected,
 	waitForAssistantResponse,
 } from './wait-helpers';
@@ -56,12 +56,7 @@ export async function clickArchiveSession(page: Page): Promise<void> {
  */
 export async function createSessionWithMessage(page: Page): Promise<string> {
 	// Create new session
-	const newSessionButton = page.getByRole('button', {
-		name: 'New Session',
-		exact: true,
-	});
-	await newSessionButton.click();
-	const sessionId = await waitForSessionCreated(page);
+	const sessionId = await createSessionViaUI(page);
 
 	// Send a simple message
 	const textarea = page.locator('textarea[placeholder*="Ask"]');
@@ -91,11 +86,19 @@ export async function archiveSession(page: Page, sessionId: string): Promise<voi
 }
 
 /**
- * Navigate to home page and wait for WebSocket connection
+ * Navigate to home page and wait for WebSocket connection.
+ * Clicks "Chats" in NavRail to ensure the session list is visible.
  */
 export async function goToHomePage(page: Page): Promise<void> {
 	await page.goto('/');
 	await waitForWebSocketConnected(page);
+
+	// Click Chats in NavRail to show session list (Lobby shows RoomList by default)
+	const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
+	if (await chatsButton.isVisible().catch(() => false)) {
+		await chatsButton.click();
+		await page.waitForTimeout(300);
+	}
 }
 
 /**

@@ -25,7 +25,7 @@ import {
 	getMcpConfigViaRPC,
 } from '../helpers/mcp-toggle-helpers';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForWebSocketConnected,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -42,12 +42,7 @@ test.describe('MCP Toggle - Tools Modal', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -312,12 +307,7 @@ test.describe('MCP Toggle - Edge Cases', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -445,12 +435,7 @@ test.describe('MCP Toggle - State Persistence', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -556,12 +541,7 @@ test.describe('MCP Toggle - Session Config Sync', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {

@@ -21,7 +21,7 @@ import {
 import {
 	waitForWebSocketConnected,
 	waitForAssistantResponse,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 
@@ -33,12 +33,7 @@ test.describe('Session Archive - Menu Option', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -236,12 +231,7 @@ test.describe('Session Archive - Edge Cases', () => {
 
 	test('should preserve messages after archiving', async ({ page }) => {
 		// Create session with a specific message
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const textarea = page.locator('textarea[placeholder*="Ask"]');

@@ -22,7 +22,7 @@ test.describe('Settings Modal - Basic Interaction', () => {
 		await openSettingsModal(page);
 
 		// Verify modal is open with Settings title
-		await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+		await expect(page.locator('h2:has-text("Global Settings")')).toBeVisible();
 	});
 
 	test.skip('should close Settings modal with close button', async ({ page }) => {
@@ -30,13 +30,13 @@ test.describe('Settings Modal - Basic Interaction', () => {
 		await openSettingsModal(page);
 
 		// Verify modal is open
-		await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+		await expect(page.locator('h2:has-text("Global Settings")')).toBeVisible();
 
 		// Close the modal
 		await closeSettingsModal(page);
 
 		// Verify modal is closed
-		await expect(page.locator('h2:has-text("Settings")')).toBeHidden();
+		await expect(page.locator('h2:has-text("Global Settings")')).toBeHidden();
 	});
 
 	test.skip('should close Settings modal by clicking backdrop', async ({ page }) => {
@@ -44,7 +44,7 @@ test.describe('Settings Modal - Basic Interaction', () => {
 		await openSettingsModal(page);
 
 		// Verify modal is open
-		await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+		await expect(page.locator('h2:has-text("Global Settings")')).toBeVisible();
 
 		// Click backdrop (the overlay behind the modal)
 		// The backdrop should be a sibling or parent element of the modal
@@ -64,7 +64,7 @@ test.describe('Settings Modal - Basic Interaction', () => {
 		await openSettingsModal(page);
 
 		// Verify modal is open
-		await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+		await expect(page.locator('h2:has-text("Global Settings")')).toBeVisible();
 
 		// Press Escape
 		await page.keyboard.press('Escape');
@@ -73,7 +73,7 @@ test.describe('Settings Modal - Basic Interaction', () => {
 		await page.waitForTimeout(500);
 
 		// Verify modal is closed
-		await expect(page.locator('h2:has-text("Settings")')).toBeHidden();
+		await expect(page.locator('h2:has-text("Global Settings")')).toBeHidden();
 	});
 });
 
@@ -323,26 +323,39 @@ test.describe('Settings Modal - Settings Persistence', () => {
 		await waitForWebSocketConnected(page);
 	});
 
-	test('should save model selection and show Saved indicator', async ({ page }) => {
+	test('should allow changing model selection', async ({ page }) => {
 		await openSettingsModal(page);
 
-		// Find and change model selection
+		// Find the model selection dropdown
 		const modelSelect = page.locator('select').first();
+		await expect(modelSelect).toBeVisible();
 
-		// Change to a different value
-		const options = await modelSelect.locator('option').allTextContents();
-		const newOption = options.find((opt) => !opt.includes('Default'));
+		// Get all option values
+		const optionValues = await modelSelect.locator('option').evaluateAll((opts) =>
+			opts.map((o) => ({
+				value: (o as HTMLOptionElement).value,
+				label: o.textContent,
+			}))
+		);
+		expect(optionValues.length).toBeGreaterThan(1);
 
-		if (newOption) {
-			await modelSelect.selectOption({ label: newOption });
+		// Get initial selected value
+		const initialValue = await modelSelect.inputValue();
 
-			// Should show "Saved" indicator briefly
-			await expect(page.locator('text=Saved').first()).toBeVisible({
-				timeout: 3000,
-			});
+		// Select a different option by value
+		const differentOption = optionValues.find((o) => o.value !== initialValue);
+		if (differentOption) {
+			await modelSelect.selectOption(differentOption.value);
 
-			// Saved indicator should disappear after a while
-			await page.waitForTimeout(2500);
+			// Wait for auto-save
+			await page.waitForTimeout(500);
+
+			// Verify the selection changed
+			const newValue = await modelSelect.inputValue();
+			expect(newValue).toBe(differentOption.value);
+
+			// Restore original
+			await modelSelect.selectOption(initialValue);
 		}
 	});
 

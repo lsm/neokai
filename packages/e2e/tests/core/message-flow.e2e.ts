@@ -12,8 +12,7 @@
 
 import { test, expect } from '../../fixtures';
 import {
-	// waitForWebSocketConnected,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	setupMessageHubTesting,
 	cleanupTestSession,
@@ -26,14 +25,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should successfully send a message and receive response', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
-
-		const sessionId = await waitForSessionCreated(page);
-		expect(sessionId).toBeTruthy();
+		const sessionId = await createSessionViaUI(page);
 
 		// Get message input and send button
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
@@ -83,13 +75,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should handle message sending state transitions correctly', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
-
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
@@ -138,13 +124,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should not allow sending empty messages', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
-
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Get controls
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
@@ -167,29 +147,32 @@ test.describe('Message Send and Receive', () => {
 
 	test('should handle WebSocket disconnection gracefully', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
+		const sessionId = await createSessionViaUI(page);
 
-		const sessionId = await waitForSessionCreated(page);
-
-		// Verify initially online
-		await expect(page.locator('text=Online').first()).toBeVisible({
-			timeout: 10000,
-		});
+		// Verify initially connected via daemon status indicator
+		await page.waitForFunction(
+			() => {
+				const indicator = document.querySelector('[aria-label="Daemon: Connected"]');
+				return !!indicator;
+			},
+			{ timeout: 10000 }
+		);
 
 		// Simulate disconnection using exposed method
 		await page.evaluate(() => {
-			window.connectionManager.simulateDisconnect();
+			const cm = (window as any).connectionManager;
+			if (cm?.simulateDisconnect) cm.simulateDisconnect();
 		});
 
 		// Auto-reconnect should kick in and restore connection
 		// (Server is still running, so reconnect succeeds)
-		await expect(page.locator('text=Online').first()).toBeVisible({
-			timeout: 15000,
-		});
+		await page.waitForFunction(
+			() => {
+				const indicator = document.querySelector('[aria-label="Daemon: Connected"]');
+				return !!indicator;
+			},
+			{ timeout: 15000 }
+		);
 
 		// After reconnect, should be able to interact normally
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
@@ -201,13 +184,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should display message immediately in UI (optimistic update)', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
-
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');
@@ -231,13 +208,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should handle consecutive messages correctly', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
-
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		const messages = ['First message', 'Second message', 'Third message'];
 
@@ -285,13 +256,7 @@ test.describe('Message Send and Receive', () => {
 
 	test('should recover from send failures', async ({ page }) => {
 		// Create a new session
-		const newSessionBtn = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionBtn.click();
-
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// First, send a successful message
 		const messageInput = await waitForElement(page, 'textarea[placeholder*="Ask"]');

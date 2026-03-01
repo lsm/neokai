@@ -26,8 +26,8 @@ test.describe('Recovery Mechanisms', () => {
 		const draftMessage = 'This is a draft message that should be preserved';
 		await messageInput.fill(draftMessage);
 
-		// Navigate away
-		await page.click('h1:has-text("NeoKai")');
+		// Navigate away (click Home button in NavRail)
+		await page.click('button[aria-label="Home"]');
 		await page.waitForTimeout(1000);
 
 		// Navigate back to session

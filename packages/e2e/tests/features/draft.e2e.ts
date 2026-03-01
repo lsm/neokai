@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 test.describe('Draft Persistence', () => {
 	test.beforeEach(async ({ page }) => {
@@ -21,10 +21,7 @@ test.describe('Draft Persistence', () => {
 	test.skip('should save draft text while typing', async ({ page }) => {
 		// TODO: Draft persistence feature may not be fully implemented or timing-dependent
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]', {
-			timeout: 10000,
-		});
+		await createSessionViaUI(page);
 
 		// Type draft text
 		const draftText = 'This is a draft message';
@@ -37,10 +34,7 @@ test.describe('Draft Persistence', () => {
 		const currentUrl = page.url();
 
 		// Create another session to switch away
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]', {
-			timeout: 10000,
-		});
+		await createSessionViaUI(page);
 		await page.waitForTimeout(500);
 
 		// Navigate back to the first session
@@ -57,8 +51,7 @@ test.describe('Draft Persistence', () => {
 
 	test('should clear draft after sending message', async ({ page }) => {
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]');
+		await createSessionViaUI(page);
 
 		// Type and send message
 		const messageText = 'Test message for draft clearing';
@@ -73,7 +66,7 @@ test.describe('Draft Persistence', () => {
 		await expect(textarea).toHaveValue('');
 
 		// Switch to another session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		await createSessionViaUI(page);
 		await page.waitForTimeout(500);
 
 		// Go back to test session
@@ -94,8 +87,7 @@ test.describe('Draft Persistence', () => {
 	test.skip('should not restore sent message as draft after page reload', async ({ page }) => {
 		// TODO: Draft persistence feature may not be fully implemented
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]');
+		await createSessionViaUI(page);
 
 		// Type and send message
 		const messageText = 'Message that should not reappear';
@@ -129,8 +121,7 @@ test.describe('Draft Persistence', () => {
 
 	test('should clear draft when user manually deletes all text', async ({ page }) => {
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]');
+		await createSessionViaUI(page);
 
 		// Type draft text
 		const draftText = 'Draft to be deleted';
@@ -146,7 +137,7 @@ test.describe('Draft Persistence', () => {
 		await page.waitForTimeout(200);
 
 		// Switch to another session and back
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		await createSessionViaUI(page);
 		await page.waitForTimeout(500);
 
 		// Go back to first session
@@ -167,8 +158,7 @@ test.describe('Draft Persistence', () => {
 
 	test('should handle rapid typing and sending without draft interference', async ({ page }) => {
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]');
+		await createSessionViaUI(page);
 
 		const textarea = page.locator('textarea[placeholder*="Ask"]');
 
@@ -190,7 +180,7 @@ test.describe('Draft Persistence', () => {
 		await expect(textarea).toHaveValue('');
 
 		// Switch sessions
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		await createSessionViaUI(page);
 		await page.waitForTimeout(500);
 
 		// Go back
@@ -208,8 +198,7 @@ test.describe('Draft Persistence', () => {
 	test.skip('should preserve draft when switching sessions without sending', async ({ page }) => {
 		// TODO: Draft persistence feature may not be fully implemented
 		// Create first session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]');
+		await createSessionViaUI(page);
 
 		// Type draft in first session
 		const draft1 = 'Draft for session 1';
@@ -217,8 +206,7 @@ test.describe('Draft Persistence', () => {
 		await page.waitForTimeout(500);
 
 		// Create second session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]');
+		await createSessionViaUI(page);
 
 		// Type draft in second session
 		const draft2 = 'Draft for session 2';
@@ -263,10 +251,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 	test('should NOT restore sent message as draft after session switch', async ({ page }) => {
 		// Create first session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]', {
-			timeout: 10000,
-		});
+		await createSessionViaUI(page);
 
 		// Type and send message
 		const messageText = 'This message should not reappear';
@@ -286,10 +271,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		const firstSessionId = await firstSessionButton.getAttribute('data-session-id');
 
 		// Create another session to switch away
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]', {
-			timeout: 10000,
-		});
+		await createSessionViaUI(page);
 		await page.waitForTimeout(500);
 
 		// Get second session ID for cleanup
@@ -313,10 +295,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 	test('should NOT restore sent message as draft after page reload', async ({ page }) => {
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]', {
-			timeout: 10000,
-		});
+		await createSessionViaUI(page);
 
 		// Type and send message
 		const messageText = 'Message for reload test';
@@ -356,10 +335,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 
 	test('should handle rapid send without draft race condition', async ({ page }) => {
 		// Create new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		await page.waitForSelector('textarea[placeholder*="Ask"]', {
-			timeout: 10000,
-		});
+		await createSessionViaUI(page);
 
 		const textarea = page.locator('textarea[placeholder*="Ask"]');
 
@@ -375,7 +351,7 @@ test.describe('Draft Clearing Bug Fix', () => {
 		await expect(textarea).toHaveValue('', { timeout: 2000 });
 
 		// Switch away and back quickly
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
+		await createSessionViaUI(page);
 		await page.waitForTimeout(100);
 
 		// Get second session ID for cleanup

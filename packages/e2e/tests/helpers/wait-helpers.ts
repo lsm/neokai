@@ -50,6 +50,9 @@ export async function getWorkspaceRoot(page: Page): Promise<string> {
  * then navigates to the session via URL.
  */
 export async function createSessionViaUI(page: Page): Promise<string> {
+	// Ensure WebSocket is connected before making RPC calls
+	await waitForWebSocketConnected(page);
+
 	// Get the workspace root path
 	const workspaceRoot = await getWorkspaceRoot(page);
 
@@ -85,9 +88,9 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 	// Wait for session to be created and loaded
 	await page.waitForTimeout(1500);
 
-	// Verify we're NOT on the welcome screen
+	// Verify we're NOT on the lobby/home screen
 	await page.waitForFunction(
-		() => !document.querySelector('h2')?.textContent?.includes('Welcome to NeoKai'),
+		() => !document.querySelector('h2')?.textContent?.includes('Neo Lobby'),
 		{ timeout: 10000 }
 	);
 

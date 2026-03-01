@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 /**
  * Message Output Removal E2E Tests
@@ -17,7 +17,7 @@ test.describe('Message Output Removal', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -35,12 +35,7 @@ test.describe('Message Output Removal', () => {
 
 	test('should show tool output in message when present', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message that will trigger tool use
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -64,12 +59,7 @@ test.describe('Message Output Removal', () => {
 
 	test('should display message content after tool execution', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message that triggers tool use
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -93,12 +83,7 @@ test.describe('Message Output Removal', () => {
 
 	test('should maintain conversation after viewing tool output', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send first message
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -125,12 +110,7 @@ test.describe('Message Output Removal', () => {
 
 	test('should show collapsible tool output blocks', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message that should trigger file reading
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();

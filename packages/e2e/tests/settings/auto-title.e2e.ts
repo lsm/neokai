@@ -1,15 +1,16 @@
 import { test, expect } from '../../fixtures';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForMessageProcessed,
 	cleanupTestSession,
+	setupMessageHubTesting,
 } from '../helpers/wait-helpers';
 
 test.describe('Auto Title Generation', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
+		await setupMessageHubTesting(page);
 		sessionId = null;
 	});
 
@@ -29,14 +30,7 @@ test.describe('Auto Title Generation', () => {
 		test.setTimeout(180000);
 
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		// Wait for session to be created
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 		expect(sessionId).toBeTruthy();
 
 		// Verify initial title is "New Session"
@@ -80,13 +74,7 @@ test.describe('Auto Title Generation', () => {
 		// This test sends 2 messages, so needs longer timeout
 		test.setTimeout(180000);
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send first message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -117,11 +105,11 @@ test.describe('Auto Title Generation', () => {
 		await messageInput.fill('What are its benefits?');
 		await messageInput.press('Enter');
 
-		// Wait for second message to be processed
-		await waitForMessageProcessed(page, 'What are its benefits?');
+		// Wait for second message to appear in the chat (don't need full response)
+		await expect(page.locator('text=What are its benefits?')).toBeVisible({ timeout: 5000 });
 
-		// Wait a bit to ensure title doesn't change
-		await page.waitForTimeout(3000);
+		// Wait enough time for title regeneration to trigger (if it were going to)
+		await page.waitForTimeout(10000);
 
 		// Verify title hasn't changed
 		const titleAfterSecondMessage = await sessionItem.locator('h3').textContent();
@@ -133,13 +121,7 @@ test.describe('Auto Title Generation', () => {
 		// We can't easily simulate failure in E2E, but we can verify the session
 		// continues to work even if title stays as "New Session"
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();

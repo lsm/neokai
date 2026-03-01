@@ -121,44 +121,38 @@ test.describe('Interrupt Button', () => {
 		await cleanupTestSession(page, sessionId);
 	});
 
-	test('should show loading spinner while interrupting', async ({ page }) => {
+	test('should toggle between stop and send button based on input content while agent is running', async ({
+		page,
+	}) => {
 		// Create a session
 		const sessionId = await createSessionViaUI(page);
 
-		// Send a message
+		// Send a message to start agent processing
 		const messageInput = await waitForElement(page, 'textarea');
 		await messageInput.fill('Explain neural networks in depth.');
 		await page.click('[data-testid="send-button"]');
 
-		// Wait for processing
-		await page.waitForTimeout(1000);
-
+		// Wait for agent to start: stop button appears (agent running, input empty after send)
 		const stopButton = page.locator('[data-testid="stop-button"]');
-		await expect(stopButton).toBeVisible({ timeout: 5000 });
+		await expect(stopButton).toBeVisible({ timeout: 10000 });
 
-		// Click stop button
+		// Stop button visible, send button NOT visible (agent running + empty input)
+		await expect(page.locator('[data-testid="send-button"]')).not.toBeVisible();
+
+		// Type text while agent is running → send button should appear, stop button disappear
+		await messageInput.fill('some follow-up text');
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 3000 });
+		await expect(stopButton).not.toBeVisible();
+
+		// Clear the text → stop button returns, send button disappears
+		await messageInput.fill('');
+		await expect(stopButton).toBeVisible({ timeout: 3000 });
+		await expect(page.locator('[data-testid="send-button"]')).not.toBeVisible();
+
+		// Click stop to interrupt → send button returns after interrupt completes
 		await stopButton.click();
-
-		// During interrupt, button should show spinner
-		// Note: This might be very quick, so we check immediately after click
-		const hasSpinner = await stopButton
-			.locator('.animate-spin')
-			.isVisible({ timeout: 500 })
-			.catch(() => false);
-
-		// Spinner might not be visible if interrupt was very fast, but button should be disabled
-		const isDisabledDuringInterrupt = await stopButton.isDisabled().catch(() => false);
-
-		// At least one should be true (spinner visible or button disabled)
-		expect(hasSpinner || isDisabledDuringInterrupt).toBe(true);
-
-		// Wait for interrupt to complete
-		await page.waitForTimeout(1500);
-
-		// Send button should return
-		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-			timeout: 5000,
-		});
+		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({ timeout: 15000 });
+		await expect(stopButton).not.toBeVisible();
 
 		await cleanupTestSession(page, sessionId);
 	});
