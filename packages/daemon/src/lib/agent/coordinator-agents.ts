@@ -17,8 +17,6 @@ import { testerAgent } from './coordinator/tester';
 import { reviewerAgent } from './coordinator/reviewer';
 import { vcsAgent } from './coordinator/vcs';
 import { verifierAgent } from './coordinator/verifier';
-import { executorAgent } from './coordinator/executor';
-
 /**
  * Specialist subagent definitions.
  *
@@ -33,7 +31,6 @@ const SPECIALIST_AGENTS: Record<string, AgentDefinition> = {
 	Reviewer: reviewerAgent,
 	VCS: vcsAgent,
 	Verifier: verifierAgent,
-	Executor: executorAgent,
 };
 
 /**

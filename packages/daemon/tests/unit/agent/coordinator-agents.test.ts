@@ -19,7 +19,6 @@ describe('getCoordinatorAgents', () => {
 		expect(agents.Reviewer).toBeDefined();
 		expect(agents.VCS).toBeDefined();
 		expect(agents.Verifier).toBeDefined();
-		expect(agents.Executor).toBeDefined();
 	});
 
 	it('should include coordinator agent with orchestration tools only', () => {
@@ -82,15 +81,15 @@ describe('getCoordinatorAgents', () => {
 		const agents = getCoordinatorAgents();
 		const agentNames = Object.keys(agents);
 
-		// coordinator + 7 specialists = 8
-		expect(agentNames).toHaveLength(8);
+		// coordinator + 6 specialists = 7
+		expect(agentNames).toHaveLength(7);
 	});
 
 	it('should work with undefined user agents', () => {
 		const agents = getCoordinatorAgents(undefined);
 
 		expect(agents.Coordinator).toBeDefined();
-		expect(Object.keys(agents)).toHaveLength(8);
+		expect(Object.keys(agents)).toHaveLength(7);
 	});
 
 	it('should have verifier using opus model for critical verification', () => {

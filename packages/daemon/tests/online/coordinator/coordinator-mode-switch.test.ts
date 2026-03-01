@@ -6,7 +6,7 @@
  *
  * Each system:init message is per-message and immutable once saved.
  * When coordinator mode is ON:
- *   - system:init.agents should include coordinator + 7 specialists
+ *   - system:init.agents should include coordinator + 6 specialists
  *   - The agent field should be 'coordinator'
  * When coordinator mode is OFF:
  *   - system:init.agents should be the default SDK agents (Bash, Explore, etc.)
@@ -43,7 +43,6 @@ const COORDINATOR_AGENTS = [
 	'Reviewer',
 	'VCS',
 	'Verifier',
-	'Executor',
 ];
 
 /**
@@ -127,7 +126,6 @@ function assertCoordinatorOff(systemInit: Record<string, unknown>) {
 		expect(agents).not.toContain('Reviewer');
 		expect(agents).not.toContain('VCS');
 		expect(agents).not.toContain('Verifier');
-		expect(agents).not.toContain('Executor');
 	}
 }
 
