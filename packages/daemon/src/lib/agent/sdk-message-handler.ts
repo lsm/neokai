@@ -116,6 +116,13 @@ export class SDKMessageHandler {
 			const userMessage = this.circuitBreaker.getTripMessage();
 			await this.handleCircuitBreakerTrip(reason, userMessage);
 		});
+
+		// Set up message yield callback - fires when generator yields to SDK
+		// This is the CORRECT moment to broadcast steered messages to UI
+		// and update their DB timestamp (T_consumed, not T_end)
+		ctx.messageQueue.onMessageYielded = (messageId: string, sentAt: number) => {
+			this.handleMessageYielded(messageId, sentAt);
+		};
 	}
 
 	/**
@@ -285,6 +292,7 @@ export class SDKMessageHandler {
 			.getMessagesByStatus(session.id, 'sent')
 			.find((sent) => sent.uuid === message.uuid);
 		if (sentMessage) {
+			this.acknowledgedPersistedUserThisTurn = true;
 			return true;
 		}
 
@@ -293,31 +301,117 @@ export class SDKMessageHandler {
 
 	/**
 	 * Fallback acknowledgment when SDK doesn't replay user messages.
-	 * Marks exactly one oldest queued user message as sent at turn end.
+	 * Marks ALL remaining queued user messages as sent at turn end.
+	 *
+	 * This is a safety net — ideally handleMessageYielded already handled
+	 * these at yield time. But if the generator didn't fire the callback
+	 * (e.g., internal messages, edge cases), this ensures messages don't
+	 * stay stuck in 'queued' status forever.
 	 */
 	private async acknowledgeOldestQueuedUserOnTurnEnd(): Promise<void> {
 		const { session, db, daemonHub, messageHub } = this.ctx;
-		const oldestQueuedUser = db
+		const queuedUsers = db
 			.getMessagesByStatus(session.id, 'queued')
-			.find((queued) => isSDKUserMessage(queued));
-		if (!oldestQueuedUser) {
+			.filter((queued) => isSDKUserMessage(queued));
+
+		for (const queuedUser of queuedUsers) {
+			db.updateMessageStatus([queuedUser.dbId], 'sent');
+			// Don't update timestamp here — keep the original T1 timestamp
+			// since we don't know the exact T_consumed for these edge cases.
+			// The original timestamp (when user sent it) is a better approximation
+			// than turn-end time.
+			await daemonHub.emit('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [queuedUser.dbId],
+				status: 'sent',
+			});
+
+			const { dbId: _dbId, timestamp, ...sdkUserMessage } = queuedUser;
+			messageHub.event(
+				'state.sdkMessages.delta',
+				{
+					added: [{ ...sdkUserMessage, timestamp }],
+					timestamp: Date.now(),
+					version: ++this.sdkMessageDeltaVersion,
+				},
+				{ channel: `session:${session.id}` }
+			);
+		}
+	}
+
+	/**
+	 * Handle message yielded by the generator to the SDK.
+	 *
+	 * This fires at the EXACT moment the SDK receives a queued user message
+	 * (T_consumed). We update the DB and broadcast to UI here, so the message
+	 * appears at the correct position in the conversation — after any assistant
+	 * messages that were already streamed, and before the assistant's response
+	 * to the steering.
+	 */
+	private handleMessageYielded(messageId: string, sentAt: number): void {
+		const { session, db, daemonHub, messageHub } = this.ctx;
+
+		// Find the queued message in DB by UUID
+		const queuedMessage = db
+			.getMessagesByStatus(session.id, 'queued')
+			.find((queued) => queued.uuid === messageId);
+		if (!queuedMessage) {
+			// Could be a 'saved' message being replayed
+			const savedMessage = db
+				.getMessagesByStatus(session.id, 'saved')
+				.find((saved) => saved.uuid === messageId);
+			if (!savedMessage) {
+				return; // Not a persisted user message (e.g., already sent)
+			}
+			// Handle saved message the same way
+			db.updateMessageStatus([savedMessage.dbId], 'sent');
+			db.updateMessageTimestamp(savedMessage.dbId, sentAt);
+			daemonHub
+				.emit('messages.statusChanged', {
+					sessionId: session.id,
+					messageIds: [savedMessage.dbId],
+					status: 'sent',
+				})
+				.catch(() => {});
+			this.acknowledgedPersistedUserThisTurn = true;
+
+			const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = savedMessage;
+			messageHub.event(
+				'state.sdkMessages.delta',
+				{
+					added: [{ ...sdkMessage, timestamp: sentAt }],
+					timestamp: sentAt,
+					version: ++this.sdkMessageDeltaVersion,
+				},
+				{ channel: `session:${session.id}` }
+			);
 			return;
 		}
 
-		db.updateMessageStatus([oldestQueuedUser.dbId], 'sent');
-		db.updateMessageTimestamp(oldestQueuedUser.dbId);
-		await daemonHub.emit('messages.statusChanged', {
-			sessionId: session.id,
-			messageIds: [oldestQueuedUser.dbId],
-			status: 'sent',
-		});
+		// Update status and timestamp in DB
+		db.updateMessageStatus([queuedMessage.dbId], 'sent');
+		db.updateMessageTimestamp(queuedMessage.dbId, sentAt);
 
-		const { dbId: _dbId, timestamp: _timestamp, ...sdkUserMessage } = oldestQueuedUser;
+		// Emit status change event (for queue overlay polling)
+		daemonHub
+			.emit('messages.statusChanged', {
+				sessionId: session.id,
+				messageIds: [queuedMessage.dbId],
+				status: 'sent',
+			})
+			.catch(() => {});
+
+		// Mark as acknowledged so fallback path doesn't fire again
+		this.acknowledgedPersistedUserThisTurn = true;
+
+		// Broadcast to UI with the correct timestamp
+		// Strip DB-only fields before broadcasting
+		const { dbId: _dbId, timestamp: _timestamp, ...sdkMessage } = queuedMessage;
 		messageHub.event(
 			'state.sdkMessages.delta',
 			{
-				added: [sdkUserMessage],
-				timestamp: Date.now(),
+				added: [{ ...sdkMessage, timestamp: sentAt }],
+				timestamp: sentAt,
 				version: ++this.sdkMessageDeltaVersion,
 			},
 			{ channel: `session:${session.id}` }

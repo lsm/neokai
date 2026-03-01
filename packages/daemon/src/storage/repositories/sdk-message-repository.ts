@@ -306,16 +306,16 @@ export class SDKMessageRepository {
 	}
 
 	/**
-	 * Update the timestamp of a message to the current time.
+	 * Update the timestamp of a message.
 	 *
-	 * Used when a queued/saved user message is acknowledged by the SDK, so that
-	 * its DB position matches where it actually appeared in the conversation
-	 * (after already-streamed assistant messages) rather than when the user
-	 * originally typed it.
+	 * When timestampMs is provided, sets the timestamp to that value (used to
+	 * record the moment the SDK generator yielded the message — T_consumed).
+	 * Otherwise falls back to the current time.
 	 */
-	updateMessageTimestamp(messageId: string): void {
+	updateMessageTimestamp(messageId: string, timestampMs?: number): void {
 		const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
-		stmt.run(new Date().toISOString(), messageId);
+		const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
+		stmt.run(ts.toISOString(), messageId);
 	}
 
 	/**
