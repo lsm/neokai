@@ -1,12 +1,12 @@
 /**
- * RoomAgents - Configure built-in agents and reviewer sub-agents for the room
+ * RoomAgents - Configure built-in agents and per-agent sub-agents for the room
  *
- * Shows the 4 built-in agent roles with per-agent model selection,
- * detected CLI agents with install/auth status, and reviewer configuration.
+ * Shows a default model selector, 4 built-in agent roles with per-agent model
+ * selection, expandable sub-agent pools per agent, and max review rounds.
  *
  * Config shape in room.config:
  *   agentModels: { planner?: string, coder?: string, general?: string, leader?: string }
- *   reviewers: ReviewerConfig[]
+ *   agentSubagents: { planner?: SubagentConfig[], coder?: SubagentConfig[], ... }
  *   maxReviewRounds: number
  */
 
@@ -63,7 +63,7 @@ const BUILTIN_AGENTS: AgentRole[] = [
 	{ key: 'leader', label: 'Leader', description: 'Reviews and routes' },
 ];
 
-interface ReviewerConfig {
+interface SubagentConfig {
 	model: string;
 	provider?: string;
 	type?: 'cli';
@@ -75,6 +75,13 @@ interface AgentModels {
 	coder?: string;
 	general?: string;
 	leader?: string;
+}
+
+interface AgentSubagents {
+	planner?: SubagentConfig[];
+	coder?: SubagentConfig[];
+	general?: SubagentConfig[];
+	leader?: SubagentConfig[];
 }
 
 export interface RoomAgentsProps {
@@ -89,6 +96,7 @@ function ModelPicker({
 	disabled,
 	onChange,
 	placeholder = 'Default',
+	excludeModels,
 }: {
 	value: string;
 	models: ModelInfo[];
@@ -96,6 +104,7 @@ function ModelPicker({
 	disabled: boolean;
 	onChange: (modelId: string) => void;
 	placeholder?: string;
+	excludeModels?: string[];
 }) {
 	const isOpen = useSignal(false);
 	const ref = useRef<HTMLDivElement>(null);
@@ -164,30 +173,234 @@ function ModelPicker({
 			</button>
 
 			{isOpen.value && (
-				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
+				<div class="absolute top-full mt-1 right-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
 					<button
 						class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
 							!value ? 'text-blue-400' : 'text-gray-200'
 						}`}
 						onClick={() => handleSelect('')}
 					>
-						Default
+						{placeholder}
 						{!value && ' (current)'}
 					</button>
-					{models.map((model) => (
+					{models
+						.filter(
+							(model) =>
+								model.id === value ||
+								!excludeModels?.includes(model.id)
+						)
+						.map((model) => (
+							<button
+								key={model.id}
+								class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
+									model.id === value ? 'text-blue-400' : 'text-gray-200'
+								}`}
+								onClick={() => handleSelect(model.id)}
+							>
+								<span class="text-sm">
+									{MODEL_FAMILY_ICONS[model.family] ||
+										MODEL_FAMILY_ICONS.__default__}
+								</span>
+								{model.name}
+								{model.id === value && ' (current)'}
+							</button>
+						))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** Tags-style input for selecting sub-agent models */
+function ModelTagsInput({
+	models,
+	selected,
+	loading,
+	disabled,
+	onAdd,
+	onRemove,
+}: {
+	models: ModelInfo[];
+	selected: string[];
+	loading: boolean;
+	disabled: boolean;
+	onAdd: (modelId: string) => void;
+	onRemove: (modelId: string) => void;
+}) {
+	const isOpen = useSignal(false);
+	const ref = useRef<HTMLDivElement>(null);
+
+	const availableToAdd = models.filter((m) => !selected.includes(m.id));
+
+	useEffect(() => {
+		if (!isOpen.value) return;
+		const handler = (e: MouseEvent) => {
+			if (ref.current && !ref.current.contains(e.target as Node)) isOpen.value = false;
+		};
+		document.addEventListener('mousedown', handler);
+		return () => document.removeEventListener('mousedown', handler);
+	}, [isOpen.value]);
+
+	return (
+		<div class="relative" ref={ref}>
+			<div
+				class="flex flex-wrap items-center gap-1.5 min-h-[32px] px-2 py-1.5 bg-dark-800 border border-dark-600 rounded-md cursor-text"
+				onClick={() => {
+					if (!disabled && !loading && availableToAdd.length > 0)
+						isOpen.value = !isOpen.value;
+				}}
+			>
+				{selected.map((modelId) => {
+					const info = models.find((m) => m.id === modelId);
+					const icon = info
+						? MODEL_FAMILY_ICONS[info.family] || MODEL_FAMILY_ICONS.__default__
+						: MODEL_FAMILY_ICONS.__default__;
+					return (
+						<span
+							key={modelId}
+							class="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-200"
+						>
+							<span class="text-sm leading-none">{icon}</span>
+							{info?.name ?? modelId}
+							{!disabled && (
+								<button
+									class="ml-0.5 text-red-400 hover:text-red-300 leading-none"
+									onClick={(e) => {
+										e.stopPropagation();
+										onRemove(modelId);
+									}}
+								>
+									&times;
+								</button>
+							)}
+						</span>
+					);
+				})}
+				{availableToAdd.length > 0 && (
+					<span class="inline-flex items-center justify-center w-6 h-6 rounded bg-dark-600 hover:bg-dark-500 text-gray-400 hover:text-gray-200 text-sm font-medium transition-colors cursor-pointer">
+						+
+					</span>
+				)}
+			</div>
+
+			{isOpen.value && (
+				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
+					{availableToAdd.map((model) => (
 						<button
 							key={model.id}
-							class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-								model.id === value ? 'text-blue-400' : 'text-gray-200'
-							}`}
-							onClick={() => handleSelect(model.id)}
+							class="w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 text-gray-200"
+							onClick={() => {
+								onAdd(model.id);
+								if (availableToAdd.length <= 1) isOpen.value = false;
+							}}
 						>
 							<span class="text-sm">
-								{MODEL_FAMILY_ICONS[model.family] ||
-									MODEL_FAMILY_ICONS.__default__}
+								{MODEL_FAMILY_ICONS[model.family] || MODEL_FAMILY_ICONS.__default__}
 							</span>
 							{model.name}
-							{model.id === value && ' (current)'}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** Tags-style input for selecting CLI sub-agents */
+function CliTagsInput({
+	agents,
+	selectedIds,
+	disabled,
+	onToggle,
+}: {
+	agents: CliAgentInfo[];
+	selectedIds: string[];
+	disabled: boolean;
+	onToggle: (agent: CliAgentInfo) => void;
+}) {
+	const isOpen = useSignal(false);
+	const ref = useRef<HTMLDivElement>(null);
+
+	const installableAgents = agents.filter((a) => a.installed);
+	const availableToAdd = installableAgents.filter((a) => !selectedIds.includes(a.id));
+
+	useEffect(() => {
+		if (!isOpen.value) return;
+		const handler = (e: MouseEvent) => {
+			if (ref.current && !ref.current.contains(e.target as Node)) isOpen.value = false;
+		};
+		document.addEventListener('mousedown', handler);
+		return () => document.removeEventListener('mousedown', handler);
+	}, [isOpen.value]);
+
+	return (
+		<div class="relative" ref={ref}>
+			<div
+				class="flex flex-wrap items-center gap-1.5 min-h-[32px] px-2 py-1.5 bg-dark-800 border border-dark-600 rounded-md cursor-text"
+				onClick={() => {
+					if (!disabled && availableToAdd.length > 0) isOpen.value = !isOpen.value;
+				}}
+			>
+				{selectedIds.map((id) => {
+					const info = agents.find((a) => a.id === id);
+					if (!info) return null;
+					return (
+						<span
+							key={id}
+							class="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-200"
+						>
+							{info.name}
+							<span class="text-[10px] text-gray-500">{info.provider}</span>
+							{!disabled && (
+								<button
+									class="ml-0.5 text-red-400 hover:text-red-300 leading-none"
+									onClick={(e) => {
+										e.stopPropagation();
+										onToggle(info);
+									}}
+								>
+									&times;
+								</button>
+							)}
+						</span>
+					);
+				})}
+				{availableToAdd.length > 0 && (
+					<span class="inline-flex items-center justify-center w-6 h-6 rounded bg-dark-600 hover:bg-dark-500 text-gray-400 hover:text-gray-200 text-sm font-medium transition-colors cursor-pointer">
+						+
+					</span>
+				)}
+				{selectedIds.length === 0 && availableToAdd.length === 0 && (
+					<span class="text-xs text-gray-600">No CLI agents installed</span>
+				)}
+			</div>
+
+			{isOpen.value && (
+				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-56 py-1 z-50 animate-slideIn">
+					{availableToAdd.map((agent) => (
+						<button
+							key={agent.id}
+							class="w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center justify-between gap-2 text-gray-200"
+							onClick={() => {
+								onToggle(agent);
+								if (availableToAdd.length <= 1) isOpen.value = false;
+							}}
+						>
+							<span class="flex items-center gap-2">
+								{agent.name}
+								<span class="text-[10px] text-gray-500">{agent.provider}</span>
+							</span>
+							{agent.authenticated ? (
+								<span class="text-[10px] text-green-400 flex items-center gap-1">
+									<span class="w-1 h-1 rounded-full bg-green-400" />
+									Ready
+								</span>
+							) : (
+								<span class="text-[10px] text-yellow-400 flex items-center gap-1">
+									<span class="w-1 h-1 rounded-full bg-yellow-400" />
+									No auth
+								</span>
+							)}
 						</button>
 					))}
 				</div>
@@ -198,8 +411,10 @@ function ModelPicker({
 
 export function RoomAgents({ room }: RoomAgentsProps) {
 	const agentModels = useSignal<AgentModels>({});
-	const reviewers = useSignal<ReviewerConfig[]>([]);
+	const agentSubagents = useSignal<AgentSubagents>({});
 	const maxReviewRounds = useSignal<number>(3);
+	const selectedDefaultModel = useSignal(room.defaultModel || '');
+	const expandedAgents = useSignal<Set<string>>(new Set());
 	const isSaving = useSignal(false);
 	const availableModels = useSignal<ModelInfo[]>([]);
 	const cliAgents = useSignal<CliAgentInfo[]>([]);
@@ -234,33 +449,60 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		fetchData();
 	}, []);
 
-	// Load from room config
+	// Load from room config (with backward-compat migration from flat reviewers)
 	useEffect(() => {
 		const config = room.config ?? {};
 		agentModels.value = (config.agentModels as AgentModels) ?? {};
-		const saved = config.reviewers as ReviewerConfig[] | undefined;
-		reviewers.value = saved ? [...saved] : [];
+		selectedDefaultModel.value = room.defaultModel || '';
+
+		const savedSubagents = config.agentSubagents as AgentSubagents | undefined;
+		if (savedSubagents) {
+			agentSubagents.value = { ...savedSubagents };
+		} else {
+			// Migrate: old flat reviewers -> leader sub-agents
+			const legacyReviewers = config.reviewers as SubagentConfig[] | undefined;
+			agentSubagents.value = legacyReviewers?.length
+				? { leader: [...legacyReviewers] }
+				: {};
+		}
+
 		maxReviewRounds.value = (config.maxReviewRounds as number) ?? 3;
 	}, [room]);
 
+	// Change detection
 	const originalJson = useComputed(() => {
 		const config = room.config ?? {};
+		const savedSubagents = config.agentSubagents as AgentSubagents | undefined;
+		const origSubagents = savedSubagents
+			? savedSubagents
+			: (config.reviewers as SubagentConfig[] | undefined)?.length
+				? { leader: config.reviewers }
+				: {};
 		return JSON.stringify({
+			defaultModel: room.defaultModel ?? '',
 			agentModels: config.agentModels ?? {},
-			reviewers: config.reviewers ?? [],
+			agentSubagents: origSubagents,
 			maxReviewRounds: config.maxReviewRounds ?? 3,
 		});
 	});
 
 	const currentJson = useComputed(() => {
 		return JSON.stringify({
+			defaultModel: selectedDefaultModel.value,
 			agentModels: agentModels.value,
-			reviewers: reviewers.value,
+			agentSubagents: agentSubagents.value,
 			maxReviewRounds: maxReviewRounds.value,
 		});
 	});
 
 	const hasChanges = useComputed(() => originalJson.value !== currentJson.value);
+
+	// Resolve default model name for display
+	const defaultModelLabel = useComputed(() => {
+		if (!selectedDefaultModel.value) return 'Default';
+		const m = availableModels.value.find((m) => m.id === selectedDefaultModel.value);
+		return m ? `Default (${m.name})` : `Default (${selectedDefaultModel.value})`;
+	});
 
 	const updateAgentModel = useCallback(
 		(key: string, model: string) => {
@@ -275,67 +517,86 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		[agentModels]
 	);
 
-	// Check if a CLI agent is already in reviewers list
-	const isCliAgentEnabled = (agentId: string) => {
-		return reviewers.value.some((r) => r.type === 'cli' && r.model === agentId);
+	// Per-agent sub-agent helpers
+	const getSubagentsForRole = (role: string): SubagentConfig[] => {
+		return agentSubagents.value[role as keyof AgentSubagents] ?? [];
 	};
 
-	const toggleCliAgent = (agent: CliAgentInfo) => {
-		if (isCliAgentEnabled(agent.id)) {
-			// Remove
-			reviewers.value = reviewers.value.filter(
-				(r) => !(r.type === 'cli' && r.model === agent.id)
-			);
-		} else {
-			// Add as CLI reviewer
-			reviewers.value = [
-				...reviewers.value,
-				{ model: agent.id, type: 'cli', driver_model: 'sonnet' },
-			];
-		}
+	const isCliAgentEnabledFor = (role: string, agentId: string): boolean => {
+		return getSubagentsForRole(role).some((r) => r.type === 'cli' && r.model === agentId);
 	};
 
-	// SDK model reviewers (non-CLI)
-	const sdkReviewers = reviewers.value.filter((r) => r.type !== 'cli');
-
-	const addSdkReviewer = () => {
-		reviewers.value = [...reviewers.value, { model: '' }];
+	const toggleCliAgentFor = (role: string, agent: CliAgentInfo) => {
+		const current = getSubagentsForRole(role);
+		const updated = isCliAgentEnabledFor(role, agent.id)
+			? current.filter((r) => !(r.type === 'cli' && r.model === agent.id))
+			: [...current, { model: agent.id, type: 'cli' as const, driver_model: 'sonnet' }];
+		agentSubagents.value = { ...agentSubagents.value, [role]: updated };
 	};
 
-	const removeSdkReviewer = (model: string) => {
-		// Remove first non-CLI reviewer matching this model
+	const getSdkSubagentsFor = (role: string): SubagentConfig[] => {
+		return getSubagentsForRole(role).filter((r) => r.type !== 'cli');
+	};
+
+	const addSdkSubagentFor = (role: string, model: string) => {
+		if (!model) return;
+		const current = getSubagentsForRole(role);
+		// Avoid duplicates
+		if (current.some((r) => r.type !== 'cli' && r.model === model)) return;
+		agentSubagents.value = { ...agentSubagents.value, [role]: [...current, { model }] };
+	};
+
+	const removeSdkSubagentFor = (role: string, model: string) => {
 		let removed = false;
-		reviewers.value = reviewers.value.filter((r) => {
-			if (!removed && r.type !== 'cli' && r.model === model) {
-				removed = true;
-				return false;
-			}
-			return true;
-		});
+		const current = getSubagentsForRole(role);
+		agentSubagents.value = {
+			...agentSubagents.value,
+			[role]: current.filter((r) => {
+				if (!removed && r.type !== 'cli' && r.model === model) {
+					removed = true;
+					return false;
+				}
+				return true;
+			}),
+		};
 	};
 
-	const updateSdkReviewer = (oldModel: string, newModel: string) => {
-		let updated = false;
-		reviewers.value = reviewers.value.map((r) => {
-			if (!updated && r.type !== 'cli' && r.model === oldModel) {
-				updated = true;
-				return { ...r, model: newModel };
-			}
-			return r;
-		});
+	const toggleExpanded = (key: string) => {
+		const next = new Set(expandedAgents.value);
+		if (next.has(key)) {
+			next.delete(key);
+		} else {
+			next.add(key);
+		}
+		expandedAgents.value = next;
 	};
 
 	const handleSave = async () => {
 		if (!hasChanges.value) return;
 
-		const validReviewers = reviewers.value.filter((r) => r.model.trim());
+		// Clean up: remove entries with blank model and empty role arrays
+		const cleanedSubagents: AgentSubagents = {};
+		for (const [key, subs] of Object.entries(agentSubagents.value)) {
+			const valid = (subs as SubagentConfig[]).filter((s) => s.model.trim());
+			if (valid.length > 0) {
+				cleanedSubagents[key as keyof AgentSubagents] = valid;
+			}
+		}
 
 		isSaving.value = true;
 		try {
+			// Save defaultModel if changed
+			if (selectedDefaultModel.value !== (room.defaultModel || '')) {
+				await roomStore.updateSettings({
+					defaultModel: selectedDefaultModel.value || undefined,
+				});
+			}
+			// Save config (clears legacy reviewers key)
 			await roomStore.updateConfig({
 				...room.config,
 				agentModels: agentModels.value,
-				reviewers: validReviewers,
+				agentSubagents: cleanedSubagents,
+				reviewers: undefined,
 				maxReviewRounds: maxReviewRounds.value,
 			});
 			toast.success('Agent configuration saved');
@@ -354,162 +615,139 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 			<div class="pb-4 border-b border-dark-700">
 				<h2 class="text-lg font-semibold text-gray-100">Agents</h2>
 				<p class="text-xs text-gray-500 mt-0.5">
-					Configure models for built-in agents and enable reviewers.
+					Configure models for built-in agents and their sub-agents.
 				</p>
 			</div>
 
 			<div class="flex-1 overflow-y-auto py-4 space-y-6">
-				{/* Built-in agent rows */}
-				<div class="space-y-2">
-					{BUILTIN_AGENTS.map((agent) => (
-						<div
-							key={agent.key}
-							class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-dark-800 border border-dark-700"
-						>
-							<div class="min-w-0">
-								<span class="text-sm font-medium text-gray-100">
-									{agent.label}
-								</span>
-								<span class="text-xs text-gray-500 ml-2">
-									{agent.description}
-								</span>
-							</div>
-							<ModelPicker
-								value={
-									agentModels.value[agent.key as keyof AgentModels] ?? ''
-								}
-								models={availableModels.value}
-								loading={isLoadingModels.value}
-								disabled={disabled}
-								onChange={(model) => updateAgentModel(agent.key, model)}
-							/>
+				{/* Default Model selector */}
+				<div>
+					<div class="flex items-center justify-between gap-3 mb-1">
+						<div>
+							<h3 class="text-sm font-semibold text-gray-300">Default Model</h3>
+							<p class="text-xs text-gray-500">
+								What "Default" resolves to for agent model selectors below.
+							</p>
 						</div>
-					))}
+						<ModelPicker
+							value={selectedDefaultModel.value}
+							models={availableModels.value}
+							loading={isLoadingModels.value}
+							disabled={disabled}
+							onChange={(model) => {
+								selectedDefaultModel.value = model;
+							}}
+							placeholder="System default"
+						/>
+					</div>
 				</div>
 
 				{/* Divider */}
 				<div class="border-t border-dark-700" />
 
-				{/* Reviewers section */}
-				<div>
-					<h3 class="text-sm font-semibold text-gray-300 mb-1">Reviewers</h3>
-					<p class="text-xs text-gray-500 mb-3">
-						Models and CLI agents that review code during the review phase.
-					</p>
+				{/* Built-in agents with expandable sub-agents */}
+				<div class="space-y-2">
+					{BUILTIN_AGENTS.map((agent) => {
+						const isExpanded = expandedAgents.value.has(agent.key);
+						const subagentCount = getSubagentsForRole(agent.key).length;
 
-					{/* CLI Agents */}
-					{cliAgents.value.length > 0 && (
-						<div class="mb-4">
-							<div class="text-xs font-medium text-gray-400 mb-2">CLI Agents</div>
-							<div class="space-y-1.5">
-								{cliAgents.value.map((agent) => (
-									<div
-										key={agent.id}
-										class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-dark-800 border border-dark-700"
+						return (
+							<div
+								key={agent.key}
+								class="rounded-lg bg-dark-800 border border-dark-700"
+							>
+								{/* Agent header row */}
+								<div class="flex items-center justify-between gap-3 px-3 py-2">
+									<button
+										type="button"
+										class="flex items-center gap-2 min-w-0 cursor-pointer group"
+										onClick={() => toggleExpanded(agent.key)}
 									>
-										<div class="flex items-center gap-2.5 min-w-0">
-											<button
-												type="button"
-												class={`w-4 h-4 rounded flex-shrink-0 border transition-colors ${
-													isCliAgentEnabled(agent.id)
-														? 'bg-blue-500 border-blue-500'
-														: 'border-dark-500 hover:border-dark-400'
-												}`}
-												onClick={() =>
-													agent.installed && toggleCliAgent(agent)
-												}
-												disabled={disabled || !agent.installed}
-											>
-												{isCliAgentEnabled(agent.id) && (
-													<svg
-														class="w-4 h-4 text-white"
-														fill="none"
-														viewBox="0 0 24 24"
-														stroke="currentColor"
-													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															stroke-width={3}
-															d="M5 13l4 4L19 7"
-														/>
-													</svg>
-												)}
-											</button>
-											<div class="min-w-0">
-												<span
-													class={`text-sm font-medium ${agent.installed ? 'text-gray-100' : 'text-gray-500'}`}
-												>
-													{agent.name}
-												</span>
-												<span class="text-xs text-gray-500 ml-1.5">
-													{agent.provider}
-												</span>
-											</div>
-										</div>
-										<div class="flex items-center gap-2 flex-shrink-0">
-											{agent.installed ? (
-												agent.authenticated ? (
-													<span class="text-xs text-green-400 flex items-center gap-1">
-														<span class="w-1.5 h-1.5 rounded-full bg-green-400" />
-														Ready
-													</span>
-												) : (
-													<span class="text-xs text-yellow-400 flex items-center gap-1">
-														<span class="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-														No auth
-													</span>
-												)
-											) : (
-												<span class="text-xs text-gray-500">
-													Not installed
-												</span>
-											)}
-										</div>
-									</div>
-								))}
-							</div>
-						</div>
-					)}
-
-					{/* SDK Model Reviewers */}
-					<div>
-						<div class="text-xs font-medium text-gray-400 mb-2">Model Reviewers</div>
-						<div class="space-y-1.5">
-							{sdkReviewers.map((reviewer, idx) => (
-								<div
-									key={idx}
-									class="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-dark-800 border border-dark-700"
-								>
+										<svg
+											class={`w-3.5 h-3.5 text-gray-500 group-hover:text-gray-300 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`}
+											fill="none"
+											viewBox="0 0 24 24"
+											stroke="currentColor"
+										>
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M9 5l7 7-7 7"
+											/>
+										</svg>
+										<span class="text-sm font-medium text-gray-100">
+											{agent.label}
+										</span>
+										<span class="text-xs text-gray-500">
+											{agent.description}
+										</span>
+										{subagentCount > 0 && (
+											<span class="text-[10px] text-blue-400/70 bg-blue-900/20 px-1.5 py-0.5 rounded">
+												{subagentCount} sub-agent
+												{subagentCount !== 1 ? 's' : ''}
+											</span>
+										)}
+									</button>
 									<ModelPicker
-										value={reviewer.model}
+										value={
+											agentModels.value[
+												agent.key as keyof AgentModels
+											] ?? ''
+										}
 										models={availableModels.value}
 										loading={isLoadingModels.value}
 										disabled={disabled}
 										onChange={(model) =>
-											updateSdkReviewer(reviewer.model, model)
+											updateAgentModel(agent.key, model)
 										}
-										placeholder="Select model..."
+										placeholder={defaultModelLabel.value}
 									/>
-									<button
-										class="text-xs text-red-400 hover:text-red-300 flex-shrink-0"
-										onClick={() => removeSdkReviewer(reviewer.model)}
-										disabled={disabled}
-									>
-										Remove
-									</button>
 								</div>
-							))}
 
-							<button
-								class="w-full border border-dashed border-dark-600 rounded-lg py-2 text-xs text-gray-400 hover:text-gray-200 hover:border-dark-500 transition-colors"
-								onClick={addSdkReviewer}
-								disabled={disabled}
-							>
-								+ Add Model Reviewer
-							</button>
-						</div>
-					</div>
+								{/* Expandable sub-agents section */}
+								{isExpanded && (
+									<div class="px-3 pb-3 pt-1 border-t border-dark-700/50 ml-6">
+										{/* Sub Agent CLIs */}
+										<div class="mb-3">
+											<div class="text-xs text-gray-500 mb-2">
+												Sub Agent CLIs
+											</div>
+											<CliTagsInput
+												agents={cliAgents.value}
+												selectedIds={getSubagentsForRole(agent.key)
+													.filter((s) => s.type === 'cli')
+													.map((s) => s.model)}
+												disabled={disabled}
+												onToggle={(cliAgent) =>
+													toggleCliAgentFor(agent.key, cliAgent)
+												}
+											/>
+										</div>
+
+										{/* Sub Agent Models */}
+										<div class="text-xs text-gray-500 mb-2">
+											Sub Agent Models
+										</div>
+										<ModelTagsInput
+											models={availableModels.value}
+											selected={getSdkSubagentsFor(agent.key)
+												.map((s) => s.model)
+												.filter(Boolean)}
+											loading={isLoadingModels.value}
+											disabled={disabled}
+											onAdd={(model) =>
+												addSdkSubagentFor(agent.key, model)
+											}
+											onRemove={(model) =>
+												removeSdkSubagentFor(agent.key, model)
+											}
+										/>
+									</div>
+								)}
+							</div>
+						);
+					})}
 				</div>
 
 				{/* Max review rounds */}
