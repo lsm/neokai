@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 test.describe
 	.serial('Session List Ordering', () => {
@@ -27,12 +27,7 @@ test.describe
 			const initialCount = await sessionItems.count();
 
 			// Create first session
-			const newSessionButton = page.getByRole('button', {
-				name: 'New Session',
-				exact: true,
-			});
-			await newSessionButton.click();
-			const firstSessionId = await waitForSessionCreated(page);
+			const firstSessionId = await createSessionViaUI(page);
 			sessionIds.push(firstSessionId);
 
 			// Go back to home and wait for sidebar to update
@@ -55,8 +50,7 @@ test.describe
 
 			// Create second session
 			const countBeforeSecond = await sessionItems.count();
-			await newSessionButton.click();
-			const secondSessionId = await waitForSessionCreated(page);
+			const secondSessionId = await createSessionViaUI(page);
 			sessionIds.push(secondSessionId);
 
 			// Go back to home and wait for sidebar to update
@@ -89,13 +83,7 @@ test.describe
 
 			// Create 3 sessions in sequence
 			for (let i = 0; i < 3; i++) {
-				const newSessionButton = page.getByRole('button', {
-					name: 'New Session',
-					exact: true,
-				});
-				await newSessionButton.click();
-
-				const sessionId = await waitForSessionCreated(page);
+				const sessionId = await createSessionViaUI(page);
 				createdSessionIds.push(sessionId);
 				sessionIds.push(sessionId);
 

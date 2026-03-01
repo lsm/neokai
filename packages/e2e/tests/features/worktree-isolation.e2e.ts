@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 /**
  * Worktree Isolation E2E Tests
@@ -19,7 +19,7 @@ test.describe('Worktree Isolation', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -37,12 +37,7 @@ test.describe('Worktree Isolation', () => {
 
 	test('should create session with worktree indicator', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to trigger Stage 2 (workspace initialization)
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -65,12 +60,7 @@ test.describe('Worktree Isolation', () => {
 
 	test('should show session metadata with workspace info', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to trigger workspace initialization
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -93,12 +83,7 @@ test.describe('Worktree Isolation', () => {
 
 	test('should cleanup worktree when session is deleted', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to initialize workspace
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -140,12 +125,7 @@ test.describe('Worktree Isolation', () => {
 		const sessionIds: string[] = [];
 
 		// Create first session
-		let newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		const session1Id = await waitForSessionCreated(page);
+		const session1Id = await createSessionViaUI(page);
 		sessionIds.push(session1Id);
 
 		// Send message to first session
@@ -160,12 +140,7 @@ test.describe('Worktree Isolation', () => {
 		await page.goto('/');
 		await page.waitForTimeout(1000);
 
-		newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		const session2Id = await waitForSessionCreated(page);
+		const session2Id = await createSessionViaUI(page);
 		sessionIds.push(session2Id);
 
 		// Send message to second session
@@ -202,12 +177,7 @@ test.describe('Worktree Isolation', () => {
 	test.skip('should display worktree info in session header', async ({ page }) => {
 		// TODO: The UI may not have a <main> element; needs investigation
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send message to trigger workspace initialization
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();

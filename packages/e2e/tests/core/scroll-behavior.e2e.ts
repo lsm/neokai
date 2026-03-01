@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForSessionCreated, cleanupTestSession } from '../helpers/wait-helpers';
+import { createSessionViaUI, cleanupTestSession } from '../helpers/wait-helpers';
 
 test.describe('Auto-Scroll Toggle', () => {
 	let sessionId: string | null = null;
@@ -35,8 +35,7 @@ test.describe('Auto-Scroll Toggle', () => {
 
 	test('should toggle auto-scroll when button is clicked', async ({ page }) => {
 		// Create a new session
-		await page.click('text=New Session');
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Wait for chat interface to load
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();

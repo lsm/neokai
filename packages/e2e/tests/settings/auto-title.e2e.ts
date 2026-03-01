@@ -1,6 +1,6 @@
 import { test, expect } from '../../fixtures';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForMessageProcessed,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -29,14 +29,7 @@ test.describe('Auto Title Generation', () => {
 		test.setTimeout(180000);
 
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		// Wait for session to be created
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 		expect(sessionId).toBeTruthy();
 
 		// Verify initial title is "New Session"
@@ -80,13 +73,7 @@ test.describe('Auto Title Generation', () => {
 		// This test sends 2 messages, so needs longer timeout
 		test.setTimeout(180000);
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send first message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -133,13 +120,7 @@ test.describe('Auto Title Generation', () => {
 		// We can't easily simulate failure in E2E, but we can verify the session
 		// continues to work even if title stays as "New Session"
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();

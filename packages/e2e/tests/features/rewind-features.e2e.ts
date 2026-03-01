@@ -10,7 +10,7 @@ import { test, expect, type Page } from '../../fixtures';
 import {
 	setupMessageHubTesting,
 	cleanupTestSession,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForMessageProcessed,
 } from '../helpers/wait-helpers';
 
@@ -91,9 +91,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should have "Rewind Mode" option in InputActionsMenu', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open InputActionsMenu
 		await openInputActionsMenu(page);
@@ -107,9 +105,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should enter rewind mode when "Rewind Mode" is clicked', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message to have content
 		await sendMessage(page, 'Test message for rewind mode');
@@ -132,9 +128,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should show checkboxes next to messages in rewind mode', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send multiple messages
 		await sendMessage(page, 'First message');
@@ -158,9 +152,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should not show checkboxes for tool progress messages', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message that triggers tool use
 		await sendMessage(page, 'What files are in the current directory?');
@@ -190,9 +182,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should auto-select subsequent messages when a message is selected', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send multiple messages
 		await sendMessage(page, 'First message');
@@ -226,9 +216,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should update selection count in banner', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send messages
 		await sendMessage(page, 'First message');
@@ -260,9 +248,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should show "Rewind to Here" button when messages are selected', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send messages
 		await sendMessage(page, 'First message');
@@ -298,9 +284,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should exit rewind mode when "Exit Rewind Mode" is clicked', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		await sendMessage(page, 'Test message');
@@ -342,9 +326,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should show checkmark icon when in rewind mode', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		await sendMessage(page, 'Test message');
@@ -374,9 +356,7 @@ test.describe('Rewind Mode', () => {
 
 	test('should deselect messages when checkbox is clicked again', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.locator('button:has-text("New Session")').first();
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send messages
 		await sendMessage(page, 'First message');

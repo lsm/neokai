@@ -22,7 +22,7 @@ test.describe('Error Scenarios', () => {
 		await page.goto('/');
 
 		// Wait for app to initialize
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible({
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible({
 			timeout: 10000,
 		});
 
@@ -46,25 +46,18 @@ test.describe('Error Scenarios', () => {
 			timeout: 5000,
 		});
 
-		// Try to send a message while disconnected
-		await messageInput.fill('This message should not send');
-		await page.click('[data-testid="send-button"]');
+		// Input should be disabled when disconnected (preventing message send)
+		await expect(messageInput).toBeDisabled({ timeout: 5000 });
 
-		// Wait a moment to verify nothing happens
-		await page.waitForTimeout(1000);
-
-		// Message should not have been sent - verify by checking no "Sending..." status appears
-		const hasSendingStatus = await page
-			.locator('text=/Sending/i')
-			.isVisible({ timeout: 1000 })
-			.catch(() => false);
-		expect(hasSendingStatus).toBe(false);
-
-		// Input should still be enabled (message was blocked before sending)
-		await expect(messageInput).toBeEnabled();
+		// Send button should also be disabled
+		const sendButton = page.locator('button[aria-label="Send message"]');
+		await expect(sendButton).toBeDisabled();
 
 		// Restore network
 		await restoreWebSocket(page);
+
+		// After reconnection, input should be enabled again
+		await expect(messageInput).toBeEnabled({ timeout: 10000 });
 
 		await cleanupTestSession(page, sessionId);
 	});
@@ -115,9 +108,7 @@ test.describe('Error Scenarios', () => {
 		await page.waitForTimeout(3000);
 
 		// Should see error toast or be redirected to home
-		const isOnHome = await page
-			.locator('h2:has-text("Welcome to NeoKai")')
-			.isVisible({ timeout: 5000 });
+		const isOnHome = await page.locator('h2:has-text("Neo Lobby")').isVisible({ timeout: 5000 });
 		const hasErrorToast = await page
 			.locator('text=/session not found/i')
 			.isVisible({ timeout: 2000 })

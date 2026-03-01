@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 /**
  * Tools Modal Complete E2E Tests
@@ -18,7 +18,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -36,12 +36,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should show System Prompt section with Claude Code Preset', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open session options menu
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -62,12 +57,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should show Setting Sources section with checkboxes', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open Tools modal
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -90,12 +80,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should show NeoKai Tools section with Memory tool', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open Tools modal
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -116,12 +101,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should show SDK Built-in section', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open Tools modal
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -142,12 +122,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should enable Save button when settings change', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open Tools modal
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -177,12 +152,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should close modal with Cancel button without saving', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open Tools modal
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -202,12 +172,7 @@ test.describe('Tools Modal - Complete', () => {
 
 	test.skip('should toggle Claude Code Preset', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open Tools modal
 		const optionsButton = page.locator('button[aria-label="Session options"]');

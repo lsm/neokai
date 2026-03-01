@@ -13,7 +13,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForMessageProcessed,
 	cleanupTestSession,
 	waitForElement,
@@ -41,13 +41,7 @@ test.describe('Page Refresh - Session State Persistence', () => {
 
 	test('should reset agent state to idle after refresh (expected behavior)', async ({ page }) => {
 		// Create session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -84,13 +78,7 @@ test.describe('Page Refresh - Session State Persistence', () => {
 
 	test('should restore slash commands immediately after refresh', async ({ page }) => {
 		// Create session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Wait for commands to load (check for autocomplete to be available)
 		await page.waitForTimeout(2000);
@@ -140,13 +128,7 @@ test.describe('Page Refresh - Session State Persistence', () => {
 
 	test('should restore full session state including messages and title', async ({ page }) => {
 		// Create session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send message and wait for title generation
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();

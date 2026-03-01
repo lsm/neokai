@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 /**
  * Session Export E2E Tests
@@ -15,7 +15,7 @@ test.describe('Session Export', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -33,12 +33,7 @@ test.describe('Session Export', () => {
 
 	test('should show Export Chat option in session options menu', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open session options menu (3 dots button)
 		const optionsButton = page.locator('button[aria-label="Session options"]');
@@ -51,12 +46,7 @@ test.describe('Session Export', () => {
 
 	test('should export session to Markdown file', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a test message to have content to export
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -83,12 +73,7 @@ test.describe('Session Export', () => {
 
 	test('should include messages in exported Markdown', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a test message with unique content
 		const testMessage = 'Unique export test message ' + Date.now();
@@ -125,12 +110,7 @@ test.describe('Session Export', () => {
 
 	test('should show success toast after export', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a test message
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -161,12 +141,7 @@ test.describe('Session Export', () => {
 
 	test('should disable Export when disconnected', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Verify Export is clickable when connected
 		const optionsButton = page.locator('button[aria-label="Session options"]');

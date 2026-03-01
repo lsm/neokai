@@ -6,7 +6,7 @@
 
 import type { Page } from '@playwright/test';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForWebSocketConnected,
 	waitForAssistantResponse,
 } from './wait-helpers';
@@ -56,12 +56,7 @@ export async function clickArchiveSession(page: Page): Promise<void> {
  */
 export async function createSessionWithMessage(page: Page): Promise<string> {
 	// Create new session
-	const newSessionButton = page.getByRole('button', {
-		name: 'New Session',
-		exact: true,
-	});
-	await newSessionButton.click();
-	const sessionId = await waitForSessionCreated(page);
+	const sessionId = await createSessionViaUI(page);
 
 	// Send a simple message
 	const textarea = page.locator('textarea[placeholder*="Ask"]');

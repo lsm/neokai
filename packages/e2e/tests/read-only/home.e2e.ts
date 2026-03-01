@@ -4,30 +4,20 @@ test.describe('Home Page', () => {
 	test('should display the welcome screen when no session is selected', async ({ page }) => {
 		await page.goto('/');
 
-		// Check for welcome message
-		await expect(page.locator('text=Welcome to NeoKai')).toBeVisible();
+		// Check for lobby heading
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 
-		// The subtitle changes based on whether there are sessions
-		// Check for the "Create a new session" part which appears in both variants
-		// Use .first() to handle multiple matches in strict mode
-		await expect(page.locator('text=/create a new session/i').first()).toBeVisible();
-
-		// Check for description
-		await expect(
-			page.locator(
-				'text=A modern wrapper around Claude Agent SDK with rich UI and multi-device access'
-			)
-		).toBeVisible();
+		// Check for lobby subtitle (desktop only)
+		await expect(page.locator('text=Manage your AI-powered workspaces')).toBeVisible();
 	});
 
 	test('should have a sidebar visible', async ({ page }) => {
 		await page.goto('/');
 
-		// Sidebar should be visible - look for the sidebar header
-		const sidebarTitle = page.locator('h1:has-text("NeoKai")');
-		await expect(sidebarTitle).toBeVisible();
+		// NavRail should be visible - look for the Home button
+		await expect(page.getByRole('button', { name: 'Home' })).toBeVisible();
 
-		// Check for New Session button in sidebar
+		// Check for New Session button
 		await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
 	});
 
@@ -50,7 +40,7 @@ test.describe('Home Page', () => {
 		await page.goto('/');
 
 		// The page should load without errors on mobile
-		await expect(page.locator('text=Welcome to NeoKai')).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 
 		// Check viewport is mobile-friendly
 		if (isMobile) {
