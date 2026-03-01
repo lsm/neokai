@@ -14,7 +14,12 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { getProcessingState, sendMessage, waitForIdle } from '../../helpers/daemon-actions';
+import {
+	getProcessingState,
+	sendMessage,
+	waitForIdle,
+	waitForSdkMessages,
+} from '../../helpers/daemon-actions';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
@@ -153,4 +158,194 @@ describe('Message delivery mode queue flow', () => {
 		const sentCount = await getCountByStatus(sessionId, 'sent');
 		expect(sentCount).toBeGreaterThanOrEqual(1);
 	}, 90000);
+
+	test('current_turn steering while busy should have timestamp between assistant messages', async () => {
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/steer-position-${Date.now()}`,
+			title: 'Steer Position Test',
+			config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		try {
+			// Send a message that makes the agent work for a while
+			const first = await sendMessage(
+				daemon,
+				sessionId,
+				'Write a detailed 5-paragraph essay about the history of computing. Take your time and be thorough.'
+			);
+			expect(first.messageId).toBeString();
+
+			const becameBusy = await waitForBusy(sessionId, 20000);
+			if (!becameBusy) {
+				console.log('Skipping: agent did not enter busy state');
+				return;
+			}
+
+			// Wait a moment to ensure some assistant content has been streamed
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+
+			// Send a steering message (current_turn while busy)
+			const steerResult = await sendMessage(
+				daemon,
+				sessionId,
+				'Actually, stop what you are doing. Reply with exactly: STEERED_OK',
+				{ deliveryMode: 'current_turn' }
+			);
+			expect(steerResult.messageId).toBeString();
+
+			// The message should be queued initially
+			// Then transition to 'sent' when the generator yields it
+			await waitForCount(sessionId, 'queued', (count) => count === 0, 30000);
+
+			// Wait for the turn to complete
+			await waitForIdle(daemon, sessionId, 120000);
+
+			// Get all SDK messages and verify ordering
+			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+				minCount: 4, // system + user + assistant + (steered user) + result
+				timeout: 10000,
+			});
+
+			// Find the steered user message by UUID
+			const steeredMsg = sdkMessages.find(
+				(msg: Record<string, unknown>) =>
+					msg.type === 'user' && msg.uuid === steerResult.messageId
+			);
+			expect(steeredMsg).toBeDefined();
+
+			// The steered message should have a timestamp
+			const steeredTimestamp = (steeredMsg as Record<string, unknown>).timestamp as number;
+			expect(steeredTimestamp).toBeGreaterThan(0);
+
+			// Find the first user message
+			const firstUserMsg = sdkMessages.find(
+				(msg: Record<string, unknown>) =>
+					msg.type === 'user' && msg.uuid === first.messageId
+			);
+			expect(firstUserMsg).toBeDefined();
+			const firstUserTimestamp = (firstUserMsg as Record<string, unknown>).timestamp as number;
+
+			// The steered message timestamp should be AFTER the first user message
+			expect(steeredTimestamp).toBeGreaterThan(firstUserTimestamp);
+
+			// Find the result message (should be last or second-to-last)
+			const resultMessages = sdkMessages.filter(
+				(msg: Record<string, unknown>) => msg.type === 'result'
+			);
+			expect(resultMessages.length).toBeGreaterThanOrEqual(1);
+			const lastResult = resultMessages[resultMessages.length - 1];
+			const resultTimestamp = (lastResult as Record<string, unknown>).timestamp as number;
+
+			// CRITICAL: The steered message timestamp must be BEFORE the final result
+			// This proves it was positioned at SDK insertion time, not at turn end
+			expect(steeredTimestamp).toBeLessThan(resultTimestamp);
+
+			// Verify the message status is now 'sent'
+			const sentCount = await getCountByStatus(sessionId, 'sent');
+			expect(sentCount).toBeGreaterThanOrEqual(2); // At least first + steered
+		} finally {
+			try {
+				await daemon.messageHub.request('client.interrupt', { sessionId });
+			} catch {
+				// Best effort
+			}
+		}
+	}, 180000);
+
+	test('multiple current_turn steers while busy should all be acknowledged', async () => {
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/multi-steer-${Date.now()}`,
+			title: 'Multi Steer Test',
+			config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		try {
+			// Send initial message to make agent busy
+			await sendMessage(
+				daemon,
+				sessionId,
+				'Write a very long and detailed analysis of renewable energy sources. Cover at least solar, wind, hydro, and geothermal. Be thorough.'
+			);
+
+			const becameBusy = await waitForBusy(sessionId, 20000);
+			if (!becameBusy) {
+				console.log('Skipping: agent did not enter busy state');
+				return;
+			}
+
+			// Wait for some assistant content to stream
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+
+			// Send TWO steering messages in quick succession
+			const steer1 = await sendMessage(
+				daemon,
+				sessionId,
+				'STEER_MESSAGE_ONE: Acknowledge this.',
+				{ deliveryMode: 'current_turn' }
+			);
+			const steer2 = await sendMessage(
+				daemon,
+				sessionId,
+				'STEER_MESSAGE_TWO: Also acknowledge this.',
+				{ deliveryMode: 'current_turn' }
+			);
+
+			expect(steer1.messageId).toBeString();
+			expect(steer2.messageId).toBeString();
+
+			// Wait for all queued messages to be consumed
+			await waitForCount(sessionId, 'queued', (count) => count === 0, 60000);
+
+			// Wait for turns to complete
+			await waitForIdle(daemon, sessionId, 120000);
+
+			// Both steering messages should now be 'sent'
+			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+				minCount: 5,
+				timeout: 10000,
+			});
+
+			const steered1 = sdkMessages.find(
+				(msg: Record<string, unknown>) =>
+					msg.type === 'user' && msg.uuid === steer1.messageId
+			);
+			const steered2 = sdkMessages.find(
+				(msg: Record<string, unknown>) =>
+					msg.type === 'user' && msg.uuid === steer2.messageId
+			);
+
+			// Both messages should exist in the transcript
+			expect(steered1).toBeDefined();
+			expect(steered2).toBeDefined();
+
+			// Both should have timestamps
+			const ts1 = (steered1 as Record<string, unknown>).timestamp as number;
+			const ts2 = (steered2 as Record<string, unknown>).timestamp as number;
+			expect(ts1).toBeGreaterThan(0);
+			expect(ts2).toBeGreaterThan(0);
+
+			// Steer 2 should have a timestamp >= steer 1 (sent in order)
+			expect(ts2).toBeGreaterThanOrEqual(ts1);
+
+			// No messages should remain in queued status
+			const queuedCount = await getCountByStatus(sessionId, 'queued');
+			expect(queuedCount).toBe(0);
+
+			// All user messages should be sent
+			const sentCount = await getCountByStatus(sessionId, 'sent');
+			expect(sentCount).toBeGreaterThanOrEqual(3); // initial + steer1 + steer2
+		} finally {
+			try {
+				await daemon.messageHub.request('client.interrupt', { sessionId });
+			} catch {
+				// Best effort
+			}
+		}
+	}, 180000);
 });

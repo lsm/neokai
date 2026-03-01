@@ -504,6 +504,7 @@ describe('SDKMessageHandler', () => {
 							dbId: 'db-msg-1',
 							uuid: 'queued-user-uuid',
 							type: 'user',
+							timestamp: 1700000000000,
 							message: { role: 'user', content: 'Queued message' },
 						},
 					];
@@ -528,8 +529,11 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
-			// Bug fix: fallback-ack must also update timestamp
-			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-msg-1');
+			// Fallback-ack preserves original timestamp (T1) instead of updating
+			// to turn-end time — the message was already positioned at yield time
+			// by handleMessageYielded, or if that didn't fire, T1 is a better
+			// approximation than T_end.
+			expect(mockDb.updateMessageTimestamp).not.toHaveBeenCalledWith('db-msg-1');
 			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
 				sessionId: 'test-session-id',
 				messageIds: ['db-msg-1'],

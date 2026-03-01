@@ -64,6 +64,13 @@ export class MessageQueue {
 	private generation: number = 0;
 
 	/**
+	 * Callback fired when the generator yields a message to the SDK.
+	 * Used to broadcast the message to UI and update DB timestamp at yield time
+	 * (the moment the SDK actually receives the message in the conversation).
+	 */
+	onMessageYielded?: (messageId: string, sentAt: number) => void;
+
+	/**
 	 * Enqueue a message to be sent to Claude via the streaming query
 	 */
 	async enqueue(content: string | MessageContent[], internal: boolean = false): Promise<string> {
@@ -246,6 +253,12 @@ export class MessageQueue {
 				},
 				internal: queuedMessage.internal,
 			};
+
+			// Fire callback at yield time for non-internal messages
+			// This is T_consumed - when the SDK actually receives the message
+			if (!queuedMessage.internal && this.onMessageYielded) {
+				this.onMessageYielded(queuedMessage.id, Date.now());
+			}
 
 			// Yield message with callback
 			yield {
