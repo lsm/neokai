@@ -267,10 +267,7 @@ export class QueryRunner {
 			// If startup timed out while trying to resume a session, clear sdkSessionId
 			// so the next attempt (Reset Agent, or sending a message) starts a fresh SDK
 			// session instead of repeatedly failing on the same problematic session file.
-			if (
-				errorMessage.includes('SDK startup timeout') &&
-				session.sdkSessionId
-			) {
+			if (errorMessage.includes('SDK startup timeout') && session.sdkSessionId) {
 				logger.error(
 					`Clearing sdkSessionId (${session.sdkSessionId}) due to startup timeout. ` +
 						'Next query will start fresh without resume.'
