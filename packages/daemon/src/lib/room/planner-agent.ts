@@ -112,7 +112,10 @@ export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
 	sections.push(`1. Read relevant files to understand the current codebase state`);
 	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
 	sections.push(`3. Order tasks by dependency (later tasks build on earlier ones)`);
-	sections.push(`4. Each task description must include clear acceptance criteria`);
+	sections.push(
+		`4. Each task description must include clear acceptance criteria. ` +
+			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
+	);
 	sections.push(
 		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
 	);

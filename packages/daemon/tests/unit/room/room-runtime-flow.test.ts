@@ -1,8 +1,9 @@
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, it, test, beforeEach, afterEach } from 'bun:test';
 import {
 	createRuntimeTestContext,
 	createGoalAndTask,
 	spawnAndRouteToLeader,
+	makeRoom,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
 
@@ -303,6 +304,226 @@ describe('RoomRuntime flow', () => {
 			// Leader terminal state should be no-op (tool was called)
 			const updated = ctx.groupRepo.getGroup(group.id);
 			expect(updated!.state).toBe('completed');
+		});
+	});
+
+	describe('lifecycle hooks', () => {
+		test('bounces coder back when on base branch', async () => {
+			// Hook: git returns 'main' as current branch → coder must be on a feature branch
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args: string[], _cwd: string) => {
+						const cmd = args.join(' ');
+						if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+							return { stdout: 'main', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			await createGoalAndTask(hookCtx);
+			hookCtx.runtime.start();
+			await hookCtx.runtime.tick();
+
+			const groups = hookCtx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await hookCtx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Worker should have been bounced back with feature-branch message
+			const bounceCalls = hookCtx.sessionFactory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					(c.args[1] as string).includes('feature branch')
+			);
+			expect(bounceCalls).toHaveLength(1);
+
+			// Group stays in awaiting_worker
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_worker');
+		});
+
+		test('bounces coder back when no PR exists', async () => {
+			// Hook: branch is 'feat/test' but gh pr list returns empty array
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args: string[], _cwd: string) => {
+						const cmd = args.join(' ');
+						if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+							return { stdout: 'feat/test', exitCode: 0 };
+						}
+						if (cmd.startsWith('gh pr list')) {
+							return { stdout: '[]', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			await createGoalAndTask(hookCtx);
+			hookCtx.runtime.start();
+			await hookCtx.runtime.tick();
+
+			const groups = hookCtx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			await hookCtx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Worker should have been bounced back with PR creation message
+			const bounceCalls = hookCtx.sessionFactory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					(c.args[1] as string).includes('gh pr create')
+			);
+			expect(bounceCalls).toHaveLength(1);
+
+			// Group stays in awaiting_worker
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_worker');
+		});
+
+		test('rejects complete_task when no reviews and reviewers configured', async () => {
+			// Room has reviewer sub-agents configured
+			// Hook: branch is feature, PR exists but has 0 reviews
+			const hookCtx = createRuntimeTestContext({
+				room: {
+					config: {
+						agentSubagents: {
+							leader: [{ model: 'claude-opus-4-6' }],
+						},
+					},
+				},
+				hookOptions: {
+					runCommand: async (args: string[], _cwd: string) => {
+						const cmd = args.join(' ');
+						if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+							return { stdout: 'feat/test', exitCode: 0 };
+						}
+						if (cmd.startsWith('gh pr list')) {
+							return { stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]', exitCode: 0 };
+						}
+						if (cmd.startsWith('gh pr view') && cmd.includes('reviews')) {
+							return { stdout: '0', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await spawnAndRouteToLeader(hookCtx);
+
+			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'done',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.action_required).toBeDefined();
+			expect(typeof parsed.action_required).toBe('string');
+
+			// Group stays in awaiting_leader — not completed
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_leader');
+		});
+
+		test('allows complete_task when no reviewers configured', async () => {
+			// All git/gh commands fail gracefully (exit 1), so all hooks pass
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => {
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await spawnAndRouteToLeader(hookCtx);
+
+			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'done',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('completed');
+		});
+
+		test('bounces planner back when no draft tasks created', async () => {
+			// All git/gh commands fail (exit 1) — only the draft-tasks check matters for planners
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => {
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			// Create a goal with no tasks — tick will spawn a planning group
+			await hookCtx.goalManager.createGoal({
+				title: 'New Feature',
+				description: 'Build something new',
+			});
+
+			hookCtx.runtime.start();
+			await hookCtx.runtime.tick();
+
+			const groups = hookCtx.groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			const group = groups[0];
+
+			// Planner finishes without creating any draft tasks (draftTaskCount = 0)
+			await hookCtx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Planner should be bounced with message about create_task
+			const bounceCalls = hookCtx.sessionFactory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					(c.args[1] as string).includes('create_task')
+			);
+			expect(bounceCalls).toHaveLength(1);
+
+			// Group stays in awaiting_worker
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_worker');
 		});
 	});
 });

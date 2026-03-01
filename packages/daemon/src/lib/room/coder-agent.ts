@@ -47,6 +47,20 @@ export function buildCoderSystemPrompt(config: CoderAgentConfig): string {
 	sections.push(`Your job is to complete the task described below to the best of your ability.`);
 	sections.push(`Work carefully and thoroughly. When you are done, simply finish your response.`);
 
+	// Mandatory Git workflow
+	sections.push(`\n## Git Workflow (MANDATORY)\n`);
+	sections.push(`You are working in an isolated git worktree. Follow this workflow:`);
+	sections.push(`1. Create a feature branch: \`git checkout -b feat/<short-task-description>\``);
+	sections.push(`2. Implement the task, making logical commits along the way`);
+	sections.push(`3. Push your branch: \`git push -u origin HEAD\``);
+	sections.push(`4. Create a pull request: \`gh pr create --fill\``);
+	sections.push(`5. Finish your response`);
+	sections.push(``);
+	sections.push(
+		`**IMPORTANT**: Do NOT commit directly to the main/dev/master branch. ` +
+			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
+	);
+
 	// Task context
 	sections.push(`\n## Task\n`);
 	sections.push(`**Title:** ${task.title}`);

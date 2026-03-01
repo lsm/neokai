@@ -7,6 +7,7 @@ import { TaskManager } from '../../../src/lib/room/task-manager';
 import type { Room } from '@neokai/shared';
 import type { SessionFactory } from '../../../src/lib/room/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import type { HookOptions } from '../../../src/lib/room/lifecycle-hooks';
 
 export function createMockDaemonHub() {
 	const handlers = new Map<string, Map<string | undefined, Array<(data: unknown) => void>>>();
@@ -58,7 +59,7 @@ export function createMockSessionFactory() {
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
-export function makeRoom(): Room {
+export function makeRoom(overrides?: Partial<Room>): Room {
 	return {
 		id: 'room-1',
 		name: 'Test Room',
@@ -68,6 +69,7 @@ export function makeRoom(): Room {
 		status: 'active',
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+		...overrides,
 	};
 }
 
@@ -126,7 +128,12 @@ export interface RuntimeTestContext {
 	observer: SessionObserver;
 }
 
-export function createRuntimeTestContext(): RuntimeTestContext {
+export interface RuntimeTestContextOptions {
+	hookOptions?: HookOptions;
+	room?: Partial<Room>;
+}
+
+export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
 	const db = new Database(':memory:');
 	const now = Date.now();
 	db.exec(DB_SCHEMA);
@@ -142,7 +149,7 @@ export function createRuntimeTestContext(): RuntimeTestContext {
 	const sessionFactory = createMockSessionFactory();
 
 	const runtime = new RoomRuntime({
-		room: makeRoom(),
+		room: makeRoom(opts?.room),
 		groupRepo,
 		sessionObserver: observer,
 		taskManager,
@@ -152,6 +159,7 @@ export function createRuntimeTestContext(): RuntimeTestContext {
 		maxConcurrentGroups: 1,
 		maxFeedbackIterations: 5,
 		tickInterval: 60_000,
+		hookOptions: opts?.hookOptions,
 	});
 
 	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };

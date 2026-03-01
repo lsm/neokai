@@ -111,6 +111,14 @@ describe('Coder Agent', () => {
 			const prompt = buildCoderSystemPrompt(makeConfig());
 			expect(prompt).not.toContain('Previous Work');
 		});
+
+		it('includes mandatory git workflow with feature branch and PR instructions', () => {
+			const prompt = buildCoderSystemPrompt(makeConfig());
+			expect(prompt).toContain('Git Workflow (MANDATORY)');
+			expect(prompt).toContain('feature branch');
+			expect(prompt).toContain('gh pr create');
+			expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
+		});
 	});
 
 	describe('createCoderAgentInit', () => {

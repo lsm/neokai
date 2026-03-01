@@ -43,6 +43,13 @@ import {
 	sortTasksByPriority,
 } from './message-routing';
 import { Logger } from '../logger';
+import {
+	runWorkerExitGate,
+	runLeaderCompleteGate,
+	type HookOptions,
+	type WorkerExitHookContext,
+	type LeaderCompleteHookContext,
+} from './lifecycle-hooks';
 
 const log = new Logger('room-runtime');
 
@@ -84,6 +91,8 @@ export interface RoomRuntimeConfig {
 	daemonHub?: DaemonHub;
 	/** MessageHub for broadcasting group message deltas to frontend */
 	messageHub?: MessageHub;
+	/** Hook options for lifecycle gates (test injection point) */
+	hookOptions?: HookOptions;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -108,6 +117,7 @@ export class RoomRuntime {
 	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
+	private readonly hookOptions?: HookOptions;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -148,6 +158,7 @@ export class RoomRuntime {
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
+		this.hookOptions = config.hookOptions;
 
 		this.taskGroupManager = new TaskGroupManager({
 			room: config.room,
@@ -247,6 +258,40 @@ export class RoomRuntime {
 					'Your worktree has uncommitted changes or untracked files. ' +
 						'Make logical commits for changes you want to keep and clean up unused files. ' +
 						'Run `git status` to see what needs attention, then commit or remove files as appropriate.'
+				);
+				return; // Stay in awaiting_worker state
+			}
+		}
+
+		// Lifecycle hooks: Worker Exit Gate
+		// Validates preconditions before routing to leader (branch/PR for coders, tasks for planners)
+		{
+			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
+			const hookCtx: WorkerExitHookContext = {
+				workspacePath: groupWorkspace,
+				taskType: task.taskType ?? 'coding',
+				workerRole: group.workerRole,
+				taskId: group.taskId,
+				groupId,
+			};
+			if (group.workerRole === 'planner') {
+				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
+				hookCtx.draftTaskCount = draftTasks.length;
+			}
+			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
+			if (!gateResult.pass) {
+				log.info(
+					`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`
+				);
+				this.groupRepo.appendMessage({
+					groupId,
+					role: 'system',
+					messageType: 'status',
+					content: `Worker exit gate: ${gateResult.reason}`,
+				});
+				await this.sessionFactory.injectMessage(
+					group.workerSessionId,
+					gateResult.bounceMessage!
 				);
 				return; // Stay in awaiting_worker state
 			}
@@ -431,6 +476,59 @@ export class RoomRuntime {
 
 			case 'complete_task': {
 				const summary = params.summary ?? '';
+
+				// Lifecycle hooks: Leader Complete Gate
+				// Validates preconditions before allowing task completion
+				{
+					const hookTask = await this.taskManager.getTask(group.taskId);
+					if (hookTask) {
+						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
+						const agentSubs = roomConfig.agentSubagents as
+							| Record<string, unknown[]>
+							| undefined;
+						const hasReviewers =
+							!!(agentSubs?.leader?.length) ||
+							!!((roomConfig.reviewers as unknown[] | undefined)?.length);
+
+						const hookCtx: LeaderCompleteHookContext = {
+							workspacePath:
+								group.workspacePath ?? this.taskGroupManager.workspacePath,
+							taskType: hookTask.taskType ?? 'coding',
+							workerRole: group.workerRole,
+							taskId: group.taskId,
+							groupId,
+							hasReviewers,
+						};
+						if (hookTask.taskType === 'planning') {
+							const draftTasks =
+								await this.taskManager.getDraftTasksByCreator(group.taskId);
+							hookCtx.draftTaskCount = draftTasks.length;
+						}
+						const gateResult = await runLeaderCompleteGate(
+							hookCtx,
+							this.hookOptions
+						);
+						if (!gateResult.pass) {
+							log.info(
+								`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`
+							);
+							this.groupRepo.appendMessage({
+								groupId,
+								role: 'system',
+								messageType: 'status',
+								content: `Leader complete gate: ${gateResult.reason}`,
+							});
+							// Reset leaderCalledTool so leader can try again
+							this.groupRepo.setLeaderCalledTool(groupId, false);
+							return jsonResult({
+								success: false,
+								error: gateResult.reason ?? 'Precondition not met.',
+								action_required: gateResult.bounceMessage,
+							});
+						}
+					}
+				}
+
 				await this.taskGroupManager.complete(groupId, summary);
 				this.cleanupMirroring(groupId, 'Task completed.');
 				await this.emitTaskUpdateById(group.taskId);
