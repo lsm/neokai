@@ -190,6 +190,8 @@ export class RoomRuntimeService {
 
 		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
 
+		const maxReviewRounds = (room.config?.maxReviewRounds as number) ?? undefined;
+
 		const runtime = new RoomRuntime({
 			room,
 			groupRepo,
@@ -199,6 +201,7 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: this.ctx.defaultModel,
+			maxFeedbackIterations: maxReviewRounds,
 			getWorkerMessages: (sessionId, afterMessageId) =>
 				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
 			daemonHub: this.ctx.daemonHub,

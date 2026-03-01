@@ -312,6 +312,15 @@ export class RoomRuntime {
 
 		// Route to Leader
 		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope);
+
+		// Update task progress based on review iteration
+		// Formula: iteration 1 → 20%, then +60%/maxRounds per subsequent round, capped at 80%
+		const progress = Math.min(
+			80,
+			Math.round(20 + Math.max(0, reviewIteration - 1) * (60 / this.maxFeedbackIterations))
+		);
+		await this.taskManager.updateTaskProgress(task.id, progress);
+		await this.emitTaskUpdateById(task.id);
 	}
 
 	/**

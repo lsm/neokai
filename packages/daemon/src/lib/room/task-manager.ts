@@ -148,7 +148,35 @@ export class TaskManager {
 	async reviewTask(taskId: string, prUrl?: string): Promise<NeoTask> {
 		return this.updateTaskStatus(taskId, 'review', {
 			currentStep: prUrl,
+			progress: 80,
 		});
+	}
+
+	/**
+	 * Approve a task in review status (human approval).
+	 * If the task is a planning task, promotes its draft children to pending.
+	 * Returns the number of promoted draft tasks (0 for non-planning tasks).
+	 */
+	async approveTask(taskId: string): Promise<{ task: NeoTask; promotedCount: number }> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+		if (task.status !== 'review') {
+			throw new Error(`Task is not in review status (current: ${task.status})`);
+		}
+
+		const updatedTask = await this.updateTaskStatus(taskId, 'completed', {
+			result: 'Approved by human',
+			progress: 100,
+		});
+
+		let promotedCount = 0;
+		if (task.taskType === 'planning') {
+			promotedCount = await this.promoteDraftTasks(taskId);
+		}
+
+		return { task: updatedTask, promotedCount };
 	}
 
 	/**
