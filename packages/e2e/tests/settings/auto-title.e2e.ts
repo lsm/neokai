@@ -105,11 +105,11 @@ test.describe('Auto Title Generation', () => {
 		await messageInput.fill('What are its benefits?');
 		await messageInput.press('Enter');
 
-		// Wait for second message to be processed
-		await waitForMessageProcessed(page, 'What are its benefits?');
+		// Wait for second message to appear in the chat (don't need full response)
+		await expect(page.locator('text=What are its benefits?')).toBeVisible({ timeout: 5000 });
 
-		// Wait a bit to ensure title doesn't change
-		await page.waitForTimeout(3000);
+		// Wait enough time for title regeneration to trigger (if it were going to)
+		await page.waitForTimeout(10000);
 
 		// Verify title hasn't changed
 		const titleAfterSecondMessage = await sessionItem.locator('h3').textContent();
