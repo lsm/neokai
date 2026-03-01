@@ -3,13 +3,14 @@ import {
 	createSessionViaUI,
 	waitForMessageProcessed,
 	cleanupTestSession,
+	setupMessageHubTesting,
 } from '../helpers/wait-helpers';
 
 test.describe('Auto Title Generation', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
-		await page.goto('/');
+		await setupMessageHubTesting(page);
 		sessionId = null;
 	});
 

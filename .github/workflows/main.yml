@@ -578,6 +578,7 @@ jobs:
             features/archive
             features/file-operations
             features/rewind-features
+            settings/auto-title
           )
 
           # Tests to exclude entirely (disabled, pending refactor)
