@@ -211,8 +211,7 @@ describe('Message delivery mode queue flow', () => {
 
 			// Find the steered user message by UUID
 			const steeredMsg = sdkMessages.find(
-				(msg: Record<string, unknown>) =>
-					msg.type === 'user' && msg.uuid === steerResult.messageId
+				(msg: Record<string, unknown>) => msg.type === 'user' && msg.uuid === steerResult.messageId
 			);
 			expect(steeredMsg).toBeDefined();
 
@@ -222,8 +221,7 @@ describe('Message delivery mode queue flow', () => {
 
 			// Find the first user message
 			const firstUserMsg = sdkMessages.find(
-				(msg: Record<string, unknown>) =>
-					msg.type === 'user' && msg.uuid === first.messageId
+				(msg: Record<string, unknown>) => msg.type === 'user' && msg.uuid === first.messageId
 			);
 			expect(firstUserMsg).toBeDefined();
 			const firstUserTimestamp = (firstUserMsg as Record<string, unknown>).timestamp as number;
@@ -283,12 +281,9 @@ describe('Message delivery mode queue flow', () => {
 			await new Promise((resolve) => setTimeout(resolve, 1500));
 
 			// Send TWO steering messages in quick succession
-			const steer1 = await sendMessage(
-				daemon,
-				sessionId,
-				'STEER_MESSAGE_ONE: Acknowledge this.',
-				{ deliveryMode: 'current_turn' }
-			);
+			const steer1 = await sendMessage(daemon, sessionId, 'STEER_MESSAGE_ONE: Acknowledge this.', {
+				deliveryMode: 'current_turn',
+			});
 			const steer2 = await sendMessage(
 				daemon,
 				sessionId,
@@ -312,12 +307,10 @@ describe('Message delivery mode queue flow', () => {
 			});
 
 			const steered1 = sdkMessages.find(
-				(msg: Record<string, unknown>) =>
-					msg.type === 'user' && msg.uuid === steer1.messageId
+				(msg: Record<string, unknown>) => msg.type === 'user' && msg.uuid === steer1.messageId
 			);
 			const steered2 = sdkMessages.find(
-				(msg: Record<string, unknown>) =>
-					msg.type === 'user' && msg.uuid === steer2.messageId
+				(msg: Record<string, unknown>) => msg.type === 'user' && msg.uuid === steer2.messageId
 			);
 
 			// Both messages should exist in the transcript
