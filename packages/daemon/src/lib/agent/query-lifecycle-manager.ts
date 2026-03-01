@@ -126,11 +126,34 @@ export class QueryLifecycleManager {
 	/**
 	 * Restart the query (stop + start)
 	 *
-	 * Used when MCP settings change and SDK needs to reload settings.local.json
+	 * Used when model switching or MCP settings change.
+	 * Clears error state and resets circuit breaker to ensure the new query
+	 * starts cleanly without stale error artifacts from the interrupted query.
 	 */
 	async restart(): Promise<void> {
+		const { session, db, daemonHub, messageHandler } = this.ctx;
+
 		try {
+			// Clear error state and circuit breaker before stopping.
+			// The interrupt during stop() may produce transient errors that should
+			// not persist into the new query's lifecycle.
+			messageHandler.resetCircuitBreaker();
+			await daemonHub.emit('session.errorClear', { sessionId: session.id });
+
 			await this.stop();
+
+			// Small delay to ensure the old SDK subprocess has fully exited.
+			// Without this, the new subprocess may conflict with the old one
+			// on shared resources (session file, API connections).
+			await new Promise((resolve) => setTimeout(resolve, 100));
+
+			// Validate and repair SDK session file before restarting.
+			// The interrupted query may have left the session file in an inconsistent state
+			// (e.g., orphaned tool_results from interrupted SDK context compaction).
+			if (session.sdkSessionId) {
+				validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+			}
+
 			await this.ctx.startStreamingQuery();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -196,6 +219,14 @@ export class QueryLifecycleManager {
 			if (restartAfter) {
 				// Small delay to ensure process cleanup completes
 				await new Promise((resolve) => setTimeout(resolve, 100));
+
+				// Validate and repair SDK session file before restarting.
+				// The interrupted query may have left the session file in an inconsistent state
+				// (e.g., orphaned tool_results from interrupted SDK context compaction).
+				if (session.sdkSessionId) {
+					validateAndRepairSDKSession(session.workspacePath, session.sdkSessionId, session.id, db);
+				}
+
 				await this.ctx.startStreamingQuery();
 			}
 
