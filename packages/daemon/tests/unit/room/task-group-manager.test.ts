@@ -59,6 +59,9 @@ function createMockSessionFactory() {
 		async answerQuestion(_sessionId: string, _answer: string) {
 			return false;
 		},
+		async createWorktree(_basePath: string, _sessionId: string) {
+			return null;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 

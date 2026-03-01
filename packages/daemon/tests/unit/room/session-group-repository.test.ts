@@ -38,7 +38,7 @@ describe('SessionGroupRepository', () => {
 				group_type TEXT NOT NULL DEFAULT 'task',
 				ref_id TEXT NOT NULL,
 				state TEXT NOT NULL DEFAULT 'awaiting_worker'
-					CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'hibernated', 'completed', 'failed')),
+					CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'completed', 'failed')),
 				version INTEGER NOT NULL DEFAULT 0,
 				metadata TEXT NOT NULL DEFAULT '{}',
 				created_at INTEGER NOT NULL,
@@ -285,14 +285,13 @@ describe('SessionGroupRepository', () => {
 				'awaiting_worker',
 				'awaiting_leader',
 				'awaiting_human',
-				'hibernated',
 				'completed',
 				'failed',
 			];
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			let currentVersion = group.version;
 
-			for (const state of states.slice(0, 4)) {
+			for (const state of states.slice(0, 3)) {
 				const updated = repo.updateGroupState(group.id, state, currentVersion);
 				expect(updated).not.toBeNull();
 				currentVersion = updated!.version;

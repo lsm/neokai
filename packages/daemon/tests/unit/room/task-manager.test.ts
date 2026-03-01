@@ -235,12 +235,12 @@ describe('TaskManager', () => {
 			expect(updated.completedAt).toBeDefined();
 		});
 
-		it('should update task status to escalated', async () => {
+		it('should update task status to review', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.updateTaskStatus(task.id, 'escalated');
+			const updated = await taskManager.updateTaskStatus(task.id, 'review');
 
-			expect(updated.status).toBe('escalated');
+			expect(updated.status).toBe('review');
 		});
 
 		it('should include additional updates', async () => {
@@ -349,43 +349,25 @@ describe('TaskManager', () => {
 		});
 	});
 
-	describe('escalateTask', () => {
-		it('should escalate task', async () => {
+	describe('reviewTask', () => {
+		it('should mark task for review', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.escalateTask(task.id);
+			const updated = await taskManager.reviewTask(task.id);
 
-			expect(updated.status).toBe('escalated');
+			expect(updated.status).toBe('review');
 		});
 
-		it('should escalate task with reason', async () => {
+		it('should mark task for review with PR URL', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.escalateTask(task.id, 'Needs human attention');
+			const updated = await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
 
-			expect(updated.status).toBe('escalated');
-			expect(updated.currentStep).toBe('Needs human attention');
+			expect(updated.status).toBe('review');
 		});
 
 		it('should throw error for non-existent task', async () => {
-			await expect(taskManager.escalateTask('non-existent')).rejects.toThrow(
-				'Task not found: non-existent'
-			);
-		});
-	});
-
-	describe('deescalateTask', () => {
-		it('should de-escalate task and return to pending status', async () => {
-			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
-			await taskManager.escalateTask(task.id, 'Escalated');
-
-			const updated = await taskManager.deescalateTask(task.id);
-
-			expect(updated.status).toBe('pending');
-		});
-
-		it('should throw error for non-existent task', async () => {
-			await expect(taskManager.deescalateTask('non-existent')).rejects.toThrow(
+			await expect(taskManager.reviewTask('non-existent')).rejects.toThrow(
 				'Task not found: non-existent'
 			);
 		});
@@ -445,8 +427,8 @@ describe('TaskManager', () => {
 			await taskManager.completeTask(task3.id, 'Done');
 			const task4 = await taskManager.createTask({ title: 'Failed Task', description: '' });
 			await taskManager.failTask(task4.id, 'Error');
-			const task5 = await taskManager.createTask({ title: 'Escalated Task', description: '' });
-			await taskManager.escalateTask(task5.id);
+			const task5 = await taskManager.createTask({ title: 'Review Task', description: '' });
+			await taskManager.reviewTask(task5.id);
 
 			const tasks = await taskManager.getActiveTasks();
 
@@ -454,7 +436,7 @@ describe('TaskManager', () => {
 			const statuses = tasks.map((t) => t.status);
 			expect(statuses).toContain('pending');
 			expect(statuses).toContain('in_progress');
-			expect(statuses).toContain('escalated');
+			expect(statuses).toContain('review');
 		});
 	});
 
@@ -744,8 +726,7 @@ describe('TaskManager', () => {
 			const task = await taskManager.createTask({ title: 'Test', description: '' });
 
 			await taskManager.startTask(task.id);
-			await taskManager.escalateTask(task.id, 'Waiting');
-			await taskManager.deescalateTask(task.id);
+			await taskManager.reviewTask(task.id);
 			await taskManager.startTask(task.id);
 			await taskManager.completeTask(task.id, 'Done');
 

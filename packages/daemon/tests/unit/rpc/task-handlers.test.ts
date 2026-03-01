@@ -9,8 +9,7 @@
  * - task.start - Start a task (assign to session)
  * - task.complete - Complete a task
  * - task.fail - Fail a task
- * - task.escalate - Escalate a task (needs human input)
- * - task.deescalate - De-escalate a task (return to pending)
+ * - task.review - Mark a task for review
  * - task.delete - Delete a task
  *
  * Mocks TaskManager to focus on RPC handler logic.
@@ -113,24 +112,13 @@ const mockTaskManager = {
 				updatedAt: Date.now(),
 			}) as NeoTask
 	),
-	escalateTask: mock(
+	reviewTask: mock(
 		async () =>
 			({
 				id: 'task-123',
 				roomId: 'room-123',
 				title: 'Test Task',
-				status: 'escalated' as TaskStatus,
-				currentStep: 'Needs human attention',
-				updatedAt: Date.now(),
-			}) as NeoTask
-	),
-	deescalateTask: mock(
-		async () =>
-			({
-				id: 'task-123',
-				roomId: 'room-123',
-				title: 'Test Task',
-				status: 'pending' as TaskStatus,
+				status: 'review' as TaskStatus,
 				updatedAt: Date.now(),
 			}) as NeoTask
 	),
@@ -738,88 +726,48 @@ describe('Task RPC Handlers', () => {
 		});
 	});
 
-	describe('task.escalate', () => {
-		it('escalates task with reason', async () => {
-			const handler = messageHubData.handlers.get('task.escalate');
+	describe('task.review', () => {
+		it('marks task for review with PR URL', async () => {
+			const handler = messageHubData.handlers.get('task.review');
 			expect(handler).toBeDefined();
 
 			const result = (await handler!(
-				{ roomId: 'room-123', taskId: 'task-123', reason: 'Needs human attention' },
+				{ roomId: 'room-123', taskId: 'task-123', prUrl: 'https://github.com/org/repo/pull/1' },
 				{}
 			)) as { task: NeoTask };
 
-			expect(mockTaskManager.escalateTask).toHaveBeenCalledWith(
+			expect(mockTaskManager.reviewTask).toHaveBeenCalledWith(
 				'task-123',
-				'Needs human attention'
+				'https://github.com/org/repo/pull/1'
 			);
 			expect(result.task).toBeDefined();
 		});
 
-		it('escalates task without reason', async () => {
-			const handler = messageHubData.handlers.get('task.escalate');
+		it('marks task for review without PR URL', async () => {
+			const handler = messageHubData.handlers.get('task.review');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', taskId: 'task-123' }, {});
 
-			expect(mockTaskManager.escalateTask).toHaveBeenCalledWith('task-123', undefined);
+			expect(mockTaskManager.reviewTask).toHaveBeenCalledWith('task-123', undefined);
 		});
 
 		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('task.escalate');
+			const handler = messageHubData.handlers.get('task.review');
 			expect(handler).toBeDefined();
 
 			await expect(handler!({ taskId: 'task-123' }, {})).rejects.toThrow('Room ID is required');
 		});
 
 		it('throws error when taskId is missing', async () => {
-			const handler = messageHubData.handlers.get('task.escalate');
+			const handler = messageHubData.handlers.get('task.review');
 			expect(handler).toBeDefined();
 
 			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task ID is required');
 		});
 
 		it('emits task update event', async () => {
-			const handler = messageHubData.handlers.get('task.escalate');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', taskId: 'task-123' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'room.task.update',
-				expect.objectContaining({ roomId: 'room-123' })
-			);
-		});
-	});
-
-	describe('task.deescalate', () => {
-		it('de-escalates task and returns to pending', async () => {
-			const handler = messageHubData.handlers.get('task.deescalate');
-			expect(handler).toBeDefined();
-
-			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
-				task: NeoTask;
-			};
-
-			expect(mockTaskManager.deescalateTask).toHaveBeenCalledWith('task-123');
-			expect(result.task).toBeDefined();
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('task.deescalate');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ taskId: 'task-123' }, {})).rejects.toThrow('Room ID is required');
-		});
-
-		it('throws error when taskId is missing', async () => {
-			const handler = messageHubData.handlers.get('task.deescalate');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task ID is required');
-		});
-
-		it('emits task update event', async () => {
-			const handler = messageHubData.handlers.get('task.deescalate');
+			const handler = messageHubData.handlers.get('task.review');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', taskId: 'task-123' }, {});

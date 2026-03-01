@@ -565,17 +565,17 @@ describe('TaskRepository', () => {
 			expect(failed?.error).toBe('Connection timeout');
 		});
 
-		it('should support escalated task status', () => {
+		it('should support review task status', () => {
 			const task = repository.createTask({
 				roomId: 'room-1',
-				title: 'Escalated Task',
-				description: 'Needs human intervention',
+				title: 'Review Task',
+				description: 'Needs human review',
 			});
 
-			repository.updateTask(task.id, { status: 'escalated' });
+			repository.updateTask(task.id, { status: 'review' });
 
-			const escalated = repository.getTask(task.id);
-			expect(escalated?.status).toBe('escalated');
+			const reviewed = repository.getTask(task.id);
+			expect(reviewed?.status).toBe('review');
 		});
 	});
 });

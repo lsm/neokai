@@ -38,6 +38,9 @@ function createMockSessionFactory() {
 		async answerQuestion(_sessionId: string, _answer: string) {
 			return false;
 		},
+		async createWorktree(_basePath: string, _sessionId: string) {
+			return null;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
@@ -297,28 +300,6 @@ describe('Runtime Recovery', () => {
 
 	it('should skip awaiting_human groups', async () => {
 		createTaskAndGroup('awaiting_human');
-
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
-			isTerminalState: () => false,
-		};
-
-		const result = await recoverRuntime(
-			'room-1',
-			groupRepo,
-			taskManager,
-			observer,
-			checker,
-			runtime
-		);
-
-		expect(result.recoveredGroups).toBe(1);
-		expect(result.failedGroups).toBe(0);
-		expect(result.reattachedObservers).toBe(0);
-	});
-
-	it('should skip hibernated groups', async () => {
-		createTaskAndGroup('hibernated');
 
 		const checker: SessionStateChecker = {
 			sessionExists: () => true,
