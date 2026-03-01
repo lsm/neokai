@@ -36,11 +36,6 @@ export function RoomDashboard() {
 	const sessions = roomStore.sessions.value;
 	const roomId = roomStore.roomId.value;
 	const runtimeState = roomStore.runtimeState.value;
-	const pendingTasks = tasks.filter((t) => t.status === 'pending');
-	const activeTasks = tasks.filter((t) => t.status === 'in_progress');
-	const completedTasks = tasks.filter((t) => t.status === 'completed');
-	const failedTasks = tasks.filter((t) => t.status === 'failed');
-
 	const [actionLoading, setActionLoading] = useState(false);
 	const [showPauseConfirm, setShowPauseConfirm] = useState(false);
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
@@ -142,29 +137,6 @@ export function RoomDashboard() {
 				</div>
 			)}
 
-			{/* Stats overview */}
-			<div class="grid grid-cols-5 gap-4">
-				<div class="bg-dark-850 border border-dark-700 rounded-lg p-4">
-					<div class="text-2xl font-bold text-gray-100">{sessions.length}</div>
-					<div class="text-sm text-gray-400">Sessions</div>
-				</div>
-				<div class="bg-dark-850 border border-dark-700 rounded-lg p-4">
-					<div class="text-2xl font-bold text-gray-100">{pendingTasks.length}</div>
-					<div class="text-sm text-gray-400">Pending</div>
-				</div>
-				<div class="bg-dark-850 border border-dark-700 rounded-lg p-4">
-					<div class="text-2xl font-bold text-gray-100">{activeTasks.length}</div>
-					<div class="text-sm text-gray-400">Active</div>
-				</div>
-				<div class="bg-dark-850 border border-dark-700 rounded-lg p-4">
-					<div class="text-2xl font-bold text-gray-100">{completedTasks.length}</div>
-					<div class="text-sm text-gray-400">Completed</div>
-				</div>
-				<div class="bg-dark-850 border border-dark-700 rounded-lg p-4">
-					<div class="text-2xl font-bold text-gray-100">{failedTasks.length}</div>
-					<div class="text-sm text-gray-400">Failed</div>
-				</div>
-			</div>
 
 			{/* Tasks list */}
 			<div class="space-y-2">

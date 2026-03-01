@@ -3,7 +3,7 @@
  *
  * Displays tasks grouped by status:
  * - In Progress
- * - Escalated
+ * - Review
  * - Pending
  * - Draft
  * - Completed
@@ -29,7 +29,7 @@ export function RoomTasks({ tasks, onTaskClick }: RoomTasksProps) {
 
 	// Group by status
 	const inProgress = tasks.filter((t) => t.status === 'in_progress');
-	const escalated = tasks.filter((t) => t.status === 'escalated');
+	const review = tasks.filter((t) => t.status === 'review');
 	const pending = tasks.filter((t) => t.status === 'pending');
 	const draft = tasks.filter((t) => t.status === 'draft');
 	const completed = tasks.filter((t) => t.status === 'completed');
@@ -51,14 +51,14 @@ export function RoomTasks({ tasks, onTaskClick }: RoomTasksProps) {
 				</div>
 			)}
 
-			{/* Escalated */}
-			{escalated.length > 0 && (
+			{/* Review */}
+			{review.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-orange-900/20">
-						<h3 class="font-semibold text-orange-400">Escalated ({escalated.length})</h3>
+					<div class="px-4 py-3 border-b border-dark-700 bg-purple-900/20">
+						<h3 class="font-semibold text-purple-400">Review ({review.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
-						{escalated.map((task) => (
+						{review.map((task) => (
 							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
 						))}
 					</div>

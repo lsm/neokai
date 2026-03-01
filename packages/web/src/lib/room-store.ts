@@ -625,6 +625,32 @@ class RoomStore {
 		}
 	}
 
+	/**
+	 * Update room config (reviewers, maxReviewRounds, etc.)
+	 */
+	async updateConfig(config: Record<string, unknown>): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		try {
+			await hub.request('room.update', { roomId, config });
+			const overview = await hub.request<RoomOverview>('room.get', { roomId });
+			if (overview) {
+				this.room.value = overview.room;
+			}
+		} catch (err) {
+			logger.error('Failed to update config:', err);
+			throw err;
+		}
+	}
+
 	// ========================================
 	// Room Management Methods
 	// ========================================

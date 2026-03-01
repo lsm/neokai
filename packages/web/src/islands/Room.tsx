@@ -13,13 +13,13 @@ import { roomStore } from '../lib/room-store';
 import { navigateToHome, navigateToRoomTask } from '../lib/router';
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
-import { GoalsEditor, RoomContext, RoomSettings } from '../components/room';
+import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { toast } from '../lib/toast';
 
-type RoomTab = 'overview' | 'context' | 'goals' | 'settings';
+type RoomTab = 'overview' | 'context' | 'agents' | 'goals' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -154,6 +154,16 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
+									activeTab === 'agents'
+										? 'text-blue-400 border-b-2 border-blue-400'
+										: 'text-gray-400 hover:text-gray-200'
+								}`}
+								onClick={() => setActiveTab('agents')}
+							>
+								Agents
+							</button>
+							<button
+								class={`px-4 py-2 text-sm font-medium transition-colors ${
 									activeTab === 'goals'
 										? 'text-blue-400 border-b-2 border-blue-400'
 										: 'text-gray-400 hover:text-gray-200'
@@ -186,6 +196,11 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 									<RoomContext room={room} />
 								</div>
 							)}
+							{activeTab === 'agents' && (
+								<div class="h-full overflow-y-auto p-4">
+									<RoomAgents room={room} />
+								</div>
+							)}
 							{activeTab === 'goals' && (
 								<div class="h-full overflow-y-auto p-4">
 									<GoalsEditor
@@ -216,15 +231,6 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 					</>
 				)}
 			</div>
-
-			{/* Room Chat Panel - only show when NOT viewing a session or task within the room */}
-			{!sessionViewId && !taskViewId && (
-				<div class="w-96 border-l border-dark-700 flex flex-col bg-dark-950">
-					<div class="flex-1 flex flex-col">
-						<ChatContainer sessionId={`room:chat:${roomId}`} />
-					</div>
-				</div>
-			)}
 		</div>
 	);
 }

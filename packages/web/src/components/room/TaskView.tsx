@@ -37,7 +37,6 @@ const GROUP_STATE_LABELS: Record<string, string> = {
 	awaiting_worker: 'Worker active…',
 	awaiting_leader: 'Leader reviewing…',
 	awaiting_human: 'Needs human review',
-	hibernated: 'Hibernated',
 	completed: 'Completed',
 	failed: 'Failed',
 	// Backward compat
@@ -50,7 +49,7 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	in_progress: 'text-yellow-400',
 	completed: 'text-green-400',
 	failed: 'text-red-400',
-	escalated: 'text-orange-400',
+	review: 'text-purple-400',
 	draft: 'text-gray-500',
 };
 
@@ -188,7 +187,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									? 'This task has been completed.'
 									: task.status === 'failed'
 										? 'This task has failed.'
-										: 'No agent group has been spawned yet.'}
+										: task.status === 'review'
+											? 'This task is awaiting human review.'
+											: task.status === 'draft'
+												? 'This task is a draft and has not been scheduled yet.'
+												: 'No agent group has been spawned yet.'}
 						</p>
 					</div>
 				</div>

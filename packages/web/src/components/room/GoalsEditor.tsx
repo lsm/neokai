@@ -149,7 +149,7 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		completed: 'bg-green-900/50 text-green-300',
 		failed: 'bg-red-900/50 text-red-300',
 		draft: 'bg-dark-600 text-gray-400',
-		escalated: 'bg-orange-900/50 text-orange-300',
+		review: 'bg-purple-900/50 text-purple-300',
 	};
 	const label = status === 'in_progress' ? 'active' : status;
 	return (

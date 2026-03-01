@@ -65,15 +65,15 @@ describe('RoomTasks', () => {
 		});
 	});
 
-	describe('Escalated Section', () => {
-		it('should render escalated section with orange header', () => {
-			const tasks = [createTask('t1', 'escalated')];
+	describe('Review Section', () => {
+		it('should render review section with purple header', () => {
+			const tasks = [createTask('t1', 'review')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const header = container.querySelector('.text-orange-400');
+			const header = container.querySelector('.text-purple-400');
 			expect(header).toBeTruthy();
-			expect(header?.textContent).toContain('Escalated');
+			expect(header?.textContent).toContain('Review');
 		});
 	});
 
@@ -164,7 +164,7 @@ describe('RoomTasks', () => {
 		it('should render all status groups when tasks exist in each', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
-				createTask('t2', 'escalated'),
+				createTask('t2', 'review'),
 				createTask('t3', 'pending'),
 				createTask('t4', 'draft'),
 				createTask('t5', 'completed'),
@@ -177,7 +177,7 @@ describe('RoomTasks', () => {
 			const headerTexts = Array.from(headers).map((h) => h.textContent);
 
 			expect(headerTexts).toContain('In Progress (1)');
-			expect(headerTexts).toContain('Escalated (1)');
+			expect(headerTexts).toContain('Review (1)');
 			expect(headerTexts).toContain('Pending (1)');
 			expect(headerTexts).toContain('Draft (1)');
 			expect(headerTexts).toContain('Completed (1)');
