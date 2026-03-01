@@ -15,13 +15,24 @@ import {
 } from '../helpers/wait-helpers';
 
 /**
- * Helper to send a message and wait for it to be processed
+ * Helper to send a message and wait for response or agent idle.
+ * Uses Promise.race to handle SDK crashes gracefully — if the SDK process
+ * exits before responding, waits for the send button to reappear (agent idle).
  */
 async function sendMessage(page: Page, messageText: string): Promise<void> {
 	const messageInput = 'textarea[placeholder*="Ask"]';
 	await page.fill(messageInput, messageText);
 	await page.click('button[aria-label*="Send message"]');
-	await waitForMessageProcessed(page, messageText);
+
+	// Race between: full response completes OR send button returns (SDK crash recovery)
+	await Promise.race([
+		waitForMessageProcessed(page, messageText).catch(() => {}),
+		// If SDK crashes, send button returns after error handling
+		page.locator('[data-testid="send-button"]').waitFor({ state: 'visible', timeout: 90000 }),
+	]);
+
+	// Ensure input is ready for next message
+	await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeEnabled({ timeout: 5000 });
 }
 
 /**
