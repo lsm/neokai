@@ -39,10 +39,13 @@ export default function Lobby() {
 	const newSessionModal = useModal();
 
 	useEffect(() => {
+		// Reset modal signal on mount to clear any stale open state set while Lobby was unmounted
+		createRoomModalSignal.value = false;
 		lobbyStore.initialize().finally(() => setInitialLoad(false));
 
 		return () => {
-			// Cleanup on unmount is optional - lobby store is a singleton
+			// Reset modal signal on unmount so the signal is clean for subsequent mounts
+			createRoomModalSignal.value = false;
 		};
 	}, []);
 
@@ -112,15 +115,31 @@ export default function Lobby() {
 					</div>
 					{/* Desktop: full buttons with text */}
 					<div class="hidden md:flex gap-2 shrink-0">
-						<Button variant="secondary" onClick={newSessionModal.open}>
+						<Button
+							variant="secondary"
+							onClick={() => {
+								createRoomModalSignal.value = false;
+								newSessionModal.open();
+							}}
+						>
 							New Session
 						</Button>
-						<Button onClick={() => (createRoomModalSignal.value = true)}>Create Room</Button>
+						<Button
+							onClick={() => {
+								newSessionModal.close();
+								createRoomModalSignal.value = true;
+							}}
+						>
+							Create Room
+						</Button>
 					</div>
 					{/* Mobile: icon-only buttons */}
 					<div class="flex md:hidden gap-1.5 shrink-0">
 						<button
-							onClick={newSessionModal.open}
+							onClick={() => {
+								createRoomModalSignal.value = false;
+								newSessionModal.open();
+							}}
 							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
 							title="New Session"
 						>
@@ -134,7 +153,10 @@ export default function Lobby() {
 							</svg>
 						</button>
 						<button
-							onClick={() => (createRoomModalSignal.value = true)}
+							onClick={() => {
+								newSessionModal.close();
+								createRoomModalSignal.value = true;
+							}}
 							class="p-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
 							title="Create Room"
 						>
@@ -217,7 +239,10 @@ export default function Lobby() {
 						<RoomGrid
 							rooms={rooms}
 							onRoomClick={(room) => navigateToRoom(room.id)}
-							onCreateRoom={() => (createRoomModalSignal.value = true)}
+							onCreateRoom={() => {
+								newSessionModal.close();
+								createRoomModalSignal.value = true;
+							}}
 						/>
 					</div>
 				</div>
