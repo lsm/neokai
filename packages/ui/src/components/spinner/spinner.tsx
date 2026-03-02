@@ -26,7 +26,7 @@ function SpinnerFn({ as: Tag = 'span', label = 'Loading', children, ...rest }: S
 	};
 
 	const srSpan = createElement('span', { style: srOnlyStyle }, label);
-	const slotContent = createElement(Fragment, null, srSpan, children);
+	const slotContent = createElement(Fragment, null, [srSpan, children]);
 
 	const ourProps: Record<string, unknown> = {
 		role: 'status',

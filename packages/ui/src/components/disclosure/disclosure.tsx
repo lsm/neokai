@@ -33,6 +33,7 @@ interface DisclosureProps {
 	as?: ElementType;
 	defaultOpen?: boolean;
 	children?: unknown;
+	[key: string]: unknown;
 }
 
 function DisclosureFn({

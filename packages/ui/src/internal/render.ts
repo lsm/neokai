@@ -198,20 +198,3 @@ export function mergeProps(...propsList: Record<string, unknown>[]): Record<stri
 
 	return result;
 }
-
-// Helper to create a component with display name and forwardRef
-export function forwardRefWithAs<
-	TProps extends Record<string, unknown>,
-	TTag extends ElementType = 'div',
->(
-	component: (props: TProps & { as?: ElementType; ref?: Ref<unknown> }) => VNode | null,
-	displayName: string
-): ((props: TProps & { as?: TTag; ref?: Ref<unknown> }) => VNode | null) & {
-	displayName: string;
-} {
-	const wrapped = forwardRef(component as never) as unknown as ((
-		props: TProps & { as?: TTag; ref?: Ref<unknown> }
-	) => VNode | null) & { displayName: string };
-	wrapped.displayName = displayName;
-	return wrapped;
-}
