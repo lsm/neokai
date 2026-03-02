@@ -16,8 +16,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { TaskManager } from '../../../src/lib/room/task-manager';
-import { RoomManager } from '../../../src/lib/room/room-manager';
+import { TaskManager } from '../../../src/lib/room/managers/task-manager';
+import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 describe('TaskManager', () => {
 	let db: Database;

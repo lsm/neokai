@@ -23,7 +23,7 @@ import {
 } from '../../../src/lib/rpc-handlers/task-handlers';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
-import type { RoomManager } from '../../../src/lib/room/room-manager';
+import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;

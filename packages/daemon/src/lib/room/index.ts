@@ -7,12 +7,12 @@
  * - GoalManager for goal management with progress tracking
  */
 
-export { RoomManager } from './room-manager';
-export { TaskManager } from './task-manager';
+export { RoomManager } from './managers/room-manager';
+export { TaskManager } from './managers/task-manager';
 // @public - Library export
-export { GoalManager } from './goal-manager';
-export { RoomRuntimeService } from './room-runtime-service';
-export type { RoomRuntimeServiceConfig } from './room-runtime-service';
+export { GoalManager } from './managers/goal-manager';
+export { RoomRuntimeService } from './runtime/room-runtime-service';
+export type { RoomRuntimeServiceConfig } from './runtime/room-runtime-service';
 
 // Types - re-exported from @neokai/shared for convenience
 export type {

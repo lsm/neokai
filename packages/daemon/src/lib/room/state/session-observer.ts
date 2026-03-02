@@ -11,7 +11,7 @@
  * - interrupted → Agent was interrupted
  */
 
-import type { DaemonHub } from '../daemon-hub';
+import type { DaemonHub } from '../../daemon-hub';
 
 export type TerminalStateKind = 'idle' | 'waiting_for_input' | 'interrupted';
 

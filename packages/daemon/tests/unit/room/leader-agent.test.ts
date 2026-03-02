@@ -8,7 +8,7 @@ import {
 	toAgentModel,
 	type LeaderAgentConfig,
 	type LeaderToolCallbacks,
-} from '../../../src/lib/room/leader-agent';
+} from '../../../src/lib/room/agents/leader-agent';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
 
 function makeRoom(overrides?: Partial<Room>): Room {

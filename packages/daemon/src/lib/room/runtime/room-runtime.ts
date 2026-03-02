@@ -23,19 +23,19 @@ import type {
 	AgentType,
 	RuntimeState,
 } from '@neokai/shared';
-import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
-import type { TaskManager } from './task-manager';
-import type { GoalManager } from './goal-manager';
-import type { SessionObserver, TerminalState } from './session-observer';
+import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
+import type { TaskManager } from '../managers/task-manager';
+import type { GoalManager } from '../managers/goal-manager';
+import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
-import type { DaemonHub } from '../daemon-hub';
-import type { LeaderToolCallbacks, LeaderToolResult } from './leader-agent';
-import type { PlannerCreateTaskParams, ReplanContext } from './planner-agent';
-import { createPlannerAgentInit, buildPlannerTaskMessage } from './planner-agent';
-import { createCoderAgentInit, buildCoderTaskMessage } from './coder-agent';
-import { createGeneralAgentInit, buildGeneralTaskMessage } from './general-agent';
-import { buildLeaderTaskContext } from './leader-agent';
+import type { DaemonHub } from '../../daemon-hub';
+import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
+import type { PlannerCreateTaskParams, ReplanContext } from '../agents/planner-agent';
+import { createPlannerAgentInit, buildPlannerTaskMessage } from '../agents/planner-agent';
+import { createCoderAgentInit, buildCoderTaskMessage } from '../agents/coder-agent';
+import { createGeneralAgentInit, buildGeneralTaskMessage } from '../agents/general-agent';
+import { buildLeaderTaskContext } from '../agents/leader-agent';
 import {
 	formatWorkerToLeaderEnvelope,
 	formatPlanEnvelope,
@@ -43,7 +43,7 @@ import {
 	formatLeaderContractNudge,
 	sortTasksByPriority,
 } from './message-routing';
-import { Logger } from '../logger';
+import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
 	runLeaderCompleteGate,

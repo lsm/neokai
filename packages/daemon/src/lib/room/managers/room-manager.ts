@@ -12,9 +12,9 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { RoomRepository } from '../../storage/repositories/room-repository';
-import { TaskRepository } from '../../storage/repositories/task-repository';
-import { SessionRepository } from '../../storage/repositories/session-repository';
+import { RoomRepository } from '../../../storage/repositories/room-repository';
+import { TaskRepository } from '../../../storage/repositories/task-repository';
+import { SessionRepository } from '../../../storage/repositories/session-repository';
 import type {
 	Room,
 	CreateRoomParams,

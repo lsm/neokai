@@ -12,10 +12,10 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { TaskStatus } from '@neokai/shared';
-import type { GoalManager } from './goal-manager';
-import type { TaskManager } from './task-manager';
-import type { SessionGroupRepository } from './session-group-repository';
-import type { DaemonHub } from '../daemon-hub';
+import type { GoalManager } from '../managers/goal-manager';
+import type { TaskManager } from '../managers/task-manager';
+import type { SessionGroupRepository } from '../state/session-group-repository';
+import type { DaemonHub } from '../../daemon-hub';
 
 export interface RoomAgentToolsConfig {
 	roomId: string;

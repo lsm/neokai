@@ -5,7 +5,7 @@
  * and the feedback format for Leader → Worker routing.
  */
 
-import type { TerminalStateKind } from './session-observer';
+import type { TerminalStateKind } from '../state/session-observer';
 import type { NeoTask } from '@neokai/shared';
 
 export interface WorkerOutputEnvelopeParams {

@@ -34,7 +34,7 @@ import { setupSessionHandlers } from '../../../src/lib/rpc-handlers/session-hand
 import type { SessionManager } from '../../../src/lib/session-manager';
 import type { AgentSession } from '../../../src/lib/agent/agent-session';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { RoomManager } from '../../../src/lib/room/room-manager';
+import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { Session } from '@neokai/shared';
 
 // Type for captured request handlers

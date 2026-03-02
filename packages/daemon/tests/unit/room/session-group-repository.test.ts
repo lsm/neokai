@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
-import type { GroupState } from '../../../src/lib/room/session-group-repository';
+import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import type { GroupState } from '../../../src/lib/room/state/session-group-repository';
 
 describe('SessionGroupRepository', () => {
 	let db: Database;

@@ -13,7 +13,7 @@ import {
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 	type HookOptions,
-} from '../../../src/lib/room/lifecycle-hooks';
+} from '../../../src/lib/room/runtime/lifecycle-hooks';
 
 // Helper to create a mock command runner
 function mockRunner(

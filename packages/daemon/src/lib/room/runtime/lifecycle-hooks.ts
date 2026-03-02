@@ -8,7 +8,7 @@
  * All git/gh hooks gracefully pass when external tools are unavailable.
  */
 
-import { Logger } from '../logger';
+import { Logger } from '../../logger';
 
 const log = new Logger('lifecycle-hooks');
 

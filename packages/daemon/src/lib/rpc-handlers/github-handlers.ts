@@ -25,7 +25,7 @@ import type {
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { GitHubService } from '../github/github-service';
-import type { RoomManager } from '../room/room-manager';
+import type { RoomManager } from '../room/managers/room-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('github-handlers');

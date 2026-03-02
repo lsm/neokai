@@ -13,7 +13,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { AgentSessionInit } from '../agent/agent-session';
+import type { AgentSessionInit } from '../../agent/agent-session';
 import type {
 	Room,
 	RoomGoal,

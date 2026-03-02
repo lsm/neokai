@@ -4,7 +4,7 @@ import {
 	buildCoderTaskMessage,
 	createCoderAgentInit,
 	type CoderAgentConfig,
-} from '../../../src/lib/room/coder-agent';
+} from '../../../src/lib/room/agents/coder-agent';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
 
 function makeRoom(overrides?: Partial<Room>): Room {

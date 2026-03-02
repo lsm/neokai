@@ -13,14 +13,14 @@
 
 import { generateUUID } from '@neokai/shared';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
-import type { AgentSessionInit } from '../agent/agent-session';
-import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
-import type { SessionObserver, TerminalState } from './session-observer';
-import type { TaskManager } from './task-manager';
-import type { GoalManager } from './goal-manager';
-import type { LeaderToolCallbacks } from './leader-agent';
-import { createLeaderAgentInit } from './leader-agent';
-import type { LeaderAgentConfig, ReviewContext } from './leader-agent';
+import type { AgentSessionInit } from '../../agent/agent-session';
+import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
+import type { SessionObserver, TerminalState } from '../state/session-observer';
+import type { TaskManager } from '../managers/task-manager';
+import type { GoalManager } from '../managers/goal-manager';
+import type { LeaderToolCallbacks } from '../agents/leader-agent';
+import { createLeaderAgentInit } from '../agents/leader-agent';
+import type { LeaderAgentConfig, ReviewContext } from '../agents/leader-agent';
 
 /**
  * Convert a task title to a git branch name slug.

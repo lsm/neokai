@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
-import { SessionObserver, type TerminalState } from '../../../src/lib/room/session-observer';
+import { SessionObserver, type TerminalState } from '../../../src/lib/room/state/session-observer';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { AgentProcessingState } from '@neokai/shared';
 

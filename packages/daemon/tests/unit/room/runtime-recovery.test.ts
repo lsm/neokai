@@ -1,13 +1,13 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { recoverRuntime, type SessionStateChecker } from '../../../src/lib/room/runtime-recovery';
-import { RoomRuntime } from '../../../src/lib/room/room-runtime';
-import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
-import { SessionObserver } from '../../../src/lib/room/session-observer';
-import { GoalManager } from '../../../src/lib/room/goal-manager';
-import { TaskManager } from '../../../src/lib/room/task-manager';
+import { recoverRuntime, type SessionStateChecker } from '../../../src/lib/room/runtime/runtime-recovery';
+import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
+import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { SessionObserver } from '../../../src/lib/room/state/session-observer';
+import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room } from '@neokai/shared';
-import type { SessionFactory } from '../../../src/lib/room/task-group-manager';
+import type { SessionFactory } from '../../../src/lib/room/runtime/task-group-manager';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 function createMockDaemonHub() {

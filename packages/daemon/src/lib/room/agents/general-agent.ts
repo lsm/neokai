@@ -1,19 +1,19 @@
 /**
- * Coder Agent Factory - Creates AgentSessionInit for Coder (worker) sessions
+ * General Agent Factory - Creates AgentSessionInit for General (fallback worker) sessions
  *
- * The Coder agent is the implementation worker in a session group. It receives a task
- * with context from the goal and room, then works using standard coding tools
- * (bash, edit, read, write, glob, grep) until it reaches a terminal state.
+ * The General agent handles non-coding tasks within a session group. It has access
+ * to the same Claude Code tools as the Coder agent but uses a more generic system
+ * prompt that doesn't assume a coding context.
  *
- * No special MCP tools are needed - Coder just works until done.
+ * Used when the Planner assigns a task that doesn't fit a specific agent type.
  */
 
-import type { AgentSessionInit } from '../agent/agent-session';
+import type { AgentSessionInit } from '../../agent/agent-session';
 import type { Room, RoomGoal, NeoTask, SessionFeatures } from '@neokai/shared';
 
-const DEFAULT_CODER_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_GENERAL_MODEL = 'claude-sonnet-4-5-20250929';
 
-const CODER_FEATURES: SessionFeatures = {
+const GENERAL_FEATURES: SessionFeatures = {
 	rewind: false,
 	worktree: false,
 	coordinator: false,
@@ -21,7 +21,7 @@ const CODER_FEATURES: SessionFeatures = {
 	sessionInfo: false,
 };
 
-export interface CoderAgentConfig {
+export interface GeneralAgentConfig {
 	task: NeoTask;
 	goal: RoomGoal;
 	room: Room;
@@ -33,46 +33,32 @@ export interface CoderAgentConfig {
 }
 
 /**
- * Build the behavioral system prompt for the Coder agent.
+ * Build the behavioral system prompt for the General agent.
  *
- * Contains ONLY role definition, git workflow instructions, and behavioral rules.
+ * Contains ONLY role definition and behavioral rules.
  * Task-specific context (title, description, goal, room background) is delivered
- * via the initial user message built by buildCoderTaskMessage().
+ * via the initial user message built by buildGeneralTaskMessage().
  */
-export function buildCoderSystemPrompt(): string {
+export function buildGeneralSystemPrompt(): string {
 	const sections: string[] = [];
 
-	sections.push(`You are a Coder Agent working on a specific task within a larger goal.`);
+	sections.push(`You are a General Agent working on a task within a larger goal.`);
 	sections.push(`Your job is to complete the task described below to the best of your ability.`);
-	sections.push(`Work carefully and thoroughly. When you are done, simply finish your response.`);
-
-	// Mandatory Git workflow
-	sections.push(`\n## Git Workflow (MANDATORY)\n`);
 	sections.push(
-		`You are working in an isolated git worktree on a feature branch. ` +
-			`The branch has already been created for you. Follow this workflow:`
-	);
-	sections.push(`1. Implement the task, making logical commits along the way`);
-	sections.push(`2. Push your branch: \`git push -u origin HEAD\``);
-	sections.push(`3. Create a pull request: \`gh pr create --fill\``);
-	sections.push(`4. Finish your response`);
-	sections.push(``);
-	sections.push(
-		`**IMPORTANT**: Do NOT commit directly to the main/dev/master branch. ` +
-			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
+		`Use whatever tools are appropriate for the task. When you are done, simply finish your response.`
 	);
 
 	return sections.join('\n');
 }
 
 /**
- * Build the initial user message for the Coder agent.
+ * Build the initial user message for the General agent.
  *
  * Contains task-specific context: task title/description, goal context,
  * project background, room instructions, and previous task summaries.
  * This is what the user sees in the UI as the agent's starting prompt.
  */
-export function buildCoderTaskMessage(config: CoderAgentConfig): string {
+export function buildGeneralTaskMessage(config: GeneralAgentConfig): string {
 	const { task, goal, room, previousTaskSummaries } = config;
 
 	const sections: string[] = [];
@@ -117,24 +103,24 @@ export function buildCoderTaskMessage(config: CoderAgentConfig): string {
 }
 
 /**
- * Create an AgentSessionInit for a Coder agent session.
+ * Create an AgentSessionInit for a General agent session.
  *
- * The Coder agent uses the Claude Code preset (standard coding tools)
+ * The General agent uses the Claude Code preset (standard tools)
  * with a behavioral system prompt appended. Task-specific context is
- * delivered via the initial user message (buildCoderTaskMessage).
+ * delivered via the initial user message (buildGeneralTaskMessage).
  */
-export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit {
+export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSessionInit {
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildCoderSystemPrompt(),
+			append: buildGeneralSystemPrompt(),
 		},
-		features: CODER_FEATURES,
+		features: GENERAL_FEATURES,
 		context: { roomId: config.room.id },
-		type: 'coder',
-		model: config.model ?? DEFAULT_CODER_MODEL,
+		type: 'general',
+		model: config.model ?? DEFAULT_GENERAL_MODEL,
 	};
 }

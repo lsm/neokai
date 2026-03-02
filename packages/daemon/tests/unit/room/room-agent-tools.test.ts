@@ -1,9 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { GoalManager } from '../../../src/lib/room/goal-manager';
-import { TaskManager } from '../../../src/lib/room/task-manager';
-import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
-import { createRoomAgentToolHandlers } from '../../../src/lib/room/room-agent-tools';
+import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { TaskManager } from '../../../src/lib/room/managers/task-manager';
+import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { createRoomAgentToolHandlers } from '../../../src/lib/room/tools/room-agent-tools';
 
 describe('Room Agent Tools', () => {
 	let db: Database;

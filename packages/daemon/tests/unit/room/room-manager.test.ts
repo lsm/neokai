@@ -12,7 +12,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from '../../../src/storage/database';
-import { RoomManager } from '../../../src/lib/room/room-manager';
+import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { CreateRoomParams, WorkspacePath } from '@neokai/shared';
 
 describe('RoomManager', () => {

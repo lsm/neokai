@@ -15,10 +15,10 @@
 
 import type { MessageHub, WorkspacePath } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { RoomManager } from '../room/room-manager';
-import type { RoomRuntimeService } from '../room/room-runtime-service';
+import type { RoomManager } from '../room/managers/room-manager';
+import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
-import { getCliAgents, refresh as refreshCliAgents } from '../room/cli-agent-registry';
+import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
 import { Logger } from '../logger';
 
 const log = new Logger('room-handlers');

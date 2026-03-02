@@ -9,23 +9,23 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
-import type { Database } from '../../storage/database';
+import type { Database } from '../../../storage/database';
 import type { MessageHub } from '@neokai/shared';
-import type { DaemonHub } from '../daemon-hub';
-import type { SessionManager } from '../session-manager';
+import type { DaemonHub } from '../../daemon-hub';
+import type { SessionManager } from '../../session-manager';
 import type { SessionFactory } from './task-group-manager';
 import { RoomRuntime } from './room-runtime';
-import { SessionObserver } from './session-observer';
-import { SessionGroupRepository } from './session-group-repository';
-import { TaskManager } from './task-manager';
-import { GoalManager } from './goal-manager';
-import { AgentSession } from '../agent/agent-session';
-import { createRoomAgentMcpServer } from './room-agent-tools';
-import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
+import { SessionObserver } from '../state/session-observer';
+import { SessionGroupRepository } from '../state/session-group-repository';
+import { TaskManager } from '../managers/task-manager';
+import { GoalManager } from '../managers/goal-manager';
+import { AgentSession } from '../../agent/agent-session';
+import { createRoomAgentMcpServer } from '../tools/room-agent-tools';
+import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
-import type { RoomManager } from './room-manager';
-import { WorktreeManager } from '../worktree-manager';
-import { Logger } from '../logger';
+import type { RoomManager } from '../managers/room-manager';
+import { WorktreeManager } from '../../worktree-manager';
+import { Logger } from '../../logger';
 
 const log = new Logger('room-runtime-service');
 

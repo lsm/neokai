@@ -8,7 +8,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { Logger } from '../logger';
+import { Logger } from '../../logger';
 
 const log = new Logger('cli-agent-registry');
 

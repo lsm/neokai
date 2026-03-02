@@ -33,10 +33,10 @@ import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
 // New handlers for goals
 import { setupGoalHandlers, type GoalManagerFactory, type TaskManagerFactory as GoalTaskManagerFactory } from './goal-handlers';
-import { RoomRuntimeService } from '../room/room-runtime-service';
+import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
-import { GoalManager } from '../room/goal-manager';
-import { TaskManager } from '../room/task-manager';
+import { GoalManager } from '../room/managers/goal-manager';
+import { TaskManager } from '../room/managers/task-manager';
 import { setupDialogHandlers } from './dialog-handlers';
 
 export interface RPCHandlerDependencies {

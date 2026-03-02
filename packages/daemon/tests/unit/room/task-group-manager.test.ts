@@ -4,13 +4,13 @@ import {
 	TaskGroupManager,
 	type SessionFactory,
 	type WorkerConfig,
-} from '../../../src/lib/room/task-group-manager';
-import { SessionGroupRepository } from '../../../src/lib/room/session-group-repository';
-import { SessionObserver } from '../../../src/lib/room/session-observer';
-import { GoalManager } from '../../../src/lib/room/goal-manager';
-import { TaskManager } from '../../../src/lib/room/task-manager';
+} from '../../../src/lib/room/runtime/task-group-manager';
+import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
+import { SessionObserver } from '../../../src/lib/room/state/session-observer';
+import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
-import type { LeaderToolCallbacks } from '../../../src/lib/room/leader-agent';
+import type { LeaderToolCallbacks } from '../../../src/lib/room/agents/leader-agent';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 
 // Mock DaemonHub

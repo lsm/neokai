@@ -13,9 +13,9 @@
  * immediately rather than waiting for the safety net timer.
  */
 
-import type { SessionGroupRepository, SessionGroup } from './session-group-repository';
-import type { SessionObserver, TerminalState } from './session-observer';
-import type { TaskManager } from './task-manager';
+import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
+import type { SessionObserver, TerminalState } from '../state/session-observer';
+import type { TaskManager } from '../managers/task-manager';
 import type { RoomRuntime } from './room-runtime';
 
 /**

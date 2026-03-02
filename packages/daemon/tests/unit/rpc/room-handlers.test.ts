@@ -19,7 +19,7 @@ import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import { setupRoomHandlers } from '../../../src/lib/rpc-handlers/room-handlers';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
-import type { RoomManager } from '../../../src/lib/room/room-manager';
+import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { Room, RoomOverview, NeoStatus } from '@neokai/shared';
 
 // Type for captured request handlers

@@ -15,9 +15,9 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { GoalManager } from '../../../src/lib/room/goal-manager';
-import { RoomManager } from '../../../src/lib/room/room-manager';
-import { TaskManager } from '../../../src/lib/room/task-manager';
+import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
+import { RoomManager } from '../../../src/lib/room/managers/room-manager';
+import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import type { NeoTask } from '@neokai/shared';
 
 describe('GoalManager', () => {

@@ -9,7 +9,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { TaskRepository } from '../../storage/repositories/task-repository';
+import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type {
 	NeoTask,
 	TaskStatus,

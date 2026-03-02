@@ -21,9 +21,9 @@
 
 import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import type { GoalManager } from '../room/goal-manager';
-import type { TaskManager } from '../room/task-manager';
-import type { RoomRuntimeService } from '../room/room-runtime-service';
+import type { GoalManager } from '../room/managers/goal-manager';
+import type { TaskManager } from '../room/managers/task-manager';
+import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 
 const log = new Logger('goal-handlers');

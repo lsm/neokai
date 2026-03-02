@@ -19,9 +19,9 @@
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
-import type { RoomManager } from '../room/room-manager';
+import type { RoomManager } from '../room/managers/room-manager';
 import { TaskManager } from '../room';
-import { SessionGroupRepository } from '../room/session-group-repository';
+import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');

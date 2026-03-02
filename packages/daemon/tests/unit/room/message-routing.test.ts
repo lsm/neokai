@@ -5,7 +5,7 @@ import {
 	formatLeaderContractNudge,
 	priorityOrder,
 	sortTasksByPriority,
-} from '../../../src/lib/room/message-routing';
+} from '../../../src/lib/room/runtime/message-routing';
 
 describe('Message Routing', () => {
 	describe('formatWorkerToLeaderEnvelope', () => {
