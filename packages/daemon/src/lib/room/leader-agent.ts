@@ -97,7 +97,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		`- \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried`
 	);
 	sections.push(
-		`- \`submit_for_review\` — Work is done with a PR ready; free the group slot and park the task for human approval\n`
+		`- \`submit_for_review\` — ONLY after dispatching all reviewer sub-agents and collecting their verdicts. Runtime rejects this if no PR reviews exist. Work is done with a PR ready; free the group slot and park the task for human approval\n`
 	);
 	sections.push(`Do NOT respond with only text. You MUST call one of the above tools.`);
 
@@ -166,6 +166,9 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		if (hasReviewers) {
 			// Full review orchestration workflow with reviewer sub-agents
 			sections.push(`\n## Review Orchestration Workflow (MANDATORY)\n`);
+			sections.push(
+				`**YOU MUST DISPATCH REVIEWER SUB-AGENTS. DO NOT REVIEW CODE YOURSELF.**\nYour role is to ORCHESTRATE reviews, not to perform them. You MUST use the Task tool\nto spawn each reviewer sub-agent listed below. The runtime will reject submit_for_review\nif no reviews have been posted on the PR.\n`
+			);
 			sections.push(
 				`You have reviewer sub-agents available via the Task tool. You MUST dispatch these reviewers before calling \`complete_task\`. The runtime enforces this — \`complete_task\` will be rejected if no reviews have been posted on the PR.\n`
 			);
@@ -617,7 +620,6 @@ export function createLeaderAgentInit(
 			systemPrompt: {
 				type: 'preset',
 				preset: 'claude_code',
-				append: buildLeaderSystemPrompt(config),
 			},
 			mcpServers: {
 				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
@@ -628,6 +630,8 @@ export function createLeaderAgentInit(
 			model: config.model ?? DEFAULT_LEADER_MODEL,
 			// Use agent/agents pattern: designate Leader as main thread
 			// This enables sub-agent dispatch via Task tool without coordinatorMode
+			// The Leader's system prompt comes from the agent definition's `prompt` field,
+			// not the top-level systemPrompt, to avoid the claude_code preset drowning it out.
 			agent: 'Leader',
 			agents: allAgents,
 		};

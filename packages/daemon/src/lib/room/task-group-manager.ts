@@ -198,11 +198,21 @@ export class TaskGroupManager {
 		// Create and start ONLY the worker session
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
-		// Kick off worker so the SDK streaming loop starts processing immediately
-		await this.sessionFactory.injectMessage(
-			workerSessionId,
-			'Please begin working on the task described in your system prompt.'
-		);
+		// Kick off worker so the SDK streaming loop starts processing immediately.
+		// Build a rich task context message so the user can see what the agent was tasked with.
+		const taskPrompt = [
+			`# Task: ${task.title}`,
+			task.description ? `\n${task.description}` : '',
+			`\n**Goal:** ${goal.title}`,
+			`\n**Role:** ${workerConfig.role}`,
+			workerConfig.role === 'coder'
+				? `\n**Workspace:** Isolated worktree on branch \`${branchName}\``
+				: '',
+			`\nBegin working on this task.`,
+		]
+			.filter(Boolean)
+			.join('\n');
+		await this.sessionFactory.injectMessage(workerSessionId, taskPrompt);
 
 		// Observe worker session for terminal state
 		this.observer.observe(workerSessionId, (state) => {
