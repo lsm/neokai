@@ -23,6 +23,23 @@ import { createLeaderAgentInit } from './leader-agent';
 import type { LeaderAgentConfig, ReviewContext } from './leader-agent';
 
 /**
+ * Convert a task title to a git branch name slug.
+ *
+ * e.g. "Add health check endpoint" → "task/add-health-check-endpoint"
+ * Falls back to undefined if the title produces an empty slug (caller uses session-based default).
+ */
+function taskTitleToBranchName(title: string): string | undefined {
+	const slug = title
+		.toLowerCase()
+		.replace(/[^a-z0-9\s-]/g, '') // remove special chars
+		.trim()
+		.replace(/\s+/g, '-') // spaces to hyphens
+		.replace(/-+/g, '-') // collapse multiple hyphens
+		.slice(0, 50); // truncate
+	return slug ? `task/${slug}` : undefined;
+}
+
+/**
  * Abstract session interface for testability.
  * The real implementation delegates to AgentSession.fromInit + startStreamingQuery.
  */
@@ -39,7 +56,7 @@ export interface SessionFactory {
 	 * Create a git worktree for task isolation.
 	 * Returns the worktree path, or null if not in a git repo.
 	 */
-	createWorktree(basePath: string, sessionId: string): Promise<string | null>;
+	createWorktree(basePath: string, sessionId: string, branchName?: string): Promise<string | null>;
 }
 
 /**
@@ -105,7 +122,7 @@ export class TaskGroupManager {
 	 * Spawn a new (Worker, Leader) session group for a task.
 	 *
 	 * Flow:
-	 * 1. Create worktree for task isolation (coder tasks only)
+	 * 1. Create worktree for task isolation (ALL roles get an isolated worktree)
 	 * 2. Create worker session via workerConfig and start it immediately
 	 * 3. Build leader init but DEFER creation until first review round
 	 * 4. Create session_groups DB record (state: awaiting_worker)
@@ -125,26 +142,23 @@ export class TaskGroupManager {
 		const workerSessionId = `${workerConfig.role}:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 		const leaderSessionId = `leader:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 
-		// Create an isolated worktree for coder tasks so each group works in its own branch.
-		// Planner and general tasks don't modify the repo, so they use the base workspace.
-		let groupWorkspacePath = this.workspacePath;
-		if (workerConfig.role === 'coder') {
-			const worktreePath = await this.sessionFactory.createWorktree(
-				this.workspacePath,
-				workerSessionId
-			);
-			if (!worktreePath) {
-				await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for coder task');
-				throw new Error('Worktree creation failed — coder task requires isolation');
-			}
-			groupWorkspacePath = worktreePath;
+		// Create an isolated worktree for ALL tasks so each group works in its own branch.
+		// Worker and leader sessions share the same worktree for the task.
+		const branchName = taskTitleToBranchName(task.title) ?? `task/${workerSessionId}`;
+		const worktreePath = await this.sessionFactory.createWorktree(
+			this.workspacePath,
+			workerSessionId,
+			branchName
+		);
+		if (!worktreePath) {
+			await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for task');
+			throw new Error('Worktree creation failed — task requires isolation');
 		}
+		const groupWorkspacePath = worktreePath;
 
 		// Build worker init from the provided config, using the group workspace path
 		const workerInit = workerConfig.initFactory(workerSessionId);
-		if (groupWorkspacePath !== this.workspacePath) {
-			workerInit.workspacePath = groupWorkspacePath;
-		}
+		workerInit.workspacePath = groupWorkspacePath;
 
 		// Create session_groups record first so we have the real group.id for Leader callbacks.
 		// This is critical: Leader MCP tool callbacks must reference group.id, not task.id.
@@ -153,7 +167,7 @@ export class TaskGroupManager {
 			workerSessionId,
 			leaderSessionId,
 			workerConfig.role,
-			groupWorkspacePath !== this.workspacePath ? groupWorkspacePath : undefined
+			groupWorkspacePath
 		);
 
 		// Build Leader init using the actual group.id from the DB record — but don't start yet.

@@ -165,11 +165,12 @@ export class RoomRuntimeService {
 				await session.handleQuestionResponse(toolUseId, responses);
 				return true;
 			},
-			createWorktree: async (basePath, sessionId) => {
+			createWorktree: async (basePath, sessionId, branchName) => {
 				try {
 					const result = await worktreeManager.createWorktree({
 						sessionId,
 						repoPath: basePath,
+						branchName,
 					});
 					return result?.worktreePath ?? null;
 				} catch (error) {

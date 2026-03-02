@@ -1006,15 +1006,23 @@ export class RoomRuntime {
 		this.emitTaskUpdate(planningTask);
 
 		// Spawn the planning group directly (bypasses the tick queue)
-		const group = await this.taskGroupManager.spawn(
-			planningTask,
-			goal,
-			(groupId, state) => this.onWorkerTerminalState(groupId, state),
-			(groupId, state) => this.onLeaderTerminalState(groupId, state),
-			(groupId) => this.createLeaderCallbacks(groupId),
-			workerConfig,
-			'plan_review'
-		);
+		let group;
+		try {
+			group = await this.taskGroupManager.spawn(
+				planningTask,
+				goal,
+				(groupId, state) => this.onWorkerTerminalState(groupId, state),
+				(groupId, state) => this.onLeaderTerminalState(groupId, state),
+				(groupId) => this.createLeaderCallbacks(groupId),
+				workerConfig,
+				'plan_review'
+			);
+		} catch (err) {
+			// spawn() already called failTask() before throwing — log and continue
+			log.error(`Failed to spawn planning group for goal ${goal.id}: ${err}`);
+			await this.emitTaskUpdateById(planningTask.id);
+			return;
+		}
 
 		// Notify UI: planning task is now in_progress
 		await this.emitTaskUpdateById(planningTask.id);

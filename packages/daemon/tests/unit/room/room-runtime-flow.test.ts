@@ -872,8 +872,8 @@ describe('RoomRuntime flow', () => {
 			// Create a context where createWorktree always returns null (simulating git failure)
 			const isolCtx = createRuntimeTestContext();
 			// Override createWorktree on the mock factory to simulate worktree creation failure
-			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string) => Promise<string | null> }).createWorktree =
-				async (_basePath: string, _sessionId: string) => null;
+			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
+				async (_basePath: string, _sessionId: string, _branchName?: string) => null;
 
 			afterEach(() => {
 				isolCtx.runtime.stop();
@@ -891,6 +891,83 @@ describe('RoomRuntime flow', () => {
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('failed');
 			expect(updatedTask!.error).toContain('worktree');
+		});
+
+		test('fails task when createWorktree returns null for planner role', async () => {
+			// All roles now require an isolated worktree — planner tasks should also fail
+			const isolCtx = createRuntimeTestContext();
+			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
+				async (_basePath: string, _sessionId: string, _branchName?: string) => null;
+
+			afterEach(() => {
+				isolCtx.runtime.stop();
+				isolCtx.db.close();
+			});
+
+			// A goal with no tasks triggers planner spawn
+			await isolCtx.goalManager.createGoal({
+				title: 'New Feature',
+				description: 'Plan it out',
+			});
+			isolCtx.runtime.start();
+			await isolCtx.runtime.tick();
+
+			// The planning task should have been created by spawnPlanningGroup and then failed
+			// (worktree creation failure causes failTask() before the group is created)
+			const allTasks = await isolCtx.taskManager.listTasks({ status: 'failed' });
+			expect(allTasks.length).toBeGreaterThan(0);
+			expect(allTasks[0].error).toContain('worktree');
+		});
+
+		test('fails task when createWorktree returns null for general role', async () => {
+			// General tasks also require worktrees now
+			const isolCtx = createRuntimeTestContext();
+			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
+				async (_basePath: string, _sessionId: string, _branchName?: string) => null;
+
+			afterEach(() => {
+				isolCtx.runtime.stop();
+				isolCtx.db.close();
+			});
+
+			const { task } = await createGoalAndTask(isolCtx, { assignedAgent: 'general' });
+			isolCtx.runtime.start();
+			await isolCtx.runtime.tick();
+
+			// Task should be failed with a worktree-related error
+			const updatedTask = await isolCtx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.error).toContain('worktree');
+		});
+
+		test('creates worktree with meaningful branch name derived from task title', async () => {
+			const isolCtx = createRuntimeTestContext();
+			const worktreeCalls: Array<{ basePath: string; sessionId: string; branchName?: string }> = [];
+			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
+				async (basePath: string, sessionId: string, branchName?: string) => {
+					worktreeCalls.push({ basePath, sessionId, branchName });
+					return `/tmp/worktrees/${sessionId}`;
+				};
+
+			afterEach(() => {
+				isolCtx.runtime.stop();
+				isolCtx.db.close();
+			});
+
+			// Task title "Add health check endpoint" → branch "task/add-health-check-endpoint"
+			const goal = await isolCtx.goalManager.createGoal({ title: 'Goal', description: '' });
+			const task = await isolCtx.taskManager.createTask({
+				title: 'Add health check endpoint',
+				description: 'GET /health returns 200',
+				assignedAgent: 'coder',
+			});
+			await isolCtx.goalManager.linkTaskToGoal(goal.id, task.id);
+
+			isolCtx.runtime.start();
+			await isolCtx.runtime.tick();
+
+			expect(worktreeCalls).toHaveLength(1);
+			expect(worktreeCalls[0].branchName).toBe('task/add-health-check-endpoint');
 		});
 	});
 });
