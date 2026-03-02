@@ -120,7 +120,11 @@ describe('JobQueueRepository', () => {
 
 		it('only dequeues jobs where run_at <= now', () => {
 			repository.enqueue({ queue: 'test', payload: { label: 'ready' }, runAt: Date.now() - 1000 });
-			repository.enqueue({ queue: 'test', payload: { label: 'future' }, runAt: Date.now() + 60_000 });
+			repository.enqueue({
+				queue: 'test',
+				payload: { label: 'future' },
+				runAt: Date.now() + 60_000,
+			});
 
 			const jobs = repository.dequeue('test', 10);
 

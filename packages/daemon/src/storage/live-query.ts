@@ -117,11 +117,10 @@ function hashRows(rows: Record<string, unknown>[]): number {
  */
 export function computeDiff<T extends Record<string, unknown>>(
 	oldRows: T[],
-	newRows: T[],
+	newRows: T[]
 ): { added: T[]; removed: T[]; updated: T[] } {
 	const hasId =
-		(newRows.length > 0 && 'id' in newRows[0]) ||
-		(oldRows.length > 0 && 'id' in oldRows[0]);
+		(newRows.length > 0 && 'id' in newRows[0]) || (oldRows.length > 0 && 'id' in oldRows[0]);
 
 	if (!hasId) {
 		// Positional diff: compare by full JSON
@@ -171,14 +170,12 @@ export class LiveQueryEngine {
 	private queries = new Map<string, QueryEntry<Record<string, unknown>>>();
 	/** Map from table name to set of cache keys that depend on it */
 	private tableIndex = new Map<string, Set<string>>();
-	private changeListener: (
-		data: { tables: string[]; versions: Record<string, number> },
-	) => void;
+	private changeListener: (data: { tables: string[]; versions: Record<string, number> }) => void;
 	private disposed = false;
 
 	constructor(
 		private db: BunDatabase,
-		private reactiveDb: ReactiveDatabase,
+		private reactiveDb: ReactiveDatabase
 	) {
 		this.changeListener = (data) => {
 			for (const table of data.tables) {
@@ -195,7 +192,7 @@ export class LiveQueryEngine {
 	subscribe<T extends Record<string, unknown>>(
 		sql: string,
 		params: ReadonlyArray<unknown>,
-		onChange: (diff: QueryDiff<T>) => void,
+		onChange: (diff: QueryDiff<T>) => void
 	): LiveQueryHandle<T> {
 		const cacheKey = sql + '\0' + JSON.stringify(params);
 
@@ -326,7 +323,7 @@ export class LiveQueryEngine {
 
 	private runQuery<T extends Record<string, unknown>>(
 		sql: string,
-		params: ReadonlyArray<unknown>,
+		params: ReadonlyArray<unknown>
 	): T[] {
 		const stmt = this.db.prepare(sql);
 		const paramsArray = Array.from(params) as Parameters<typeof stmt.all>;

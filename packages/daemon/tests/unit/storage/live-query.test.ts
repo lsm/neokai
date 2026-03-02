@@ -19,7 +19,10 @@ import type { QueryDiff } from '../../../src/storage/live-query';
 // ---------------------------------------------------------------------------
 
 interface MockReactiveDatabase {
-	on(event: 'change', listener: (data: { tables: string[]; versions: Record<string, number> }) => void): void;
+	on(
+		event: 'change',
+		listener: (data: { tables: string[]; versions: Record<string, number> }) => void
+	): void;
 	off(event: string, listener: (...args: unknown[]) => void): void;
 	getTableVersion(table: string): number;
 	/** Test helper — fire a synthetic change event for the given tables. */
@@ -33,7 +36,10 @@ function createMockReactiveDatabase(): MockReactiveDatabase {
 	const versions: Record<string, number> = {};
 
 	return {
-		on(event: 'change', listener: (data: { tables: string[]; versions: Record<string, number> }) => void): void {
+		on(
+			event: 'change',
+			listener: (data: { tables: string[]; versions: Record<string, number> }) => void
+		): void {
 			emitter.on(event, listener);
 		},
 		off(event: string, listener: (...args: unknown[]) => void): void {
@@ -102,7 +108,14 @@ describe('LiveQueryEngine', () => {
 	beforeEach(() => {
 		db = createTestDb();
 		mockReactive = createMockReactiveDatabase();
-		engine = new LiveQueryEngine(db, mockReactive as Parameters<typeof LiveQueryEngine['prototype']['subscribe']>[2] extends never ? never : any);
+		engine = new LiveQueryEngine(
+			db,
+			mockReactive as Parameters<
+				(typeof LiveQueryEngine)['prototype']['subscribe']
+			>[2] extends never
+				? never
+				: any
+		);
 	});
 
 	afterEach(() => {
@@ -551,7 +564,10 @@ describe('LiveQueryEngine', () => {
 
 		test('id-based path: new row appears in added', () => {
 			const oldRows = [{ id: '1', val: 10 }];
-			const newRows = [{ id: '1', val: 10 }, { id: '2', val: 20 }];
+			const newRows = [
+				{ id: '1', val: 10 },
+				{ id: '2', val: 20 },
+			];
 			const result = computeDiff(oldRows, newRows);
 			expect(result.added).toEqual([{ id: '2', val: 20 }]);
 			expect(result.removed).toEqual([]);
@@ -559,7 +575,10 @@ describe('LiveQueryEngine', () => {
 		});
 
 		test('id-based path: deleted row appears in removed', () => {
-			const oldRows = [{ id: '1', val: 10 }, { id: '2', val: 20 }];
+			const oldRows = [
+				{ id: '1', val: 10 },
+				{ id: '2', val: 20 },
+			];
 			const newRows = [{ id: '1', val: 10 }];
 			const result = computeDiff(oldRows, newRows);
 			expect(result.added).toEqual([]);
@@ -590,7 +609,10 @@ describe('LiveQueryEngine', () => {
 
 		test('positional path: new row with no id appears in added', () => {
 			const oldRows = [{ name: 'alpha', value: 1 }];
-			const newRows = [{ name: 'alpha', value: 1 }, { name: 'beta', value: 2 }];
+			const newRows = [
+				{ name: 'alpha', value: 1 },
+				{ name: 'beta', value: 2 },
+			];
 			const result = computeDiff(oldRows, newRows);
 			expect(result.added).toEqual([{ name: 'beta', value: 2 }]);
 			expect(result.removed).toEqual([]);
@@ -598,7 +620,10 @@ describe('LiveQueryEngine', () => {
 		});
 
 		test('positional path: deleted row with no id appears in removed', () => {
-			const oldRows = [{ name: 'alpha', value: 1 }, { name: 'beta', value: 2 }];
+			const oldRows = [
+				{ name: 'alpha', value: 1 },
+				{ name: 'beta', value: 2 },
+			];
 			const newRows = [{ name: 'alpha', value: 1 }];
 			const result = computeDiff(oldRows, newRows);
 			expect(result.added).toEqual([]);
@@ -607,7 +632,10 @@ describe('LiveQueryEngine', () => {
 		});
 
 		test('positional path: identical rows produce empty diff', () => {
-			const rows = [{ name: 'alpha', value: 1 }, { name: 'beta', value: 2 }];
+			const rows = [
+				{ name: 'alpha', value: 1 },
+				{ name: 'beta', value: 2 },
+			];
 			const result = computeDiff(rows, rows.slice());
 			expect(result.added).toEqual([]);
 			expect(result.removed).toEqual([]);
@@ -808,14 +836,14 @@ describe('extractTables', () => {
 
 	test('LEFT OUTER JOIN extracts table', () => {
 		const tables = extractTables(
-			'SELECT * FROM items LEFT OUTER JOIN other ON items.id = other.id',
+			'SELECT * FROM items LEFT OUTER JOIN other ON items.id = other.id'
 		);
 		expect(tables).toContain('other');
 	});
 
 	test('RIGHT OUTER JOIN extracts table', () => {
 		const tables = extractTables(
-			'SELECT * FROM items RIGHT OUTER JOIN other ON items.id = other.id',
+			'SELECT * FROM items RIGHT OUTER JOIN other ON items.id = other.id'
 		);
 		expect(tables).toContain('other');
 	});
@@ -857,9 +885,7 @@ describe('extractTables', () => {
 	// -------------------------------------------------------------------------
 
 	test('self-join produces single entry for the table', () => {
-		const tables = extractTables(
-			'SELECT a.id FROM items a JOIN items b ON a.id = b.parent_id',
-		);
+		const tables = extractTables('SELECT a.id FROM items a JOIN items b ON a.id = b.parent_id');
 		expect(tables).toEqual(['items']);
 	});
 
@@ -868,9 +894,7 @@ describe('extractTables', () => {
 	// -------------------------------------------------------------------------
 
 	test('multiple tables via JOIN all extracted', () => {
-		const tables = extractTables(
-			'SELECT * FROM items JOIN other ON items.id = other.item_id',
-		);
+		const tables = extractTables('SELECT * FROM items JOIN other ON items.id = other.item_id');
 		expect(tables.sort()).toEqual(['items', 'other']);
 	});
 

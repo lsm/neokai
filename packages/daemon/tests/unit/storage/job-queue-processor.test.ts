@@ -399,7 +399,7 @@ describe('JobQueueProcessor', () => {
 			// Manually set started_at far in the past so it's considered stale
 			db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
 				Date.now() - 10_000,
-				job.id,
+				job.id
 			);
 
 			// tick() will run checkStaleJobs on first call (lastStaleCheck=0)
@@ -441,7 +441,7 @@ describe('JobQueueProcessor', () => {
 			// Make it stale
 			db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
 				Date.now() - 10_000,
-				job.id,
+				job.id
 			);
 
 			// First tick: runs stale check (lastStaleCheck=0), reclaims and processes
@@ -456,7 +456,7 @@ describe('JobQueueProcessor', () => {
 			repo.dequeue('throttle-queue', 1);
 			db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
 				Date.now() - 10_000,
-				job2.id,
+				job2.id
 			);
 
 			// Second tick: within 60s window, stale check is SKIPPED
