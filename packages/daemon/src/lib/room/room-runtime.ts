@@ -588,17 +588,25 @@ export class RoomRuntime {
 			case 'submit_for_review': {
 				const prUrl = params.pr_url ?? '';
 
-				// Lifecycle gate: validate PR exists for coding tasks
+				// Lifecycle gate: validate PR exists for coding tasks (and reviews if reviewers configured)
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask && group.workerRole === 'coder') {
+						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
+						const agentSubs = roomConfig.agentSubagents as
+							| Record<string, unknown[]>
+							| undefined;
+						const hasReviewers =
+							!!(agentSubs?.leader?.length) ||
+							!!((roomConfig.reviewers as unknown[] | undefined)?.length);
+
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
 							groupId,
-							hasReviewers: false,
+							hasReviewers,
 						};
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {

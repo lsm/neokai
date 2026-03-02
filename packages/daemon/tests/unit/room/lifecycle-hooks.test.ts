@@ -490,4 +490,59 @@ describe('runLeaderSubmitGate', () => {
 		const result = await runLeaderSubmitGate(makeLeaderCtx({ workerRole: 'coder' }), opts);
 		expect(result.pass).toBe(true);
 	});
+
+	test('checks reviews when hasReviewers is true and reviews exist', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+			'gh pr view feat/add-alerts --json reviews --jq .reviews | length': {
+				stdout: '2',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderSubmitGate(
+			makeLeaderCtx({ workerRole: 'coder', hasReviewers: true }),
+			opts,
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails when hasReviewers is true but no reviews posted', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+			'gh pr view feat/add-alerts --json reviews --jq .reviews | length': {
+				stdout: '0',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderSubmitGate(
+			makeLeaderCtx({ workerRole: 'coder', hasReviewers: true }),
+			opts,
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('reviewer sub-agents');
+	});
+
+	test('skips review check when hasReviewers is false', async () => {
+		// PR exists but no reviews — should still pass because hasReviewers is false
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderSubmitGate(
+			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
+			opts,
+		);
+		expect(result.pass).toBe(true);
+	});
 });

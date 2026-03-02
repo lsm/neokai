@@ -354,6 +354,7 @@ export async function runWorkerExitGate(
 /**
  * Run the leader submit-for-review gate.
  * For coder tasks: PR must exist before submitting for review.
+ * When reviewers are configured: reviews must be posted on the PR before submitting.
  * For other task types: pass through.
  */
 export async function runLeaderSubmitGate(
@@ -363,6 +364,12 @@ export async function runLeaderSubmitGate(
 	if (ctx.workerRole === 'coder') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
 		if (!prResult.pass) return prResult;
+
+		// If reviewers are configured, reviews must be posted before submitting
+		if (ctx.hasReviewers) {
+			const reviewResult = await checkPrHasReviews(ctx, opts);
+			if (!reviewResult.pass) return reviewResult;
+		}
 	}
 	return { pass: true };
 }
