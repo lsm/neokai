@@ -177,6 +177,7 @@ export function createTables(db: BunDatabase): void {
         updated_at INTEGER NOT NULL,
         completed_at INTEGER,
         planning_attempts INTEGER DEFAULT 0,
+        goal_review_attempts INTEGER DEFAULT 0,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);

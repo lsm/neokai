@@ -72,6 +72,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups,
 	// add config column to rooms table
 	runMigration16(db);
+
+	// Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
+	runMigration17(db);
 }
 
 /**
@@ -699,6 +702,108 @@ function runMigration16(db: BunDatabase): void {
 	// --- Rooms table: add config column ---
 	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'config')) {
 		db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
+	}
+}
+
+/**
+ * Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
+ *
+ * The goals table was created with an old CHECK constraint:
+ *   CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked'))
+ * The correct constraint (matching GoalStatus type) is:
+ *   CHECK(status IN ('active', 'needs_human', 'completed', 'archived'))
+ *
+ * Also adds the goal_review_attempts column defined in the RoomGoal interface
+ * but missing from the original table schema.
+ *
+ * Status mapping: pending → active, in_progress → active, blocked → needs_human
+ *
+ * CRITICAL: Must disable foreign_keys during table recreation to prevent
+ * CASCADE delete from wiping related data when we DROP TABLE goals.
+ */
+function runMigration17(db: BunDatabase): void {
+	if (!tableExists(db, 'goals')) {
+		return;
+	}
+
+	// Check if migration is needed: try inserting a row with status='active'
+	// If it fails, the old CHECK constraint is in place and we need to recreate the table.
+	// Also check if goal_review_attempts column is already present.
+	const testId = '__migration16_goals_test__';
+	let needsConstraintFix = false;
+	try {
+		db.prepare(
+			`INSERT INTO goals (id, room_id, title, description, status, priority, created_at, updated_at)
+			 VALUES (?, 'test', 'test', '', 'active', 'normal', 0, 0)`
+		).run(testId);
+		db.prepare(`DELETE FROM goals WHERE id = ?`).run(testId);
+	} catch {
+		needsConstraintFix = true;
+	}
+
+	const needsColumn = !tableHasColumn(db, 'goals', 'goal_review_attempts');
+
+	if (!needsConstraintFix && !needsColumn) {
+		return; // Already up to date
+	}
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		if (needsConstraintFix) {
+			// Map old status values to new ones before recreating the table
+			db.exec(`PRAGMA ignore_check_constraints = 1`);
+			db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
+			db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
+			db.exec(`PRAGMA ignore_check_constraints = 0`);
+		}
+
+		// Drop leftover temp table from a previous crashed migration attempt
+		db.exec(`DROP TABLE IF EXISTS goals_new`);
+
+		// Determine which optional columns exist so we can carry them over
+		const hasGoalReviewAttempts = tableHasColumn(db, 'goals', 'goal_review_attempts');
+
+		db.exec(`
+			CREATE TABLE goals_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]',
+				metrics TEXT DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0,
+				goal_review_attempts INTEGER DEFAULT 0,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
+		// Build column list — only include goal_review_attempts if it existed before
+		const cols = [
+			'id', 'room_id', 'title', 'description', 'status', 'priority', 'progress',
+			'linked_task_ids', 'metrics', 'created_at', 'updated_at', 'completed_at',
+			'planning_attempts',
+		];
+		if (hasGoalReviewAttempts) {
+			cols.push('goal_review_attempts');
+		}
+		const selectCols = cols.join(', ');
+		db.exec(`INSERT INTO goals_new (${selectCols}) SELECT ${selectCols} FROM goals`);
+
+		db.exec(`DROP TABLE goals`);
+		db.exec(`ALTER TABLE goals_new RENAME TO goals`);
+
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
 	}
 }
 
