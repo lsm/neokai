@@ -59,6 +59,10 @@ export class RoomRuntimeService {
 		return runtime ? runtime.getState() : null;
 	}
 
+	getRuntime(roomId: string): RoomRuntime | null {
+		return this.runtimes.get(roomId) ?? null;
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;

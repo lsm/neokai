@@ -58,7 +58,9 @@ describe('RoomRuntime', () => {
 
 			// Worker starts immediately, leader is deferred until routeWorkerToLeader
 			const workerCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'coder'
+				(c) =>
+					c.method === 'createAndStartSession' &&
+					c.args[1] !== 'leader'
 			);
 			const leaderCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
@@ -86,7 +88,7 @@ describe('RoomRuntime', () => {
 
 			// Only 1 group should be spawned (maxConcurrentGroups = 1)
 			const workerCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'coder'
+				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
 			);
 			expect(workerCalls).toHaveLength(1);
 		});

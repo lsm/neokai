@@ -46,6 +46,7 @@ import { Logger } from '../logger';
 import {
 	runWorkerExitGate,
 	runLeaderCompleteGate,
+	runLeaderSubmitGate,
 	type HookOptions,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
@@ -143,6 +144,24 @@ export class RoomRuntime {
 	private async emitTaskUpdateById(taskId: string): Promise<void> {
 		const task = await this.taskManager.getTask(taskId);
 		if (task) this.emitTaskUpdate(task);
+	}
+
+	/**
+	 * Recalculate progress for all goals linked to a task and emit goal.progressUpdated events.
+	 * Called after task status or progress changes.
+	 */
+	private async emitGoalProgressForTask(taskId: string): Promise<void> {
+		await this.goalManager.updateGoalsForTask(taskId);
+		if (!this.daemonHub) return;
+		const goals = await this.goalManager.getGoalsForTask(taskId);
+		for (const goal of goals) {
+			void this.daemonHub.emit('goal.progressUpdated', {
+				sessionId: `room:${this.room.id}`,
+				roomId: this.room.id,
+				goalId: goal.id,
+				progress: goal.progress,
+			});
+		}
 	}
 
 	constructor(config: RoomRuntimeConfig) {
@@ -291,7 +310,7 @@ export class RoomRuntime {
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
-					gateResult.bounceMessage!
+					gateResult.bounceMessage ?? gateResult.reason ?? 'Gate check failed'
 				);
 				return; // Stay in awaiting_worker state
 			}
@@ -366,6 +385,7 @@ export class RoomRuntime {
 		);
 		await this.taskManager.updateTaskProgress(task.id, progress);
 		await this.emitTaskUpdateById(task.id);
+		await this.emitGoalProgressForTask(task.id);
 	}
 
 	/**
@@ -477,6 +497,17 @@ export class RoomRuntime {
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
+				// State machine enforcement: coding tasks must go through submit_for_review first
+				if (group.workerRole === 'coder' && !group.submittedForReview) {
+					this.groupRepo.setLeaderCalledTool(groupId, false);
+					return jsonResult({
+						success: false,
+						error: 'Coding tasks must go through submit_for_review before complete_task.',
+						action_required:
+							'Call submit_for_review with the PR URL first. After human approval, you can call complete_task.',
+					});
+				}
+
 				// Lifecycle hooks: Leader Complete Gate
 				// Validates preconditions before allowing task completion
 				{
@@ -532,6 +563,7 @@ export class RoomRuntime {
 				await this.taskGroupManager.complete(groupId, summary);
 				this.cleanupMirroring(groupId, 'Task completed.');
 				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
 				// If this was a planning task, promote its draft children to pending
 				await this.promoteDraftTasksIfPlanning(group.taskId);
 				this.scheduleTick();
@@ -543,6 +575,7 @@ export class RoomRuntime {
 				await this.taskGroupManager.fail(groupId, reason);
 				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
 				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
 			}
@@ -554,13 +587,54 @@ export class RoomRuntime {
 
 			case 'submit_for_review': {
 				const prUrl = params.pr_url ?? '';
+
+				// Lifecycle gate: validate PR exists for coding tasks
+				{
+					const hookTask = await this.taskManager.getTask(group.taskId);
+					if (hookTask && group.workerRole === 'coder') {
+						const hookCtx: LeaderCompleteHookContext = {
+							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+							taskType: hookTask.taskType ?? 'coding',
+							workerRole: group.workerRole,
+							taskId: group.taskId,
+							groupId,
+							hasReviewers: false,
+						};
+						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
+						if (!gateResult.pass) {
+							log.info(
+								`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`
+							);
+							this.groupRepo.appendMessage({
+								groupId,
+								role: 'system',
+								messageType: 'status',
+								content: `Leader submit gate: ${gateResult.reason}`,
+							});
+							// Reset leaderCalledTool so leader can try again
+							this.groupRepo.setLeaderCalledTool(groupId, false);
+							return jsonResult({
+								success: false,
+								error: gateResult.reason ?? 'Precondition not met.',
+								action_required: gateResult.bounceMessage,
+							});
+						}
+					}
+				}
+
+				// Mark that submit_for_review was called (gates complete_task state machine)
+				this.groupRepo.setSubmittedForReview(groupId, true);
+
 				await this.taskGroupManager.submitForReview(groupId, prUrl);
+				// Stop real-time streaming while awaiting human review
 				this.cleanupMirroring(groupId, `Task submitted for review: ${prUrl}`);
 				await this.emitTaskUpdateById(group.taskId);
-				this.scheduleTick();
+				await this.emitGoalProgressForTask(group.taskId);
+				// Do NOT call scheduleTick() — the group stays alive in awaiting_human.
+				// The slot is excluded from the active count in executeTick().
 				return jsonResult({
 					success: true,
-					message: `Task submitted for human review. PR: ${prUrl}`,
+					message: `Task submitted for human review. PR: ${prUrl}. Waiting for human approval before completing.`,
 				});
 			}
 
@@ -590,6 +664,27 @@ export class RoomRuntime {
 				return this.handleLeaderTool(groupId, 'submit_for_review', { pr_url: prUrl });
 			},
 		};
+	}
+
+	/**
+	 * Resume a group from awaiting_human state (human approved or rejected the PR).
+	 *
+	 * Called from RPC handlers (goal.approveTask / goal.rejectTask).
+	 * Finds the group for the given task and delegates to TaskGroupManager.resumeFromHuman().
+	 * Returns null if no awaiting_human group is found for the task.
+	 */
+	async resumeFromHuman(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.state !== 'awaiting_human') return false;
+
+		// Re-setup mirroring so messages from the new leader turn are captured
+		this.setupMirroring(group);
+
+		const updated = await this.taskGroupManager.resumeFromHuman(group.id, message);
+		if (!updated) return false;
+
+		this.scheduleTick();
+		return true;
 	}
 
 	// =========================================================================
@@ -722,8 +817,10 @@ export class RoomRuntime {
 	}
 
 	private async executeTick(): Promise<void> {
-		// Check capacity
-		const activeGroups = this.groupRepo.getActiveGroups(this.room.id);
+		// Check capacity — awaiting_human groups are paused and don't consume slots
+		const activeGroups = this.groupRepo
+			.getActiveGroups(this.room.id)
+			.filter((g) => g.state !== 'awaiting_human');
 		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
 
 		if (availableSlots <= 0) return;
@@ -972,15 +1069,23 @@ export class RoomRuntime {
 			};
 		}
 
-		const group = await this.taskGroupManager.spawn(
-			task,
-			goal,
-			(groupId, state) => this.onWorkerTerminalState(groupId, state),
-			(groupId, state) => this.onLeaderTerminalState(groupId, state),
-			(groupId) => this.createLeaderCallbacks(groupId),
-			workerConfig,
-			'code_review'
-		);
+		let group;
+		try {
+			group = await this.taskGroupManager.spawn(
+				task,
+				goal,
+				(groupId, state) => this.onWorkerTerminalState(groupId, state),
+				(groupId, state) => this.onLeaderTerminalState(groupId, state),
+				(groupId) => this.createLeaderCallbacks(groupId),
+				workerConfig,
+				'code_review'
+			);
+		} catch (err) {
+			// spawn() already called failTask() before throwing — log and continue to next task
+			log.error(`Failed to spawn group for task ${task.id}: ${err}`);
+			await this.emitTaskUpdateById(task.id);
+			return;
+		}
 
 		// Notify UI: task is now in_progress
 		await this.emitTaskUpdateById(task.id);
@@ -1009,6 +1114,8 @@ export class RoomRuntime {
 			for (const t of pendingTasks) {
 				this.emitTaskUpdate(t);
 			}
+			// Recalculate goal progress now that draft tasks are pending
+			await this.emitGoalProgressForTask(taskId);
 		}
 	}
 

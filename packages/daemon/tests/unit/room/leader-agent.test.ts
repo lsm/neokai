@@ -4,6 +4,7 @@ import {
 	buildReviewerAgents,
 	createLeaderToolHandlers,
 	createLeaderAgentInit,
+	toAgentModel,
 	type LeaderAgentConfig,
 	type LeaderToolCallbacks,
 } from '../../../src/lib/room/leader-agent';
@@ -414,6 +415,58 @@ describe('Leader Agent', () => {
 			expect(agent.tools).toContain('Bash');
 			expect(agent.tools).not.toContain('Edit');
 			expect(agent.tools).not.toContain('Write');
+		});
+
+		it('should map full model ID to valid AgentModel for SDK-native reviewer', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6-20250929' }]);
+			const agent = agents['reviewer-claude-opus-4-6-20250929'];
+			expect(agent).toBeDefined();
+			expect(agent.model).toBe('opus');
+		});
+
+		it('should map full model ID to valid AgentModel for CLI reviewer', () => {
+			const agents = buildReviewerAgents([
+				{ model: 'custom-cli', type: 'cli', driver_model: 'claude-sonnet-4-5-20250929' },
+			]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent).toBeDefined();
+			expect(agent.model).toBe('sonnet');
+		});
+
+		it('should default CLI reviewer to sonnet when no driver_model given', () => {
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent.model).toBe('sonnet');
+		});
+	});
+
+	describe('toAgentModel', () => {
+		it('should map full opus model ID to opus', () => {
+			expect(toAgentModel('claude-opus-4-6-20250929')).toBe('opus');
+		});
+
+		it('should map full sonnet model ID to sonnet', () => {
+			expect(toAgentModel('claude-sonnet-4-5-20250929')).toBe('sonnet');
+		});
+
+		it('should map full haiku model ID to haiku', () => {
+			expect(toAgentModel('claude-haiku-3-5-20241022')).toBe('haiku');
+		});
+
+		it('should default unknown model to sonnet', () => {
+			expect(toAgentModel('some-unknown-model-xyz')).toBe('sonnet');
+		});
+
+		it('should map short name opus to opus', () => {
+			expect(toAgentModel('opus')).toBe('opus');
+		});
+
+		it('should map short name sonnet to sonnet', () => {
+			expect(toAgentModel('sonnet')).toBe('sonnet');
+		});
+
+		it('should map short name haiku to haiku', () => {
+			expect(toAgentModel('haiku')).toBe('haiku');
 		});
 	});
 });

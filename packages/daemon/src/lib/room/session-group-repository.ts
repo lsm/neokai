@@ -40,6 +40,8 @@ interface TaskGroupMetadata {
 	workerRole?: string;
 	/** Workspace path for this group (may be a worktree path, different from room default) */
 	workspacePath?: string;
+	/** Whether the leader has called submit_for_review (state machine gate for complete_task) */
+	submittedForReview?: boolean;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -82,6 +84,8 @@ export interface SessionGroup {
 	tokensUsed: number;
 	/** Workspace path for this group (may differ from room default when using worktrees) */
 	workspacePath?: string;
+	/** Whether the leader has called submit_for_review (state machine gate for complete_task) */
+	submittedForReview: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -314,6 +318,24 @@ export class SessionGroupRepository {
 			.run(JSON.stringify(merged), groupId);
 	}
 
+	/**
+	 * Set submittedForReview flag without version check.
+	 * Records that the leader has called submit_for_review, gating complete_task.
+	 */
+	setSubmittedForReview(groupId: string, value: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, submittedForReview: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
 	updateLastForwardedMessageId(
 		groupId: string,
 		messageId: string,
@@ -424,6 +446,7 @@ export class SessionGroupRepository {
 			version: row.version as number,
 			tokensUsed: meta.tokensUsed,
 			workspacePath: meta.workspacePath,
+			submittedForReview: meta.submittedForReview ?? false,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

@@ -345,7 +345,7 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 			'submit_for_review',
 			'Work is done with a PR ready — free the group slot and park the task for human approval',
 			{
-				pr_url: z.string().describe('The GitHub PR URL for human review'),
+				pr_url: z.string().min(1).describe('The GitHub PR URL for human review'),
 			},
 			(args) => handlers.submit_for_review(args)
 		),
@@ -370,9 +370,8 @@ interface SubagentConfig {
 }
 
 /**
- * Read leader sub-agents from room config with backward compatibility.
- * New path: room.config.agentSubagents.leader
- * Legacy path: room.config.reviewers
+ * Read leader sub-agents from room config.
+ * Path: room.config.agentSubagents.leader
  */
 function getLeaderSubagents(
 	roomConfig: Record<string, unknown>
@@ -383,8 +382,25 @@ function getLeaderSubagents(
 	if (agentSubagents?.leader && agentSubagents.leader.length > 0) {
 		return agentSubagents.leader;
 	}
-	// Fallback to legacy flat reviewers
-	return roomConfig.reviewers as SubagentConfig[] | undefined;
+	// Legacy fallback: room.config.reviewers
+	const legacyReviewers = roomConfig.reviewers as SubagentConfig[] | undefined;
+	if (legacyReviewers && legacyReviewers.length > 0) {
+		return legacyReviewers;
+	}
+	return undefined;
+}
+
+/**
+ * Map a full model ID to a valid AgentModel for the SDK.
+ * The SDK only accepts: 'sonnet' | 'opus' | 'haiku' | 'inherit'
+ */
+export function toAgentModel(modelId: string): AgentDefinition['model'] {
+	const lower = modelId.toLowerCase();
+	if (lower.includes('opus')) return 'opus';
+	if (lower.includes('haiku')) return 'haiku';
+	if (lower.includes('sonnet')) return 'sonnet';
+	// Default to 'sonnet' for unknown models
+	return 'sonnet';
 }
 
 /** Restricted tools for reviewer sub-agents (read-only + gh CLI) */
@@ -511,7 +527,7 @@ export function buildReviewerAgents(
 			agents[name] = {
 				description: `Code reviewer using ${reviewer.model} CLI. Runs the CLI tool via Bash and posts findings as PR comments.`,
 				tools: REVIEWER_TOOLS,
-				model: (reviewer.driver_model ?? 'sonnet') as AgentDefinition['model'],
+				model: toAgentModel(reviewer.driver_model ?? 'sonnet'),
 				prompt: buildCliReviewerPrompt(reviewer.model),
 			};
 		} else {
@@ -519,7 +535,7 @@ export function buildReviewerAgents(
 			agents[name] = {
 				description: `Code reviewer using ${reviewer.model}. Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
-				model: reviewer.model as AgentDefinition['model'],
+				model: toAgentModel(reviewer.model),
 				prompt: buildSdkReviewerPrompt(),
 			};
 		}

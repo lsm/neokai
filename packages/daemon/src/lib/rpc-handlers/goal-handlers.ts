@@ -22,6 +22,8 @@
 import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { GoalManager } from '../room/goal-manager';
+import type { TaskManager } from '../room/task-manager';
+import type { RoomRuntimeService } from '../room/room-runtime-service';
 import { Logger } from '../logger';
 
 const log = new Logger('goal-handlers');
@@ -46,11 +48,14 @@ export type GoalManagerLike = Pick<
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
+export type TaskManagerFactory = (roomId: string) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
 
 export function setupGoalHandlers(
 	messageHub: MessageHub,
 	daemonHub: DaemonHub,
-	goalManagerFactory: GoalManagerFactory
+	goalManagerFactory: GoalManagerFactory,
+	taskManagerFactory?: TaskManagerFactory,
+	runtimeService?: RoomRuntimeService
 ): void {
 	/**
 	 * Emit goal.created event to notify UI clients
@@ -479,5 +484,93 @@ export function setupGoalHandlers(
 		const goals = await goalManager.getActiveGoals();
 
 		return { goals };
+	});
+
+	// goal.approveTask - Human approves the PR; resume leader to call complete_task
+	messageHub.onRequest('goal.approveTask', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!taskManagerFactory || !runtimeService) {
+			throw new Error('Task manager factory and runtime service are required for goal.approveTask');
+		}
+
+		const taskManager = taskManagerFactory(params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (task.status !== 'review') {
+			throw new Error(`Task is not in review status (current: ${task.status})`);
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const message =
+			'Human has approved the PR. The PR is ready to merge or has been merged. ' +
+			'You may now call `complete_task` with a summary of what was accomplished.';
+
+		const resumed = await runtime.resumeFromHuman(params.taskId, message);
+		if (!resumed) {
+			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
+		}
+
+		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);
+		return { success: true };
+	});
+
+	// goal.rejectTask - Human rejects the PR with feedback; resume leader to relay feedback
+	messageHub.onRequest('goal.rejectTask', async (data) => {
+		const params = data as { roomId: string; taskId: string; feedback: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!params.feedback) {
+			throw new Error('Feedback is required');
+		}
+		if (!taskManagerFactory || !runtimeService) {
+			throw new Error('Task manager factory and runtime service are required for goal.rejectTask');
+		}
+
+		const taskManager = taskManagerFactory(params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (task.status !== 'review') {
+			throw new Error(`Task is not in review status (current: ${task.status})`);
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const message =
+			`Human has provided feedback on the PR:\n\n${params.feedback}\n\n` +
+			'Please use send_to_worker to relay this feedback so the worker can address it.';
+
+		// Move task back to in_progress
+		await taskManager.updateTaskStatus(params.taskId, 'in_progress');
+
+		const resumed = await runtime.resumeFromHuman(params.taskId, message);
+		if (!resumed) {
+			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
+		}
+
+		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);
+		return { success: true };
 	});
 }

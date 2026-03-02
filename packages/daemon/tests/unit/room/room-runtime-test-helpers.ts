@@ -53,8 +53,9 @@ export function createMockSessionFactory() {
 		async answerQuestion(_sessionId: string, _answer: string) {
 			return false;
 		},
-		async createWorktree(_basePath: string, _sessionId: string) {
-			return null;
+		async createWorktree(_basePath: string, sessionId: string) {
+			// Return a synthetic worktree path so coder isolation enforcement passes in tests
+			return `/tmp/worktrees/${sessionId}`;
 		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
@@ -165,7 +166,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
 }
 
-export async function createGoalAndTask(ctx: RuntimeTestContext) {
+export async function createGoalAndTask(ctx: RuntimeTestContext, opts?: { assignedAgent?: 'coder' | 'general' }) {
 	const goal = await ctx.goalManager.createGoal({
 		title: 'Health check',
 		description: 'Add health endpoint',
@@ -173,6 +174,9 @@ export async function createGoalAndTask(ctx: RuntimeTestContext) {
 	const task = await ctx.taskManager.createTask({
 		title: 'Add GET /health',
 		description: 'Returns 200 OK',
+		// Default to 'general' for most unit tests so they don't hit the
+		// submit_for_review state machine gate (which is coder-specific).
+		assignedAgent: opts?.assignedAgent ?? 'general',
 	});
 	await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
 	return { goal, task };
@@ -182,8 +186,8 @@ export async function createGoalAndTask(ctx: RuntimeTestContext) {
  * Helper: spawn a group via tick, route worker to leader, return the group.
  * Leaves the group in `awaiting_leader` state ready for a leader tool call.
  */
-export async function spawnAndRouteToLeader(ctx: RuntimeTestContext) {
-	const { goal, task } = await createGoalAndTask(ctx);
+export async function spawnAndRouteToLeader(ctx: RuntimeTestContext, opts?: { assignedAgent?: 'coder' | 'general' }) {
+	const { goal, task } = await createGoalAndTask(ctx, opts);
 	ctx.runtime.start();
 	await ctx.runtime.tick();
 

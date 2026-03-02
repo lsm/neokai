@@ -9,6 +9,7 @@ import {
 	checkLeaderDraftsExist,
 	runWorkerExitGate,
 	runLeaderCompleteGate,
+	runLeaderSubmitGate,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 	type HookOptions,
@@ -433,6 +434,60 @@ describe('runLeaderCompleteGate', () => {
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'general', taskType: 'research' }),
 		);
+		expect(result.pass).toBe(true);
+	});
+});
+
+describe('runLeaderSubmitGate', () => {
+	test('passes for non-coder tasks without checking PR', async () => {
+		// General task — no git/gh checks should run
+		const result = await runLeaderSubmitGate(
+			makeLeaderCtx({ workerRole: 'general', taskType: 'research' }),
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes for planner tasks without checking PR', async () => {
+		const result = await runLeaderSubmitGate(
+			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning' }),
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes for coder tasks when PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderSubmitGate(makeLeaderCtx({ workerRole: 'coder' }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails for coder tasks when no PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '[]',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderSubmitGate(makeLeaderCtx({ workerRole: 'coder' }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('send_to_worker');
+	});
+
+	test('passes gracefully for coder tasks when gh is unavailable', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr list --head feat/add-alerts --json number --state open': {
+				stdout: '',
+				exitCode: 1,
+			},
+		});
+		const result = await runLeaderSubmitGate(makeLeaderCtx({ workerRole: 'coder' }), opts);
 		expect(result.pass).toBe(true);
 	});
 });

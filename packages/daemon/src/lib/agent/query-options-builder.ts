@@ -285,6 +285,16 @@ export class QueryOptionsBuilder {
 			queryOptions.allowedTools = [...new Set([...existing, ...allTools])];
 		}
 
+		// ============ Non-Coordinator Agent Support ============
+		// When agents are defined without coordinator mode (e.g., leader with reviewer agents),
+		// ensure Task-related tools are available for sub-agent dispatch.
+		// Unlike coordinator mode, we don't restrict the main agent or merge specialists.
+		if (!config.coordinatorMode && config.agents && Object.keys(config.agents as Record<string, unknown>).length > 0) {
+			const taskTools = ['Task', 'TaskOutput', 'TaskStop'];
+			const existing = queryOptions.allowedTools ?? [];
+			queryOptions.allowedTools = [...new Set([...existing, ...taskTools])];
+		}
+
 		// Remove undefined values to use SDK defaults
 		const cleanedOptions = Object.fromEntries(
 			Object.entries(queryOptions).filter(([_, v]) => v !== undefined)

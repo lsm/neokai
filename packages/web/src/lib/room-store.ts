@@ -512,11 +512,16 @@ class RoomStore {
 
 		try {
 			await hub.request('goal.create', { ...goal, roomId });
-			// Refetch goals to ensure UI is up to date
-			await this.fetchGoals();
 		} catch (err) {
 			logger.error('Failed to create goal:', err);
 			throw err;
+		}
+
+		// Refetch goals to ensure UI is up to date — non-fatal if it fails
+		try {
+			await this.fetchGoals();
+		} catch (err) {
+			logger.warn('Failed to refetch goals after creation:', err);
 		}
 	}
 

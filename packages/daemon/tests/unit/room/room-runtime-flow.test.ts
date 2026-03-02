@@ -327,7 +327,7 @@ describe('RoomRuntime flow', () => {
 				hookCtx.db.close();
 			});
 
-			await createGoalAndTask(hookCtx);
+			await createGoalAndTask(hookCtx, { assignedAgent: 'coder' });
 			hookCtx.runtime.start();
 			await hookCtx.runtime.tick();
 
@@ -375,7 +375,7 @@ describe('RoomRuntime flow', () => {
 				hookCtx.db.close();
 			});
 
-			await createGoalAndTask(hookCtx);
+			await createGoalAndTask(hookCtx, { assignedAgent: 'coder' });
 			hookCtx.runtime.start();
 			await hookCtx.runtime.tick();
 
@@ -434,7 +434,10 @@ describe('RoomRuntime flow', () => {
 				hookCtx.db.close();
 			});
 
-			const { group } = await spawnAndRouteToLeader(hookCtx);
+			// Must be a coder task so the reviewer gate fires
+			// Also pre-set submittedForReview so the state machine gate doesn't block first
+			const { group } = await spawnAndRouteToLeader(hookCtx, { assignedAgent: 'coder' });
+			hookCtx.groupRepo.setSubmittedForReview(group.id, true);
 
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'done',
@@ -524,6 +527,370 @@ describe('RoomRuntime flow', () => {
 			// Group stays in awaiting_worker
 			const updated = hookCtx.groupRepo.getGroup(group.id);
 			expect(updated!.state).toBe('awaiting_worker');
+		});
+	});
+
+	describe('goal progress recalculation', () => {
+		it('should recalculate goal progress when task progress is updated in onWorkerTerminalState', async () => {
+			const { goal, task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Verify initial goal progress is 0
+			const initialGoal = await ctx.goalManager.getGoal(goal.id);
+			expect(initialGoal!.progress).toBe(0);
+
+			// Worker finishes — runtime routes to leader and updates task progress
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Task progress should be non-zero (formula: iteration 1 → 20%)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.progress).toBeGreaterThan(0);
+
+			// Goal progress should be recalculated from the updated task progress
+			const updatedGoal = await ctx.goalManager.getGoal(goal.id);
+			expect(updatedGoal!.progress).toBe(updatedTask!.progress);
+		});
+
+		it('should recalculate goal progress to 100 when task is completed', async () => {
+			const { goal } = await spawnAndRouteToLeader(ctx);
+
+			const initialGoal = await ctx.goalManager.getGoal(goal.id);
+			expect(initialGoal!.progress).toBeLessThan(100);
+
+			// Leader completes the task
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Task done',
+			});
+
+			// Goal progress should now be 100 (completed task = 100%)
+			const updatedGoal = await ctx.goalManager.getGoal(goal.id);
+			expect(updatedGoal!.progress).toBe(100);
+		});
+
+		it('should recalculate goal progress to 0 when task fails', async () => {
+			const { goal } = await spawnAndRouteToLeader(ctx);
+
+			// Leader fails the task
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.handleLeaderTool(group.id, 'fail_task', {
+				reason: 'Task could not be completed',
+			});
+
+			// Failed tasks contribute 0 to progress calculation
+			const updatedGoal = await ctx.goalManager.getGoal(goal.id);
+			expect(updatedGoal!.progress).toBe(0);
+		});
+
+		it('should recalculate goal progress when task is submitted for review', async () => {
+			const { goal } = await spawnAndRouteToLeader(ctx);
+
+			// Leader submits the task for review
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+
+			// Goal progress should reflect the task's current progress after submit_for_review
+			const updatedGoal = await ctx.goalManager.getGoal(goal.id);
+			const updatedTask = await ctx.taskManager.getTask(group.taskId);
+			// Task should now be in 'review' status
+			expect(updatedTask!.status).toBe('review');
+			// Goal progress should be consistent with task progress (not 100% since not completed)
+			expect(updatedGoal!.progress).toBeLessThan(100);
+			expect(updatedGoal!.progress).toBe(updatedTask!.progress ?? 0);
+		});
+	});
+
+	describe('submit_for_review gate', () => {
+		test('rejects submit_for_review when no PR exists for coder task', async () => {
+			// Worker exit gate uses `--json number,url`; submit gate uses `--json number`.
+			// We pass the worker exit gate (PR exists), then fail the submit gate (no PR).
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args: string[], _cwd: string) => {
+						const cmd = args.join(' ');
+						if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+							return { stdout: 'feat/test', exitCode: 0 };
+						}
+						// Worker exit gate: checkPrExists uses --json number,url → return PR
+						if (cmd.includes('--json number,url')) {
+							return { stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]', exitCode: 0 };
+						}
+						// Worker exit gate: checkPrSynced uses git rev-parse HEAD
+						if (cmd === 'git rev-parse HEAD') {
+							return { stdout: 'abc123', exitCode: 0 };
+						}
+						// Worker exit gate: checkPrSynced uses gh pr view --json headRefOid
+						if (cmd.startsWith('gh pr view --json headRefOid')) {
+							return { stdout: 'abc123', exitCode: 0 };
+						}
+						// Submit gate: checkLeaderPrExists uses --json number → return empty (no PR)
+						if (cmd.includes('--json number')) {
+							return { stdout: '[]', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await spawnAndRouteToLeader(hookCtx, { assignedAgent: 'coder' });
+
+			// Verify the group is in awaiting_leader (worker exit gate passed)
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+
+			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: '',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.action_required).toBeDefined();
+			expect(typeof parsed.action_required).toBe('string');
+			expect(parsed.action_required).toContain('send_to_worker');
+
+			// Group stays in awaiting_leader — not submitted
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_leader');
+		});
+
+		test('allows submit_for_review when PR exists for coder task', async () => {
+			// Hook: branch is feat/test and PR exists
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args: string[], _cwd: string) => {
+						const cmd = args.join(' ');
+						if (cmd === 'git rev-parse --abbrev-ref HEAD') {
+							return { stdout: 'feat/test', exitCode: 0 };
+						}
+						if (cmd.startsWith('gh pr list')) {
+							return { stdout: '[{"number":1}]', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group, task } = await spawnAndRouteToLeader(hookCtx, { assignedAgent: 'coder' });
+
+			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			// Group is awaiting_human (not completed) and task is in review
+			const updatedGroup = hookCtx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.state).toBe('awaiting_human');
+			expect(updatedGroup!.submittedForReview).toBe(true);
+			const updatedTask = await hookCtx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('review');
+		});
+	});
+
+	describe('state machine: submit_for_review → awaiting_human → complete_task', () => {
+		test('complete_task is rejected for coder tasks without prior submit_for_review', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
+
+			// Coder task: complete_task without submit_for_review should be rejected
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Done',
+			});
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('submit_for_review');
+			expect(parsed.action_required).toBeDefined();
+
+			// Group stays in awaiting_leader — not completed
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_leader');
+		});
+
+		test('complete_task is allowed for coder tasks after submit_for_review', async () => {
+			// Use a no-op hook context (all commands fail → gates pass by default)
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await spawnAndRouteToLeader(hookCtx, { assignedAgent: 'coder' });
+
+			// Step 1: submit_for_review → transitions to awaiting_human
+			const submitResult = await hookCtx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+			expect(JSON.parse(submitResult.content[0].text).success).toBe(true);
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
+			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(true);
+
+			// Step 2: human approves → resumeFromHuman transitions back to awaiting_leader
+			const resumed = await hookCtx.runtime.resumeFromHuman(
+				group.taskId,
+				'Human approved. Call complete_task.'
+			);
+			expect(resumed).toBe(true);
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+
+			// Step 3: complete_task succeeds
+			const completeResult = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Implemented and reviewed',
+			});
+			expect(JSON.parse(completeResult.content[0].text).success).toBe(true);
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('completed');
+		});
+
+		test('complete_task is allowed for non-coder tasks without submit_for_review', async () => {
+			// general tasks skip the submit_for_review gate
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'General task done',
+			});
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('completed');
+		});
+
+		test('submit_for_review sets group state to awaiting_human', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await spawnAndRouteToLeader(hookCtx, { assignedAgent: 'coder' });
+
+			await hookCtx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+
+			const updated = hookCtx.groupRepo.getGroup(group.id);
+			expect(updated!.state).toBe('awaiting_human');
+			expect(updated!.submittedForReview).toBe(true);
+		});
+
+		test('awaiting_human groups do not count toward maxConcurrentGroups', async () => {
+			// Create a coder task and submit for review → slot freed
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			// Two tasks: first is coder (high priority, will be submitted for review), second is general
+			const goal = await hookCtx.goalManager.createGoal({ title: 'G', description: '' });
+			const task1 = await hookCtx.taskManager.createTask({
+				title: 'Coder task',
+				description: 'desc',
+				priority: 'high',
+				assignedAgent: 'coder',
+			});
+			const task2 = await hookCtx.taskManager.createTask({
+				title: 'General task',
+				description: 'desc',
+				priority: 'normal',
+				assignedAgent: 'general',
+			});
+			await hookCtx.goalManager.linkTaskToGoal(goal.id, task1.id);
+			await hookCtx.goalManager.linkTaskToGoal(goal.id, task2.id);
+
+			hookCtx.runtime.start();
+			await hookCtx.runtime.tick();
+
+			// One group spawned (maxConcurrentGroups = 1), must be for task1
+			const groups1 = hookCtx.groupRepo.getActiveGroups('room-1');
+			expect(groups1).toHaveLength(1);
+			const group1 = groups1[0];
+			expect(group1.taskId).toBe(task1.id);
+
+			// Route to leader
+			await hookCtx.runtime.onWorkerTerminalState(group1.id, {
+				sessionId: group1.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Leader submits for review → group goes to awaiting_human
+			await hookCtx.runtime.handleLeaderTool(group1.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+			expect(hookCtx.groupRepo.getGroup(group1.id)!.state).toBe('awaiting_human');
+
+			// Tick should now pick up task2 (awaiting_human doesn't count against slot)
+			await hookCtx.runtime.tick();
+			const groups2 = hookCtx.groupRepo
+				.getActiveGroups('room-1')
+				.filter((g) => g.state !== 'awaiting_human');
+			expect(groups2).toHaveLength(1);
+			expect(groups2[0].taskId).toBe(task2.id);
+		});
+
+		test('resumeFromHuman returns false when group is not in awaiting_human', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			// Group is in awaiting_leader, not awaiting_human
+			const result = await ctx.runtime.resumeFromHuman(group.taskId, 'some message');
+			expect(result).toBe(false);
+		});
+	});
+
+	describe('worktree isolation enforcement', () => {
+		test('fails task when createWorktree returns null for coder role', async () => {
+			// Create a context where createWorktree always returns null (simulating git failure)
+			const isolCtx = createRuntimeTestContext();
+			// Override createWorktree on the mock factory to simulate worktree creation failure
+			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string) => Promise<string | null> }).createWorktree =
+				async (_basePath: string, _sessionId: string) => null;
+
+			afterEach(() => {
+				isolCtx.runtime.stop();
+				isolCtx.db.close();
+			});
+
+			const { task } = await createGoalAndTask(isolCtx, { assignedAgent: 'coder' });
+			isolCtx.runtime.start();
+
+			// tick() spawns a coder group and spawn() throws on null worktree;
+			// the runtime catches the error and the task is marked failed
+			await isolCtx.runtime.tick();
+
+			// Task should be failed with a worktree-related error
+			const updatedTask = await isolCtx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.error).toContain('worktree');
 		});
 	});
 });

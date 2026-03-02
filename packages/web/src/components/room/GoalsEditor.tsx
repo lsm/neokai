@@ -204,9 +204,11 @@ function GoalForm({
 				description: description.trim() || undefined,
 				priority,
 			});
-			onCancel();
+		} catch {
+			// Error already logged by the store layer
 		} finally {
 			setIsSubmitting(false);
+			onCancel(); // Always close modal
 		}
 	};
 

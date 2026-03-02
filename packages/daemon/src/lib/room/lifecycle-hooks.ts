@@ -352,6 +352,22 @@ export async function runWorkerExitGate(
 }
 
 /**
+ * Run the leader submit-for-review gate.
+ * For coder tasks: PR must exist before submitting for review.
+ * For other task types: pass through.
+ */
+export async function runLeaderSubmitGate(
+	ctx: LeaderCompleteHookContext,
+	opts?: HookOptions,
+): Promise<HookResult> {
+	if (ctx.workerRole === 'coder') {
+		const prResult = await checkLeaderPrExists(ctx, opts);
+		if (!prResult.pass) return prResult;
+	}
+	return { pass: true };
+}
+
+/**
  * Run all applicable leader complete hooks for the given context.
  * Returns the first failing hook result, or { pass: true }.
  */

@@ -133,9 +133,11 @@ export class TaskGroupManager {
 				this.workspacePath,
 				workerSessionId
 			);
-			if (worktreePath) {
-				groupWorkspacePath = worktreePath;
+			if (!worktreePath) {
+				await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for coder task');
+				throw new Error('Worktree creation failed — coder task requires isolation');
 			}
+			groupWorkspacePath = worktreePath;
 		}
 
 		// Build worker init from the provided config, using the group workspace path
@@ -318,25 +320,44 @@ export class TaskGroupManager {
 	 * Submit a group for human review - work is done, PR awaits human approval.
 	 *
 	 * Called when Leader calls submit_for_review(pr_url).
-	 * Completes the group (frees the slot) and moves the task to 'review' status.
+	 * Transitions the group to 'awaiting_human' (slot stays occupied but paused)
+	 * and moves the task to 'review' status.
 	 */
 	async submitForReview(groupId: string, prUrl: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		// Complete the group (free the slot for the next task)
-		const updated = this.groupRepo.completeGroup(groupId, group.version);
+		// Pause the group in awaiting_human (does NOT free the slot — slot exclusion is done in executeTick)
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
 		if (!updated) return null;
 
 		// Move task to review status with PR URL
 		await this.taskManager.reviewTask(group.taskId, prUrl);
 
-		// Stop observing sessions
-		this.observer.unobserve(group.workerSessionId);
-		this.observer.unobserve(group.leaderSessionId);
-		this.pendingLeaderInits.delete(groupId);
-
 		return updated;
+	}
+
+	/**
+	 * Resume a group from human review — human approved or rejected the PR.
+	 *
+	 * Called when human calls goal.approveTask or goal.rejectTask.
+	 * Transitions back to awaiting_leader and injects the approval/rejection message.
+	 */
+	async resumeFromHuman(groupId: string, message: string): Promise<SessionGroup | null> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group || group.state !== 'awaiting_human') return null;
+
+		// Transition to awaiting_leader
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
+		if (!updated) return null;
+
+		// Reset leader contract state for the new round
+		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
+
+		// Inject approval/rejection message to leader
+		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+
+		return this.groupRepo.getGroup(groupId);
 	}
 
 	/**

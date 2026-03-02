@@ -59,8 +59,9 @@ function createMockSessionFactory() {
 		async answerQuestion(_sessionId: string, _answer: string) {
 			return false;
 		},
-		async createWorktree(_basePath: string, _sessionId: string) {
-			return null;
+		async createWorktree(_basePath: string, sessionId: string) {
+			// Return a synthetic worktree path so coder isolation enforcement passes in tests
+			return `/tmp/worktrees/${sessionId}`;
 		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
