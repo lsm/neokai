@@ -45,5 +45,5 @@ export const navRailOpenSignal = signal<boolean>(false);
 export const createRoomModalSignal = signal<boolean>(false);
 
 // Settings section signal - which settings section is active
-export type SettingsSection = 'general' | 'mcp-servers' | 'usage' | 'about';
+export type SettingsSection = 'general' | 'providers' | 'mcp-servers' | 'usage' | 'about';
 export const settingsSectionSignal = signal<SettingsSection>('general');

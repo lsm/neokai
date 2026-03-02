@@ -14,6 +14,7 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
+import type { ModelInfo } from '@neokai/shared/src/models';
 
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -278,6 +279,123 @@ describe('Session RPC Handlers (API-dependent)', () => {
 
 			expect(response.type).toBe('RSP');
 			expect(response.data.models).toBeArray();
+
+			ws.close();
+		});
+
+		test('should include OpenAI models when OPENAI_API_KEY is set', async () => {
+			if (!process.env.OPENAI_API_KEY) {
+				console.log('Skipping - OPENAI_API_KEY not set');
+				return;
+			}
+
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const responsePromise = waitForWebSocketMessage(ws, 10000);
+
+			ws.send(
+				JSON.stringify({
+					id: 'models-list-openai',
+					type: 'REQ',
+					method: 'models.list',
+					data: {
+						useCache: false,
+					},
+					sessionId: 'global',
+					timestamp: new Date().toISOString(),
+					version: '1.0.0',
+				})
+			);
+
+			const response = (await responsePromise) as {
+				type: string;
+				data: { models: ModelInfo[] };
+			};
+
+			expect(response.type).toBe('RSP');
+			const models = response.data.models;
+
+			// Verify OpenAI models are present
+			const openaiModels = models.filter((m) => m.provider === 'openai');
+			expect(openaiModels.length).toBeGreaterThan(0);
+
+			// Verify specific OpenAI model IDs exist
+			expect(models.some((m) => m.id === 'gpt-5-mini')).toBe(true);
+
+			ws.close();
+		});
+
+		test('should include GitHub Copilot models when authenticated', async () => {
+			// First check if GitHub Copilot is authenticated
+			const { ws: authWs, firstMessagePromise: authFirstMessagePromise } =
+				createWebSocketWithFirstMessage(daemon.baseUrl);
+			await waitForWebSocketState(authWs, WebSocket.OPEN);
+			await authFirstMessagePromise;
+
+			const authResponsePromise = waitForWebSocketMessage(authWs, 10000);
+
+			authWs.send(
+				JSON.stringify({
+					id: 'auth-providers-1',
+					type: 'REQ',
+					method: 'auth.providers',
+					data: {},
+					sessionId: 'global',
+					timestamp: new Date().toISOString(),
+					version: '1.0.0',
+				})
+			);
+
+			const authResponse = (await authResponsePromise) as {
+				type: string;
+				data: {
+					providers: Array<{ id: string; isAuthenticated: boolean }>;
+				};
+			};
+
+			expect(authResponse.type).toBe('RSP');
+			const copilot = authResponse.data.providers.find((p) => p.id === 'github-copilot');
+			authWs.close();
+
+			if (!copilot?.isAuthenticated) {
+				console.log('Skipping - GitHub Copilot not authenticated');
+				return;
+			}
+
+			// Now fetch models list
+			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+			await waitForWebSocketState(ws, WebSocket.OPEN);
+			await firstMessagePromise;
+
+			const responsePromise = waitForWebSocketMessage(ws, 10000);
+
+			ws.send(
+				JSON.stringify({
+					id: 'models-list-copilot',
+					type: 'REQ',
+					method: 'models.list',
+					data: {
+						useCache: false,
+					},
+					sessionId: 'global',
+					timestamp: new Date().toISOString(),
+					version: '1.0.0',
+				})
+			);
+
+			const response = (await responsePromise) as {
+				type: string;
+				data: { models: ModelInfo[] };
+			};
+
+			expect(response.type).toBe('RSP');
+			const models = response.data.models;
+
+			// Verify GitHub Copilot models are present
+			const copilotModels = models.filter((m) => m.provider === 'github-copilot');
+			expect(copilotModels.length).toBeGreaterThan(0);
 
 			ws.close();
 		});
