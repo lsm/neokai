@@ -513,14 +513,10 @@ Run Codex in non-interactive mode to review the code:
 codex exec "You are reviewing PR #<PR_NUMBER>. Review all changed files for correctness, security, performance, and maintainability. The original request was: <task description>. Read the full implementation files (not just diffs) and verify the request was correctly achieved. List specific issues with file paths and line numbers." \\
   --model gpt-5.3-codex \\
   --sandbox read-only \\
-  --ask-for-approval never \\
-  -o /tmp/codex-review.md
+  --ask-for-approval never
 \`\`\`
 
-Then read the output:
-\`\`\`bash
-cat /tmp/codex-review.md
-\`\`\``;
+The final review output is printed to stdout.`;
 	}
 
 	if (tool.includes('copilot')) {
