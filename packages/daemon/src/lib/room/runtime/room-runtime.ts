@@ -107,7 +107,7 @@ export class RoomRuntime {
 	private tickQueued = false;
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
 
-	private readonly room: Room;
+	private room: Room;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
 	private readonly taskManager: TaskManager;
@@ -227,6 +227,15 @@ export class RoomRuntime {
 
 	getState(): RuntimeState {
 		return this.state;
+	}
+
+	/**
+	 * Update the room reference with the latest data.
+	 * Called when room config changes so lifecycle hooks see the current config.
+	 */
+	updateRoom(room: Room): void {
+		this.room = room;
+		this.taskGroupManager.updateRoom(room);
 	}
 
 	// =========================================================================
@@ -498,12 +507,12 @@ export class RoomRuntime {
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
-				// State machine enforcement: coding tasks must go through submit_for_review first
-				if (group.workerRole === 'coder' && !group.submittedForReview) {
+				// State machine enforcement: coding and planning tasks must go through submit_for_review first
+				if ((group.workerRole === 'coder' || group.workerRole === 'planner') && !group.submittedForReview) {
 					this.groupRepo.setLeaderCalledTool(groupId, false);
 					return jsonResult({
 						success: false,
-						error: 'Coding tasks must go through submit_for_review before complete_task.',
+						error: 'Coding and planning tasks must go through submit_for_review before complete_task.',
 						action_required:
 							'Call submit_for_review with the PR URL first. After human approval, you can call complete_task.',
 					});
@@ -518,9 +527,7 @@ export class RoomRuntime {
 						const agentSubs = roomConfig.agentSubagents as
 							| Record<string, unknown[]>
 							| undefined;
-						const hasReviewers =
-							!!(agentSubs?.leader?.length) ||
-							!!((roomConfig.reviewers as unknown[] | undefined)?.length);
+						const hasReviewers = !!(agentSubs?.leader?.length);
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath:
@@ -589,17 +596,15 @@ export class RoomRuntime {
 			case 'submit_for_review': {
 				const prUrl = params.pr_url ?? '';
 
-				// Lifecycle gate: validate PR exists for coding tasks (and reviews if reviewers configured)
+				// Lifecycle gate: validate PR exists for coding/planning tasks (and reviews if reviewers configured)
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
-					if (hookTask && group.workerRole === 'coder') {
+					if (hookTask && (group.workerRole === 'coder' || group.workerRole === 'planner')) {
 						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as
 							| Record<string, unknown[]>
 							| undefined;
-						const hasReviewers =
-							!!(agentSubs?.leader?.length) ||
-							!!((roomConfig.reviewers as unknown[] | undefined)?.length);
+						const hasReviewers = !!(agentSubs?.leader?.length);
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,

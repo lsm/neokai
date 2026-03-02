@@ -109,7 +109,7 @@ interface PendingLeaderInfo {
 }
 
 export class TaskGroupManager {
-	private readonly room: Room;
+	private room: Room;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
 	private readonly taskManager: TaskManager;
@@ -130,6 +130,11 @@ export class TaskGroupManager {
 		this.sessionFactory = config.sessionFactory;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
+	}
+
+	/** Update the room reference when room config changes (e.g., agentSubagents added). */
+	updateRoom(room: Room): void {
+		this.room = room;
 	}
 
 	/**

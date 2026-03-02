@@ -154,15 +154,13 @@ describe('Leader Agent', () => {
 				})
 			);
 			expect(prompt).toContain('Review Orchestration Workflow');
-			expect(prompt).toContain('reviewer-claude-opus-4-6');
-			expect(prompt).toContain('reviewer-claude-sonnet-4-6');
+			expect(prompt).toContain('reviewer-opus');
+			expect(prompt).toContain('reviewer-sonnet');
 			expect(prompt).toContain('---VERDICT---');
-			expect(prompt).toContain('REQUEST_CHANGES');
 			expect(prompt).toContain('Task(subagent_type:');
-			// P3 severity level and comprehensive review
+			// Severity levels and decision criteria
+			expect(prompt).toContain('P0/P1/P2');
 			expect(prompt).toContain('P3');
-			expect(prompt).toContain('P0, P1, or P2 issues exist');
-			expect(prompt).toContain('not just diffs');
 		});
 
 		it('should use simple review guidelines without sub-agents', () => {
@@ -172,7 +170,7 @@ describe('Leader Agent', () => {
 			expect(prompt).not.toContain('---VERDICT---');
 		});
 
-		it('includes MANDATORY review orchestration when sub-agents configured', () => {
+		it('includes available specialists when sub-agents configured', () => {
 			const prompt = buildLeaderSystemPrompt(
 				makeConfig({
 					room: makeRoom({
@@ -187,9 +185,9 @@ describe('Leader Agent', () => {
 					}),
 				})
 			);
-			expect(prompt).toContain('Review Orchestration Workflow (MANDATORY)');
-			expect(prompt).toContain('MUST dispatch these reviewers');
-			expect(prompt).toContain('complete_task` will be rejected');
+			expect(prompt).toContain('Available Specialists (via Task subagent_type)');
+			expect(prompt).toContain('reviewer-opus, reviewer-sonnet');
+			expect(prompt).toContain('Dispatch Reviewer Sub-agents');
 		});
 
 		it('recommends submit_for_review in simple review path', () => {
@@ -365,7 +363,7 @@ describe('Leader Agent', () => {
 			expect(init.agents).toBeDefined();
 			// agents map must include both the Leader and reviewer entries
 			expect(Object.keys(init.agents!)).toContain('Leader');
-			expect(Object.keys(init.agents!)).toContain('reviewer-claude-opus-4-6');
+			expect(Object.keys(init.agents!)).toContain('reviewer-opus');
 		});
 
 		it('should set agent: Leader when reviewers configured', () => {
@@ -389,8 +387,8 @@ describe('Leader Agent', () => {
 			expect(init.agents).toBeDefined();
 			expect(Object.keys(init.agents!)).toHaveLength(3); // Leader + 2 reviewers
 			expect(Object.keys(init.agents!)).toContain('Leader');
-			expect(Object.keys(init.agents!)).toContain('reviewer-claude-opus-4-6');
-			expect(Object.keys(init.agents!)).toContain('reviewer-claude-sonnet-4-6');
+			expect(Object.keys(init.agents!)).toContain('reviewer-opus');
+			expect(Object.keys(init.agents!)).toContain('reviewer-sonnet');
 		});
 
 		it('should include Task tools in Leader agent definition', () => {
@@ -417,35 +415,18 @@ describe('Leader Agent', () => {
 			expect(leaderDef.tools).toContain('Glob');
 		});
 
-		it('should fallback to legacy reviewers config', () => {
-			const callbacks = makeCallbacks();
-			const init = createLeaderAgentInit(
-				makeConfig({
-					room: makeRoom({
-						config: {
-							reviewers: [{ model: 'claude-sonnet-4-6' }],
-						},
-					}),
-				}),
-				callbacks
-			);
-			expect(init.coordinatorMode).toBeUndefined();
-			expect(init.agent).toBe('Leader');
-			expect(init.agents).toBeDefined();
-			expect(Object.keys(init.agents!)).toContain('Leader');
-			expect(Object.keys(init.agents!)).toContain('reviewer-claude-sonnet-4-6');
-		});
-
-		it('should prefer agentSubagents.leader over legacy reviewers', () => {
+		it('should use agentSubagents.leader for reviewer config', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(
 				makeConfig({
 					room: makeRoom({
 						config: {
 							agentSubagents: {
-								leader: [{ model: 'new-model' }],
+								leader: [
+									{ model: 'claude-sonnet-4-6' },
+									{ model: 'claude-haiku-4-5' },
+								],
 							},
-							reviewers: [{ model: 'old-model' }],
 						},
 					}),
 				}),
@@ -454,8 +435,8 @@ describe('Leader Agent', () => {
 			expect(init.coordinatorMode).toBeUndefined();
 			expect(init.agent).toBe('Leader');
 			expect(Object.keys(init.agents!)).toContain('Leader');
-			expect(Object.keys(init.agents!)).toContain('reviewer-new-model');
-			expect(Object.keys(init.agents!)).not.toContain('reviewer-old-model');
+			expect(Object.keys(init.agents!)).toContain('reviewer-sonnet');
+			expect(Object.keys(init.agents!)).toContain('reviewer-haiku');
 		});
 
 		it('should not set agent or agents when no reviewers configured', () => {
@@ -470,7 +451,7 @@ describe('Leader Agent', () => {
 	describe('buildReviewerAgents', () => {
 		it('should create SDK reviewer with structured verdict format in prompt', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
-			const agent = agents['reviewer-claude-opus-4-6'];
+			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
 			expect(agent.prompt).toContain('---VERDICT---');
 			expect(agent.prompt).toContain('---END_VERDICT---');
@@ -499,7 +480,7 @@ describe('Leader Agent', () => {
 
 		it('should include read-only tools for reviewers', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
-			const agent = agents['reviewer-claude-opus-4-6'];
+			const agent = agents['reviewer-opus'];
 			expect(agent.tools).toContain('Read');
 			expect(agent.tools).toContain('Grep');
 			expect(agent.tools).toContain('Glob');
@@ -510,7 +491,7 @@ describe('Leader Agent', () => {
 
 		it('should map full model ID to valid AgentModel for SDK-native reviewer', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6-20250929' }]);
-			const agent = agents['reviewer-claude-opus-4-6-20250929'];
+			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
 			expect(agent.model).toBe('opus');
 		});

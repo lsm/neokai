@@ -92,9 +92,6 @@ export function buildPlannerSystemPrompt(): string {
 	sections.push(
 		`\nYour job is to examine the codebase and produce a clear, ordered task breakdown.`
 	);
-	sections.push(
-		`Use the planning tools (\`create_task\`, \`update_task\`, \`remove_task\`) to manage your plan. Do NOT write code or make changes.`
-	);
 
 	sections.push(`\n## Planning Guidelines\n`);
 	sections.push(`1. Read relevant files to understand the current codebase state`);
@@ -108,10 +105,26 @@ export function buildPlannerSystemPrompt(): string {
 		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
 	);
 	sections.push(`6. Call \`create_task\` for each task — this is how you record your plan`);
-	sections.push(`7. When done creating all tasks, finish your response`);
-	sections.push(`8. Do NOT implement anything — only plan and call create_task`);
+	sections.push(`7. Do NOT implement any code — only plan and call create_task`);
 	sections.push(
-		`9. If the Leader sends feedback, use \`update_task\` or \`remove_task\` to refine your plan, and \`create_task\` for new additions`
+		`8. If the Leader sends feedback, use \`update_task\` or \`remove_task\` to refine your plan, and \`create_task\` for new additions`
+	);
+
+	sections.push(`\n## Deliverable (REQUIRED)\n`);
+	sections.push(
+		`After creating all tasks via the planning tools, you MUST also:`
+	);
+	sections.push(
+		`1. Write a plan file at \`PLAN.md\` in the repository root summarizing the plan (goal, task list with descriptions, dependencies, and acceptance criteria)`
+	);
+	sections.push(
+		`2. Create a feature branch, commit the plan file, and push it`
+	);
+	sections.push(
+		`3. Create a GitHub PR via \`gh pr create\` with the plan summary as the PR description`
+	);
+	sections.push(
+		`4. Finish your response — the Leader will review the plan and either approve or request changes`
 	);
 
 	return sections.join('\n');

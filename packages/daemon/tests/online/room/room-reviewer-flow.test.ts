@@ -12,9 +12,15 @@
  * 5. Leader consolidates verdicts and decides: complete or send back
  * 6. Task reaches terminal state (completed, review, or needs_human)
  *
+ * Assertions:
+ * - Planning and coding tasks reach terminal state
+ * - Group messages contain coder, leader, and system roles
+ * - Leader's messages contain Task tool_use blocks dispatching EACH
+ *   configured reviewer sub-agent (verified by subagent_type)
+ *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (Sonnet for all agents)
+ * - Makes real API calls (Sonnet for workers, Sonnet+Haiku for reviewers)
  */
 
 import { execSync } from 'child_process';
@@ -117,9 +123,15 @@ case "$1" in
         fi
         ;;
       review)
-        # gh pr review --approve or similar
+        # gh pr review --approve/--comment/--request-changes
+        # This is the ONLY way to post a proper PR review that the lifecycle hook detects.
         touch "$STATE_DIR/.reviews-posted"
         echo '{"state":"APPROVED"}'
+        exit 0
+        ;;
+      comment)
+        # gh pr comment - creates a PR comment (NOT a review)
+        echo "https://github.com/test/repo/pull/1#issuecomment-1"
         exit 0
         ;;
       *)
@@ -128,9 +140,9 @@ case "$1" in
     esac
     ;;
   api)
-    # Any gh api call counts as a review being posted
-    touch "$STATE_DIR/.reviews-posted"
-    echo '{"id":1,"state":"APPROVED","body":"Looks good"}'
+    # Generic gh api call - does NOT set reviews-posted flag.
+    # Only gh pr review creates proper PR reviews that the lifecycle hook detects.
+    echo '{"id":1}'
     exit 0
     ;;
   *)
@@ -159,7 +171,8 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 		// Create a room with a reviewer sub-agent configured
 		roomId = await createRoom(daemon, 'Reviewer Flow');
 
-		// Configure the room with a reviewer sub-agent (Sonnet as reviewer)
+		// Configure the room with multiple reviewer sub-agents (Sonnet + Haiku)
+		// This tests that the leader dispatches ALL configured reviewers via Task tool
 		await daemon.messageHub.request('room.update', {
 			roomId,
 			config: {
@@ -169,12 +182,20 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 							model: 'claude-sonnet-4-5-20250929',
 							provider: 'anthropic',
 						},
+						{
+							model: 'claude-haiku-4-5-20251001',
+							provider: 'anthropic',
+						},
 					],
 				},
 				// Limit review rounds to keep test fast
 				maxReviewRounds: 3,
 			},
 		});
+
+		// Allow event propagation so runtime picks up the updated room config
+		// (runtime subscribes to room.updated and refreshes its room reference)
+		await Bun.sleep(100);
 	}, 30_000);
 
 	afterAll(
@@ -285,41 +306,62 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			// At least one worker → leader round occurred
 			expect(group.feedbackIteration).toBeGreaterThanOrEqual(1);
 
-			// --- Stage 5: Verify group messages contain reviewer activity ---
+			// --- Stage 5: Verify group messages contain worker, leader, and reviewer dispatch ---
 			const messagesResult = (await daemon.messageHub.request('task.getGroupMessages', {
 				groupId: group.id,
 			})) as { messages: Array<{ role: string; messageType: string; content: string }> };
 
-			// Must have messages (worker + leader at minimum)
 			const messageRoles = new Set(messagesResult.messages.map((m) => m.role));
-			const messageTypes = new Set(messagesResult.messages.map((m) => m.messageType));
 			console.log(
 				`Group ${group.id}: ${messagesResult.messages.length} messages, ` +
 					`roles: [${[...messageRoles].join(', ')}], ` +
-					`types: [${[...messageTypes].join(', ')}], ` +
 					`feedbackIteration: ${group.feedbackIteration}, ` +
 					`group state: ${group.state}`
 			);
 			expect(messagesResult.messages.length).toBeGreaterThan(0);
 
-			// Check that worker messages exist
+			// Worker messages must exist
 			expect(messageRoles.has('coder') || messageRoles.has('general')).toBe(true);
 
-			// The task reaching 'review' or 'completed' proves the leader was involved
-			// (only the leader can call submit_for_review/complete_task).
-			// Leader messages should also be mirrored to the group.
-			if (!messageRoles.has('leader')) {
-				// Log detailed message info for debugging mirroring issues
-				console.warn(
-					`WARNING: No leader messages found in group. ` +
-						`Task status: ${terminalTask.status} (proves leader ran). ` +
-						`Message roles: [${[...messageRoles].join(', ')}]`
-				);
-				for (const msg of messagesResult.messages) {
-					console.log(`  msg: role=${msg.role} type=${msg.messageType}`);
+			// Leader messages must exist (mirrored from leader session)
+			expect(messageRoles.has('leader')).toBe(true);
+
+			// --- Stage 6: Verify leader dispatched BOTH configured reviewer sub-agents ---
+			// Parse leader's mirrored messages to find sub-agent dispatch tool_use blocks.
+			// The SDK tool name is 'Task' in configuration but may appear as 'Task' or 'Agent'
+			// in tool_use blocks depending on SDK version.
+			const leaderMessages = messagesResult.messages.filter((m) => m.role === 'leader');
+			const dispatchedSubagents = new Set<string>();
+			const allToolCalls: Array<{ name: string; subagentType?: string }> = [];
+
+			for (const msg of leaderMessages) {
+				try {
+					const parsed = JSON.parse(msg.content) as {
+						type?: string;
+						message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> };
+					};
+					if (parsed.type !== 'assistant' || !parsed.message?.content) continue;
+					for (const block of parsed.message.content) {
+						if (block.type !== 'tool_use' || !block.name) continue;
+						const subagentType = block.input?.subagent_type as string | undefined;
+						allToolCalls.push({ name: block.name, subagentType });
+						// Match Task or Agent tool with subagent_type referencing a reviewer
+						if ((block.name === 'Task' || block.name === 'Agent') && subagentType) {
+							dispatchedSubagents.add(subagentType);
+						}
+					}
+				} catch {
+					// Skip non-JSON messages (status messages, etc.)
 				}
 			}
-			expect(messageRoles.has('leader')).toBe(true);
+
+			console.log(`Leader tool calls: ${JSON.stringify(allToolCalls)}`);
+			console.log(`Dispatched sub-agents: [${[...dispatchedSubagents].join(', ')}]`);
+
+			// Both configured reviewers must have been dispatched via Task tool
+			// Reviewer names use short model names: reviewer-sonnet, reviewer-haiku
+			expect(dispatchedSubagents.has('reviewer-sonnet')).toBe(true);
+			expect(dispatchedSubagents.has('reviewer-haiku')).toBe(true);
 		},
 		{ timeout: 600_000 }
 	);

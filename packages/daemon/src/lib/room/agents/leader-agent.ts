@@ -76,7 +76,7 @@ export interface LeaderAgentConfig {
  * Adapts review guidelines based on whether reviewing a plan or code.
  */
 export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
-	const { room, reviewContext } = config;
+	const { reviewContext } = config;
 	const isPlanReview = reviewContext === 'plan_review';
 
 	const sections: string[] = [];
@@ -101,7 +101,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		`- \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried`
 	);
 	sections.push(
-		`- \`submit_for_review\` — ONLY after dispatching all reviewer sub-agents and collecting their verdicts. Runtime rejects this if no PR reviews exist. Work is done with a PR ready; free the group slot and park the task for human approval\n`
+		`- \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval\n`
 	);
 	sections.push(`Do NOT respond with only text. You MUST call one of the above tools.`);
 
@@ -141,103 +141,62 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
 		);
 	} else {
-		// Check if room has sub-agents configured for leader
-		const roomConfig = room.config ?? {};
+		// Check if room has reviewer sub-agents configured
+		const roomConfig = config.room.config ?? {};
 		const reviewerConfigs = getLeaderSubagents(roomConfig);
 		const hasReviewers = reviewerConfigs && reviewerConfigs.length > 0;
 
 		if (hasReviewers) {
-			// Full review orchestration workflow with reviewer sub-agents
-			sections.push(`\n## Review Orchestration Workflow (MANDATORY)\n`);
+			// Build reviewer names using the same logic as buildReviewerAgents
+			const usedNames = new Set<string>();
+			const reviewerNames: string[] = [];
+			for (const reviewer of reviewerConfigs!) {
+				reviewerNames.push(toReviewerName(reviewer, usedNames));
+			}
+
+			sections.push(`\n## Available Specialists (via Task subagent_type)\n`);
+			sections.push(`Custom: ${reviewerNames.join(', ')}\n`);
+
+			sections.push(`## Review Orchestration Workflow\n`);
 			sections.push(
-				`**YOU MUST DISPATCH REVIEWER SUB-AGENTS. DO NOT REVIEW CODE YOURSELF.**\nYour role is to ORCHESTRATE reviews, not to perform them. You MUST use the Task tool\nto spawn each reviewer sub-agent listed below. The runtime will reject submit_for_review\nif no reviews have been posted on the PR.\n`
-			);
-			sections.push(
-				`You have reviewer sub-agents available via the Task tool. You MUST dispatch these reviewers before calling \`complete_task\`. The runtime enforces this — \`complete_task\` will be rejected if no reviews have been posted on the PR.\n`
-			);
-			sections.push(
-				`Each reviewer will thoroughly review the code in this worktree — not just the diff, but the full implementation — to verify the original request was correctly achieved.\n`
+				`You are the lead reviewer. You do NOT review code yourself. You delegate reviews to specialist reviewer sub-agents, consolidate their findings, and make the routing decision.\n`
 			);
 
 			sections.push(`### Step 1: Understand What Was Done`);
-			sections.push(`Read the worker's output to understand:`);
-			sections.push(`- What was the original request/task?`);
-			sections.push(`- What did the worker implement?`);
-			sections.push(`- Which files were changed or created?`);
+			sections.push(`Read the worker's output to understand what was implemented and which files changed.`);
 			sections.push(
-				`\nExtract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
+				`Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
 			);
 			sections.push(
 				`If no PR was created, use \`send_to_worker\` asking the worker to create one before review can proceed.\n`
 			);
 
-			sections.push(`### Step 2: Spawn Reviewer Sub-agents`);
+			sections.push(`### Step 2: Dispatch Reviewer Sub-agents`);
 			sections.push(
-				`Use the \`Task\` tool to spawn each reviewer. Available reviewers:\n`
+				`Use the Task tool to dispatch each reviewer. Spawn all reviewers in parallel.\n`
 			);
-			for (const reviewer of reviewerConfigs!) {
-				const name = `reviewer-${reviewer.model.replace(/[^a-zA-Z0-9-]/g, '-')}`;
-				const label =
-					reviewer.type === 'cli'
-						? `(CLI — ${reviewer.provider ?? 'unknown'} via ${reviewer.driver_model ?? 'sonnet'})`
-						: `(${reviewer.provider ?? 'anthropic'})`;
-				sections.push(`- **${name}** ${label} — Reviews using ${reviewer.model}`);
+			for (const name of reviewerNames) {
+				sections.push(
+					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. The task was: <description>. The worker implemented: <summary>. Review the code and post your review using gh pr review.")`
+				);
 			}
 
-			sections.push(`\nFor each reviewer, use the Task tool like this:`);
-			sections.push('```');
+			sections.push(`\n### Step 3: Consolidate Verdicts`);
 			sections.push(
-				`Task(subagent_type: "reviewer-<model-name>", prompt: "Review the code in this worktree for PR #<NUMBER>. The original request was: <task description>. The worker implemented: <summary of what was done>. Review the implementation thoroughly — read the full files, not just diffs — and verify the original request is correctly and completely achieved.")`
+				`Each reviewer returns a verdict between \`---VERDICT---\` and \`---END_VERDICT---\` markers with P0/P1/P2/P3 severity levels.\n`
 			);
-			sections.push('```');
-			sections.push(
-				`\nSpawn all reviewers in parallel by making multiple Task calls in the same turn.`
-			);
-			sections.push(
-				`Each reviewer will review the codebase comprehensively, post findings as PR comments, and return a structured verdict.\n`
-			);
-
-			sections.push(`### Step 3: Parse Verdicts`);
-			sections.push(
-				`Each reviewer returns a verdict block between \`---VERDICT---\` and \`---END_VERDICT---\` markers.`
-			);
-			sections.push(`Parse each verdict for:\n`);
-			sections.push(`- **recommendation**: APPROVE, REQUEST_CHANGES, or COMMENT_ONLY`);
-			sections.push(`- **P0**: Blocking — bugs, security vulnerabilities, data loss, broken functionality`);
-			sections.push(`- **P1**: Should-fix — poor patterns, missing error handling, test gaps`);
-			sections.push(`- **P2**: Important suggestion — meaningful quality/readability improvements`);
-			sections.push(`- **P3**: Nit — style issues, minor cosmetic, optional documentation\n`);
-
 			sections.push(`### Step 4: Decide Next Action\n`);
 			sections.push(
-				`Consolidate all reviewer findings and make ONE decision:\n`
+				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with consolidated feedback`
 			);
 			sections.push(
-				`- **Any P0, P1, or P2 issues exist** → use \`send_to_worker\` with consolidated feedback. List each issue with file:line and what to fix. All P0, P1, and P2 issues must be resolved.`
+				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`
 			);
 			sections.push(
-				`- **Only P3 nits or no issues** → use \`submit_for_review\` with the PR URL to park for human approval.`
-			);
-			sections.push(
-				`- **Task is fundamentally broken** → use \`fail_task\` or \`replan_goal\`.\n`
-			);
-
-			sections.push(`### Subsequent Rounds`);
-			sections.push(
-				`When the worker pushes fixes and you receive their updated output:\n`
-			);
-			sections.push(
-				`1. Resume each reviewer using \`Task(resume: <agentId>)\` — this preserves their prior context`
-			);
-			sections.push(
-				`2. Tell each resumed reviewer: "Fixes have been pushed for PR #<NUMBER>. Please re-review the code and verify your previous findings were addressed. Also check that the fixes didn't introduce new issues."`
-			);
-			sections.push(
-				`3. Parse the new verdicts and decide again.\n`
+				`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``
 			);
 		} else {
-			// Simple review guidelines without coordinator sub-agents
-			sections.push(`\n## Review Guidelines\n`);
+			sections.push(`\n## Code Review Guidelines\n`);
 			sections.push(`1. Check that the implementation matches the task description`);
 			sections.push(`2. Verify correctness and completeness`);
 			sections.push(
@@ -252,7 +211,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		}
 
 		sections.push(
-			`- Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound`
+			`\n- Use \`fail_task\` if this specific task is not achievable but the overall plan is still sound`
 		);
 		sections.push(
 			`- Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`
@@ -380,7 +339,6 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 
 /**
  * Sub-agent configuration (used in room.config.agentSubagents.{role})
- * Backward-compatible with the legacy room.config.reviewers format.
  */
 interface SubagentConfig {
 	/** Model ID (e.g., 'claude-opus-4-6', 'glm-5') or CLI agent ID */
@@ -406,12 +364,24 @@ function getLeaderSubagents(
 	if (agentSubagents?.leader && agentSubagents.leader.length > 0) {
 		return agentSubagents.leader;
 	}
-	// Legacy fallback: room.config.reviewers
-	const legacyReviewers = roomConfig.reviewers as SubagentConfig[] | undefined;
-	if (legacyReviewers && legacyReviewers.length > 0) {
-		return legacyReviewers;
-	}
 	return undefined;
+}
+
+/**
+ * Extract a short, human-friendly name from a model ID.
+ * e.g., 'claude-sonnet-4-5-20250929' → 'sonnet'
+ *       'claude-haiku-4-5-20251001' → 'haiku'
+ *       'gpt-5.3-codex' → 'codex'
+ */
+export function toShortModelName(modelId: string): string {
+	const lower = modelId.toLowerCase();
+	if (lower.includes('opus')) return 'opus';
+	if (lower.includes('haiku')) return 'haiku';
+	if (lower.includes('sonnet')) return 'sonnet';
+	if (lower.includes('codex')) return 'codex';
+	if (lower.includes('copilot')) return 'copilot';
+	// Fallback: take the first meaningful segment
+	return modelId.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
 }
 
 /**
@@ -497,12 +467,20 @@ You MUST include this identity block at the top of every PR comment you post.
    - **Error handling**: Are failures handled gracefully at system boundaries?
    - **Tests**: Do tests actually verify the new behavior? Are edge cases covered?
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
-5. Post your review as a PR comment using:
-   \`\`\`bash
-   gh pr comment <PR_NUMBER> --body "## 🤖 Review by ${model} (${provider ?? 'anthropic'})
+5. Post your review as a proper PR review (NOT a comment) using:
+   - If approving: \`gh pr review <PR_NUMBER> --approve --body "..."\`
+   - If requesting changes: \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
+   - If commenting only: \`gh pr review <PR_NUMBER> --comment --body "..."\`
 
-   <your review findings here>"
+   Include this header in your review body:
    \`\`\`
+   ## 🤖 Review by ${model} (${provider ?? 'anthropic'})
+
+   <your review findings here>
+   \`\`\`
+
+   IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
+   a proper PR review that the system can detect. Using \`gh pr comment\` will NOT count as a review.
 6. Return your verdict in the structured format below
 
 ## Guidelines
@@ -581,12 +559,15 @@ You MUST include this identity block at the top of every PR comment you post.
 ${cliInstructions}
 
 5. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
-6. Post findings as a PR comment using:
-   \`\`\`bash
-   gh pr comment <PR_NUMBER> --body "## 🤖 Review by ${cliTool} (${provider ?? 'unknown'})
+6. Post findings as a proper PR review (NOT a comment) using:
+   - If approving: \`gh pr review <PR_NUMBER> --approve --body "..."\`
+   - If requesting changes: \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
+   - If commenting only: \`gh pr review <PR_NUMBER> --comment --body "..."\`
 
-   <your review findings here>"
-   \`\`\`
+   Include this header: "## 🤖 Review by ${cliTool} (${provider ?? 'unknown'})"
+
+   IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
+   a proper PR review that the system can detect.
 7. Return your verdict in the structured format below
 
 ## Guidelines
@@ -600,6 +581,27 @@ ${REVIEWER_VERDICT_FORMAT}`;
 }
 
 /**
+ * Build a short, unique reviewer agent name from a SubagentConfig.
+ * e.g., 'claude-sonnet-4-5-20250929' → 'reviewer-sonnet'
+ *       'gpt-5.3-codex' → 'reviewer-codex'
+ * Appends a counter suffix if names collide.
+ */
+export function toReviewerName(
+	reviewer: SubagentConfig,
+	existingNames: Set<string>
+): string {
+	const shortName = toShortModelName(reviewer.model);
+	let candidate = `reviewer-${shortName}`;
+	let counter = 2;
+	while (existingNames.has(candidate)) {
+		candidate = `reviewer-${shortName}-${counter}`;
+		counter++;
+	}
+	existingNames.add(candidate);
+	return candidate;
+}
+
+/**
  * Build reviewer AgentDefinition records from sub-agent configs.
  * Each sub-agent becomes a named agent the leader can spawn via Task tool.
  */
@@ -607,14 +609,15 @@ export function buildReviewerAgents(
 	reviewers: SubagentConfig[]
 ): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
+	const usedNames = new Set<string>();
 
 	for (const reviewer of reviewers) {
-		const name = `reviewer-${reviewer.model.replace(/[^a-zA-Z0-9-]/g, '-')}`;
+		const name = toReviewerName(reviewer, usedNames);
 
 		if (reviewer.type === 'cli') {
 			// CLI-based reviewer: a driver model calls the external tool via Bash
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model} CLI (${reviewer.provider ?? 'unknown'} via ${reviewer.driver_model ?? 'sonnet'}). Runs the CLI tool via Bash and posts findings as PR comments.`,
+				description: `Code reviewer using ${reviewer.model} CLI (${reviewer.provider ?? 'unknown'} via ${reviewer.driver_model ?? 'sonnet'}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
 				tools: REVIEWER_TOOLS,
 				model: toAgentModel(reviewer.driver_model ?? 'sonnet'),
 				prompt: buildCliReviewerPrompt(reviewer.model, reviewer.provider),
@@ -673,7 +676,7 @@ export function createLeaderAgentInit(
 	// when there are reviewer sub-agents to dispatch. Otherwise, use the simple
 	// preset path to avoid unnecessary complexity.
 	if (reviewerAgents) {
-		// Build the Leader agent definition that describes its role and tools
+		// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
 		const leaderAgentDef: AgentDefinition = {
 			description:
 				'Lead reviewer that orchestrates code review. Dispatches reviewer sub-agents, consolidates their findings, and makes routing decisions using MCP tools.',
@@ -681,20 +684,14 @@ export function createLeaderAgentInit(
 			tools: [
 				'Task',
 				'TaskOutput',
-				'TaskStop', // For dispatching reviewer sub-agents
+				'TaskStop',
 				'Read',
 				'Grep',
 				'Glob',
-				'Bash', // For reading code
-				'WebFetch',
-				'WebSearch', // For reference lookups
-				// NOTE: MCP tools (leader-agent-tools__*) are provided via mcpServers
-				// and should be available regardless of this tools list.
 			],
 			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
 		};
 
-		// Combine Leader + reviewer agents into a single agents map
 		const allAgents: Record<string, AgentDefinition> = {
 			Leader: leaderAgentDef,
 			...reviewerAgents,
@@ -703,22 +700,17 @@ export function createLeaderAgentInit(
 		return {
 			sessionId: config.sessionId,
 			workspacePath: config.workspacePath,
-			// IMPORTANT: No systemPrompt here. When using agent/agents pattern, the Leader
-			// agent's `prompt` field IS the system prompt. Setting the claude_code preset
-			// here causes the massive preset to overwhelm the review orchestration
-			// instructions, making the model act as a general assistant instead of
-			// dispatching reviewer sub-agents. The SDK provides tool documentation
-			// automatically and CLAUDE.md is loaded via settingSources.
+			systemPrompt: {
+				type: 'preset',
+				preset: 'claude_code',
+			},
 			mcpServers: {
 				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
 			},
 			features: LEADER_FEATURES,
 			context: { roomId: config.room.id },
-			type: 'leader',
+			type: 'leader' as const,
 			model: config.model ?? DEFAULT_LEADER_MODEL,
-			// Use agent/agents pattern: designate Leader as main thread.
-			// The SDK applies the agent's prompt, tools, and model to the main conversation.
-			// Sub-agents (reviewers) are available via the Task tool.
 			agent: 'Leader',
 			agents: allAgents,
 		};

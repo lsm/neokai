@@ -285,6 +285,22 @@ export class RoomRuntimeService {
 		);
 		this.unsubscribers.push(unsubRoomCreated);
 
+		// room.updated — refresh the runtime's room reference so lifecycle hooks see latest config
+		const unsubRoomUpdated = this.ctx.daemonHub.on(
+			'room.updated',
+			(event) => {
+				const runtime = this.runtimes.get(event.roomId);
+				if (runtime) {
+					const room = this.ctx.roomManager.getRoom(event.roomId);
+					if (room) {
+						runtime.updateRoom(room);
+					}
+				}
+			},
+			{ sessionId: 'global' }
+		);
+		this.unsubscribers.push(unsubRoomUpdated);
+
 		// goal.created is emitted with sessionId: 'room:${roomId}' — subscribe globally
 		const unsubGoalCreated = this.ctx.daemonHub.on('goal.created', (event) => {
 			this.runtimes.get(event.roomId)?.onGoalCreated(event.goalId);
