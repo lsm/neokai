@@ -207,7 +207,6 @@ describe('TaskGroupManager', () => {
 		sessionFactory = createMockSessionFactory();
 
 		manager = new TaskGroupManager({
-			room,
 			groupRepo,
 			sessionObserver: observer,
 			taskManager,
@@ -236,6 +235,7 @@ describe('TaskGroupManager', () => {
 			const callbacks = createMockLeaderCallbacks();
 
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -256,6 +256,7 @@ describe('TaskGroupManager', () => {
 			const callbacks = createMockLeaderCallbacks();
 
 			await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -281,6 +282,7 @@ describe('TaskGroupManager', () => {
 			const callbacks = createMockLeaderCallbacks();
 
 			await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -299,6 +301,7 @@ describe('TaskGroupManager', () => {
 			const callbacks = createMockLeaderCallbacks();
 
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -319,6 +322,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -341,6 +345,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -359,6 +364,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -387,6 +393,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -414,6 +421,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -436,6 +444,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -459,6 +468,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -485,6 +495,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -507,6 +518,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},
@@ -528,6 +540,7 @@ describe('TaskGroupManager', () => {
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
 			const group = await manager.spawn(
+				room,
 				task,
 				goal,
 				() => {},

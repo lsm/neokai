@@ -181,7 +181,6 @@ export class RoomRuntime {
 		this.hookOptions = config.hookOptions;
 
 		this.taskGroupManager = new TaskGroupManager({
-			room: config.room,
 			groupRepo: config.groupRepo,
 			sessionObserver: config.sessionObserver,
 			taskManager: config.taskManager,
@@ -235,7 +234,6 @@ export class RoomRuntime {
 	 */
 	updateRoom(room: Room): void {
 		this.room = room;
-		this.taskGroupManager.updateRoom(room);
 	}
 
 	// =========================================================================
@@ -1027,6 +1025,7 @@ export class RoomRuntime {
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
+				this.room,
 				planningTask,
 				goal,
 				(groupId, state) => this.onWorkerTerminalState(groupId, state),
@@ -1124,6 +1123,7 @@ export class RoomRuntime {
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
+				this.room,
 				task,
 				goal,
 				(groupId, state) => this.onWorkerTerminalState(groupId, state),

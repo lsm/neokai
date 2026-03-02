@@ -89,7 +89,6 @@ export interface WorkerConfig {
 }
 
 export interface TaskGroupManagerConfig {
-	room: Room;
 	groupRepo: SessionGroupRepository;
 	sessionObserver: SessionObserver;
 	taskManager: TaskManager;
@@ -109,7 +108,6 @@ interface PendingLeaderInfo {
 }
 
 export class TaskGroupManager {
-	private room: Room;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
 	private readonly taskManager: TaskManager;
@@ -122,7 +120,6 @@ export class TaskGroupManager {
 	private pendingLeaderInits = new Map<string, PendingLeaderInfo>();
 
 	constructor(config: TaskGroupManagerConfig) {
-		this.room = config.room;
 		this.groupRepo = config.groupRepo;
 		this.observer = config.sessionObserver;
 		this.taskManager = config.taskManager;
@@ -130,11 +127,6 @@ export class TaskGroupManager {
 		this.sessionFactory = config.sessionFactory;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
-	}
-
-	/** Update the room reference when room config changes (e.g., agentSubagents added). */
-	updateRoom(room: Room): void {
-		this.room = room;
 	}
 
 	/**
@@ -150,6 +142,7 @@ export class TaskGroupManager {
 	 * 7. Kick off worker (inject initial message)
 	 */
 	async spawn(
+		room: Room,
 		task: NeoTask,
 		goal: RoomGoal,
 		onWorkerTerminal: (groupId: string, state: TerminalState) => void,
@@ -158,8 +151,8 @@ export class TaskGroupManager {
 		workerConfig: WorkerConfig,
 		reviewContext?: ReviewContext
 	): Promise<SessionGroup> {
-		const workerSessionId = `${workerConfig.role}:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
-		const leaderSessionId = `leader:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
+		const workerSessionId = `${workerConfig.role}:${room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
+		const leaderSessionId = `leader:${room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 
 		// Create an isolated worktree for ALL tasks so each group works in its own branch.
 		// Worker and leader sessions share the same worktree for the task.
@@ -195,7 +188,7 @@ export class TaskGroupManager {
 		const leaderConfig: LeaderAgentConfig = {
 			task,
 			goal,
-			room: this.room,
+			room,
 			sessionId: leaderSessionId,
 			workspacePath: groupWorkspacePath,
 			groupId: group.id,
