@@ -30,11 +30,15 @@ import {
 	type CreateGoalParams,
 	type UpdateGoalParams,
 } from './repositories/goal-repository';
+import { JobQueueRepository } from './repositories/job-queue-repository';
 
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
 export type { CreateInboxItemParams, InboxItemFilter } from './repositories/inbox-item-repository';
 export type { CreateGoalParams, UpdateGoalParams } from './repositories/goal-repository';
+export type { Job, EnqueueParams } from './repositories/job-queue-repository';
+export { JobQueueProcessor } from './job-queue-processor';
+export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor';
 
 // @public - Library export
 // Re-export repository classes for direct use
@@ -54,6 +58,7 @@ export class Database {
 	private githubMappingRepo!: GitHubMappingRepository;
 	private inboxItemRepo!: InboxItemRepository;
 	private goalRepo!: GoalRepository;
+	private jobQueueRepo!: JobQueueRepository;
 
 	constructor(dbPath: string) {
 		this.core = new DatabaseCore(dbPath);
@@ -70,6 +75,7 @@ export class Database {
 		this.githubMappingRepo = new GitHubMappingRepository(db);
 		this.inboxItemRepo = new InboxItemRepository(db);
 		this.goalRepo = new GoalRepository(db);
+		this.jobQueueRepo = new JobQueueRepository(db);
 	}
 
 	// ============================================================================
@@ -380,6 +386,14 @@ export class Database {
 	 */
 	getDatabasePath(): string {
 		return this.core.getDbPath();
+	}
+
+	/**
+	 * Get the job queue repository
+	 * Used for generic database-backed job queue operations
+	 */
+	getJobQueueRepo(): JobQueueRepository {
+		return this.jobQueueRepo;
 	}
 
 	close(): void {

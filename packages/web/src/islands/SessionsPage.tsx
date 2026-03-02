@@ -2,6 +2,7 @@ import { useState } from 'preact/hooks';
 import type { Session } from '@neokai/shared';
 import { sessions } from '../lib/state.ts';
 import { connectionState, authStatus } from '../lib/state.ts';
+import { isUserSession } from '../lib/session-utils.ts';
 import { navigateToSession } from '../lib/router.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
@@ -111,7 +112,7 @@ function SessionCard({ session }: { session: Session }) {
 export function SessionsPage() {
 	const [creating, setCreating] = useState(false);
 
-	const sessionsList = sessions.value.filter((s) => !s.context?.roomId);
+	const sessionsList = sessions.value.filter(isUserSession);
 	const canCreate =
 		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
 
@@ -143,7 +144,7 @@ export function SessionsPage() {
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
 			{/* Header */}
-			<div class="px-6 py-4 border-b border-dark-700 pl-12 md:pl-6 flex items-center justify-between">
+			<div class="px-6 py-4 border-b border-dark-700 pl-16 md:pl-6 flex items-center justify-between">
 				<div>
 					<h2 class="text-lg font-semibold text-gray-100">Sessions</h2>
 					<p class="text-sm text-gray-400">
@@ -175,7 +176,7 @@ export function SessionsPage() {
 					<div class="flex flex-col items-center justify-center h-full text-center">
 						<div class="text-5xl mb-4">💬</div>
 						<h3 class="text-lg font-semibold text-gray-100 mb-2">No sessions yet</h3>
-						<p class="text-sm text-gray-400 mb-6">Create a session to start working with AI</p>
+						<p class="text-sm text-gray-400 mb-6">Sessions created outside of Rooms appear here</p>
 						<Button onClick={handleNewSession} loading={creating} disabled={!canCreate}>
 							New Session
 						</Button>

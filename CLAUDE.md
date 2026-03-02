@@ -28,6 +28,13 @@ packages/
 
 Packages use `workspace:*` for interdependencies. The `shared` package is imported by both `daemon` and `web`.
 
+Each package's `tsconfig.json` defines path aliases that resolve to source files directly (no build step needed):
+- `@neokai/shared` → `packages/shared/src/mod.ts`
+- `@neokai/shared/*` → `packages/shared/src/*`
+- `@neokai/daemon` → `packages/daemon/main.ts`
+- `@neokai/daemon/*` → `packages/daemon/src/*`
+- `@/*` → package-local `./src/*`
+
 ## Commands
 
 ```bash
@@ -60,9 +67,27 @@ make compile              # Compile binary for current platform
 ## Code Style
 
 - **Formatter**: Biome — tab indentation, single quotes, semicolons always, trailing commas (ES5), line width 100
-- **Linter**: Oxlint — `no-explicit-any` (error), `no-unused-vars` (error)
+- **JSX quotes**: Double quotes in JSX (`jsxQuoteStyle: "double"`), single quotes in JS
+- **Linter**: Oxlint — `no-explicit-any` (error), `no-unused-vars` (error), `no-console` (error)
 - **Unused exports**: Knip checks for dead exports
 - **JSX**: Preact automatic runtime (not React)
+- **Console calls are forbidden** in application code. For startup output in entry points, use conditional logging:
+  ```ts
+  const logInfo = verbose ? console.log : () => {};
+  ```
+  Test files, setup files, entry points (`main.ts`, `app.ts`), and CLI are exempt (see `.oxlintrc.json` ignorePatterns).
+
+## Environment Configuration
+
+Bun automatically loads `.env` and `.env.local` files at startup (no dotenv package needed). See `packages/daemon/.env.example` for all options.
+
+Credential discovery order (in `packages/daemon/src/lib/config.ts`):
+1. Environment variables (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`)
+2. `~/.claude/.credentials.json` (Claude Code login)
+3. macOS Keychain (Claude Code login)
+4. `~/.claude/settings.json` env block (third-party providers)
+
+**Gotcha**: The daemon deletes `process.env.CLAUDECODE` at startup so SDK subprocesses don't refuse to start when the daemon itself runs inside a Claude Code session.
 
 ## Architecture
 
@@ -92,11 +117,20 @@ Preact with Signals for reactivity. Key patterns:
 
 MessageHub protocol provides unified RPC + pub/sub over WebSocket between web client and daemon. Defined in `packages/shared/src/message-hub/`.
 
+Three-layer architecture:
+1. **MessageHubRouter** — Pure routing layer (no app logic)
+2. **MessageHub** — Protocol layer (owns Router and Transport)
+3. **WebSocketServerTransport** — I/O layer (uses Router for client management)
+
+Initialization order matters: Router → MessageHub, then Transport → MessageHub.
+
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
 - `packages/daemon/tests/online/` — Online tests (matrixized by module, mock SDK by default, real API with NEOKAI_TEST_ONLINE=true)
 - `packages/e2e/tests/` — Browser automation tests
+
+Unit tests preload `packages/daemon/tests/unit/setup.ts` which sets `NODE_ENV='test'`, clears all API keys (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, GLM_API_KEY, ZHIPU_API_KEY), and suppresses console output. This ensures unit tests never make real API calls.
 
 #### E2E Test Rules
 
@@ -147,11 +181,17 @@ make self-test TEST=tests/core/navigation-3-column.e2e.ts
 - Always run a single E2E test file at a time — too slow to run all together
 - If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
 
-## Branching Strategy
+## Branching Strategy & CI
 
 - **`dev`** (default): Active development. PRs target `dev`. E2E tests run after merge.
-- **`main`**: Production-ready. Only accepts PRs from `dev`. Full test suite on PR.
+- **`main`**: Production-ready. Only accepts PRs from `dev` (enforced by CI). Full test suite on PR.
 - Feature branches are created from `dev`.
+
+| Event | Tests Run |
+|-------|-----------|
+| PR → `dev` | Lint, type check, unit tests, integration tests (fast) |
+| Merge to `dev` | All tests including E2E |
+| PR → `main` | All tests including E2E |
 
 ## Commit Convention
 

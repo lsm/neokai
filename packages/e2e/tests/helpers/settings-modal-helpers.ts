@@ -22,13 +22,16 @@ export async function openSettingsModal(page: Page): Promise<void> {
 }
 
 /**
- * Close the Settings modal by clicking the close button
+ * Close the Settings view by navigating to the Home section
+ *
+ * Settings is now a panel view (not a modal), so "closing" it means
+ * navigating to a different section via the NavRail.
  */
 export async function closeSettingsModal(page: Page): Promise<void> {
-	// The Modal component has a close button with aria-label="Close modal"
-	const closeButton = page.locator('button[aria-label="Close modal"]');
-	await closeButton.click();
+	// Navigate away from settings by clicking the Home button in the NavRail
+	const homeButton = page.getByRole('button', { name: 'Home', exact: true });
+	await homeButton.click();
 
-	// Wait for modal to close
+	// Wait for settings view to close
 	await page.locator('h2:has-text("Global Settings")').waitFor({ state: 'hidden', timeout: 5000 });
 }

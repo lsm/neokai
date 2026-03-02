@@ -14,6 +14,7 @@ import { SessionsPage } from './SessionsPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
 import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
+import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
 
 export default function MainContent() {
@@ -62,6 +63,7 @@ export default function MainContent() {
 					{settingsSection === 'general' && <GeneralSettings />}
 					{settingsSection === 'providers' && <ProvidersSettings />}
 					{settingsSection === 'mcp-servers' && <McpServersSettings />}
+					{settingsSection === 'usage' && <UsageAnalytics />}
 					{settingsSection === 'about' && <AboutSection />}
 				</div>
 			</div>

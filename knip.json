@@ -10,6 +10,8 @@
 		"**/packages/daemon/tests/**",
 		"**/packages/e2e/tests/**",
 		"**/packages/shared/tests/**",
+		"**/packages/ui/tests/**",
+		"**/packages/ui/demo/**",
 		"packages/shared/src/neo-prompt/**",
 		"packages/web/src/**",
 		"packages/cli/**",
@@ -27,5 +29,11 @@
 		"packages/daemon/src/lib/room/task-message-queue.ts",
 		"packages/daemon/dump-context.ts"
 	],
-	"ignoreDependencies": ["@testing-library/preact", "tailwindcss"]
+	"ignoreDependencies": [
+		"@testing-library/preact",
+		"tailwindcss",
+		"@floating-ui/dom",
+		"@vitest/coverage-v8",
+		"use-sync-external-store"
+	]
 }

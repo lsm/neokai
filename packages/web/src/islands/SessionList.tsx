@@ -3,6 +3,7 @@ import { navigateToSession } from '../lib/router.ts';
 import { sessions, hasArchivedSessions, globalSettings } from '../lib/state.ts';
 import { updateGlobalSettings } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
+import { isUserSession } from '../lib/session-utils.ts';
 import SessionListItem from '../components/SessionListItem.tsx';
 
 const SESSIONS_PER_PAGE = 20;
@@ -15,8 +16,8 @@ interface SessionListProps {
 export function SessionList({ onSessionSelect }: SessionListProps) {
 	const [visibleCount, setVisibleCount] = useState(SESSIONS_PER_PAGE);
 
-	// Only show sessions that don't belong to a room
-	const sessionsList = sessions.value.filter((s) => !s.context?.roomId);
+	// Only show user-created sessions (not internal Room Runtime agents)
+	const sessionsList = sessions.value.filter(isUserSession);
 	const showArchived = globalSettings.value?.showArchived ?? false;
 
 	// Pagination
@@ -79,7 +80,7 @@ export function SessionList({ onSessionSelect }: SessionListProps) {
 					<div class="p-6 text-center">
 						<div class="text-4xl mb-3">💬</div>
 						<p class="text-sm text-gray-400">No sessions yet.</p>
-						<p class="text-xs text-gray-500 mt-1">Create one to get started!</p>
+						<p class="text-xs text-gray-500 mt-1">Sessions created outside of Rooms appear here.</p>
 					</div>
 				)}
 

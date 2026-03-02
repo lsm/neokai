@@ -36,6 +36,7 @@ export interface InputTextareaProps {
 	onSubmit: () => void;
 	disabled?: boolean;
 	maxChars?: number;
+	placeholder?: string;
 	// Command autocomplete
 	showCommandAutocomplete?: boolean;
 	filteredCommands?: string[];
@@ -58,6 +59,7 @@ export function InputTextarea({
 	onSubmit,
 	disabled,
 	maxChars = 10000,
+	placeholder = 'Ask or make anything...',
 	showCommandAutocomplete = false,
 	filteredCommands = [],
 	selectedCommandIndex = 0,
@@ -162,7 +164,7 @@ export function InputTextarea({
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
 					disabled={disabled}
-					placeholder="Ask or make anything..."
+					placeholder={placeholder}
 					maxLength={maxChars}
 					rows={1}
 					class={cn(
