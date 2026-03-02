@@ -257,6 +257,25 @@ export function createTables(db: BunDatabase): void {
       )
     `);
 
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS job_queue (
+        id TEXT PRIMARY KEY,
+        queue TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+        payload TEXT NOT NULL DEFAULT '{}',
+        result TEXT,
+        error TEXT,
+        priority INTEGER NOT NULL DEFAULT 0,
+        max_retries INTEGER NOT NULL DEFAULT 3,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        run_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER
+      )
+    `);
+
 	// Create indexes
 	createIndexes(db);
 }
@@ -291,4 +310,9 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgmsg_group ON session_group_messages(group_id, id)`);
+	// Job queue indexes
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`
+	);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_job_queue_status ON job_queue(status)`);
 }
