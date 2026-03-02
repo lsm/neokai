@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
-import type { PermissionMode } from '@neokai/shared';
+import type { PermissionMode, ThinkingLevel } from '@neokai/shared';
 import {
 	SettingsSection,
 	SettingsRow,
@@ -23,6 +23,13 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: 'delegate', label: 'Delegate' },
 ];
 
+const THINKING_LEVEL_OPTIONS = [
+	{ value: 'auto', label: 'Auto' },
+	{ value: 'think8k', label: 'Think 8k' },
+	{ value: 'think16k', label: 'Think 16k' },
+	{ value: 'think32k', label: 'Think 32k' },
+];
+
 export function GeneralSettings() {
 	const settings = globalSettings.value;
 	const [localModel, setLocalModel] = useState(settings?.model ?? 'sonnet');
@@ -30,6 +37,10 @@ export function GeneralSettings() {
 		settings?.permissionMode ?? 'default'
 	);
 	const [localAutoScroll, setLocalAutoScroll] = useState(settings?.autoScroll ?? true);
+	const [localThinkingLevel, setLocalThinkingLevel] = useState<ThinkingLevel>(
+		settings?.thinkingLevel ?? 'auto'
+	);
+	const [localShowArchived, setLocalShowArchived] = useState(settings?.showArchived ?? false);
 	const [isUpdating, setIsUpdating] = useState(false);
 
 	// Sync local state when global settings change
@@ -38,6 +49,8 @@ export function GeneralSettings() {
 			setLocalModel(settings.model ?? 'sonnet');
 			setLocalPermissionMode(settings.permissionMode ?? 'default');
 			setLocalAutoScroll(settings.autoScroll ?? true);
+			setLocalThinkingLevel(settings.thinkingLevel ?? 'auto');
+			setLocalShowArchived(settings.showArchived ?? false);
 		}
 	}, [settings]);
 
@@ -84,6 +97,33 @@ export function GeneralSettings() {
 		}
 	};
 
+	const handleThinkingLevelChange = async (value: string) => {
+		const level = value as ThinkingLevel;
+		setLocalThinkingLevel(level);
+		setIsUpdating(true);
+		try {
+			await updateGlobalSettings({ thinkingLevel: level });
+		} catch {
+			toast.error('Failed to update thinking level');
+			setLocalThinkingLevel(settings?.thinkingLevel ?? 'auto');
+		} finally {
+			setIsUpdating(false);
+		}
+	};
+
+	const handleShowArchivedChange = async (value: boolean) => {
+		setLocalShowArchived(value);
+		setIsUpdating(true);
+		try {
+			await updateGlobalSettings({ showArchived: value });
+		} catch {
+			toast.error('Failed to update archived sessions setting');
+			setLocalShowArchived(settings?.showArchived ?? false);
+		} finally {
+			setIsUpdating(false);
+		}
+	};
+
 	return (
 		<SettingsSection title="General">
 			<SettingsRow label="Default Model" description="Model for new sessions">
@@ -104,10 +144,27 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
+			<SettingsRow label="Default Thinking Level" description="Thinking budget for new sessions">
+				<SettingsSelect
+					value={localThinkingLevel}
+					onChange={handleThinkingLevelChange}
+					options={THINKING_LEVEL_OPTIONS}
+					disabled={isUpdating}
+				/>
+			</SettingsRow>
+
 			<SettingsRow label="Auto-scroll" description="Auto-scroll to new messages">
 				<SettingsToggle
 					checked={localAutoScroll}
 					onChange={handleAutoScrollChange}
+					disabled={isUpdating}
+				/>
+			</SettingsRow>
+
+			<SettingsRow label="Show Archived Sessions" description="Display archived sessions in lists">
+				<SettingsToggle
+					checked={localShowArchived}
+					onChange={handleShowArchivedChange}
 					disabled={isUpdating}
 				/>
 			</SettingsRow>

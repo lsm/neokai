@@ -22,6 +22,7 @@ import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
 import { useModal, MODEL_FAMILY_ICONS, useMessageHub } from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
+import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 
 /**
@@ -281,74 +282,92 @@ export default function SessionStatusBar({
 			<div class="flex items-center gap-3 sm:gap-4">
 				{/* Coordinator Mode Toggle - only show if feature is enabled */}
 				{features.coordinator && (
-					<button
-						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-							coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
-						}`}
-						onClick={handleCoordinatorModeToggle}
-						disabled={coordinatorSwitching || modelSwitching}
-						title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+					<Tooltip
+						content={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+						position="top"
+						delay={300}
 					>
-						{coordinatorSwitching ? (
-							<Spinner size="sm" />
-						) : (
-							<svg
-								class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-								/>
-							</svg>
-						)}
-					</button>
+						<button
+							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+								coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
+							}`}
+							onClick={handleCoordinatorModeToggle}
+							disabled={coordinatorSwitching || modelSwitching}
+							title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+						>
+							{coordinatorSwitching ? (
+								<Spinner size="sm" />
+							) : (
+								<svg
+									class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+									/>
+								</svg>
+							)}
+						</button>
+					</Tooltip>
 				)}
 
 				{/* Sandbox Mode Toggle - only show if feature is enabled */}
 				{features.worktree && (
-					<button
-						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-							sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
-						}`}
-						onClick={handleSandboxModeToggle}
-						disabled={sandboxSwitching || modelSwitching}
-						title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+					<Tooltip
+						content={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+						position="top"
+						delay={300}
 					>
-						{sandboxSwitching ? (
-							<Spinner size="sm" />
-						) : (
-							<svg
-								class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width="2"
-									d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-								/>
-							</svg>
-						)}
-					</button>
+						<button
+							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+								sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
+							}`}
+							onClick={handleSandboxModeToggle}
+							disabled={sandboxSwitching || modelSwitching}
+							title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+						>
+							{sandboxSwitching ? (
+								<Spinner size="sm" />
+							) : (
+								<svg
+									class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+									/>
+								</svg>
+							)}
+						</button>
+					</Tooltip>
 				)}
 
 				{/* Model Switcher */}
 				<div class="relative">
-					<button
-						class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-						onClick={toggleModelDropdown}
-						disabled={modelLoading || modelSwitching || coordinatorSwitching}
-						title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+					<Tooltip
+						content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
+						position="top"
+						delay={300}
 					>
-						{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
-					</button>
+						<button
+							class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+							onClick={toggleModelDropdown}
+							disabled={modelLoading || modelSwitching || coordinatorSwitching}
+							title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+						>
+							{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
+						</button>
+					</Tooltip>
 
 					{/* Model Dropdown */}
 					{modelDropdown.isOpen && (
@@ -376,16 +395,22 @@ export default function SessionStatusBar({
 
 				{/* Thinking Level */}
 				<div class="relative">
-					<button
-						class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
-							thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
-						}`}
-						onClick={toggleThinkingDropdown}
-						title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+					<Tooltip
+						content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+						position="top"
+						delay={300}
 					>
-						<ThinkingBorderRing level={thinkingLevel} />
-						<ThinkingLevelIcon level={thinkingLevel} />
-					</button>
+						<button
+							class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
+								thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
+							}`}
+							onClick={toggleThinkingDropdown}
+							title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+						>
+							<ThinkingBorderRing level={thinkingLevel} />
+							<ThinkingLevelIcon level={thinkingLevel} />
+						</button>
+					</Tooltip>
 
 					{/* Thinking Dropdown */}
 					{thinkingDropdown.isOpen && (
@@ -411,27 +436,33 @@ export default function SessionStatusBar({
 				</div>
 
 				{/* Auto-scroll Toggle - Highlighted border and icon when active */}
-				<button
-					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
-						autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
-					}`}
-					onClick={handleAutoScrollToggle}
-					title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
+				<Tooltip
+					content={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
+					position="top"
+					delay={300}
 				>
-					<svg
-						class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke="currentColor"
+					<button
+						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
+							autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
+						}`}
+						onClick={handleAutoScrollToggle}
+						title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
 					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M19 14l-7 7m0 0l-7-7m7 7V3"
-						/>
-					</svg>
-				</button>
+						<svg
+							class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M19 14l-7 7m0 0l-7-7m7 7V3"
+							/>
+						</svg>
+					</button>
+				</Tooltip>
 
 				{/* Separator */}
 				<div class="h-6 w-px bg-gray-600" />

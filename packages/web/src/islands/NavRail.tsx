@@ -1,5 +1,10 @@
 import { navSectionSignal, navRailOpenSignal, type NavSection } from '../lib/signals.ts';
-import { navigateToSessions, navigateToSettings, navigateToHome } from '../lib/router.ts';
+import {
+	navigateToSessions,
+	navigateToSettings,
+	navigateToHome,
+	navigateToRooms,
+} from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import { connectionState } from '../lib/state.ts';
@@ -16,6 +21,9 @@ export function NavRail() {
 		switch (section) {
 			case 'chats':
 				navigateToSessions();
+				break;
+			case 'rooms':
+				navigateToRooms();
 				break;
 			case 'settings':
 				navigateToSettings();
@@ -71,6 +79,23 @@ export function NavRail() {
 						</svg>
 					</NavIconButton>
 
+					{/* Rooms Button */}
+					<NavIconButton
+						active={navSection === 'rooms'}
+						onClick={() => handleNavClick('rooms')}
+						label="Rooms"
+					>
+						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"
+							/>
+						</svg>
+					</NavIconButton>
+
+					{/* Chats Button */}
 					<NavIconButton
 						active={navSection === 'chats'}
 						onClick={() => handleNavClick('chats')}

@@ -15,10 +15,16 @@ import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
 import { contextPanelOpenSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
+import { navigateToRoom } from '../lib/router';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { Tooltip } from './ui/Tooltip';
 import { GitBranchIcon } from './icons/GitBranchIcon';
+
+export interface RoomContext {
+	roomName: string;
+	roomId: string;
+}
 
 export interface ChatHeaderProps {
 	session: Session | null;
@@ -27,6 +33,7 @@ export interface ChatHeaderProps {
 		totalCost: number;
 	};
 	features?: SessionFeatures;
+	roomContext?: RoomContext;
 	onToolsClick: () => void;
 	onInfoClick: () => void;
 	onExportClick: () => void;
@@ -42,6 +49,7 @@ export function ChatHeader({
 	session,
 	displayStats,
 	features = DEFAULT_WORKER_FEATURES,
+	roomContext,
 	onToolsClick,
 	onInfoClick,
 	onExportClick,
@@ -202,6 +210,29 @@ export function ChatHeader({
 
 				{/* Session title and stats */}
 				<div class="flex-1 min-w-0">
+					{roomContext && (
+						<div class="flex items-center gap-1.5 text-xs text-gray-400 mb-0.5">
+							<button
+								onClick={() => navigateToRoom(roomContext.roomId)}
+								class="hover:text-gray-200 transition-colors truncate max-w-[12rem]"
+							>
+								{roomContext.roomName}
+							</button>
+							<svg
+								class="w-3 h-3 flex-shrink-0"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M9 5l7 7-7 7"
+								/>
+							</svg>
+						</div>
+					)}
 					<h2 class="text-lg font-semibold text-gray-100 truncate">
 						{session?.title || 'New Session'}
 					</h2>

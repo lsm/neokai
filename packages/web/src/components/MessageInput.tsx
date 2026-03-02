@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import type { MessageDeliveryMode, MessageImage } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, SessionType } from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -24,8 +24,19 @@ import {
 	useInterrupt,
 } from '../hooks';
 
+function getPlaceholderForSessionType(sessionType?: SessionType): string {
+	switch (sessionType) {
+		case 'room_chat':
+			return 'Chat with the room coordinator...';
+		case 'worker':
+		default:
+			return 'Ask or make anything...';
+	}
+}
+
 interface MessageInputProps {
 	sessionId: string;
+	sessionType?: SessionType;
 	onSend: (
 		content: string,
 		images?: MessageImage[],
@@ -50,6 +61,7 @@ interface QueuedOverlayMessage {
 
 export default function MessageInput({
 	sessionId,
+	sessionType,
 	onSend,
 	disabled,
 	autoScroll,
@@ -410,6 +422,7 @@ export default function MessageInput({
 								void handleSubmit('current_turn');
 							}}
 							disabled={disabled}
+							placeholder={getPlaceholderForSessionType(sessionType)}
 							showCommandAutocomplete={commandAutocomplete.showAutocomplete}
 							filteredCommands={commandAutocomplete.filteredCommands}
 							selectedCommandIndex={commandAutocomplete.selectedIndex}

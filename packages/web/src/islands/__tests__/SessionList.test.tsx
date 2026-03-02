@@ -151,7 +151,7 @@ describe('SessionList', () => {
 			const { container } = render(<SessionList />);
 
 			expect(container.textContent).toContain('No sessions yet.');
-			expect(container.textContent).toContain('Create one to get started!');
+			expect(container.textContent).toContain('Sessions created outside of Rooms appear here.');
 		});
 
 		it('should show emoji in empty state', () => {
