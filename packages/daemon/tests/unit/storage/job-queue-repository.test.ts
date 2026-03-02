@@ -1,0 +1,527 @@
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { JobQueueRepository } from '../../../src/storage/repositories/job-queue-repository';
+
+describe('JobQueueRepository', () => {
+	let db: Database;
+	let repository: JobQueueRepository;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		db.exec(`
+			CREATE TABLE job_queue (
+				id TEXT PRIMARY KEY,
+				queue TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending'
+					CHECK(status IN ('pending', 'processing', 'completed', 'failed', 'dead')),
+				payload TEXT NOT NULL DEFAULT '{}',
+				result TEXT,
+				error TEXT,
+				priority INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				run_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER
+			);
+
+			CREATE INDEX idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC);
+			CREATE INDEX idx_job_queue_status ON job_queue(status);
+		`);
+		repository = new JobQueueRepository(db as any);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	describe('enqueue', () => {
+		it('creates a job with correct defaults', () => {
+			const before = Date.now();
+			const job = repository.enqueue({ queue: 'test', payload: { action: 'run' } });
+			const after = Date.now();
+
+			expect(job.status).toBe('pending');
+			expect(job.priority).toBe(0);
+			expect(job.maxRetries).toBe(3);
+			expect(job.retryCount).toBe(0);
+			expect(job.runAt).toBeGreaterThanOrEqual(before);
+			expect(job.runAt).toBeLessThanOrEqual(after);
+			expect(job.startedAt).toBeNull();
+			expect(job.completedAt).toBeNull();
+			expect(job.error).toBeNull();
+			expect(job.result).toBeNull();
+		});
+
+		it('respects custom priority, maxRetries, and runAt', () => {
+			const futureTime = Date.now() + 60_000;
+			const job = repository.enqueue({
+				queue: 'test',
+				payload: {},
+				priority: 10,
+				maxRetries: 5,
+				runAt: futureTime,
+			});
+
+			expect(job.priority).toBe(10);
+			expect(job.maxRetries).toBe(5);
+			expect(job.runAt).toBe(futureTime);
+		});
+
+		it('stores payload as JSON and retrieves it correctly', () => {
+			const payload = { action: 'process', data: { count: 42, tags: ['a', 'b'] } };
+			const job = repository.enqueue({ queue: 'test', payload });
+
+			expect(job.payload).toEqual(payload);
+		});
+
+		it('assigns each job a unique UUID', () => {
+			const job1 = repository.enqueue({ queue: 'test', payload: {} });
+			const job2 = repository.enqueue({ queue: 'test', payload: {} });
+			const job3 = repository.enqueue({ queue: 'test', payload: {} });
+
+			expect(job1.id).not.toBe(job2.id);
+			expect(job2.id).not.toBe(job3.id);
+			expect(job1.id).not.toBe(job3.id);
+		});
+	});
+
+	describe('dequeue', () => {
+		it('claims pending jobs and marks them as processing', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test');
+
+			expect(job.status).toBe('processing');
+		});
+
+		it('sets startedAt timestamp', () => {
+			const before = Date.now();
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test');
+			const after = Date.now();
+
+			expect(job.startedAt).not.toBeNull();
+			expect(job.startedAt!).toBeGreaterThanOrEqual(before);
+			expect(job.startedAt!).toBeLessThanOrEqual(after);
+		});
+
+		it('respects priority ordering (higher priority first)', () => {
+			repository.enqueue({ queue: 'test', payload: { p: 0 }, priority: 0 });
+			repository.enqueue({ queue: 'test', payload: { p: 5 }, priority: 5 });
+			repository.enqueue({ queue: 'test', payload: { p: 2 }, priority: 2 });
+
+			const jobs = repository.dequeue('test', 3);
+
+			expect(jobs[0].payload.p).toBe(5);
+			expect(jobs[1].payload.p).toBe(2);
+			expect(jobs[2].payload.p).toBe(0);
+		});
+
+		it('only dequeues jobs where run_at <= now', () => {
+			repository.enqueue({ queue: 'test', payload: { label: 'ready' }, runAt: Date.now() - 1000 });
+			repository.enqueue({ queue: 'test', payload: { label: 'future' }, runAt: Date.now() + 60_000 });
+
+			const jobs = repository.dequeue('test', 10);
+
+			expect(jobs.length).toBe(1);
+			expect(jobs[0].payload.label).toBe('ready');
+		});
+
+		it('does NOT dequeue future-scheduled jobs', () => {
+			repository.enqueue({ queue: 'test', payload: {}, runAt: Date.now() + 60_000 });
+
+			const jobs = repository.dequeue('test');
+
+			expect(jobs.length).toBe(0);
+		});
+
+		it('does NOT dequeue already-processing jobs', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.dequeue('test', 1);
+
+			const jobs = repository.dequeue('test', 1);
+
+			expect(jobs.length).toBe(0);
+		});
+
+		it('returns empty array when no pending jobs', () => {
+			const jobs = repository.dequeue('test');
+
+			expect(jobs).toEqual([]);
+		});
+
+		it('respects limit parameter', () => {
+			for (let i = 0; i < 5; i++) {
+				repository.enqueue({ queue: 'test', payload: { i } });
+			}
+
+			const jobs = repository.dequeue('test', 3);
+
+			expect(jobs.length).toBe(3);
+		});
+
+		it('multiple dequeues do not return the same job', () => {
+			repository.enqueue({ queue: 'test', payload: { n: 1 } });
+			repository.enqueue({ queue: 'test', payload: { n: 2 } });
+			repository.enqueue({ queue: 'test', payload: { n: 3 } });
+
+			const first = repository.dequeue('test', 2);
+			const second = repository.dequeue('test', 2);
+
+			expect(first.length).toBe(2);
+			expect(second.length).toBe(1);
+
+			const firstIds = new Set(first.map((j) => j.id));
+			expect(firstIds.has(second[0].id)).toBe(false);
+		});
+	});
+
+	describe('complete', () => {
+		it('marks job as completed with completedAt timestamp', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [dequeued] = repository.dequeue('test');
+			const before = Date.now();
+			const job = repository.complete(dequeued.id);
+			const after = Date.now();
+
+			expect(job).not.toBeNull();
+			expect(job!.status).toBe('completed');
+			expect(job!.completedAt).not.toBeNull();
+			expect(job!.completedAt!).toBeGreaterThanOrEqual(before);
+			expect(job!.completedAt!).toBeLessThanOrEqual(after);
+		});
+
+		it('stores result JSON', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [dequeued] = repository.dequeue('test');
+			const result = { success: true, count: 7 };
+			const job = repository.complete(dequeued.id, result);
+
+			expect(job!.result).toEqual(result);
+		});
+
+		it('returns null for non-existent job', () => {
+			const job = repository.complete('non-existent-id');
+
+			expect(job).toBeNull();
+		});
+
+		it('returns null for job not in processing status', () => {
+			const enqueued = repository.enqueue({ queue: 'test', payload: {} });
+
+			const job = repository.complete(enqueued.id);
+
+			expect(job).toBeNull();
+		});
+	});
+
+	describe('fail', () => {
+		it('resets job to pending with incremented retryCount when retries remain', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
+			const [dequeued] = repository.dequeue('test');
+			const job = repository.fail(dequeued.id, 'timeout');
+
+			expect(job!.status).toBe('pending');
+			expect(job!.retryCount).toBe(1);
+		});
+
+		it('sets run_at to future time (exponential backoff)', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
+			const [dequeued] = repository.dequeue('test');
+			const before = Date.now();
+			const job = repository.fail(dequeued.id, 'timeout');
+
+			// retryCount was 0 before fail, delay = 2^0 * 1000 = 1000ms
+			expect(job!.runAt).toBeGreaterThan(before);
+		});
+
+		it('clears startedAt on retry', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
+			const [dequeued] = repository.dequeue('test');
+			expect(dequeued.startedAt).not.toBeNull();
+
+			const job = repository.fail(dequeued.id, 'error');
+
+			expect(job!.startedAt).toBeNull();
+		});
+
+		it('marks job as dead when retryCount >= maxRetries', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 1 });
+			const [first] = repository.dequeue('test');
+			// First failure: retryCount 0 < maxRetries 1, resets to pending
+			repository.fail(first.id, 'err');
+			// Now retryCount is 1 which equals maxRetries 1
+			// Need to update run_at so we can dequeue it again
+			db.prepare(`UPDATE job_queue SET run_at = ? WHERE id = ?`).run(Date.now() - 1, first.id);
+			const [second] = repository.dequeue('test');
+			const dead = repository.fail(second.id, 'final error');
+
+			expect(dead!.status).toBe('dead');
+		});
+
+		it('sets completedAt when job becomes dead', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 0 });
+			const [dequeued] = repository.dequeue('test');
+			const before = Date.now();
+			const job = repository.fail(dequeued.id, 'fatal');
+			const after = Date.now();
+
+			expect(job!.status).toBe('dead');
+			expect(job!.completedAt).not.toBeNull();
+			expect(job!.completedAt!).toBeGreaterThanOrEqual(before);
+			expect(job!.completedAt!).toBeLessThanOrEqual(after);
+		});
+
+		it('stores error message', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
+			const [dequeued] = repository.dequeue('test');
+			const job = repository.fail(dequeued.id, 'something broke');
+
+			expect(job!.error).toBe('something broke');
+		});
+
+		it('returns null for non-existent job', () => {
+			const job = repository.fail('non-existent-id', 'error');
+
+			expect(job).toBeNull();
+		});
+	});
+
+	describe('getJob', () => {
+		it('returns job by id', () => {
+			const enqueued = repository.enqueue({ queue: 'test', payload: { key: 'val' } });
+			const job = repository.getJob(enqueued.id);
+
+			expect(job).not.toBeNull();
+			expect(job!.id).toBe(enqueued.id);
+			expect(job!.payload).toEqual({ key: 'val' });
+		});
+
+		it('returns null for non-existent id', () => {
+			const job = repository.getJob('does-not-exist');
+
+			expect(job).toBeNull();
+		});
+	});
+
+	describe('listJobs', () => {
+		it('lists all jobs when no filter', () => {
+			repository.enqueue({ queue: 'queue-a', payload: {} });
+			repository.enqueue({ queue: 'queue-b', payload: {} });
+			repository.enqueue({ queue: 'queue-c', payload: {} });
+
+			const jobs = repository.listJobs({});
+
+			expect(jobs.length).toBe(3);
+		});
+
+		it('filters by queue', () => {
+			repository.enqueue({ queue: 'alpha', payload: {} });
+			repository.enqueue({ queue: 'alpha', payload: {} });
+			repository.enqueue({ queue: 'beta', payload: {} });
+
+			const jobs = repository.listJobs({ queue: 'alpha' });
+
+			expect(jobs.length).toBe(2);
+			expect(jobs.every((j) => j.queue === 'alpha')).toBe(true);
+		});
+
+		it('filters by status', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			const toProcess = repository.enqueue({ queue: 'test', payload: {} });
+			repository.dequeue('test', 1);
+			// manually mark one as completed to have variety
+			const [processing] = repository.dequeue('test', 1);
+			repository.complete(processing.id);
+
+			const pending = repository.listJobs({ status: 'pending' });
+			expect(pending.every((j) => j.status === 'pending')).toBe(true);
+
+			const completed = repository.listJobs({ status: 'completed' });
+			expect(completed.length).toBe(1);
+			expect(completed[0].status).toBe('completed');
+		});
+
+		it('filters by both queue and status', () => {
+			repository.enqueue({ queue: 'q1', payload: {} });
+			repository.enqueue({ queue: 'q2', payload: {} });
+			const [q1job] = repository.dequeue('q1', 1);
+			repository.complete(q1job.id);
+
+			const jobs = repository.listJobs({ queue: 'q1', status: 'completed' });
+
+			expect(jobs.length).toBe(1);
+			expect(jobs[0].queue).toBe('q1');
+			expect(jobs[0].status).toBe('completed');
+		});
+
+		it('respects limit', () => {
+			for (let i = 0; i < 10; i++) {
+				repository.enqueue({ queue: 'test', payload: { i } });
+			}
+
+			const jobs = repository.listJobs({ limit: 3 });
+
+			expect(jobs.length).toBe(3);
+		});
+
+		it('orders by created_at DESC', async () => {
+			repository.enqueue({ queue: 'test', payload: { order: 1 } });
+			await new Promise((r) => setTimeout(r, 5));
+			repository.enqueue({ queue: 'test', payload: { order: 2 } });
+			await new Promise((r) => setTimeout(r, 5));
+			repository.enqueue({ queue: 'test', payload: { order: 3 } });
+
+			const jobs = repository.listJobs({});
+
+			expect(jobs[0].payload.order).toBe(3);
+			expect(jobs[1].payload.order).toBe(2);
+			expect(jobs[2].payload.order).toBe(1);
+		});
+	});
+
+	describe('countByStatus', () => {
+		it('returns counts for each status', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test', 1);
+			repository.complete(job.id);
+
+			const counts = repository.countByStatus('test');
+
+			expect(counts.pending).toBe(1);
+			expect(counts.completed).toBe(1);
+			expect(counts.processing).toBe(0);
+		});
+
+		it('returns 0 for statuses with no jobs', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+
+			const counts = repository.countByStatus('test');
+
+			expect(counts.processing).toBe(0);
+			expect(counts.completed).toBe(0);
+			expect(counts.failed).toBe(0);
+			expect(counts.dead).toBe(0);
+		});
+
+		it('only counts jobs in the specified queue', () => {
+			repository.enqueue({ queue: 'q1', payload: {} });
+			repository.enqueue({ queue: 'q1', payload: {} });
+			repository.enqueue({ queue: 'q2', payload: {} });
+
+			const q1counts = repository.countByStatus('q1');
+			const q2counts = repository.countByStatus('q2');
+
+			expect(q1counts.pending).toBe(2);
+			expect(q2counts.pending).toBe(1);
+		});
+	});
+
+	describe('cleanup', () => {
+		it('deletes completed jobs older than threshold', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test');
+			repository.complete(job.id);
+
+			const threshold = Date.now() + 1000;
+			const deleted = repository.cleanup(threshold);
+
+			expect(deleted).toBe(1);
+			expect(repository.getJob(job.id)).toBeNull();
+		});
+
+		it('deletes dead jobs older than threshold', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 0 });
+			const [job] = repository.dequeue('test');
+			repository.fail(job.id, 'fatal');
+
+			const threshold = Date.now() + 1000;
+			const deleted = repository.cleanup(threshold);
+
+			expect(deleted).toBe(1);
+			expect(repository.getJob(job.id)).toBeNull();
+		});
+
+		it('does NOT delete pending or processing jobs', () => {
+			const pending = repository.enqueue({ queue: 'test', payload: {} });
+			const enqueued2 = repository.enqueue({ queue: 'test', payload: {} });
+			const [processing] = repository.dequeue('test', 1);
+
+			const threshold = Date.now() + 1000;
+			const deleted = repository.cleanup(threshold);
+
+			expect(deleted).toBe(0);
+			expect(repository.getJob(pending.id)).not.toBeNull();
+			expect(repository.getJob(processing.id)).not.toBeNull();
+		});
+
+		it('returns count of deleted jobs', () => {
+			for (let i = 0; i < 3; i++) {
+				repository.enqueue({ queue: 'test', payload: {} });
+			}
+			const jobs = repository.dequeue('test', 3);
+			for (const job of jobs) {
+				repository.complete(job.id);
+			}
+
+			const threshold = Date.now() + 1000;
+			const deleted = repository.cleanup(threshold);
+
+			expect(deleted).toBe(3);
+		});
+	});
+
+	describe('reclaimStale', () => {
+		it('reclaims processing jobs started before threshold', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test');
+
+			const threshold = Date.now() + 1000;
+			const reclaimed = repository.reclaimStale(threshold);
+
+			expect(reclaimed).toBe(1);
+			const updated = repository.getJob(job.id);
+			expect(updated!.status).toBe('pending');
+		});
+
+		it('does NOT reclaim pending or completed jobs', () => {
+			const pending = repository.enqueue({ queue: 'test', payload: {} });
+			const toComplete = repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test', 1);
+			repository.complete(job.id);
+
+			const threshold = Date.now() + 1000;
+			const reclaimed = repository.reclaimStale(threshold);
+
+			expect(reclaimed).toBe(0);
+		});
+
+		it('sets status back to pending and clears startedAt', () => {
+			repository.enqueue({ queue: 'test', payload: {} });
+			const [job] = repository.dequeue('test');
+			expect(job.startedAt).not.toBeNull();
+
+			const threshold = Date.now() + 1000;
+			repository.reclaimStale(threshold);
+
+			const reclaimed = repository.getJob(job.id);
+			expect(reclaimed!.status).toBe('pending');
+			expect(reclaimed!.startedAt).toBeNull();
+		});
+
+		it('returns count of reclaimed jobs', () => {
+			for (let i = 0; i < 4; i++) {
+				repository.enqueue({ queue: 'test', payload: {} });
+			}
+			repository.dequeue('test', 4);
+
+			const threshold = Date.now() + 1000;
+			const reclaimed = repository.reclaimStale(threshold);
+
+			expect(reclaimed).toBe(4);
+		});
+	});
+});
