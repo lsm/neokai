@@ -1,5 +1,4 @@
 import { type ComponentChildren, createElement, Fragment, type Ref, type VNode } from 'preact';
-import { forwardRef } from 'preact/compat';
 import { type ElementType, Features, RenderStrategy } from './types.ts';
 
 // Merge slot props data attributes into the element

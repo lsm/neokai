@@ -29,5 +29,10 @@
 		"packages/daemon/src/lib/room/task-message-queue.ts",
 		"packages/daemon/dump-context.ts"
 	],
-	"ignoreDependencies": ["@testing-library/preact", "tailwindcss", "@floating-ui/dom", "@vitest/coverage-v8"]
+	"ignoreDependencies": [
+		"@testing-library/preact",
+		"tailwindcss",
+		"@floating-ui/dom",
+		"@vitest/coverage-v8"
+	]
 }
