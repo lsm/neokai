@@ -563,11 +563,7 @@ function TransitionChildFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_
 	const requiresRef = shouldForwardRef(props as TransitionRootProps<TTag>);
 
 	// Build refs array conditionally - the spread is safe because useSyncRefs handles null/undefined
-	const refs = requiresRef
-		? [container, ref, setLocalContainerElement]
-		: ref === null
-			? []
-			: [ref];
+	const refs = requiresRef ? [container, ref, setLocalContainerElement] : ref === null ? [] : [ref];
 	const transitionRef = useSyncRefs(...refs);
 
 	const strategy = (theirProps.unmount ?? true) ? RenderStrategy.Unmount : RenderStrategy.Hidden;
@@ -729,11 +725,7 @@ function TransitionRootFn<TTag extends ElementType = typeof DEFAULT_TRANSITION_C
 	const requiresRef = shouldForwardRef(props);
 
 	// Build refs array conditionally - the spread is safe because useSyncRefs handles null/undefined
-	const refs = requiresRef
-		? [internalTransitionRef, ref]
-		: ref === null
-			? []
-			: [ref];
+	const refs = requiresRef ? [internalTransitionRef, ref] : ref === null ? [] : [ref];
 	const transitionRef = useSyncRefs(...refs);
 
 	useServerHandoffComplete();
