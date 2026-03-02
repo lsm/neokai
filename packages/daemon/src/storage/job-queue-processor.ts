@@ -22,7 +22,7 @@ export class JobQueueProcessor {
 
 	constructor(
 		private repo: JobQueueRepository,
-		options?: JobQueueProcessorOptions,
+		options?: JobQueueProcessorOptions
 	) {
 		this.pollIntervalMs = options?.pollIntervalMs ?? 1000;
 		this.maxConcurrent = options?.maxConcurrent ?? 1;

@@ -52,7 +52,7 @@ export class JobQueueRepository {
 			params.runAt ?? now,
 			now,
 			null,
-			null,
+			null
 		);
 
 		return this.getJob(id)!;
@@ -71,9 +71,7 @@ export class JobQueueRepository {
 			const now = Date.now();
 			for (const row of rows) {
 				this.db
-					.prepare(
-						`UPDATE job_queue SET status = 'processing', started_at = ? WHERE id = ?`
-					)
+					.prepare(`UPDATE job_queue SET status = 'processing', started_at = ? WHERE id = ?`)
 					.run(now, row.id as string);
 				claimed.push(this.getJob(row.id as string)!);
 			}
@@ -94,9 +92,9 @@ export class JobQueueRepository {
 	}
 
 	fail(jobId: string, error: string): Job | null {
-		const row = this.db
-			.prepare(`SELECT * FROM job_queue WHERE id = ?`)
-			.get(jobId) as Record<string, unknown> | undefined;
+		const row = this.db.prepare(`SELECT * FROM job_queue WHERE id = ?`).get(jobId) as
+			| Record<string, unknown>
+			| undefined;
 
 		if (!row) return null;
 
@@ -112,9 +110,7 @@ export class JobQueueRepository {
 				.run(error, Date.now() + delay, jobId);
 		} else {
 			this.db
-				.prepare(
-					`UPDATE job_queue SET status = 'dead', error = ?, completed_at = ? WHERE id = ?`
-				)
+				.prepare(`UPDATE job_queue SET status = 'dead', error = ?, completed_at = ? WHERE id = ?`)
 				.run(error, Date.now(), jobId);
 		}
 
@@ -152,9 +148,7 @@ export class JobQueueRepository {
 
 	countByStatus(queue: string): Record<string, number> {
 		const rows = this.db
-			.prepare(
-				`SELECT status, COUNT(*) as count FROM job_queue WHERE queue = ? GROUP BY status`
-			)
+			.prepare(`SELECT status, COUNT(*) as count FROM job_queue WHERE queue = ? GROUP BY status`)
 			.all(queue) as { status: string; count: number }[];
 
 		const defaults: Record<string, number> = {
@@ -174,9 +168,7 @@ export class JobQueueRepository {
 
 	cleanup(beforeMs: number): number {
 		const result = this.db
-			.prepare(
-				`DELETE FROM job_queue WHERE status IN ('completed', 'dead') AND completed_at < ?`
-			)
+			.prepare(`DELETE FROM job_queue WHERE status IN ('completed', 'dead') AND completed_at < ?`)
 			.run(beforeMs);
 		return result.changes;
 	}
@@ -196,7 +188,8 @@ export class JobQueueRepository {
 			queue: row.queue as string,
 			status: row.status as JobStatus,
 			payload: JSON.parse(row.payload as string) as Record<string, unknown>,
-			result: row.result !== null ? (JSON.parse(row.result as string) as Record<string, unknown>) : null,
+			result:
+				row.result !== null ? (JSON.parse(row.result as string) as Record<string, unknown>) : null,
 			error: (row.error as string | null) ?? null,
 			priority: row.priority as number,
 			maxRetries: row.max_retries as number,

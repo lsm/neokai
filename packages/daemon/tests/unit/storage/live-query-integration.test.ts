@@ -32,10 +32,7 @@ import type { SDKMessage } from '@neokai/shared/sdk';
 // ---------------------------------------------------------------------------
 
 function makeTempDbPath(): string {
-	return join(
-		tmpdir(),
-		`live-query-int-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
-	);
+	return join(tmpdir(), `live-query-int-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
 }
 
 function makeSession(id: string, overrides: Partial<Session> = {}): Session {
@@ -320,7 +317,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 	// -------------------------------------------------------------------------
 
 	describe('sdk_messages query', () => {
-		const MESSAGES_SQL = 'SELECT id, session_id, message_type FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
+		const MESSAGES_SQL =
+			'SELECT id, session_id, message_type FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
 
 		test('initial snapshot for sdk_messages is empty', () => {
 			const diffs: QueryDiff<{ id: string; session_id: string; message_type: string }>[] = [];
@@ -387,7 +385,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 
 	describe('cross-table isolation', () => {
 		test('change to sessions table does not trigger sdk_messages query callback', async () => {
-			const MESSAGES_SQL_ISO = 'SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
+			const MESSAGES_SQL_ISO =
+				'SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
 
 			const msgDiffs: QueryDiff<{ id: string }>[] = [];
 			engine.subscribe(MESSAGES_SQL_ISO, ['iso-session'], (diff) => msgDiffs.push(diff));
@@ -400,7 +399,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 		});
 
 		test('two subscriptions to different tables update independently', async () => {
-			const MESSAGES_SQL_CROSS = 'SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
+			const MESSAGES_SQL_CROSS =
+				'SELECT id FROM sdk_messages WHERE session_id = ? ORDER BY timestamp';
 
 			const sessionDiffs: QueryDiff<SessionRow>[] = [];
 			const msgDiffs: QueryDiff<{ id: string }>[] = [];
@@ -464,10 +464,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const diffs: QueryDiff<{ id: string; processing_state: string | null }>[] = [];
-			engine.subscribe(
-				'SELECT id, processing_state FROM sessions WHERE id = ?',
-				['ps1'],
-				(diff) => diffs.push(diff),
+			engine.subscribe('SELECT id, processing_state FROM sessions WHERE id = ?', ['ps1'], (diff) =>
+				diffs.push(diff)
 			);
 
 			reactiveDb.db.updateSession('ps1', {
@@ -498,10 +496,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const diffs: QueryDiff<{ id: string; metadata: string }>[] = [];
-			engine.subscribe(
-				'SELECT id, metadata FROM sessions WHERE id = ?',
-				['ci1'],
-				(diff) => diffs.push(diff),
+			engine.subscribe('SELECT id, metadata FROM sessions WHERE id = ?', ['ci1'], (diff) =>
+				diffs.push(diff)
 			);
 
 			reactiveDb.db.updateSession('ci1', {
@@ -532,10 +528,8 @@ describe('LiveQuery Integration (Database + ReactiveDatabase + LiveQueryEngine)'
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const diffs: QueryDiff<{ id: string; processing_state: string | null }>[] = [];
-			engine.subscribe(
-				'SELECT id, processing_state FROM sessions WHERE id = ?',
-				['ps2'],
-				(diff) => diffs.push(diff),
+			engine.subscribe('SELECT id, processing_state FROM sessions WHERE id = ?', ['ps2'], (diff) =>
+				diffs.push(diff)
 			);
 
 			// Three rapid updates without yielding
