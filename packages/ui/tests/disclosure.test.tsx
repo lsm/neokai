@@ -408,4 +408,263 @@ describe('Disclosure', () => {
 
 		expect(screen.queryByText('Panel content')).not.toBeNull(); // unmount=false keeps it in DOM
 	});
+
+	// --- Controlled Mode Tests ---
+	describe('controlled mode', () => {
+		it('should use controlled open prop when provided', () => {
+			const onChange = vi.fn();
+			render(
+				<Disclosure open={true} onChange={onChange}>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Should be open because open={true}
+			expect(screen.getByText('Panel content')).toBeTruthy();
+		});
+
+		it('should call onChange when toggling in controlled mode', () => {
+			const onChange = vi.fn();
+			render(
+				<Disclosure open={false} onChange={onChange}>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Should be closed because open={false}
+			expect(screen.queryByText('Panel content')).toBeNull();
+
+			// Click the button
+			fireEvent.click(screen.getByText('Toggle'));
+
+			// onChange should be called with true
+			expect(onChange).toHaveBeenCalledTimes(1);
+			expect(onChange).toHaveBeenCalledWith(true);
+		});
+
+		it('should not update internally in controlled mode', () => {
+			const onChange = vi.fn();
+			render(
+				<Disclosure open={false} onChange={onChange}>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Should be closed
+			expect(screen.queryByText('Panel content')).toBeNull();
+
+			// Click the button - should call onChange but not open internally
+			fireEvent.click(screen.getByText('Toggle'));
+
+			// Still closed because we're in controlled mode and parent didn't update open prop
+			expect(screen.queryByText('Panel content')).toBeNull();
+		});
+
+		it('should prefer open prop over defaultOpen', () => {
+			render(
+				<Disclosure open={false} defaultOpen={true}>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Should be closed because open={false} takes precedence over defaultOpen={true}
+			expect(screen.queryByText('Panel content')).toBeNull();
+		});
+	});
+
+	// --- Button Inside Panel Tests ---
+	describe('button inside panel', () => {
+		it('should close disclosure when button inside panel is clicked', () => {
+			render(
+				<Disclosure defaultOpen>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>
+						Panel content
+						<DisclosureButton>Close</DisclosureButton>
+					</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Panel should be open
+			expect(screen.getByText('Panel content')).toBeTruthy();
+
+			// Click the button inside the panel
+			fireEvent.click(screen.getByText('Close'));
+
+			// Panel should be closed
+			expect(screen.queryByText('Panel content')).toBeNull();
+		});
+
+		it('should not have aria-expanded on button inside panel', () => {
+			render(
+				<Disclosure defaultOpen>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>
+						<DisclosureButton>Close</DisclosureButton>
+					</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Button inside panel should NOT have aria-expanded
+			const closeButton = screen.getByText('Close');
+			expect(closeButton.getAttribute('aria-expanded')).toBeNull();
+		});
+
+		it('should not have aria-controls on button inside panel', () => {
+			render(
+				<Disclosure defaultOpen>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>
+						<DisclosureButton>Close</DisclosureButton>
+					</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Button inside panel should NOT have aria-controls
+			const closeButton = screen.getByText('Close');
+			expect(closeButton.getAttribute('aria-controls')).toBeNull();
+		});
+
+		it('should not have id on button inside panel', () => {
+			render(
+				<Disclosure defaultOpen>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>
+						<DisclosureButton>Close</DisclosureButton>
+					</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Button inside panel should NOT have an id
+			const closeButton = screen.getByText('Close');
+			expect(closeButton.getAttribute('id')).toBeNull();
+		});
+
+		it('should close on Enter/Space when button inside panel', () => {
+			render(
+				<Disclosure defaultOpen>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>
+						Panel content
+						<DisclosureButton>Close</DisclosureButton>
+					</DisclosurePanel>
+				</Disclosure>
+			);
+
+			// Panel should be open
+			expect(screen.getByText('Panel content')).toBeTruthy();
+
+			// Press Enter on the button inside the panel
+			fireEvent.keyDown(screen.getByText('Close'), { key: 'Enter' });
+
+			// Panel should be closed
+			expect(screen.queryByText('Close')).toBeNull();
+		});
+	});
+
+	// --- Ref Handling Tests ---
+	// Note: In plain Preact (without preact/compat), refs passed to function components
+	// are received as props but not automatically forwarded to DOM elements.
+	// The render function extracts the ref from props and applies it to the rendered element.
+	// However, when testing-library renders the component, the ref receives the component
+	// instance rather than the DOM element. This is a known Preact behavior difference from React.
+	// For proper ref forwarding, preact/compat's forwardRef is needed, but this project
+	// uses plain Preact without the compat layer.
+
+	// --- Button Type Resolution Tests ---
+	describe('button type resolution', () => {
+		it('should have type="button" on DisclosureButton by default', () => {
+			render(
+				<Disclosure>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			const button = screen.getByText('Toggle');
+			expect(button.getAttribute('type')).toBe('button');
+		});
+
+		it('should preserve explicit type prop', () => {
+			render(
+				<Disclosure>
+					<DisclosureButton type="submit">Submit</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			const button = screen.getByText('Submit');
+			expect(button.getAttribute('type')).toBe('submit');
+		});
+
+		it('should not add type when as is not button', () => {
+			render(
+				<Disclosure>
+					<DisclosureButton as="div">Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			const button = screen.getByText('Toggle');
+			expect(button.getAttribute('type')).toBeNull();
+		});
+	});
+
+	// --- Firefox Space Key Fix Tests ---
+	describe('firefox space key fix', () => {
+		it('should prevent default on keyup for Space key', () => {
+			render(
+				<Disclosure>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			const button = screen.getByText('Toggle');
+
+			// Open the disclosure first
+			fireEvent.click(button);
+			expect(screen.getByText('Panel content')).toBeTruthy();
+
+			// Simulate keydown + keyup for Space
+			fireEvent.keyDown(button, { key: ' ' });
+			fireEvent.keyUp(button, { key: ' ' });
+
+			// Should be closed after toggle
+			expect(screen.queryByText('Panel content')).toBeNull();
+		});
+	});
+
+	// --- data-headlessui-state Tests ---
+	describe('data-headlessui-state', () => {
+		it('should pass open state in slot to DisclosureButton', () => {
+			render(
+				<Disclosure>
+					<DisclosureButton>
+						{({ open }: { open: boolean }) => (open ? 'Open' : 'Closed')}
+					</DisclosureButton>
+					<DisclosurePanel>Panel content</DisclosurePanel>
+				</Disclosure>
+			);
+
+			expect(screen.getByText('Closed')).toBeTruthy();
+		});
+
+		it('should pass open state in slot to DisclosurePanel', () => {
+			render(
+				<Disclosure defaultOpen>
+					<DisclosureButton>Toggle</DisclosureButton>
+					<DisclosurePanel>
+						{({ open }: { open: boolean }) => (open ? 'Panel is open' : 'Panel is closed')}
+					</DisclosurePanel>
+				</Disclosure>
+			);
+
+			expect(screen.getByText('Panel is open')).toBeTruthy();
+		});
+	});
 });

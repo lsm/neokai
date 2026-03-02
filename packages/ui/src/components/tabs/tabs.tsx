@@ -1,11 +1,16 @@
-import { createContext, createElement } from 'preact';
-import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks';
+import { createContext, createElement, type Ref } from 'preact';
+import { forwardRef } from 'preact/compat';
+import { useCallback, useContext, useState } from 'preact/hooks';
 import { focusElement } from '../../internal/focus-management.ts';
 import { render } from '../../internal/render.ts';
 import type { ElementType } from '../../internal/types.ts';
 import { Features } from '../../internal/types.ts';
 import { useControllable } from '../../internal/use-controllable.ts';
+import { useEvent } from '../../internal/use-event.ts';
 import { useId } from '../../internal/use-id.ts';
+import { useIsoMorphicEffect } from '../../internal/use-iso-morphic-effect.ts';
+import { useResolveButtonType } from '../../internal/use-resolve-button-type.ts';
+import { optionalRef, useSyncRefs } from '../../internal/use-sync-refs.ts';
 
 // --- Context types ---
 
@@ -66,16 +71,19 @@ interface TabGroupProps {
 	[key: string]: unknown;
 }
 
-function TabGroupFn({
-	as: Tag = 'div',
-	selectedIndex: controlledIndex,
-	defaultIndex = 0,
-	onChange,
-	manual = false,
-	vertical = false,
-	children,
-	...rest
-}: TabGroupProps) {
+function TabGroupFn(
+	{
+		as: Tag = 'div',
+		selectedIndex: controlledIndex,
+		defaultIndex = 0,
+		onChange,
+		manual = false,
+		vertical = false,
+		children,
+		...rest
+	}: TabGroupProps,
+	ref: Ref<HTMLElement>
+) {
 	const [selectedIndex, setSelectedIndex] = useControllable(
 		controlledIndex,
 		onChange,
@@ -85,7 +93,7 @@ function TabGroupFn({
 	const [tabs, setTabs] = useState<TabData[]>([]);
 	const [panels, setPanels] = useState<PanelData[]>([]);
 
-	const registerTab = useCallback((tab: TabData) => {
+	const registerTab = useEvent((tab: TabData) => {
 		setTabs((prev) => {
 			if (prev.find((t) => t.id === tab.id)) return prev;
 			const next = [...prev, tab];
@@ -94,9 +102,9 @@ function TabGroupFn({
 		return () => {
 			setTabs((prev) => prev.filter((t) => t.id !== tab.id));
 		};
-	}, []);
+	});
 
-	const registerPanel = useCallback((panel: PanelData) => {
+	const registerPanel = useEvent((panel: PanelData) => {
 		setPanels((prev) => {
 			if (prev.find((p) => p.id === panel.id)) return prev;
 			const next = [...prev, panel];
@@ -105,7 +113,7 @@ function TabGroupFn({
 		return () => {
 			setPanels((prev) => prev.filter((p) => p.id !== panel.id));
 		};
-	}, []);
+	});
 
 	const ctx: TabGroupState = {
 		selectedIndex,
@@ -120,11 +128,13 @@ function TabGroupFn({
 
 	const slot = { selectedIndex };
 
+	const groupRef = useSyncRefs(ref);
+
 	return createElement(
 		TabGroupContext.Provider,
 		{ value: ctx },
 		render({
-			ourProps: {},
+			ourProps: { ref: groupRef },
 			theirProps: { as: Tag, children, ...rest },
 			slot,
 			defaultTag: 'div',
@@ -134,7 +144,7 @@ function TabGroupFn({
 }
 
 TabGroupFn.displayName = 'TabGroup';
-export const TabGroup = TabGroupFn;
+export const TabGroup = forwardRef(TabGroupFn);
 
 // --- TabList ---
 
@@ -144,12 +154,15 @@ interface TabListProps {
 	[key: string]: unknown;
 }
 
-function TabListFn({ as: Tag = 'div', children, ...rest }: TabListProps) {
+function TabListFn({ as: Tag = 'div', children, ...rest }: TabListProps, ref: Ref<HTMLElement>) {
 	const { selectedIndex, vertical } = useTabGroupContext('TabList');
 
 	const slot = { selectedIndex };
 
+	const listRef = useSyncRefs(ref);
+
 	const ourProps: Record<string, unknown> = {
+		ref: listRef,
 		role: 'tablist',
 		'aria-orientation': vertical ? 'vertical' : 'horizontal',
 	};
@@ -164,7 +177,7 @@ function TabListFn({ as: Tag = 'div', children, ...rest }: TabListProps) {
 }
 
 TabListFn.displayName = 'TabList';
-export const TabList = TabListFn;
+export const TabList = forwardRef(TabListFn);
 
 // --- Tab ---
 
@@ -176,28 +189,29 @@ interface TabProps {
 	[key: string]: unknown;
 }
 
-function TabFn({
-	as: Tag = 'button',
-	disabled = false,
-	autoFocus = false,
-	children,
-	...rest
-}: TabProps) {
-	const { selectedIndex, setSelectedIndex, tabs, panels, manual, vertical } =
+function TabFn(
+	{ as: Tag = 'button', disabled = false, autoFocus = false, children, ...rest }: TabProps,
+	ref: Ref<HTMLElement>
+) {
+	const { selectedIndex, setSelectedIndex, tabs, panels, manual, vertical, registerTab } =
 		useTabGroupContext('Tab');
 
 	const id = useId();
-	const ref = useRef<HTMLElement | null>(null);
+	const internalRef = { current: null as HTMLElement | null };
+	const [element, setElement] = useState<HTMLElement | null>(null);
+	const tabRef = useSyncRefs(
+		internalRef,
+		ref,
+		optionalRef((el: HTMLElement) => setElement(el))
+	);
 
 	const [hover, setHover] = useState(false);
 	const [focus, setFocus] = useState(false);
 	const [active, setActive] = useState(false);
 
-	const { registerTab } = useTabGroupContext('Tab');
-
 	// Register/unregister this tab
-	useEffect(() => {
-		const tabData: TabData = { id, ref, disabled };
+	useIsoMorphicEffect(() => {
+		const tabData: TabData = { id, ref: internalRef, disabled };
 		return registerTab(tabData);
 	}, [id, registerTab, disabled]);
 
@@ -205,6 +219,12 @@ function TabFn({
 	const myIndex = tabs.findIndex((t) => t.id === id);
 	const selected = myIndex !== -1 && myIndex === selectedIndex;
 	const panelId = panels[myIndex]?.id;
+
+	// Resolve button type
+	const buttonType = useResolveButtonType(
+		{ as: Tag, type: rest.type as string | undefined },
+		element
+	);
 
 	const getNextNonDisabledIndex = useCallback(
 		(from: number, direction: 1 | -1): number => {
@@ -218,85 +238,88 @@ function TabFn({
 		[tabs]
 	);
 
-	const handleKeyDown = useCallback(
-		(e: KeyboardEvent) => {
-			if (myIndex === -1) return;
+	const handleKeyDown = useEvent((e: KeyboardEvent) => {
+		if (myIndex === -1) return;
 
-			const prevKey = vertical ? 'ArrowUp' : 'ArrowLeft';
-			const nextKey = vertical ? 'ArrowDown' : 'ArrowRight';
+		const prevKey = vertical ? 'ArrowUp' : 'ArrowLeft';
+		const nextKey = vertical ? 'ArrowDown' : 'ArrowRight';
 
-			let targetIndex: number | null = null;
-			const activate = !manual;
+		let targetIndex: number | null = null;
+		// In manual mode, arrow key navigation should NOT change selection
+		// Only Enter/Space should activate the tab
+		const shouldActivateOnNavigate = !manual;
 
-			switch (e.key) {
-				case nextKey: {
-					e.preventDefault();
-					targetIndex = getNextNonDisabledIndex(myIndex, 1);
-					break;
-				}
-				case prevKey: {
-					e.preventDefault();
-					targetIndex = getNextNonDisabledIndex(myIndex, -1);
-					break;
-				}
-				case 'Home': {
-					e.preventDefault();
-					targetIndex = getNextNonDisabledIndex(-1, 1);
-					break;
-				}
-				case 'End': {
-					e.preventDefault();
-					targetIndex = getNextNonDisabledIndex(tabs.length, -1);
-					break;
-				}
-				case 'Enter':
-				case ' ': {
-					e.preventDefault();
-					if (manual && !disabled) {
-						setSelectedIndex(myIndex);
-					}
-					return;
-				}
-				default:
-					return;
+		switch (e.key) {
+			case nextKey: {
+				e.preventDefault();
+				targetIndex = getNextNonDisabledIndex(myIndex, 1);
+				break;
 			}
-
-			if (targetIndex === null) return;
-
-			const targetTab = tabs[targetIndex];
-			if (!targetTab) return;
-
-			focusElement(targetTab.ref.current);
-			if (activate && !targetTab.disabled) {
-				setSelectedIndex(targetIndex);
+			case prevKey: {
+				e.preventDefault();
+				targetIndex = getNextNonDisabledIndex(myIndex, -1);
+				break;
 			}
-		},
-		[myIndex, vertical, manual, disabled, tabs, getNextNonDisabledIndex, setSelectedIndex]
-	);
-
-	const handleClick = useCallback(
-		(e: MouseEvent) => {
-			if (disabled) return;
-			e.preventDefault();
-			if (myIndex !== -1) {
-				setSelectedIndex(myIndex);
+			case 'Home': {
+				e.preventDefault();
+				targetIndex = getNextNonDisabledIndex(-1, 1);
+				break;
 			}
-		},
-		[disabled, myIndex, setSelectedIndex]
-	);
+			case 'End': {
+				e.preventDefault();
+				targetIndex = getNextNonDisabledIndex(tabs.length, -1);
+				break;
+			}
+			case 'Enter':
+			case ' ': {
+				e.preventDefault();
+				if (!disabled) {
+					setSelectedIndex(myIndex);
+				}
+				return;
+			}
+			default:
+				return;
+		}
 
-	const handleFocus = useCallback(() => {
+		if (targetIndex === null) return;
+
+		const targetTab = tabs[targetIndex];
+		if (!targetTab) return;
+
+		focusElement(targetTab.ref.current);
+		if (shouldActivateOnNavigate && !targetTab.disabled) {
+			setSelectedIndex(targetIndex);
+		}
+	});
+
+	const handleClick = useEvent((e: MouseEvent) => {
+		if (disabled) return;
+		e.preventDefault();
+		if (myIndex !== -1) {
+			setSelectedIndex(myIndex);
+		}
+	});
+
+	const handleFocus = useEvent(() => {
 		setFocus(true);
 		// In automatic mode, focusing a tab selects it
 		if (!manual && !disabled && myIndex !== -1) {
 			setSelectedIndex(myIndex);
 		}
-	}, [manual, disabled, myIndex, setSelectedIndex]);
+	});
+
+	const handleBlur = useEvent(() => setFocus(false));
+	const handleMouseEnter = useEvent(() => setHover(true));
+	const handleMouseLeave = useEvent(() => setHover(false));
+	const handleMouseDown = useEvent(() => setActive(true));
+	const handleMouseUp = useEvent(() => setActive(false));
 
 	const ourProps: Record<string, unknown> = {
 		id,
-		ref,
+		ref: tabRef,
 		role: 'tab',
+		type: buttonType,
 		'aria-selected': selected,
 		'aria-controls': panelId,
 		tabIndex: selected ? 0 : -1,
@@ -304,12 +327,12 @@ function TabFn({
 		disabled: disabled || undefined,
 		onClick: handleClick,
 		onKeyDown: handleKeyDown,
-		onMouseEnter: () => setHover(true),
-		onMouseLeave: () => setHover(false),
+		onMouseEnter: handleMouseEnter,
+		onMouseLeave: handleMouseLeave,
 		onFocus: handleFocus,
-		onBlur: () => setFocus(false),
-		onMouseDown: () => setActive(true),
-		onMouseUp: () => setActive(false),
+		onBlur: handleBlur,
+		onMouseDown: handleMouseDown,
+		onMouseUp: handleMouseUp,
 	};
 
 	const slot = { selected, hover, focus, active, autofocus: autoFocus, disabled };
@@ -324,7 +347,7 @@ function TabFn({
 }
 
 TabFn.displayName = 'Tab';
-export const Tab = TabFn;
+export const Tab = forwardRef(TabFn);
 
 // --- TabPanels ---
 
@@ -334,13 +357,18 @@ interface TabPanelsProps {
 	[key: string]: unknown;
 }
 
-function TabPanelsFn({ as: Tag = 'div', children, ...rest }: TabPanelsProps) {
+function TabPanelsFn(
+	{ as: Tag = 'div', children, ...rest }: TabPanelsProps,
+	ref: Ref<HTMLElement>
+) {
 	const { selectedIndex } = useTabGroupContext('TabPanels');
 
 	const slot = { selectedIndex };
 
+	const panelsRef = useSyncRefs(ref);
+
 	return render({
-		ourProps: {},
+		ourProps: { ref: panelsRef },
 		theirProps: { as: Tag, children, ...rest },
 		slot,
 		defaultTag: 'div',
@@ -349,7 +377,7 @@ function TabPanelsFn({ as: Tag = 'div', children, ...rest }: TabPanelsProps) {
 }
 
 TabPanelsFn.displayName = 'TabPanels';
-export const TabPanels = TabPanelsFn;
+export const TabPanels = forwardRef(TabPanelsFn);
 
 // --- TabPanel ---
 
@@ -361,23 +389,21 @@ interface TabPanelProps {
 	[key: string]: unknown;
 }
 
-function TabPanelFn({
-	as: Tag = 'div',
-	static: isStatic = false,
-	unmount = true,
-	children,
-	...rest
-}: TabPanelProps) {
+function TabPanelFn(
+	{ as: Tag = 'div', static: isStatic = false, unmount = true, children, ...rest }: TabPanelProps,
+	ref: Ref<HTMLElement>
+) {
 	const { selectedIndex, panels, tabs, registerPanel } = useTabGroupContext('TabPanel');
 
 	const id = useId();
-	const ref = useRef<HTMLElement | null>(null);
+	const internalRef = { current: null as HTMLElement | null };
+	const panelRef = useSyncRefs(internalRef, ref);
 
 	const [focus, setFocus] = useState(false);
 
 	// Register/unregister this panel
-	useEffect(() => {
-		const panelData: PanelData = { id, ref };
+	useIsoMorphicEffect(() => {
+		const panelData: PanelData = { id, ref: internalRef };
 		return registerPanel(panelData);
 	}, [id, registerPanel]);
 
@@ -386,14 +412,17 @@ function TabPanelFn({
 	const selected = myIndex !== -1 && myIndex === selectedIndex;
 	const tabId = tabs[myIndex]?.id;
 
+	const handleFocus = useEvent(() => setFocus(true));
+	const handleBlur = useEvent(() => setFocus(false));
+
 	const ourProps: Record<string, unknown> = {
 		id,
-		ref,
+		ref: panelRef,
 		role: 'tabpanel',
 		'aria-labelledby': tabId,
 		tabIndex: selected ? 0 : undefined,
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
+		onFocus: handleFocus,
+		onBlur: handleBlur,
 	};
 
 	const slot = { selected, focus };
@@ -418,4 +447,4 @@ function TabPanelFn({
 }
 
 TabPanelFn.displayName = 'TabPanel';
-export const TabPanel = TabPanelFn;
+export const TabPanel = forwardRef(TabPanelFn);

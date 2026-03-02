@@ -376,4 +376,104 @@ describe('Dialog', () => {
 		// unmount=false keeps it in DOM
 		expect(document.querySelector('[role="dialog"]')).not.toBeNull();
 	});
+
+	it('should accept initialFocus prop', async () => {
+		// This test verifies that the Dialog accepts the initialFocus prop
+		// The actual focus behavior is tested in use-focus-trap.test.tsx
+		const onClose = vi.fn();
+		const initialFocusRef = { current: null as HTMLInputElement | null };
+
+		// Should not throw when passing initialFocus
+		const { container } = render(
+			<Dialog open={true} onClose={onClose} initialFocus={initialFocusRef}>
+				<DialogPanel>
+					<button>First button</button>
+				</DialogPanel>
+			</Dialog>
+		);
+		await act(async () => {});
+
+		expect(getDialog()).not.toBeNull();
+	});
+
+	it('should support __demoMode prop to disable aria-modal', async () => {
+		const onClose = vi.fn();
+
+		render(
+			<Dialog open={true} onClose={onClose} __demoMode>
+				<DialogPanel>
+					<button data-testid="demo-button">Demo button</button>
+				</DialogPanel>
+			</Dialog>
+		);
+		await act(async () => {});
+
+		// In demo mode, aria-modal should not be set (undefined becomes null when getting attribute)
+		const dialog = getDialog();
+		expect(dialog?.getAttribute('aria-modal')).toBeNull();
+	});
+
+	it('should set id attribute on dialog element', async () => {
+		const onClose = vi.fn();
+
+		render(
+			<Dialog open={true} onClose={onClose}>
+				<DialogPanel>Panel content</DialogPanel>
+			</Dialog>
+		);
+		await act(async () => {});
+
+		const dialog = getDialog();
+		expect(dialog?.id.startsWith('headlessui-dialog-')).toBe(true);
+	});
+
+	it('should set tabIndex=-1 on dialog element', async () => {
+		const onClose = vi.fn();
+
+		render(
+			<Dialog open={true} onClose={onClose}>
+				<DialogPanel>Panel content</DialogPanel>
+			</Dialog>
+		);
+		await act(async () => {});
+
+		const dialog = getDialog();
+		expect(dialog?.tabIndex).toBe(-1);
+	});
+
+	it('should set id on DialogPanel', async () => {
+		const onClose = vi.fn();
+
+		render(
+			<Dialog open={true} onClose={onClose}>
+				<DialogPanel data-testid="panel">Panel content</DialogPanel>
+			</Dialog>
+		);
+		await act(async () => {});
+
+		const panel = document.body.querySelector('[data-testid="panel"]');
+		expect(panel?.id.startsWith('headlessui-dialog-panel-')).toBe(true);
+	});
+
+	it('should stop propagation on DialogPanel click', async () => {
+		const onClose = vi.fn();
+		const parentClick = vi.fn();
+
+		render(
+			<div onClick={parentClick}>
+				<Dialog open={true} onClose={onClose}>
+					<DialogPanel data-testid="panel">Panel content</DialogPanel>
+				</Dialog>
+			</div>
+		);
+		await act(async () => {});
+
+		const panel = document.body.querySelector('[data-testid="panel"]');
+		expect(panel).not.toBeNull();
+		if (panel) {
+			fireEvent.click(panel);
+		}
+		// Parent click should not be called because click is stopped
+		expect(parentClick).not.toHaveBeenCalled();
+	});
 });

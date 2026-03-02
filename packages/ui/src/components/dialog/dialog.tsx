@@ -12,6 +12,9 @@ import { useId } from '../../internal/use-id.ts';
 import { useInert } from '../../internal/use-inert.ts';
 import { useOutsideClick } from '../../internal/use-outside-click.ts';
 import { useScrollLock } from '../../internal/use-scroll-lock.ts';
+import { useEvent } from '../../internal/use-event.ts';
+import { useIsoMorphicEffect } from '../../internal/use-iso-morphic-effect.ts';
+import { stackMachines } from '../../internal/stack-machine.ts';
 
 // --- Context ---
 
@@ -87,10 +90,12 @@ interface DialogProps {
 	onClose: (value: boolean) => void;
 	role?: 'dialog' | 'alertdialog';
 	autoFocus?: boolean;
+	initialFocus?: RefObject<HTMLElement | null>;
 	as?: ElementType;
 	transition?: boolean;
 	static?: boolean;
 	unmount?: boolean;
+	__demoMode?: boolean;
 	children?: unknown;
 	[key: string]: unknown;
 }
@@ -100,13 +105,18 @@ function DialogFn({
 	onClose,
 	role = 'dialog',
 	autoFocus = true,
+	initialFocus,
 	as: Tag = 'div',
 	transition = false,
 	static: isStatic = false,
 	unmount = true,
+	__demoMode = false,
 	children,
 	...rest
 }: DialogProps) {
+	const internalId = useId();
+	const id = `headlessui-dialog-${internalId}`;
+
 	const dialogRef = useRef<HTMLElement | null>(null);
 	const panelRef = useRef<HTMLElement | null>(null);
 	const [titleId, setTitleId] = useState<string | null>(null);
@@ -119,16 +129,57 @@ function DialogFn({
 		[onClose]
 	);
 
-	useFocusTrap(panelRef, open && autoFocus);
-	useScrollLock(open);
+	// Stack machine integration for proper nested dialog handling
+	const stackMachine = stackMachines.get(null);
+
+	// Register/unregister with stack machine when dialog opens/closes
+	useIsoMorphicEffect(() => {
+		if (!open) return;
+
+		stackMachine.actions.push(id);
+		return () => stackMachine.actions.pop(id);
+	}, [stackMachine, id, open]);
+
+	// Check if this dialog is the top layer
+	// Read directly from stack machine state for synchronous check
+	const isTopLayerRef = useRef(true);
+	useIsoMorphicEffect(() => {
+		isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
+	});
+
+	// Determine if we should handle escape/outside-click events
+	// For single dialogs (not yet in stack), we should handle events
+	const shouldHandleEvents =
+		open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, id));
+
+	// Focus trap with initialFocus support
+	useFocusTrap(panelRef, open && autoFocus && !__demoMode, {
+		initialFocus,
+		restoreFocus: !__demoMode,
+	});
+
+	// Scroll lock (disabled in demo mode)
+	useScrollLock(open && !__demoMode);
+
+	// Inert handling for accessibility
 	useInert(dialogRef, open);
+
+	// Escape key handler - only when we should handle events
 	useEscape(
-		useCallback(() => handleClose(false), [handleClose]),
+		useCallback(() => {
+			if (!shouldHandleEvents) return;
+			handleClose(false);
+		}, [shouldHandleEvents, handleClose]),
 		open
 	);
+
+	// Outside click handler - only when we should handle events
 	useOutsideClick(
 		[panelRef],
-		useCallback(() => handleClose(false), [handleClose]),
+		useCallback(() => {
+			if (!shouldHandleEvents) return;
+			handleClose(false);
+		}, [shouldHandleEvents, handleClose]),
 		open
 	);
 
@@ -137,9 +188,11 @@ function DialogFn({
 	const slot = { open };
 
 	const ourProps: Record<string, unknown> = {
+		id,
 		ref: dialogRef,
 		role,
-		'aria-modal': true,
+		tabIndex: -1,
+		'aria-modal': __demoMode ? undefined : open ? true : undefined,
 		'aria-labelledby': titleId ?? undefined,
 		'aria-describedby': descriptionId ?? undefined,
 		...transitionAttrs,
@@ -198,13 +251,21 @@ function DialogPanelFn({
 }: DialogPanelProps) {
 	const { open, panelRef } = useDialogContext('DialogPanel');
 	const id = useId();
+	const panelId = `headlessui-dialog-panel-${id}`;
+
 	const transitionAttrs = useTransitionAttrs(open, transition);
 
 	const slot = { open };
 
+	// Prevent click events from bubbling through to parent elements
+	const handleClick = useEvent((event: MouseEvent) => {
+		event.stopPropagation();
+	});
+
 	const ourProps: Record<string, unknown> = {
-		id,
+		id: panelId,
 		ref: panelRef,
+		onClick: handleClick,
 		...transitionAttrs,
 	};
 
@@ -231,16 +292,17 @@ interface DialogTitleProps {
 function DialogTitleFn({ as: Tag = 'h2', children, ...rest }: DialogTitleProps) {
 	const { open, setTitleId } = useDialogContext('DialogTitle');
 	const id = useId();
+	const titleId = `headlessui-dialog-title-${id}`;
 
 	useEffect(() => {
-		setTitleId(id);
+		setTitleId(titleId);
 		return () => setTitleId(null);
-	}, [id, setTitleId]);
+	}, [titleId, setTitleId]);
 
 	const slot = { open };
 
 	const ourProps: Record<string, unknown> = {
-		id,
+		id: titleId,
 	};
 
 	return render({
@@ -266,16 +328,17 @@ interface DialogDescriptionProps {
 function DialogDescriptionFn({ as: Tag = 'p', children, ...rest }: DialogDescriptionProps) {
 	const { open, setDescriptionId } = useDialogContext('DialogDescription');
 	const id = useId();
+	const descriptionId = `headlessui-dialog-description-${id}`;
 
 	useEffect(() => {
-		setDescriptionId(id);
+		setDescriptionId(descriptionId);
 		return () => setDescriptionId(null);
-	}, [id, setDescriptionId]);
+	}, [descriptionId, setDescriptionId]);
 
 	const slot = { open };
 
 	const ourProps: Record<string, unknown> = {
-		id,
+		id: descriptionId,
 	};
 
 	return render({
@@ -310,9 +373,9 @@ function DialogBackdropFn({
 
 	const slot = { open };
 
-	const handleClick = useCallback(() => {
+	const handleClick = useEvent(() => {
 		onClose(false);
-	}, [onClose]);
+	});
 
 	const ourProps: Record<string, unknown> = {
 		'aria-hidden': true,
@@ -347,9 +410,9 @@ function CloseButtonFn({ as: Tag = 'button', children, ...rest }: CloseButtonPro
 	const [focus, setFocus] = useState(false);
 	const [active, setActive] = useState(false);
 
-	const handleClick = useCallback(() => {
+	const handleClick = useEvent(() => {
 		onClose(false);
-	}, [onClose]);
+	});
 
 	const slot = { hover, focus, active };
 

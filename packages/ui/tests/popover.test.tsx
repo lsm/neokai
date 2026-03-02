@@ -84,11 +84,15 @@ describe('Popover', () => {
 		expect(btn.getAttribute('aria-controls')).toBe(panelId);
 	});
 
-	it('should close on Escape key', () => {
+	it('should close on Escape key', async () => {
 		render(<BasicPopover />);
-		fireEvent.click(screen.getByText('Toggle'));
+		await act(async () => {
+			fireEvent.click(screen.getByText('Toggle'));
+		});
 		expect(screen.getByText('Panel content')).not.toBeNull();
-		fireEvent.keyDown(document, { key: 'Escape' });
+		await act(async () => {
+			fireEvent.keyDown(document, { key: 'Escape' });
+		});
 		expect(screen.queryByText('Panel content')).toBeNull();
 	});
 
@@ -238,11 +242,8 @@ describe('Popover', () => {
 			await act(async () => {
 				vi.advanceTimersByTime(10);
 			});
-			await act(async () => {
-				document.body.dispatchEvent(
-					new PointerEvent('pointerdown', { bubbles: true, cancelable: true })
-				);
-			});
+			// Dispatch pointerdown on body (outside the panel)
+			fireEvent.pointerDown(document.body);
 			expect(screen.queryByText('Panel content')).toBeNull();
 		} finally {
 			vi.useRealTimers();

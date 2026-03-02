@@ -2,13 +2,35 @@ import { type ComponentChildren, createElement, Fragment, type Ref, type VNode }
 import { type ElementType, Features, RenderStrategy } from './types.ts';
 
 // Merge slot props data attributes into the element
+// Generates data-headlessui-state attribute with space-separated state names
+// and individual data-* attributes for each truthy boolean value
 function mergeDataAttributes(slot: Record<string, unknown>): Record<string, string | undefined> {
 	const result: Record<string, string | undefined> = {};
+
+	// Check if slot has any boolean values
+	let hasBooleanState = false;
+	const truthyStates: string[] = [];
+
 	for (const [key, value] of Object.entries(slot)) {
 		if (typeof value === 'boolean') {
-			result[`data-${key.replace(/([A-Z])/g, '-$1').toLowerCase()}`] = value ? '' : undefined;
+			hasBooleanState = true;
+			// Convert camelCase to kebab-case (e.g., focusVisible -> focus-visible)
+			const kebabKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
+			if (value) {
+				truthyStates.push(kebabKey);
+			}
 		}
 	}
+
+	// Only add data-headlessui-state if there are boolean states in the slot
+	if (hasBooleanState) {
+		result['data-headlessui-state'] = truthyStates.length > 0 ? truthyStates.join(' ') : '';
+		// Add individual data-* attributes for each truthy state
+		for (const state of truthyStates) {
+			result[`data-${state}`] = '';
+		}
+	}
+
 	return result;
 }
 

@@ -42,7 +42,9 @@ export {
 } from './components/menu/menu.tsx';
 export {
 	Popover,
+	PopoverBackdrop,
 	PopoverButton,
+	PopoverGroup,
 	PopoverPanel,
 } from './components/popover/popover.tsx';
 export { Tooltip, TooltipPanel, TooltipTrigger } from './components/tooltip/tooltip.tsx';

@@ -6,14 +6,35 @@ import {
 	calculateActiveIndex,
 	Focus,
 } from '../../internal/calculate-active-index.ts';
+import { disposables } from '../../internal/disposables.ts';
+import {
+	FloatingProvider,
+	useFloatingPanel,
+	useFloatingPanelProps,
+	useFloatingReference,
+	useFloatingReferenceProps,
+} from '../../internal/floating-provider.tsx';
 import { OpenClosedContext, State } from '../../internal/open-closed.ts';
 import { Portal } from '../../internal/portal.ts';
 import { render } from '../../internal/render.ts';
+import { stackMachines } from '../../internal/stack-machine.ts';
 import type { ElementType } from '../../internal/types.ts';
 import { Features } from '../../internal/types.ts';
 import { useEscape } from '../../internal/use-escape.ts';
+import { useEvent } from '../../internal/use-event.ts';
 import { useId } from '../../internal/use-id.ts';
+import { useInert } from '../../internal/use-inert.ts';
+import { useIsoMorphicEffect } from '../../internal/use-iso-morphic-effect.ts';
 import { useOutsideClick } from '../../internal/use-outside-click.ts';
+import {
+	useResolvedAnchor,
+	type AnchorPropsWithSelection,
+} from '../../internal/use-anchor-props.ts';
+import { useResolveButtonType } from '../../internal/use-resolve-button-type.ts';
+import { useScrollLock } from '../../internal/use-scroll-lock.ts';
+// Note: We don't use useSlice for stack machine - using ref + effect pattern instead
+// to avoid type compatibility issues between StackMachine and the generic Machine type
+import { useSyncRefs } from '../../internal/use-sync-refs.ts';
 import { useTextValue } from '../../internal/use-text-value.ts';
 import { useTrackedPointer } from '../../internal/use-tracked-pointer.ts';
 
@@ -27,6 +48,7 @@ interface MenuItemData {
 }
 
 interface MenuState {
+	id: string;
 	open: boolean;
 	toggle: () => void;
 	close: () => void;
@@ -108,6 +130,7 @@ interface MenuProps {
 }
 
 function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
+	const id = useId();
 	const [open, setOpen] = useState(false);
 	const [items, setItems] = useState<MenuItemData[]>([]);
 	const [activeItemIndex, setActiveItemIndex] = useState<number | null>(null);
@@ -120,14 +143,31 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
 	const buttonRef = useRef<HTMLElement | null>(null);
 	const itemsRef = useRef<HTMLElement | null>(null);
 
-	const toggle = useCallback(() => setOpen((v) => !v), []);
+	// Stack machine integration - register/unregister this menu
+	const stackMachine = stackMachines.get(null);
 
-	const close = useCallback(() => {
+	// Check if this menu is the top layer using ref + effect pattern (like dialog.tsx)
+	const isTopLayerRef = useRef(true);
+	useIsoMorphicEffect(() => {
+		isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, id);
+	});
+
+	// Register with stack machine when open changes
+	useIsoMorphicEffect(() => {
+		if (open) {
+			stackMachine.actions.push(id);
+			return () => stackMachine.actions.pop(id);
+		}
+	}, [open, id, stackMachine]);
+
+	const toggle = useEvent(() => setOpen((v) => !v));
+
+	const close = useEvent(() => {
 		setOpen(false);
 		setActiveItemIndex(null);
-	}, []);
+	});
 
-	const registerItem = useCallback((item: MenuItemData) => {
+	const registerItem = useEvent((item: MenuItemData) => {
 		setItems((prev) => {
 			// Insert in DOM order
 			if (item.ref.current && itemsRef.current) {
@@ -143,13 +183,14 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
 			}
 			return [...prev, item];
 		});
-	}, []);
+	});
 
-	const unregisterItem = useCallback((id: string) => {
+	const unregisterItem = useEvent((id: string) => {
 		setItems((prev) => prev.filter((item) => item.id !== id));
-	}, []);
+	});
 
 	const ctx: MenuState = {
+		id,
 		open,
 		toggle,
 		close,
@@ -168,19 +209,28 @@ function MenuFn({ as: Tag = Fragment, children, ...rest }: MenuProps) {
 
 	const slot = { open, close };
 
+	// Ref forwarding for the menu root
+	const menuRef = useSyncRefs(
+		rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
+	);
+
 	return createElement(
-		MenuContext.Provider,
-		{ value: ctx },
+		FloatingProvider,
+		null,
 		createElement(
-			OpenClosedContext.Provider,
-			{ value: open ? State.Open : State.Closed },
-			render({
-				ourProps: {},
-				theirProps: { as: Tag, children, ...rest },
-				slot,
-				defaultTag: Fragment,
-				name: 'Menu',
-			})
+			MenuContext.Provider,
+			{ value: ctx },
+			createElement(
+				OpenClosedContext.Provider,
+				{ value: open ? State.Open : State.Closed },
+				render({
+					ourProps: menuRef ? { ref: menuRef } : {},
+					theirProps: { as: Tag, children, ...rest },
+					slot,
+					defaultTag: Fragment,
+					name: 'Menu',
+				})
+			)
 		)
 	);
 }
@@ -205,76 +255,113 @@ function MenuButtonFn({
 	children,
 	...rest
 }: MenuButtonProps) {
-	const { open, toggle, close, buttonRef, buttonId, itemsId, itemsRef } =
-		useMenuContext('MenuButton');
+	const {
+		open,
+		toggle,
+		close,
+		buttonRef: contextButtonRef,
+		buttonId,
+		itemsId,
+		itemsRef,
+	} = useMenuContext('MenuButton');
 
+	// Internal ref for element access
+	const internalRef = useRef<HTMLElement | null>(null);
+
+	// Floating UI reference
+	const setFloatingReference = useFloatingReference();
+	const getFloatingReferenceProps = useFloatingReferenceProps();
+
+	// Combined ref: context ref + floating ref + internal ref
+	const buttonRef = useSyncRefs(
+		contextButtonRef,
+		setFloatingReference,
+		internalRef,
+		rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
+	);
+
+	// Resolve button type (auto-add type="button" for native buttons)
+	const resolvedType = useResolveButtonType(
+		{ as: Tag, type: rest.type as string | undefined },
+		internalRef.current
+	);
+
+	// Stack machine - check if this menu is on top (not used in MenuButton currently)
+	// but included for consistency with Headless UI v2 pattern
+
+	// State for hover/focus/active
 	const [hover, setHover] = useState(false);
 	const [focus, setFocus] = useState(false);
 	const [active, setActive] = useState(false);
 
-	const handleClick = useCallback(
-		(e: MouseEvent) => {
-			if (disabled) return;
-			e.preventDefault();
-			toggle();
-		},
-		[disabled, toggle]
-	);
+	const handleClick = useEvent((e: MouseEvent) => {
+		if (disabled) return;
+		e.preventDefault();
+		toggle();
+	});
 
-	const handleKeyDown = useCallback(
-		(e: KeyboardEvent) => {
-			if (disabled) return;
-			if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				if (!open) {
-					toggle();
+	const handleKeyDown = useEvent((e: KeyboardEvent) => {
+		if (disabled) return;
+		if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			if (!open) {
+				toggle();
+			}
+			// Focus first item after opening
+			requestAnimationFrame(() => {
+				const el = itemsRef.current;
+				if (el) {
+					el.focus();
 				}
-				// Focus first item after opening
-				requestAnimationFrame(() => {
-					const el = itemsRef.current;
-					if (el) {
-						el.focus();
-					}
-					// Dispatch a synthetic ArrowDown or nothing — the MenuItems keydown handler
-					// will handle focusing first/last item. We signal via a custom event.
-					el?.dispatchEvent(
+				// Dispatch a synthetic ArrowDown or nothing — the MenuItems keydown handler
+				// will handle focusing first/last item. We signal via a custom event.
+				el?.dispatchEvent(
+					new CustomEvent('menu:openkey', {
+						detail: { key: e.key === 'ArrowUp' ? 'ArrowUp' : 'ArrowDown' },
+						bubbles: false,
+					})
+				);
+			});
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (!open) {
+				toggle();
+			}
+			requestAnimationFrame(() => {
+				const el = itemsRef.current;
+				if (el) {
+					el.focus();
+					el.dispatchEvent(
 						new CustomEvent('menu:openkey', {
-							detail: { key: e.key === 'ArrowUp' ? 'ArrowUp' : 'ArrowDown' },
+							detail: { key: 'ArrowUp' },
 							bubbles: false,
 						})
 					);
-				});
-			} else if (e.key === 'ArrowUp') {
-				e.preventDefault();
-				if (!open) {
-					toggle();
 				}
-				requestAnimationFrame(() => {
-					const el = itemsRef.current;
-					if (el) {
-						el.focus();
-						el.dispatchEvent(
-							new CustomEvent('menu:openkey', {
-								detail: { key: 'ArrowUp' },
-								bubbles: false,
-							})
-						);
-					}
-				});
-			} else if (e.key === 'Escape') {
-				e.preventDefault();
-				close();
-				requestAnimationFrame(() => {
-					buttonRef.current?.focus();
-				});
-			}
-		},
-		[disabled, open, toggle, close, itemsRef, buttonRef]
-	);
+			});
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			close();
+			requestAnimationFrame(() => {
+				contextButtonRef.current?.focus();
+			});
+		}
+	});
+
+	// Firefox Space key fix - prevent Space from triggering click after keydown preventDefault
+	const handleKeyUp = useEvent((e: KeyboardEvent) => {
+		if (e.key === ' ') {
+			e.preventDefault();
+		}
+	});
+
+	const floatingProps = getFloatingReferenceProps();
 
 	const ourProps: Record<string, unknown> = {
+		...floatingProps,
 		id: buttonId,
 		ref: buttonRef,
+		type: resolvedType,
 		'aria-haspopup': 'menu',
 		'aria-expanded': open,
 		'aria-controls': itemsId,
@@ -282,6 +369,7 @@ function MenuButtonFn({
 		disabled: disabled || undefined,
 		onClick: handleClick,
 		onKeyDown: handleKeyDown,
+		onKeyUp: handleKeyUp,
 		onMouseEnter: () => setHover(true),
 		onMouseLeave: () => setHover(false),
 		onFocus: () => setFocus(true),
@@ -290,7 +378,7 @@ function MenuButtonFn({
 		onMouseUp: () => setActive(false),
 	};
 
-	const slot = { open, hover, focus, active, autofocus: autoFocus, disabled };
+	const slot = { open, hover, focus, active: active || open, autofocus: autoFocus, disabled };
 
 	return render({
 		ourProps,
@@ -311,7 +399,7 @@ interface MenuItemsProps {
 	transition?: boolean;
 	static?: boolean;
 	unmount?: boolean;
-	anchor?: string;
+	anchor?: AnchorPropsWithSelection;
 	portal?: boolean;
 	modal?: boolean;
 	children?: unknown;
@@ -323,17 +411,18 @@ function MenuItemsFn({
 	transition = false,
 	static: isStatic = false,
 	unmount = true,
-	anchor: _anchor,
+	anchor: rawAnchor,
 	portal = false,
 	modal = true,
 	children,
 	...rest
 }: MenuItemsProps) {
 	const {
+		id: menuId,
 		open,
 		close,
 		buttonRef,
-		itemsRef,
+		itemsRef: contextItemsRef,
 		buttonId,
 		itemsId,
 		items,
@@ -342,47 +431,86 @@ function MenuItemsFn({
 		setActivationTrigger,
 	} = useMenuContext('MenuItems');
 
+	// Resolve anchor configuration
+	const anchor = useResolvedAnchor(rawAnchor);
+
+	// Internal ref for element access
+	const internalRef = useRef<HTMLElement | null>(null);
+
+	// Floating UI panel positioning
+	const [floatingRef, floatingStyles] = useFloatingPanel(anchor);
+	const getFloatingPanelProps = useFloatingPanelProps();
+
+	// Combined ref: context ref + floating ref (if anchor is set) + internal ref
+	const itemsRef = useSyncRefs(
+		contextItemsRef,
+		anchor ? floatingRef : null,
+		internalRef,
+		rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
+	);
+
+	// Stack machine - check if this menu is on top using ref + effect pattern
+	const stackMachine = stackMachines.get(null);
+	const isTopLayerRef = useRef(true);
+	useIsoMorphicEffect(() => {
+		isTopLayerRef.current = stackMachine.selectors.isTop(stackMachine.state, menuId);
+	});
+
+	// Determine if we should handle events (same pattern as dialog.tsx)
+	const shouldHandleEvents =
+		open && (isTopLayerRef.current || !stackMachine.selectors.inStack(stackMachine.state, menuId));
+
+	// Search buffer for typeahead
 	const searchBufferRef = useRef('');
 	const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	// Close on outside click
+	// Close on outside click - only if we should handle events
 	useOutsideClick(
-		[buttonRef, itemsRef],
+		shouldHandleEvents ? [buttonRef, internalRef] : [],
 		useCallback(() => {
-			close();
-		}, [close]),
+			if (shouldHandleEvents) {
+				close();
+			}
+		}, [close, shouldHandleEvents]),
 		open
 	);
 
-	// Close on escape
+	// Close on escape - only if we should handle events
 	useEscape(
 		useCallback(
 			(e: KeyboardEvent) => {
+				if (!shouldHandleEvents) return;
 				e.preventDefault();
 				close();
 				requestAnimationFrame(() => {
 					buttonRef.current?.focus();
 				});
 			},
-			[close, buttonRef]
+			[close, buttonRef, shouldHandleEvents]
 		),
-		open
+		open && shouldHandleEvents
 	);
+
+	// Scroll lock when modal and open and we should handle events
+	useScrollLock(modal && open && shouldHandleEvents);
+
+	// Mark other elements inert when modal and open and we should handle events
+	useInert(internalRef, modal && open && shouldHandleEvents);
 
 	// Focus the items container when menu opens
 	useEffect(() => {
 		if (open) {
 			requestAnimationFrame(() => {
-				itemsRef.current?.focus();
+				internalRef.current?.focus();
 			});
 		} else {
 			setActiveItemIndex(null);
 		}
-	}, [open, itemsRef, setActiveItemIndex]);
+	}, [open, setActiveItemIndex]);
 
 	// Listen to the custom event dispatched by MenuButton to focus first/last item
 	useEffect(() => {
-		const el = itemsRef.current;
+		const el = internalRef.current;
 		if (!el) return;
 
 		function handleOpenKey(e: Event) {
@@ -425,7 +553,7 @@ function MenuItemsFn({
 
 		el.addEventListener('menu:openkey', handleOpenKey);
 		return () => el.removeEventListener('menu:openkey', handleOpenKey);
-	}, [items, setActiveItemIndex, setActivationTrigger, itemsRef]);
+	}, [items, setActiveItemIndex, setActivationTrigger]);
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent) => {
@@ -504,6 +632,20 @@ function MenuItemsFn({
 				case 'Tab': {
 					e.preventDefault();
 					close();
+					// Let natural tab proceed after closing
+					requestAnimationFrame(() => {
+						const focusableElements = document.querySelectorAll<HTMLElement>(
+							'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+						);
+						const buttonEl = buttonRef.current;
+						if (!buttonEl) return;
+						const currentIndex = Array.from(focusableElements).indexOf(buttonEl);
+						const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
+						const nextEl = focusableElements[nextIndex];
+						if (nextEl) {
+							nextEl.focus();
+						}
+					});
 					break;
 				}
 				default: {
@@ -554,18 +696,30 @@ function MenuItemsFn({
 	const activeItemId =
 		activeItemIndex !== null && items[activeItemIndex] ? items[activeItemIndex].id : undefined;
 
+	// Get floating panel props if anchor is set
+	const floatingPanelProps = anchor ? getFloatingPanelProps() : {};
+
+	// Always enable portal when anchor is set
+	if (anchor) {
+		portal = true;
+	}
+
 	const ourProps: Record<string, unknown> = {
+		...floatingPanelProps,
 		id: itemsId,
 		ref: itemsRef,
 		role: 'menu',
 		'aria-activedescendant': activeItemId,
 		'aria-labelledby': buttonId,
-		tabIndex: 0,
+		tabIndex: open ? 0 : undefined,
 		onKeyDown: handleKeyDown,
+		style: {
+			...(rest.style as Record<string, unknown> | undefined),
+			...floatingStyles,
+		},
 		...transitionAttrs,
 	};
 
-	void modal;
 	const visible = isStatic || open;
 	const features = Features.RenderStrategy | Features.Static;
 
@@ -612,12 +766,19 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
 	} = useMenuContext('MenuItem');
 
 	const id = useId();
-	const ref = useRef<HTMLElement | null>(null);
+	const internalRef = useRef<HTMLElement | null>(null);
 	const disabledRef = useRef(disabled);
 	disabledRef.current = disabled;
-	const getTextValue = useTextValue(ref);
+	const getTextValue = useTextValue(internalRef);
 	const pointer = useTrackedPointer();
 
+	// Combined ref for forwarding
+	const ref = useSyncRefs(
+		internalRef,
+		rest.ref as RefObject<HTMLElement | null> | ((instance: HTMLElement) => void) | null
+	);
+
+	// State for hover/focus
 	const [hover, setHover] = useState(false);
 	const [focus, setFocus] = useState(false);
 
@@ -625,11 +786,30 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
 	const activeItem = activeItemIndex !== null ? items[activeItemIndex] : null;
 	const isActive = activeItem ? activeItem.id === id : false;
 
+	// Scroll active item into view when activated via keyboard
+	const shouldScrollIntoView = isActive;
+	const prevIsActiveRef = useRef(false);
+
+	useIsoMorphicEffect(() => {
+		if (!shouldScrollIntoView) {
+			prevIsActiveRef.current = false;
+			return;
+		}
+
+		// Only scroll when becoming active (not when already active)
+		if (prevIsActiveRef.current) return;
+		prevIsActiveRef.current = true;
+
+		return disposables().requestAnimationFrame(() => {
+			internalRef.current?.scrollIntoView?.({ block: 'nearest' });
+		});
+	}, [shouldScrollIntoView]);
+
 	// Register/unregister with menu context on mount/unmount
 	useEffect(() => {
 		const itemData: MenuItemData = {
 			id,
-			ref,
+			ref: internalRef,
 			get disabled() {
 				return disabledRef.current;
 			},
@@ -641,58 +821,65 @@ function MenuItemFn({ as: Tag = Fragment, disabled = false, children, ...rest }:
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [id]);
 
-	const handleClick = useCallback(
-		(e: MouseEvent) => {
-			if (disabled) {
-				e.preventDefault();
-				return;
-			}
-			close();
-		},
-		[disabled, close]
-	);
+	const handleClick = useEvent((e: MouseEvent) => {
+		if (disabled) {
+			e.preventDefault();
+			return;
+		}
+		close();
+	});
 
-	const handlePointerMove = useCallback(
-		(e: PointerEvent) => {
-			pointer.update(e);
-			if (!pointer.wasMoved(e)) return;
-			if (disabled) return;
-			setHover(true);
-			// Find this item's index and set active
-			setActiveItemIndex((currentIndex) => {
-				const idx = items.findIndex((item) => item.id === id);
-				if (idx === -1) return currentIndex;
-				return idx;
-			});
-			setActivationTrigger(ActivationTrigger.Pointer);
-		},
-		[disabled, id, items, pointer, setActiveItemIndex, setActivationTrigger]
-	);
+	const handleFocus = useEvent(() => {
+		if (disabled) return;
+		setFocus(true);
+		// Find this item's index and set active
+		setActiveItemIndex((currentIndex) => {
+			const idx = items.findIndex((item) => item.id === id);
+			if (idx === -1) return currentIndex;
+			return idx;
+		});
+		setActivationTrigger(ActivationTrigger.Other);
+	});
 
-	const handlePointerLeave = useCallback(
-		(e: PointerEvent) => {
-			pointer.update(e);
-			setHover(false);
-			setActiveItemIndex((currentIndex) => {
-				const idx = items.findIndex((item) => item.id === id);
-				if (idx !== -1 && currentIndex === idx) return null;
-				return currentIndex;
-			});
-		},
-		[id, items, pointer, setActiveItemIndex]
-	);
+	const handleBlur = useEvent(() => {
+		setFocus(false);
+	});
+
+	const handlePointerMove = useEvent((e: PointerEvent) => {
+		pointer.update(e);
+		if (!pointer.wasMoved(e)) return;
+		if (disabled) return;
+		setHover(true);
+		// Find this item's index and set active
+		setActiveItemIndex((currentIndex) => {
+			const idx = items.findIndex((item) => item.id === id);
+			if (idx === -1) return currentIndex;
+			return idx;
+		});
+		setActivationTrigger(ActivationTrigger.Pointer);
+	});
+
+	const handlePointerLeave = useEvent((e: PointerEvent) => {
+		pointer.update(e);
+		setHover(false);
+		setActiveItemIndex((currentIndex) => {
+			const idx = items.findIndex((item) => item.id === id);
+			if (idx !== -1 && currentIndex === idx) return null;
+			return currentIndex;
+		});
+	});
 
 	const ourProps: Record<string, unknown> = {
 		id,
 		ref,
 		role: 'menuitem',
-		tabIndex: -1,
+		tabIndex: disabled ? undefined : -1,
 		'aria-disabled': disabled || undefined,
 		onClick: handleClick,
+		onFocus: handleFocus,
+		onBlur: handleBlur,
 		onPointerMove: handlePointerMove,
 		onPointerLeave: handlePointerLeave,
-		onFocus: () => setFocus(true),
-		onBlur: () => setFocus(false),
 	};
 
 	const slot = {
