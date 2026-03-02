@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
 	buildCoderSystemPrompt,
+	buildCoderTaskMessage,
 	createCoderAgentInit,
 	type CoderAgentConfig,
 } from '../../../src/lib/room/coder-agent';
@@ -63,38 +64,60 @@ function makeConfig(overrides?: Partial<CoderAgentConfig>): CoderAgentConfig {
 
 describe('Coder Agent', () => {
 	describe('buildCoderSystemPrompt', () => {
+		it('includes mandatory git workflow with feature branch and PR instructions', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('Git Workflow (MANDATORY)');
+			expect(prompt).toContain('feature branch');
+			expect(prompt).toContain('gh pr create');
+			expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
+		});
+
+		it('includes coder agent role description', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('You are a Coder Agent');
+		});
+
+		it('should NOT include task-specific context', () => {
+			const prompt = buildCoderSystemPrompt();
+			// Task title and description should not be in system prompt
+			expect(prompt).not.toContain('Add GET /health endpoint');
+			expect(prompt).not.toContain('Implement health check');
+		});
+	});
+
+	describe('buildCoderTaskMessage', () => {
 		it('should include task title and description', () => {
-			const prompt = buildCoderSystemPrompt(makeConfig());
-			expect(prompt).toContain('Add GET /health endpoint');
-			expect(prompt).toContain('GET /health endpoint that returns 200 OK');
+			const message = buildCoderTaskMessage(makeConfig());
+			expect(message).toContain('Add GET /health endpoint');
+			expect(message).toContain('GET /health endpoint that returns 200 OK');
 		});
 
 		it('should include goal context', () => {
-			const prompt = buildCoderSystemPrompt(makeConfig());
-			expect(prompt).toContain('Implement health check');
-			expect(prompt).toContain('health check endpoint to the API');
+			const message = buildCoderTaskMessage(makeConfig());
+			expect(message).toContain('Implement health check');
+			expect(message).toContain('health check endpoint to the API');
 		});
 
 		it('should include room background when present', () => {
-			const prompt = buildCoderSystemPrompt(
+			const message = buildCoderTaskMessage(
 				makeConfig({
 					room: makeRoom({ background: 'This is a Node.js REST API project' }),
 				})
 			);
-			expect(prompt).toContain('Node.js REST API project');
+			expect(message).toContain('Node.js REST API project');
 		});
 
 		it('should include room instructions when present', () => {
-			const prompt = buildCoderSystemPrompt(
+			const message = buildCoderTaskMessage(
 				makeConfig({
 					room: makeRoom({ instructions: 'Always write tests first' }),
 				})
 			);
-			expect(prompt).toContain('Always write tests first');
+			expect(message).toContain('Always write tests first');
 		});
 
 		it('should include previous task summaries when provided', () => {
-			const prompt = buildCoderSystemPrompt(
+			const message = buildCoderTaskMessage(
 				makeConfig({
 					previousTaskSummaries: [
 						'Set up Express server with basic routing',
@@ -102,22 +125,19 @@ describe('Coder Agent', () => {
 					],
 				})
 			);
-			expect(prompt).toContain('Set up Express server');
-			expect(prompt).toContain('database connection module');
-			expect(prompt).toContain('Previous Work');
+			expect(message).toContain('Set up Express server');
+			expect(message).toContain('database connection module');
+			expect(message).toContain('Previous Work');
 		});
 
 		it('should omit previous work section when no summaries', () => {
-			const prompt = buildCoderSystemPrompt(makeConfig());
-			expect(prompt).not.toContain('Previous Work');
+			const message = buildCoderTaskMessage(makeConfig());
+			expect(message).not.toContain('Previous Work');
 		});
 
-		it('includes mandatory git workflow with feature branch and PR instructions', () => {
-			const prompt = buildCoderSystemPrompt(makeConfig());
-			expect(prompt).toContain('Git Workflow (MANDATORY)');
-			expect(prompt).toContain('feature branch');
-			expect(prompt).toContain('gh pr create');
-			expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
+		it('should end with begin instruction', () => {
+			const message = buildCoderTaskMessage(makeConfig());
+			expect(message).toContain('Begin working on this task.');
 		});
 	});
 
@@ -127,13 +147,17 @@ describe('Coder Agent', () => {
 			expect(init.type).toBe('coder');
 		});
 
-		it('should use claude_code preset with appended prompt', () => {
+		it('should use claude_code preset with behavioral-only prompt appended', () => {
 			const init = createCoderAgentInit(makeConfig());
 			expect(init.systemPrompt).toEqual({
 				type: 'preset',
 				preset: 'claude_code',
-				append: expect.stringContaining('Add GET /health endpoint'),
+				append: expect.stringContaining('Git Workflow (MANDATORY)'),
 			});
+			// System prompt should NOT contain task-specific content
+			if (typeof init.systemPrompt === 'object' && 'append' in init.systemPrompt) {
+				expect(init.systemPrompt.append).not.toContain('Add GET /health endpoint');
+			}
 		});
 
 		it('should use provided session ID and workspace path', () => {

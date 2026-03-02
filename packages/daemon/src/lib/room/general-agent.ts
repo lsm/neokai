@@ -33,13 +33,13 @@ export interface GeneralAgentConfig {
 }
 
 /**
- * Build a system prompt for the General agent.
+ * Build the behavioral system prompt for the General agent.
  *
- * Similar to Coder but with a generic framing that doesn't assume coding work.
+ * Contains ONLY role definition and behavioral rules.
+ * Task-specific context (title, description, goal, room background) is delivered
+ * via the initial user message built by buildGeneralTaskMessage().
  */
-export function buildGeneralSystemPrompt(config: GeneralAgentConfig): string {
-	const { task, goal, room, previousTaskSummaries } = config;
-
+export function buildGeneralSystemPrompt(): string {
 	const sections: string[] = [];
 
 	sections.push(`You are a General Agent working on a task within a larger goal.`);
@@ -48,8 +48,23 @@ export function buildGeneralSystemPrompt(config: GeneralAgentConfig): string {
 		`Use whatever tools are appropriate for the task. When you are done, simply finish your response.`
 	);
 
+	return sections.join('\n');
+}
+
+/**
+ * Build the initial user message for the General agent.
+ *
+ * Contains task-specific context: task title/description, goal context,
+ * project background, room instructions, and previous task summaries.
+ * This is what the user sees in the UI as the agent's starting prompt.
+ */
+export function buildGeneralTaskMessage(config: GeneralAgentConfig): string {
+	const { task, goal, room, previousTaskSummaries } = config;
+
+	const sections: string[] = [];
+
 	// Task context
-	sections.push(`\n## Task\n`);
+	sections.push(`## Task\n`);
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
 	if (task.priority) {
@@ -82,6 +97,8 @@ export function buildGeneralSystemPrompt(config: GeneralAgentConfig): string {
 		}
 	}
 
+	sections.push(`\nBegin working on this task.`);
+
 	return sections.join('\n');
 }
 
@@ -89,7 +106,8 @@ export function buildGeneralSystemPrompt(config: GeneralAgentConfig): string {
  * Create an AgentSessionInit for a General agent session.
  *
  * The General agent uses the Claude Code preset (standard tools)
- * with a generic system prompt appended for task context.
+ * with a behavioral system prompt appended. Task-specific context is
+ * delivered via the initial user message (buildGeneralTaskMessage).
  */
 export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSessionInit {
 	return {
@@ -98,7 +116,7 @@ export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSession
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildGeneralSystemPrompt(config),
+			append: buildGeneralSystemPrompt(),
 		},
 		features: GENERAL_FEATURES,
 		context: { roomId: config.room.id },

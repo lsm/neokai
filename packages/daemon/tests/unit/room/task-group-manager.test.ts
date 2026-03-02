@@ -138,6 +138,7 @@ function makeDefaultWorkerConfig(): WorkerConfig {
 			type: 'coder',
 			model: 'claude-sonnet-4-5-20250929',
 		}),
+		taskMessage: 'Test task: Add health endpoint\n\nBegin working on this task.',
 	};
 }
 

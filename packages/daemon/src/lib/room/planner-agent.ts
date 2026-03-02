@@ -77,10 +77,13 @@ export interface PlannerAgentConfig {
 }
 
 /**
- * Build system prompt for Planner agent.
+ * Build the behavioral system prompt for the Planner agent.
+ *
+ * Contains ONLY role definition, tool contract, and planning guidelines.
+ * Goal-specific context (title, description, room background, replan info)
+ * is delivered via the initial user message built by buildPlannerTaskMessage().
  */
-export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
-	const { goal, room } = config;
+export function buildPlannerSystemPrompt(): string {
 	const sections: string[] = [];
 
 	sections.push(
@@ -92,21 +95,6 @@ export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
 	sections.push(
 		`Use the planning tools (\`create_task\`, \`update_task\`, \`remove_task\`) to manage your plan. Do NOT write code or make changes.`
 	);
-
-	sections.push(`\n## Goal to Plan\n`);
-	sections.push(`**Goal:** ${goal.title}`);
-	if (goal.description) {
-		sections.push(`**Description:** ${goal.description}`);
-	}
-
-	if (room.background) {
-		sections.push(`\n## Project Context\n`);
-		sections.push(room.background);
-	}
-	if (room.instructions) {
-		sections.push(`\n## Instructions\n`);
-		sections.push(room.instructions);
-	}
 
 	sections.push(`\n## Planning Guidelines\n`);
 	sections.push(`1. Read relevant files to understand the current codebase state`);
@@ -125,6 +113,35 @@ export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
 	sections.push(
 		`9. If the Leader sends feedback, use \`update_task\` or \`remove_task\` to refine your plan, and \`create_task\` for new additions`
 	);
+
+	return sections.join('\n');
+}
+
+/**
+ * Build the initial user message for the Planner agent.
+ *
+ * Contains goal-specific context: goal title/description, project background,
+ * room instructions, and replanning context if this is a replan session.
+ * This is what the user sees in the UI as the agent's starting prompt.
+ */
+export function buildPlannerTaskMessage(config: PlannerAgentConfig): string {
+	const { goal, room } = config;
+	const sections: string[] = [];
+
+	sections.push(`## Goal to Plan\n`);
+	sections.push(`**Goal:** ${goal.title}`);
+	if (goal.description) {
+		sections.push(`**Description:** ${goal.description}`);
+	}
+
+	if (room.background) {
+		sections.push(`\n## Project Context\n`);
+		sections.push(room.background);
+	}
+	if (room.instructions) {
+		sections.push(`\n## Instructions\n`);
+		sections.push(room.instructions);
+	}
 
 	// Replanning context — enriched info when replanning after task failure
 	if (config.replanContext) {
@@ -148,6 +165,8 @@ export function buildPlannerSystemPrompt(config: PlannerAgentConfig): string {
 		sections.push(`Create new tasks that address the failure and complete the remaining goal.`);
 		sections.push(`Do NOT create tasks for work that already completed successfully.`);
 	}
+
+	sections.push(`\nBreak this goal into tasks.`);
 
 	return sections.join('\n');
 }
@@ -296,7 +315,7 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildPlannerSystemPrompt(config),
+			append: buildPlannerSystemPrompt(),
 		},
 		mcpServers: {
 			'planner-tools': mcpServer as unknown as McpServerConfig,

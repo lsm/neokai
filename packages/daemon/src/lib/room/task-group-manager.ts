@@ -74,6 +74,18 @@ export interface WorkerConfig {
 	role: string;
 	/** Factory that produces the AgentSessionInit for the worker */
 	initFactory: (workerSessionId: string) => AgentSessionInit;
+	/**
+	 * Task-specific initial message injected into the worker session at startup.
+	 * Contains task title, description, goal context, project background, etc.
+	 * Built by the appropriate buildXxxTaskMessage() function in room-runtime.ts.
+	 */
+	taskMessage: string;
+	/**
+	 * Task/goal context string prepended to the worker output envelope when routing
+	 * to the Leader for review. Built by buildLeaderTaskContext() in room-runtime.ts.
+	 * If omitted, the envelope is sent without prepended context.
+	 */
+	leaderTaskContext?: string;
 }
 
 export interface TaskGroupManagerConfig {
@@ -92,6 +104,8 @@ interface PendingLeaderInfo {
 	init: AgentSessionInit;
 	sessionId: string;
 	onTerminal: (groupId: string, state: TerminalState) => void;
+	/** Task/goal context to prepend to the worker envelope on first review round */
+	leaderTaskContext?: string;
 }
 
 export class TaskGroupManager {
@@ -190,6 +204,7 @@ export class TaskGroupManager {
 			init: leaderInit,
 			sessionId: leaderSessionId,
 			onTerminal: onLeaderTerminal,
+			leaderTaskContext: workerConfig.leaderTaskContext,
 		});
 
 		// Set task status to in_progress
@@ -199,20 +214,9 @@ export class TaskGroupManager {
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
 		// Kick off worker so the SDK streaming loop starts processing immediately.
-		// Build a rich task context message so the user can see what the agent was tasked with.
-		const taskPrompt = [
-			`# Task: ${task.title}`,
-			task.description ? `\n${task.description}` : '',
-			`\n**Goal:** ${goal.title}`,
-			`\n**Role:** ${workerConfig.role}`,
-			workerConfig.role === 'coder'
-				? `\n**Workspace:** Isolated worktree on branch \`${branchName}\``
-				: '',
-			`\nBegin working on this task.`,
-		]
-			.filter(Boolean)
-			.join('\n');
-		await this.sessionFactory.injectMessage(workerSessionId, taskPrompt);
+		// Use the task-specific message built by the caller (room-runtime.ts) via
+		// the appropriate buildXxxTaskMessage() function.
+		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
 
 		// Observe worker session for terminal state
 		this.observer.observe(workerSessionId, (state) => {
@@ -235,12 +239,14 @@ export class TaskGroupManager {
 		if (!group) return null;
 
 		// Lazy-start leader session if this is the first review round
+		let leaderTaskContext: string | undefined;
 		const pending = this.pendingLeaderInits.get(groupId);
 		if (pending) {
 			await this.sessionFactory.createAndStartSession(pending.init, 'leader');
 			this.observer.observe(pending.sessionId, (state) => {
 				pending.onTerminal(groupId, state);
 			});
+			leaderTaskContext = pending.leaderTaskContext;
 			this.pendingLeaderInits.delete(groupId);
 		} else if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
 			// After restart: pending init lost and leader session doesn't exist.
@@ -249,8 +255,16 @@ export class TaskGroupManager {
 			return null;
 		}
 
+		// Build the message to inject into the Leader session.
+		// On the first review round, prepend the task/goal context so the Leader
+		// knows what it's reviewing without it being baked into the system prompt.
+		const leaderMessage =
+			leaderTaskContext
+				? `${leaderTaskContext}\n\n---\n\n${workerOutput}`
+				: workerOutput;
+
 		// Inject worker output into Leader session
-		await this.sessionFactory.injectMessage(group.leaderSessionId, workerOutput);
+		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
 
 		// Update group state to awaiting_leader
 		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);

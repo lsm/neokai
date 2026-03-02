@@ -66,13 +66,17 @@ export interface LeaderAgentConfig {
 }
 
 /**
- * Build a system prompt for the Leader agent.
+ * Build the behavioral system prompt for the Leader agent.
  *
- * Includes goal/task context, review policy, and the tool contract.
+ * Contains ONLY role definition, tool contract, handling rules, and review guidelines.
+ * Task-specific context (task title/description, goal context, review policy from
+ * room.instructions) is delivered via buildLeaderTaskContext() which gets prepended
+ * to the worker output envelope.
+ *
  * Adapts review guidelines based on whether reviewing a plan or code.
  */
 export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
-	const { task, goal, room, reviewContext } = config;
+	const { room, reviewContext } = config;
 	const isPlanReview = reviewContext === 'plan_review';
 
 	const sections: string[] = [];
@@ -100,27 +104,6 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		`- \`submit_for_review\` — ONLY after dispatching all reviewer sub-agents and collecting their verdicts. Runtime rejects this if no PR reviews exist. Work is done with a PR ready; free the group slot and park the task for human approval\n`
 	);
 	sections.push(`Do NOT respond with only text. You MUST call one of the above tools.`);
-
-	// Task context
-	sections.push(`\n## Task Under Review\n`);
-	sections.push(`**Title:** ${task.title}`);
-	sections.push(`**Description:** ${task.description}`);
-	if (task.priority) {
-		sections.push(`**Priority:** ${task.priority}`);
-	}
-
-	// Goal context
-	sections.push(`\n## Goal Context\n`);
-	sections.push(`**Goal:** ${goal.title}`);
-	if (goal.description) {
-		sections.push(`**Description:** ${goal.description}`);
-	}
-
-	// Room review policy
-	if (room.instructions) {
-		sections.push(`\n## Review Policy\n`);
-		sections.push(room.instructions);
-	}
 
 	// Handling worker questions
 	sections.push(`\n## Handling Worker Questions\n`);
@@ -274,6 +257,41 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		sections.push(
 			`- Use \`replan_goal\` if the failure reveals the overall approach needs rethinking — this cancels remaining tasks and triggers a fresh plan`
 		);
+	}
+
+	return sections.join('\n');
+}
+
+/**
+ * Build the task context string for the Leader agent's initial message.
+ *
+ * Contains the task title/description, goal context, and review policy from
+ * room.instructions. This is prepended to the worker output envelope so the
+ * Leader knows what task is being reviewed without it being in the system prompt.
+ */
+export function buildLeaderTaskContext(config: LeaderAgentConfig): string {
+	const { task, goal, room } = config;
+	const sections: string[] = [];
+
+	// Task context
+	sections.push(`## Task Under Review\n`);
+	sections.push(`**Title:** ${task.title}`);
+	sections.push(`**Description:** ${task.description}`);
+	if (task.priority) {
+		sections.push(`**Priority:** ${task.priority}`);
+	}
+
+	// Goal context
+	sections.push(`\n## Goal Context\n`);
+	sections.push(`**Goal:** ${goal.title}`);
+	if (goal.description) {
+		sections.push(`**Description:** ${goal.description}`);
+	}
+
+	// Room review policy
+	if (room.instructions) {
+		sections.push(`\n## Review Policy\n`);
+		sections.push(room.instructions);
 	}
 
 	return sections.join('\n');

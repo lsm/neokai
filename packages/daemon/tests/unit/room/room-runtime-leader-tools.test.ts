@@ -320,21 +320,24 @@ describe('RoomRuntime leader tools', () => {
 				reason: 'Signup flow needs OAuth, not password',
 			});
 
-			// Verify the planner session was created with replan context in the init
-			const createCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession'
+			// Verify the planner worker received the replan context in its task message.
+			// After refactoring, replan context is in the injected task message (not system prompt).
+			const injectCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage'
 			);
-			// Last createAndStartSession call is the replanning planner
-			const lastCreate = createCalls[createCalls.length - 1];
-			const init = lastCreate.args[0] as { systemPrompt: { append: string } };
-			const prompt = init.systemPrompt.append;
+			// The last injectMessage to a planner session is the task message for the replanning planner
+			const plannerInjectCalls = injectCalls.filter(
+				(c) => typeof c.args[0] === 'string' && (c.args[0] as string).startsWith('planner:')
+			);
+			const lastPlannerInject = plannerInjectCalls[plannerInjectCalls.length - 1];
+			const taskMessage = lastPlannerInject?.args[1] as string;
 
-			// Replan context should include the completed task
-			expect(prompt).toContain('Replanning Context');
-			expect(prompt).toContain('Add login endpoint');
-			expect(prompt).toContain('Login endpoint implemented with JWT');
+			// Replan context should include the completed task and failure info
+			expect(taskMessage).toContain('Replanning Context');
+			expect(taskMessage).toContain('Add login endpoint');
+			expect(taskMessage).toContain('Login endpoint implemented with JWT');
 			// Failed task info
-			expect(prompt).toContain('Signup flow needs OAuth, not password');
+			expect(taskMessage).toContain('Signup flow needs OAuth, not password');
 		});
 
 		it('should increment planning_attempts on the goal', async () => {

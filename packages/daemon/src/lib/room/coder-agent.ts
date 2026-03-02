@@ -33,14 +33,13 @@ export interface CoderAgentConfig {
 }
 
 /**
- * Build a system prompt for the Coder agent.
+ * Build the behavioral system prompt for the Coder agent.
  *
- * Includes task context, goal context, room instructions, and
- * summaries of previous work on the same goal.
+ * Contains ONLY role definition, git workflow instructions, and behavioral rules.
+ * Task-specific context (title, description, goal, room background) is delivered
+ * via the initial user message built by buildCoderTaskMessage().
  */
-export function buildCoderSystemPrompt(config: CoderAgentConfig): string {
-	const { task, goal, room, previousTaskSummaries } = config;
-
+export function buildCoderSystemPrompt(): string {
 	const sections: string[] = [];
 
 	sections.push(`You are a Coder Agent working on a specific task within a larger goal.`);
@@ -63,8 +62,23 @@ export function buildCoderSystemPrompt(config: CoderAgentConfig): string {
 			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
 	);
 
+	return sections.join('\n');
+}
+
+/**
+ * Build the initial user message for the Coder agent.
+ *
+ * Contains task-specific context: task title/description, goal context,
+ * project background, room instructions, and previous task summaries.
+ * This is what the user sees in the UI as the agent's starting prompt.
+ */
+export function buildCoderTaskMessage(config: CoderAgentConfig): string {
+	const { task, goal, room, previousTaskSummaries } = config;
+
+	const sections: string[] = [];
+
 	// Task context
-	sections.push(`\n## Task\n`);
+	sections.push(`## Task\n`);
 	sections.push(`**Title:** ${task.title}`);
 	sections.push(`**Description:** ${task.description}`);
 	if (task.priority) {
@@ -97,6 +111,8 @@ export function buildCoderSystemPrompt(config: CoderAgentConfig): string {
 		}
 	}
 
+	sections.push(`\nBegin working on this task.`);
+
 	return sections.join('\n');
 }
 
@@ -104,7 +120,8 @@ export function buildCoderSystemPrompt(config: CoderAgentConfig): string {
  * Create an AgentSessionInit for a Coder agent session.
  *
  * The Coder agent uses the Claude Code preset (standard coding tools)
- * with a custom system prompt appended for task context.
+ * with a behavioral system prompt appended. Task-specific context is
+ * delivered via the initial user message (buildCoderTaskMessage).
  */
 export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit {
 	return {
@@ -113,7 +130,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildCoderSystemPrompt(config),
+			append: buildCoderSystemPrompt(),
 		},
 		features: CODER_FEATURES,
 		context: { roomId: config.room.id },

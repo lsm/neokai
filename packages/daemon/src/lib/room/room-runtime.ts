@@ -32,9 +32,10 @@ import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../daemon-hub';
 import type { LeaderToolCallbacks, LeaderToolResult } from './leader-agent';
 import type { PlannerCreateTaskParams, ReplanContext } from './planner-agent';
-import { createPlannerAgentInit } from './planner-agent';
-import { createCoderAgentInit } from './coder-agent';
-import { createGeneralAgentInit } from './general-agent';
+import { createPlannerAgentInit, buildPlannerTaskMessage } from './planner-agent';
+import { createCoderAgentInit, buildCoderTaskMessage } from './coder-agent';
+import { createGeneralAgentInit, buildGeneralTaskMessage } from './general-agent';
+import { buildLeaderTaskContext } from './leader-agent';
 import {
 	formatWorkerToLeaderEnvelope,
 	formatPlanEnvelope,
@@ -985,21 +986,33 @@ export class RoomRuntime {
 		};
 
 		// Build WorkerConfig for the Planner agent
+		const plannerConfig = {
+			task: planningTask,
+			goal,
+			room: this.room,
+			sessionId: '', // placeholder — overwritten by initFactory
+			workspacePath: this.taskGroupManager.workspacePath,
+			model: this.taskGroupManager.model,
+			createDraftTask,
+			updateDraftTask,
+			removeDraftTask,
+			replanContext,
+		};
 		const workerConfig: WorkerConfig = {
 			role: 'planner',
 			initFactory: (workerSessionId) =>
-				createPlannerAgentInit({
-					task: planningTask,
-					goal,
-					room: this.room,
-					sessionId: workerSessionId,
-					workspacePath: this.taskGroupManager.workspacePath,
-					model: this.taskGroupManager.model,
-					createDraftTask,
-					updateDraftTask,
-					removeDraftTask,
-					replanContext,
-				}),
+				createPlannerAgentInit({ ...plannerConfig, sessionId: workerSessionId }),
+			taskMessage: buildPlannerTaskMessage(plannerConfig),
+			leaderTaskContext: buildLeaderTaskContext({
+				task: planningTask,
+				goal,
+				room: this.room,
+				sessionId: '', // not used by buildLeaderTaskContext
+				workspacePath: this.taskGroupManager.workspacePath,
+				groupId: '', // not used by buildLeaderTaskContext
+				model: this.taskGroupManager.model,
+				reviewContext: 'plan_review',
+			}),
 		};
 
 		// Notify UI: planning task created
@@ -1054,34 +1067,52 @@ export class RoomRuntime {
 		const agentType = task.assignedAgent ?? 'coder';
 		let workerConfig: WorkerConfig;
 
+		// Shared leader context config (groupId not used by buildLeaderTaskContext)
+		const leaderContextConfig = {
+			task,
+			goal,
+			room: this.room,
+			sessionId: '',
+			workspacePath: this.taskGroupManager.workspacePath,
+			groupId: '',
+			model: this.taskGroupManager.model,
+			reviewContext: 'code_review' as const,
+		};
+
 		if (agentType === 'general') {
+			const generalConfig = {
+				task,
+				goal,
+				room: this.room,
+				sessionId: '', // placeholder — overwritten by initFactory
+				workspacePath: this.taskGroupManager.workspacePath,
+				model: this.taskGroupManager.model,
+				previousTaskSummaries,
+			};
 			workerConfig = {
 				role: 'general',
 				initFactory: (workerSessionId) =>
-					createGeneralAgentInit({
-						task,
-						goal,
-						room: this.room,
-						sessionId: workerSessionId,
-						workspacePath: this.taskGroupManager.workspacePath,
-						model: this.taskGroupManager.model,
-						previousTaskSummaries,
-					}),
+					createGeneralAgentInit({ ...generalConfig, sessionId: workerSessionId }),
+				taskMessage: buildGeneralTaskMessage(generalConfig),
+				leaderTaskContext: buildLeaderTaskContext(leaderContextConfig),
 			};
 		} else {
 			// Default to coder
+			const coderConfig = {
+				task,
+				goal,
+				room: this.room,
+				sessionId: '', // placeholder — overwritten by initFactory
+				workspacePath: this.taskGroupManager.workspacePath,
+				model: this.taskGroupManager.model,
+				previousTaskSummaries,
+			};
 			workerConfig = {
 				role: 'coder',
 				initFactory: (workerSessionId) =>
-					createCoderAgentInit({
-						task,
-						goal,
-						room: this.room,
-						sessionId: workerSessionId,
-						workspacePath: this.taskGroupManager.workspacePath,
-						model: this.taskGroupManager.model,
-						previousTaskSummaries,
-					}),
+					createCoderAgentInit({ ...coderConfig, sessionId: workerSessionId }),
+				taskMessage: buildCoderTaskMessage(coderConfig),
+				leaderTaskContext: buildLeaderTaskContext(leaderContextConfig),
 			};
 		}
 

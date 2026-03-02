@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
 	buildLeaderSystemPrompt,
+	buildLeaderTaskContext,
 	buildReviewerAgents,
 	createLeaderToolHandlers,
 	createLeaderAgentInit,
@@ -102,24 +103,21 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('replan_goal');
 		});
 
-		it('should include task context', () => {
+		it('should NOT include task-specific context', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('Add GET /health endpoint');
-			expect(prompt).toContain('GET /health endpoint that returns 200 OK');
+			// Task/goal details belong in buildLeaderTaskContext, not the system prompt
+			expect(prompt).not.toContain('Add GET /health endpoint');
+			expect(prompt).not.toContain('Implement health check');
 		});
 
-		it('should include goal context', () => {
-			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('Implement health check');
-		});
-
-		it('should include room review policy when present', () => {
+		it('should NOT include room review policy', () => {
 			const prompt = buildLeaderSystemPrompt(
 				makeConfig({
 					room: makeRoom({ instructions: 'Require 100% test coverage' }),
 				})
 			);
-			expect(prompt).toContain('Require 100% test coverage');
+			// Review policy belongs in buildLeaderTaskContext, not the system prompt
+			expect(prompt).not.toContain('Require 100% test coverage');
 		});
 
 		it('should include code review guidelines by default', () => {
@@ -198,6 +196,41 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('submit_for_review');
 			expect(prompt).toContain('non-coding tasks');
+		});
+	});
+
+	describe('buildLeaderTaskContext', () => {
+		it('should include task title and description', () => {
+			const ctx = buildLeaderTaskContext(makeConfig());
+			expect(ctx).toContain('Add GET /health endpoint');
+			expect(ctx).toContain('GET /health endpoint that returns 200 OK');
+		});
+
+		it('should include goal context', () => {
+			const ctx = buildLeaderTaskContext(makeConfig());
+			expect(ctx).toContain('Implement health check');
+		});
+
+		it('should include room review policy when present', () => {
+			const ctx = buildLeaderTaskContext(
+				makeConfig({
+					room: makeRoom({ instructions: 'Require 100% test coverage' }),
+				})
+			);
+			expect(ctx).toContain('Require 100% test coverage');
+			expect(ctx).toContain('Review Policy');
+		});
+
+		it('should omit review policy section when no instructions', () => {
+			const ctx = buildLeaderTaskContext(makeConfig());
+			expect(ctx).not.toContain('Review Policy');
+		});
+
+		it('should include task priority when set', () => {
+			const ctx = buildLeaderTaskContext(
+				makeConfig({ task: makeTask({ priority: 'urgent' }) })
+			);
+			expect(ctx).toContain('urgent');
 		});
 	});
 
