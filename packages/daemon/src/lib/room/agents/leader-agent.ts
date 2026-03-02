@@ -703,10 +703,12 @@ export function createLeaderAgentInit(
 		return {
 			sessionId: config.sessionId,
 			workspacePath: config.workspacePath,
-			systemPrompt: {
-				type: 'preset',
-				preset: 'claude_code',
-			},
+			// IMPORTANT: No systemPrompt here. When using agent/agents pattern, the Leader
+			// agent's `prompt` field IS the system prompt. Setting the claude_code preset
+			// here causes the massive preset to overwhelm the review orchestration
+			// instructions, making the model act as a general assistant instead of
+			// dispatching reviewer sub-agents. The SDK provides tool documentation
+			// automatically and CLAUDE.md is loaded via settingSources.
 			mcpServers: {
 				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
 			},
@@ -714,10 +716,9 @@ export function createLeaderAgentInit(
 			context: { roomId: config.room.id },
 			type: 'leader',
 			model: config.model ?? DEFAULT_LEADER_MODEL,
-			// Use agent/agents pattern: designate Leader as main thread
-			// This enables sub-agent dispatch via Task tool without coordinatorMode
-			// The Leader's system prompt comes from the agent definition's `prompt` field,
-			// not the top-level systemPrompt, to avoid the claude_code preset drowning it out.
+			// Use agent/agents pattern: designate Leader as main thread.
+			// The SDK applies the agent's prompt, tools, and model to the main conversation.
+			// Sub-agents (reviewers) are available via the Task tool.
 			agent: 'Leader',
 			agents: allAgents,
 		};

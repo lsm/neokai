@@ -9,6 +9,9 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
+import { generateUUID } from '@neokai/shared';
+import type { SDKUserMessage } from '@neokai/shared/sdk';
+import type { UUID } from 'crypto';
 import type { Database } from '../../../storage/database';
 import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
@@ -145,7 +148,23 @@ export class RoomRuntimeService {
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
-				await session.messageQueue.enqueue(message);
+				// Pre-persist to DB with 'queued' status before enqueuing,
+				// exactly like the normal UI send flow. This ensures
+				// acknowledgePersistedUserMessage() finds the message by UUID
+				// and treats it as a normal user message (not synthetic).
+				const messageId = generateUUID();
+				const sdkUserMessage: SDKUserMessage = {
+					type: 'user' as const,
+					uuid: messageId as UUID,
+					session_id: sessionId,
+					parent_tool_use_id: null,
+					message: {
+						role: 'user' as const,
+						content: [{ type: 'text' as const, text: message }],
+					},
+				};
+				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
+				await session.messageQueue.enqueueWithId(messageId, message);
 			},
 			hasSession: (sessionId) => {
 				return agentSessions.has(sessionId);

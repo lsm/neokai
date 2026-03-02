@@ -264,6 +264,13 @@ export class SDKMessageHandler {
 				{ channel: `session:${session.id}` }
 			);
 
+			// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
+			// so pre-persisted user messages appear in the group timeline.
+			await daemonHub.emit('sdk.message', {
+				sessionId: session.id,
+				message,
+			});
+
 			return true;
 		}
 
@@ -289,6 +296,12 @@ export class SDKMessageHandler {
 				},
 				{ channel: `session:${session.id}` }
 			);
+
+			// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
+			await daemonHub.emit('sdk.message', {
+				sessionId: session.id,
+				message,
+			});
 
 			return true;
 		}
