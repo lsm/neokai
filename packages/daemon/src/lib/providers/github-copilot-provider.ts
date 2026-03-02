@@ -624,11 +624,3 @@ export class GitHubCopilotProvider implements Provider {
 		});
 	}
 }
-
-/**
- * Helper to check if GitHub Copilot is configured
- */
-export async function isGitHubCopilotAvailable(): Promise<boolean> {
-	const provider = new GitHubCopilotProvider();
-	return provider.isAvailable();
-}

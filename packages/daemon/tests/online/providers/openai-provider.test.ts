@@ -14,7 +14,12 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, getProcessingState, getSession } from '../../helpers/daemon-actions';
+import {
+	sendMessage,
+	waitForIdle,
+	getProcessingState,
+	getSession,
+} from '../../helpers/daemon-actions';
 import type { ContextInfo } from '@neokai/shared';
 
 describe('OpenAI Provider (Online)', () => {

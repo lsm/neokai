@@ -669,11 +669,3 @@ export class OpenAiProvider implements Provider {
 		await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
 	}
 }
-
-/**
- * Helper to check if OpenAI is configured
- */
-export async function isOpenAiAvailable(): Promise<boolean> {
-	const provider = new OpenAiProvider();
-	return provider.isAvailable();
-}

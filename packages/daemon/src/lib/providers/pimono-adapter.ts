@@ -26,7 +26,12 @@ import type {
 	ToolDefinition,
 } from '@neokai/shared/provider/query-types';
 import { generateUUID } from '@neokai/shared';
-import { Agent, type AgentTool, type AgentEvent, type AgentMessage } from '@mariozechner/pi-agent-core';
+import {
+	Agent,
+	type AgentTool,
+	type AgentEvent,
+	type AgentMessage,
+} from '@mariozechner/pi-agent-core';
 import { getModel, Type } from '@mariozechner/pi-ai';
 import type {
 	Api,
@@ -177,9 +182,7 @@ export function convertToAgentTools(
 
 				// Convert result to AgentToolResult format
 				const resultText =
-					typeof result.output === 'string'
-						? result.output
-						: JSON.stringify(result.output);
+					typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
 
 				return {
 					content: [
@@ -210,7 +213,11 @@ export function convertToAgentTools(
  * Convert pi-ai AssistantMessage content to SDK assistant message format
  */
 export function piAiToSdkAssistant(
-	content: Array<TextContent | { type: 'thinking'; thinking: string } | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }>,
+	content: Array<
+		| TextContent
+		| { type: 'thinking'; thinking: string }
+		| { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }
+	>,
 	sessionId: string,
 	parentToolUseId: string | null = null,
 	error?: SDKAssistantMessage['error']
@@ -493,10 +500,9 @@ export async function* piMonoQueryGenerator(
 
 	// Get the model using pi-ai SDK
 	const piAiProvider = mapProviderToPiAi(provider);
-	const model = getModel(
-		piAiProvider as 'openai' | 'github-copilot',
-		modelId as never
-	) as Model<Api> | undefined;
+	const model = getModel(piAiProvider as 'openai' | 'github-copilot', modelId as never) as
+		| Model<Api>
+		| undefined;
 
 	if (!model) {
 		yield createResultMessage(
@@ -522,9 +528,10 @@ export async function* piMonoQueryGenerator(
 	const agentMessages: AgentMessage[] = [sdkToAgentMessage(userMessage)];
 
 	// Convert tools to AgentTool format
-	const agentTools = options.tools.length > 0
-		? convertToAgentTools(options.tools, toolExecutor, context.signal)
-		: [];
+	const agentTools =
+		options.tools.length > 0
+			? convertToAgentTools(options.tools, toolExecutor, context.signal)
+			: [];
 
 	// Create Agent instance
 	const agent = new Agent({
@@ -654,7 +661,11 @@ export async function* piMonoQueryGenerator(
 				if (event.message && 'role' in event.message && event.message.role === 'assistant') {
 					// Extract content from assistant message
 					const assistantMsg = event.message as {
-						content: Array<TextContent | { type: 'thinking'; thinking: string } | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }>;
+						content: Array<
+							| TextContent
+							| { type: 'thinking'; thinking: string }
+							| { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }
+						>;
 						usage?: {
 							input: number;
 							output: number;
