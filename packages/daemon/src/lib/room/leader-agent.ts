@@ -194,8 +194,11 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			for (const reviewer of reviewerConfigs!) {
 				const name = `reviewer-${reviewer.model.replace(/[^a-zA-Z0-9-]/g, '-')}`;
-				const type = reviewer.type === 'cli' ? ' (CLI)' : '';
-				sections.push(`- **${name}**${type} — Reviews using ${reviewer.model}`);
+				const label =
+					reviewer.type === 'cli'
+						? `(CLI — ${reviewer.provider ?? 'unknown'} via ${reviewer.driver_model ?? 'sonnet'})`
+						: `(${reviewer.provider ?? 'anthropic'})`;
+				sections.push(`- **${name}** ${label} — Reviews using ${reviewer.model}`);
 			}
 
 			sections.push(`\nFor each reviewer, use the Task tool like this:`);
@@ -449,8 +452,14 @@ Decision rules:
 /**
  * Build prompt for an SDK-native reviewer agent (reviews code directly).
  */
-function buildSdkReviewerPrompt(): string {
+function buildSdkReviewerPrompt(model: string, provider?: string): string {
 	return `You are a thorough code reviewer. Your job is to review the codebase in this worktree to verify that the requested work was correctly implemented.
+
+## Your Identity
+
+- **Model:** ${model}
+- **Provider:** ${provider ?? 'anthropic'}
+You MUST include this identity block at the top of every PR comment you post.
 
 ## Review Process
 
@@ -470,7 +479,12 @@ function buildSdkReviewerPrompt(): string {
    - **Error handling**: Are failures handled gracefully at system boundaries?
    - **Tests**: Do tests actually verify the new behavior? Are edge cases covered?
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
-5. Post your review as a PR comment using: gh pr comment <PR_NUMBER> --body "<review>"
+5. Post your review as a PR comment using:
+   \`\`\`bash
+   gh pr comment <PR_NUMBER> --body "## 🤖 Review by ${model} (${provider ?? 'anthropic'})
+
+   <your review findings here>"
+   \`\`\`
 6. Return your verdict in the structured format below
 
 ## Guidelines
@@ -480,36 +494,94 @@ function buildSdkReviewerPrompt(): string {
 - Be constructive and specific — always include file paths and line numbers
 - Focus on issues that matter — don't nitpick formatting or style if a linter handles it
 - Check that tests actually test the new/changed behavior, not just exist
+- ALWAYS include the model/provider header in PR comments
 ${REVIEWER_VERDICT_FORMAT}`;
+}
+
+/**
+ * Return specific CLI invocation instructions based on the tool name.
+ */
+function getCliInstructions(cliTool: string): string {
+	const tool = cliTool.toLowerCase();
+
+	if (tool.includes('codex')) {
+		return `### Codex CLI (OpenAI)
+
+Run Codex in non-interactive mode to review the code:
+
+\`\`\`bash
+codex exec "You are reviewing PR #<PR_NUMBER>. Review all changed files for correctness, security, performance, and maintainability. The original request was: <task description>. Read the full implementation files (not just diffs) and verify the request was correctly achieved. List specific issues with file paths and line numbers." \\
+  --model gpt-5.3-codex \\
+  --sandbox read-only \\
+  --ask-for-approval never \\
+  -o /tmp/codex-review.md
+\`\`\`
+
+Then read the output:
+\`\`\`bash
+cat /tmp/codex-review.md
+\`\`\``;
+	}
+
+	if (tool.includes('copilot')) {
+		return `### GitHub Copilot CLI
+
+Run Copilot CLI in autopilot mode to review the code:
+
+\`\`\`bash
+copilot --autopilot --yolo --max-autopilot-continues 10 \\
+  -p "You are reviewing PR #<PR_NUMBER>. Review all changed files for correctness, security, performance, and maintainability. The original request was: <task description>. Read the full implementation files (not just diffs) and verify the request was correctly achieved. List specific issues with file paths and line numbers." \\
+  2>/dev/null
+\`\`\`
+
+Capture the output from stdout.`;
+	}
+
+	// Generic fallback for unknown CLI tools
+	return `### ${cliTool} CLI
+
+Run the ${cliTool} CLI tool to review the code. Consult the tool's documentation for the correct non-interactive invocation syntax. Pass the changed files as input and capture the review output.`;
 }
 
 /**
  * Build prompt for a CLI-based reviewer agent (drives an external CLI tool).
  */
-function buildCliReviewerPrompt(cliTool: string): string {
-	return `You are a code reviewer that uses the ${cliTool} CLI tool to perform thorough code review.
+function buildCliReviewerPrompt(cliTool: string, provider?: string): string {
+	const cliInstructions = getCliInstructions(cliTool);
+
+	return `You are a code reviewer that orchestrates the ${cliTool} CLI tool to perform thorough code review.
+
+## Your Identity
+
+- **Tool:** ${cliTool}
+- **Provider:** ${provider ?? 'unknown'}
+You MUST include this identity block at the top of every PR comment you post.
 
 ## Review Process
 
 1. Read the task prompt carefully — it describes what was requested and what was implemented
-2. Understand the original ask: what was the goal? What should the final result look like?
-3. Explore the codebase to identify changed and related files (use Read, Grep, Glob)
-4. Run the ${cliTool} CLI tool via Bash to review the code:
-   - Pass the relevant files or directories as input
-   - Capture the tool's output
-5. Supplement the CLI tool's output with your own review:
-   - Read surrounding code to understand integration points
-   - Verify the original request is fully achieved
-   - Check for issues the CLI tool may have missed
-6. Post findings as a PR comment using: gh pr comment <PR_NUMBER> --body "<review>"
+2. Extract the PR number from the prompt
+3. Get the diff: \`gh pr diff <PR_NUMBER>\`
+4. Run the CLI tool to review the code:
+
+${cliInstructions}
+
+5. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
+6. Post findings as a PR comment using:
+   \`\`\`bash
+   gh pr comment <PR_NUMBER> --body "## 🤖 Review by ${cliTool} (${provider ?? 'unknown'})
+
+   <your review findings here>"
+   \`\`\`
 7. Return your verdict in the structured format below
 
 ## Guidelines
 
+- The CLI tool does the heavy lifting — focus on orchestrating it correctly
 - Map the CLI tool's output to severity levels (P0/P1/P2/P3)
-- Add context from the codebase if the tool's findings need clarification
-- Review comprehensively — don't limit yourself to just what the CLI tool found
+- If the CLI tool misses something obvious, add it yourself
 - Be specific about file paths and line numbers
+- ALWAYS include the model/provider header in PR comments
 ${REVIEWER_VERDICT_FORMAT}`;
 }
 
@@ -528,10 +600,10 @@ export function buildReviewerAgents(
 		if (reviewer.type === 'cli') {
 			// CLI-based reviewer: a driver model calls the external tool via Bash
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model} CLI. Runs the CLI tool via Bash and posts findings as PR comments.`,
+				description: `Code reviewer using ${reviewer.model} CLI (${reviewer.provider ?? 'unknown'} via ${reviewer.driver_model ?? 'sonnet'}). Runs the CLI tool via Bash and posts findings as PR comments.`,
 				tools: REVIEWER_TOOLS,
 				model: toAgentModel(reviewer.driver_model ?? 'sonnet'),
-				prompt: buildCliReviewerPrompt(reviewer.model),
+				prompt: buildCliReviewerPrompt(reviewer.model, reviewer.provider),
 			};
 		} else {
 			// Direct SDK reviewer: uses the specified model natively
@@ -539,7 +611,7 @@ export function buildReviewerAgents(
 				description: `Code reviewer using ${reviewer.model}. Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
 				model: toAgentModel(reviewer.model),
-				prompt: buildSdkReviewerPrompt(),
+				prompt: buildSdkReviewerPrompt(reviewer.model, reviewer.provider),
 			};
 		}
 	}
