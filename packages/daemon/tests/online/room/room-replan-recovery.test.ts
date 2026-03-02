@@ -34,6 +34,14 @@ describe('Room Replan Recovery (API-dependent)', () => {
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
+
+		// Initialize workspace as git repo so worktree creation succeeds
+		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
+		const { execSync } = await import('child_process');
+		execSync('git init && git commit --allow-empty -m "init"', {
+			cwd: workspace,
+			stdio: 'pipe',
+		});
 	}, 30_000);
 
 	afterAll(
@@ -65,11 +73,38 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				'Create src/double.ts that exports double(n: number): number which returns n * 2.'
 			);
 
-			// Wait for planning to complete
-			await waitForTask(daemon, roomId, { taskType: 'planning', status: 'completed' }, 180_000);
+			// Wait for planning to reach terminal state
+			const terminalPlanning = await waitForTask(
+				daemon,
+				roomId,
+				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				180_000
+			);
+			if (terminalPlanning.status === 'failed') {
+				throw new Error(
+					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
+			// If planning is in 'review', approve it to promote draft tasks
+			if (terminalPlanning.status === 'review') {
+				await daemon.messageHub.request('task.approve', {
+					roomId,
+					taskId: terminalPlanning.id,
+				});
+			}
 
 			// Wait for coding task to complete (full lifecycle)
-			await waitForTask(daemon, roomId, { taskType: 'coding', status: 'completed' }, 180_000);
+			const terminalCoding = await waitForTask(
+				daemon,
+				roomId,
+				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
+				180_000
+			);
+			if (terminalCoding.status === 'failed') {
+				throw new Error(
+					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
 
 			// Record initial state
 			const goalBefore = await getGoal(daemon, roomId, goal.id);
@@ -104,7 +139,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			const newPlanningTask = await waitForNewTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['pending', 'in_progress', 'completed'] },
+				{ taskType: 'planning', status: ['pending', 'in_progress', 'completed', 'review'] },
 				existingTaskIds,
 				120_000
 			);
@@ -120,7 +155,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			const newCodingTask = await waitForNewTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: ['pending', 'in_progress', 'completed'] },
+				{ taskType: 'coding', status: ['pending', 'in_progress', 'completed', 'review', 'draft'] },
 				existingTaskIds,
 				180_000
 			);

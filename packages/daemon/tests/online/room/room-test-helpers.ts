@@ -30,8 +30,15 @@ export async function waitForTask(
 		if (match) return match;
 		await new Promise((r) => setTimeout(r, 1000));
 	}
+	// Include current task states in error for debugging
+	const finalResult = (await daemon.messageHub.request('task.list', { roomId })) as {
+		tasks: NeoTask[];
+	};
+	const taskSummary = finalResult.tasks
+		.map((t) => `  ${t.taskType}:${t.status} (${t.title})`)
+		.join('\n');
 	throw new Error(
-		`Timeout (${timeout}ms) waiting for task matching ${JSON.stringify(filter)} in room ${roomId}`
+		`Timeout (${timeout}ms) waiting for task matching ${JSON.stringify(filter)} in room ${roomId}\nCurrent tasks:\n${taskSummary}`
 	);
 }
 

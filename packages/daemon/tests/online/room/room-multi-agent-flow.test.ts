@@ -12,6 +12,7 @@
  * - Makes real API calls
  */
 
+import { execSync } from 'child_process';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
@@ -28,6 +29,13 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
+
+		// Initialize workspace as git repo so worktree creation succeeds
+		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
+		execSync('git init && git commit --allow-empty -m "init"', {
+			cwd: workspace,
+			stdio: 'pipe',
+		});
 
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `Multi-Agent Flow ${Date.now()}`,
@@ -92,13 +100,24 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			expect(planningGroup.id).toBeTruthy();
 
 			// --- Stage 2: Planning completes, execution tasks promoted ---
-			const completedPlanning = await waitForTask(
+			const terminalPlanning = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: 'completed' },
+				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
 				180_000
 			);
-			expect(completedPlanning.status).toBe('completed');
+			if (terminalPlanning.status === 'failed') {
+				throw new Error(
+					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
+			// If planning is in 'review', approve it to promote draft tasks
+			if (terminalPlanning.status === 'review') {
+				await daemon.messageHub.request('task.approve', {
+					roomId,
+					taskId: terminalPlanning.id,
+				});
+			}
 
 			const execTasks = await waitForTaskCount(
 				daemon,
@@ -120,9 +139,14 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			const completedTask = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: 'completed' },
+				{ taskType: 'coding', status: ['completed', 'failed'] },
 				180_000
 			);
+			if (completedTask.status === 'failed') {
+				throw new Error(
+					`Coding task failed: ${(completedTask as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
 			expect(completedTask.status).toBe('completed');
 			expect(completedTask.result).toBeTruthy();
 			expect(completedTask.result!.length).toBeGreaterThan(10);

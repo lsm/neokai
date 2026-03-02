@@ -28,6 +28,14 @@ describe('Room Chat Agent Tools (API-dependent)', () => {
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
+
+		// Initialize workspace as git repo so worktree creation succeeds
+		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
+		const { execSync } = await import('child_process');
+		execSync('git init && git commit --allow-empty -m "init"', {
+			cwd: workspace,
+			stdio: 'pipe',
+		});
 	}, 30_000);
 
 	afterAll(
@@ -74,7 +82,7 @@ describe('Room Chat Agent Tools (API-dependent)', () => {
 			const planningTask = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['pending', 'in_progress', 'completed'] },
+				{ taskType: 'planning', status: ['pending', 'in_progress', 'completed', 'review'] },
 				120_000
 			);
 			expect(planningTask.taskType).toBe('planning');

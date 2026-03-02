@@ -33,6 +33,14 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
+
+		// Initialize workspace as git repo so worktree creation succeeds
+		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
+		const { execSync } = await import('child_process');
+		execSync('git init && git commit --allow-empty -m "init"', {
+			cwd: workspace,
+			stdio: 'pipe',
+		});
 	}, 30_000);
 
 	afterAll(
@@ -64,7 +72,23 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 				'Create src/triple.ts that exports triple(n: number): number which returns n * 3.'
 			);
 
-			await waitForTask(daemon, roomId, { taskType: 'planning', status: 'completed' }, 180_000);
+			const terminalPlanning = await waitForTask(
+				daemon,
+				roomId,
+				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				180_000
+			);
+			if (terminalPlanning.status === 'failed') {
+				throw new Error(
+					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
+			if (terminalPlanning.status === 'review') {
+				await daemon.messageHub.request('task.approve', {
+					roomId,
+					taskId: terminalPlanning.id,
+				});
+			}
 
 			// Wait for coding task to appear
 			await waitForTask(
