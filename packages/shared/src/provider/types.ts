@@ -62,6 +62,43 @@ export interface ProviderSessionConfig {
 }
 
 /**
+ * Authentication status returned by providers
+ */
+export interface ProviderAuthStatusInfo {
+	/** Whether the provider is authenticated */
+	isAuthenticated: boolean;
+	/** Authentication method used */
+	method?: 'api_key' | 'oauth';
+	/** Token expiration timestamp (Unix ms) */
+	expiresAt?: number;
+	/** Whether token needs refresh */
+	needsRefresh?: boolean;
+	/** User information (if available) */
+	user?: {
+		email?: string;
+		name?: string;
+	};
+	/** Error message if authentication failed */
+	error?: string;
+}
+
+/**
+ * OAuth flow data returned when starting OAuth
+ */
+export interface ProviderOAuthFlowData {
+	/** Flow type: redirect (browser) or device (code entry) */
+	type: 'redirect' | 'device';
+	/** For redirect flow: URL to open in browser */
+	authUrl?: string;
+	/** For device flow: user code to display */
+	userCode?: string;
+	/** For device flow: verification URL */
+	verificationUri?: string;
+	/** Human-readable message */
+	message: string;
+}
+
+/**
  * Core provider interface that all providers must implement
  *
  * This interface enables:
@@ -131,6 +168,39 @@ export interface Provider {
 	 * @returns SDK-compatible model ID (or original if no translation needed)
 	 */
 	translateModelIdForSdk?(modelId: string): string;
+
+	/**
+	 * Optional: Create custom query generator for non-SDK providers.
+	 * Return null to use standard Claude Agent SDK query().
+	 * This allows providers like OpenAI/GitHub Copilot to bypass the SDK entirely.
+	 */
+	createQuery?(
+		prompt: AsyncGenerator<import('../sdk/sdk.d.ts').SDKUserMessage>,
+		options: import('./query-types.js').ProviderQueryOptions,
+		context: import('./query-types.js').ProviderQueryContext
+	):
+		| Promise<AsyncGenerator<import('../sdk/sdk.d.ts').SDKMessage> | null>
+		| AsyncGenerator<import('../sdk/sdk.d.ts').SDKMessage>
+		| null;
+
+	/**
+	 * Optional: Get authentication status for this provider.
+	 * Returns detailed auth info including method, expiration, and user info.
+	 */
+	getAuthStatus?(): Promise<ProviderAuthStatusInfo>;
+
+	/**
+	 * Optional: Start OAuth authentication flow.
+	 * Returns flow data (URL for redirect, or code for device flow).
+	 * The auth completes asynchronously - poll getAuthStatus() to check completion.
+	 */
+	startOAuthFlow?(): Promise<ProviderOAuthFlowData>;
+
+	/**
+	 * Optional: Logout from this provider.
+	 * Clears stored credentials.
+	 */
+	logout?(): Promise<void>;
 }
 
 /**

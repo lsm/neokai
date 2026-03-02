@@ -206,6 +206,9 @@ export class AgentSession
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 	originalEnvVars: OriginalEnvVars = {};
+	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
+	// Set by QueryRunner when it detects a provider with createQuery method
+	isCustomQueryProvider = false;
 
 	// Session state
 	private _isCleaningUp = false;

@@ -12,6 +12,7 @@ import Room from './Room.tsx';
 import Lobby from './Lobby.tsx';
 import { SessionsPage } from './SessionsPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
+import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
 
@@ -59,6 +60,7 @@ export default function MainContent() {
 				{/* Settings Content */}
 				<div class="flex-1 overflow-y-auto p-6">
 					{settingsSection === 'general' && <GeneralSettings />}
+					{settingsSection === 'providers' && <ProvidersSettings />}
 					{settingsSection === 'mcp-servers' && <McpServersSettings />}
 					{settingsSection === 'about' && <AboutSection />}
 				</div>

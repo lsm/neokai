@@ -9,6 +9,8 @@
 
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
+import { OpenAiProvider } from './openai-provider.js';
+import { GitHubCopilotProvider } from './github-copilot-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -38,6 +40,12 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GLM provider (will be available if API key is set)
 	registry.register(new GlmProvider());
+
+	// Register OpenAI provider (will be available if OPENAI_API_KEY is set)
+	registry.register(new OpenAiProvider());
+
+	// Register GitHub Copilot provider (will be available if OAuth token is configured)
+	registry.register(new GitHubCopilotProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:

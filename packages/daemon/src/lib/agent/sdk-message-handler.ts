@@ -16,7 +16,7 @@
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
 import type { UUID } from 'crypto';
-import type { MessageHub, Session } from '@neokai/shared';
+import type { MessageHub, Session, ContextInfo } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
@@ -60,6 +60,11 @@ export interface SDKMessageHandlerContext {
 	// Mutable query state (needed to check if query is running)
 	queryObject: Query | null;
 	queryPromise: Promise<void> | null;
+
+	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
+	// When true, /context command queuing is skipped since the generator completes
+	// immediately after yielding the result message
+	isCustomQueryProvider: boolean;
 
 	// Called when the SDK init message provides the full slash commands list
 	onInitSlashCommands: (commands: string[]) => Promise<void>;
@@ -657,11 +662,20 @@ export class SDKMessageHandler {
 		// CRITICAL: Check flag to prevent infinite loop!
 		// /context produces its own result message, so we must skip queuing another
 		// Note: flag is reset when we process the result message (see early return above)
+		//
+		// SKIP for custom query providers (pi-mono based) because:
+		// - Their generator completes immediately after yielding the result message
+		// - Nothing will consume the queued /context command
+		// - This would cause a deadlock where session state never transitions to idle
+		//
+		// INSTEAD for custom providers: build ContextInfo directly from result usage
+		// since they already include full usage data in the result message
 		const isZeroTokenResult = this.isZeroTokenResult(message);
 		if (
 			!this.lastMessageWasContextResponse &&
 			!isZeroTokenResult &&
-			this.internalContextCommandIds.size === 0
+			this.internalContextCommandIds.size === 0 &&
+			!this.ctx.isCustomQueryProvider
 		) {
 			// Fire-and-forget: don't await the enqueue. Awaiting blocks
 			// handleResultMessage (and the for-await SDK output loop) until the
@@ -675,6 +689,14 @@ export class SDKMessageHandler {
 				this.internalContextCommandIds.delete(contextMessageId);
 				this.logger.warn('Failed to queue /context:', error);
 			});
+		} else if (
+			!this.lastMessageWasContextResponse &&
+			!isZeroTokenResult &&
+			this.ctx.isCustomQueryProvider
+		) {
+			// For custom query providers, build ContextInfo directly from result usage
+			// since /context command cannot be used (generator completes immediately)
+			await this.updateContextInfoFromUsage(message, session.metadata?.totalTokens || 0);
 		}
 
 		// Mark successful API interaction - resets circuit breaker error tracking
@@ -768,6 +790,83 @@ export class SDKMessageHandler {
 
 		// Clear isCompacting flag on processing state (flows through state.session)
 		await stateManager.setCompacting(false);
+	}
+
+	/**
+	 * Update ContextInfo directly from result message usage for custom query providers.
+	 *
+	 * Custom providers (pi-mono based) cannot use the /context command because their
+	 * generator completes immediately after yielding the result message. Instead, we
+	 * build a ContextInfo directly from the usage data in the result message.
+	 */
+	private async updateContextInfoFromUsage(
+		message: SDKMessage,
+		_cumulativeTokens: number
+	): Promise<void> {
+		if (!isSDKResultSuccess(message)) return;
+
+		const { session, daemonHub, contextTracker, db } = this.ctx;
+		const usage = message.usage;
+
+		// Get model context info if available (pi-mono provides this)
+		const modelUsage = message.modelUsage;
+		const modelUsageKeys = modelUsage ? Object.keys(modelUsage) : [];
+		const firstModelUsage = modelUsageKeys.length > 0 ? modelUsage[modelUsageKeys[0]!] : undefined;
+		const contextWindow = firstModelUsage?.contextWindow || 200000;
+
+		// Calculate context usage based on current turn input tokens
+		const currentTurnInput = usage.input_tokens;
+
+		// Build a simplified breakdown from usage data
+		// Custom providers don't have the detailed breakdown that /context provides,
+		// but we can show the key metrics
+		const contextInfo: ContextInfo = {
+			model: session.config.model || 'unknown',
+			totalUsed: currentTurnInput,
+			totalCapacity: contextWindow,
+			percentUsed: (currentTurnInput / contextWindow) * 100,
+			breakdown: {
+				'Input Tokens': {
+					tokens: usage.input_tokens,
+					percent: (usage.input_tokens / contextWindow) * 100,
+				},
+				'Output Tokens': {
+					tokens: usage.output_tokens,
+					percent: (usage.output_tokens / contextWindow) * 100,
+				},
+			},
+			apiUsage: {
+				inputTokens: usage.input_tokens,
+				outputTokens: usage.output_tokens,
+				cacheReadTokens: usage.cache_read_input_tokens,
+				cacheCreationTokens: usage.cache_creation_input_tokens,
+			},
+			lastUpdated: Date.now(),
+			source: 'context-command', // Treat same as /context for UI display
+		};
+
+		// Update ContextTracker - persists to session metadata
+		contextTracker.updateWithDetailedBreakdown(contextInfo);
+
+		// Emit context update event via DaemonHub
+		// StateManager will broadcast this via state.session channel
+		await daemonHub.emit('context.updated', {
+			sessionId: session.id,
+			contextInfo,
+		});
+
+		// Persist to database
+		session.metadata = {
+			...session.metadata,
+			lastContextInfo: contextInfo,
+		};
+		db.updateSession(session.id, {
+			metadata: session.metadata,
+		});
+
+		this.logger.debug(
+			`Updated context info for custom provider: ${usage.input_tokens} input / ${contextWindow} capacity`
+		);
 	}
 
 	/**
