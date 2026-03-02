@@ -66,7 +66,7 @@ export default function ConnectionStatus({
 		if (connectionState === 'connected') {
 			return {
 				dotClass: 'bg-green-500',
-				text: 'Online',
+				text: '',
 				textClass: 'text-green-400',
 			};
 		}
@@ -108,7 +108,7 @@ export default function ConnectionStatus({
 	return (
 		<div class="flex items-center gap-2">
 			<div class={`w-2 h-2 rounded-full ${status.dotClass}`} />
-			<span class={`text-xs font-medium ${status.textClass}`}>{status.text}</span>
+			{status.text && <span class={`text-xs font-medium ${status.textClass}`}>{status.text}</span>}
 		</div>
 	);
 }

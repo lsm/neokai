@@ -63,6 +63,8 @@ import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
 import { contextPanelOpenSignal } from '../lib/signals.ts';
+import { lobbyStore } from '../lib/lobby-store.ts';
+import type { RoomContext } from '../components/ChatHeader.tsx';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -300,6 +302,15 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		}
 		return DEFAULT_WORKER_FEATURES;
 	}, [session?.config?.features, sessionId]);
+
+	// Compute room context breadcrumb for sessions inside a room
+	const roomContext: RoomContext | undefined = useMemo(() => {
+		const roomId = session?.context?.roomId;
+		if (!roomId) return undefined;
+		const room = lobbyStore.rooms.value.find((r) => r.id === roomId);
+		if (!room) return undefined;
+		return { roomName: room.name, roomId: room.id };
+	}, [session?.context?.roomId]);
 
 	// Sync context from sessionStore
 	useSignalEffect(() => {
@@ -829,6 +840,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				session={session}
 				displayStats={displayStats}
 				features={features}
+				roomContext={roomContext}
 				onToolsClick={toolsModal.open}
 				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
@@ -1082,6 +1094,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 						!readonly && (
 							<MessageInput
 								sessionId={sessionId}
+								sessionType={session?.type}
 								onSend={handleSendMessage}
 								disabled={isWaitingForInput || !isConnected}
 								autoScroll={autoScroll}

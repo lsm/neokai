@@ -20,12 +20,13 @@ describe('ConnectionStatus', () => {
 	});
 
 	describe('Connection States', () => {
-		it('should show "Online" when connected', () => {
+		it('should not show text when connected and idle', () => {
 			const { container } = render(
 				<ConnectionStatus connectionState="connected" isProcessing={false} />
 			);
 
-			expect(container.textContent).toContain('Online');
+			// Connected+idle hides text (NavRail green dot already shows status)
+			expect(container.querySelector('span')).toBeNull();
 		});
 
 		it('should show green dot when connected', () => {
@@ -238,13 +239,14 @@ describe('ConnectionStatus', () => {
 	});
 
 	describe('Text Colors', () => {
-		it('should have green text when connected', () => {
+		it('should not render text span when connected and idle', () => {
 			const { container } = render(
 				<ConnectionStatus connectionState="connected" isProcessing={false} />
 			);
 
-			const text = container.querySelector('.text-green-400');
-			expect(text).toBeTruthy();
+			// No text shown for connected+idle (NavRail green dot suffices)
+			const text = container.querySelector('span');
+			expect(text).toBeNull();
 		});
 
 		it('should have yellow text when connecting', () => {
@@ -296,9 +298,9 @@ describe('ConnectionStatus', () => {
 			expect(dot).toBeTruthy();
 		});
 
-		it('should have properly styled text', () => {
+		it('should have properly styled text when not connected', () => {
 			const { container } = render(
-				<ConnectionStatus connectionState="connected" isProcessing={false} />
+				<ConnectionStatus connectionState="disconnected" isProcessing={false} />
 			);
 
 			const text = container.querySelector('.text-xs.font-medium');
@@ -316,7 +318,7 @@ describe('ConnectionStatus', () => {
 				/>
 			);
 
-			expect(container.textContent).toContain('Online');
+			// Connected+idle hides text; should not show action text either
 			expect(container.textContent).not.toContain('Some action');
 		});
 
@@ -325,8 +327,8 @@ describe('ConnectionStatus', () => {
 				<ConnectionStatus connectionState="connected" isProcessing={true} />
 			);
 
-			// Should fall back to connection state
-			expect(container.textContent).toContain('Online');
+			// Should fall back to connection state (connected+idle = no text)
+			expect(container.querySelector('span')).toBeNull();
 		});
 
 		it('should handle phase without processing state', () => {
@@ -339,7 +341,8 @@ describe('ConnectionStatus', () => {
 			);
 
 			// Should show connection state, not processing phase
-			expect(container.textContent).toContain('Online');
+			// Connected+idle hides text
+			expect(container.querySelector('span')).toBeNull();
 		});
 
 		it('should handle null streamingPhase', () => {
