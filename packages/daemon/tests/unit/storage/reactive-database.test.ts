@@ -533,4 +533,84 @@ describe('ReactiveDatabase', () => {
 			expect(events[1].tables).toContain('sessions');
 		});
 	});
+
+	// -------------------------------------------------------------------------
+	// Transaction edge cases
+	// -------------------------------------------------------------------------
+
+	describe('transaction edge cases', () => {
+		test('commitTransaction without beginTransaction is a no-op — no error, no events', () => {
+			const events: unknown[] = [];
+			reactiveDb.on('change', () => events.push(1));
+
+			// Should not throw
+			expect(() => reactiveDb.commitTransaction()).not.toThrow();
+
+			// No events emitted
+			expect(events.length).toBe(0);
+		});
+
+		test('abortTransaction without beginTransaction is a no-op — no error', () => {
+			expect(() => reactiveDb.abortTransaction()).not.toThrow();
+		});
+
+		test('begin → begin → abort inner → commit outer: events ARE emitted (inner abort did not reach depth=0)', () => {
+			// begin: depth=1
+			// begin: depth=2
+			// abort: depth=1 (does not clear pending; depth > 0)
+			// commit: depth=0 → flush
+			const events: unknown[] = [];
+			reactiveDb.on('change', () => events.push(1));
+
+			reactiveDb.beginTransaction(); // depth=1
+			reactiveDb.beginTransaction(); // depth=2
+			reactiveDb.db.createSession(makeSession('mixed1'));
+			reactiveDb.abortTransaction(); // depth=1 — pending still alive
+			expect(events.length).toBe(0); // still batched
+
+			reactiveDb.commitTransaction(); // depth=0 — flush
+
+			// The write happened, abort only decrements; pending is flushed on commit
+			expect(events.length).toBe(1);
+		});
+
+		test('begin → begin → commit inner → abort outer: events are NOT emitted (outer abort clears at depth=0)', () => {
+			// begin: depth=1
+			// begin: depth=2
+			// commit: depth=1 (no flush; still nested)
+			// abort: depth=0 → clear pending, no events
+			const events: unknown[] = [];
+			reactiveDb.on('change', () => events.push(1));
+
+			reactiveDb.beginTransaction(); // depth=1
+			reactiveDb.beginTransaction(); // depth=2
+			reactiveDb.db.createSession(makeSession('mixed2'));
+			reactiveDb.commitTransaction(); // depth=1 — no flush yet
+			expect(events.length).toBe(0);
+
+			reactiveDb.abortTransaction(); // depth=0 — clears pending, no flush
+
+			expect(events.length).toBe(0);
+		});
+
+		test('multiple tables in single transaction — commit emits one event containing both tables', () => {
+			const events: Array<{ tables: string[]; versions: Record<string, number> }> = [];
+			reactiveDb.on('change', (data) => events.push(data));
+
+			reactiveDb.beginTransaction();
+			reactiveDb.db.createSession(makeSession('multi-tx1'));
+			// saveSDKMessage requires a session to exist for FK constraints; use notifyChange
+			// for sdk_messages to avoid FK overhead while still testing multi-table batching
+			reactiveDb.notifyChange('sdk_messages');
+			reactiveDb.commitTransaction();
+
+			// Exactly one batched event
+			expect(events.length).toBe(1);
+			expect(events[0].tables).toContain('sessions');
+			expect(events[0].tables).toContain('sdk_messages');
+			// Versions for both tables should be present
+			expect(events[0].versions).toHaveProperty('sessions');
+			expect(events[0].versions).toHaveProperty('sdk_messages');
+		});
+	});
 });

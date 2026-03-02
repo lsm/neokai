@@ -286,6 +286,51 @@ describe('JobQueueRepository', () => {
 
 			expect(job).toBeNull();
 		});
+
+		it('fail() on a pending job still applies retry logic', () => {
+			const job = repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
+			// Job is pending (not processing)
+			expect(job.status).toBe('pending');
+
+			const failed = repository.fail(job.id, 'unexpected failure');
+
+			// fail() applies retry logic regardless of current status
+			expect(failed).not.toBeNull();
+			expect(failed!.status).toBe('pending');
+			expect(failed!.retryCount).toBe(1);
+			expect(failed!.error).toBe('unexpected failure');
+		});
+
+		it('fail() on a completed job resets it to pending if retries remain', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 3 });
+			const [dequeued] = repository.dequeue('test');
+			repository.complete(dequeued.id);
+
+			const completed = repository.getJob(dequeued.id);
+			expect(completed!.status).toBe('completed');
+
+			const failed = repository.fail(dequeued.id, 'post-complete failure');
+
+			// fail() doesn't check status — it resets to pending
+			expect(failed).not.toBeNull();
+			expect(failed!.status).toBe('pending');
+			expect(failed!.retryCount).toBe(1);
+		});
+
+		it('fail() on a dead job with no retries remaining keeps it dead', () => {
+			repository.enqueue({ queue: 'test', payload: {}, maxRetries: 0 });
+			const [dequeued] = repository.dequeue('test');
+			repository.fail(dequeued.id, 'first failure');
+
+			const dead = repository.getJob(dequeued.id);
+			expect(dead!.status).toBe('dead');
+
+			// Calling fail() again on a dead job — retryCount(1) >= maxRetries(0), stays dead
+			const failedAgain = repository.fail(dequeued.id, 'second failure');
+			expect(failedAgain).not.toBeNull();
+			expect(failedAgain!.status).toBe('dead');
+			expect(failedAgain!.error).toBe('second failure');
+		});
 	});
 
 	describe('getJob', () => {

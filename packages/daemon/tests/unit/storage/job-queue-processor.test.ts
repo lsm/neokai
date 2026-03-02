@@ -428,6 +428,49 @@ describe('JobQueueProcessor', () => {
 			// Should still be processing (not reclaimed and re-processed)
 			expect(after?.status).toBe('processing');
 		});
+
+		it('does not run stale check again within STALE_CHECK_INTERVAL', async () => {
+			// Use a fresh processor with short stale threshold
+			const throttledProcessor = new JobQueueProcessor(repo, { staleThresholdMs: 100 });
+			throttledProcessor.register('throttle-queue', async () => {});
+
+			// Enqueue and dequeue to create a processing job
+			const job = repo.enqueue({ queue: 'throttle-queue', payload: {} });
+			repo.dequeue('throttle-queue', 1);
+
+			// Make it stale
+			db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+				Date.now() - 10_000,
+				job.id,
+			);
+
+			// First tick: runs stale check (lastStaleCheck=0), reclaims and processes
+			await throttledProcessor.tick();
+			await flush();
+
+			const afterFirst = repo.getJob(job.id);
+			expect(afterFirst?.status).toBe('completed');
+
+			// Create another stale job
+			const job2 = repo.enqueue({ queue: 'throttle-queue', payload: {} });
+			repo.dequeue('throttle-queue', 1);
+			db.prepare(`UPDATE job_queue SET started_at = ? WHERE id = ?`).run(
+				Date.now() - 10_000,
+				job2.id,
+			);
+
+			// Second tick: within 60s window, stale check is SKIPPED
+			// The stale job should NOT be reclaimed, so it stays processing
+			// But tick still tries to dequeue pending jobs — there are none
+			await throttledProcessor.tick();
+			await flush();
+
+			const afterSecond = repo.getJob(job2.id);
+			// Still processing — stale check was throttled
+			expect(afterSecond?.status).toBe('processing');
+
+			await throttledProcessor.stop();
+		});
 	});
 
 	describe('changeNotifier', () => {
