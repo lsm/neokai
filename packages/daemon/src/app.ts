@@ -12,6 +12,8 @@ import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
+import { createReactiveDatabase } from './storage/reactive-database';
+import { LiveQueryEngine } from './storage/live-query';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -43,6 +45,10 @@ export interface DaemonAppContext {
 	 * GitHub service instance (null if not configured)
 	 */
 	gitHubService: GitHubService | null;
+	/** Phase 2: Reactive database wrapper for change event emission */
+	reactiveDb: ReturnType<typeof createReactiveDatabase>;
+	/** Phase 2: Live query engine for reactive SQL queries */
+	liveQueries: LiveQueryEngine;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -77,6 +83,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	// Initialize database
 	const db = new Database(config.dbPath);
 	await db.initialize();
+	const reactiveDb = createReactiveDatabase(db);
+	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
 
 	// Initialize authentication manager
 	const authManager = new AuthManager(db, config);
@@ -360,6 +368,9 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
 
+			// Dispose live query engine
+			liveQueries.dispose();
+
 			// Cleanup RPC handlers
 			rpcHandlerCleanup();
 
@@ -393,6 +404,8 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		transport,
 		eventBus,
 		gitHubService,
+		reactiveDb,
+		liveQueries,
 		cleanup,
 	};
 }
