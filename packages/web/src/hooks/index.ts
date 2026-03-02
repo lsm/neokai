@@ -15,6 +15,9 @@ export {
 	useModelSwitcher,
 	type UseModelSwitcherResult,
 	MODEL_FAMILY_ICONS,
+	getModelFamilyIcon,
+	PROVIDER_LABELS,
+	getProviderLabel,
 } from './useModelSwitcher';
 export {
 	useMessageHub,

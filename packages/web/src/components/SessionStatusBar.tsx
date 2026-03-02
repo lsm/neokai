@@ -20,7 +20,7 @@ import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import { useModal, MODEL_FAMILY_ICONS, useMessageHub } from '../hooks';
+import { useModal, getModelFamilyIcon, getProviderLabel, useMessageHub } from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 
@@ -265,7 +265,7 @@ export default function SessionStatusBar({
 	);
 
 	// Get current model icon
-	const currentModelIcon = currentModelInfo ? MODEL_FAMILY_ICONS[currentModelInfo.family] : '💎';
+	const currentModelIcon = currentModelInfo ? getModelFamilyIcon(currentModelInfo.family) : '💎';
 
 	return (
 		<ContentContainer className="pb-2 flex items-center gap-4 justify-between">
@@ -365,9 +365,14 @@ export default function SessionStatusBar({
 									onClick={() => handleModelSwitch(model.id)}
 									disabled={modelSwitching}
 								>
-									<span class="text-base">{MODEL_FAMILY_ICONS[model.family]}</span>
-									{model.name}
-									{model.id === currentModelInfo?.id && ' (current)'}
+									<span class="text-base">{getModelFamilyIcon(model.family)}</span>
+									<span class="flex-1 truncate">{model.name}</span>
+									{model.provider !== 'anthropic' && (
+										<span class="text-gray-500 text-[10px]">{getProviderLabel(model.provider)}</span>
+									)}
+									{model.id === currentModelInfo?.id && (
+										<span class="text-blue-400 text-[10px]">(current)</span>
+									)}
 								</button>
 							))}
 						</div>
