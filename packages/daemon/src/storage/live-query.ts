@@ -7,19 +7,7 @@
  */
 
 import { Database as BunDatabase } from 'bun:sqlite';
-
-// ============================================================================
-// ReactiveDatabase interface (consumed, not owned)
-// ============================================================================
-
-export interface ReactiveDatabase {
-	on(
-		event: 'change',
-		listener: (data: { tables: string[]; versions: Record<string, number> }) => void,
-	): void;
-	off(event: string, listener: (...args: unknown[]) => void): void;
-	getTableVersion(table: string): number;
-}
+import type { ReactiveDatabase } from './reactive-database';
 
 // ============================================================================
 // Public API types
@@ -65,14 +53,53 @@ interface QueryEntry<T extends Record<string, unknown>> {
 // Helpers
 // ============================================================================
 
-/** Extract table names from FROM and JOIN clauses using simple regex. */
-function extractTables(sql: string): string[] {
-	const pattern = /(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
+/**
+ * Extract table names referenced in FROM and JOIN clauses.
+ *
+ * Handles:
+ * - Simple `FROM table` and all JOIN variants: LEFT JOIN, RIGHT JOIN,
+ *   INNER JOIN, CROSS JOIN, FULL JOIN, LEFT OUTER JOIN, RIGHT OUTER JOIN
+ * - Comma-separated tables in the FROM clause: `FROM a, b`
+ * - Table aliases — `FROM items AS i` or `FROM items i` — returns base name
+ * - Case-insensitive keywords; names are normalised to lowercase
+ * - Subqueries: the pattern skips `FROM (` so the `(` is not treated as a
+ *   table name; inner tables are still matched when the regex reaches them
+ *
+ * Known limitations (acceptable for the queries this engine handles):
+ * - CTE aliases defined with `WITH alias AS (…)` may be captured as table
+ *   names when they appear after a FROM/JOIN keyword.
+ * - Quoted identifiers (`"my table"`, `` `col` ``) are not supported.
+ *
+ * @internal Exported for unit testing only.
+ */
+export function extractTables(sql: string): string[] {
 	const tables = new Set<string>();
+
+	// Match all JOIN variants followed by a bare identifier (not a `(`).
+	// This covers: JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, CROSS JOIN,
+	// FULL JOIN, LEFT OUTER JOIN, RIGHT OUTER JOIN, etc.
+	const joinPattern =
+		/\b(?:(?:LEFT|RIGHT|INNER|CROSS|FULL)(?:\s+OUTER)?\s+)?JOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi;
 	let match: RegExpExecArray | null;
-	while ((match = pattern.exec(sql)) !== null) {
+	while ((match = joinPattern.exec(sql)) !== null) {
 		tables.add(match[1].toLowerCase());
 	}
+
+	// Match FROM clauses and walk the comma-separated table list that follows.
+	// The pattern captures the raw list; we then split on commas and pick the
+	// first identifier from each item (ignoring AS alias and positional alias).
+	// We use a negative lookahead `(?!\s*\()` to skip `FROM (subquery)` openers.
+	const fromPattern =
+		/\bFROM\s+(?!\s*\()([a-zA-Z_][a-zA-Z0-9_\s,]*?)(?=\s+(?:WHERE|JOIN|ON|GROUP|ORDER|HAVING|LIMIT|UNION)\b|\s*(?:$|\)))/gi;
+	while ((match = fromPattern.exec(sql)) !== null) {
+		for (const part of match[1].split(',')) {
+			const name = part.trim().match(/^([a-zA-Z_][a-zA-Z0-9_]*)/);
+			if (name) {
+				tables.add(name[1].toLowerCase());
+			}
+		}
+	}
+
 	return Array.from(tables);
 }
 
@@ -85,8 +112,10 @@ function hashRows(rows: Record<string, unknown>[]): number {
 /**
  * Compute a row-level diff between old and new result sets.
  * Uses `id` field when available; falls back to positional comparison.
+ *
+ * @internal Exported for testing only.
  */
-function computeDiff<T extends Record<string, unknown>>(
+export function computeDiff<T extends Record<string, unknown>>(
 	oldRows: T[],
 	newRows: T[],
 ): { added: T[]; removed: T[]; updated: T[] } {
