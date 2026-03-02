@@ -7,7 +7,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
-import { useModelSwitcher, MODEL_FAMILY_ICONS, getModelFamilyIcon, getProviderLabel } from '../useModelSwitcher.ts';
+import {
+	useModelSwitcher,
+	MODEL_FAMILY_ICONS,
+	getModelFamilyIcon,
+	getProviderLabel,
+} from '../useModelSwitcher.ts';
 
 // Mock the connection manager
 const mockGetHubIfConnected = vi.fn();
@@ -292,7 +297,9 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex (Copilot)', description: '' }],
+						models: [
+							{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex (Copilot)', description: '' },
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -317,7 +324,13 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'gemini-3.1-pro-preview', display_name: 'Gemini 3.1 Pro (Copilot)', description: '' }],
+						models: [
+							{
+								id: 'gemini-3.1-pro-preview',
+								display_name: 'Gemini 3.1 Pro (Copilot)',
+								description: '',
+							},
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -328,7 +341,9 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			const geminiModel = result.current.availableModels.find((m) => m.id === 'gemini-3.1-pro-preview');
+			const geminiModel = result.current.availableModels.find(
+				(m) => m.id === 'gemini-3.1-pro-preview'
+			);
 			expect(geminiModel?.provider).toBe('github-copilot');
 			expect(geminiModel?.family).toBe('gemini');
 		});
@@ -342,7 +357,9 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'claude-opus-4-6', display_name: 'Claude Opus 4.6 (Copilot)', description: '' }],
+						models: [
+							{ id: 'claude-opus-4-6', display_name: 'Claude Opus 4.6 (Copilot)', description: '' },
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);

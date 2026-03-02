@@ -368,7 +368,9 @@ export default function SessionStatusBar({
 									<span class="text-base">{getModelFamilyIcon(model.family)}</span>
 									<span class="flex-1 truncate">{model.name}</span>
 									{model.provider !== 'anthropic' && (
-										<span class="text-gray-500 text-[10px]">{getProviderLabel(model.provider)}</span>
+										<span class="text-gray-500 text-[10px]">
+											{getProviderLabel(model.provider)}
+										</span>
 									)}
 									{model.id === currentModelInfo?.id && (
 										<span class="text-blue-400 text-[10px]">(current)</span>
