@@ -327,8 +327,61 @@ describe('Leader Agent', () => {
 			);
 			// coordinatorMode should NOT be set — leader uses its own prompt/tools
 			expect(init.coordinatorMode).toBeUndefined();
+			// agent: 'Leader' designates Leader as the main thread
+			expect(init.agent).toBe('Leader');
 			expect(init.agents).toBeDefined();
+			// agents map must include both the Leader and reviewer entries
+			expect(Object.keys(init.agents!)).toContain('Leader');
 			expect(Object.keys(init.agents!)).toContain('reviewer-claude-opus-4-6');
+		});
+
+		it('should set agent: Leader when reviewers configured', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [
+									{ model: 'claude-opus-4-6' },
+									{ model: 'claude-sonnet-4-6' },
+								],
+							},
+						},
+					}),
+				}),
+				callbacks
+			);
+			expect(init.agent).toBe('Leader');
+			expect(init.agents).toBeDefined();
+			expect(Object.keys(init.agents!)).toHaveLength(3); // Leader + 2 reviewers
+			expect(Object.keys(init.agents!)).toContain('Leader');
+			expect(Object.keys(init.agents!)).toContain('reviewer-claude-opus-4-6');
+			expect(Object.keys(init.agents!)).toContain('reviewer-claude-sonnet-4-6');
+		});
+
+		it('should include Task tools in Leader agent definition', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'claude-opus-4-6' }],
+							},
+						},
+					}),
+				}),
+				callbacks
+			);
+			const leaderDef = init.agents!['Leader'];
+			expect(leaderDef).toBeDefined();
+			expect(leaderDef.tools).toContain('Task');
+			expect(leaderDef.tools).toContain('TaskOutput');
+			expect(leaderDef.tools).toContain('TaskStop');
+			expect(leaderDef.tools).toContain('Read');
+			expect(leaderDef.tools).toContain('Grep');
+			expect(leaderDef.tools).toContain('Glob');
 		});
 
 		it('should fallback to legacy reviewers config', () => {
@@ -344,7 +397,9 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			expect(init.coordinatorMode).toBeUndefined();
+			expect(init.agent).toBe('Leader');
 			expect(init.agents).toBeDefined();
+			expect(Object.keys(init.agents!)).toContain('Leader');
 			expect(Object.keys(init.agents!)).toContain('reviewer-claude-sonnet-4-6');
 		});
 
@@ -364,14 +419,17 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			expect(init.coordinatorMode).toBeUndefined();
+			expect(init.agent).toBe('Leader');
+			expect(Object.keys(init.agents!)).toContain('Leader');
 			expect(Object.keys(init.agents!)).toContain('reviewer-new-model');
 			expect(Object.keys(init.agents!)).not.toContain('reviewer-old-model');
 		});
 
-		it('should not set agents when no reviewers configured', () => {
+		it('should not set agent or agents when no reviewers configured', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.coordinatorMode).toBeUndefined();
+			expect(init.agent).toBeUndefined();
 			expect(init.agents).toBeUndefined();
 		});
 	});
@@ -467,6 +525,26 @@ describe('Leader Agent', () => {
 
 		it('should map short name haiku to haiku', () => {
 			expect(toAgentModel('haiku')).toBe('haiku');
+		});
+
+		it('should map version-pattern opus-4.6 to opus', () => {
+			expect(toAgentModel('opus-4.6')).toBe('opus');
+		});
+
+		it('should map version-pattern sonnet-4.6 to sonnet', () => {
+			expect(toAgentModel('sonnet-4.6')).toBe('sonnet');
+		});
+
+		it('should map version-pattern haiku-4.6 to haiku', () => {
+			expect(toAgentModel('haiku-4.6')).toBe('haiku');
+		});
+
+		it('should map claude-opus-4.6 style IDs to opus', () => {
+			expect(toAgentModel('claude-opus-4.6')).toBe('opus');
+		});
+
+		it('should map claude-sonnet-4.6 style IDs to sonnet', () => {
+			expect(toAgentModel('claude-sonnet-4.6')).toBe('sonnet');
 		});
 	});
 });

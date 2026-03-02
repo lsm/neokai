@@ -126,6 +126,9 @@ export interface AgentSessionInit {
 	/** Enable coordinator mode — main agent orchestrates specialist sub-agents */
 	coordinatorMode?: boolean;
 
+	/** The named agent to use as the main agent (must be a key in `agents`) */
+	agent?: string;
+
 	/** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
 	agents?: Record<string, import('@neokai/shared').AgentDefinition>;
 }
@@ -448,6 +451,7 @@ export class AgentSession
 			tools: type !== 'worker' ? { useClaudeCodePreset: false } : undefined,
 			// Coordinator mode — leader sessions use this with reviewer sub-agents
 			coordinatorMode: init.coordinatorMode,
+			agent: init.agent,
 			agents: init.agents,
 		};
 

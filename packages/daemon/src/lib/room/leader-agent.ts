@@ -547,13 +547,24 @@ export function buildReviewerAgents(
 /**
  * Create an AgentSessionInit for a Leader agent session.
  *
- * Uses the Claude Code preset (for read/glob/grep codebase access to review work)
- * plus leader-specific MCP tools for routing decisions.
+ * Uses the agent/agents pattern: the Leader is defined as a named AgentDefinition
+ * and the session is configured with `agent: 'Leader'` to designate it as the main thread.
+ * Reviewer sub-agents (if configured) are merged into the `agents` map alongside Leader.
  *
- * When Room.config.agentSubagents.leader (or legacy Room.config.reviewers) is configured,
- * reviewer agents are passed via `agents` so the leader can spawn them via the Task tool.
- * We intentionally do NOT use coordinatorMode here — the Coordinator agent would
- * override the leader's system prompt and restrict its MCP tools.
+ * This is analogous to coordinatorMode but custom: we define the Leader agent explicitly
+ * rather than using the SDK's built-in coordinator. This preserves the leader's system
+ * prompt and MCP tools while still allowing sub-agent dispatch via the Task tool.
+ *
+ * DESIGN NOTE: The Leader agent definition includes built-in tools (Task, Read, etc.)
+ * but NOT MCP tools (leader-agent-tools__send_to_worker, etc.). MCP tools are provided
+ * via the mcpServers config and should be available to the main agent thread regardless
+ * of the agent's tools list. If this assumption is wrong and MCP tools are NOT available,
+ * add 'leader-agent-tools__*' to the Leader agent's tools array.
+ *
+ * To test: Run the server, create a room with reviewer sub-agents configured,
+ * trigger autonomous mode, and verify:
+ * 1. Leader can call MCP tools (send_to_worker, complete_task, etc.)
+ * 2. Leader can dispatch reviewer sub-agents via Task tool
  */
 export function createLeaderAgentInit(
 	config: LeaderAgentConfig,
@@ -569,6 +580,60 @@ export function createLeaderAgentInit(
 			? buildReviewerAgents(reviewerConfigs)
 			: undefined;
 
+	// Only define the Leader agent definition and use agent/agents pattern
+	// when there are reviewer sub-agents to dispatch. Otherwise, use the simple
+	// preset path to avoid unnecessary complexity.
+	if (reviewerAgents) {
+		// Build the Leader agent definition that describes its role and tools
+		const leaderAgentDef: AgentDefinition = {
+			description:
+				'Lead reviewer that orchestrates code review. Dispatches reviewer sub-agents, consolidates their findings, and makes routing decisions using MCP tools.',
+			prompt: buildLeaderSystemPrompt(config),
+			tools: [
+				'Task',
+				'TaskOutput',
+				'TaskStop', // For dispatching reviewer sub-agents
+				'Read',
+				'Grep',
+				'Glob',
+				'Bash', // For reading code
+				'WebFetch',
+				'WebSearch', // For reference lookups
+				// NOTE: MCP tools (leader-agent-tools__*) are provided via mcpServers
+				// and should be available regardless of this tools list.
+			],
+			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
+		};
+
+		// Combine Leader + reviewer agents into a single agents map
+		const allAgents: Record<string, AgentDefinition> = {
+			Leader: leaderAgentDef,
+			...reviewerAgents,
+		};
+
+		return {
+			sessionId: config.sessionId,
+			workspacePath: config.workspacePath,
+			systemPrompt: {
+				type: 'preset',
+				preset: 'claude_code',
+				append: buildLeaderSystemPrompt(config),
+			},
+			mcpServers: {
+				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
+			},
+			features: LEADER_FEATURES,
+			context: { roomId: config.room.id },
+			type: 'leader',
+			model: config.model ?? DEFAULT_LEADER_MODEL,
+			// Use agent/agents pattern: designate Leader as main thread
+			// This enables sub-agent dispatch via Task tool without coordinatorMode
+			agent: 'Leader',
+			agents: allAgents,
+		};
+	}
+
+	// Simple path: no reviewer sub-agents, no agent/agents needed
 	return {
 		sessionId: config.sessionId,
 		workspacePath: config.workspacePath,
@@ -584,8 +649,5 @@ export function createLeaderAgentInit(
 		context: { roomId: config.room.id },
 		type: 'leader',
 		model: config.model ?? DEFAULT_LEADER_MODEL,
-		// Pass reviewer agents directly — the SDK Task tool can spawn them
-		// without needing coordinatorMode (which would conflict with leader's own tools)
-		agents: reviewerAgents,
 	};
 }
