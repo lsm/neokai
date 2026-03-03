@@ -123,4 +123,13 @@ export class MessageRecoveryHandler {
  * (no human-typed text content).
  */
 function isToolResultOnlyContent(content: unknown): boolean {
-	if (!
+	if (!Array.isArray(content) || content.length === 0) {
+		return false;
+	}
+	return content.every(
+		(block) =>
+			typeof block === 'object' &&
+			block !== null &&
+			(block as { type?: unknown }).type === 'tool_result',
+	);
+}
