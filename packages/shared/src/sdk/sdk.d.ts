@@ -1872,6 +1872,7 @@ export declare type SDKUserMessage = {
     message: MessageParam;
     parent_tool_use_id: string | null;
     isSynthetic?: boolean;
+    sendStatus?: 'failed';
     tool_use_result?: unknown;
     uuid?: UUID;
     session_id: string;

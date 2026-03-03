@@ -13,7 +13,7 @@ import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
 import type { SQLiteValue } from '../types';
 
-export type SendStatus = 'saved' | 'queued' | 'sent';
+export type SendStatus = 'saved' | 'queued' | 'sent' | 'failed';
 
 export class SDKMessageRepository {
 	private logger = new Logger('Database');
@@ -87,11 +87,11 @@ export class SDKMessageRepository {
 		since?: number
 	): { messages: SDKMessage[]; hasMore: boolean } {
 		// Step 1: Get top-level messages (excluding subagent messages)
-		// Only show user messages that are already sent to SDK.
-		let query = `SELECT sdk_message, timestamp FROM sdk_messages
+		// Show user messages that were sent to SDK, plus any that failed to deliver.
+		let query = `SELECT sdk_message, timestamp, send_status FROM sdk_messages
       WHERE session_id = ?
         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
-        AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')`;
+        AND (message_type != 'user' OR COALESCE(send_status, 'sent') IN ('sent', 'failed'))`;
 		const params: SQLiteValue[] = [sessionId];
 
 		// Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
@@ -113,12 +113,15 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-		// Parse SDK message and inject the timestamp from the database row
+		// Parse SDK message and inject the timestamp and sendStatus from the database row
 		const messages = rows.map((r) => {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
-			// Inject timestamp into SDK message object for client-side filtering
-			return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+			const extra: Record<string, unknown> = { timestamp };
+			if (r.send_status === 'failed') {
+				extra.sendStatus = 'failed';
+			}
+			return { ...sdkMessage, ...extra } as SDKMessage & { timestamp: number };
 		});
 
 		// Reverse to get chronological order (oldest to newest) for display
@@ -150,7 +153,7 @@ export class SDKMessageRepository {
 			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
        WHERE session_id = ?
          AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
-         AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')
+         AND (message_type != 'user' OR COALESCE(send_status, 'sent') IN ('sent', 'failed'))
         ORDER BY timestamp ASC`;
 			const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 

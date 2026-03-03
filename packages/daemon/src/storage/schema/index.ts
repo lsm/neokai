@@ -73,7 +73,7 @@ export function createTables(db: BunDatabase): void {
         message_subtype TEXT,
         sdk_message TEXT NOT NULL,
         timestamp TEXT NOT NULL,
-        send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent')),
+        send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent', 'failed')),
         FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
       )
     `);

@@ -65,6 +65,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 14: Drop events table and unused session columns (labels, sub_session_order)
 	runMigration14(db);
+
+	// Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
+	runMigration15(db);
 }
 
 /**
@@ -506,6 +509,53 @@ function runMigration14(db: BunDatabase): void {
 	}
 	if (tableHasColumn(db, 'sessions', 'sub_session_order')) {
 		db.exec(`ALTER TABLE sessions DROP COLUMN sub_session_order`);
+	}
+}
+
+/**
+ * Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
+ *
+ * Orphaned messages are now marked 'failed' instead of 'saved', so they appear
+ * in the UI as undelivered rather than being silently re-dispatched on startup.
+ *
+ * Requires rebuilding the table because SQLite does not support modifying
+ * existing CHECK constraints via ALTER TABLE.
+ */
+function runMigration15(db: BunDatabase): void {
+	if (!tableExists(db, 'sdk_messages')) {
+		return;
+	}
+	// Check if the constraint already includes 'failed' by inspecting the schema SQL
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sdk_messages'`)
+		.get() as { sql: string } | null;
+	if (tableInfo?.sql?.includes("'failed'")) {
+		return; // Already migrated
+	}
+
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		db.exec(`
+			CREATE TABLE sdk_messages_new (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				message_subtype TEXT,
+				sdk_message TEXT NOT NULL,
+				timestamp TEXT NOT NULL,
+				send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent', 'failed')),
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`INSERT INTO sdk_messages_new SELECT * FROM sdk_messages`);
+		db.exec(`DROP TABLE sdk_messages`);
+		db.exec(`ALTER TABLE sdk_messages_new RENAME TO sdk_messages`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_id ON sdk_messages(session_id)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
+		);
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
 	}
 }
 
