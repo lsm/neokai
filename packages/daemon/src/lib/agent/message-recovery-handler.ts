@@ -9,7 +9,7 @@
  */
 
 import type { Session } from '@neokai/shared';
-import type { SDKMessage } from '@neokai/shared/sdk';
+import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import { isSDKUserMessage, isSDKSystemMessage } from '@neokai/shared/sdk/type-guards';
 import { Database } from '../../storage/database';
 import { Logger } from '../logger';
@@ -76,6 +76,21 @@ export class MessageRecoveryHandler {
 					continue;
 				}
 
+				// Skip synthetic messages (SDK-generated tool results, not human-typed).
+				// These are saved by saveSDKMessage with isSynthetic=true and should not
+				// be recovered — they are internal SDK messages, not user input.
+				const userMsg = sentMsg as SDKUserMessage & { isSynthetic?: boolean };
+				if (userMsg.isSynthetic) {
+					continue;
+				}
+
+				// Also skip messages whose content is entirely tool_result blocks.
+				// Even without the isSynthetic flag (e.g. older messages), tool_result
+				// content is never human-typed input.
+				if (isToolResultOnlyContent(userMsg.message.content)) {
+					continue;
+				}
+
 				const msgWithTimestamp = sentMsg as SDKMessage & { timestamp?: number };
 				const msgTimestamp = msgWithTimestamp.timestamp || 0;
 
@@ -102,3 +117,10 @@ export class MessageRecoveryHandler {
 		}
 	}
 }
+
+/**
+ * Check if message content consists entirely of tool_result blocks
+ * (no human-typed text content).
+ */
+function isToolResultOnlyContent(content: unknown): boolean {
+	if (!
