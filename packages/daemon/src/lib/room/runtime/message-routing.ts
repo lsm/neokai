@@ -57,25 +57,34 @@ export interface PlanEnvelopeParams {
 	workerOutput: string;
 	/** Draft tasks created by the planner */
 	draftTasks: Array<Pick<NeoTask, 'id' | 'title' | 'description' | 'priority' | 'assignedAgent'>>;
+	/** Whether the plan has been approved (phase 2) */
+	planApproved?: boolean;
 }
 
 /**
  * Format planner output as a structured envelope for Leader review.
- * Includes the list of draft tasks so the Leader can evaluate the plan.
+ *
+ * Phase 1 (planApproved=false): Plan file + PR created, no draft tasks expected.
+ * Phase 2 (planApproved=true): Draft tasks created from approved plan.
  */
 export function formatPlanEnvelope(params: PlanEnvelopeParams): string {
 	const lines: string[] = [];
 
-	lines.push(`[PLANNER OUTPUT] Iteration: ${params.iteration}`);
+	const phase = params.planApproved ? 'Phase 2 (task creation)' : 'Phase 1 (plan document)';
+	lines.push(`[PLANNER OUTPUT] Iteration: ${params.iteration} — ${phase}`);
 	lines.push(`Goal: ${params.goalTitle}`);
-	lines.push(`Tasks created: ${params.draftTasks.length}`);
+	if (params.planApproved) {
+		lines.push(`Tasks created: ${params.draftTasks.length}`);
+	} else {
+		lines.push(`Plan PR created — ready for review`);
+	}
 	lines.push(`Terminal state: ${params.terminalState}`);
 	lines.push('---');
 	lines.push(params.workerOutput);
 
 	if (params.draftTasks.length > 0) {
 		lines.push('');
-		lines.push('## Current Plan');
+		lines.push('## Created Tasks');
 		lines.push('');
 		for (let i = 0; i < params.draftTasks.length; i++) {
 			const t = params.draftTasks[i];

@@ -119,27 +119,88 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 
 	// Context-specific review guidelines
 	if (isPlanReview) {
-		sections.push(`\n## Plan Review Guidelines\n`);
-		sections.push(`1. Check that the plan covers all aspects of the goal`);
-		sections.push(`2. Verify each task has clear, specific acceptance criteria`);
-		sections.push(`3. Ensure tasks are ordered correctly by dependency`);
-		sections.push(`4. Check that tasks are well-scoped (not too broad or too narrow)`);
-		sections.push(
-			`5. Verify appropriate agent types are assigned (coder for implementation, general for non-coding)`
-		);
-		sections.push(
-			`6. If the plan needs changes, use \`send_to_worker\` with specific feedback on what to add, remove, or modify`
-		);
-		sections.push(
-			`7. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
-		);
-		sections.push(
-			`8. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
-		);
-		sections.push(`9. Use \`fail_task\` only if the goal is fundamentally not plannable`);
-		sections.push(
-			`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
-		);
+		// Check if room has reviewer sub-agents configured for plan review
+		const roomConfig = config.room.config ?? {};
+		const planReviewerConfigs = getLeaderSubagents(roomConfig);
+		const hasPlanReviewers = planReviewerConfigs && planReviewerConfigs.length > 0;
+
+		if (hasPlanReviewers) {
+			// Build reviewer names using the same logic as buildReviewerAgents
+			const usedNames = new Set<string>();
+			const reviewerNames: string[] = [];
+			for (const reviewer of planReviewerConfigs!) {
+				reviewerNames.push(toReviewerName(reviewer, usedNames));
+			}
+
+			sections.push(`\n## Available Specialists (via Task subagent_type)\n`);
+			sections.push(`Custom: ${reviewerNames.join(', ')}\n`);
+
+			sections.push(`## Plan Review Orchestration Workflow\n`);
+			sections.push(
+				`You are the lead reviewer. You do NOT review the plan yourself. You delegate reviews to specialist reviewer sub-agents, consolidate their findings, and make the routing decision.\n`
+			);
+
+			sections.push(`### Step 1: Understand the Plan`);
+			sections.push(
+				`Read the planner's output to understand what plan was created and what PR was opened.`
+			);
+			sections.push(
+				`Extract the PR number (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
+			);
+			sections.push(
+				`If no PR was created, use \`send_to_worker\` asking the planner to create one before review can proceed.\n`
+			);
+
+			sections.push(`### Step 2: Dispatch Reviewer Sub-agents`);
+			sections.push(
+				`Use the Task tool to dispatch each reviewer to review the plan PR. Spawn all reviewers in parallel.\n`
+			);
+			for (const name of reviewerNames) {
+				sections.push(
+					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. This is a PLAN review (not code). The planner created a plan to break down a goal into tasks. Review the plan for completeness, task scoping, ordering, acceptance criteria, and feasibility. Post your review using gh pr review.")`
+				);
+			}
+
+			sections.push(`\n### Step 3: Consolidate Verdicts`);
+			sections.push(
+				`Each reviewer returns a verdict between \`---VERDICT---\` and \`---END_VERDICT---\` markers with P0/P1/P2/P3 severity levels.\n`
+			);
+			sections.push(`### Step 4: Decide Next Action\n`);
+			sections.push(
+				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with consolidated feedback about what to change in the plan`
+			);
+			sections.push(
+				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval`
+			);
+			sections.push(
+				`- **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\``
+			);
+			sections.push(
+				`\nDo NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are created.`
+			);
+		} else {
+			sections.push(`\n## Plan Review Guidelines\n`);
+			sections.push(`1. Check that the plan covers all aspects of the goal`);
+			sections.push(`2. Verify each task has clear, specific acceptance criteria`);
+			sections.push(`3. Ensure tasks are ordered correctly by dependency`);
+			sections.push(`4. Check that tasks are well-scoped (not too broad or too narrow)`);
+			sections.push(
+				`5. Verify appropriate agent types are assigned (coder for implementation, general for non-coding)`
+			);
+			sections.push(
+				`6. If the plan needs changes, use \`send_to_worker\` with specific feedback on what to add, remove, or modify`
+			);
+			sections.push(
+				`7. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
+			);
+			sections.push(
+				`8. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
+			);
+			sections.push(`9. Use \`fail_task\` only if the goal is fundamentally not plannable`);
+			sections.push(
+				`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
+			);
+		}
 	} else {
 		// Check if room has reviewer sub-agents configured
 		const roomConfig = config.room.config ?? {};

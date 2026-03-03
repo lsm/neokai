@@ -514,13 +514,32 @@ export function setupGoalHandlers(
 			throw new Error(`No runtime found for room: ${params.roomId}`);
 		}
 
-		const message =
-			'Human has approved the PR. The PR is ready to merge or has been merged. ' +
-			'You may now call `complete_task` with a summary of what was accomplished.';
+		if (task.taskType === 'planning') {
+			// Planning tasks: route to WORKER (planner phase 2) for merge + task creation
+			const message =
+				'Your plan has been approved by AI reviewers and the human reviewer. ' +
+				'Now merge the plan PR (run `gh pr merge --merge` or merge the branch manually), ' +
+				'then read the PLAN.md file and create tasks 1:1 from the approved plan using `create_task`. ' +
+				'Each task title and description should match the plan exactly.';
 
-		const resumed = await runtime.resumeFromHuman(params.taskId, message);
-		if (!resumed) {
-			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
+			const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message);
+			if (!resumed) {
+				throw new Error(
+					`Failed to resume planning task ${params.taskId} — no awaiting_human group found`
+				);
+			}
+		} else {
+			// Coding/general tasks: route to LEADER (existing behavior)
+			const message =
+				'Human has approved the PR. The PR is ready to merge or has been merged. ' +
+				'You may now call `complete_task` with a summary of what was accomplished.';
+
+			const resumed = await runtime.resumeFromHuman(params.taskId, message);
+			if (!resumed) {
+				throw new Error(
+					`Failed to resume task ${params.taskId} — no awaiting_human group found`
+				);
+			}
 		}
 
 		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);

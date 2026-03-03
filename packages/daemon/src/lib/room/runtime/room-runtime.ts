@@ -14,14 +14,15 @@
  * All handlers are idempotent. Tick mutex prevents concurrent execution.
  */
 
-import type {
-	Room,
-	NeoTask,
-	RoomGoal,
-	MessageHub,
-	TaskPriority,
-	AgentType,
-	RuntimeState,
+import {
+	generateUUID,
+	type Room,
+	type NeoTask,
+	type RoomGoal,
+	type MessageHub,
+	type TaskPriority,
+	type AgentType,
+	type RuntimeState,
 } from '@neokai/shared';
 import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
 import type { TaskManager } from '../managers/task-manager';
@@ -30,12 +31,12 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
-import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
+import type { LeaderToolCallbacks, LeaderToolResult, LeaderAgentConfig } from '../agents/leader-agent';
 import type { PlannerCreateTaskParams, ReplanContext } from '../agents/planner-agent';
 import { createPlannerAgentInit, buildPlannerTaskMessage } from '../agents/planner-agent';
 import { createCoderAgentInit, buildCoderTaskMessage } from '../agents/coder-agent';
 import { createGeneralAgentInit, buildGeneralTaskMessage } from '../agents/general-agent';
-import { buildLeaderTaskContext } from '../agents/leader-agent';
+import { buildLeaderTaskContext, createLeaderAgentInit } from '../agents/leader-agent';
 import {
 	formatWorkerToLeaderEnvelope,
 	formatPlanEnvelope,
@@ -266,8 +267,8 @@ export class RoomRuntime {
 		if (!task) return;
 
 		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
-		// Only applies to non-planning groups (planners don't modify the worktree).
-		if (group.workerRole !== 'planner') {
+		// Applies to all workers — planners now create PLAN.md files and commit to branches.
+		{
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
 			if (dirty) {
@@ -300,6 +301,7 @@ export class RoomRuntime {
 				workerRole: group.workerRole,
 				taskId: group.taskId,
 				groupId,
+				planApproved: group.planApproved,
 			};
 			if (group.workerRole === 'planner') {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
@@ -356,6 +358,7 @@ export class RoomRuntime {
 				terminalState: terminalState.kind,
 				workerOutput: workerOutputText,
 				draftTasks,
+				planApproved: group.planApproved,
 			});
 		} else {
 			envelope = formatWorkerToLeaderEnvelope({
@@ -697,6 +700,149 @@ export class RoomRuntime {
 
 		this.scheduleTick();
 		return true;
+	}
+
+	/**
+	 * Resume a planning group from awaiting_human by starting a new planner session (phase 2).
+	 *
+	 * Called when a human approves a planning task. Creates a new planner worker
+	 * session for phase 2 (merge PR + create tasks) and a new leader init for
+	 * task verification after phase 2.
+	 *
+	 * Flow:
+	 * 1. Set planApproved flag on group metadata
+	 * 2. Build phase 2 planner init (create_tasks phase)
+	 * 3. Build new leader init (task verification, no reviewer dispatch)
+	 * 4. Delegate to TaskGroupManager.resumeWorkerFromHuman
+	 * 5. Setup mirroring for new sessions
+	 */
+	async resumeWorkerFromHuman(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.state !== 'awaiting_human') return false;
+
+		// 1. Set planApproved flag
+		this.groupRepo.setPlanApproved(group.id, true);
+
+		// 2. Look up task and goal
+		const task = await this.taskManager.getTask(group.taskId);
+		if (!task) return false;
+		const goals = await this.goalManager.getGoalsForTask(group.taskId);
+		const goal = goals[0];
+		if (!goal) return false;
+
+		// 3. Build draft task callbacks (same as spawnPlanningGroup)
+		const createDraftTask = async (
+			params: PlannerCreateTaskParams
+		): Promise<{ id: string; title: string }> => {
+			const newTask = await this.taskManager.createTask({
+				title: params.title,
+				description: params.description,
+				priority: params.priority,
+				taskType: 'coding',
+				status: 'draft',
+				createdByTaskId: task.id,
+				assignedAgent: params.agent,
+			});
+			await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+			log.info(`Phase 2 planner created draft task: ${newTask.id} (${newTask.title})`);
+			return { id: newTask.id, title: newTask.title };
+		};
+
+		const updateDraftTask = async (
+			draftId: string,
+			updates: {
+				title?: string;
+				description?: string;
+				priority?: TaskPriority;
+				assignedAgent?: AgentType;
+			}
+		): Promise<{ id: string; title: string }> => {
+			return this.taskManager.updateDraftTask(draftId, updates);
+		};
+
+		const removeDraftTask = async (draftId: string): Promise<boolean> => {
+			return this.taskManager.removeDraftTask(draftId);
+		};
+
+		// 4. Build phase 2 planner init
+		const newWorkerSessionId = `planner:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
+		const groupWorkspacePath = group.workspacePath ?? this.taskGroupManager.workspacePath;
+		const plannerConfig = {
+			task,
+			goal,
+			room: this.room,
+			sessionId: newWorkerSessionId,
+			workspacePath: groupWorkspacePath,
+			model: this.taskGroupManager.model,
+			createDraftTask,
+			updateDraftTask,
+			removeDraftTask,
+			phase: 'create_tasks' as const,
+		};
+		const workerInit = createPlannerAgentInit(plannerConfig);
+		workerInit.workspacePath = groupWorkspacePath;
+
+		// 5. Build phase 2 leader init (lightweight task verification, no review context)
+		const newLeaderSessionId = `leader:${this.room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
+		const leaderCallbacks = this.createLeaderCallbacks(group.id);
+		const leaderConfig: LeaderAgentConfig = {
+			task,
+			goal,
+			room: this.room,
+			sessionId: newLeaderSessionId,
+			workspacePath: groupWorkspacePath,
+			groupId: group.id,
+			model: this.taskGroupManager.model,
+			// No reviewContext — second leader pass is just task verification
+		};
+		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
+
+		const leaderTaskContext = buildLeaderTaskContext({
+			task,
+			goal,
+			room: this.room,
+			sessionId: newLeaderSessionId,
+			workspacePath: groupWorkspacePath,
+			groupId: group.id,
+			model: this.taskGroupManager.model,
+		});
+
+		// 6. Move task back to in_progress
+		await this.taskManager.updateTaskStatus(task.id, 'in_progress');
+
+		// 7. Setup mirroring before starting the new worker
+		// (refreshed group needed because worker session_id will change)
+		const refreshedGroup = this.groupRepo.getGroup(group.id);
+		if (refreshedGroup) {
+			// Clean up old mirroring first
+			this.cleanupMirroring(group.id);
+		}
+
+		// 8. Delegate to TaskGroupManager
+		const resumed = await this.taskGroupManager.resumeWorkerFromHuman(
+			group.id,
+			workerInit,
+			message,
+			{
+				init: leaderInit,
+				sessionId: newLeaderSessionId,
+				onTerminal: (gid, state) => this.onLeaderTerminalState(gid, state),
+				leaderTaskContext,
+			},
+			(gid, state) => this.onWorkerTerminalState(gid, state)
+		);
+
+		if (resumed) {
+			// Setup mirroring with updated group
+			const newGroup = this.groupRepo.getGroup(group.id);
+			if (newGroup) {
+				this.setupMirroring(newGroup);
+			}
+			await this.emitTaskUpdateById(task.id);
+			this.scheduleTick();
+		}
+
+		return resumed;
 	}
 
 	// =========================================================================

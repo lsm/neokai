@@ -481,8 +481,9 @@ describe('RoomRuntime flow', () => {
 			expect(updated!.state).toBe('completed');
 		});
 
-		test('bounces planner back when no draft tasks created', async () => {
-			// All git/gh commands fail (exit 1) — only the draft-tasks check matters for planners
+		test('bounces planner back when no draft tasks created (phase 2)', async () => {
+			// All git/gh commands fail (exit 1) — in phase 2 (planApproved=true),
+			// the draft-tasks check matters for planners
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => {
@@ -508,6 +509,9 @@ describe('RoomRuntime flow', () => {
 			const groups = hookCtx.groupRepo.getActiveGroups('room-1');
 			expect(groups).toHaveLength(1);
 			const group = groups[0];
+
+			// Set planApproved=true to simulate phase 2 (after human approval)
+			hookCtx.groupRepo.setPlanApproved(group.id, true);
 
 			// Planner finishes without creating any draft tasks (draftTaskCount = 0)
 			await hookCtx.runtime.onWorkerTerminalState(group.id, {

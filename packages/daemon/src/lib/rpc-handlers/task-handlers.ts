@@ -372,6 +372,7 @@ export function setupTaskHandlers(
 				leaderSessionId: group.leaderSessionId,
 				state: group.state,
 				feedbackIteration: group.feedbackIteration,
+				planApproved: group.planApproved,
 				createdAt: group.createdAt,
 				completedAt: group.completedAt,
 			},

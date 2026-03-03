@@ -326,18 +326,51 @@ describe('runWorkerExitGate', () => {
 		expect(result.bounceMessage).toContain('feature branch');
 	});
 
-	test('runs planner hook and passes when tasks exist', async () => {
+	test('runs planner phase 2 hook and passes when tasks exist', async () => {
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 3 }),
+			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 3, planApproved: true }),
 		);
 		expect(result.pass).toBe(true);
 	});
 
-	test('fails planner with no tasks', async () => {
+	test('fails planner phase 2 with no tasks', async () => {
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 0 }),
+			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 0, planApproved: true }),
 		);
 		expect(result.pass).toBe(false);
+	});
+
+	test('runs planner phase 1 hooks (PR check) and passes', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr list --head plan/new-feature --json number,url --state open': {
+				stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]',
+				exitCode: 0,
+			},
+			'git rev-parse HEAD': { stdout: 'abc123', exitCode: 0 },
+			'gh pr view --json headRefOid --jq .headRefOid': { stdout: 'abc123', exitCode: 0 },
+		});
+		const result = await runWorkerExitGate(
+			makeWorkerCtx({ workerRole: 'planner', planApproved: false }),
+			opts,
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails planner phase 1 when no PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr list --head plan/new-feature --json number,url --state open': {
+				stdout: '[]',
+				exitCode: 0,
+			},
+		});
+		const result = await runWorkerExitGate(
+			makeWorkerCtx({ workerRole: 'planner', planApproved: false }),
+			opts,
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('gh pr create');
 	});
 
 	test('passes for general role with no applicable hooks', async () => {

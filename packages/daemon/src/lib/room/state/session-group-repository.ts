@@ -42,6 +42,8 @@ interface TaskGroupMetadata {
 	workspacePath?: string;
 	/** Whether the leader has called submit_for_review (state machine gate for complete_task) */
 	submittedForReview?: boolean;
+	/** Whether the plan has been approved by human (gates create_task tool and worker exit gate phase) */
+	planApproved?: boolean;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -86,6 +88,8 @@ export interface SessionGroup {
 	workspacePath?: string;
 	/** Whether the leader has called submit_for_review (state machine gate for complete_task) */
 	submittedForReview: boolean;
+	/** Whether the plan has been approved by human (gates create_task tool and worker exit gate phase) */
+	planApproved: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -336,6 +340,36 @@ export class SessionGroupRepository {
 			.run(JSON.stringify(merged), groupId);
 	}
 
+	/**
+	 * Set planApproved flag without version check.
+	 * Records that the human has approved the plan, gating create_task tool for phase 2.
+	 */
+	setPlanApproved(groupId: string, value: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, planApproved: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
+	 * Update the worker member's session_id for a group.
+	 * Used when resuming a worker session (e.g., planner phase 2).
+	 */
+	updateWorkerSession(groupId: string, newSessionId: string): void {
+		this.db
+			.prepare(
+				`UPDATE session_group_members SET session_id = ? WHERE group_id = ? AND role = 'worker'`
+			)
+			.run(newSessionId, groupId);
+	}
+
 	updateLastForwardedMessageId(
 		groupId: string,
 		messageId: string,
@@ -447,6 +481,7 @@ export class SessionGroupRepository {
 			tokensUsed: meta.tokensUsed,
 			workspacePath: meta.workspacePath,
 			submittedForReview: meta.submittedForReview ?? false,
+			planApproved: meta.planApproved ?? false,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

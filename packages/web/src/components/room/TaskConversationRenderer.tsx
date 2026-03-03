@@ -1,16 +1,12 @@
 /**
  * TaskConversationRenderer
  *
- * Renders a unified conversation timeline for a task group.
+ * Renders a flat conversation timeline for a task group.
  * Messages are fetched from session_group_messages via task.getGroupMessages RPC
- * and grouped by turn (using _taskMeta.turnId + _taskMeta.authorRole).
+ * and grouped by turn (using _taskMeta.turnId).
  *
- * Each turn is rendered as a collapsible block with a colored left border:
- * - Planner: teal border
- * - Coder: blue border
- * - General: slate border
- * - Leader: purple border
- * - System: gray centered divider
+ * Each turn is rendered with a colored left border and a small header showing
+ * the agent name and turn number. All messages are always visible (no collapse).
  *
  * Subscribes to state.groupMessages.delta on channel group:{groupId} for
  * real-time updates.
@@ -18,7 +14,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { isSDKAssistantMessage } from '@neokai/shared/sdk/type-guards';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
@@ -74,7 +69,7 @@ const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: s
 	},
 	human: {
 		border: 'border-l-green-500',
-		label: 'Human',
+		label: 'Task Prompt',
 		labelColor: 'text-green-400',
 	},
 	system: {
@@ -95,9 +90,6 @@ const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: s
 	},
 };
 
-/**
- * Parse a group message's content JSON into an SDKMessage with _taskMeta.
- */
 function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 	try {
 		return JSON.parse(msg.content) as SDKMessage;
@@ -111,34 +103,30 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-/**
- * Extract a short summary from the first text block of an assistant message.
- */
-function getMessagePreview(messages: SDKMessage[]): string | null {
+function getSystemText(messages: SDKMessage[]): string | null {
 	for (const msg of messages) {
-		if (!isSDKAssistantMessage(msg)) continue;
-		const content = msg.message?.content;
-		if (!Array.isArray(content)) continue;
-		for (const block of content) {
-			const b = block as Record<string, unknown>;
-			if (b.type === 'text' && typeof b.text === 'string' && b.text.length > 0) {
-				return b.text.length > 120 ? b.text.slice(0, 120) + '…' : b.text;
+		const raw = msg as Record<string, unknown>;
+		if (raw.type === 'user' && raw.message) {
+			const m = raw.message as Record<string, unknown>;
+			if (Array.isArray(m.content)) {
+				for (const block of m.content) {
+					const b = block as Record<string, unknown>;
+					if (b.type === 'text' && typeof b.text === 'string') return b.text;
+				}
 			}
 		}
 	}
 	return null;
 }
 
-/**
- * Count tool uses across all messages in a turn.
- */
 function countToolUses(messages: SDKMessage[]): number {
 	let count = 0;
 	for (const msg of messages) {
-		if (!isSDKAssistantMessage(msg)) continue;
-		const content = msg.message?.content;
-		if (!Array.isArray(content)) continue;
-		for (const block of content) {
+		const raw = msg as Record<string, unknown>;
+		if (raw.type !== 'assistant') continue;
+		const m = raw.message as Record<string, unknown> | undefined;
+		if (!m || !Array.isArray(m.content)) continue;
+		for (const block of m.content) {
 			if ((block as Record<string, unknown>).type === 'tool_use') count++;
 		}
 	}
@@ -146,10 +134,7 @@ function countToolUses(messages: SDKMessage[]): number {
 }
 
 /**
- * Group messages by turn using _taskMeta.turnId alone.
- * turnId is deterministic: `turn_{groupId}_{iteration}_{shortSessionId}`
- * so it uniquely identifies each agent's turn without needing authorRole in the key.
- * Messages without _taskMeta are placed in an 'unknown' group.
+ * Group consecutive messages by turnId.
  */
 function groupMessagesByTurn(messages: SDKMessage[]): TurnGroup[] {
 	const groups: TurnGroup[] = [];
@@ -161,7 +146,6 @@ function groupMessagesByTurn(messages: SDKMessage[]): TurnGroup[] {
 		const authorRole = meta?.authorRole ?? 'system';
 		const iteration = meta?.iteration ?? 0;
 
-		// Start a new group when turnId changes
 		if (!currentGroup || currentGroup.turnId !== turnId) {
 			currentGroup = { turnId, authorRole, iteration, messages: [] };
 			groups.push(currentGroup);
@@ -177,10 +161,8 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
-	const [collapsedTurns, setCollapsedTurns] = useState<Set<string>>(new Set());
 	const scrollRef = useRef<HTMLDivElement>(null);
 
-	// Fetch initial messages and subscribe to updates
 	useEffect(() => {
 		const channel = `group:${groupId}`;
 		joinRoom(channel);
@@ -203,13 +185,11 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 
 		fetchMessages();
 
-		// Subscribe to real-time message deltas
 		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
 			'state.groupMessages.delta',
 			(event) => {
 				if (event.added && event.added.length > 0) {
 					setMessages((prev) => [...prev, ...event.added]);
-					// Auto-scroll to bottom on new messages
 					requestAnimationFrame(() => {
 						scrollRef.current?.scrollTo({
 							top: scrollRef.current.scrollHeight,
@@ -226,35 +206,21 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 		};
 	}, [groupId]);
 
-	// Group messages by turn
 	const turnGroups = useMemo(() => groupMessagesByTurn(messages), [messages]);
-
-	// Compute message maps for tool result rendering
 	const maps = useMessageMaps(messages, groupId);
 
-	// Auto-collapse previous turns when new ones arrive
-	useEffect(() => {
-		if (turnGroups.length > 1) {
-			const toCollapse = new Set<string>();
-			// Collapse all turns except the last one
-			for (let i = 0; i < turnGroups.length - 1; i++) {
-				toCollapse.add(turnGroups[i].turnId);
-			}
-			setCollapsedTurns(toCollapse);
+	// Assign sequential turn numbers per role
+	const turnNumbers = useMemo(() => {
+		const counters: Record<string, number> = {};
+		const result = new Map<string, number>();
+		for (const group of turnGroups) {
+			if (group.authorRole === 'system' || group.authorRole === 'human') continue;
+			const role = group.authorRole;
+			counters[role] = (counters[role] ?? 0) + 1;
+			result.set(group.turnId, counters[role]);
 		}
-	}, [turnGroups.length]);
-
-	const toggleTurn = (turnKey: string) => {
-		setCollapsedTurns((prev) => {
-			const next = new Set(prev);
-			if (next.has(turnKey)) {
-				next.delete(turnKey);
-			} else {
-				next.add(turnKey);
-			}
-			return next;
-		});
-	};
+		return result;
+	}, [turnGroups]);
 
 	if (loading) {
 		return (
@@ -276,63 +242,58 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 		<div ref={scrollRef} class="flex-1 overflow-y-auto px-4 py-3 space-y-2">
 			{turnGroups.map((group) => {
 				const style = ROLE_STYLES[group.authorRole] ?? ROLE_STYLES.system;
-				const isCollapsed = collapsedTurns.has(group.turnId);
 
 				// System messages: render as centered dividers
 				if (group.authorRole === 'system') {
+					const text = getSystemText(group.messages);
 					return (
 						<div key={group.turnId} class="flex items-center gap-3 py-1.5">
 							<div class="flex-1 h-px bg-dark-700" />
 							<span class="text-xs text-gray-500 whitespace-nowrap">
-								{getMessagePreview(group.messages) ?? 'Status update'}
+								{text ?? 'Status update'}
 							</span>
 							<div class="flex-1 h-px bg-dark-700" />
 						</div>
 					);
 				}
 
+				const turnNum = turnNumbers.get(group.turnId);
 				const toolCount = countToolUses(group.messages);
-				const preview = isCollapsed ? getMessagePreview(group.messages) : null;
 
 				return (
 					<div key={group.turnId} class={`border-l-2 ${style.border} bg-dark-850/50 rounded-r`}>
-						{/* Turn header */}
-						<button
-							type="button"
-							class="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-dark-800/50 transition-colors"
-							onClick={() => toggleTurn(group.turnId)}
-						>
-							<span class="text-[10px] text-gray-600 select-none">{isCollapsed ? '▶' : '▼'}</span>
+						{/* Turn header — always visible, not clickable */}
+						<div class="flex items-center gap-2 px-3 py-1.5">
 							<span class={`text-xs font-semibold uppercase tracking-wide ${style.labelColor}`}>
 								{style.label}
 							</span>
+							{turnNum != null && (
+								<span class="text-[10px] text-gray-600">#{turnNum}</span>
+							)}
 							{group.iteration > 0 && (
-								<span class="text-[10px] text-gray-600">iteration {group.iteration}</span>
+								<span class="text-[10px] text-gray-600">
+									iter {group.iteration}
+								</span>
 							)}
 							{toolCount > 0 && (
 								<span class="text-[10px] text-gray-600">
 									{toolCount} tool{toolCount !== 1 ? 's' : ''}
 								</span>
 							)}
-							{isCollapsed && preview && (
-								<span class="text-xs text-gray-500 truncate ml-1 flex-1 text-left">{preview}</span>
-							)}
-						</button>
+						</div>
 
-						{/* Turn messages */}
-						{!isCollapsed && (
-							<div class="px-3 pb-2 space-y-1">
-								{group.messages.map((msg) => (
-									<SDKMessageRenderer
-										key={(msg as SDKMessage & { uuid?: string }).uuid ?? Math.random().toString()}
-										message={msg}
-										toolResultsMap={maps.toolResultsMap}
-										toolInputsMap={maps.toolInputsMap}
-										subagentMessagesMap={maps.subagentMessagesMap}
-									/>
-								))}
-							</div>
-						)}
+						{/* All messages — always expanded */}
+						<div class="px-3 pb-2 space-y-1">
+							{group.messages.map((msg) => (
+								<SDKMessageRenderer
+									key={(msg as SDKMessage & { uuid?: string }).uuid ?? Math.random().toString()}
+									message={msg}
+									toolResultsMap={maps.toolResultsMap}
+									toolInputsMap={maps.toolInputsMap}
+									subagentMessagesMap={maps.subagentMessagesMap}
+								/>
+							))}
+						</div>
 					</div>
 				);
 			})}

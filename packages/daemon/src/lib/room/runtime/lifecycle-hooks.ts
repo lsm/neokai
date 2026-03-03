@@ -35,6 +35,8 @@ export interface WorkerExitHookContext {
 	groupId: string;
 	/** For planner tasks: how many draft tasks exist */
 	draftTaskCount?: number;
+	/** Whether the plan has been approved by human (determines planner phase) */
+	planApproved?: boolean;
 }
 
 export interface LeaderCompleteHookContext {
@@ -342,9 +344,21 @@ export async function runWorkerExitGate(
 	}
 
 	if (ctx.workerRole === 'planner') {
-		const result = await checkDraftTasksCreated(ctx, opts);
-		if (!result.pass) {
-			return result;
+		if (!ctx.planApproved) {
+			// Phase 1: planner must create a plan file and PR (like coder exit gate)
+			const hooks = [checkNotOnBaseBranch, checkPrExists, checkPrSynced];
+			for (const hook of hooks) {
+				const result = await hook(ctx, opts);
+				if (!result.pass) {
+					return result;
+				}
+			}
+		} else {
+			// Phase 2: planner must have created draft tasks from the approved plan
+			const result = await checkDraftTasksCreated(ctx, opts);
+			if (!result.pass) {
+				return result;
+			}
 		}
 	}
 

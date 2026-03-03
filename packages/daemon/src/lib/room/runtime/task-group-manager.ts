@@ -211,9 +211,33 @@ export class TaskGroupManager {
 		// Create and start ONLY the worker session
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
+		// Store the initial task message in the group timeline BEFORE injecting it
+		// into the SDK, so the frontend can display the user prompt. The mirroring
+		// subscription (setupMirroring) won't be active yet when the SDK receives
+		// this message, so we must persist it explicitly.
+		const shortSessionId = workerSessionId.slice(0, 8);
+		const taskMsgContent = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [{ type: 'text', text: workerConfig.taskMessage }],
+			},
+			_taskMeta: {
+				authorRole: 'human',
+				authorSessionId: workerSessionId,
+				turnId: `turn_${group.id}_0_${shortSessionId}`,
+				iteration: 0,
+			},
+		});
+		this.groupRepo.appendMessage({
+			groupId: group.id,
+			sessionId: workerSessionId,
+			role: 'human',
+			messageType: 'user',
+			content: taskMsgContent,
+		});
+
 		// Kick off worker so the SDK streaming loop starts processing immediately.
-		// Use the task-specific message built by the caller (room-runtime.ts) via
-		// the appropriate buildXxxTaskMessage() function.
 		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
 
 		// Observe worker session for terminal state
@@ -394,6 +418,95 @@ export class TaskGroupManager {
 		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 
 		return this.groupRepo.getGroup(groupId);
+	}
+
+	/**
+	 * Resume a group from awaiting_human state with a new worker session (planner phase 2).
+	 *
+	 * Called when a planning task is approved by a human. Creates a new planner
+	 * worker session for phase 2 (merge PR + create tasks) within the same group.
+	 *
+	 * Flow:
+	 * 1. Update worker member session_id to the new session
+	 * 2. Transition: awaiting_human → awaiting_worker
+	 * 3. Store new leader init for after phase 2 worker exit
+	 * 4. Create and start new worker session
+	 * 5. Pre-persist task message in group timeline
+	 * 6. Inject task message and observe worker
+	 */
+	async resumeWorkerFromHuman(
+		groupId: string,
+		workerInit: AgentSessionInit,
+		taskMessage: string,
+		leaderInfo: {
+			init: AgentSessionInit;
+			sessionId: string;
+			onTerminal: (groupId: string, state: TerminalState) => void;
+			leaderTaskContext?: string;
+		},
+		onWorkerTerminal: (groupId: string, state: TerminalState) => void
+	): Promise<boolean> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group || group.state !== 'awaiting_human') return false;
+
+		// 1. Update worker member to point to new session
+		this.groupRepo.updateWorkerSession(groupId, workerInit.sessionId);
+
+		// 2. Transition: awaiting_human → awaiting_worker
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
+		if (!updated) return false;
+
+		// 3. Store new leader init (for after phase 2 worker exit → routeWorkerToLeader)
+		this.pendingLeaderInits.set(groupId, {
+			init: leaderInfo.init,
+			sessionId: leaderInfo.sessionId,
+			onTerminal: leaderInfo.onTerminal,
+			leaderTaskContext: leaderInfo.leaderTaskContext,
+		});
+
+		// 4. Reset state for the new review round
+		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
+		const afterReset = this.groupRepo.getGroup(groupId);
+		if (afterReset) {
+			// Reset submittedForReview so the new leader pass must go through the same flow
+			this.groupRepo.setSubmittedForReview(groupId, false);
+		}
+
+		// 5. Create and start new worker session
+		await this.sessionFactory.createAndStartSession(workerInit, 'planner');
+
+		// 6. Pre-persist task message in group timeline
+		const shortSessionId = workerInit.sessionId.slice(0, 8);
+		const taskMsgContent = JSON.stringify({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [{ type: 'text', text: taskMessage }],
+			},
+			_taskMeta: {
+				authorRole: 'human',
+				authorSessionId: workerInit.sessionId,
+				turnId: `turn_${groupId}_phase2_${shortSessionId}`,
+				iteration: 0,
+			},
+		});
+		this.groupRepo.appendMessage({
+			groupId,
+			sessionId: workerInit.sessionId,
+			role: 'human',
+			messageType: 'user',
+			content: taskMsgContent,
+		});
+
+		// 7. Inject task message into worker
+		await this.sessionFactory.injectMessage(workerInit.sessionId, taskMessage);
+
+		// 8. Observe worker for terminal state
+		this.observer.observe(workerInit.sessionId, (state) => {
+			onWorkerTerminal(groupId, state);
+		});
+
+		return true;
 	}
 
 	/**
