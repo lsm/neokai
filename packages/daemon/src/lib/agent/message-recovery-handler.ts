@@ -130,6 +130,6 @@ function isToolResultOnlyContent(content: unknown): boolean {
 		(block) =>
 			typeof block === 'object' &&
 			block !== null &&
-			(block as { type?: unknown }).type === 'tool_result',
+			(block as { type?: unknown }).type === 'tool_result'
 	);
 }

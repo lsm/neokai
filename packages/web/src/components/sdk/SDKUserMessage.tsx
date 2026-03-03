@@ -292,9 +292,7 @@ export function SDKUserMessage({
 					content="Message was not delivered — the server crashed before Claude responded"
 					position="left"
 				>
-					<span class="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">
-						not delivered
-					</span>
+					<span class="text-xs px-2 py-0.5 bg-red-500/20 text-red-400 rounded">not delivered</span>
 				</Tooltip>
 			)}
 

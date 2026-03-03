@@ -550,11 +550,9 @@ function runMigration15(db: BunDatabase): void {
 		db.exec(`INSERT INTO sdk_messages_new SELECT * FROM sdk_messages`);
 		db.exec(`DROP TABLE sdk_messages`);
 		db.exec(`ALTER TABLE sdk_messages_new RENAME TO sdk_messages`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_id ON sdk_messages(session_id)`);
 		db.exec(
-			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_id ON sdk_messages(session_id)`,
-		);
-		db.exec(
-			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`,
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
 		);
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
