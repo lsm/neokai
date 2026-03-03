@@ -1,11 +1,10 @@
 /**
- * MessageRecoveryHandler - Recovers orphaned messages
+ * MessageRecoveryHandler - Marks orphaned messages as failed
  *
  * Extracted from AgentSession to reduce complexity.
  * Handles:
- * - Detecting messages stuck in 'queued' or 'sent' status
- * - Identifying messages that never got a system:init response
- * - Resetting orphaned messages to 'saved' for retry
+ * - Detecting messages stuck in 'sent' status with no system:init response
+ * - Marking those messages as 'failed' so they appear in the UI as undelivered
  */
 
 import type { Session } from '@neokai/shared';
@@ -29,13 +28,14 @@ export class MessageRecoveryHandler {
 	}
 
 	/**
-	 * Recover orphaned sent messages
+	 * Mark orphaned sent messages as failed
 	 *
-	 * Recovery strategy:
-	 * 1. For sent messages, detect orphaned ones with no system:init boundary after send
-	 *    and reset them to saved for retry.
+	 * For sent messages with no system:init boundary after them (i.e. the server
+	 * crashed before Claude responded), mark them as 'failed' so they appear in
+	 * the UI as undelivered. The user can see what was lost without silent re-dispatch.
 	 *
-	 * This allows startup replay logic to re-dispatch recoverable messages safely.
+	 * Synthetic messages and tool_result-only messages are skipped — they are
+	 * SDK-internal and should not be surfaced as user-facing failures.
 	 */
 	recoverOrphanedSentMessages(): void {
 		const { session, db, logger } = this;
@@ -108,11 +108,11 @@ export class MessageRecoveryHandler {
 				return;
 			}
 
-			// Reset orphaned messages to 'saved' status
+			// Mark orphaned messages as 'failed' so they surface in the UI as undelivered
 			const dbIds = orphanedMessages.map((m) => m.dbId);
-			db.updateMessageStatus(dbIds, 'saved');
+			db.updateMessageStatus(dbIds, 'failed');
 		} catch (error) {
-			logger.warn('Failed to recover orphaned sent messages:', error);
+			logger.warn('Failed to mark orphaned sent messages as failed:', error);
 			// Don't throw - recovery failure shouldn't prevent session from loading
 		}
 	}

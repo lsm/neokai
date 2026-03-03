@@ -113,7 +113,7 @@ describe('MessageRecoveryHandler', () => {
 			handler.recoverOrphanedSentMessages();
 
 			// User message timestamp (2000) > system:init timestamp (1000) = orphaned
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
 		});
 
 		it('should not recover sent messages that have system:init after them', () => {
@@ -204,7 +204,7 @@ describe('MessageRecoveryHandler', () => {
 
 			handler.recoverOrphanedSentMessages();
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2'], 'saved');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1', 'db-2'], 'failed');
 		});
 
 		it('should handle errors gracefully', () => {
@@ -216,7 +216,7 @@ describe('MessageRecoveryHandler', () => {
 			handler.recoverOrphanedSentMessages();
 
 			expect(mockLogger.warn).toHaveBeenCalledWith(
-				'Failed to recover orphaned sent messages:',
+				'Failed to mark orphaned sent messages as failed:',
 				expect.any(Error)
 			);
 		});
@@ -256,7 +256,7 @@ describe('MessageRecoveryHandler', () => {
 
 			handler.recoverOrphanedSentMessages();
 
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
 		});
 
 		it('should skip synthetic messages (isSynthetic=true)', () => {
@@ -353,7 +353,7 @@ describe('MessageRecoveryHandler', () => {
 			handler.recoverOrphanedSentMessages();
 
 			// Mixed content has human-typed text, should be recovered
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'saved');
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-1'], 'failed');
 		});
 
 		it('should find latest system:init timestamp for sent messages', () => {
