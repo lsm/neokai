@@ -271,7 +271,7 @@ export class RoomRuntime {
 		if (!task) return;
 
 		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
-		// Applies to all workers — planners now create PLAN.md files and commit to branches.
+		// Applies to all workers — planners create plan files under docs/plans/ and commit to branches.
 		{
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
@@ -505,10 +505,13 @@ export class RoomRuntime {
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
-				// State machine enforcement: coding and planning tasks must go through submit_for_review first
+				// State machine enforcement: coding and planning tasks must go through submit_for_review first.
+				// Exception: phase 2 planning tasks (planApproved=true) skip this — the plan was already
+				// human-approved, so phase 2 (merge PR + create tasks) can complete directly.
 				if (
 					(group.workerRole === 'coder' || group.workerRole === 'planner') &&
-					!group.submittedForReview
+					!group.submittedForReview &&
+					!group.planApproved
 				) {
 					this.groupRepo.setLeaderCalledTool(groupId, false);
 					return jsonResult({
@@ -536,6 +539,7 @@ export class RoomRuntime {
 							taskId: group.taskId,
 							groupId,
 							hasReviewers,
+							planApproved: group.planApproved,
 						};
 						if (hookTask.taskType === 'planning') {
 							const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);

@@ -49,6 +49,8 @@ export interface LeaderCompleteHookContext {
 	hasReviewers: boolean;
 	/** For planning tasks: how many draft tasks exist */
 	draftTaskCount?: number;
+	/** Whether the plan has been approved by human (phase 2 — PR already merged) */
+	planApproved?: boolean;
 }
 
 // --- Shell Command Helper ---
@@ -396,6 +398,15 @@ export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
+	// Phase 2 planning (planApproved=true): PR was already merged, skip PR/review checks.
+	// Only verify that draft tasks were created.
+	if (ctx.planApproved) {
+		if (ctx.taskType === 'planning') {
+			return checkLeaderDraftsExist(ctx, opts);
+		}
+		return { pass: true };
+	}
+
 	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
 		if (!prResult.pass) {
