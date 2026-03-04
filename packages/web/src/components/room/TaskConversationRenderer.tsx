@@ -76,20 +76,6 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-function getSystemText(msg: SDKMessage): string | null {
-	const raw = msg as Record<string, unknown>;
-	if (raw.type === 'user' && raw.message) {
-		const m = raw.message as Record<string, unknown>;
-		if (Array.isArray(m.content)) {
-			for (const block of m.content) {
-				const b = block as Record<string, unknown>;
-				if (b.type === 'text' && typeof b.text === 'string') return b.text;
-			}
-		}
-	}
-	return null;
-}
-
 export function TaskConversationRenderer({ groupId }: TaskConversationRendererProps) {
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);

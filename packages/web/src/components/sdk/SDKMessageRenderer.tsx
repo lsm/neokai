@@ -116,7 +116,11 @@ function SystemInitPill({ message }: { message: SystemInitMessage }) {
 							{message.mcp_servers.map((server: { name: string; status: string }) => (
 								<span key={server.name} class="font-mono">
 									{server.name}
-									<span class={server.status === 'connected' ? 'text-green-600 dark:text-green-400' : ''}>
+									<span
+										class={
+											server.status === 'connected' ? 'text-green-600 dark:text-green-400' : ''
+										}
+									>
 										({server.status})
 									</span>{' '}
 								</span>
