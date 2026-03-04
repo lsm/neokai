@@ -91,6 +91,87 @@ describe('RoomRuntime leader tools', () => {
 		});
 	});
 
+	describe('phase 2 planning (planApproved)', () => {
+		it('should allow complete_task without submit_for_review when planApproved is true', async () => {
+			// Create a goal — tick() will auto-spawn a planning group
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Build stock app',
+				description: 'Stock tracking web app',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			const group = groups[0];
+
+			// Find the planning task that was auto-created
+			const tasks = await ctx.taskManager.listTasks({ status: 'in_progress' });
+			const planTask = tasks.find((t) => t.taskType === 'planning')!;
+			expect(planTask).toBeDefined();
+
+			// Simulate phase 2: set planApproved, reset submittedForReview
+			ctx.groupRepo.setPlanApproved(group.id, true);
+			ctx.groupRepo.setSubmittedForReview(group.id, false);
+
+			// Create a draft task (required by lifecycle gate for planning completion)
+			await ctx.taskManager.createTask({
+				title: 'Implement auth module',
+				description: 'Create auth module',
+				status: 'draft',
+				createdByTaskId: planTask.id,
+			});
+
+			// Route worker to leader
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Leader calls complete_task — should succeed without submit_for_review
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Tasks created from approved plan',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			const updatedTask = await ctx.taskManager.getTask(planTask.id);
+			expect(updatedTask!.status).toBe('completed');
+		});
+
+		it('should reject complete_task for planning tasks without planApproved and without submit_for_review', async () => {
+			// Create a goal — tick() will auto-spawn a planning group
+			await ctx.goalManager.createGoal({
+				title: 'Build stock app',
+				description: 'Stock tracking web app',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			const group = groups[0];
+
+			// Route worker to leader (phase 1 — planApproved is false)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Leader calls complete_task — should fail (submit_for_review required)
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Plan done',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('submit_for_review');
+		});
+	});
+
 	describe('replan_goal', () => {
 		async function setupGoalWithMultipleTasks() {
 			const goal = await ctx.goalManager.createGoal({

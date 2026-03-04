@@ -467,6 +467,43 @@ describe('runLeaderCompleteGate', () => {
 		);
 		expect(result.pass).toBe(true);
 	});
+
+	test('skips PR checks for phase 2 planning (planApproved=true) and passes with drafts', async () => {
+		// Phase 2: PR was already merged, no open PR — but planApproved skips PR checks
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'planner',
+				taskType: 'planning',
+				planApproved: true,
+				draftTaskCount: 3,
+			})
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails phase 2 planning when no drafts exist despite planApproved', async () => {
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'planner',
+				taskType: 'planning',
+				planApproved: true,
+				draftTaskCount: 0,
+			})
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('create_task');
+	});
+
+	test('passes for non-planning tasks with planApproved (edge case)', async () => {
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				planApproved: true,
+			})
+		);
+		expect(result.pass).toBe(true);
+	});
 });
 
 describe('runLeaderSubmitGate', () => {
