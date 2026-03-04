@@ -65,6 +65,8 @@ export interface SDKMessageHandlerContext {
 	// When true, /context command queuing is skipped since the generator completes
 	// immediately after yielding the result message
 	isCustomQueryProvider: boolean;
+	// Whether to auto-queue /context after each turn (default: true)
+	contextAutoQueueEnabled: boolean;
 
 	// Called when the SDK init message provides the full slash commands list
 	onInitSlashCommands: (commands: string[]) => Promise<void>;
@@ -403,6 +405,12 @@ export class SDKMessageHandler {
 				},
 				{ channel: `session:${session.id}` }
 			);
+			daemonHub
+				.emit('sdk.message', {
+					sessionId: session.id,
+					message: { ...sdkMessage, timestamp: sentAt },
+				})
+				.catch(() => {});
 			return;
 		}
 
@@ -434,6 +442,15 @@ export class SDKMessageHandler {
 			},
 			{ channel: `session:${session.id}` }
 		);
+
+		// Emit on DaemonHub for server-side listeners (e.g. group message mirroring)
+		// so injected user messages (like leader envelope) appear in the group timeline.
+		daemonHub
+			.emit('sdk.message', {
+				sessionId: session.id,
+				message: { ...sdkMessage, timestamp: sentAt },
+			})
+			.catch(() => {});
 	}
 
 	/**
@@ -688,7 +705,8 @@ export class SDKMessageHandler {
 			!this.lastMessageWasContextResponse &&
 			!isZeroTokenResult &&
 			this.internalContextCommandIds.size === 0 &&
-			!this.ctx.isCustomQueryProvider
+			!this.ctx.isCustomQueryProvider &&
+			this.ctx.contextAutoQueueEnabled
 		) {
 			// Fire-and-forget: don't await the enqueue. Awaiting blocks
 			// handleResultMessage (and the for-await SDK output loop) until the

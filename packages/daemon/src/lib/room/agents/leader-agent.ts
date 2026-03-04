@@ -172,9 +172,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(
 				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval`
 			);
-			sections.push(
-				`- **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\``
-			);
+			sections.push(`- **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\``);
 			sections.push(
 				`\nDo NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are created.`
 			);
@@ -224,7 +222,9 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 
 			sections.push(`### Step 1: Understand What Was Done`);
-			sections.push(`Read the worker's output to understand what was implemented and which files changed.`);
+			sections.push(
+				`Read the worker's output to understand what was implemented and which files changed.`
+			);
 			sections.push(
 				`Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
 			);
@@ -247,15 +247,9 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`Each reviewer returns a verdict between \`---VERDICT---\` and \`---END_VERDICT---\` markers with P0/P1/P2/P3 severity levels.\n`
 			);
 			sections.push(`### Step 4: Decide Next Action\n`);
-			sections.push(
-				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with consolidated feedback`
-			);
-			sections.push(
-				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`
-			);
-			sections.push(
-				`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``
-			);
+			sections.push(`- **Any P0/P1/P2 issues** → \`send_to_worker\` with consolidated feedback`);
+			sections.push(`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`);
+			sections.push(`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``);
 		} else {
 			sections.push(`\n## Code Review Guidelines\n`);
 			sections.push(`1. Check that the implementation matches the task description`);
@@ -416,12 +410,8 @@ interface SubagentConfig {
  * Read leader sub-agents from room config.
  * Path: room.config.agentSubagents.leader
  */
-function getLeaderSubagents(
-	roomConfig: Record<string, unknown>
-): SubagentConfig[] | undefined {
-	const agentSubagents = roomConfig.agentSubagents as
-		| Record<string, SubagentConfig[]>
-		| undefined;
+function getLeaderSubagents(roomConfig: Record<string, unknown>): SubagentConfig[] | undefined {
+	const agentSubagents = roomConfig.agentSubagents as Record<string, SubagentConfig[]> | undefined;
 	if (agentSubagents?.leader && agentSubagents.leader.length > 0) {
 		return agentSubagents.leader;
 	}
@@ -442,7 +432,11 @@ export function toShortModelName(modelId: string): string {
 	if (lower.includes('codex')) return 'codex';
 	if (lower.includes('copilot')) return 'copilot';
 	// Fallback: take the first meaningful segment
-	return modelId.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
+	return modelId
+		.replace(/[^a-zA-Z0-9]/g, '-')
+		.replace(/-+/g, '-')
+		.replace(/^-|-$/g, '')
+		.slice(0, 20);
 }
 
 /**
@@ -647,10 +641,7 @@ ${REVIEWER_VERDICT_FORMAT}`;
  *       'gpt-5.3-codex' → 'reviewer-codex'
  * Appends a counter suffix if names collide.
  */
-export function toReviewerName(
-	reviewer: SubagentConfig,
-	existingNames: Set<string>
-): string {
+export function toReviewerName(reviewer: SubagentConfig, existingNames: Set<string>): string {
 	const shortName = toShortModelName(reviewer.model);
 	let candidate = `reviewer-${shortName}`;
 	let counter = 2;
@@ -666,9 +657,7 @@ export function toReviewerName(
  * Build reviewer AgentDefinition records from sub-agent configs.
  * Each sub-agent becomes a named agent the leader can spawn via Task tool.
  */
-export function buildReviewerAgents(
-	reviewers: SubagentConfig[]
-): Record<string, AgentDefinition> {
+export function buildReviewerAgents(reviewers: SubagentConfig[]): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
 	const usedNames = new Set<string>();
 
@@ -742,14 +731,7 @@ export function createLeaderAgentInit(
 			description:
 				'Lead reviewer that orchestrates code review. Dispatches reviewer sub-agents, consolidates their findings, and makes routing decisions using MCP tools.',
 			prompt: buildLeaderSystemPrompt(config),
-			tools: [
-				'Task',
-				'TaskOutput',
-				'TaskStop',
-				'Read',
-				'Grep',
-				'Glob',
-			],
+			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob'],
 			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
 		};
 
@@ -774,6 +756,7 @@ export function createLeaderAgentInit(
 			model: config.model ?? DEFAULT_LEADER_MODEL,
 			agent: 'Leader',
 			agents: allAgents,
+			contextAutoQueue: false,
 		};
 	}
 
@@ -793,5 +776,6 @@ export function createLeaderAgentInit(
 		context: { roomId: config.room.id },
 		type: 'leader',
 		model: config.model ?? DEFAULT_LEADER_MODEL,
+		contextAutoQueue: false,
 	};
 }

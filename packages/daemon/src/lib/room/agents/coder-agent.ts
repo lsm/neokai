@@ -136,5 +136,6 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 		context: { roomId: config.room.id },
 		type: 'coder',
 		model: config.model ?? DEFAULT_CODER_MODEL,
+		contextAutoQueue: false,
 	};
 }

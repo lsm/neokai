@@ -131,6 +131,9 @@ export interface AgentSessionInit {
 
 	/** Custom sub-agent definitions (merged with built-in specialists in coordinator mode) */
 	agents?: Record<string, import('@neokai/shared').AgentDefinition>;
+
+	/** Disable automatic /context queuing after each turn (default: true) */
+	contextAutoQueue?: boolean;
 }
 
 // Extracted components
@@ -218,6 +221,9 @@ export class AgentSession
 	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
 	// Set by QueryRunner when it detects a provider with createQuery method
 	isCustomQueryProvider = false;
+	// Whether to auto-queue /context after each turn (default: true)
+	// Disabled for room-managed agents to prevent interleaved messages after terminal state
+	contextAutoQueueEnabled = true;
 
 	// Session state
 	private _isCleaningUp = false;
@@ -422,7 +428,11 @@ export class AgentSession
 			};
 		}
 
-		return new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+		if (init.contextAutoQueue === false) {
+			agentSession.contextAutoQueueEnabled = false;
+		}
+		return agentSession;
 	}
 
 	/**

@@ -122,5 +122,6 @@ export function createGeneralAgentInit(config: GeneralAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'general',
 		model: config.model ?? DEFAULT_GENERAL_MODEL,
+		contextAutoQueue: false,
 	};
 }
