@@ -35,8 +35,8 @@ export interface WorkerExitHookContext {
 	groupId: string;
 	/** For planner tasks: how many draft tasks exist */
 	draftTaskCount?: number;
-	/** Whether the plan has been approved by human (determines planner phase) */
-	planApproved?: boolean;
+	/** Whether a human has approved the task (plan or PR) */
+	approved?: boolean;
 }
 
 export interface LeaderCompleteHookContext {
@@ -49,8 +49,8 @@ export interface LeaderCompleteHookContext {
 	hasReviewers: boolean;
 	/** For planning tasks: how many draft tasks exist */
 	draftTaskCount?: number;
-	/** Whether the plan has been approved by human (phase 2 — PR already merged) */
-	planApproved?: boolean;
+	/** Whether a human has approved the task (plan or PR) */
+	approved?: boolean;
 }
 
 // --- Shell Command Helper ---
@@ -335,32 +335,24 @@ export async function runWorkerExitGate(
 	ctx: WorkerExitHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	if (ctx.workerRole === 'coder') {
+	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
+		const isApproved = ctx.approved;
+		if (isApproved) {
+			// Post-approval: role-based verification
+			if (ctx.workerRole === 'planner') {
+				// Phase 2: planner must have created draft tasks from the approved plan
+				const result = await checkDraftTasksCreated(ctx, opts);
+				if (!result.pass) return result;
+			}
+			// Coder: worker merged the PR, skip all checks
+			return { pass: true };
+		}
+
+		// Pre-approval: must create feature branch, PR, and push commits
 		const hooks = [checkNotOnBaseBranch, checkPrExists, checkPrSynced];
 		for (const hook of hooks) {
 			const result = await hook(ctx, opts);
-			if (!result.pass) {
-				return result;
-			}
-		}
-	}
-
-	if (ctx.workerRole === 'planner') {
-		if (!ctx.planApproved) {
-			// Phase 1: planner must create a plan file and PR (like coder exit gate)
-			const hooks = [checkNotOnBaseBranch, checkPrExists, checkPrSynced];
-			for (const hook of hooks) {
-				const result = await hook(ctx, opts);
-				if (!result.pass) {
-					return result;
-				}
-			}
-		} else {
-			// Phase 2: planner must have created draft tasks from the approved plan
-			const result = await checkDraftTasksCreated(ctx, opts);
-			if (!result.pass) {
-				return result;
-			}
+			if (!result.pass) return result;
 		}
 	}
 
@@ -398,9 +390,9 @@ export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	// Phase 2 planning (planApproved=true): PR was already merged, skip PR/review checks.
-	// Only verify that draft tasks were created.
-	if (ctx.planApproved) {
+	// Human-approved tasks: PR was already merged, skip PR/review checks.
+	// For planning: still verify that draft tasks were created.
+	if (ctx.approved) {
 		if (ctx.taskType === 'planning') {
 			return checkLeaderDraftsExist(ctx, opts);
 		}

@@ -326,14 +326,14 @@ describe('runWorkerExitGate', () => {
 
 	test('runs planner phase 2 hook and passes when tasks exist', async () => {
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 3, planApproved: true })
+			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 3, approved: true })
 		);
 		expect(result.pass).toBe(true);
 	});
 
 	test('fails planner phase 2 with no tasks', async () => {
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 0, planApproved: true })
+			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 0, approved: true })
 		);
 		expect(result.pass).toBe(false);
 	});
@@ -349,7 +349,7 @@ describe('runWorkerExitGate', () => {
 			'gh pr view --json headRefOid --jq .headRefOid': { stdout: 'abc123', exitCode: 0 },
 		});
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', planApproved: false }),
+			makeWorkerCtx({ workerRole: 'planner', approved: false }),
 			opts
 		);
 		expect(result.pass).toBe(true);
@@ -364,7 +364,7 @@ describe('runWorkerExitGate', () => {
 			},
 		});
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', planApproved: false }),
+			makeWorkerCtx({ workerRole: 'planner', approved: false }),
 			opts
 		);
 		expect(result.pass).toBe(false);
@@ -468,25 +468,25 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('skips PR checks for phase 2 planning (planApproved=true) and passes with drafts', async () => {
-		// Phase 2: PR was already merged, no open PR — but planApproved skips PR checks
+	test('skips PR checks for phase 2 planning (approved=true) and passes with drafts', async () => {
+		// Phase 2: PR was already merged, no open PR — but approved skips PR checks
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'planner',
 				taskType: 'planning',
-				planApproved: true,
+				approved: true,
 				draftTaskCount: 3,
 			})
 		);
 		expect(result.pass).toBe(true);
 	});
 
-	test('fails phase 2 planning when no drafts exist despite planApproved', async () => {
+	test('fails phase 2 planning when no drafts exist despite approved', async () => {
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'planner',
 				taskType: 'planning',
-				planApproved: true,
+				approved: true,
 				draftTaskCount: 0,
 			})
 		);
@@ -494,15 +494,42 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.bounceMessage).toContain('create_task');
 	});
 
-	test('passes for non-planning tasks with planApproved (edge case)', async () => {
+	test('passes for non-planning tasks with approved (edge case)', async () => {
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'coder',
 				taskType: 'coding',
-				planApproved: true,
+				approved: true,
 			})
 		);
 		expect(result.pass).toBe(true);
+	});
+
+	test('passes for coder tasks with approved (PR already merged by worker)', async () => {
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+			})
+		);
+		expect(result.pass).toBe(true);
+	});
+});
+
+describe('runWorkerExitGate — approved bypass', () => {
+	test('passes for coder when approved is true (post-merge exit)', async () => {
+		// No mock runner — would fail branch/PR checks without approved
+		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }));
+		expect(result.pass).toBe(true);
+	});
+
+	test('still enforces checks for coder when approved is false', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'main', exitCode: 0 },
+		});
+		const result = await runWorkerExitGate(makeWorkerCtx({ approved: false }), opts);
+		expect(result.pass).toBe(false);
 	});
 });
 

@@ -134,6 +134,11 @@ case "$1" in
         echo "https://github.com/test/repo/pull/1#issuecomment-1"
         exit 0
         ;;
+      merge)
+        # gh pr merge — used by worker to merge approved PR
+        echo "Pull request #1 merged"
+        exit 0
+        ;;
       *)
         exit 0
         ;;
@@ -160,6 +165,8 @@ esac
 describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 	let roomId: string;
+	// Shared state: first test leaves coding task in 'review', second test approves it
+	let codingTaskId: string | null = null;
 
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
@@ -373,7 +380,69 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			// Reviewer names use short model names: reviewer-sonnet, reviewer-haiku
 			expect(dispatchedSubagents.has('reviewer-sonnet')).toBe(true);
 			expect(dispatchedSubagents.has('reviewer-haiku')).toBe(true);
+
+			// --- Capture coding task ID for follow-up approve test ---
+			if (terminalTask.status === 'review') {
+				codingTaskId = terminalTask.id;
+			}
 		},
 		{ timeout: 600_000 }
+	);
+
+	test(
+		'approve coding task routes to worker for PR merge, then completes',
+		async () => {
+			if (!codingTaskId) {
+				console.log('Skipping: coding task did not reach review state in previous test');
+				return;
+			}
+
+			// --- Approve the coding task ---
+			// This should route to the WORKER (not leader) with approved=true
+			// Worker merges the PR via `gh pr merge`, then exits
+			// Leader receives terminal state and calls complete_task (bypasses submittedForReview gate)
+			const result = await daemon.messageHub.request('goal.approveTask', {
+				roomId,
+				taskId: codingTaskId,
+			});
+			expect(result).toEqual({ success: true });
+
+			console.log(`Approved coding task ${codingTaskId}, waiting for completion...`);
+
+			// --- Wait for task to complete ---
+			// After worker merges and exits, leader should complete the task
+			const completedTask = await waitForTask(
+				daemon,
+				roomId,
+				{ taskType: 'coding', status: ['completed', 'failed'] },
+				180_000
+			);
+
+			console.log(`Coding task final status: ${completedTask.status}`);
+			expect(completedTask.status).toBe('completed');
+
+			// --- Verify group reached completed state ---
+			const group = await waitForGroupState(
+				daemon,
+				roomId,
+				codingTaskId,
+				['completed', 'failed'],
+				10_000
+			);
+			expect(group.state).toBe('completed');
+
+			// --- Verify worker received the merge instruction ---
+			const messagesResult = (await daemon.messageHub.request('task.getGroupMessages', {
+				groupId: group.id,
+			})) as { messages: Array<{ role: string; messageType: string; content: string }> };
+
+			// There should be a human message with the merge instruction
+			const humanMessages = messagesResult.messages.filter((m) => m.role === 'human');
+			const hasMergeInstruction = humanMessages.some((m) => m.content.includes('gh pr merge'));
+			expect(hasMergeInstruction).toBe(true);
+
+			console.log(`Approve→merge→complete flow verified for task ${codingTaskId}`);
+		},
+		{ timeout: 300_000 }
 	);
 });

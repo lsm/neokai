@@ -397,37 +397,15 @@ export class TaskGroupManager {
 	}
 
 	/**
-	 * Resume a group from human review — human approved or rejected the PR.
+	 * Resume a group from awaiting_human by injecting a message into the existing worker.
 	 *
-	 * Called when human calls goal.approveTask or goal.rejectTask.
-	 * Transitions back to awaiting_leader and injects the approval/rejection message.
-	 */
-	async resumeFromHuman(groupId: string, message: string): Promise<SessionGroup | null> {
-		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_human') return null;
-
-		// Transition to awaiting_leader
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
-		if (!updated) return null;
-
-		// Reset leader contract state for the new round
-		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
-
-		// Inject approval/rejection message to leader
-		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
-
-		return this.groupRepo.getGroup(groupId);
-	}
-
-	/**
-	 * Resume a planning group from awaiting_human by injecting approval into existing worker.
-	 *
-	 * Called when a planning task is approved by a human. Reuses the existing
-	 * worker session — injects the approval message so the planner can merge
-	 * the PR and create tasks using the now-unlocked create_task MCP tool.
+	 * Used for all task types after human approval or rejection:
+	 * - Planning approve: worker merges plan PR + creates tasks
+	 * - Coding approve: worker merges code PR
+	 * - Coding reject: worker addresses feedback
 	 *
 	 * No new sessions are created. The existing observer will fire
-	 * onWorkerTerminalState again when the planner finishes phase 2.
+	 * onWorkerTerminalState again when the worker finishes.
 	 */
 	async resumeWorkerFromHuman(groupId: string, message: string): Promise<boolean> {
 		const group = this.groupRepo.getGroup(groupId);

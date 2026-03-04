@@ -9,7 +9,7 @@
  *          calls submit_for_review → task goes to 'review' / awaiting_human.
  *
  * Human approval: goal.approveTask routes planning tasks to WORKER (not leader).
- *                 Sets planApproved=true, injects approval into existing worker session (phase 2).
+ *                 Sets approved=true, injects approval into existing worker session (phase 2).
  *
  * Phase 2: Planner merges plan PR, reads PLAN.md, creates tasks 1:1 from
  *          the approved plan using create_task. Worker exit gate checks
@@ -23,7 +23,7 @@
  * - After human approval, group transitions back to awaiting_worker
  * - Planning task completes after phase 2
  * - Coding tasks are created and promoted to pending
- * - planApproved flag is set on the group
+ * - approved flag is set on the group
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
@@ -372,7 +372,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 					expect(codingTasks.length).toBeGreaterThan(0);
 				}
 
-				// --- Stage 10: Verify planApproved flag ---
+				// --- Stage 10: Verify approved flag ---
 				const groupResult = (await daemon.messageHub.request('task.getGroup', {
 					roomId,
 					taskId: planningTask.id,
@@ -380,16 +380,15 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 					group: {
 						id: string;
 						state: string;
-						planApproved: boolean;
+						approved: boolean;
 						feedbackIteration: number;
 					} | null;
 				};
 
 				expect(groupResult.group).toBeTruthy();
-				expect(groupResult.group!.planApproved).toBe(true);
+				expect(groupResult.group!.approved).toBe(true);
 				console.log(
-					`Group planApproved: ${groupResult.group!.planApproved}, ` +
-						`state: ${groupResult.group!.state}`
+					`Group approved: ${groupResult.group!.approved}, ` + `state: ${groupResult.group!.state}`
 				);
 			} else if (reviewTask.status === 'completed') {
 				// Task completed directly (may happen if leader completes without submit_for_review)

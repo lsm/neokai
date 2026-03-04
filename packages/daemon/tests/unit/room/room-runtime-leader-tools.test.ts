@@ -91,8 +91,8 @@ describe('RoomRuntime leader tools', () => {
 		});
 	});
 
-	describe('phase 2 planning (planApproved)', () => {
-		it('should allow complete_task without submit_for_review when planApproved is true', async () => {
+	describe('phase 2 planning (approved)', () => {
+		it('should allow complete_task without submit_for_review when approved is true', async () => {
 			// Create a goal — tick() will auto-spawn a planning group
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build stock app',
@@ -111,8 +111,8 @@ describe('RoomRuntime leader tools', () => {
 			const planTask = tasks.find((t) => t.taskType === 'planning')!;
 			expect(planTask).toBeDefined();
 
-			// Simulate phase 2: set planApproved, reset submittedForReview
-			ctx.groupRepo.setPlanApproved(group.id, true);
+			// Simulate phase 2: set approved, reset submittedForReview
+			ctx.groupRepo.setApproved(group.id, true);
 			ctx.groupRepo.setSubmittedForReview(group.id, false);
 
 			// Create a draft task (required by lifecycle gate for planning completion)
@@ -141,7 +141,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(updatedTask!.status).toBe('completed');
 		});
 
-		it('should reject complete_task for planning tasks without planApproved and without submit_for_review', async () => {
+		it('should reject complete_task for planning tasks without approved and without submit_for_review', async () => {
 			// Create a goal — tick() will auto-spawn a planning group
 			await ctx.goalManager.createGoal({
 				title: 'Build stock app',
@@ -155,7 +155,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(groups).toHaveLength(1);
 			const group = groups[0];
 
-			// Route worker to leader (phase 1 — planApproved is false)
+			// Route worker to leader (phase 1 — approved is false)
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
@@ -173,7 +173,7 @@ describe('RoomRuntime leader tools', () => {
 	});
 
 	describe('isPlanApproved dynamic gate', () => {
-		it('should wire isPlanApproved to query group planApproved flag from DB', async () => {
+		it('should wire isPlanApproved to query group approved flag from DB', async () => {
 			// Create a goal — tick() will auto-spawn a planning group
 			await ctx.goalManager.createGoal({
 				title: 'Dynamic gate test',
@@ -187,20 +187,20 @@ describe('RoomRuntime leader tools', () => {
 			expect(groups).toHaveLength(1);
 			const group = groups[0];
 
-			// At creation time, planApproved should be false
-			expect(ctx.groupRepo.getGroup(group.id)!.planApproved).toBeFalsy();
+			// At creation time, approved should be false
+			expect(ctx.groupRepo.getGroup(group.id)!.approved).toBeFalsy();
 
-			// After setting planApproved in the DB, the isPlanApproved callback
+			// After setting approved in the DB, the isPlanApproved callback
 			// should return true (verified indirectly through the complete_task gate)
-			ctx.groupRepo.setPlanApproved(group.id, true);
-			expect(ctx.groupRepo.getGroup(group.id)!.planApproved).toBe(true);
+			ctx.groupRepo.setApproved(group.id, true);
+			expect(ctx.groupRepo.getGroup(group.id)!.approved).toBe(true);
 
 			// This shows the DB flag is correctly read — the dynamic gate
 			// will pick up this change at tool invocation time
 		});
 
-		it('should use planApproved flag to bypass submit_for_review gate for planning tasks', async () => {
-			// Phase 1 (planApproved=false): complete_task requires submit_for_review
+		it('should use approved flag to bypass submit_for_review gate for planning tasks', async () => {
+			// Phase 1 (approved=false): complete_task requires submit_for_review
 			await ctx.goalManager.createGoal({
 				title: 'Phase gate test',
 				description: 'desc',
@@ -221,15 +221,13 @@ describe('RoomRuntime leader tools', () => {
 			});
 
 			// Phase 1: complete_task should be rejected (submit_for_review required)
-			const phase1Result = await ctx.runtime.handleLeaderTool(
-				group.id,
-				'complete_task',
-				{ summary: 'Done' }
-			);
+			const phase1Result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Done',
+			});
 			expect(JSON.parse(phase1Result.content[0].text).success).toBe(false);
 
-			// Now simulate phase 2: set planApproved, reset submittedForReview
-			ctx.groupRepo.setPlanApproved(group.id, true);
+			// Now simulate phase 2: set approved, reset submittedForReview
+			ctx.groupRepo.setApproved(group.id, true);
 			ctx.groupRepo.setSubmittedForReview(group.id, false);
 
 			// Create draft tasks (required by lifecycle gate)
@@ -240,12 +238,10 @@ describe('RoomRuntime leader tools', () => {
 				createdByTaskId: planTask.id,
 			});
 
-			// Phase 2: complete_task should succeed (planApproved bypasses submit_for_review)
-			const phase2Result = await ctx.runtime.handleLeaderTool(
-				group.id,
-				'complete_task',
-				{ summary: 'Tasks created' }
-			);
+			// Phase 2: complete_task should succeed (approved bypasses submit_for_review)
+			const phase2Result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Tasks created',
+			});
 			expect(JSON.parse(phase2Result.content[0].text).success).toBe(true);
 		});
 	});

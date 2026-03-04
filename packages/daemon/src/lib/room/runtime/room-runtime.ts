@@ -298,7 +298,7 @@ export class RoomRuntime {
 				workerRole: group.workerRole,
 				taskId: group.taskId,
 				groupId,
-				planApproved: group.planApproved,
+				approved: group.approved,
 			};
 			if (group.workerRole === 'planner') {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
@@ -353,7 +353,7 @@ export class RoomRuntime {
 				terminalState: terminalState.kind,
 				workerOutput: workerOutputText,
 				draftTasks,
-				planApproved: group.planApproved,
+				approved: group.approved,
 			});
 		} else {
 			envelope = formatWorkerToLeaderEnvelope({
@@ -501,12 +501,11 @@ export class RoomRuntime {
 				const summary = params.summary ?? '';
 
 				// State machine enforcement: coding and planning tasks must go through submit_for_review first.
-				// Exception: phase 2 planning tasks (planApproved=true) skip this — the plan was already
-				// human-approved, so phase 2 (merge PR + create tasks) can complete directly.
+				// Exception: approved=true means human already approved (plan or PR)
 				if (
 					(group.workerRole === 'coder' || group.workerRole === 'planner') &&
 					!group.submittedForReview &&
-					!group.planApproved
+					!group.approved
 				) {
 					this.groupRepo.setLeaderCalledTool(groupId, false);
 					return jsonResult({
@@ -534,7 +533,7 @@ export class RoomRuntime {
 							taskId: group.taskId,
 							groupId,
 							hasReviewers,
-							planApproved: group.planApproved,
+							approved: group.approved,
 						};
 						if (hookTask.taskType === 'planning') {
 							const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
@@ -667,38 +666,26 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Resume a group from awaiting_human state (human approved or rejected the PR).
+	 * Resume a group from awaiting_human by injecting a message into the existing worker.
 	 *
-	 * Called from RPC handlers (goal.approveTask / goal.rejectTask).
-	 * Finds the group for the given task and delegates to TaskGroupManager.resumeFromHuman().
-	 * Returns null if no awaiting_human group is found for the task.
-	 */
-	async resumeFromHuman(taskId: string, message: string): Promise<boolean> {
-		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group || group.state !== 'awaiting_human') return false;
-
-		const updated = await this.taskGroupManager.resumeFromHuman(group.id, message);
-		if (!updated) return false;
-
-		this.scheduleTick();
-		return true;
-	}
-
-	/**
-	 * Resume a planning group from awaiting_human by injecting approval into existing worker.
-	 *
-	 * Called when a human approves a planning task. Sets planApproved flag so
-	 * the planner's create_task MCP tool becomes available, then injects the
-	 * approval message into the existing worker session for phase 2 (merge PR + create tasks).
+	 * Used for all task types (planning, coding, general):
+	 * - Approve: sets approved=true → worker merges PR (planner also creates tasks)
+	 * - Reject: no flag set, submittedForReview reset → worker addresses feedback
 	 *
 	 * Reuses the same worker and leader sessions — no new sessions are created.
 	 */
-	async resumeWorkerFromHuman(taskId: string, message: string): Promise<boolean> {
+	async resumeWorkerFromHuman(
+		taskId: string,
+		message: string,
+		opts?: { approved?: boolean }
+	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group || group.state !== 'awaiting_human') return false;
 
-		// Set planApproved flag — unlocks create_task/update_task/remove_task MCP tools
-		this.groupRepo.setPlanApproved(group.id, true);
+		// Set approved when explicitly requested or when resuming a planner (always an approval)
+		if (opts?.approved || group.workerRole === 'planner') {
+			this.groupRepo.setApproved(group.id, true);
+		}
 
 		// Move task back to in_progress
 		await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
@@ -1016,7 +1003,7 @@ export class RoomRuntime {
 		let spawnedGroupId: string | null = null;
 		const isPlanApproved = () => {
 			if (!spawnedGroupId) return false;
-			return this.groupRepo.getGroup(spawnedGroupId)?.planApproved ?? false;
+			return this.groupRepo.getGroup(spawnedGroupId)?.approved ?? false;
 		};
 		const plannerConfig = {
 			task: planningTask,
