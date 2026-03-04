@@ -275,6 +275,8 @@ export interface TaskSummary {
 	status: TaskStatus;
 	priority: TaskPriority;
 	progress?: number;
+	/** IDs of tasks this task depends on */
+	dependsOn: string[];
 }
 
 /**

@@ -39,6 +39,7 @@ export interface PlannerCreateTaskParams {
 	description: string;
 	priority?: TaskPriority;
 	agent?: AgentType;
+	dependsOn?: string[];
 }
 
 /** Context passed to the planner when replanning after a task failure */
@@ -94,16 +95,16 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
 	const sections: string[] = [];
 
 	if (phase === 'create_tasks') {
-		sections.push(
-			`You are a Planner Agent in the task creation phase.`
-		);
+		sections.push(`You are a Planner Agent in the task creation phase.`);
 		sections.push(
 			`\nYour plan has been approved by AI reviewers and a human reviewer. ` +
-			`Now you must merge the plan PR and create tasks from the approved plan.`
+				`Now you must merge the plan PR and create tasks from the approved plan.`
 		);
 
 		sections.push(`\n## Task Creation Guidelines\n`);
-		sections.push(`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`);
+		sections.push(
+			`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`
+		);
 		sections.push(`2. Read the PLAN.md file to get the approved plan`);
 		sections.push(`3. Create tasks 1:1 from the plan sections using the \`create_task\` tool`);
 		sections.push(`4. Each task title and description should match the plan exactly`);
@@ -111,11 +112,16 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
 			`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
 		);
 		sections.push(
-			`6. Each task description must include clear acceptance criteria. ` +
-			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
+			`6. Use the \`depends_on\` parameter to declare task dependencies. ` +
+				`Pass the task IDs returned by previous \`create_task\` calls. ` +
+				`Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.`
 		);
-		sections.push(`7. Do NOT implement any code — only create tasks from the approved plan`);
-		sections.push(`8. Finish your response after all tasks are created`);
+		sections.push(
+			`7. Each task description must include clear acceptance criteria. ` +
+				`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
+		);
+		sections.push(`8. Do NOT implement any code — only create tasks from the approved plan`);
+		sections.push(`9. Finish your response after all tasks are created`);
 
 		return sections.join('\n');
 	}
@@ -131,7 +137,9 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
 	sections.push(`\n## Planning Guidelines\n`);
 	sections.push(`1. Read relevant files to understand the current codebase state`);
 	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
-	sections.push(`3. Order tasks by dependency (later tasks build on earlier ones)`);
+	sections.push(
+		`3. Order tasks by dependency (later tasks build on earlier ones). Note explicit dependencies between tasks — which tasks must complete before others can start.`
+	);
 	sections.push(
 		`4. Each task description must include clear acceptance criteria. ` +
 			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
@@ -141,20 +149,14 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
 	);
 	sections.push(`6. Do NOT call \`create_task\` — that tool is disabled in this phase`);
 	sections.push(`7. Do NOT implement any code — only plan`);
-	sections.push(
-		`8. If the Leader sends feedback, update the plan document accordingly`
-	);
+	sections.push(`8. If the Leader sends feedback, update the plan document accordingly`);
 
 	sections.push(`\n## Deliverable (REQUIRED)\n`);
+	sections.push(`You MUST produce a plan file and create a PR for review:`);
 	sections.push(
-		`You MUST produce a plan file and create a PR for review:`
+		`1. Write a plan file at \`PLAN.md\` in the repository root with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments`
 	);
-	sections.push(
-		`1. Write a plan file at \`PLAN.md\` in the repository root with: goal, ordered task list with descriptions, dependencies, acceptance criteria, and agent type assignments`
-	);
-	sections.push(
-		`2. Create a feature branch, commit the plan file, and push it`
-	);
+	sections.push(`2. Create a feature branch, commit the plan file, and push it`);
 	sections.push(
 		`3. Create a GitHub PR via \`gh pr create\` with the plan summary as the PR description`
 	);
@@ -260,6 +262,13 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 					.optional()
 					.default('coder')
 					.describe('Which agent type should execute this task'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.default([])
+					.describe(
+						'IDs of tasks this task depends on (from previous create_task calls). Task will not start until all dependencies are completed.'
+					),
 			},
 			async (args) => {
 				if (phase !== 'create_tasks') return phaseGateError;
@@ -269,6 +278,7 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 						description: args.description,
 						priority: args.priority as TaskPriority | undefined,
 						agent: args.agent as AgentType | undefined,
+						dependsOn: args.depends_on,
 					});
 					return {
 						content: [
@@ -391,5 +401,6 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'planner',
 		model: config.model ?? DEFAULT_PLANNER_MODEL,
+		contextAutoQueue: false,
 	};
 }

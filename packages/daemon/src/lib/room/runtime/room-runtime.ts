@@ -31,7 +31,11 @@ import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
-import type { LeaderToolCallbacks, LeaderToolResult, LeaderAgentConfig } from '../agents/leader-agent';
+import type {
+	LeaderToolCallbacks,
+	LeaderToolResult,
+	LeaderAgentConfig,
+} from '../agents/leader-agent';
 import type { PlannerCreateTaskParams, ReplanContext } from '../agents/planner-agent';
 import { createPlannerAgentInit, buildPlannerTaskMessage } from '../agents/planner-agent';
 import { createCoderAgentInit, buildCoderTaskMessage } from '../agents/coder-agent';
@@ -272,9 +276,7 @@ export class RoomRuntime {
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
 			if (dirty) {
-				log.info(
-					`Worktree dirty for group ${groupId} — sending worker back to clean up.`
-				);
+				log.info(`Worktree dirty for group ${groupId} — sending worker back to clean up.`);
 				this.groupRepo.appendMessage({
 					groupId,
 					role: 'system',
@@ -309,9 +311,7 @@ export class RoomRuntime {
 			}
 			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			if (!gateResult.pass) {
-				log.info(
-					`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`
-				);
+				log.info(`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`);
 				this.groupRepo.appendMessage({
 					groupId,
 					role: 'system',
@@ -431,10 +431,7 @@ export class RoomRuntime {
 			);
 		} else {
 			// Second+ violation: fail the group
-			await this.taskGroupManager.fail(
-				groupId,
-				'Leader failed to call required tool after nudge'
-			);
+			await this.taskGroupManager.fail(groupId, 'Leader failed to call required tool after nudge');
 			this.cleanupMirroring(groupId, 'Leader contract violation — task failed.');
 			await this.emitTaskUpdateById(group.taskId);
 			this.scheduleTick();
@@ -509,11 +506,15 @@ export class RoomRuntime {
 				const summary = params.summary ?? '';
 
 				// State machine enforcement: coding and planning tasks must go through submit_for_review first
-				if ((group.workerRole === 'coder' || group.workerRole === 'planner') && !group.submittedForReview) {
+				if (
+					(group.workerRole === 'coder' || group.workerRole === 'planner') &&
+					!group.submittedForReview
+				) {
 					this.groupRepo.setLeaderCalledTool(groupId, false);
 					return jsonResult({
 						success: false,
-						error: 'Coding and planning tasks must go through submit_for_review before complete_task.',
+						error:
+							'Coding and planning tasks must go through submit_for_review before complete_task.',
 						action_required:
 							'Call submit_for_review with the PR URL first. After human approval, you can call complete_task.',
 					});
@@ -525,14 +526,11 @@ export class RoomRuntime {
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask) {
 						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
-						const agentSubs = roomConfig.agentSubagents as
-							| Record<string, unknown[]>
-							| undefined;
-						const hasReviewers = !!(agentSubs?.leader?.length);
+						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
+						const hasReviewers = !!agentSubs?.leader?.length;
 
 						const hookCtx: LeaderCompleteHookContext = {
-							workspacePath:
-								group.workspacePath ?? this.taskGroupManager.workspacePath,
+							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
 							taskType: hookTask.taskType ?? 'coding',
 							workerRole: group.workerRole,
 							taskId: group.taskId,
@@ -540,18 +538,12 @@ export class RoomRuntime {
 							hasReviewers,
 						};
 						if (hookTask.taskType === 'planning') {
-							const draftTasks =
-								await this.taskManager.getDraftTasksByCreator(group.taskId);
+							const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
 							hookCtx.draftTaskCount = draftTasks.length;
 						}
-						const gateResult = await runLeaderCompleteGate(
-							hookCtx,
-							this.hookOptions
-						);
+						const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
-							log.info(
-								`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`
-							);
+							log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
 							this.groupRepo.appendMessage({
 								groupId,
 								role: 'system',
@@ -602,10 +594,8 @@ export class RoomRuntime {
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask && (group.workerRole === 'coder' || group.workerRole === 'planner')) {
 						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
-						const agentSubs = roomConfig.agentSubagents as
-							| Record<string, unknown[]>
-							| undefined;
-						const hasReviewers = !!(agentSubs?.leader?.length);
+						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
+						const hasReviewers = !!agentSubs?.leader?.length;
 
 						const hookCtx: LeaderCompleteHookContext = {
 							workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
@@ -617,9 +607,7 @@ export class RoomRuntime {
 						};
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
-							log.info(
-								`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`
-							);
+							log.info(`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`);
 							this.groupRepo.appendMessage({
 								groupId,
 								role: 'system',
@@ -738,6 +726,7 @@ export class RoomRuntime {
 				title: params.title,
 				description: params.description,
 				priority: params.priority,
+				dependsOn: params.dependsOn,
 				taskType: 'coding',
 				status: 'draft',
 				createdByTaskId: task.id,
@@ -996,8 +985,17 @@ export class RoomRuntime {
 		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 		if (executableTasks.length === 0) return;
 
+		// Filter to tasks whose dependencies are all completed
+		const readyTasks: NeoTask[] = [];
+		for (const task of executableTasks) {
+			if (await this.taskManager.areDependenciesMet(task)) {
+				readyTasks.push(task);
+			}
+		}
+		if (readyTasks.length === 0) return;
+
 		// Sort by priority
-		const sorted = sortTasksByPriority(executableTasks);
+		const sorted = sortTasksByPriority(readyTasks);
 
 		// Spawn groups for available slots
 		const toSpawn = sorted.slice(0, availableSlots);
@@ -1106,6 +1104,7 @@ export class RoomRuntime {
 				title: params.title,
 				description: params.description,
 				priority: params.priority,
+				dependsOn: params.dependsOn,
 				taskType: 'coding', // default for planning-created tasks
 				status: 'draft',
 				createdByTaskId: planningTask.id,

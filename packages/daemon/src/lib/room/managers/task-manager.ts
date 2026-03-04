@@ -33,6 +33,16 @@ export class TaskManager {
 	 * Create task
 	 */
 	async createTask(params: Omit<CreateTaskParams, 'roomId'>): Promise<NeoTask> {
+		// Validate that all dependency task IDs exist in this room
+		if (params.dependsOn && params.dependsOn.length > 0) {
+			for (const depId of params.dependsOn) {
+				const depTask = await this.getTask(depId);
+				if (!depTask) {
+					throw new Error(`Dependency task not found in room: ${depId}`);
+				}
+			}
+		}
+
 		const task = this.taskRepo.createTask({
 			roomId: this.roomId,
 			title: params.title,
