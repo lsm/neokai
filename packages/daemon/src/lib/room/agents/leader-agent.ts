@@ -396,14 +396,16 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
  * Sub-agent configuration (used in room.config.agentSubagents.{role})
  */
 interface SubagentConfig {
-	/** Model ID (e.g., 'claude-opus-4-6', 'glm-5') or CLI agent ID */
+	/** Model ID (e.g., 'claude-opus-4-6', 'gpt-5.3-codex') or CLI agent short name */
 	model: string;
-	/** Provider name (e.g., 'anthropic', 'glm') */
+	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
 	provider?: string;
 	/** For CLI-only models: use a driver model that calls the CLI via Bash */
 	type?: 'cli';
 	/** Model to use as driver when type is 'cli' */
 	driver_model?: string;
+	/** Full model ID when different from the short name in 'model' */
+	modelId?: string;
 }
 
 /**
@@ -496,12 +498,15 @@ Decision rules:
  * Build prompt for an SDK-native reviewer agent (reviews code directly).
  */
 function buildSdkReviewerPrompt(model: string, provider?: string): string {
+	const displayProvider = provider ?? 'anthropic';
+
 	return `You are a thorough code reviewer. Your job is to review the codebase in this worktree to verify that the requested work was correctly implemented.
 
-## Your Identity
+## Reviewer Identity
 
 - **Model:** ${model}
-- **Provider:** ${provider ?? 'anthropic'}
+- **Client:** NeoKai
+- **Provider:** ${displayProvider}
 You MUST include this identity block at the top of every PR comment you post.
 
 ## Review Process
@@ -529,9 +534,9 @@ You MUST include this identity block at the top of every PR comment you post.
 
    Include this header in your review body:
    \`\`\`
-   ## 🤖 Review by ${model} (${provider ?? 'anthropic'})
+   ## 🤖 Review by ${model} (${displayProvider})
 
-   <your review findings here>
+   > **Model:** ${model} | **Client:** NeoKai | **Provider:** ${displayProvider}
    \`\`\`
 
    IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
@@ -545,7 +550,7 @@ You MUST include this identity block at the top of every PR comment you post.
 - Be constructive and specific — always include file paths and line numbers
 - Focus on issues that matter — don't nitpick formatting or style if a linter handles it
 - Check that tests actually test the new/changed behavior, not just exist
-- ALWAYS include the model/provider header in PR comments
+- ALWAYS include the identity block in PR comments
 ${REVIEWER_VERDICT_FORMAT}`;
 }
 
@@ -561,13 +566,14 @@ function getCliInstructions(cliTool: string): string {
 Run Codex in non-interactive mode to review the code:
 
 \`\`\`bash
-codex exec "You are reviewing PR #<PR_NUMBER>. Review all changed files for correctness, security, performance, and maintainability. The original request was: <task description>. Read the full implementation files (not just diffs) and verify the request was correctly achieved. List specific issues with file paths and line numbers." \\
-  --model gpt-5.3-codex \\
-  --sandbox read-only \\
-  --ask-for-approval never
+codex exec --sandbox read-only "<YOUR REVIEW PROMPT HERE>" 2>&1
 \`\`\`
 
-The final review output is printed to stdout.`;
+- Do NOT pass \`--model\` — Codex uses its default model (gpt-5.3-codex).
+- Do NOT pass \`--ask-for-approval\` — that flag does not exist.
+- The \`--sandbox read-only\` flag ensures Codex can read files but not modify them.
+- Capture stdout — the final review output is printed there.
+- If you need to run in background, use the Bash tool's background mode.`;
 	}
 
 	if (tool.includes('copilot')) {
@@ -577,7 +583,7 @@ Run Copilot CLI in autopilot mode to review the code:
 
 \`\`\`bash
 copilot --autopilot --yolo --max-autopilot-continues 10 \\
-  -p "You are reviewing PR #<PR_NUMBER>. Review all changed files for correctness, security, performance, and maintainability. The original request was: <task description>. Read the full implementation files (not just diffs) and verify the request was correctly achieved. List specific issues with file paths and line numbers." \\
+  -p "<YOUR REVIEW PROMPT HERE>" \\
   2>/dev/null
 \`\`\`
 
@@ -592,46 +598,61 @@ Run the ${cliTool} CLI tool to review the code. Consult the tool's documentation
 
 /**
  * Build prompt for a CLI-based reviewer agent (drives an external CLI tool).
+ * The driver model MUST act as a strict relay — only orchestrate the CLI tool,
+ * parse its output, and post. Do NOT do independent code review.
  */
-function buildCliReviewerPrompt(cliTool: string, provider?: string): string {
+function buildCliReviewerPrompt(cliTool: string, provider?: string, modelId?: string): string {
 	const cliInstructions = getCliInstructions(cliTool);
+	const displayProvider = provider ?? 'unknown';
+	const displayModel = modelId ?? cliTool;
 
-	return `You are a code reviewer that orchestrates the ${cliTool} CLI tool to perform thorough code review.
+	return `You are a RELAY agent that orchestrates the ${cliTool} CLI tool to perform code review. You MUST NOT review the code yourself — your ONLY job is to run the CLI tool, parse its output, and post the results.
 
-## Your Identity
+## Reviewer Identity
 
-- **Tool:** ${cliTool}
-- **Provider:** ${provider ?? 'unknown'}
+- **Model:** ${displayModel}
+- **Client:** ${cliTool}
+- **Provider:** ${displayProvider}
 You MUST include this identity block at the top of every PR comment you post.
+
+## CRITICAL RULES
+
+1. You are a RELAY, not a reviewer. Do NOT read code files yourself to form opinions.
+2. Do NOT add your own findings or analysis. Only relay what the CLI tool reports.
+3. If the CLI tool exits with an error, report the error — do not fall back to reviewing yourself.
+4. Your only tools interaction should be: extracting PR info, running the CLI tool, and posting the review.
 
 ## Review Process
 
-1. Read the task prompt carefully — it describes what was requested and what was implemented
-2. Extract the PR number from the prompt
-3. Get the diff: \`gh pr diff <PR_NUMBER>\`
-4. Run the CLI tool to review the code:
+1. Read the task prompt carefully — extract the PR number and task description
+2. Run the CLI tool:
 
 ${cliInstructions}
 
-5. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
-6. Post findings as a proper PR review (NOT a comment) using:
+3. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
+4. Post findings as a proper PR review (NOT a comment) using:
    - If approving: \`gh pr review <PR_NUMBER> --approve --body "..."\`
    - If requesting changes: \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
    - If commenting only: \`gh pr review <PR_NUMBER> --comment --body "..."\`
 
-   Include this header: "## 🤖 Review by ${cliTool} (${provider ?? 'unknown'})"
+   Include this header:
+   \`\`\`
+   ## 🤖 Review by ${cliTool} (${displayProvider})
+
+   > **Model:** ${displayModel} | **Client:** ${cliTool} | **Provider:** ${displayProvider}
+   \`\`\`
 
    IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
    a proper PR review that the system can detect.
-7. Return your verdict in the structured format below
+5. Return your verdict in the structured format below
 
 ## Guidelines
 
-- The CLI tool does the heavy lifting — focus on orchestrating it correctly
+- The CLI tool does ALL the reviewing — you are strictly a relay
 - Map the CLI tool's output to severity levels (P0/P1/P2/P3)
-- If the CLI tool misses something obvious, add it yourself
-- Be specific about file paths and line numbers
-- ALWAYS include the model/provider header in PR comments
+- Do NOT do independent analysis, read source files for review, or add your own findings
+- Be specific about file paths and line numbers (from the CLI output)
+- ALWAYS include the identity block in PR comments
 ${REVIEWER_VERDICT_FORMAT}`;
 }
 
@@ -657,28 +678,59 @@ export function toReviewerName(reviewer: SubagentConfig, existingNames: Set<stri
  * Build reviewer AgentDefinition records from sub-agent configs.
  * Each sub-agent becomes a named agent the leader can spawn via Task tool.
  */
+/**
+ * Auto-resolve provider name from known CLI agent names and model IDs.
+ */
+function resolveProvider(reviewer: SubagentConfig): string {
+	if (reviewer.provider) return reviewer.provider;
+	const m = reviewer.model.toLowerCase();
+	if (m.includes('codex') || m.includes('gpt') || m.includes('openai')) return 'OpenAI';
+	if (m.includes('claude') || m.includes('opus') || m.includes('sonnet') || m.includes('haiku'))
+		return 'Anthropic';
+	if (m.includes('gemini') || m.includes('google')) return 'Google';
+	if (m.includes('copilot')) return 'GitHub';
+	return 'unknown';
+}
+
+/**
+ * Resolve the full model ID for a reviewer config.
+ * If modelId is explicitly set, use that. Otherwise, map known short names.
+ */
+function resolveModelId(reviewer: SubagentConfig): string {
+	if (reviewer.modelId) return reviewer.modelId;
+	const m = reviewer.model.toLowerCase();
+	// Map common short names to full model IDs
+	if (m === 'opus') return 'claude-opus-4-6';
+	if (m === 'sonnet') return 'claude-sonnet-4-6';
+	if (m === 'haiku') return 'claude-haiku-4-5';
+	if (m === 'codex') return 'gpt-5.3-codex';
+	return reviewer.model;
+}
+
 export function buildReviewerAgents(reviewers: SubagentConfig[]): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
 	const usedNames = new Set<string>();
 
 	for (const reviewer of reviewers) {
 		const name = toReviewerName(reviewer, usedNames);
+		const provider = resolveProvider(reviewer);
+		const modelId = resolveModelId(reviewer);
 
 		if (reviewer.type === 'cli') {
 			// CLI-based reviewer: a driver model calls the external tool via Bash
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model} CLI (${reviewer.provider ?? 'unknown'} via ${reviewer.driver_model ?? 'sonnet'}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
+				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${reviewer.driver_model ?? 'sonnet'}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
 				tools: REVIEWER_TOOLS,
 				model: toAgentModel(reviewer.driver_model ?? 'sonnet'),
-				prompt: buildCliReviewerPrompt(reviewer.model, reviewer.provider),
+				prompt: buildCliReviewerPrompt(reviewer.model, provider, modelId),
 			};
 		} else {
 			// Direct SDK reviewer: uses the specified model natively
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model}. Reviews code changes for correctness, quality, and security.`,
+				description: `Code reviewer using ${modelId} (${provider}). Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
 				model: toAgentModel(reviewer.model),
-				prompt: buildSdkReviewerPrompt(reviewer.model, reviewer.provider),
+				prompt: buildSdkReviewerPrompt(modelId, provider),
 			};
 		}
 	}
