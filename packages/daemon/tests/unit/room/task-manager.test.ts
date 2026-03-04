@@ -73,17 +73,19 @@ describe('TaskManager', () => {
 		});
 
 		it('should create a task with all params', async () => {
+			const dep1 = await taskManager.createTask({ title: 'Dep 1', description: '' });
+			const dep2 = await taskManager.createTask({ title: 'Dep 2', description: '' });
 			const task = await taskManager.createTask({
 				title: 'Full Task',
 				description: 'A detailed task description',
 				priority: 'high',
-				dependsOn: ['task-1', 'task-2'],
+				dependsOn: [dep1.id, dep2.id],
 			});
 
 			expect(task.title).toBe('Full Task');
 			expect(task.description).toBe('A detailed task description');
 			expect(task.priority).toBe('high');
-			expect(task.dependsOn).toEqual(['task-1', 'task-2']);
+			expect(task.dependsOn).toEqual([dep1.id, dep2.id]);
 		});
 
 		it('should create task with urgent priority', async () => {
@@ -622,12 +624,16 @@ describe('TaskManager', () => {
 			expect(met).toBe(false);
 		});
 
-		it('should return false when dependency does not exist', async () => {
+		it('should return false when dependency was deleted after creation', async () => {
+			const dep = await taskManager.createTask({ title: 'Dep', description: '' });
 			const task = await taskManager.createTask({
 				title: 'Test Task',
 				description: '',
-				dependsOn: ['non-existent'],
+				dependsOn: [dep.id],
 			});
+
+			// Delete the dependency — simulates a dep being removed after task creation
+			await taskManager.deleteTask(dep.id);
 
 			const met = await taskManager.areDependenciesMet(task);
 
@@ -649,6 +655,48 @@ describe('TaskManager', () => {
 			const met = await taskManager.areDependenciesMet(task);
 
 			expect(met).toBe(false);
+		});
+	});
+
+	describe('dependency validation on create', () => {
+		it('should reject creation with non-existent dependency', async () => {
+			await expect(
+				taskManager.createTask({
+					title: 'Task with bad dep',
+					description: '',
+					dependsOn: ['non-existent-id'],
+				})
+			).rejects.toThrow('Dependency task not found in room');
+		});
+
+		it('should accept creation with valid dependency', async () => {
+			const dep = await taskManager.createTask({ title: 'Dep', description: '' });
+			const task = await taskManager.createTask({
+				title: 'Dependent',
+				description: '',
+				dependsOn: [dep.id],
+			});
+			expect(task.dependsOn).toEqual([dep.id]);
+		});
+
+		it('should accept creation with multiple valid dependencies', async () => {
+			const dep1 = await taskManager.createTask({ title: 'Dep 1', description: '' });
+			const dep2 = await taskManager.createTask({ title: 'Dep 2', description: '' });
+			const task = await taskManager.createTask({
+				title: 'Dependent',
+				description: '',
+				dependsOn: [dep1.id, dep2.id],
+			});
+			expect(task.dependsOn).toEqual([dep1.id, dep2.id]);
+		});
+
+		it('should accept creation with empty dependsOn', async () => {
+			const task = await taskManager.createTask({
+				title: 'No deps',
+				description: '',
+				dependsOn: [],
+			});
+			expect(task.dependsOn).toEqual([]);
 		});
 	});
 

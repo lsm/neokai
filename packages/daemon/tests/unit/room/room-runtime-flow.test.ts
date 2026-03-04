@@ -419,7 +419,10 @@ describe('RoomRuntime flow', () => {
 							return { stdout: 'feat/test', exitCode: 0 };
 						}
 						if (cmd.startsWith('gh pr list')) {
-							return { stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]', exitCode: 0 };
+							return {
+								stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]',
+								exitCode: 0,
+							};
 						}
 						if (cmd.startsWith('gh pr view') && cmd.includes('reviews')) {
 							return { stdout: '0', exitCode: 0 };
@@ -626,7 +629,10 @@ describe('RoomRuntime flow', () => {
 						}
 						// Worker exit gate: checkPrExists uses --json number,url → return PR
 						if (cmd.includes('--json number,url')) {
-							return { stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]', exitCode: 0 };
+							return {
+								stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]',
+								exitCode: 0,
+							};
 						}
 						// Worker exit gate: checkPrSynced uses git rev-parse HEAD
 						if (cmd === 'git rev-parse HEAD') {
@@ -876,8 +882,12 @@ describe('RoomRuntime flow', () => {
 			// Create a context where createWorktree always returns null (simulating git failure)
 			const isolCtx = createRuntimeTestContext();
 			// Override createWorktree on the mock factory to simulate worktree creation failure
-			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
-				async (_basePath: string, _sessionId: string, _branchName?: string) => null;
+			(
+				isolCtx.sessionFactory as {
+					createWorktree: (b: string, s: string, branch?: string) => Promise<string | null>;
+				}
+			).createWorktree = async (_basePath: string, _sessionId: string, _branchName?: string) =>
+				null;
 
 			afterEach(() => {
 				isolCtx.runtime.stop();
@@ -900,8 +910,12 @@ describe('RoomRuntime flow', () => {
 		test('fails task when createWorktree returns null for planner role', async () => {
 			// All roles now require an isolated worktree — planner tasks should also fail
 			const isolCtx = createRuntimeTestContext();
-			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
-				async (_basePath: string, _sessionId: string, _branchName?: string) => null;
+			(
+				isolCtx.sessionFactory as {
+					createWorktree: (b: string, s: string, branch?: string) => Promise<string | null>;
+				}
+			).createWorktree = async (_basePath: string, _sessionId: string, _branchName?: string) =>
+				null;
 
 			afterEach(() => {
 				isolCtx.runtime.stop();
@@ -926,8 +940,12 @@ describe('RoomRuntime flow', () => {
 		test('fails task when createWorktree returns null for general role', async () => {
 			// General tasks also require worktrees now
 			const isolCtx = createRuntimeTestContext();
-			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
-				async (_basePath: string, _sessionId: string, _branchName?: string) => null;
+			(
+				isolCtx.sessionFactory as {
+					createWorktree: (b: string, s: string, branch?: string) => Promise<string | null>;
+				}
+			).createWorktree = async (_basePath: string, _sessionId: string, _branchName?: string) =>
+				null;
 
 			afterEach(() => {
 				isolCtx.runtime.stop();
@@ -947,11 +965,14 @@ describe('RoomRuntime flow', () => {
 		test('creates worktree with meaningful branch name derived from task title', async () => {
 			const isolCtx = createRuntimeTestContext();
 			const worktreeCalls: Array<{ basePath: string; sessionId: string; branchName?: string }> = [];
-			(isolCtx.sessionFactory as { createWorktree: (b: string, s: string, branch?: string) => Promise<string | null> }).createWorktree =
-				async (basePath: string, sessionId: string, branchName?: string) => {
-					worktreeCalls.push({ basePath, sessionId, branchName });
-					return `/tmp/worktrees/${sessionId}`;
-				};
+			(
+				isolCtx.sessionFactory as {
+					createWorktree: (b: string, s: string, branch?: string) => Promise<string | null>;
+				}
+			).createWorktree = async (basePath: string, sessionId: string, branchName?: string) => {
+				worktreeCalls.push({ basePath, sessionId, branchName });
+				return `/tmp/worktrees/${sessionId}`;
+			};
 
 			afterEach(() => {
 				isolCtx.runtime.stop();
@@ -972,6 +993,145 @@ describe('RoomRuntime flow', () => {
 
 			expect(worktreeCalls).toHaveLength(1);
 			expect(worktreeCalls[0].branchName).toBe('task/add-health-check-endpoint');
+		});
+	});
+
+	describe('dependency-aware scheduling', () => {
+		it('should not spawn a task with unmet dependencies', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Dep test',
+				description: '',
+			});
+			const taskA = await ctx.taskManager.createTask({
+				title: 'Task A',
+				description: 'Independent',
+			});
+			const taskB = await ctx.taskManager.createTask({
+				title: 'Task B',
+				description: 'Depends on A',
+				dependsOn: [taskA.id],
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskA.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskB.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// Only taskA should be spawned (taskB is blocked)
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			expect(groups).toHaveLength(1);
+			expect((await ctx.taskManager.getTask(taskA.id))!.status).toBe('in_progress');
+			expect((await ctx.taskManager.getTask(taskB.id))!.status).toBe('pending');
+		});
+
+		it('should spawn dependent task after dependency completes', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Chain test',
+				description: '',
+			});
+			const taskA = await ctx.taskManager.createTask({
+				title: 'Task A',
+				description: 'First',
+			});
+			const taskB = await ctx.taskManager.createTask({
+				title: 'Task B',
+				description: 'Second',
+				dependsOn: [taskA.id],
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskA.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskB.id);
+
+			ctx.runtime.start();
+
+			// Tick 1: Only taskA spawned
+			await ctx.runtime.tick();
+			const group1 = ctx.groupRepo.getActiveGroups('room-1')[0];
+			expect(group1).toBeDefined();
+			expect((await ctx.taskManager.getTask(taskA.id))!.status).toBe('in_progress');
+
+			// Complete taskA
+			await ctx.runtime.taskGroupManager.complete(group1.id, 'Task A done');
+			expect((await ctx.taskManager.getTask(taskA.id))!.status).toBe('completed');
+
+			// Tick 2: taskB should now be spawned since its dep is complete
+			await ctx.runtime.tick();
+			expect((await ctx.taskManager.getTask(taskB.id))!.status).toBe('in_progress');
+		});
+
+		it('should not spawn any tasks when all pending are blocked', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'All blocked',
+				description: '',
+			});
+			const taskA = await ctx.taskManager.createTask({
+				title: 'Task A',
+				description: 'In progress',
+			});
+			await ctx.taskManager.startTask(taskA.id);
+
+			const taskB = await ctx.taskManager.createTask({
+				title: 'Task B',
+				description: 'Depends on A',
+				dependsOn: [taskA.id],
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskA.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskB.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// taskA is in_progress (not pending), taskB is blocked — no new groups spawned
+			expect(ctx.groupRepo.getActiveGroups('room-1')).toHaveLength(0);
+			expect((await ctx.taskManager.getTask(taskB.id))!.status).toBe('pending');
+		});
+
+		it('should handle multi-level dependency chains', async () => {
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Chain A->B->C',
+				description: '',
+			});
+			const taskA = await ctx.taskManager.createTask({
+				title: 'Task A',
+				description: 'Base',
+			});
+			const taskB = await ctx.taskManager.createTask({
+				title: 'Task B',
+				description: 'Depends on A',
+				dependsOn: [taskA.id],
+			});
+			const taskC = await ctx.taskManager.createTask({
+				title: 'Task C',
+				description: 'Depends on B',
+				dependsOn: [taskB.id],
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskA.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskB.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, taskC.id);
+
+			ctx.runtime.start();
+
+			// Tick 1: Only A
+			await ctx.runtime.tick();
+			expect((await ctx.taskManager.getTask(taskA.id))!.status).toBe('in_progress');
+			expect((await ctx.taskManager.getTask(taskB.id))!.status).toBe('pending');
+			expect((await ctx.taskManager.getTask(taskC.id))!.status).toBe('pending');
+
+			// Complete A
+			const group1 = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.taskGroupManager.complete(group1.id, 'A done');
+
+			// Tick 2: Only B (C still blocked)
+			await ctx.runtime.tick();
+			expect((await ctx.taskManager.getTask(taskB.id))!.status).toBe('in_progress');
+			expect((await ctx.taskManager.getTask(taskC.id))!.status).toBe('pending');
+
+			// Complete B
+			const group2 = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.taskGroupManager.complete(group2.id, 'B done');
+
+			// Tick 3: C now ready
+			await ctx.runtime.tick();
+			expect((await ctx.taskManager.getTask(taskC.id))!.status).toBe('in_progress');
 		});
 	});
 });
