@@ -13,7 +13,7 @@ import { Logger } from '../../logger';
 const log = new Logger('cli-agent-registry');
 
 export interface CliAgentInfo {
-	/** Unique identifier for this CLI agent */
+	/** Unique identifier for this CLI agent (e.g., 'codex', 'codex:gpt-5.3-codex') */
 	id: string;
 	/** Human-readable name */
 	name: string;
@@ -29,6 +29,8 @@ export interface CliAgentInfo {
 	path?: string;
 	/** Version string (if detectable) */
 	version?: string;
+	/** Model IDs available through this CLI agent */
+	models?: string[];
 }
 
 interface CliAgentDefinition {
@@ -40,6 +42,10 @@ interface CliAgentDefinition {
 	versionCommand?: string;
 	/** Command to check auth status (should exit 0 if authenticated) */
 	authCheckCommand?: string;
+	/** Known model IDs for this CLI agent */
+	knownModels?: string[];
+	/** Command to list available models (output parsed as one model per line) */
+	modelsCommand?: string;
 }
 
 const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
@@ -48,12 +54,14 @@ const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
 		name: 'Codex',
 		command: 'codex',
 		provider: 'OpenAI',
+		knownModels: ['gpt-5.3-codex', 'o3', 'o4-mini', 'gpt-4.1'],
 	},
 	{
 		id: 'gemini',
 		name: 'Gemini CLI',
 		command: 'gemini',
 		provider: 'Google',
+		knownModels: ['gemini-2.5-pro', 'gemini-2.5-flash'],
 	},
 	{
 		id: 'aider',
@@ -118,6 +126,20 @@ function detectAgent(def: CliAgentDefinition): CliAgentInfo {
 	} else {
 		// If no explicit auth check, assume authenticated if installed
 		info.authenticated = true;
+	}
+
+	// Detect available models
+	if (def.modelsCommand) {
+		const modelsResult = runCommand(def.modelsCommand);
+		if (modelsResult.ok && modelsResult.output) {
+			info.models = modelsResult.output
+				.split('\n')
+				.map((l) => l.trim())
+				.filter((l) => l.length > 0);
+		}
+	}
+	if (!info.models && def.knownModels) {
+		info.models = def.knownModels;
 	}
 
 	return info;
