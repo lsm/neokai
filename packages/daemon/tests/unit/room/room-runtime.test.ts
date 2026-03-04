@@ -58,9 +58,7 @@ describe('RoomRuntime', () => {
 
 			// Worker starts immediately, leader is deferred until routeWorkerToLeader
 			const workerCalls = ctx.sessionFactory.calls.filter(
-				(c) =>
-					c.method === 'createAndStartSession' &&
-					c.args[1] !== 'leader'
+				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
 			);
 			const leaderCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'

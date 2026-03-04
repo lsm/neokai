@@ -57,7 +57,7 @@ const BASE_BRANCHES = ['main', 'master', 'dev', 'develop'];
 
 async function defaultRunCommand(
 	args: string[],
-	cwd: string,
+	cwd: string
 ): Promise<{ stdout: string; exitCode: number }> {
 	try {
 		const proc = Bun.spawn(args, { cwd, stdout: 'pipe', stderr: 'pipe' });
@@ -81,12 +81,12 @@ function getRunner(opts?: HookOptions) {
  */
 export async function checkNotOnBaseBranch(
 	ctx: WorkerExitHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	const run = getRunner(opts);
 	const { stdout: branch, exitCode } = await run(
 		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 
 	if (exitCode !== 0) {
@@ -116,14 +116,14 @@ export async function checkNotOnBaseBranch(
  */
 export async function checkPrExists(
 	ctx: WorkerExitHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	const run = getRunner(opts);
 
 	// Get current branch name
 	const { stdout: branch, exitCode: branchExit } = await run(
 		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (branchExit !== 0) {
 		log.debug(`checkPrExists: git command failed, skipping check`);
@@ -133,7 +133,7 @@ export async function checkPrExists(
 	// Check for open PR on this branch
 	const { stdout: prJson, exitCode: ghExit } = await run(
 		['gh', 'pr', 'list', '--head', branch, '--json', 'number,url', '--state', 'open'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
 		log.debug(`checkPrExists: gh command failed, skipping check`);
@@ -165,14 +165,14 @@ export async function checkPrExists(
  */
 export async function checkPrSynced(
 	ctx: WorkerExitHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	const run = getRunner(opts);
 
 	// Get local HEAD
 	const { stdout: localSha, exitCode: gitExit } = await run(
 		['git', 'rev-parse', 'HEAD'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (gitExit !== 0) {
 		return { pass: true };
@@ -181,7 +181,7 @@ export async function checkPrSynced(
 	// Get PR head SHA
 	const { stdout: remoteSha, exitCode: ghExit } = await run(
 		['gh', 'pr', 'view', '--json', 'headRefOid', '--jq', '.headRefOid'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
 		return { pass: true };
@@ -204,7 +204,7 @@ export async function checkPrSynced(
  */
 export async function checkDraftTasksCreated(
 	ctx: WorkerExitHookContext,
-	_opts?: HookOptions,
+	_opts?: HookOptions
 ): Promise<HookResult> {
 	if ((ctx.draftTaskCount ?? 0) > 0) {
 		return { pass: true };
@@ -223,14 +223,14 @@ export async function checkDraftTasksCreated(
  */
 export async function checkLeaderPrExists(
 	ctx: LeaderCompleteHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	const run = getRunner(opts);
 
 	// Get current branch
 	const { stdout: branch, exitCode: branchExit } = await run(
 		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (branchExit !== 0) {
 		return { pass: true };
@@ -239,7 +239,7 @@ export async function checkLeaderPrExists(
 	// Check for open PR
 	const { stdout: prJson, exitCode: ghExit } = await run(
 		['gh', 'pr', 'list', '--head', branch, '--json', 'number', '--state', 'open'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
 		return { pass: true };
@@ -267,14 +267,14 @@ export async function checkLeaderPrExists(
  */
 export async function checkPrHasReviews(
 	ctx: LeaderCompleteHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	const run = getRunner(opts);
 
 	// Get current branch
 	const { stdout: branch, exitCode: branchExit } = await run(
 		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (branchExit !== 0) {
 		return { pass: true };
@@ -283,7 +283,7 @@ export async function checkPrHasReviews(
 	// Get review count from PR
 	const { stdout: reviewCount, exitCode: ghExit } = await run(
 		['gh', 'pr', 'view', branch, '--json', 'reviews', '--jq', '.reviews | length'],
-		ctx.workspacePath,
+		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
 		return { pass: true };
@@ -309,7 +309,7 @@ export async function checkPrHasReviews(
  */
 export async function checkLeaderDraftsExist(
 	ctx: LeaderCompleteHookContext,
-	_opts?: HookOptions,
+	_opts?: HookOptions
 ): Promise<HookResult> {
 	if ((ctx.draftTaskCount ?? 0) > 0) {
 		return { pass: true };
@@ -331,7 +331,7 @@ export async function checkLeaderDraftsExist(
  */
 export async function runWorkerExitGate(
 	ctx: WorkerExitHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	if (ctx.workerRole === 'coder') {
 		const hooks = [checkNotOnBaseBranch, checkPrExists, checkPrSynced];
@@ -373,7 +373,7 @@ export async function runWorkerExitGate(
  */
 export async function runLeaderSubmitGate(
 	ctx: LeaderCompleteHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
@@ -394,7 +394,7 @@ export async function runLeaderSubmitGate(
  */
 export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
-	opts?: HookOptions,
+	opts?: HookOptions
 ): Promise<HookResult> {
 	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
 		const prResult = await checkLeaderPrExists(ctx, opts);

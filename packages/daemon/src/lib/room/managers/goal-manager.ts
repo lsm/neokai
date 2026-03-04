@@ -10,7 +10,10 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import { GoalRepository, type CreateGoalParams } from '../../../storage/repositories/goal-repository';
+import {
+	GoalRepository,
+	type CreateGoalParams,
+} from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
 

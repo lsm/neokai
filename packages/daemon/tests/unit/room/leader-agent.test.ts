@@ -144,10 +144,7 @@ describe('Leader Agent', () => {
 					room: makeRoom({
 						config: {
 							agentSubagents: {
-								leader: [
-									{ model: 'claude-opus-4-6' },
-									{ model: 'claude-sonnet-4-6' },
-								],
+								leader: [{ model: 'claude-opus-4-6' }, { model: 'claude-sonnet-4-6' }],
 							},
 						},
 					}),
@@ -176,10 +173,7 @@ describe('Leader Agent', () => {
 					room: makeRoom({
 						config: {
 							agentSubagents: {
-								leader: [
-									{ model: 'claude-opus-4-6' },
-									{ model: 'claude-sonnet-4-6' },
-								],
+								leader: [{ model: 'claude-opus-4-6' }, { model: 'claude-sonnet-4-6' }],
 							},
 						},
 					}),
@@ -225,9 +219,7 @@ describe('Leader Agent', () => {
 		});
 
 		it('should include task priority when set', () => {
-			const ctx = buildLeaderTaskContext(
-				makeConfig({ task: makeTask({ priority: 'urgent' }) })
-			);
+			const ctx = buildLeaderTaskContext(makeConfig({ task: makeTask({ priority: 'urgent' }) }));
 			expect(ctx).toContain('urgent');
 		});
 	});
@@ -373,10 +365,7 @@ describe('Leader Agent', () => {
 					room: makeRoom({
 						config: {
 							agentSubagents: {
-								leader: [
-									{ model: 'claude-opus-4-6' },
-									{ model: 'claude-sonnet-4-6' },
-								],
+								leader: [{ model: 'claude-opus-4-6' }, { model: 'claude-sonnet-4-6' }],
 							},
 						},
 					}),
@@ -422,10 +411,7 @@ describe('Leader Agent', () => {
 					room: makeRoom({
 						config: {
 							agentSubagents: {
-								leader: [
-									{ model: 'claude-sonnet-4-6' },
-									{ model: 'claude-haiku-4-5' },
-								],
+								leader: [{ model: 'claude-sonnet-4-6' }, { model: 'claude-haiku-4-5' }],
 							},
 						},
 					}),

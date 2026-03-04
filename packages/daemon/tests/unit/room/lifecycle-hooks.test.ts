@@ -16,9 +16,7 @@ import {
 } from '../../../src/lib/room/runtime/lifecycle-hooks';
 
 // Helper to create a mock command runner
-function mockRunner(
-	responses: Record<string, { stdout: string; exitCode: number }>,
-): HookOptions {
+function mockRunner(responses: Record<string, { stdout: string; exitCode: number }>): HookOptions {
 	return {
 		runCommand: async (args: string[], _cwd: string) => {
 			const key = args.join(' ');
@@ -328,14 +326,14 @@ describe('runWorkerExitGate', () => {
 
 	test('runs planner phase 2 hook and passes when tasks exist', async () => {
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 3, planApproved: true }),
+			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 3, planApproved: true })
 		);
 		expect(result.pass).toBe(true);
 	});
 
 	test('fails planner phase 2 with no tasks', async () => {
 		const result = await runWorkerExitGate(
-			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 0, planApproved: true }),
+			makeWorkerCtx({ workerRole: 'planner', draftTaskCount: 0, planApproved: true })
 		);
 		expect(result.pass).toBe(false);
 	});
@@ -352,7 +350,7 @@ describe('runWorkerExitGate', () => {
 		});
 		const result = await runWorkerExitGate(
 			makeWorkerCtx({ workerRole: 'planner', planApproved: false }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -367,7 +365,7 @@ describe('runWorkerExitGate', () => {
 		});
 		const result = await runWorkerExitGate(
 			makeWorkerCtx({ workerRole: 'planner', planApproved: false }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('gh pr create');
@@ -390,7 +388,7 @@ describe('runLeaderCompleteGate', () => {
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -409,7 +407,7 @@ describe('runLeaderCompleteGate', () => {
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: true }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -428,7 +426,7 @@ describe('runLeaderCompleteGate', () => {
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: true }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('reviewer sub-agents');
@@ -444,28 +442,28 @@ describe('runLeaderCompleteGate', () => {
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
 
 	test('checks drafts for planning tasks and passes when drafts exist', async () => {
 		const result = await runLeaderCompleteGate(
-			makeLeaderCtx({ taskType: 'planning', draftTaskCount: 2 }),
+			makeLeaderCtx({ taskType: 'planning', draftTaskCount: 2 })
 		);
 		expect(result.pass).toBe(true);
 	});
 
 	test('fails planning tasks with no drafts', async () => {
 		const result = await runLeaderCompleteGate(
-			makeLeaderCtx({ taskType: 'planning', draftTaskCount: 0 }),
+			makeLeaderCtx({ taskType: 'planning', draftTaskCount: 0 })
 		);
 		expect(result.pass).toBe(false);
 	});
 
 	test('passes for general tasks with no applicable hooks', async () => {
 		const result = await runLeaderCompleteGate(
-			makeLeaderCtx({ workerRole: 'general', taskType: 'research' }),
+			makeLeaderCtx({ workerRole: 'general', taskType: 'research' })
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -475,14 +473,14 @@ describe('runLeaderSubmitGate', () => {
 	test('passes for non-coder tasks without checking PR', async () => {
 		// General task — no git/gh checks should run
 		const result = await runLeaderSubmitGate(
-			makeLeaderCtx({ workerRole: 'general', taskType: 'research' }),
+			makeLeaderCtx({ workerRole: 'general', taskType: 'research' })
 		);
 		expect(result.pass).toBe(true);
 	});
 
 	test('passes for planner tasks without checking PR', async () => {
 		const result = await runLeaderSubmitGate(
-			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning' }),
+			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning' })
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -538,7 +536,7 @@ describe('runLeaderSubmitGate', () => {
 		});
 		const result = await runLeaderSubmitGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: true }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -557,7 +555,7 @@ describe('runLeaderSubmitGate', () => {
 		});
 		const result = await runLeaderSubmitGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: true }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('reviewer sub-agents');
@@ -574,7 +572,7 @@ describe('runLeaderSubmitGate', () => {
 		});
 		const result = await runLeaderSubmitGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
-			opts,
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});

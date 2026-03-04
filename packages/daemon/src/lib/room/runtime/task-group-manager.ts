@@ -280,10 +280,9 @@ export class TaskGroupManager {
 		// Build the message to inject into the Leader session.
 		// On the first review round, prepend the task/goal context so the Leader
 		// knows what it's reviewing without it being baked into the system prompt.
-		const leaderMessage =
-			leaderTaskContext
-				? `${leaderTaskContext}\n\n---\n\n${workerOutput}`
-				: workerOutput;
+		const leaderMessage = leaderTaskContext
+			? `${leaderTaskContext}\n\n---\n\n${workerOutput}`
+			: workerOutput;
 
 		// Inject worker output into Leader session
 		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);

@@ -282,9 +282,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 
 				// Worker (planner) messages must exist
 				expect(
-					messageRoles.has('planner') ||
-						messageRoles.has('general') ||
-						messageRoles.has('coder')
+					messageRoles.has('planner') || messageRoles.has('general') || messageRoles.has('coder')
 				).toBe(true);
 
 				// Leader messages must exist
@@ -310,10 +308,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 						for (const block of parsed.message.content) {
 							if (block.type !== 'tool_use' || !block.name) continue;
 							const subagentType = block.input?.subagent_type as string | undefined;
-							if (
-								(block.name === 'Task' || block.name === 'Agent') &&
-								subagentType
-							) {
+							if ((block.name === 'Task' || block.name === 'Agent') && subagentType) {
 								dispatchedSubagents.add(subagentType);
 							}
 						}
@@ -322,20 +317,15 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 					}
 				}
 
-				console.log(
-					`Dispatched sub-agents: [${[...dispatchedSubagents].join(', ')}]`
-				);
+				console.log(`Dispatched sub-agents: [${[...dispatchedSubagents].join(', ')}]`);
 
 				// At least one reviewer should have been dispatched for plan review
 				const hasReviewers =
-					dispatchedSubagents.has('reviewer-sonnet') ||
-					dispatchedSubagents.has('reviewer-haiku');
+					dispatchedSubagents.has('reviewer-sonnet') || dispatchedSubagents.has('reviewer-haiku');
 				if (hasReviewers) {
 					console.log('Reviewer sub-agents were dispatched for plan review');
 				} else {
-					console.warn(
-						'No reviewer sub-agents detected — leader may have reviewed directly'
-					);
+					console.warn('No reviewer sub-agents detected — leader may have reviewed directly');
 				}
 
 				// --- Stage 6: Human approves → triggers phase 2 planner ---

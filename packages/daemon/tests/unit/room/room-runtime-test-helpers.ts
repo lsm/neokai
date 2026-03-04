@@ -166,7 +166,10 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
 }
 
-export async function createGoalAndTask(ctx: RuntimeTestContext, opts?: { assignedAgent?: 'coder' | 'general' }) {
+export async function createGoalAndTask(
+	ctx: RuntimeTestContext,
+	opts?: { assignedAgent?: 'coder' | 'general' }
+) {
 	const goal = await ctx.goalManager.createGoal({
 		title: 'Health check',
 		description: 'Add health endpoint',
@@ -186,7 +189,10 @@ export async function createGoalAndTask(ctx: RuntimeTestContext, opts?: { assign
  * Helper: spawn a group via tick, route worker to leader, return the group.
  * Leaves the group in `awaiting_leader` state ready for a leader tool call.
  */
-export async function spawnAndRouteToLeader(ctx: RuntimeTestContext, opts?: { assignedAgent?: 'coder' | 'general' }) {
+export async function spawnAndRouteToLeader(
+	ctx: RuntimeTestContext,
+	opts?: { assignedAgent?: 'coder' | 'general' }
+) {
 	const { goal, task } = await createGoalAndTask(ctx, opts);
 	ctx.runtime.start();
 	await ctx.runtime.tick();

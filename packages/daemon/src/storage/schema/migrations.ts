@@ -626,8 +626,19 @@ function runMigration16(db: BunDatabase): void {
 				`);
 				// Build column list dynamically — old schemas may not have all columns
 				const cols = [
-					'id', 'room_id', 'title', 'description', 'status', 'priority', 'progress',
-					'current_step', 'result', 'error', 'depends_on', 'created_at', 'started_at',
+					'id',
+					'room_id',
+					'title',
+					'description',
+					'status',
+					'priority',
+					'progress',
+					'current_step',
+					'result',
+					'error',
+					'depends_on',
+					'created_at',
+					'started_at',
 					'completed_at',
 				];
 				const optionalCols = ['task_type', 'assigned_agent', 'created_by_task_id'];
@@ -787,8 +798,18 @@ function runMigration17(db: BunDatabase): void {
 
 		// Build column list — only include goal_review_attempts if it existed before
 		const cols = [
-			'id', 'room_id', 'title', 'description', 'status', 'priority', 'progress',
-			'linked_task_ids', 'metrics', 'created_at', 'updated_at', 'completed_at',
+			'id',
+			'room_id',
+			'title',
+			'description',
+			'status',
+			'priority',
+			'progress',
+			'linked_task_ids',
+			'metrics',
+			'created_at',
+			'updated_at',
+			'completed_at',
 			'planning_attempts',
 		];
 		if (hasGoalReviewAttempts) {

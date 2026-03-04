@@ -322,9 +322,7 @@ describe('RoomRuntime leader tools', () => {
 
 			// Verify the planner worker received the replan context in its task message.
 			// After refactoring, replan context is in the injected task message (not system prompt).
-			const injectCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'injectMessage'
-			);
+			const injectCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'injectMessage');
 			// The last injectMessage to a planner session is the task message for the replanning planner
 			const plannerInjectCalls = injectCalls.filter(
 				(c) => typeof c.args[0] === 'string' && (c.args[0] as string).startsWith('planner:')

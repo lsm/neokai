@@ -143,7 +143,9 @@ export function refresh(): CliAgentInfo[] {
 	cachedAgents = KNOWN_CLI_AGENTS.map((def) => {
 		const info = detectAgent(def);
 		if (info.installed) {
-			log.info(`  ${info.name}: installed (${info.version ?? 'unknown version'}), auth=${info.authenticated}`);
+			log.info(
+				`  ${info.name}: installed (${info.version ?? 'unknown version'}), auth=${info.authenticated}`
+			);
 		} else {
 			log.info(`  ${info.name}: not installed`);
 		}

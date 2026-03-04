@@ -338,7 +338,9 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				try {
 					const parsed = JSON.parse(msg.content) as {
 						type?: string;
-						message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> };
+						message?: {
+							content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }>;
+						};
 					};
 					if (parsed.type !== 'assistant' || !parsed.message?.content) continue;
 					for (const block of parsed.message.content) {

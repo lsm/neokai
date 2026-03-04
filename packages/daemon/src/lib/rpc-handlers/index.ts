@@ -32,7 +32,11 @@ import { setupTaskHandlers } from './task-handlers';
 import { setupGitHubHandlers } from './github-handlers';
 import type { GitHubService } from '../github/github-service';
 // New handlers for goals
-import { setupGoalHandlers, type GoalManagerFactory, type TaskManagerFactory as GoalTaskManagerFactory } from './goal-handlers';
+import {
+	setupGoalHandlers,
+	type GoalManagerFactory,
+	type TaskManagerFactory as GoalTaskManagerFactory,
+} from './goal-handlers';
 import { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
@@ -115,7 +119,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService);
 
 	// Goal handlers (after runtime service — approveTask/rejectTask need runtimeService)
-	setupGoalHandlers(deps.messageHub, deps.daemonHub, goalManagerFactory, goalTaskManagerFactory, roomRuntimeService);
+	setupGoalHandlers(
+		deps.messageHub,
+		deps.daemonHub,
+		goalManagerFactory,
+		goalTaskManagerFactory,
+		roomRuntimeService
+	);
 
 	// GitHub handlers
 	setupGitHubHandlers(

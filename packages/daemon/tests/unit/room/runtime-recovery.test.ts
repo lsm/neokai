@@ -1,6 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { recoverRuntime, type SessionStateChecker } from '../../../src/lib/room/runtime/runtime-recovery';
+import {
+	recoverRuntime,
+	type SessionStateChecker,
+} from '../../../src/lib/room/runtime/runtime-recovery';
 import { RoomRuntime } from '../../../src/lib/room/runtime/room-runtime';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
 import { SessionObserver } from '../../../src/lib/room/state/session-observer';

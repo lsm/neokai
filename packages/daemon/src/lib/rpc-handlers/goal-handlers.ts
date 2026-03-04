@@ -48,7 +48,9 @@ export type GoalManagerLike = Pick<
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
-export type TaskManagerFactory = (roomId: string) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
+export type TaskManagerFactory = (
+	roomId: string
+) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
 
 export function setupGoalHandlers(
 	messageHub: MessageHub,
@@ -536,9 +538,7 @@ export function setupGoalHandlers(
 
 			const resumed = await runtime.resumeFromHuman(params.taskId, message);
 			if (!resumed) {
-				throw new Error(
-					`Failed to resume task ${params.taskId} — no awaiting_human group found`
-				);
+				throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
 			}
 		}
 
