@@ -1,12 +1,12 @@
 /**
  * TaskConversationRenderer
  *
- * Renders a flat conversation timeline for a task group.
+ * Renders a flat chronological conversation timeline for a task group.
  * Messages are fetched from session_group_messages via task.getGroupMessages RPC
- * and grouped by turn (using _taskMeta.turnId).
+ * with pagination to fetch ALL messages (not just the first 100).
  *
- * Each turn is rendered with a colored left border and a small header showing
- * the agent name and turn number. All messages are always visible (no collapse).
+ * Each message is rendered inline with a thin colored left border indicating
+ * which agent produced it. Role transitions show a small divider label.
  *
  * Subscribes to state.groupMessages.delta on channel group:{groupId} for
  * real-time updates.
@@ -25,13 +25,6 @@ interface TaskMeta {
 	iteration: number;
 }
 
-interface TurnGroup {
-	turnId: string;
-	authorRole: string;
-	iteration: number;
-	messages: SDKMessage[];
-}
-
 interface GroupMessage {
 	id: number;
 	groupId: string;
@@ -46,51 +39,31 @@ interface TaskConversationRendererProps {
 	groupId: string;
 }
 
-const ROLE_STYLES: Record<string, { border: string; label: string; labelColor: string }> = {
-	planner: {
-		border: 'border-l-teal-500',
-		label: 'Planner',
-		labelColor: 'text-teal-400',
-	},
-	coder: {
-		border: 'border-l-blue-500',
-		label: 'Coder',
-		labelColor: 'text-blue-400',
-	},
-	general: {
-		border: 'border-l-slate-400',
-		label: 'General',
-		labelColor: 'text-slate-400',
-	},
-	leader: {
-		border: 'border-l-purple-500',
-		label: 'Leader',
-		labelColor: 'text-purple-400',
-	},
-	human: {
-		border: 'border-l-green-500',
-		label: 'Task Prompt',
-		labelColor: 'text-green-400',
-	},
-	system: {
-		border: '',
-		label: '',
-		labelColor: 'text-gray-500',
-	},
-	// Backward compat for messages already in DB from before the rename
-	craft: {
-		border: 'border-l-blue-500',
-		label: 'Craft',
-		labelColor: 'text-blue-400',
-	},
-	lead: {
-		border: 'border-l-purple-500',
-		label: 'Lead',
-		labelColor: 'text-purple-400',
-	},
+const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
+	planner: { border: 'border-l-teal-500', label: 'Planner', labelColor: 'text-teal-400' },
+	coder: { border: 'border-l-blue-500', label: 'Coder', labelColor: 'text-blue-400' },
+	general: { border: 'border-l-slate-400', label: 'General', labelColor: 'text-slate-400' },
+	leader: { border: 'border-l-purple-500', label: 'Leader', labelColor: 'text-purple-400' },
+	human: { border: 'border-l-green-500', label: 'Task Prompt', labelColor: 'text-green-400' },
+	system: { border: 'border-l-transparent', label: '', labelColor: 'text-gray-500' },
+	craft: { border: 'border-l-blue-500', label: 'Craft', labelColor: 'text-blue-400' },
+	lead: { border: 'border-l-purple-500', label: 'Lead', labelColor: 'text-purple-400' },
 };
 
 function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
+	// Status messages are plain text, not JSON
+	if (msg.messageType === 'status') {
+		return {
+			type: 'status',
+			text: msg.content,
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: `status-${msg.id}`,
+				iteration: 0,
+			},
+		} as unknown as SDKMessage;
+	}
 	try {
 		return JSON.parse(msg.content) as SDKMessage;
 	} catch {
@@ -103,58 +76,18 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-function getSystemText(messages: SDKMessage[]): string | null {
-	for (const msg of messages) {
-		const raw = msg as Record<string, unknown>;
-		if (raw.type === 'user' && raw.message) {
-			const m = raw.message as Record<string, unknown>;
-			if (Array.isArray(m.content)) {
-				for (const block of m.content) {
-					const b = block as Record<string, unknown>;
-					if (b.type === 'text' && typeof b.text === 'string') return b.text;
-				}
+function getSystemText(msg: SDKMessage): string | null {
+	const raw = msg as Record<string, unknown>;
+	if (raw.type === 'user' && raw.message) {
+		const m = raw.message as Record<string, unknown>;
+		if (Array.isArray(m.content)) {
+			for (const block of m.content) {
+				const b = block as Record<string, unknown>;
+				if (b.type === 'text' && typeof b.text === 'string') return b.text;
 			}
 		}
 	}
 	return null;
-}
-
-function countToolUses(messages: SDKMessage[]): number {
-	let count = 0;
-	for (const msg of messages) {
-		const raw = msg as Record<string, unknown>;
-		if (raw.type !== 'assistant') continue;
-		const m = raw.message as Record<string, unknown> | undefined;
-		if (!m || !Array.isArray(m.content)) continue;
-		for (const block of m.content) {
-			if ((block as Record<string, unknown>).type === 'tool_use') count++;
-		}
-	}
-	return count;
-}
-
-/**
- * Group consecutive messages by turnId.
- */
-function groupMessagesByTurn(messages: SDKMessage[]): TurnGroup[] {
-	const groups: TurnGroup[] = [];
-	let currentGroup: TurnGroup | null = null;
-
-	for (const msg of messages) {
-		const meta = getTaskMeta(msg);
-		const turnId = meta?.turnId ?? 'unknown';
-		const authorRole = meta?.authorRole ?? 'system';
-		const iteration = meta?.iteration ?? 0;
-
-		if (!currentGroup || currentGroup.turnId !== turnId) {
-			currentGroup = { turnId, authorRole, iteration, messages: [] };
-			groups.push(currentGroup);
-		}
-
-		currentGroup.messages.push(msg);
-	}
-
-	return groups;
 }
 
 export function TaskConversationRenderer({ groupId }: TaskConversationRendererProps) {
@@ -167,12 +100,28 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 		const channel = `group:${groupId}`;
 		joinRoom(channel);
 
-		const fetchMessages = async () => {
+		const fetchAllMessages = async () => {
 			try {
-				const res = await request<{ messages: GroupMessage[] }>('task.getGroupMessages', {
-					groupId,
-				});
-				const parsed = res.messages
+				const allGroupMessages: GroupMessage[] = [];
+				let afterId = 0;
+				let hasMore = true;
+
+				// Paginate through all messages
+				while (hasMore) {
+					const res = await request<{ messages: GroupMessage[]; hasMore: boolean }>(
+						'task.getGroupMessages',
+						{ groupId, afterId, limit: 500 }
+					);
+					allGroupMessages.push(...res.messages);
+					hasMore = res.hasMore;
+					if (res.messages.length > 0) {
+						afterId = res.messages[res.messages.length - 1].id;
+					} else {
+						break;
+					}
+				}
+
+				const parsed = allGroupMessages
 					.map(parseGroupMessage)
 					.filter((m): m is SDKMessage => m !== null);
 				setMessages(parsed);
@@ -183,7 +132,7 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 			}
 		};
 
-		fetchMessages();
+		fetchAllMessages();
 
 		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
 			'state.groupMessages.delta',
@@ -206,21 +155,22 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 		};
 	}, [groupId]);
 
-	const turnGroups = useMemo(() => groupMessagesByTurn(messages), [messages]);
 	const maps = useMessageMaps(messages, groupId);
 
-	// Assign sequential turn numbers per role
-	const turnNumbers = useMemo(() => {
-		const counters: Record<string, number> = {};
-		const result = new Map<string, number>();
-		for (const group of turnGroups) {
-			if (group.authorRole === 'system' || group.authorRole === 'human') continue;
-			const role = group.authorRole;
-			counters[role] = (counters[role] ?? 0) + 1;
-			result.set(group.turnId, counters[role]);
+	// Track role transitions to insert dividers
+	const roleTransitions = useMemo(() => {
+		const transitions = new Set<number>();
+		let lastRole: string | null = null;
+		for (let i = 0; i < messages.length; i++) {
+			const meta = getTaskMeta(messages[i]);
+			const role = meta?.authorRole ?? 'system';
+			if (role !== 'system' && lastRole !== null && role !== lastRole) {
+				transitions.add(i);
+			}
+			if (role !== 'system') lastRole = role;
 		}
-		return result;
-	}, [turnGroups]);
+		return transitions;
+	}, [messages]);
 
 	if (loading) {
 		return (
@@ -239,60 +189,50 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 	}
 
 	return (
-		<div ref={scrollRef} class="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-			{turnGroups.map((group) => {
-				const style = ROLE_STYLES[group.authorRole] ?? ROLE_STYLES.system;
+		<div ref={scrollRef} class="flex-1 overflow-y-auto px-4 py-3 space-y-0.5">
+			{messages.map((msg, i) => {
+				const meta = getTaskMeta(msg);
+				const role = meta?.authorRole ?? 'system';
+				const style = ROLE_COLORS[role] ?? ROLE_COLORS.system;
+				const key = (msg as SDKMessage & { uuid?: string }).uuid ?? `msg-${groupId}-${i}`;
 
-				// System messages: render as centered dividers
-				if (group.authorRole === 'system') {
-					const text = getSystemText(group.messages);
+				// Status messages: render as centered dividers
+				const raw = msg as Record<string, unknown>;
+				if (raw.type === 'status') {
+					const statusText = typeof raw.text === 'string' ? raw.text : 'Status update';
 					return (
-						<div key={group.turnId} class="flex items-center gap-3 py-1.5">
+						<div key={key} class="flex items-center gap-3 py-1.5">
 							<div class="flex-1 h-px bg-dark-700" />
-							<span class="text-xs text-gray-500 whitespace-nowrap">
-								{text ?? 'Status update'}
-							</span>
+							<span class="text-xs text-gray-500 whitespace-nowrap">{statusText}</span>
 							<div class="flex-1 h-px bg-dark-700" />
 						</div>
 					);
 				}
 
-				const turnNum = turnNumbers.get(group.turnId);
-				const toolCount = countToolUses(group.messages);
+				// Insert a role transition divider when the agent changes
+				const showTransition = roleTransitions.has(i);
 
 				return (
-					<div key={group.turnId} class={`border-l-2 ${style.border} bg-dark-850/50 rounded-r`}>
-						{/* Turn header — always visible, not clickable */}
-						<div class="flex items-center gap-2 px-3 py-1.5">
-							<span class={`text-xs font-semibold uppercase tracking-wide ${style.labelColor}`}>
-								{style.label}
-							</span>
-							{turnNum != null && (
-								<span class="text-[10px] text-gray-600">#{turnNum}</span>
-							)}
-							{group.iteration > 0 && (
-								<span class="text-[10px] text-gray-600">
-									iter {group.iteration}
+					<div key={key}>
+						{showTransition && (
+							<div class="flex items-center gap-2 py-1.5 mt-1">
+								<div class="flex-1 h-px bg-dark-700" />
+								<span
+									class={`text-[10px] font-semibold uppercase tracking-wide ${style.labelColor}`}
+								>
+									{style.label}
 								</span>
-							)}
-							{toolCount > 0 && (
-								<span class="text-[10px] text-gray-600">
-									{toolCount} tool{toolCount !== 1 ? 's' : ''}
-								</span>
-							)}
-						</div>
-
-						{/* All messages — always expanded */}
-						<div class="px-3 pb-2 space-y-1">
-							{group.messages.map((msg) => (
-								<SDKMessageRenderer
-									key={(msg as SDKMessage & { uuid?: string }).uuid ?? Math.random().toString()}
-									message={msg}
-									toolResultsMap={maps.toolResultsMap}
-									toolInputsMap={maps.toolInputsMap}
-									subagentMessagesMap={maps.subagentMessagesMap}
-								/>
-							))}
+								<div class="flex-1 h-px bg-dark-700" />
+							</div>
+						)}
+						<div class={`border-l-2 ${style.border} pl-3`}>
+							<SDKMessageRenderer
+								message={msg}
+								toolResultsMap={maps.toolResultsMap}
+								toolInputsMap={maps.toolInputsMap}
+								subagentMessagesMap={maps.subagentMessagesMap}
+								taskContext
+							/>
 						</div>
 					</div>
 				);

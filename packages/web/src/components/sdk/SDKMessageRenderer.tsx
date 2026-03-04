@@ -3,6 +3,7 @@
  */
 
 import type { JSX } from 'preact';
+import { useState } from 'preact/hooks';
 import type {
 	SDKAuthStatusMessage,
 	SDKMessage,
@@ -55,6 +56,8 @@ interface Props {
 	selectedMessages?: Set<string>;
 	onMessageCheckboxChange?: (messageId: string, checked: boolean) => void;
 	allMessages?: SDKMessage[];
+	/** When true, renders all message types without skipping (for task conversation timelines) */
+	taskContext?: boolean;
 }
 
 /**
@@ -66,6 +69,82 @@ function isSubagentMessage(message: SDKMessage): boolean {
 		parent_tool_use_id?: string | null;
 	};
 	return !!msgWithParent.parent_tool_use_id;
+}
+
+/**
+ * Compact renderer for system/init messages in task context
+ */
+function SystemInitPill({ message }: { message: SystemInitMessage }) {
+	const [expanded, setExpanded] = useState(false);
+
+	return (
+		<div class="py-1 px-2">
+			<button
+				onClick={() => setExpanded(!expanded)}
+				class="flex items-center gap-2 text-[10px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+			>
+				<svg
+					class={`w-3 h-3 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
+					fill="none"
+					stroke="currentColor"
+					viewBox="0 0 24 24"
+				>
+					<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+				</svg>
+				<span class="font-medium">{message.model ?? 'unknown model'}</span>
+				{message.mcp_servers && message.mcp_servers.length > 0 && (
+					<span>
+						· {message.mcp_servers.length} MCP server
+						{message.mcp_servers.length !== 1 ? 's' : ''}
+					</span>
+				)}
+				{message.tools && <span>· {message.tools.length} tools</span>}
+			</button>
+
+			{expanded && (
+				<div class="mt-1.5 ml-5 space-y-1.5 text-[10px] text-gray-500">
+					{message.cwd && (
+						<div>
+							<span class="font-semibold text-gray-600 dark:text-gray-400">cwd: </span>
+							<span class="font-mono">{message.cwd}</span>
+						</div>
+					)}
+
+					{message.mcp_servers && message.mcp_servers.length > 0 && (
+						<div>
+							<span class="font-semibold text-gray-600 dark:text-gray-400">MCP Servers: </span>
+							{message.mcp_servers.map((server: { name: string; status: string }) => (
+								<span key={server.name} class="font-mono">
+									{server.name}
+									<span class={server.status === 'connected' ? 'text-green-600 dark:text-green-400' : ''}>
+										({server.status})
+									</span>{' '}
+								</span>
+							))}
+						</div>
+					)}
+
+					{message.tools && message.tools.length > 0 && (
+						<div>
+							<span class="font-semibold text-gray-600 dark:text-gray-400">
+								Tools ({message.tools.length}):{' '}
+							</span>
+							<span class="font-mono">{message.tools.join(', ')}</span>
+						</div>
+					)}
+
+					{message.agents && message.agents.length > 0 && (
+						<div>
+							<span class="font-semibold text-gray-600 dark:text-gray-400">
+								Agents ({message.agents.length}):{' '}
+							</span>
+							<span class="font-mono">{message.agents.join(', ')}</span>
+						</div>
+					)}
+				</div>
+			)}
+		</div>
+	);
 }
 
 /**
@@ -87,6 +166,7 @@ export function SDKMessageRenderer({
 	selectedMessages,
 	onMessageCheckboxChange,
 	allMessages: _allMessages,
+	taskContext,
 }: Props) {
 	// Skip messages that shouldn't be shown to user (e.g., stream events)
 	if (!isUserVisibleMessage(message)) {
@@ -94,7 +174,11 @@ export function SDKMessageRenderer({
 	}
 
 	// Skip session init messages - they're now shown as indicators attached to user messages
+	// In task context, render them as compact info pills
 	if (isSDKSystemInit(message)) {
+		if (taskContext) {
+			return <SystemInitPill message={message as SystemInitMessage} />;
+		}
 		return null;
 	}
 

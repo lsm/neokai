@@ -152,9 +152,7 @@ function ModelPicker({
 				) : (
 					<>
 						{icon && <span class="text-sm">{icon}</span>}
-						<span class="truncate max-w-[140px]">
-							{selectedModel?.name ?? placeholder}
-						</span>
+						<span class="truncate max-w-[140px]">{selectedModel?.name ?? placeholder}</span>
 						<svg
 							class="w-3 h-3 text-gray-500 flex-shrink-0"
 							fill="none"
@@ -184,11 +182,7 @@ function ModelPicker({
 						{!value && ' (current)'}
 					</button>
 					{models
-						.filter(
-							(model) =>
-								model.id === value ||
-								!excludeModels?.includes(model.id)
-						)
+						.filter((model) => model.id === value || !excludeModels?.includes(model.id))
 						.map((model) => (
 							<button
 								key={model.id}
@@ -198,8 +192,7 @@ function ModelPicker({
 								onClick={() => handleSelect(model.id)}
 							>
 								<span class="text-sm">
-									{MODEL_FAMILY_ICONS[model.family] ||
-										MODEL_FAMILY_ICONS.__default__}
+									{MODEL_FAMILY_ICONS[model.family] || MODEL_FAMILY_ICONS.__default__}
 								</span>
 								{model.name}
 								{model.id === value && ' (current)'}
@@ -246,8 +239,7 @@ function ModelTagsInput({
 			<div
 				class="flex flex-wrap items-center gap-1.5 min-h-[32px] px-2 py-1.5 bg-dark-800 border border-dark-600 rounded-md cursor-text"
 				onClick={() => {
-					if (!disabled && !loading && availableToAdd.length > 0)
-						isOpen.value = !isOpen.value;
+					if (!disabled && !loading && availableToAdd.length > 0) isOpen.value = !isOpen.value;
 				}}
 			>
 				{selected.map((modelId) => {
@@ -430,9 +422,9 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 					hub.request<{
 						models: Array<{ id: string; display_name?: string; name?: string }>;
 					}>('models.list'),
-					hub.request<{ agents: CliAgentInfo[] }>('agents.cli.list').catch(
-						() => ({ agents: [] }) as { agents: CliAgentInfo[] }
-					),
+					hub
+						.request<{ agents: CliAgentInfo[] }>('agents.cli.list')
+						.catch(() => ({ agents: [] }) as { agents: CliAgentInfo[] }),
 				]);
 				availableModels.value = (modelsRes.models ?? []).map((m) => ({
 					id: m.id,
@@ -461,9 +453,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		} else {
 			// Migrate: old flat reviewers -> leader sub-agents
 			const legacyReviewers = config.reviewers as SubagentConfig[] | undefined;
-			agentSubagents.value = legacyReviewers?.length
-				? { leader: [...legacyReviewers] }
-				: {};
+			agentSubagents.value = legacyReviewers?.length ? { leader: [...legacyReviewers] } : {};
 		}
 
 		maxReviewRounds.value = (config.maxReviewRounds as number) ?? 3;
@@ -652,10 +642,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 						const subagentCount = getSubagentsForRole(agent.key).length;
 
 						return (
-							<div
-								key={agent.key}
-								class="rounded-lg bg-dark-800 border border-dark-700"
-							>
+							<div key={agent.key} class="rounded-lg bg-dark-800 border border-dark-700">
 								{/* Agent header row */}
 								<div class="flex items-center justify-between gap-3 px-3 py-2">
 									<button
@@ -676,12 +663,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 												d="M9 5l7 7-7 7"
 											/>
 										</svg>
-										<span class="text-sm font-medium text-gray-100">
-											{agent.label}
-										</span>
-										<span class="text-xs text-gray-500">
-											{agent.description}
-										</span>
+										<span class="text-sm font-medium text-gray-100">{agent.label}</span>
+										<span class="text-xs text-gray-500">{agent.description}</span>
 										{subagentCount > 0 && (
 											<span class="text-[10px] text-blue-400/70 bg-blue-900/20 px-1.5 py-0.5 rounded">
 												{subagentCount} sub-agent
@@ -690,17 +673,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 										)}
 									</button>
 									<ModelPicker
-										value={
-											agentModels.value[
-												agent.key as keyof AgentModels
-											] ?? ''
-										}
+										value={agentModels.value[agent.key as keyof AgentModels] ?? ''}
 										models={availableModels.value}
 										loading={isLoadingModels.value}
 										disabled={disabled}
-										onChange={(model) =>
-											updateAgentModel(agent.key, model)
-										}
+										onChange={(model) => updateAgentModel(agent.key, model)}
 										placeholder={defaultModelLabel.value}
 									/>
 								</div>
@@ -710,25 +687,19 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 									<div class="px-3 pb-3 pt-1 border-t border-dark-700/50 ml-6">
 										{/* Sub Agent CLIs */}
 										<div class="mb-3">
-											<div class="text-xs text-gray-500 mb-2">
-												Sub Agent CLIs
-											</div>
+											<div class="text-xs text-gray-500 mb-2">Sub Agent CLIs</div>
 											<CliTagsInput
 												agents={cliAgents.value}
 												selectedIds={getSubagentsForRole(agent.key)
 													.filter((s) => s.type === 'cli')
 													.map((s) => s.model)}
 												disabled={disabled}
-												onToggle={(cliAgent) =>
-													toggleCliAgentFor(agent.key, cliAgent)
-												}
+												onToggle={(cliAgent) => toggleCliAgentFor(agent.key, cliAgent)}
 											/>
 										</div>
 
 										{/* Sub Agent Models */}
-										<div class="text-xs text-gray-500 mb-2">
-											Sub Agent Models
-										</div>
+										<div class="text-xs text-gray-500 mb-2">Sub Agent Models</div>
 										<ModelTagsInput
 											models={availableModels.value}
 											selected={getSdkSubagentsFor(agent.key)
@@ -736,12 +707,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 												.filter(Boolean)}
 											loading={isLoadingModels.value}
 											disabled={disabled}
-											onAdd={(model) =>
-												addSdkSubagentFor(agent.key, model)
-											}
-											onRemove={(model) =>
-												removeSdkSubagentFor(agent.key, model)
-											}
+											onAdd={(model) => addSdkSubagentFor(agent.key, model)}
+											onRemove={(model) => removeSdkSubagentFor(agent.key, model)}
 										/>
 									</div>
 								)}
@@ -752,9 +719,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 
 				{/* Max review rounds */}
 				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1">
-						Max Review Rounds
-					</label>
+					<label class="block text-sm font-medium text-gray-300 mb-1">Max Review Rounds</label>
 					<p class="text-xs text-gray-500 mb-2">
 						Maximum number of review iterations before failing the task.
 					</p>

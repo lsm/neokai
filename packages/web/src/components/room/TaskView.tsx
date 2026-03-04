@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { NeoTask } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
-import { navigateToRoom } from '../../lib/router';
+import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
 
 interface TaskGroupInfo {
@@ -172,6 +172,23 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					</div>
 				)}
 			</div>
+
+			{/* Dependencies */}
+			{task.dependsOn && task.dependsOn.length > 0 && (
+				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-2 flex items-center gap-2 flex-shrink-0 flex-wrap">
+					<span class="text-xs text-gray-500">Depends on:</span>
+					{task.dependsOn.map((depId) => (
+						<button
+							key={depId}
+							class="text-xs px-1.5 py-0.5 rounded bg-dark-700 text-blue-400 hover:text-blue-300 hover:bg-dark-600 transition-colors"
+							onClick={() => navigateToRoomTask(roomId, depId)}
+							title={depId}
+						>
+							{depId.slice(0, 8)}...
+						</button>
+					))}
+				</div>
+			)}
 
 			{/* Conversation timeline */}
 			{group ? (

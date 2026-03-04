@@ -137,7 +137,6 @@ export function RoomDashboard() {
 				</div>
 			)}
 
-
 			{/* Tasks list */}
 			<div class="space-y-2">
 				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>

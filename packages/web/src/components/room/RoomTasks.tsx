@@ -4,7 +4,7 @@
  * Displays tasks grouped by status:
  * - In Progress
  * - Review (with Approve button)
- * - Pending
+ * - Pending (with "Blocked" badge for unmet dependencies)
  * - Draft
  * - Completed
  * - Failed
@@ -46,7 +46,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{inProgress.map((task) => (
-							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -63,6 +63,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 							<TaskItem
 								key={task.id}
 								task={task}
+								allTasks={tasks}
 								onClick={onTaskClick}
 								onApprove={onApprove}
 							/>
@@ -79,7 +80,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{pending.map((task) => (
-							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -93,7 +94,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{draft.map((task) => (
-							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -107,7 +108,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
-							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -121,7 +122,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 					</div>
 					<div class="divide-y divide-dark-700">
 						{failed.map((task) => (
-							<TaskItem key={task.id} task={task} onClick={onTaskClick} />
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>
 				</div>
@@ -130,17 +131,29 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 	);
 }
 
+function isBlocked(task: TaskSummary, allTasks: TaskSummary[]): boolean {
+	if (!task.dependsOn || task.dependsOn.length === 0) return false;
+	return task.dependsOn.some((depId) => {
+		const dep = allTasks.find((t) => t.id === depId);
+		return !dep || dep.status !== 'completed';
+	});
+}
+
 function TaskItem({
 	task,
+	allTasks,
 	onClick,
 	onApprove,
 }: {
 	task: TaskSummary;
+	allTasks: TaskSummary[];
 	onClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
 	const showApprove = task.status === 'review' && !!onApprove;
+	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
+	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 
 	return (
 		<div
@@ -149,7 +162,14 @@ function TaskItem({
 		>
 			<div class="flex items-start justify-between">
 				<div class="flex-1 min-w-0">
-					<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
+					<div class="flex items-center gap-2">
+						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
+						{blocked && (
+							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
+								Blocked
+							</span>
+						)}
+					</div>
 				</div>
 				<div class="ml-4 flex items-center gap-2 flex-shrink-0">
 					{task.progress !== undefined && (
@@ -169,6 +189,27 @@ function TaskItem({
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
+			{hasDeps && (
+				<div class="flex items-center gap-1 mt-1.5 flex-wrap">
+					<span class="text-xs text-gray-500">Deps:</span>
+					{task.dependsOn.map((depId) => {
+						const depTask = allTasks.find((t) => t.id === depId);
+						const depCompleted = depTask?.status === 'completed';
+						return (
+							<span
+								key={depId}
+								class={`text-xs px-1.5 py-0.5 rounded ${
+									depCompleted ? 'bg-green-900/20 text-green-400' : 'bg-dark-700 text-gray-400'
+								}`}
+								title={depTask?.title ?? depId}
+							>
+								{depTask?.title ?? depId.slice(0, 8)}
+								{depCompleted ? ' \u2713' : ''}
+							</span>
+						);
+					})}
+				</div>
+			)}
 			{task.progress !== undefined && (
 				<div class="mt-2 h-1 bg-dark-700 rounded-full overflow-hidden">
 					<div

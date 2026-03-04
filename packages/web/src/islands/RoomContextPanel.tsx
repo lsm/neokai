@@ -11,11 +11,7 @@
 
 import { useMemo } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
-import {
-	navigateToRooms,
-	navigateToRoom,
-	navigateToRoomSession,
-} from '../lib/router';
+import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
 import { cn } from '../lib/utils';
 
