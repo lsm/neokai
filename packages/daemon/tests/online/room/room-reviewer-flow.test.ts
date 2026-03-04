@@ -251,12 +251,21 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				);
 			}
 
-			// If planning is in 'review', approve it to promote draft tasks to pending
+			// If planning is in 'review', approve it via goal.approveTask to trigger phase 2
+			// (task.approve bypasses the runtime and skips phase 2 where tasks are created)
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('task.approve', {
+				await daemon.messageHub.request('goal.approveTask', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
+
+				// Wait for planning task to complete after phase 2
+				await waitForTask(
+					daemon,
+					roomId,
+					{ taskType: 'planning', status: ['completed', 'failed'] },
+					180_000
+				);
 			}
 
 			// --- Stage 2: Execution tasks promoted ---

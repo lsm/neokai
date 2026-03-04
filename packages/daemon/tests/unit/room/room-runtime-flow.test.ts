@@ -996,6 +996,333 @@ describe('RoomRuntime flow', () => {
 		});
 	});
 
+	describe('two-phase planning flow (session reuse)', () => {
+		/**
+		 * Helper: spawn a planning group for a goal, route planner to leader,
+		 * then submit for review → awaiting_human.
+		 */
+		async function setupPlanningGroupInAwaitingHuman(hookCtx: RuntimeTestContext) {
+			const goal = await hookCtx.goalManager.createGoal({
+				title: 'Build stock app',
+				description: 'Stock tracking web app',
+			});
+
+			hookCtx.runtime.start();
+			await hookCtx.runtime.tick();
+
+			const groups = hookCtx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+			const tasks = await hookCtx.taskManager.listTasks({ status: 'in_progress' });
+			const planTask = tasks.find((t) => t.taskType === 'planning')!;
+
+			// Worker finishes phase 1 → leader reviews
+			await hookCtx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Leader submits for review → awaiting_human
+			await hookCtx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+				pr_url: 'https://github.com/org/repo/pull/1',
+			});
+
+			// Record session count AFTER reaching awaiting_human (includes both worker + leader)
+			const sessionCountBefore = hookCtx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			).length;
+
+			return { goal, group, planTask, sessionCountBefore };
+		}
+
+		test('resumeWorkerFromHuman reuses existing sessions (no new sessions)', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group, sessionCountBefore } =
+				await setupPlanningGroupInAwaitingHuman(hookCtx);
+
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
+
+			// Human approves → resumeWorkerFromHuman
+			const result = await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Plan approved. Merge the PR and create tasks.'
+			);
+			expect(result).toBe(true);
+
+			// No new sessions should have been created
+			const sessionCountAfter = hookCtx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			).length;
+			expect(sessionCountAfter).toBe(sessionCountBefore);
+
+			// Approval message should be injected into existing worker session
+			const injectCalls = hookCtx.sessionFactory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					(c.args[1] as string).includes('Merge the PR')
+			);
+			expect(injectCalls).toHaveLength(1);
+		});
+
+		test('resumeWorkerFromHuman sets planApproved flag', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await setupPlanningGroupInAwaitingHuman(hookCtx);
+
+			// Before approval: planApproved should be false
+			expect(hookCtx.groupRepo.getGroup(group.id)!.planApproved).toBeFalsy();
+
+			await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Plan approved.'
+			);
+
+			// After approval: planApproved should be true
+			expect(hookCtx.groupRepo.getGroup(group.id)!.planApproved).toBe(true);
+		});
+
+		test('resumeWorkerFromHuman transitions group to awaiting_worker', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group, planTask } = await setupPlanningGroupInAwaitingHuman(hookCtx);
+
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
+
+			await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Plan approved.'
+			);
+
+			// Group should transition back to awaiting_worker for phase 2
+			const updated = hookCtx.groupRepo.getGroup(group.id)!;
+			expect(updated.state).toBe('awaiting_worker');
+			// submittedForReview should be reset
+			expect(updated.submittedForReview).toBe(false);
+
+			// Task should be back to in_progress
+			const updatedTask = await hookCtx.taskManager.getTask(planTask.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
+		test('resumeWorkerFromHuman returns false when not in awaiting_human', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			await hookCtx.goalManager.createGoal({
+				title: 'Test Goal',
+				description: 'desc',
+			});
+
+			hookCtx.runtime.start();
+			await hookCtx.runtime.tick();
+
+			const groups = hookCtx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Group is in awaiting_worker, not awaiting_human
+			const result = await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'some message'
+			);
+			expect(result).toBe(false);
+		});
+
+		test('full two-phase cycle: plan → review → approve → create tasks → complete', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group, planTask, sessionCountBefore } =
+				await setupPlanningGroupInAwaitingHuman(hookCtx);
+
+			// *** Phase 2: Human approves ***
+			await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Plan approved. Merge the PR and create tasks.'
+			);
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			expect(hookCtx.groupRepo.getGroup(group.id)!.planApproved).toBe(true);
+
+			// Create draft tasks (simulating what the planner MCP tools do)
+			await hookCtx.taskManager.createTask({
+				title: 'Implement auth module',
+				description: 'Create auth module',
+				status: 'draft',
+				createdByTaskId: planTask.id,
+			});
+			await hookCtx.taskManager.createTask({
+				title: 'Implement stock API',
+				description: 'Stock API endpoint',
+				status: 'draft',
+				createdByTaskId: planTask.id,
+			});
+
+			// Worker finishes phase 2 → routes to leader
+			await hookCtx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+
+			// Leader completes the planning task
+			const result = await hookCtx.runtime.handleLeaderTool(
+				group.id,
+				'complete_task',
+				{ summary: 'Plan executed: 2 tasks created' }
+			);
+			expect(JSON.parse(result.content[0].text).success).toBe(true);
+
+			// Planning task completed
+			const completedTask = await hookCtx.taskManager.getTask(planTask.id);
+			expect(completedTask!.status).toBe('completed');
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('completed');
+
+			// Draft tasks should be promoted to pending
+			const pendingTasks = await hookCtx.taskManager.listTasks({ status: 'pending' });
+			expect(pendingTasks).toHaveLength(2);
+
+			// Verify no additional sessions were created during phase 2
+			const sessionCountAfter = hookCtx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			).length;
+			expect(sessionCountAfter).toBe(sessionCountBefore);
+		});
+
+		test('mirroring is not cleaned up on submit_for_review (stays active through awaiting_human)', async () => {
+			// This test verifies that submit_for_review does NOT call cleanupMirroring.
+			// Since daemonHub is not wired in unit tests, we verify indirectly:
+			// the group state transitions correctly through the full cycle without
+			// any mirroring-related errors, and the group stays active.
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await setupPlanningGroupInAwaitingHuman(hookCtx);
+
+			// Group should be in awaiting_human (not failed or completed)
+			const afterSubmit = hookCtx.groupRepo.getGroup(group.id)!;
+			expect(afterSubmit.state).toBe('awaiting_human');
+
+			// Resume without errors
+			const resumed = await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Approved.'
+			);
+			expect(resumed).toBe(true);
+
+			// Group transitions cleanly back to awaiting_worker
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+		});
+
+		test('resumeWorkerFromHuman resets leader contract violations', async () => {
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await setupPlanningGroupInAwaitingHuman(hookCtx);
+
+			// Simulate a leader contract violation was recorded before submit
+			const currentGroup = hookCtx.groupRepo.getGroup(group.id)!;
+			hookCtx.groupRepo.updateLeaderContractViolations(
+				group.id,
+				1,
+				'turn_test',
+				currentGroup.version
+			);
+			expect(
+				hookCtx.groupRepo.getGroup(group.id)!.leaderContractViolations
+			).toBe(1);
+
+			await hookCtx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Approved.'
+			);
+
+			// Contract violations should be reset after resuming
+			expect(
+				hookCtx.groupRepo.getGroup(group.id)!.leaderContractViolations
+			).toBe(0);
+		});
+	});
+
 	describe('dependency-aware scheduling', () => {
 		it('should not spawn a task with unmet dependencies', async () => {
 			const goal = await ctx.goalManager.createGoal({

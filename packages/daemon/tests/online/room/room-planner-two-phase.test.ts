@@ -9,7 +9,7 @@
  *          calls submit_for_review → task goes to 'review' / awaiting_human.
  *
  * Human approval: goal.approveTask routes planning tasks to WORKER (not leader).
- *                 Sets planApproved=true, starts new planner session (phase 2).
+ *                 Sets planApproved=true, injects approval into existing worker session (phase 2).
  *
  * Phase 2: Planner merges plan PR, reads PLAN.md, creates tasks 1:1 from
  *          the approved plan using create_task. Worker exit gate checks

@@ -52,9 +52,6 @@ export interface ReplanContext {
 	attempt: number;
 }
 
-/** Two-phase planner lifecycle */
-export type PlannerPhase = 'plan' | 'create_tasks';
-
 export interface PlannerAgentConfig {
 	task: NeoTask;
 	goal: RoomGoal;
@@ -78,19 +75,10 @@ export interface PlannerAgentConfig {
 	removeDraftTask: (taskId: string) => Promise<boolean>;
 	/** If set, this is a replanning session with context from previous attempt */
 	replanContext?: ReplanContext;
-	/** Phase of the two-phase planner lifecycle. Default: 'plan' */
-	phase?: PlannerPhase;
+	/** Dynamic check: is the plan approved? Gates create_task/update_task/remove_task tools. */
+	isPlanApproved?: () => boolean;
 }
 
-/**
- * Build the behavioral system prompt for the Planner agent.
- *
- * Two-phase lifecycle:
- * - Phase 'plan': Examine codebase, write plan as docs/plans/<slug>.md, commit, create PR. No create_task.
- * - Phase 'create_tasks': Plan approved — merge PR, create tasks 1:1 from plan.
- *
- * Goal-specific context is delivered via the initial user message.
- */
 /**
  * Derive a slug from goal title for plan file naming.
  * e.g., "Build a stock web app" → "build-a-stock-web-app"
@@ -106,55 +94,35 @@ export function toPlanSlug(goalTitle: string): string {
 		.replace(/-$/, '');
 }
 
-export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan', goalTitle?: string): string {
+/**
+ * Build the behavioral system prompt for the Planner agent.
+ *
+ * Single-session lifecycle:
+ * 1. Examine codebase, write plan as docs/plans/<slug>.md, commit, create PR
+ * 2. (Worker exits → Leader reviews → submit_for_review → Human approves)
+ * 3. When resumed with approval message: merge PR, create tasks using create_task tool
+ *
+ * The create_task/update_task/remove_task tools are gated by a dynamic isPlanApproved
+ * check — they become available only after the human approves the plan.
+ *
+ * Goal-specific context is delivered via the initial user message.
+ */
+export function buildPlannerSystemPrompt(goalTitle?: string): string {
 	const sections: string[] = [];
 
-	const planSlugForPhase2 = goalTitle ? toPlanSlug(goalTitle) : 'plan';
-	const planPathForPhase2 = `docs/plans/${planSlugForPhase2}.md`;
+	const planSlug = goalTitle ? toPlanSlug(goalTitle) : 'plan';
+	const planPath = `docs/plans/${planSlug}.md`;
 
-	if (phase === 'create_tasks') {
-		sections.push(`You are a Planner Agent in the task creation phase.`);
-		sections.push(
-			`\nYour plan has been approved by AI reviewers and a human reviewer. ` +
-				`Now you must merge the plan PR and create tasks from the approved plan.`
-		);
-
-		sections.push(`\n## Task Creation Guidelines\n`);
-		sections.push(
-			`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`
-		);
-		sections.push(
-			`2. Read the plan file (look for \`${planPathForPhase2}\` or any \`.md\` file under \`docs/plans/\`) to get the approved plan`
-		);
-		sections.push(`3. Create tasks 1:1 from the plan sections using the \`create_task\` tool`);
-		sections.push(`4. Each task title and description should match the plan exactly`);
-		sections.push(
-			`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
-		);
-		sections.push(
-			`6. Use the \`depends_on\` parameter to declare task dependencies. ` +
-				`Pass the task IDs returned by previous \`create_task\` calls. ` +
-				`Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.`
-		);
-		sections.push(
-			`7. Each task description must include clear acceptance criteria. ` +
-				`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
-		);
-		sections.push(`8. Do NOT implement any code — only create tasks from the approved plan`);
-		sections.push(`9. Finish your response after all tasks are created`);
-
-		return sections.join('\n');
-	}
-
-	// Phase 'plan' (default)
 	sections.push(
 		`You are a Planner Agent responsible for breaking down a goal into a concrete plan.`
 	);
+	sections.push(`\nYour job has two phases within a single session:`);
+	sections.push(`1. **Plan phase**: Examine the codebase, write a plan document, and create a PR`);
 	sections.push(
-		`\nYour job is to examine the codebase and produce a clear, ordered plan document.`
+		`2. **Task creation phase**: After the plan is approved, merge the PR and create tasks`
 	);
 
-	sections.push(`\n## Planning Guidelines\n`);
+	sections.push(`\n## Phase 1: Planning\n`);
 	sections.push(`1. Read relevant files to understand the current codebase state`);
 	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
 	sections.push(
@@ -167,14 +135,13 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan', goalTitle
 	sections.push(
 		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
 	);
-	sections.push(`6. Do NOT call \`create_task\` — that tool is disabled in this phase`);
+	sections.push(
+		`6. Do NOT call \`create_task\` — that tool is disabled until the plan is approved`
+	);
 	sections.push(`7. Do NOT implement any code — only plan`);
 	sections.push(`8. If the Leader sends feedback, update the plan document accordingly`);
 
-	const planSlug = goalTitle ? toPlanSlug(goalTitle) : 'plan';
-	const planPath = `docs/plans/${planSlug}.md`;
-
-	sections.push(`\n## Deliverable (REQUIRED)\n`);
+	sections.push(`\n### Plan Deliverable (REQUIRED)\n`);
 	sections.push(`You MUST produce a plan file and create a PR for review:`);
 	sections.push(
 		`1. Create the \`docs/plans/\` directory if it doesn't exist, then write the plan file at \`${planPath}\` with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments`
@@ -186,6 +153,33 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan', goalTitle
 	sections.push(
 		`4. Finish your response — the Leader will dispatch reviewers, then submit for human approval`
 	);
+
+	sections.push(`\n## Phase 2: Task Creation (after plan approval)\n`);
+	sections.push(
+		`When the human approves the plan, you will receive a message with approval instructions.`
+	);
+	sections.push(
+		`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`
+	);
+	sections.push(
+		`2. Read the plan file (look for \`${planPath}\` or any \`.md\` file under \`docs/plans/\`) to get the approved plan`
+	);
+	sections.push(`3. Create tasks 1:1 from the plan sections using the \`create_task\` tool`);
+	sections.push(`4. Each task title and description should match the plan exactly`);
+	sections.push(
+		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
+	);
+	sections.push(
+		`6. Use the \`depends_on\` parameter to declare task dependencies. ` +
+			`Pass the task IDs returned by previous \`create_task\` calls. ` +
+			`Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.`
+	);
+	sections.push(
+		`7. Each task description must include clear acceptance criteria. ` +
+			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
+	);
+	sections.push(`8. Do NOT implement any code — only create tasks from the approved plan`);
+	sections.push(`9. Finish your response after all tasks are created`);
 
 	return sections.join('\n');
 }
@@ -248,7 +242,6 @@ export function buildPlannerTaskMessage(config: PlannerAgentConfig): string {
  * Create the MCP server with planning tools.
  */
 function createPlannerMcpServer(config: PlannerAgentConfig) {
-	const phase = config.phase ?? 'plan';
 	const phaseGateError = {
 		content: [
 			{
@@ -264,10 +257,13 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 		],
 	};
 
+	// Dynamic gate: checks isPlanApproved at tool invocation time (not MCP creation time)
+	const isApproved = () => config.isPlanApproved?.() ?? false;
+
 	const tools = [
 		tool(
 			'create_task',
-			'Record a task in the plan. Call this for each task you identify.',
+			'Record a task in the plan. Call this for each task you identify. Only available after the plan is approved.',
 			{
 				title: z
 					.string()
@@ -294,7 +290,7 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 					),
 			},
 			async (args) => {
-				if (phase !== 'create_tasks') return phaseGateError;
+				if (!isApproved()) return phaseGateError;
 				try {
 					const task = await config.createDraftTask({
 						title: args.title,
@@ -325,7 +321,7 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 		),
 		tool(
 			'update_task',
-			'Update an existing draft task. Use this to refine tasks based on Leader feedback.',
+			'Update an existing draft task. Use this to refine tasks based on Leader feedback. Only available after the plan is approved.',
 			{
 				task_id: z.string().describe('The ID of the draft task to update'),
 				title: z.string().optional().describe('Updated task title'),
@@ -337,7 +333,7 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 				agent: z.enum(['coder', 'general']).optional().describe('Updated agent type'),
 			},
 			async (args) => {
-				if (phase !== 'create_tasks') return phaseGateError;
+				if (!isApproved()) return phaseGateError;
 				try {
 					const task = await config.updateDraftTask(args.task_id, {
 						title: args.title,
@@ -367,12 +363,12 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 		),
 		tool(
 			'remove_task',
-			'Remove a draft task from the plan.',
+			'Remove a draft task from the plan. Only available after the plan is approved.',
 			{
 				task_id: z.string().describe('The ID of the draft task to remove'),
 			},
 			async (args) => {
-				if (phase !== 'create_tasks') return phaseGateError;
+				if (!isApproved()) return phaseGateError;
 				try {
 					const removed = await config.removeDraftTask(args.task_id);
 					return {
@@ -415,7 +411,7 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildPlannerSystemPrompt(config.phase ?? 'plan', config.goal.title),
+			append: buildPlannerSystemPrompt(config.goal.title),
 		},
 		mcpServers: {
 			'planner-tools': mcpServer as unknown as McpServerConfig,

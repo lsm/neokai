@@ -405,7 +405,7 @@ class RoomStore {
 
 	/**
 	 * Approve a task in review status (human approval).
-	 * For planning tasks, this promotes draft children to pending.
+	 * Routes through the runtime so planning tasks trigger phase 2 (merge PR + create tasks).
 	 */
 	async approveTask(taskId: string): Promise<void> {
 		const roomId = this.roomId.value;
@@ -418,21 +418,12 @@ class RoomStore {
 			throw new Error('Not connected');
 		}
 
-		const { task } = await hub.request<{ task: NeoTask }>('task.approve', {
+		await hub.request<{ success: boolean }>('goal.approveTask', {
 			roomId,
 			taskId,
 		});
 
-		if (task) {
-			const idx = this.tasks.value.findIndex((t) => t.id === task.id);
-			if (idx >= 0) {
-				this.tasks.value = [
-					...this.tasks.value.slice(0, idx),
-					task,
-					...this.tasks.value.slice(idx + 1),
-				];
-			}
-		}
+		// Task state updates arrive via room.task.update events
 	}
 
 	// ========================================
