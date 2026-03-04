@@ -86,13 +86,31 @@ export interface PlannerAgentConfig {
  * Build the behavioral system prompt for the Planner agent.
  *
  * Two-phase lifecycle:
- * - Phase 'plan': Examine codebase, write plan as PLAN.md, commit, create PR. No create_task.
+ * - Phase 'plan': Examine codebase, write plan as docs/plans/<slug>.md, commit, create PR. No create_task.
  * - Phase 'create_tasks': Plan approved — merge PR, create tasks 1:1 from plan.
  *
  * Goal-specific context is delivered via the initial user message.
  */
-export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
+/**
+ * Derive a slug from goal title for plan file naming.
+ * e.g., "Build a stock web app" → "build-a-stock-web-app"
+ */
+export function toPlanSlug(goalTitle: string): string {
+	return goalTitle
+		.toLowerCase()
+		.replace(/[^a-z0-9\s-]/g, '')
+		.trim()
+		.replace(/\s+/g, '-')
+		.replace(/-+/g, '-')
+		.slice(0, 60)
+		.replace(/-$/, '');
+}
+
+export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan', goalTitle?: string): string {
 	const sections: string[] = [];
+
+	const planSlugForPhase2 = goalTitle ? toPlanSlug(goalTitle) : 'plan';
+	const planPathForPhase2 = `docs/plans/${planSlugForPhase2}.md`;
 
 	if (phase === 'create_tasks') {
 		sections.push(`You are a Planner Agent in the task creation phase.`);
@@ -105,7 +123,9 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
 		sections.push(
 			`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`
 		);
-		sections.push(`2. Read the PLAN.md file to get the approved plan`);
+		sections.push(
+			`2. Read the plan file (look for \`${planPathForPhase2}\` or any \`.md\` file under \`docs/plans/\`) to get the approved plan`
+		);
 		sections.push(`3. Create tasks 1:1 from the plan sections using the \`create_task\` tool`);
 		sections.push(`4. Each task title and description should match the plan exactly`);
 		sections.push(
@@ -151,10 +171,13 @@ export function buildPlannerSystemPrompt(phase: PlannerPhase = 'plan'): string {
 	sections.push(`7. Do NOT implement any code — only plan`);
 	sections.push(`8. If the Leader sends feedback, update the plan document accordingly`);
 
+	const planSlug = goalTitle ? toPlanSlug(goalTitle) : 'plan';
+	const planPath = `docs/plans/${planSlug}.md`;
+
 	sections.push(`\n## Deliverable (REQUIRED)\n`);
 	sections.push(`You MUST produce a plan file and create a PR for review:`);
 	sections.push(
-		`1. Write a plan file at \`PLAN.md\` in the repository root with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments`
+		`1. Create the \`docs/plans/\` directory if it doesn't exist, then write the plan file at \`${planPath}\` with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments`
 	);
 	sections.push(`2. Create a feature branch, commit the plan file, and push it`);
 	sections.push(
@@ -234,7 +257,7 @@ function createPlannerMcpServer(config: PlannerAgentConfig) {
 					success: false,
 					error:
 						'This tool is not available during the planning phase. ' +
-						'Write your plan as a PLAN.md file, commit it, and create a PR instead. ' +
+						'Write your plan file under docs/plans/, commit it, and create a PR instead. ' +
 						'Tasks will be created after the plan is approved.',
 				}),
 			},
@@ -392,7 +415,7 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildPlannerSystemPrompt(config.phase ?? 'plan'),
+			append: buildPlannerSystemPrompt(config.phase ?? 'plan', config.goal.title),
 		},
 		mcpServers: {
 			'planner-tools': mcpServer as unknown as McpServerConfig,

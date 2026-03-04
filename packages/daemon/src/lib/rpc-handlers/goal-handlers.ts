@@ -521,7 +521,7 @@ export function setupGoalHandlers(
 			const message =
 				'Your plan has been approved by AI reviewers and the human reviewer. ' +
 				'Now merge the plan PR (run `gh pr merge --merge` or merge the branch manually), ' +
-				'then read the PLAN.md file and create tasks 1:1 from the approved plan using `create_task`. ' +
+				'then read the plan file under `docs/plans/` and create tasks 1:1 from the approved plan using `create_task`. ' +
 				'Each task title and description should match the plan exactly.';
 
 			const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message);
