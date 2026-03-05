@@ -184,6 +184,23 @@ export class RoomRuntimeService {
 				await session.handleQuestionResponse(toolUseId, responses);
 				return true;
 			},
+			restoreSession: async (sessionId) => {
+				// Idempotent: already in cache
+				if (agentSessions.has(sessionId)) return true;
+
+				const session = AgentSession.restore(
+					sessionId,
+					ctx.db,
+					ctx.messageHub,
+					ctx.daemonHub,
+					ctx.getApiKey
+				);
+				if (!session) return false;
+
+				agentSessions.set(sessionId, session);
+				await session.startStreamingQuery();
+				return true;
+			},
 			createWorktree: async (basePath, sessionId, branchName) => {
 				try {
 					const result = await worktreeManager.createWorktree({
@@ -335,12 +352,15 @@ export class RoomRuntimeService {
 		const rawDb = this.ctx.db.getDatabase();
 		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, roomId);
+		const sessionFactory = this.createSessionFactory();
 
 		const checker: SessionStateChecker = {
 			sessionExists: (sessionId) => this.ctx.db.getSession(sessionId) !== null,
 			// Assume not terminal after restart — active groups stuck post-restart
 			// can be cancelled via the cancel_task Room Agent tool.
 			isTerminalState: () => false,
+			isLive: (sessionId) => this.agentSessions.has(sessionId),
+			restoreSession: (sessionId) => sessionFactory.restoreSession(sessionId),
 		};
 
 		try {
@@ -355,7 +375,8 @@ export class RoomRuntimeService {
 			if (result.recoveredGroups > 0) {
 				log.info(
 					`Room ${roomId}: recovered ${result.recoveredGroups} groups, ` +
-						`failed ${result.failedGroups}, reattached ${result.reattachedObservers} observers`
+						`failed ${result.failedGroups}, restored ${result.restoredSessions} sessions, ` +
+						`reattached ${result.reattachedObservers} observers`
 				);
 			}
 		} catch (error) {

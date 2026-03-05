@@ -57,6 +57,12 @@ export interface SessionFactory {
 	 * Returns the worktree path, or null if not in a git repo.
 	 */
 	createWorktree(basePath: string, sessionId: string, branchName?: string): Promise<string | null>;
+	/**
+	 * Restore a session from DB after daemon restart.
+	 * Adds it to the in-memory cache and starts the streaming query.
+	 * Returns true if successful, false if session not found in DB.
+	 */
+	restoreSession(sessionId: string): Promise<boolean>;
 }
 
 /**
@@ -440,8 +446,19 @@ export class TaskGroupManager {
 			}),
 		});
 
-		// Inject approval message into existing worker session
-		await this.sessionFactory.injectMessage(group.workerSessionId, message);
+		// Inject approval message into existing worker session.
+		// If injection fails (e.g., session not in cache after restart), rollback
+		// the group state so the task stays in review for retry.
+		try {
+			await this.sessionFactory.injectMessage(group.workerSessionId, message);
+		} catch (error) {
+			// Rollback: revert group back to awaiting_human
+			const current = this.groupRepo.getGroup(groupId);
+			if (current && current.state === 'awaiting_worker') {
+				this.groupRepo.updateGroupState(groupId, 'awaiting_human', current.version);
+			}
+			throw error;
+		}
 
 		return true;
 	}

@@ -44,6 +44,10 @@ function createMockSessionFactory() {
 		async createWorktree(_basePath: string, _sessionId: string) {
 			return null;
 		},
+		async restoreSession(sessionId: string) {
+			calls.push({ method: 'restoreSession', args: [sessionId] });
+			return true;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
@@ -57,6 +61,17 @@ function makeRoom(): Room {
 		status: 'active',
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
+	};
+}
+
+/** Create a checker where all sessions exist in DB and are live in cache */
+function createDefaultChecker(overrides?: Partial<SessionStateChecker>): SessionStateChecker {
+	return {
+		sessionExists: () => true,
+		isTerminalState: () => false,
+		isLive: () => true,
+		restoreSession: async () => true,
+		...overrides,
 	};
 }
 
@@ -168,10 +183,7 @@ describe('Runtime Recovery', () => {
 	}
 
 	it('should return empty result when no active groups', async () => {
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
-			isTerminalState: () => false,
-		};
+		const checker = createDefaultChecker();
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -189,10 +201,10 @@ describe('Runtime Recovery', () => {
 	it('should fail groups with lost worker sessions', async () => {
 		const { taskId, group } = createTaskAndGroup('awaiting_worker');
 
-		const checker: SessionStateChecker = {
+		const checker = createDefaultChecker({
 			sessionExists: (id) => !id.startsWith('worker:'),
-			isTerminalState: () => false,
-		};
+			isLive: (id) => !id.startsWith('worker:'),
+		});
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -214,10 +226,10 @@ describe('Runtime Recovery', () => {
 	it('should fail groups with lost leader sessions', async () => {
 		const { taskId, group } = createTaskAndGroup('awaiting_leader');
 
-		const checker: SessionStateChecker = {
+		const checker = createDefaultChecker({
 			sessionExists: (id) => !id.startsWith('leader:'),
-			isTerminalState: () => false,
-		};
+			isLive: (id) => !id.startsWith('leader:'),
+		});
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -239,10 +251,7 @@ describe('Runtime Recovery', () => {
 	it('should reattach observers for active worker sessions', async () => {
 		const { group } = createTaskAndGroup('awaiting_worker');
 
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
-			isTerminalState: () => false,
-		};
+		const checker = createDefaultChecker();
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -260,10 +269,7 @@ describe('Runtime Recovery', () => {
 	it('should reattach observers for active leader sessions', async () => {
 		const { group } = createTaskAndGroup('awaiting_leader');
 
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
-			isTerminalState: () => false,
-		};
+		const checker = createDefaultChecker();
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -281,10 +287,9 @@ describe('Runtime Recovery', () => {
 	it('should process immediately terminal worker sessions', async () => {
 		const { group } = createTaskAndGroup('awaiting_worker');
 
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
+		const checker = createDefaultChecker({
 			isTerminalState: (id) => id.startsWith('worker:'),
-		};
+		});
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -301,13 +306,13 @@ describe('Runtime Recovery', () => {
 		expect(updated!.state).toBe('awaiting_leader');
 	});
 
-	it('should skip awaiting_human groups', async () => {
-		createTaskAndGroup('awaiting_human');
+	it('should restore and observe awaiting_human groups', async () => {
+		const { group } = createTaskAndGroup('awaiting_human');
 
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
-			isTerminalState: () => false,
-		};
+		// Sessions exist in DB but not live in cache
+		const checker = createDefaultChecker({
+			isLive: () => false,
+		});
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -320,18 +325,69 @@ describe('Runtime Recovery', () => {
 
 		expect(result.recoveredGroups).toBe(1);
 		expect(result.failedGroups).toBe(0);
-		expect(result.reattachedObservers).toBe(0);
+		expect(result.restoredSessions).toBeGreaterThanOrEqual(1);
+		expect(result.reattachedObservers).toBe(1);
+		// Worker observer should be attached for future approval
+		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
 	});
 
-	it('should handle multiple groups', async () => {
+	it('should fail awaiting_human group when worker cannot be restored', async () => {
+		const { taskId, group } = createTaskAndGroup('awaiting_human');
+
+		const checker = createDefaultChecker({
+			isLive: () => false,
+			restoreSession: async () => false,
+		});
+
+		const result = await recoverRuntime(
+			'room-1',
+			groupRepo,
+			taskManager,
+			observer,
+			checker,
+			runtime
+		);
+
+		expect(result.failedGroups).toBe(1);
+		const updatedGroup = groupRepo.getGroup(group!.id);
+		expect(updatedGroup!.state).toBe('failed');
+
+		const task = await taskManager.getTask(taskId);
+		expect(task!.status).toBe('failed');
+	});
+
+	it('should restore sessions not live in cache for awaiting_worker', async () => {
+		const { group } = createTaskAndGroup('awaiting_worker');
+		const restoreCalls: string[] = [];
+
+		const checker = createDefaultChecker({
+			isLive: () => false,
+			restoreSession: async (id) => {
+				restoreCalls.push(id);
+				return true;
+			},
+		});
+
+		const result = await recoverRuntime(
+			'room-1',
+			groupRepo,
+			taskManager,
+			observer,
+			checker,
+			runtime
+		);
+
+		expect(result.restoredSessions).toBeGreaterThanOrEqual(1);
+		expect(restoreCalls).toContain(group!.workerSessionId);
+		expect(result.reattachedObservers).toBe(1);
+	});
+
+	it('should handle multiple groups with mixed states', async () => {
 		createTaskAndGroup('awaiting_worker');
 		createTaskAndGroup('awaiting_leader');
 		createTaskAndGroup('awaiting_human');
 
-		const checker: SessionStateChecker = {
-			sessionExists: () => true,
-			isTerminalState: () => false,
-		};
+		const checker = createDefaultChecker();
 
 		const result = await recoverRuntime(
 			'room-1',
@@ -343,7 +399,7 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.recoveredGroups).toBe(3);
-		// 2 groups need observers (awaiting_worker + awaiting_leader)
-		expect(result.reattachedObservers).toBe(2);
+		// All 3 groups get observers (awaiting_human now restores and observes too)
+		expect(result.reattachedObservers).toBe(3);
 	});
 });

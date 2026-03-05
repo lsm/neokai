@@ -690,9 +690,17 @@ export class RoomRuntime {
 		// Move task back to in_progress
 		await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
 
-		// Delegate to TaskGroupManager (injects message into existing worker)
-		const updated = await this.taskGroupManager.resumeWorkerFromHuman(group.id, message);
-		if (!updated) return false;
+		// Delegate to TaskGroupManager (injects message into existing worker).
+		// If injection fails, TaskGroupManager rolls back group state. We also
+		// revert the task status so the task stays in review for retry.
+		try {
+			const updated = await this.taskGroupManager.resumeWorkerFromHuman(group.id, message);
+			if (!updated) return false;
+		} catch (error) {
+			await this.taskManager.reviewTask(group.taskId);
+			log.error(`Failed to resume worker from human for task ${taskId}:`, error);
+			return false;
+		}
 
 		await this.emitTaskUpdateById(group.taskId);
 		this.scheduleTick();
@@ -828,7 +836,100 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Safety net: detect groups whose worker/leader sessions are missing from the
+	 * in-memory cache. Returns zombie groups that need async restoration.
+	 *
+	 * Split into sync detection + async recovery to avoid unnecessary microtask
+	 * checkpoints when there are no zombies (common case).
+	 */
+	private findZombieGroups(): SessionGroup[] {
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.room.id);
+		const zombies: SessionGroup[] = [];
+
+		for (const group of allActiveGroups) {
+			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
+			const leaderMissing =
+				group.state === 'awaiting_leader' && !this.sessionFactory.hasSession(group.leaderSessionId);
+
+			if (workerMissing || leaderMissing) {
+				zombies.push(group);
+			}
+		}
+
+		return zombies;
+	}
+
+	/**
+	 * Attempt to restore zombie groups. Called only when findZombieGroups()
+	 * returns non-empty results.
+	 */
+	private async recoverZombieGroups(zombies: SessionGroup[]): Promise<void> {
+		for (const group of zombies) {
+			// Check worker session liveness
+			if (!this.sessionFactory.hasSession(group.workerSessionId)) {
+				log.warn(
+					`Zombie detected: group ${group.id} (state=${group.state}) ` +
+						`worker ${group.workerSessionId} not in cache. Attempting restore.`
+				);
+				const restored = await this.sessionFactory.restoreSession(group.workerSessionId);
+				if (restored) {
+					log.info(`Restored worker session ${group.workerSessionId} for group ${group.id}`);
+					this.observer.observe(group.workerSessionId, (state) => {
+						this.onWorkerTerminalState(group.id, state);
+					});
+				} else {
+					log.error(
+						`Failed to restore worker ${group.workerSessionId}. Failing group ${group.id}.`
+					);
+					await this.taskGroupManager.fail(
+						group.id,
+						'Worker session lost and could not be restored'
+					);
+					this.cleanupMirroring(group.id, 'Worker session lost — could not be restored.');
+					await this.emitTaskUpdateById(group.taskId);
+					continue;
+				}
+			}
+
+			// Check leader session liveness (only when leader is the active actor)
+			if (
+				group.state === 'awaiting_leader' &&
+				!this.sessionFactory.hasSession(group.leaderSessionId)
+			) {
+				log.warn(
+					`Zombie detected: group ${group.id} (state=awaiting_leader) ` +
+						`leader ${group.leaderSessionId} not in cache. Attempting restore.`
+				);
+				const restored = await this.sessionFactory.restoreSession(group.leaderSessionId);
+				if (restored) {
+					log.info(`Restored leader session ${group.leaderSessionId} for group ${group.id}`);
+					this.observer.observe(group.leaderSessionId, (state) => {
+						this.onLeaderTerminalState(group.id, state);
+					});
+				} else {
+					log.error(
+						`Failed to restore leader ${group.leaderSessionId}. Failing group ${group.id}.`
+					);
+					await this.taskGroupManager.fail(
+						group.id,
+						'Leader session lost and could not be restored'
+					);
+					this.cleanupMirroring(group.id, 'Leader session lost — could not be restored.');
+					await this.emitTaskUpdateById(group.taskId);
+				}
+			}
+		}
+	}
+
 	private async executeTick(): Promise<void> {
+		// Safety net: detect and recover zombie groups (sessions missing from cache).
+		// Sync detection avoids unnecessary microtask checkpoints in the common case.
+		const zombies = this.findZombieGroups();
+		if (zombies.length > 0) {
+			await this.recoverZombieGroups(zombies);
+		}
+
 		// Check capacity — awaiting_human groups are paused and don't consume slots
 		const activeGroups = this.groupRepo
 			.getActiveGroups(this.room.id)

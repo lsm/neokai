@@ -57,6 +57,10 @@ export function createMockSessionFactory() {
 			// Return a synthetic worktree path so isolation enforcement passes in tests
 			return `/tmp/worktrees/${sessionId}`;
 		},
+		async restoreSession(sessionId: string) {
+			calls.push({ method: 'restoreSession', args: [sessionId] });
+			return true;
+		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
