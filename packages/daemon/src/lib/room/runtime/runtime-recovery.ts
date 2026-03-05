@@ -3,9 +3,9 @@
  *
  * On startup:
  * 1. Find all in-progress tasks with active groups
- * 2. For each group, check session existence and state
+ * 2. For each group, restore sessions into in-memory cache
  * 3. Re-attach observers for active sessions
- * 4. Fail groups with lost sessions
+ * 4. Fail groups with lost or unrestorable sessions
  * 5. Resume tick loop
  *
  * Key insight: Recovery is proactive - checks current state before subscribing
@@ -19,12 +19,18 @@ import type { TaskManager } from '../managers/task-manager';
 import type { RoomRuntime } from './room-runtime';
 
 /**
- * Interface for checking session existence and state.
+ * Interface for checking session existence, liveness, and restoration.
  * Injected for testability.
  */
 export interface SessionStateChecker {
+	/** Check if the session row exists in DB */
 	sessionExists(sessionId: string): boolean;
+	/** Check if the session is in a terminal processing state */
 	isTerminalState(sessionId: string): boolean;
+	/** Check if the session is live in the in-memory AgentSession cache */
+	isLive(sessionId: string): boolean;
+	/** Restore a session from DB into the in-memory cache and start streaming. */
+	restoreSession(sessionId: string): Promise<boolean>;
 }
 
 export interface RecoveryResult {
@@ -32,12 +38,13 @@ export interface RecoveryResult {
 	failedGroups: number;
 	reattachedObservers: number;
 	immediateTerminals: number;
+	restoredSessions: number;
 }
 
 /**
  * Recover room runtime state after daemon restart.
  *
- * Scans active groups and either re-attaches observers or fails
+ * Scans active groups and either restores + re-attaches observers or fails
  * groups with lost sessions.
  */
 export async function recoverRuntime(
@@ -53,6 +60,7 @@ export async function recoverRuntime(
 		failedGroups: 0,
 		reattachedObservers: 0,
 		immediateTerminals: 0,
+		restoredSessions: 0,
 	};
 
 	// Find all active groups for this room
@@ -87,12 +95,39 @@ export async function recoverRuntime(
 				break;
 
 			case 'awaiting_human':
-				// No action needed - waiting for external input
+				await recoverAwaitingHuman(
+					group,
+					groupRepo,
+					taskManager,
+					observer,
+					sessionChecker,
+					runtime,
+					result
+				);
 				break;
 		}
 	}
 
 	return result;
+}
+
+/**
+ * Ensure a session is live (in the in-memory cache). If not, restore from DB.
+ * Returns true if session is live after this call, false if unrestorable.
+ */
+async function ensureLive(
+	sessionId: string,
+	sessionChecker: SessionStateChecker,
+	result: RecoveryResult
+): Promise<boolean> {
+	if (sessionChecker.isLive(sessionId)) return true;
+	if (!sessionChecker.sessionExists(sessionId)) return false;
+
+	const restored = await sessionChecker.restoreSession(sessionId);
+	if (restored) {
+		result.restoredSessions++;
+	}
+	return restored;
 }
 
 async function recoverAwaitingWorker(
@@ -104,8 +139,9 @@ async function recoverAwaitingWorker(
 	runtime: RoomRuntime,
 	result: RecoveryResult
 ): Promise<void> {
-	if (!sessionChecker.sessionExists(group.workerSessionId)) {
-		// Session lost - fail the group and task
+	// Restore worker into memory if not live
+	const workerLive = await ensureLive(group.workerSessionId, sessionChecker, result);
+	if (!workerLive) {
 		await failGroupAndTask(group, groupRepo, taskManager, 'Worker session lost during restart');
 		result.failedGroups++;
 		return;
@@ -126,8 +162,9 @@ async function recoverAwaitingWorker(
 		result.reattachedObservers++;
 	}
 
-	// Also observe Leader for when it becomes active
+	// Also restore and observe Leader for when it becomes active
 	if (sessionChecker.sessionExists(group.leaderSessionId)) {
+		await ensureLive(group.leaderSessionId, sessionChecker, result);
 		observer.observe(group.leaderSessionId, (state: TerminalState) => {
 			runtime.onLeaderTerminalState(group.id, state);
 		});
@@ -143,8 +180,9 @@ async function recoverAwaitingLeader(
 	runtime: RoomRuntime,
 	result: RecoveryResult
 ): Promise<void> {
-	if (!sessionChecker.sessionExists(group.leaderSessionId)) {
-		// Session lost - fail the group and task
+	// Restore leader into memory if not live
+	const leaderLive = await ensureLive(group.leaderSessionId, sessionChecker, result);
+	if (!leaderLive) {
 		await failGroupAndTask(group, groupRepo, taskManager, 'Leader session lost during restart');
 		result.failedGroups++;
 		return;
@@ -165,10 +203,54 @@ async function recoverAwaitingLeader(
 		result.reattachedObservers++;
 	}
 
-	// Also observe Worker for if it becomes active again
+	// Also restore and observe Worker for if it becomes active again
 	if (sessionChecker.sessionExists(group.workerSessionId)) {
+		await ensureLive(group.workerSessionId, sessionChecker, result);
 		observer.observe(group.workerSessionId, (state: TerminalState) => {
 			runtime.onWorkerTerminalState(group.id, state);
+		});
+	}
+}
+
+/**
+ * Recover awaiting_human groups by restoring sessions into memory.
+ *
+ * The worker session must be live so that when the human approves,
+ * injectMessage can deliver the approval to the worker.
+ */
+async function recoverAwaitingHuman(
+	group: SessionGroup,
+	groupRepo: SessionGroupRepository,
+	taskManager: TaskManager,
+	observer: SessionObserver,
+	sessionChecker: SessionStateChecker,
+	runtime: RoomRuntime,
+	result: RecoveryResult
+): Promise<void> {
+	// Restore worker into memory so injectMessage works on human approval
+	const workerLive = await ensureLive(group.workerSessionId, sessionChecker, result);
+	if (!workerLive) {
+		await failGroupAndTask(
+			group,
+			groupRepo,
+			taskManager,
+			'Worker session lost during restart (awaiting human)'
+		);
+		result.failedGroups++;
+		return;
+	}
+
+	// Attach observer so worker terminal state fires after human approval
+	observer.observe(group.workerSessionId, (state: TerminalState) => {
+		runtime.onWorkerTerminalState(group.id, state);
+	});
+	result.reattachedObservers++;
+
+	// Also restore leader if it exists (best-effort)
+	if (sessionChecker.sessionExists(group.leaderSessionId)) {
+		await ensureLive(group.leaderSessionId, sessionChecker, result);
+		observer.observe(group.leaderSessionId, (state: TerminalState) => {
+			runtime.onLeaderTerminalState(group.id, state);
 		});
 	}
 }

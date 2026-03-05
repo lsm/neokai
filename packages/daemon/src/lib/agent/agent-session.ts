@@ -436,6 +436,30 @@ export class AgentSession
 	}
 
 	/**
+	 * Restore an AgentSession from DB after daemon restart.
+	 *
+	 * Unlike fromInit(), this skips fingerprint comparison and init-derived config
+	 * updates. Used for worker/leader sessions that were persisted before restart.
+	 *
+	 * Returns null if the session doesn't exist in DB.
+	 */
+	static restore(
+		sessionId: string,
+		db: Database,
+		messageHub: MessageHub,
+		daemonHub: DaemonHub,
+		getApiKey: () => Promise<string | null>
+	): AgentSession | null {
+		const session = db.getSession(sessionId);
+		if (!session) return null;
+
+		const agentSession = new AgentSession(session, db, messageHub, daemonHub, getApiKey);
+		// Worker/leader sessions managed by room runtime should not auto-queue /context
+		agentSession.contextAutoQueueEnabled = false;
+		return agentSession;
+	}
+
+	/**
 	 * Create a Session object from AgentSessionInit
 	 *
 	 * This creates the session data structure that can be persisted to DB.
