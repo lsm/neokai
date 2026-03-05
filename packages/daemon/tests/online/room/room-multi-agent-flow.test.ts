@@ -32,10 +32,13 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 
 		// Initialize workspace as git repo so worktree creation succeeds
 		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
-		execSync('git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"', {
-			cwd: workspace,
-			stdio: 'pipe',
-		});
+		execSync(
+			'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
+			{
+				cwd: workspace,
+				stdio: 'pipe',
+			}
+		);
 
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `Multi-Agent Flow ${Date.now()}`,

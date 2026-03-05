@@ -916,8 +916,8 @@ describe('RoomRuntime flow', () => {
 			expect(updatedTask!.error).toContain('worktree');
 		});
 
-		test('fails task when createWorktree returns null for planner role', async () => {
-			// All roles now require an isolated worktree — planner tasks should also fail
+		test('falls back to workspace when createWorktree returns null for planner role', async () => {
+			// Non-coder roles fall back to the main workspace when worktree creation fails
 			const isolCtx = createRuntimeTestContext();
 			(
 				isolCtx.sessionFactory as {
@@ -939,15 +939,13 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// The planning task should have been created by spawnPlanningGroup and then failed
-			// (worktree creation failure causes failTask() before the group is created)
+			// The planning task should proceed (not fail) even without a worktree
 			const allTasks = await isolCtx.taskManager.listTasks({ status: 'failed' });
-			expect(allTasks.length).toBeGreaterThan(0);
-			expect(allTasks[0].error).toContain('worktree');
+			expect(allTasks.length).toBe(0);
 		});
 
-		test('fails task when createWorktree returns null for general role', async () => {
-			// General tasks also require worktrees now
+		test('falls back to workspace when createWorktree returns null for general role', async () => {
+			// Non-coder roles fall back to the main workspace when worktree creation fails
 			const isolCtx = createRuntimeTestContext();
 			(
 				isolCtx.sessionFactory as {
@@ -965,10 +963,9 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// Task should be failed with a worktree-related error
+			// Task should proceed (not fail) even without a worktree
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
-			expect(updatedTask!.error).toContain('worktree');
+			expect(updatedTask!.status).not.toBe('failed');
 		});
 
 		test('creates worktree with meaningful branch name derived from task title', async () => {

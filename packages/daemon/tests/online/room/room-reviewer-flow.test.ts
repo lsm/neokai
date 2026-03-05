@@ -59,10 +59,13 @@ process.env.DEFAULT_MODEL = 'sonnet';
  */
 function setupGitEnvironment(workspace: string): void {
 	// 1. Init as git repo with a proper initial commit
-	execSync('git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"', {
-		cwd: workspace,
-		stdio: 'pipe',
-	});
+	execSync(
+		'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
+		{
+			cwd: workspace,
+			stdio: 'pipe',
+		}
+	);
 
 	// 2. Create a bare remote repo so `git push` works
 	const bareRemote = path.join(workspace, '..', `bare-remote-${Date.now()}`);
