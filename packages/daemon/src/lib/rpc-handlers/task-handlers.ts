@@ -8,6 +8,7 @@
  * - task.fail - Fail a task (used by tests to simulate failure)
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
+ * - task.sendHumanMessage - Send a human message to the active agent in a task group
  */
 
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
@@ -236,6 +237,9 @@ export function setupTaskHandlers(
 		if (!params.message) {
 			throw new Error('Message is required');
 		}
+		if (!params.message.trim()) {
+			throw new Error('Message cannot be empty');
+		}
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.sendHumanMessage');
 		}
@@ -243,6 +247,14 @@ export function setupTaskHandlers(
 		const runtime = runtimeService.getRuntime(params.roomId);
 		if (!runtime) {
 			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		// Cross-room ownership check: verify the task belongs to this room.
+		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
 		}
 
 		const groupRepo = new SessionGroupRepository(db.getDatabase());

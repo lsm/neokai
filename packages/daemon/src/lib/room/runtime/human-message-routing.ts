@@ -54,15 +54,32 @@ export async function routeHumanMessageToGroup(
 
 		case 'awaiting_leader': {
 			// Leader is actively reviewing — inject message and record it in the timeline.
+			// Note: injectMessageToLeader writes to the SDK messages table only; we must
+			// also explicitly append to session_group_messages so it appears in the UI.
+			// This is NOT a double-write — the two paths write to different tables.
 			const injected = await runtime.injectMessageToLeader(taskId, message);
 			if (!injected) {
 				return { success: false, error: 'Failed to inject message into leader session' };
 			}
+			// Store as a 'user' message with JSON content so the frontend renderer can
+			// parse it (renderer calls JSON.parse for all non-'status' message types).
 			groupRepo.appendMessage({
 				groupId: group.id,
 				role: 'human',
-				messageType: 'human',
-				content: message,
+				messageType: 'user',
+				content: JSON.stringify({
+					type: 'user',
+					message: {
+						role: 'user',
+						content: [{ type: 'text', text: message }],
+					},
+					_taskMeta: {
+						authorRole: 'human',
+						authorSessionId: '',
+						turnId: `human_${group.id}_${group.feedbackIteration}`,
+						iteration: group.feedbackIteration,
+					},
+				}),
 			});
 			return { success: true };
 		}

@@ -117,11 +117,22 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(true);
 			expect(injectMessageToLeader).toHaveBeenCalledWith(taskId, message);
+			// Content must be JSON-serialized so the frontend renderer can parse it
+			// (renderer calls JSON.parse for all non-'status' message types).
 			expect(appendMessage).toHaveBeenCalledWith({
 				groupId: 'group-1',
 				role: 'human',
-				messageType: 'human',
-				content: message,
+				messageType: 'user',
+				content: JSON.stringify({
+					type: 'user',
+					message: { role: 'user', content: [{ type: 'text', text: message }] },
+					_taskMeta: {
+						authorRole: 'human',
+						authorSessionId: '',
+						turnId: 'human_group-1_0',
+						iteration: 0,
+					},
+				}),
 			});
 		});
 
