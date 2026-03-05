@@ -145,14 +145,17 @@ describe('routeHumanMessageToGroup', () => {
 			expect(appendMessage).toHaveBeenCalledTimes(1);
 		});
 
-		it('returns error when injectMessageToLeader returns false', async () => {
+		it('returns error and does not append when injectMessageToLeader fails (simulates catch path)', async () => {
+			// injectMessageToLeader returns false when sessionFactory.injectMessage() throws
+			// (the real method catches the error and returns false).
+			// routeHumanMessageToGroup must propagate the failure and NOT call appendMessage.
 			const { runtime } = makeRuntime(true, false);
 			const { groupRepo, appendMessage } = makeGroupRepo(makeGroup('awaiting_leader'));
 
 			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toBeDefined();
+			expect(result.error).toContain('Failed to inject message into leader session');
 			expect(appendMessage).not.toHaveBeenCalled();
 		});
 	});
