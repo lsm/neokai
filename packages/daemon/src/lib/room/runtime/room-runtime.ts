@@ -707,6 +707,23 @@ export class RoomRuntime {
 		return true;
 	}
 
+	/**
+	 * Inject a human message directly into the leader session.
+	 *
+	 * Used when the group is awaiting_leader and a human wants to provide
+	 * guidance or additional context to the leader agent.
+	 *
+	 * Returns true on success, false if the group is not in awaiting_leader state.
+	 */
+	async injectMessageToLeader(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.state !== 'awaiting_leader') return false;
+
+		const formattedMessage = `[Human intervention]\n\n${message}`;
+		await this.sessionFactory.injectMessage(group.leaderSessionId, formattedMessage);
+		return true;
+	}
+
 	// =========================================================================
 	// Message Mirroring
 	// =========================================================================
