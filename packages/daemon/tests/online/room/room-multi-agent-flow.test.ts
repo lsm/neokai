@@ -105,7 +105,7 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
-				180_000
+				120_000
 			);
 			if (terminalPlanning.status === 'failed') {
 				throw new Error(
@@ -122,14 +122,14 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			}
 
 			// Wait for planning to fully complete (phase 2 may take time for task creation)
-			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 180_000);
+			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 120_000);
 
 			const execTasks = await waitForTaskCount(
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['pending', 'in_progress'] },
 				1,
-				60_000
+				30_000
 			);
 			expect(execTasks.length).toBeGreaterThanOrEqual(1);
 
@@ -146,7 +146,7 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
-				180_000
+				120_000
 			);
 			if (terminalCoding.status === 'failed') {
 				throw new Error(
@@ -164,7 +164,7 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['completed'] },
-				180_000
+				120_000
 			);
 			expect(completedTask.status).toBe('completed');
 			expect(completedTask.result).toBeTruthy();
@@ -188,6 +188,6 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			// Verify feedback iteration tracking (at least 1 worker→leader round)
 			expect(execGroup.feedbackIteration).toBeGreaterThanOrEqual(1);
 		},
-		{ timeout: 360_000 }
+		{ timeout: 300_000 }
 	);
 });

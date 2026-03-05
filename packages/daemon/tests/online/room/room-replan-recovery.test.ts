@@ -74,7 +74,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
-				180_000
+				120_000
 			);
 			if (terminalPlanning.status === 'failed') {
 				throw new Error(
@@ -91,7 +91,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			}
 
 			// Wait for planning to fully complete (phase 2 may take time)
-			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 180_000);
+			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 120_000);
 
 			// Wait for coding task to reach terminal state (full lifecycle)
 			// Two-phase coder: code → review → human approve → worker merges PR → complete
@@ -99,7 +99,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
-				180_000
+				120_000
 			);
 			if (terminalCoding.status === 'failed') {
 				throw new Error(
@@ -111,7 +111,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 					roomId,
 					taskId: terminalCoding.id,
 				});
-				await waitForTask(daemon, roomId, { taskType: 'coding', status: ['completed'] }, 180_000);
+				await waitForTask(daemon, roomId, { taskType: 'coding', status: ['completed'] }, 120_000);
 			}
 
 			// Record initial state
@@ -164,7 +164,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				roomId,
 				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
 				existingTaskIds,
-				180_000
+				120_000
 			);
 			if (newTerminalPlanning.status === 'review') {
 				await daemon.messageHub.request('goal.approveTask', {
@@ -177,7 +177,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 					roomId,
 					{ taskType: 'planning', status: ['completed'] },
 					existingTaskIds,
-					180_000
+					120_000
 				);
 			}
 
@@ -188,7 +188,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				roomId,
 				{ taskType: 'coding', status: ['pending', 'in_progress', 'completed', 'review', 'draft'] },
 				existingTaskIds,
-				180_000
+				120_000
 			);
 			expect(newCodingTask).toBeTruthy();
 			expect(newCodingTask.taskType).toBe('coding');

@@ -72,7 +72,7 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
-				180_000
+				120_000
 			);
 			if (terminalPlanning.status === 'failed') {
 				throw new Error(
@@ -89,7 +89,7 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 			}
 
 			// Wait for planning to fully complete (phase 2 may take time)
-			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 180_000);
+			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 120_000);
 
 			// Wait for coding task to appear
 			await waitForTask(
@@ -118,7 +118,7 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
-				180_000
+				120_000
 			);
 			if (terminalCoding.status === 'failed') {
 				throw new Error(
@@ -135,7 +135,7 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: 'completed' },
-				180_000
+				120_000
 			);
 			expect(completedTask.status).toBe('completed');
 			expect(completedTask.result).toBeTruthy();
@@ -179,6 +179,6 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 			const roles = new Set(messages.map((m) => m.role));
 			expect(roles.size).toBeGreaterThanOrEqual(1);
 		},
-		{ timeout: 360_000 }
+		{ timeout: 300_000 }
 	);
 });
