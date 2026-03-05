@@ -5,18 +5,12 @@
  * - goal.create - Create a new goal
  * - goal.get - Get goal details
  * - goal.list - List goals in room
- * - goal.updateStatus - Update goal status
- * - goal.updateProgress - Update goal progress
- * - goal.updatePriority - Update goal priority
- * - goal.complete - Complete a goal
+ * - goal.update - Update a goal (status/progress/priority)
  * - goal.needsHuman - Mark goal as needing human input
  * - goal.reactivate - Reactivate a goal (return to active)
- * - goal.archive - Archive a goal
  * - goal.linkTask - Link a task to a goal
- * - goal.unlinkTask - Unlink a task from a goal
  * - goal.delete - Delete a goal
- * - goal.getNext - Get next goal to work on
- * - goal.getActive - Get all active goals
+ * - goal.approveTask - Human approves a task PR (resumes worker for phase 2)
  */
 
 import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
@@ -36,15 +30,10 @@ export type GoalManagerLike = Pick<
 	| 'updateGoalStatus'
 	| 'updateGoalProgress'
 	| 'updateGoalPriority'
-	| 'completeGoal'
 	| 'needsHumanGoal'
 	| 'reactivateGoal'
-	| 'archiveGoal'
 	| 'linkTaskToGoal'
-	| 'unlinkTaskFromGoal'
 	| 'deleteGoal'
-	| 'getNextGoal'
-	| 'getActiveGoals'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
@@ -104,22 +93,6 @@ export function setupGoalHandlers(
 			})
 			.catch((error) => {
 				log.warn(`Failed to emit goal.progressUpdated for room ${roomId}:`, error);
-			});
-	};
-
-	/**
-	 * Emit goal.completed event to notify UI clients
-	 */
-	const emitGoalCompleted = (roomId: string, goal: RoomGoal) => {
-		daemonHub
-			.emit('goal.completed', {
-				sessionId: `room:${roomId}`,
-				roomId,
-				goalId: goal.id,
-				goal,
-			})
-			.catch((error) => {
-				log.warn(`Failed to emit goal.completed for room ${roomId}:`, error);
 			});
 	};
 
@@ -232,109 +205,6 @@ export function setupGoalHandlers(
 		return { goal };
 	});
 
-	// goal.updateStatus - Update goal status
-	messageHub.onRequest('goal.updateStatus', async (data) => {
-		const params = data as {
-			roomId: string;
-			goalId: string;
-			status: GoalStatus;
-			updates?: Partial<RoomGoal>;
-		};
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-		if (!params.status) {
-			throw new Error('Status is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.updateGoalStatus(params.goalId, params.status, params.updates);
-
-		// Emit goal.updated event
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-
-		return { goal };
-	});
-
-	// goal.updateProgress - Update goal progress
-	messageHub.onRequest('goal.updateProgress', async (data) => {
-		const params = data as {
-			roomId: string;
-			goalId: string;
-			progress: number;
-			metrics?: Record<string, number>;
-		};
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-		if (params.progress === undefined) {
-			throw new Error('Progress is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.updateGoalProgress(
-			params.goalId,
-			params.progress,
-			params.metrics
-		);
-
-		// Emit goal.progressUpdated event
-		emitGoalProgressUpdated(params.roomId, params.goalId, goal.progress);
-
-		return { goal };
-	});
-
-	// goal.updatePriority - Update goal priority
-	messageHub.onRequest('goal.updatePriority', async (data) => {
-		const params = data as { roomId: string; goalId: string; priority: GoalPriority };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-		if (!params.priority) {
-			throw new Error('Priority is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.updateGoalPriority(params.goalId, params.priority);
-
-		// Emit goal.updated event
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-
-		return { goal };
-	});
-
-	// goal.complete - Complete a goal
-	messageHub.onRequest('goal.complete', async (data) => {
-		const params = data as { roomId: string; goalId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.completeGoal(params.goalId);
-
-		// Emit goal.completed event
-		emitGoalCompleted(params.roomId, goal);
-
-		return { goal };
-	});
-
 	// goal.needsHuman - Mark goal as needing human input
 	messageHub.onRequest('goal.needsHuman', async (data) => {
 		const params = data as { roomId: string; goalId: string };
@@ -373,25 +243,6 @@ export function setupGoalHandlers(
 		return { goal };
 	});
 
-	// goal.archive - Archive a goal
-	messageHub.onRequest('goal.archive', async (data) => {
-		const params = data as { roomId: string; goalId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.archiveGoal(params.goalId);
-
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-
-		return { goal };
-	});
-
 	// goal.linkTask - Link a task to a goal
 	messageHub.onRequest('goal.linkTask', async (data) => {
 		const params = data as { roomId: string; goalId: string; taskId: string };
@@ -416,30 +267,6 @@ export function setupGoalHandlers(
 		return { goal };
 	});
 
-	// goal.unlinkTask - Unlink a task from a goal
-	messageHub.onRequest('goal.unlinkTask', async (data) => {
-		const params = data as { roomId: string; goalId: string; taskId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.goalId) {
-			throw new Error('Goal ID is required');
-		}
-		if (!params.taskId) {
-			throw new Error('Task ID is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.unlinkTaskFromGoal(params.goalId, params.taskId);
-
-		// Emit goal.updated event (task unlinked and progress recalculated)
-		emitGoalUpdated(params.roomId, params.goalId, goal);
-		emitGoalProgressUpdated(params.roomId, params.goalId, goal.progress);
-
-		return { goal };
-	});
-
 	// goal.delete - Delete a goal
 	messageHub.onRequest('goal.delete', async (data) => {
 		const params = data as { roomId: string; goalId: string };
@@ -458,34 +285,6 @@ export function setupGoalHandlers(
 		emitGoalUpdated(params.roomId, params.goalId);
 
 		return { success };
-	});
-
-	// goal.getNext - Get next goal to work on (by priority)
-	messageHub.onRequest('goal.getNext', async (data) => {
-		const params = data as { roomId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.getNextGoal();
-
-		return { goal };
-	});
-
-	// goal.getActive - Get all active goals (pending or in_progress)
-	messageHub.onRequest('goal.getActive', async (data) => {
-		const params = data as { roomId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		const goalManager = goalManagerFactory(params.roomId);
-		const goals = await goalManager.getActiveGoals();
-
-		return { goals };
 	});
 
 	// goal.approveTask - Human approves the PR; resume leader to call complete_task
@@ -536,49 +335,4 @@ export function setupGoalHandlers(
 		return { success: true };
 	});
 
-	// goal.rejectTask - Human rejects the PR with feedback; resume worker to address feedback
-	messageHub.onRequest('goal.rejectTask', async (data) => {
-		const params = data as { roomId: string; taskId: string; feedback: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.taskId) {
-			throw new Error('Task ID is required');
-		}
-		if (!params.feedback) {
-			throw new Error('Feedback is required');
-		}
-		if (!taskManagerFactory || !runtimeService) {
-			throw new Error('Task manager factory and runtime service are required for goal.rejectTask');
-		}
-
-		const taskManager = taskManagerFactory(params.roomId);
-		const task = await taskManager.getTask(params.taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${params.taskId}`);
-		}
-		if (task.status !== 'review') {
-			throw new Error(`Task is not in review status (current: ${task.status})`);
-		}
-
-		const runtime = runtimeService.getRuntime(params.roomId);
-		if (!runtime) {
-			throw new Error(`No runtime found for room: ${params.roomId}`);
-		}
-
-		const message =
-			`Human has provided feedback on the PR:\n\n${params.feedback}\n\n` +
-			'Please address this feedback, push updated commits, and ensure the PR is ready for re-review.';
-
-		// Route to WORKER to address feedback (no approved flag — must go through submit_for_review again)
-		// resumeWorkerFromHuman handles: task → in_progress, submittedForReview → false
-		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message);
-		if (!resumed) {
-			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
-		}
-
-		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);
-		return { success: true };
-	});
 }

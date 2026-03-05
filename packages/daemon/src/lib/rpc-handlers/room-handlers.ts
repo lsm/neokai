@@ -3,14 +3,12 @@
  *
  * RPC handlers for room operations:
  * - room.create - Create a room
- * - room.list - List all rooms
- * - room.get - Get room details
  * - room.update - Update room
  * - room.archive - Archive room
  * - room.delete - Delete room
  * - room.overview - Get room overview with related data
- * - room.status - Get status for a specific room
  * - neo.status - Get global status (all rooms, sessions)
+ * - agents.cli.list - List detected CLI agents
  */
 
 import type { MessageHub, WorkspacePath } from '@neokai/shared';
@@ -89,29 +87,6 @@ export function setupRoomHandlers(
 			});
 
 		return { room };
-	});
-
-	// room.list - List all rooms
-	messageHub.onRequest('room.list', async (data) => {
-		const params = data as { includeArchived?: boolean };
-		const rooms = roomManager.listRooms(params.includeArchived ?? false);
-		return { rooms };
-	});
-
-	// room.get - Get room overview with related data
-	messageHub.onRequest('room.get', async (data) => {
-		const params = data as { roomId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		const overview = roomManager.getRoomOverview(params.roomId);
-		if (!overview) {
-			throw new Error(`Room not found: ${params.roomId}`);
-		}
-
-		return overview; // Returns RoomOverview directly (not wrapped in { room })
 	});
 
 	// room.update - Update a room
@@ -235,101 +210,9 @@ export function setupRoomHandlers(
 		return { overview };
 	});
 
-	// room.status - Get status for a specific room
-	messageHub.onRequest('room.status', async (data) => {
-		const params = data as { roomId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-
-		const status = roomManager.getRoomStatus(params.roomId);
-		if (!status) {
-			throw new Error(`Room not found: ${params.roomId}`);
-		}
-
-		return { status };
-	});
-
 	// neo.status - Get global status (all rooms, sessions)
 	messageHub.onRequest('neo.status', async () => {
 		return roomManager.getGlobalStatus();
-	});
-
-	// room.assignSession - Assign a session to a room
-	messageHub.onRequest('room.assignSession', async (data) => {
-		const params = data as { roomId: string; sessionId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.sessionId) {
-			throw new Error('Session ID is required');
-		}
-
-		const room = roomManager.assignSession(params.roomId, params.sessionId);
-		if (!room) {
-			throw new Error(`Room not found: ${params.roomId}`);
-		}
-
-		return { room };
-	});
-
-	// room.unassignSession - Unassign a session from a room
-	messageHub.onRequest('room.unassignSession', async (data) => {
-		const params = data as { roomId: string; sessionId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.sessionId) {
-			throw new Error('Session ID is required');
-		}
-
-		const room = roomManager.unassignSession(params.roomId, params.sessionId);
-		if (!room) {
-			throw new Error(`Room not found: ${params.roomId}`);
-		}
-
-		return { room };
-	});
-
-	// room.addPath - Add an allowed path to a room
-	messageHub.onRequest('room.addPath', async (data) => {
-		const params = data as { roomId: string; path: string; description?: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.path) {
-			throw new Error('Path is required');
-		}
-
-		const room = roomManager.addAllowedPath(params.roomId, params.path, params.description);
-		if (!room) {
-			throw new Error(`Room not found: ${params.roomId}`);
-		}
-
-		return { room };
-	});
-
-	// room.removePath - Remove an allowed path from a room
-	messageHub.onRequest('room.removePath', async (data) => {
-		const params = data as { roomId: string; path: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.path) {
-			throw new Error('Path is required');
-		}
-
-		const room = roomManager.removeAllowedPath(params.roomId, params.path);
-		if (!room) {
-			throw new Error(`Room not found: ${params.roomId}`);
-		}
-
-		return { room };
 	});
 
 	// agents.cli.list - List detected CLI agents with install/auth status

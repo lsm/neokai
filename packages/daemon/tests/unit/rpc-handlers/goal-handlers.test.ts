@@ -5,18 +5,11 @@
  * - goal.create - Create a new goal
  * - goal.get - Get goal details
  * - goal.list - List goals in room
- * - goal.updateStatus - Update goal status
- * - goal.updateProgress - Update goal progress
- * - goal.updatePriority - Update goal priority
- * - goal.complete - Complete a goal
+ * - goal.update - Update a goal
  * - goal.needsHuman - Mark goal as needing human input
  * - goal.reactivate - Reactivate a goal
- * - goal.archive - Archive a goal
  * - goal.linkTask - Link a task to a goal
- * - goal.unlinkTask - Unlink a task from a goal
  * - goal.delete - Delete a goal
- * - goal.getNext - Get next goal to work on
- * - goal.getActive - Get all active goals
  *
  * Mocks GoalManager to focus on RPC handler logic.
  */
@@ -105,21 +98,6 @@ const mockGoalManager = {
 			updatedAt: Date.now(),
 		})
 	),
-	completeGoal: mock(
-		async (): Promise<RoomGoal> => ({
-			id: 'goal-123',
-			roomId: 'room-123',
-			title: 'Test Goal',
-			description: 'Test description',
-			status: 'completed' as GoalStatus,
-			priority: 'normal' as GoalPriority,
-			progress: 100,
-			linkedTaskIds: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
-			completedAt: Date.now(),
-		})
-	),
 	needsHumanGoal: mock(
 		async (): Promise<RoomGoal> => ({
 			id: 'goal-123',
@@ -148,20 +126,6 @@ const mockGoalManager = {
 			updatedAt: Date.now(),
 		})
 	),
-	archiveGoal: mock(
-		async (): Promise<RoomGoal> => ({
-			id: 'goal-123',
-			roomId: 'room-123',
-			title: 'Test Goal',
-			description: 'Test description',
-			status: 'archived' as GoalStatus,
-			priority: 'normal' as GoalPriority,
-			progress: 0,
-			linkedTaskIds: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
-		})
-	),
 	linkTaskToGoal: mock(
 		async (): Promise<RoomGoal> => ({
 			id: 'goal-123',
@@ -176,23 +140,7 @@ const mockGoalManager = {
 			updatedAt: Date.now(),
 		})
 	),
-	unlinkTaskFromGoal: mock(
-		async (): Promise<RoomGoal> => ({
-			id: 'goal-123',
-			roomId: 'room-123',
-			title: 'Test Goal',
-			description: 'Test description',
-			status: 'active' as GoalStatus,
-			priority: 'normal' as GoalPriority,
-			progress: 0,
-			linkedTaskIds: [],
-			createdAt: Date.now(),
-			updatedAt: Date.now(),
-		})
-	),
 	deleteGoal: mock(async (): Promise<boolean> => true),
-	getNextGoal: mock(async (): Promise<RoomGoal | null> => null),
-	getActiveGoals: mock(async (): Promise<RoomGoal[]> => []),
 };
 
 const createMockGoalManager = (): GoalManagerLike => mockGoalManager as unknown as GoalManagerLike;
@@ -259,15 +207,10 @@ describe('Goal RPC Handlers', () => {
 		mockGoalManager.updateGoalStatus.mockClear();
 		mockGoalManager.updateGoalProgress.mockClear();
 		mockGoalManager.updateGoalPriority.mockClear();
-		mockGoalManager.completeGoal.mockClear();
 		mockGoalManager.needsHumanGoal.mockClear();
 		mockGoalManager.reactivateGoal.mockClear();
-		mockGoalManager.archiveGoal.mockClear();
 		mockGoalManager.linkTaskToGoal.mockClear();
-		mockGoalManager.unlinkTaskFromGoal.mockClear();
 		mockGoalManager.deleteGoal.mockClear();
-		mockGoalManager.getNextGoal.mockClear();
-		mockGoalManager.getActiveGoals.mockClear();
 
 		// Setup handlers with mocked dependencies
 		setupGoalHandlers(messageHubData.hub, daemonHubData.daemonHub, createMockGoalManager);
@@ -535,261 +478,6 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
-	describe('goal.updateStatus', () => {
-		it('updates goal status', async () => {
-			const handler = messageHubData.handlers.get('goal.updateStatus');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-				status: 'active' as GoalStatus,
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith(
-				'goal-123',
-				'active',
-				undefined
-			);
-			expect(result.goal).toBeDefined();
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updateStatus');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123', status: 'active' }, {})).rejects.toThrow(
-				'Room ID is required'
-			);
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updateStatus');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', status: 'active' }, {})).rejects.toThrow(
-				'Goal ID is required'
-			);
-		});
-
-		it('throws error when status is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updateStatus');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
-				'Status is required'
-			);
-		});
-
-		it('emits goal.updated event', async () => {
-			const handler = messageHubData.handlers.get('goal.updateStatus');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123', status: 'active' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-		});
-	});
-
-	describe('goal.updateProgress', () => {
-		it('updates goal progress', async () => {
-			const handler = messageHubData.handlers.get('goal.updateProgress');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-				progress: 50,
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.updateGoalProgress).toHaveBeenCalledWith('goal-123', 50, undefined);
-			expect(result.goal).toBeDefined();
-		});
-
-		it('updates goal progress with metrics', async () => {
-			const handler = messageHubData.handlers.get('goal.updateProgress');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-				progress: 75,
-				metrics: { tasksCompleted: 3, tasksTotal: 4 },
-			};
-
-			await handler!(params, {});
-
-			expect(mockGoalManager.updateGoalProgress).toHaveBeenCalledWith('goal-123', 75, {
-				tasksCompleted: 3,
-				tasksTotal: 4,
-			});
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updateProgress');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123', progress: 50 }, {})).rejects.toThrow(
-				'Room ID is required'
-			);
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updateProgress');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', progress: 50 }, {})).rejects.toThrow(
-				'Goal ID is required'
-			);
-		});
-
-		it('throws error when progress is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updateProgress');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
-				'Progress is required'
-			);
-		});
-
-		it('emits goal.progressUpdated event', async () => {
-			const handler = messageHubData.handlers.get('goal.updateProgress');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123', progress: 50 }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.progressUpdated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-					progress: 50,
-				})
-			);
-		});
-	});
-
-	describe('goal.updatePriority', () => {
-		it('updates goal priority', async () => {
-			const handler = messageHubData.handlers.get('goal.updatePriority');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-				priority: 'high' as GoalPriority,
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.updateGoalPriority).toHaveBeenCalledWith('goal-123', 'high');
-			expect(result.goal).toBeDefined();
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updatePriority');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123', priority: 'high' }, {})).rejects.toThrow(
-				'Room ID is required'
-			);
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updatePriority');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', priority: 'high' }, {})).rejects.toThrow(
-				'Goal ID is required'
-			);
-		});
-
-		it('throws error when priority is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.updatePriority');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
-				'Priority is required'
-			);
-		});
-
-		it('emits goal.updated event', async () => {
-			const handler = messageHubData.handlers.get('goal.updatePriority');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123', priority: 'high' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-		});
-	});
-
-	describe('goal.complete', () => {
-		it('completes a goal', async () => {
-			const handler = messageHubData.handlers.get('goal.complete');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.completeGoal).toHaveBeenCalledWith('goal-123');
-			expect(result.goal).toBeDefined();
-			expect(result.goal.status).toBe('completed');
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.complete');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.complete');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
-		});
-
-		it('emits goal.completed event', async () => {
-			const handler = messageHubData.handlers.get('goal.complete');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.completed',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-		});
-	});
-
 	describe('goal.needsHuman', () => {
 		it('marks a goal as needing human input', async () => {
 			const handler = messageHubData.handlers.get('goal.needsHuman');
@@ -886,54 +574,6 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
-	describe('goal.archive', () => {
-		it('archives a goal', async () => {
-			const handler = messageHubData.handlers.get('goal.archive');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.archiveGoal).toHaveBeenCalledWith('goal-123');
-			expect(result.goal).toBeDefined();
-			expect(result.goal.status).toBe('archived');
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.archive');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.archive');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
-		});
-
-		it('emits goal.updated event', async () => {
-			const handler = messageHubData.handlers.get('goal.archive');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-		});
-	});
-
 	describe('goal.linkTask', () => {
 		it('links a task to a goal', async () => {
 			const handler = messageHubData.handlers.get('goal.linkTask');
@@ -980,75 +620,6 @@ describe('Goal RPC Handlers', () => {
 
 		it('emits goal.updated and goal.progressUpdated events', async () => {
 			const handler = messageHubData.handlers.get('goal.linkTask');
-			expect(handler).toBeDefined();
-
-			await handler!({ roomId: 'room-123', goalId: 'goal-123', taskId: 'task-456' }, {});
-
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.updated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-			expect(daemonHubData.emit).toHaveBeenCalledWith(
-				'goal.progressUpdated',
-				expect.objectContaining({
-					sessionId: 'room:room-123',
-					roomId: 'room-123',
-					goalId: 'goal-123',
-				})
-			);
-		});
-	});
-
-	describe('goal.unlinkTask', () => {
-		it('unlinks a task from a goal', async () => {
-			const handler = messageHubData.handlers.get('goal.unlinkTask');
-			expect(handler).toBeDefined();
-
-			const params = {
-				roomId: 'room-123',
-				goalId: 'goal-123',
-				taskId: 'task-456',
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal };
-
-			expect(mockGoalManager.unlinkTaskFromGoal).toHaveBeenCalledWith('goal-123', 'task-456');
-			expect(result.goal).toBeDefined();
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.unlinkTask');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ goalId: 'goal-123', taskId: 'task-456' }, {})).rejects.toThrow(
-				'Room ID is required'
-			);
-		});
-
-		it('throws error when goalId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.unlinkTask');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', taskId: 'task-456' }, {})).rejects.toThrow(
-				'Goal ID is required'
-			);
-		});
-
-		it('throws error when taskId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.unlinkTask');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
-				'Task ID is required'
-			);
-		});
-
-		it('emits goal.updated and goal.progressUpdated events', async () => {
-			const handler = messageHubData.handlers.get('goal.unlinkTask');
 			expect(handler).toBeDefined();
 
 			await handler!({ roomId: 'room-123', goalId: 'goal-123', taskId: 'task-456' }, {});
@@ -1133,121 +704,4 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
-	describe('goal.getNext', () => {
-		it('returns next goal', async () => {
-			const handler = messageHubData.handlers.get('goal.getNext');
-			expect(handler).toBeDefined();
-
-			const mockGoal: RoomGoal = {
-				id: 'goal-456',
-				roomId: 'room-123',
-				title: 'Next Goal',
-				description: '',
-				status: 'active',
-				priority: 'high',
-				progress: 0,
-				linkedTaskIds: [],
-				createdAt: Date.now(),
-				updatedAt: Date.now(),
-			};
-			mockGoalManager.getNextGoal.mockResolvedValueOnce(mockGoal);
-
-			const params = {
-				roomId: 'room-123',
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal | null };
-
-			expect(mockGoalManager.getNextGoal).toHaveBeenCalled();
-			expect(result.goal).toBeDefined();
-		});
-
-		it('returns null when no next goal', async () => {
-			const handler = messageHubData.handlers.get('goal.getNext');
-			expect(handler).toBeDefined();
-
-			mockGoalManager.getNextGoal.mockResolvedValueOnce(null);
-
-			const params = {
-				roomId: 'room-123',
-			};
-
-			const result = (await handler!(params, {})) as { goal: RoomGoal | null };
-
-			expect(result.goal).toBeNull();
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.getNext');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({}, {})).rejects.toThrow('Room ID is required');
-		});
-	});
-
-	describe('goal.getActive', () => {
-		it('returns active goals', async () => {
-			const handler = messageHubData.handlers.get('goal.getActive');
-			expect(handler).toBeDefined();
-
-			const mockGoals: RoomGoal[] = [
-				{
-					id: 'goal-123',
-					roomId: 'room-123',
-					title: 'Active Goal 1',
-					description: '',
-					status: 'active',
-					priority: 'normal',
-					progress: 50,
-					linkedTaskIds: [],
-					createdAt: Date.now(),
-					updatedAt: Date.now(),
-				},
-				{
-					id: 'goal-456',
-					roomId: 'room-123',
-					title: 'Needs Human Goal',
-					description: '',
-					status: 'needs_human',
-					priority: 'high',
-					progress: 0,
-					linkedTaskIds: [],
-					createdAt: Date.now(),
-					updatedAt: Date.now(),
-				},
-			];
-			mockGoalManager.getActiveGoals.mockResolvedValueOnce(mockGoals);
-
-			const params = {
-				roomId: 'room-123',
-			};
-
-			const result = (await handler!(params, {})) as { goals: RoomGoal[] };
-
-			expect(mockGoalManager.getActiveGoals).toHaveBeenCalled();
-			expect(result.goals).toHaveLength(2);
-		});
-
-		it('returns empty array when no active goals', async () => {
-			const handler = messageHubData.handlers.get('goal.getActive');
-			expect(handler).toBeDefined();
-
-			mockGoalManager.getActiveGoals.mockResolvedValueOnce([]);
-
-			const params = {
-				roomId: 'room-123',
-			};
-
-			const result = (await handler!(params, {})) as { goals: RoomGoal[] };
-
-			expect(result.goals).toHaveLength(0);
-		});
-
-		it('throws error when roomId is missing', async () => {
-			const handler = messageHubData.handlers.get('goal.getActive');
-			expect(handler).toBeDefined();
-
-			await expect(handler!({}, {})).rejects.toThrow('Room ID is required');
-		});
-	});
 });
