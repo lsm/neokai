@@ -10,7 +10,6 @@
  * - task.complete - Complete a task
  * - task.fail - Fail a task
  * - task.review - Move a task to review (awaiting human approval)
- * - task.approve - Approve a reviewed task (human approval, promotes planning drafts)
  * - task.delete - Delete a task
  *
  * Renamed from neo.task.* to task.* for cleaner API.
@@ -37,7 +36,6 @@ export type TaskManagerLike = Pick<
 	| 'completeTask'
 	| 'failTask'
 	| 'reviewTask'
-	| 'approveTask'
 	| 'deleteTask'
 >;
 
@@ -292,38 +290,6 @@ export function setupTaskHandlers(
 		emitTaskUpdate(params.roomId, task);
 
 		return { task };
-	});
-
-	// task.approve - Approve a task in review status (human approval)
-	// For planning tasks, this promotes draft children to pending
-	messageHub.onRequest('task.approve', async (data) => {
-		const params = data as { roomId: string; taskId: string };
-
-		if (!params.roomId) {
-			throw new Error('Room ID is required');
-		}
-		if (!params.taskId) {
-			throw new Error('Task ID is required');
-		}
-
-		const taskManager = taskManagerFactory(db, params.roomId);
-		const { task, promotedCount } = await taskManager.approveTask(params.taskId);
-
-		emitTaskUpdate(params.roomId, task);
-		emitRoomOverview(params.roomId);
-
-		if (promotedCount > 0) {
-			log.info(
-				`Approved planning task ${params.taskId}: promoted ${promotedCount} draft task(s) to pending`
-			);
-			// Emit updates for promoted tasks so UI reflects the change
-			const pendingTasks = await taskManager.listTasks({ status: 'pending' });
-			for (const t of pendingTasks) {
-				emitTaskUpdate(params.roomId, t);
-			}
-		}
-
-		return { task, promotedCount };
 	});
 
 	// task.delete - Delete a task

@@ -136,7 +136,6 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			}
 
 			// If planning is in 'review', approve it via goal.approveTask to trigger phase 2
-			// (task.approve bypasses the runtime and skips phase 2 where tasks are created)
 			if (terminalPlanning.status === 'review') {
 				await daemon.messageHub.request('goal.approveTask', {
 					roomId,
