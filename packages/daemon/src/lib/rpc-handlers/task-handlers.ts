@@ -20,7 +20,10 @@ import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
 
-export type TaskManagerLike = Pick<TaskManager, 'createTask' | 'getTask' | 'listTasks' | 'failTask'>;
+export type TaskManagerLike = Pick<
+	TaskManager,
+	'createTask' | 'getTask' | 'listTasks' | 'failTask'
+>;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
 

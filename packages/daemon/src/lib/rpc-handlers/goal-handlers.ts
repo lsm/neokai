@@ -334,5 +334,4 @@ export function setupGoalHandlers(
 		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);
 		return { success: true };
 	});
-
 }

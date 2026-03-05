@@ -703,5 +703,4 @@ describe('Goal RPC Handlers', () => {
 			expect(result.success).toBe(false);
 		});
 	});
-
 });

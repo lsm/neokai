@@ -429,5 +429,4 @@ describe('Room RPC Handlers', () => {
 			);
 		});
 	});
-
 });
