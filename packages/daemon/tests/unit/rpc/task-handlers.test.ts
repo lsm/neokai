@@ -2,7 +2,9 @@
  * Tests for Task RPC Handlers
  *
  * Tests the RPC handlers for task operations:
+ * - task.create - Create a task in a room
  * - task.list - List tasks in a room
+ * - task.get - Get task details
  * - task.fail - Fail a task
  *
  * Mocks TaskManager to focus on RPC handler logic.
@@ -23,6 +25,32 @@ type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
 
 // Mock TaskManager module
 const mockTaskManager = {
+	createTask: mock(
+		async () =>
+			({
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test description',
+				status: 'pending' as TaskStatus,
+				priority: 'medium' as TaskPriority,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}) as NeoTask
+	),
+	getTask: mock(
+		async () =>
+			({
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test description',
+				status: 'pending' as TaskStatus,
+				priority: 'medium' as TaskPriority,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}) as NeoTask
+	),
 	listTasks: mock(async () => [] as NeoTask[]),
 	failTask: mock(
 		async () =>
@@ -145,6 +173,8 @@ describe('Task RPC Handlers', () => {
 		roomManagerData = createMockRoomManager();
 		db = createMockDatabase();
 
+		mockTaskManager.createTask.mockClear();
+		mockTaskManager.getTask.mockClear();
 		mockTaskManager.listTasks.mockClear();
 		mockTaskManager.failTask.mockClear();
 
@@ -159,6 +189,52 @@ describe('Task RPC Handlers', () => {
 
 	afterEach(() => {
 		mock.restore();
+	});
+
+	describe('task.create', () => {
+		it('creates task with all parameters', async () => {
+			const handler = messageHubData.handlers.get('task.create');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!(
+				{
+					roomId: 'room-123',
+					title: 'Implement Feature X',
+					description: 'Detailed description of the feature',
+					priority: 'high' as TaskPriority,
+					dependsOn: ['task-456'],
+				},
+				{}
+			)) as { task: NeoTask };
+
+			expect(mockTaskManager.createTask).toHaveBeenCalled();
+			expect(result.task).toBeDefined();
+			expect(result.task.roomId).toBe('room-123');
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('task.create');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ title: 'Test Task' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when title is missing', async () => {
+			const handler = messageHubData.handlers.get('task.create');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task title is required');
+		});
+
+		it('emits room overview event on creation', async () => {
+			const handler = messageHubData.handlers.get('task.create');
+			expect(handler).toBeDefined();
+
+			await handler!({ roomId: 'room-123', title: 'Test Task' }, {});
+
+			expect(roomManagerData.getRoomOverview).toHaveBeenCalledWith('room-123');
+			expect(daemonHubData.emit).toHaveBeenCalled();
+		});
 	});
 
 	describe('task.list', () => {
@@ -199,6 +275,46 @@ describe('Task RPC Handlers', () => {
 			expect(handler).toBeDefined();
 
 			await expect(handler!({}, {})).rejects.toThrow('Room ID is required');
+		});
+	});
+
+	describe('task.get', () => {
+		it('returns task details', async () => {
+			const handler = messageHubData.handlers.get('task.get');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+				task: NeoTask;
+			};
+
+			expect(mockTaskManager.getTask).toHaveBeenCalledWith('task-123');
+			expect(result.task).toBeDefined();
+			expect(result.task.id).toBe('task-123');
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('task.get');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ taskId: 'task-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when taskId is missing', async () => {
+			const handler = messageHubData.handlers.get('task.get');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task ID is required');
+		});
+
+		it('throws error when task not found', async () => {
+			const handler = messageHubData.handlers.get('task.get');
+			expect(handler).toBeDefined();
+
+			mockTaskManager.getTask.mockResolvedValueOnce(null);
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'non-existent' }, {})).rejects.toThrow(
+				'Task not found: non-existent'
+			);
 		});
 	});
 

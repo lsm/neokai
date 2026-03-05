@@ -2,7 +2,9 @@
  * Task RPC Handlers
  *
  * RPC handlers for Neo task operations:
+ * - task.create - Create task in room
  * - task.list - List tasks in room
+ * - task.get - Get task details
  * - task.fail - Fail a task (used by tests to simulate failure)
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
@@ -12,13 +14,13 @@ import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shar
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/managers/room-manager';
-import { TaskManager } from '../room';
+import { TaskManager } from '../room/managers/task-manager';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
 
-export type TaskManagerLike = Pick<TaskManager, 'listTasks' | 'failTask'>;
+export type TaskManagerLike = Pick<TaskManager, 'createTask' | 'getTask' | 'listTasks' | 'failTask'>;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
 
@@ -72,6 +74,37 @@ export function setupTaskHandlers(
 		}
 	};
 
+	// task.create - Create task in room
+	messageHub.onRequest('task.create', async (data) => {
+		const params = data as {
+			roomId: string;
+			title: string;
+			description: string;
+			priority?: TaskPriority;
+			dependsOn?: string[];
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.title) {
+			throw new Error('Task title is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.createTask({
+			title: params.title,
+			description: params.description ?? '',
+			priority: params.priority,
+			dependsOn: params.dependsOn,
+		});
+
+		// Emit room.overview for new task creation (significant change)
+		emitRoomOverview(params.roomId);
+
+		return { task };
+	});
+
 	// task.list - List tasks in room
 	messageHub.onRequest('task.list', async (data) => {
 		const params = data as {
@@ -91,6 +124,27 @@ export function setupTaskHandlers(
 		});
 
 		return { tasks };
+	});
+
+	// task.get - Get task details
+	messageHub.onRequest('task.get', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		return { task };
 	});
 
 	// task.fail - Fail a task

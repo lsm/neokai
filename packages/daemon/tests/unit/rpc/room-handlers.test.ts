@@ -211,6 +211,66 @@ describe('Room RPC Handlers', () => {
 		});
 	});
 
+	describe('room.list', () => {
+		it('returns list of rooms', async () => {
+			const handler = messageHubData.handlers.get('room.list');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({}, {})) as { rooms: Room[] };
+
+			expect(result.rooms).toBeDefined();
+			expect(Array.isArray(result.rooms)).toBe(true);
+		});
+
+		it('passes includeArchived parameter', async () => {
+			const handler = messageHubData.handlers.get('room.list');
+			expect(handler).toBeDefined();
+
+			await handler!({ includeArchived: true }, {});
+
+			expect(roomManagerData.mocks.listRooms).toHaveBeenCalledWith(true);
+		});
+
+		it('defaults includeArchived to false', async () => {
+			const handler = messageHubData.handlers.get('room.list');
+			expect(handler).toBeDefined();
+
+			await handler!({}, {});
+
+			expect(roomManagerData.mocks.listRooms).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('room.get', () => {
+		it('returns room overview', async () => {
+			const handler = messageHubData.handlers.get('room.get');
+			expect(handler).toBeDefined();
+
+			const result = await handler!({ roomId: 'room-123' }, {});
+
+			expect(result).toBeDefined();
+			expect(roomManagerData.mocks.getRoomOverview).toHaveBeenCalledWith('room-123');
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('room.get');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({}, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when room not found', async () => {
+			const handler = messageHubData.handlers.get('room.get');
+			expect(handler).toBeDefined();
+
+			roomManagerData.mocks.getRoomOverview.mockReturnValueOnce(null);
+
+			await expect(handler!({ roomId: 'non-existent' }, {})).rejects.toThrow(
+				'Room not found: non-existent'
+			);
+		});
+	});
+
 	describe('room.update', () => {
 		it('updates room with all parameters', async () => {
 			const handler = messageHubData.handlers.get('room.update');

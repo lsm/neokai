@@ -3,6 +3,8 @@
  *
  * RPC handlers for room operations:
  * - room.create - Create a room
+ * - room.list - List all rooms
+ * - room.get - Get room details
  * - room.update - Update room
  * - room.archive - Archive room
  * - room.delete - Delete room
@@ -87,6 +89,29 @@ export function setupRoomHandlers(
 			});
 
 		return { room };
+	});
+
+	// room.list - List all rooms
+	messageHub.onRequest('room.list', async (data) => {
+		const params = data as { includeArchived?: boolean };
+		const rooms = roomManager.listRooms(params.includeArchived ?? false);
+		return { rooms };
+	});
+
+	// room.get - Get room overview with related data
+	messageHub.onRequest('room.get', async (data) => {
+		const params = data as { roomId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+
+		const overview = roomManager.getRoomOverview(params.roomId);
+		if (!overview) {
+			throw new Error(`Room not found: ${params.roomId}`);
+		}
+
+		return overview; // Returns RoomOverview directly (not wrapped in { room })
 	});
 
 	// room.update - Update a room
