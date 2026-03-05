@@ -32,7 +32,7 @@ describe('Room Chat Agent Tools (API-dependent)', () => {
 		// Initialize workspace as git repo so worktree creation succeeds
 		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
 		const { execSync } = await import('child_process');
-		execSync('git init && git commit --allow-empty -m "init"', {
+		execSync('git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"', {
 			cwd: workspace,
 			stdio: 'pipe',
 		});

@@ -155,6 +155,8 @@ describe('SDKMessageHandler', () => {
 			lifecycleManager: mockLifecycleManager,
 			queryObject: null,
 			queryPromise: null,
+			isCustomQueryProvider: false,
+			contextAutoQueueEnabled: true,
 		};
 
 		handler = new SDKMessageHandler(mockContext);

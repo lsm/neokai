@@ -188,7 +188,9 @@ jobs:
           - module: room-2
             test_path: >-
               tests/online/room/room-multi-agent-flow.test.ts
+              tests/online/room/room-planner-two-phase.test.ts
               tests/online/room/room-replan-recovery.test.ts
+              tests/online/room/room-reviewer-flow.test.ts
             timeout: 10
           - module: rpc-1
             test_path: >-
