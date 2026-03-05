@@ -916,8 +916,8 @@ describe('RoomRuntime flow', () => {
 			expect(updatedTask!.error).toContain('worktree');
 		});
 
-		test('falls back to workspace when createWorktree returns null for planner role', async () => {
-			// Non-coder roles fall back to the main workspace when worktree creation fails
+		test('fails task when createWorktree returns null for planner role', async () => {
+			// All roles require an isolated worktree — planner tasks should also fail
 			const isolCtx = createRuntimeTestContext();
 			(
 				isolCtx.sessionFactory as {
@@ -939,13 +939,14 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// The planning task should proceed (not fail) even without a worktree
+			// The planning task should have been created by spawnPlanningGroup and then failed
 			const allTasks = await isolCtx.taskManager.listTasks({ status: 'failed' });
-			expect(allTasks.length).toBe(0);
+			expect(allTasks.length).toBeGreaterThan(0);
+			expect(allTasks[0].error).toContain('worktree');
 		});
 
-		test('falls back to workspace when createWorktree returns null for general role', async () => {
-			// Non-coder roles fall back to the main workspace when worktree creation fails
+		test('fails task when createWorktree returns null for general role', async () => {
+			// General tasks also require worktrees
 			const isolCtx = createRuntimeTestContext();
 			(
 				isolCtx.sessionFactory as {
@@ -963,9 +964,10 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// Task should proceed (not fail) even without a worktree
+			// Task should be failed with a worktree-related error
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).not.toBe('failed');
+			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.error).toContain('worktree');
 		});
 
 		test('creates worktree with meaningful branch name derived from task title', async () => {

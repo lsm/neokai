@@ -154,20 +154,19 @@ export class TaskGroupManager {
 		const workerSessionId = `${workerConfig.role}:${room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 		const leaderSessionId = `leader:${room.id}:${task.id}:${generateUUID().slice(0, 8)}`;
 
-		// Create an isolated worktree so each group works in its own branch.
-		// Coder tasks REQUIRE worktrees (they create branches/PRs).
-		// Other roles (planner, etc.) fall back to the main workspace if worktree creation fails.
+		// Create an isolated worktree for ALL tasks so each group works in its own branch.
+		// Worker and leader sessions share the same worktree for the task.
 		const branchName = taskTitleToBranchName(task.title) ?? `task/${workerSessionId}`;
 		const worktreePath = await this.sessionFactory.createWorktree(
 			this.workspacePath,
 			workerSessionId,
 			branchName
 		);
-		if (!worktreePath && workerConfig.role === 'coder') {
+		if (!worktreePath) {
 			await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for task');
-			throw new Error('Worktree creation failed — coder tasks require isolation');
+			throw new Error('Worktree creation failed — task requires isolation');
 		}
-		const groupWorkspacePath = worktreePath ?? this.workspacePath;
+		const groupWorkspacePath = worktreePath;
 
 		// Build worker init from the provided config, using the group workspace path
 		const workerInit = workerConfig.initFactory(workerSessionId);

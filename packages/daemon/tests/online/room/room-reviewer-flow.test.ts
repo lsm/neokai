@@ -23,13 +23,11 @@
  * - Makes real API calls (Sonnet for workers, Sonnet+Haiku for reviewers)
  */
 
-import { execSync } from 'child_process';
-import { mkdirSync, writeFileSync, chmodSync } from 'fs';
-import path from 'path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import {
+	setupGitEnvironment,
 	createRoom,
 	createGoal,
 	waitForTask,
@@ -40,130 +38,6 @@ import {
 // Use Sonnet for room agents
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
-
-/**
- * Create a bare git remote + stateful mock `gh` CLI in the workspace.
- *
- * This is needed because:
- * - The coder worker creates feature branches and pushes code
- * - The Leader's system prompt requires PRs for the reviewer workflow
- * - Without a remote and `gh`, the agent can't create PRs and will fail_task
- *
- * The mock `gh` is STATEFUL to enforce reviewer dispatch:
- * - `gh pr view ... reviews` initially returns 0 reviews
- * - `gh api` calls (review POSTs) create a flag file
- * - After flag is set, `gh pr view ... reviews` returns 1
- *
- * This forces the lifecycle hooks to reject `submit_for_review` until
- * actual reviewer sub-agents have "posted" reviews via `gh api`.
- */
-function setupGitEnvironment(workspace: string): void {
-	// 1. Init as git repo with a proper initial commit
-	execSync(
-		'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
-		{
-			cwd: workspace,
-			stdio: 'pipe',
-		}
-	);
-
-	// 2. Create a bare remote repo so `git push` works
-	const bareRemote = path.join(workspace, '..', `bare-remote-${Date.now()}`);
-	mkdirSync(bareRemote, { recursive: true });
-	execSync('git init --bare', { cwd: bareRemote, stdio: 'pipe' });
-	execSync(`git remote add origin "${bareRemote}"`, {
-		cwd: workspace,
-		stdio: 'pipe',
-	});
-	// Push initial commit so remote has a default branch
-	execSync('git push -u origin HEAD', {
-		cwd: workspace,
-		stdio: 'pipe',
-	});
-
-	// 3. Create state directory for mock gh
-	const stateDir = path.join(workspace, '.mock-state');
-	mkdirSync(stateDir, { recursive: true });
-
-	// 4. Create mock `gh` script
-	const mockBin = path.join(workspace, '.mock-bin');
-	mkdirSync(mockBin, { recursive: true });
-
-	// The mock is stateful: `gh api` POST creates a flag file,
-	// and `gh pr view ... reviews` checks for it.
-	// This forces the Leader to dispatch reviewers before submit_for_review.
-	const ghScript = `#!/bin/bash
-# Stateful mock gh CLI for testing reviewer flow
-STATE_DIR="${stateDir}"
-
-case "$1" in
-  pr)
-    case "$2" in
-      create)
-        echo "https://github.com/test/repo/pull/1"
-        exit 0
-        ;;
-      list)
-        echo '[{"number":1,"url":"https://github.com/test/repo/pull/1","headRefName":"test-branch"}]'
-        exit 0
-        ;;
-      view)
-        if echo "$*" | grep -q "headRefOid"; then
-          # Return HEAD SHA from current directory (the worktree)
-          git rev-parse HEAD 2>/dev/null || echo "abc1234"
-          exit 0
-        elif echo "$*" | grep -q "reviews"; then
-          # Stateful: check if reviews have been "posted" via gh api
-          if [ -f "$STATE_DIR/.reviews-posted" ]; then
-            echo '1'
-          else
-            echo '0'
-          fi
-          exit 0
-        else
-          echo '{"number":1,"url":"https://github.com/test/repo/pull/1","state":"OPEN"}'
-          exit 0
-        fi
-        ;;
-      review)
-        # gh pr review --approve/--comment/--request-changes
-        # This is the ONLY way to post a proper PR review that the lifecycle hook detects.
-        touch "$STATE_DIR/.reviews-posted"
-        echo '{"state":"APPROVED"}'
-        exit 0
-        ;;
-      comment)
-        # gh pr comment - creates a PR comment (NOT a review)
-        echo "https://github.com/test/repo/pull/1#issuecomment-1"
-        exit 0
-        ;;
-      merge)
-        # gh pr merge — used by worker to merge approved PR
-        echo "Pull request #1 merged"
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    ;;
-  api)
-    # Generic gh api call - does NOT set reviews-posted flag.
-    # Only gh pr review creates proper PR reviews that the lifecycle hook detects.
-    echo '{"id":1}'
-    exit 0
-    ;;
-  *)
-    exit 0
-    ;;
-esac
-`;
-	writeFileSync(path.join(mockBin, 'gh'), ghScript);
-	chmodSync(path.join(mockBin, 'gh'), 0o755);
-
-	// 5. Prepend mock bin to PATH so agents find mock `gh` first
-	process.env.PATH = `${mockBin}:${process.env.PATH}`;
-}
 
 describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
@@ -435,8 +309,10 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			expect(group.state).toBe('completed');
 
 			// --- Verify worker received the merge instruction ---
+			// Use high limit — the approval message may be beyond the default 100
 			const messagesResult = (await daemon.messageHub.request('task.getGroupMessages', {
 				groupId: group.id,
+				limit: 500,
 			})) as { messages: Array<{ role: string; messageType: string; content: string }> };
 
 			// There should be a human message with the merge instruction

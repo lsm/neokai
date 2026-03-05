@@ -12,12 +12,16 @@
  * - Makes real API calls
  */
 
-import { execSync } from 'child_process';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import type { RoomGoal } from '@neokai/shared';
-import { waitForTask, waitForTaskCount, waitForGroupState } from './room-test-helpers';
+import {
+	setupGitEnvironment,
+	waitForTask,
+	waitForTaskCount,
+	waitForGroupState,
+} from './room-test-helpers';
 
 // Use Sonnet for room agents (default model may be GLM in CI)
 const savedModel = process.env.DEFAULT_MODEL;
@@ -30,15 +34,8 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
 
-		// Initialize workspace as git repo so worktree creation succeeds
-		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
-		execSync(
-			'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
-			{
-				cwd: workspace,
-				stdio: 'pipe',
-			}
-		);
+		// Set up git environment with bare remote and mock gh CLI
+		setupGitEnvironment(process.env.NEOKAI_WORKSPACE_PATH!);
 
 		const result = (await daemon.messageHub.request('room.create', {
 			name: `Multi-Agent Flow ${Date.now()}`,

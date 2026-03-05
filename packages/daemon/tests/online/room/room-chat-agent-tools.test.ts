@@ -17,7 +17,7 @@ import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import type { RoomGoal } from '@neokai/shared';
-import { waitForTask, createRoom } from './room-test-helpers';
+import { setupGitEnvironment, waitForTask, createRoom } from './room-test-helpers';
 
 // Use Sonnet for room agents
 const savedModel = process.env.DEFAULT_MODEL;
@@ -29,16 +29,8 @@ describe('Room Chat Agent Tools (API-dependent)', () => {
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
 
-		// Initialize workspace as git repo so worktree creation succeeds
-		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
-		const { execSync } = await import('child_process');
-		execSync(
-			'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
-			{
-				cwd: workspace,
-				stdio: 'pipe',
-			}
-		);
+		// Set up git environment with bare remote and mock gh CLI
+		setupGitEnvironment(process.env.NEOKAI_WORKSPACE_PATH!);
 	}, 30_000);
 
 	afterAll(

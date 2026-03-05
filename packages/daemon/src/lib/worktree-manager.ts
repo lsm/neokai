@@ -60,9 +60,10 @@ export class WorktreeManager {
 				return root;
 			}
 
+			this.logger.warn(`No .git found traversing from: ${path}`);
 			return null;
-		} catch {
-			// Not a git repository or git command failed
+		} catch (error) {
+			this.logger.warn(`findGitRoot failed for ${path}:`, error);
 			return null;
 		}
 	}
@@ -149,6 +150,7 @@ export class WorktreeManager {
 		// Find git root
 		const gitRoot = await this.findGitRoot(repoPath);
 		if (!gitRoot) {
+			this.logger.warn(`createWorktree: no git root found for repoPath=${repoPath}`);
 			return null;
 		}
 

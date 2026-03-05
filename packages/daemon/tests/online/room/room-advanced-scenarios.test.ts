@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import {
+	setupGitEnvironment,
 	waitForTask,
 	waitForGroupState,
 	createRoom,
@@ -34,16 +35,8 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 	beforeAll(async () => {
 		daemon = await createDaemonServer();
 
-		// Initialize workspace as git repo so worktree creation succeeds
-		const workspace = process.env.NEOKAI_WORKSPACE_PATH!;
-		const { execSync } = await import('child_process');
-		execSync(
-			'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
-			{
-				cwd: workspace,
-				stdio: 'pipe',
-			}
-		);
+		// Set up git environment with bare remote and mock gh CLI
+		setupGitEnvironment(process.env.NEOKAI_WORKSPACE_PATH!);
 	}, 30_000);
 
 	afterAll(

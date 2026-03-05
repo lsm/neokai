@@ -1,9 +1,113 @@
 /**
- * Shared polling helpers for room online tests.
+ * Shared helpers for room online tests.
  */
 
+import { execSync } from 'child_process';
+import { mkdirSync, writeFileSync, chmodSync } from 'fs';
+import path from 'path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import type { NeoTask, RoomGoal } from '@neokai/shared';
+
+/**
+ * Set up a full git environment in the workspace for room online tests.
+ *
+ * Creates:
+ * 1. A git repo with an initial commit (with user identity for CI)
+ * 2. A bare remote repo so `git push` works
+ * 3. A stateful mock `gh` CLI that handles pr create/list/view/review/comment/merge
+ * 4. Prepends mock bin to PATH
+ *
+ * The mock `gh` is stateful: `gh pr review` sets a flag file, and
+ * `gh pr view ... reviews` checks it. This enforces that reviewer
+ * sub-agents must post reviews before `submit_for_review` passes the
+ * lifecycle gate.
+ */
+export function setupGitEnvironment(workspace: string): void {
+	// 1. Init as git repo with a proper initial commit
+	execSync(
+		'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
+		{ cwd: workspace, stdio: 'pipe' }
+	);
+
+	// 2. Create a bare remote repo so `git push` works
+	const bareRemote = path.join(workspace, '..', `bare-remote-${Date.now()}`);
+	mkdirSync(bareRemote, { recursive: true });
+	execSync('git init --bare', { cwd: bareRemote, stdio: 'pipe' });
+	execSync(`git remote add origin "${bareRemote}"`, { cwd: workspace, stdio: 'pipe' });
+	execSync('git push -u origin HEAD', { cwd: workspace, stdio: 'pipe' });
+
+	// 3. Create state directory for mock gh
+	const stateDir = path.join(workspace, '.mock-state');
+	mkdirSync(stateDir, { recursive: true });
+
+	// 4. Create mock `gh` script
+	const mockBin = path.join(workspace, '.mock-bin');
+	mkdirSync(mockBin, { recursive: true });
+
+	const ghScript = `#!/bin/bash
+# Stateful mock gh CLI for room online tests
+STATE_DIR="${stateDir}"
+
+case "$1" in
+  pr)
+    case "$2" in
+      create)
+        echo "https://github.com/test/repo/pull/1"
+        exit 0
+        ;;
+      list)
+        echo '[{"number":1,"url":"https://github.com/test/repo/pull/1","headRefName":"test-branch"}]'
+        exit 0
+        ;;
+      view)
+        if echo "$*" | grep -q "headRefOid"; then
+          git rev-parse HEAD 2>/dev/null || echo "abc1234"
+          exit 0
+        elif echo "$*" | grep -q "reviews"; then
+          if [ -f "$STATE_DIR/.reviews-posted" ]; then
+            echo '1'
+          else
+            echo '0'
+          fi
+          exit 0
+        else
+          echo '{"number":1,"url":"https://github.com/test/repo/pull/1","state":"OPEN"}'
+          exit 0
+        fi
+        ;;
+      review)
+        touch "$STATE_DIR/.reviews-posted"
+        echo '{"state":"APPROVED"}'
+        exit 0
+        ;;
+      comment)
+        echo "https://github.com/test/repo/pull/1#issuecomment-1"
+        exit 0
+        ;;
+      merge)
+        echo "Pull request #1 merged"
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  api)
+    echo '{"id":1}'
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`;
+	writeFileSync(path.join(mockBin, 'gh'), ghScript);
+	chmodSync(path.join(mockBin, 'gh'), 0o755);
+
+	// 5. Prepend mock bin to PATH so agents find mock `gh` first
+	process.env.PATH = `${mockBin}:${process.env.PATH}`;
+}
 
 export async function waitForTask(
 	daemon: DaemonServerContext,

@@ -30,13 +30,11 @@
  * - Makes real API calls (Sonnet for workers/leaders, Sonnet+Haiku for reviewers)
  */
 
-import { execSync } from 'child_process';
-import { mkdirSync, writeFileSync, chmodSync } from 'fs';
-import path from 'path';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import {
+	setupGitEnvironment,
 	createRoom,
 	createGoal,
 	waitForTask,
@@ -48,115 +46,6 @@ import {
 // Use Sonnet for room agents
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
-
-/**
- * Create a bare git remote + stateful mock `gh` CLI in the workspace.
- *
- * The mock `gh` supports:
- * - pr create/list/view/review/comment/merge — all needed for two-phase flow
- * - Stateful review tracking: `gh pr review` sets a flag, `gh pr view ... reviews` checks it
- * - `gh pr merge` for phase 2 plan PR merging
- */
-function setupGitEnvironment(workspace: string): void {
-	// 1. Init as git repo with a proper initial commit
-	execSync(
-		'git init && git -c user.name=test -c user.email=test@test.com commit --allow-empty -m "init"',
-		{
-			cwd: workspace,
-			stdio: 'pipe',
-		}
-	);
-
-	// 2. Create a bare remote repo so `git push` works
-	const bareRemote = path.join(workspace, '..', `bare-remote-${Date.now()}`);
-	mkdirSync(bareRemote, { recursive: true });
-	execSync('git init --bare', { cwd: bareRemote, stdio: 'pipe' });
-	execSync(`git remote add origin "${bareRemote}"`, {
-		cwd: workspace,
-		stdio: 'pipe',
-	});
-	// Push initial commit so remote has a default branch
-	execSync('git push -u origin HEAD', {
-		cwd: workspace,
-		stdio: 'pipe',
-	});
-
-	// 3. Create state directory for mock gh
-	const stateDir = path.join(workspace, '.mock-state');
-	mkdirSync(stateDir, { recursive: true });
-
-	// 4. Create mock `gh` script
-	const mockBin = path.join(workspace, '.mock-bin');
-	mkdirSync(mockBin, { recursive: true });
-
-	const ghScript = `#!/bin/bash
-# Stateful mock gh CLI for testing two-phase planner flow
-STATE_DIR="${stateDir}"
-
-case "$1" in
-  pr)
-    case "$2" in
-      create)
-        echo "https://github.com/test/repo/pull/1"
-        exit 0
-        ;;
-      list)
-        echo '[{"number":1,"url":"https://github.com/test/repo/pull/1","headRefName":"test-branch"}]'
-        exit 0
-        ;;
-      view)
-        if echo "$*" | grep -q "headRefOid"; then
-          # Return HEAD SHA from current directory (the worktree)
-          git rev-parse HEAD 2>/dev/null || echo "abc1234"
-          exit 0
-        elif echo "$*" | grep -q "reviews"; then
-          # Stateful: check if reviews have been "posted" via gh pr review
-          if [ -f "$STATE_DIR/.reviews-posted" ]; then
-            echo '1'
-          else
-            echo '0'
-          fi
-          exit 0
-        else
-          echo '{"number":1,"url":"https://github.com/test/repo/pull/1","state":"OPEN"}'
-          exit 0
-        fi
-        ;;
-      review)
-        # gh pr review --approve/--comment/--request-changes
-        touch "$STATE_DIR/.reviews-posted"
-        echo '{"state":"APPROVED"}'
-        exit 0
-        ;;
-      comment)
-        echo "https://github.com/test/repo/pull/1#issuecomment-1"
-        exit 0
-        ;;
-      merge)
-        # gh pr merge — used by phase 2 planner to merge the plan PR
-        echo "Pull request #1 merged"
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    ;;
-  api)
-    echo '{"id":1}'
-    exit 0
-    ;;
-  *)
-    exit 0
-    ;;
-esac
-`;
-	writeFileSync(path.join(mockBin, 'gh'), ghScript);
-	chmodSync(path.join(mockBin, 'gh'), 0o755);
-
-	// 5. Prepend mock bin to PATH so agents find mock `gh` first
-	process.env.PATH = `${mockBin}:${process.env.PATH}`;
-}
 
 describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
