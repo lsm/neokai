@@ -65,7 +65,8 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 				daemon,
 				roomId,
 				'Add a triple utility',
-				'Create src/triple.ts that exports triple(n: number): number which returns n * 3.'
+				'Create a single file src/triple.ts that exports function triple(n: number): number returning n * 3. ' +
+					'This is one trivial task — just the one file, no tests, no config, no setup.'
 			);
 
 			const terminalPlanning = await waitForTask(

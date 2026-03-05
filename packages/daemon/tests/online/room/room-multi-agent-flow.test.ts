@@ -67,7 +67,9 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			const goalResult = (await daemon.messageHub.request('goal.create', {
 				roomId,
 				title: 'Add a capitalize utility',
-				description: 'Create src/capitalize.ts that exports capitalize(str: string): string.',
+				description:
+					'Create a single file src/capitalize.ts that exports function capitalize(s: string): string. ' +
+					'This is one trivial task — just the one file, no tests, no config, no setup.',
 			})) as { goal: RoomGoal };
 
 			const goalId = goalResult.goal.id;

@@ -148,6 +148,10 @@ export class RoomRuntimeService {
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
+				// Ensure the SDK query is running before enqueuing. After daemon
+				// restart, restored sessions are in cache but haven't started
+				// their query yet (lazy start to avoid startup timeout).
+				await session.ensureQueryStarted();
 				// Pre-persist to DB with 'queued' status before enqueuing,
 				// exactly like the normal UI send flow. This ensures
 				// acknowledgePersistedUserMessage() finds the message by UUID
@@ -198,7 +202,10 @@ export class RoomRuntimeService {
 				if (!session) return false;
 
 				agentSessions.set(sessionId, session);
-				await session.startStreamingQuery();
+				// Don't call startStreamingQuery() here — the SDK query will be
+				// started lazily when injectMessage() is called. Eagerly starting
+				// without a queued message causes a 15s startup timeout because the
+				// SDK waits for user input that never arrives.
 				return true;
 			},
 			createWorktree: async (basePath, sessionId, branchName) => {
@@ -378,6 +385,34 @@ export class RoomRuntimeService {
 						`failed ${result.failedGroups}, restored ${result.restoredSessions} sessions, ` +
 						`reattached ${result.reattachedObservers} observers`
 				);
+			}
+
+			// Inject continuation messages for restored sessions that need to resume work.
+			// Sessions are in cache (lazy-start) but SDK query hasn't started yet.
+			// injectMessage → ensureQueryStarted() starts the query lazily.
+			if (result.restoredSessions > 0) {
+				const activeGroups = groupRepo.getActiveGroups(roomId);
+				for (const group of activeGroups) {
+					try {
+						if (group.state === 'awaiting_worker') {
+							await sessionFactory.injectMessage(
+								group.workerSessionId,
+								'The system was restarted. Continue working on the task.'
+							);
+						} else if (group.state === 'awaiting_leader') {
+							await sessionFactory.injectMessage(
+								group.leaderSessionId,
+								'The system was restarted. Continue reviewing from where you left off.'
+							);
+						}
+						// awaiting_human: no message needed — human will provide one
+					} catch (error) {
+						log.error(
+							`Failed to inject continuation for group ${group.id} (${group.state}):`,
+							error
+						);
+					}
+				}
 			}
 		} catch (error) {
 			log.error(`Failed to recover runtime for room ${roomId}:`, error);

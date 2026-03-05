@@ -867,6 +867,7 @@ export class RoomRuntime {
 	private async recoverZombieGroups(zombies: SessionGroup[]): Promise<void> {
 		for (const group of zombies) {
 			// Check worker session liveness
+			let workerRestored = false;
 			if (!this.sessionFactory.hasSession(group.workerSessionId)) {
 				log.warn(
 					`Zombie detected: group ${group.id} (state=${group.state}) ` +
@@ -878,6 +879,7 @@ export class RoomRuntime {
 					this.observer.observe(group.workerSessionId, (state) => {
 						this.onWorkerTerminalState(group.id, state);
 					});
+					workerRestored = true;
 				} else {
 					log.error(
 						`Failed to restore worker ${group.workerSessionId}. Failing group ${group.id}.`
@@ -893,6 +895,7 @@ export class RoomRuntime {
 			}
 
 			// Check leader session liveness (only when leader is the active actor)
+			let leaderRestored = false;
 			if (
 				group.state === 'awaiting_leader' &&
 				!this.sessionFactory.hasSession(group.leaderSessionId)
@@ -907,6 +910,7 @@ export class RoomRuntime {
 					this.observer.observe(group.leaderSessionId, (state) => {
 						this.onLeaderTerminalState(group.id, state);
 					});
+					leaderRestored = true;
 				} else {
 					log.error(
 						`Failed to restore leader ${group.leaderSessionId}. Failing group ${group.id}.`
@@ -918,6 +922,26 @@ export class RoomRuntime {
 					this.cleanupMirroring(group.id, 'Leader session lost — could not be restored.');
 					await this.emitTaskUpdateById(group.taskId);
 				}
+			}
+
+			// Inject continuation message for restored sessions that need to resume work.
+			// The SDK query is started lazily by injectMessage → ensureQueryStarted().
+			// Sessions in awaiting_human don't need a message — human will provide one.
+			try {
+				if (workerRestored && group.state === 'awaiting_worker') {
+					await this.sessionFactory.injectMessage(
+						group.workerSessionId,
+						'The system was restarted. Continue working on the task from where you left off.'
+					);
+				}
+				if (leaderRestored && group.state === 'awaiting_leader') {
+					await this.sessionFactory.injectMessage(
+						group.leaderSessionId,
+						'The system was restarted. Continue reviewing from where you left off.'
+					);
+				}
+			} catch (error) {
+				log.error(`Failed to inject continuation message for group ${group.id}:`, error);
 			}
 		}
 	}

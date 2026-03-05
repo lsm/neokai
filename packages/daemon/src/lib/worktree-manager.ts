@@ -164,8 +164,12 @@ export class WorktreeManager {
 		}
 
 		// Generate worktree path and branch name
-		const worktreePath = join(worktreesDir, sessionId);
-		let branchName = customBranchName || `session/${sessionId}`;
+		// Colons are invalid in git branch names (git check-ref-format) and can
+		// confuse tools when used in filesystem paths.  Room session IDs use
+		// colons (e.g. planner:roomId:taskId:uuid), so sanitize everywhere.
+		const safeSessionId = sessionId.replace(/:/g, '-');
+		const worktreePath = join(worktreesDir, safeSessionId);
+		let branchName = customBranchName || `session/${safeSessionId}`;
 
 		try {
 			// Check if worktree already exists (shouldn't happen, but safety check)
@@ -177,7 +181,7 @@ export class WorktreeManager {
 			if (customBranchName) {
 				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
 				if (branchExists) {
-					branchName = `session/${sessionId}`; // Fallback to UUID-based branch
+					branchName = `session/${safeSessionId}`; // Fallback to UUID-based branch
 				}
 			}
 
