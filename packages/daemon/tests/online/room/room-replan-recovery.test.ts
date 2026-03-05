@@ -81,15 +81,20 @@ describe('Room Replan Recovery (API-dependent)', () => {
 					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
-			// If planning is in 'review', approve it to promote draft tasks
+			// If planning is in 'review', approve via goal.approveTask to trigger phase 2
+			// (worker resumes with approved=true, creates draft tasks, leader completes)
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('task.approve', {
+				await daemon.messageHub.request('goal.approveTask', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
 			}
 
-			// Wait for coding task to complete (full lifecycle)
+			// Wait for planning to fully complete (phase 2 may take time)
+			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 180_000);
+
+			// Wait for coding task to reach terminal state (full lifecycle)
+			// Two-phase coder: code → review → human approve → worker merges PR → complete
 			const terminalCoding = await waitForTask(
 				daemon,
 				roomId,
@@ -100,6 +105,13 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				throw new Error(
 					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
 				);
+			}
+			if (terminalCoding.status === 'review') {
+				await daemon.messageHub.request('goal.approveTask', {
+					roomId,
+					taskId: terminalCoding.id,
+				});
+				await waitForTask(daemon, roomId, { taskType: 'coding', status: ['completed'] }, 180_000);
 			}
 
 			// Record initial state
@@ -146,6 +158,29 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			expect(goalAfterReplan.planning_attempts).toBeGreaterThan(attemptsBefore);
 
 			// --- Phase 4: Replan produces new execution tasks ---
+			// Wait for new planning to reach terminal state and approve if needed
+			const newTerminalPlanning = await waitForNewTask(
+				daemon,
+				roomId,
+				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				existingTaskIds,
+				180_000
+			);
+			if (newTerminalPlanning.status === 'review') {
+				await daemon.messageHub.request('goal.approveTask', {
+					roomId,
+					taskId: newTerminalPlanning.id,
+				});
+				// Wait for planning to fully complete (phase 2 after approval)
+				await waitForNewTask(
+					daemon,
+					roomId,
+					{ taskType: 'planning', status: ['completed'] },
+					existingTaskIds,
+					180_000
+				);
+			}
+
 			// Just verify new coding tasks appear (don't wait for full completion
 			// to save ~30-60s — the execution path is already tested elsewhere)
 			const newCodingTask = await waitForNewTask(

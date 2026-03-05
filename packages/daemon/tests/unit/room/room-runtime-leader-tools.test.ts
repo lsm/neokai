@@ -161,7 +161,7 @@ describe('RoomRuntime leader tools', () => {
 				kind: 'idle',
 			});
 
-			// Leader calls complete_task — should fail (submit_for_review required)
+			// Leader calls complete_task — should fail (submit_for_review required for planners)
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Plan done',
 			});

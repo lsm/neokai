@@ -500,18 +500,35 @@ export class RoomRuntime {
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
+				// Re-fetch group to get latest state (submit_for_review may have changed it)
+				const freshGroup = this.groupRepo.getGroup(groupId);
+				const currentState = freshGroup?.state ?? group.state;
+
+				// Block complete_task while awaiting human approval.
+				// The leader may call complete_task right after submit_for_review in the same turn;
+				// we must reject it because the human hasn't approved yet.
+				if (currentState === 'awaiting_human') {
+					this.groupRepo.setLeaderCalledTool(groupId, false);
+					return jsonResult({
+						success: false,
+						error: 'Task is awaiting human approval. You cannot complete it yet.',
+						action_required:
+							'Wait for the human to approve or reject the PR. Do not call any more tools.',
+					});
+				}
+
 				// State machine enforcement: coding and planning tasks must go through submit_for_review first.
-				// Exception: approved=true means human already approved (plan or PR)
+				// Both follow a two-phase flow: work → review → human approval → merge/create tasks → complete.
+				// Exception: approved=true means human already approved (PR or plan).
 				if (
 					(group.workerRole === 'coder' || group.workerRole === 'planner') &&
 					!group.submittedForReview &&
-					!group.approved
+					!(freshGroup ?? group).approved
 				) {
 					this.groupRepo.setLeaderCalledTool(groupId, false);
 					return jsonResult({
 						success: false,
-						error:
-							'Coding and planning tasks must go through submit_for_review before complete_task.',
+						error: 'Tasks must go through submit_for_review before complete_task.',
 						action_required:
 							'Call submit_for_review with the PR URL first. After human approval, you can call complete_task.',
 					});
@@ -533,7 +550,7 @@ export class RoomRuntime {
 							taskId: group.taskId,
 							groupId,
 							hasReviewers,
-							approved: group.approved,
+							approved: (freshGroup ?? group).approved,
 						};
 						if (hookTask.taskType === 'planning') {
 							const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);

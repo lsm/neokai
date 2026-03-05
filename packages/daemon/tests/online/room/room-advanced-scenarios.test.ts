@@ -79,12 +79,17 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
+			// If planning is in 'review', approve via goal.approveTask to trigger phase 2
+			// (worker resumes with approved=true, creates draft tasks, leader completes)
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('task.approve', {
+				await daemon.messageHub.request('goal.approveTask', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
 			}
+
+			// Wait for planning to fully complete (phase 2 may take time)
+			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 180_000);
 
 			// Wait for coding task to appear
 			await waitForTask(
@@ -106,8 +111,26 @@ describe('Room Advanced Scenarios (API-dependent)', () => {
 			const reactivatedGoal = await getGoal(daemon, roomId, goal.id);
 			expect(reactivatedGoal.status).toBe('active');
 
-			// Wait for coding task to complete (already-running group finishes
+			// Wait for coding task to reach terminal state (already-running group finishes
 			// or new group spawns after reactivation)
+			// Two-phase coder: code → review → human approve → worker merges PR → complete
+			const terminalCoding = await waitForTask(
+				daemon,
+				roomId,
+				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
+				180_000
+			);
+			if (terminalCoding.status === 'failed') {
+				throw new Error(
+					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
+			if (terminalCoding.status === 'review') {
+				await daemon.messageHub.request('goal.approveTask', {
+					roomId,
+					taskId: terminalCoding.id,
+				});
+			}
 			const completedTask = await waitForTask(
 				daemon,
 				roomId,

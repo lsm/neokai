@@ -100,6 +100,7 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			expect(planningGroup.id).toBeTruthy();
 
 			// --- Stage 2: Planning completes, execution tasks promoted ---
+			// Two-phase planner: plan → review → human approve → worker creates tasks → complete
 			const terminalPlanning = await waitForTask(
 				daemon,
 				roomId,
@@ -111,20 +112,24 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
-			// If planning is in 'review', approve it to promote draft tasks
+			// If planning is in 'review', approve via goal.approveTask to trigger phase 2
+			// (worker resumes with approved=true, creates draft tasks, leader completes)
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('task.approve', {
+				await daemon.messageHub.request('goal.approveTask', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
 			}
+
+			// Wait for planning to fully complete (phase 2 may take time for task creation)
+			await waitForTask(daemon, roomId, { taskType: 'planning', status: ['completed'] }, 180_000);
 
 			const execTasks = await waitForTaskCount(
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['pending', 'in_progress'] },
 				1,
-				30_000
+				60_000
 			);
 			expect(execTasks.length).toBeGreaterThanOrEqual(1);
 
@@ -136,17 +141,31 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			expect((goalAfterExecPromotion.linkedTaskIds ?? []).length).toBeGreaterThanOrEqual(2);
 
 			// --- Stage 3: Execution completes through worker → leader cycle ---
+			// Two-phase coder: code → review → human approve → worker merges PR → complete
+			const terminalCoding = await waitForTask(
+				daemon,
+				roomId,
+				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
+				180_000
+			);
+			if (terminalCoding.status === 'failed') {
+				throw new Error(
+					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
+				);
+			}
+			// If coding is in 'review', approve via goal.approveTask to trigger PR merge
+			if (terminalCoding.status === 'review') {
+				await daemon.messageHub.request('goal.approveTask', {
+					roomId,
+					taskId: terminalCoding.id,
+				});
+			}
 			const completedTask = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: ['completed', 'failed'] },
+				{ taskType: 'coding', status: ['completed'] },
 				180_000
 			);
-			if (completedTask.status === 'failed') {
-				throw new Error(
-					`Coding task failed: ${(completedTask as { error?: string }).error ?? 'unknown error'}`
-				);
-			}
 			expect(completedTask.status).toBe('completed');
 			expect(completedTask.result).toBeTruthy();
 			expect(completedTask.result!.length).toBeGreaterThan(10);
