@@ -163,28 +163,6 @@ export class TaskManager {
 	}
 
 	/**
-	 * Get pending tasks count
-	 */
-	async getPendingCount(): Promise<number> {
-		return this.taskRepo.countTasksByStatus(this.roomId, 'pending');
-	}
-
-	/**
-	 * Get active (in_progress) tasks count
-	 */
-	async getActiveCount(): Promise<number> {
-		return this.taskRepo.countTasksByStatus(this.roomId, 'in_progress');
-	}
-
-	/**
-	 * Get all active tasks (non-completed, non-failed)
-	 */
-	async getActiveTasks(): Promise<NeoTask[]> {
-		const tasks = await this.listTasks();
-		return tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed');
-	}
-
-	/**
 	 * Promote all draft tasks created by a planning task to pending.
 	 * Called when a planning task completes so its children enter the execution queue.
 	 */
@@ -308,40 +286,6 @@ export class TaskManager {
 		}
 
 		return updatedTask;
-	}
-
-	/**
-	 * Get next pending task (by priority)
-	 */
-	async getNextPendingTask(): Promise<NeoTask | null> {
-		const pendingTasks = await this.listTasks({ status: 'pending' });
-
-		if (pendingTasks.length === 0) {
-			return null;
-		}
-
-		// Sort by priority: urgent > high > normal > low
-		const priorityOrder: Record<TaskPriority, number> = {
-			urgent: 0,
-			high: 1,
-			normal: 2,
-			low: 3,
-		};
-
-		pendingTasks.sort((a, b) => {
-			const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
-			if (priorityDiff !== 0) return priorityDiff;
-			return a.createdAt - b.createdAt; // Older first if same priority
-		});
-
-		// Check dependencies
-		for (const task of pendingTasks) {
-			if (await this.areDependenciesMet(task)) {
-				return task;
-			}
-		}
-
-		return null;
 	}
 
 	/**

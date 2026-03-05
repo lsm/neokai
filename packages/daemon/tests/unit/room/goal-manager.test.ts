@@ -338,40 +338,6 @@ describe('GoalManager', () => {
 		});
 	});
 
-	describe('completeGoal', () => {
-		it('should complete goal and set progress to 100', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-
-			const updated = await goalManager.completeGoal(goal.id);
-
-			expect(updated.status).toBe('completed');
-			expect(updated.progress).toBe(100);
-			expect(updated.completedAt).toBeDefined();
-		});
-
-		it('should throw error for non-existent goal', async () => {
-			await expect(goalManager.completeGoal('non-existent')).rejects.toThrow(
-				'Goal not found: non-existent'
-			);
-		});
-	});
-
-	describe('archiveGoal', () => {
-		it('should archive goal', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-
-			const updated = await goalManager.archiveGoal(goal.id);
-
-			expect(updated.status).toBe('archived');
-		});
-
-		it('should throw error for non-existent goal', async () => {
-			await expect(goalManager.archiveGoal('non-existent')).rejects.toThrow(
-				'Goal not found: non-existent'
-			);
-		});
-	});
-
 	describe('reactivateGoal', () => {
 		it('should reactivate goal and return to active status', async () => {
 			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
@@ -445,45 +411,6 @@ describe('GoalManager', () => {
 			const updated = await goalManager.linkTaskToGoal(goal.id, task.id);
 
 			expect(updated.linkedTaskIds.filter((id) => id === task.id)).toHaveLength(1);
-		});
-	});
-
-	describe('unlinkTaskFromGoal', () => {
-		it('should unlink a task from a goal', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
-			await goalManager.linkTaskToGoal(goal.id, task.id);
-
-			const updated = await goalManager.unlinkTaskFromGoal(goal.id, task.id);
-
-			expect(updated.linkedTaskIds).not.toContain(task.id);
-		});
-
-		it('should throw error for non-existent goal', async () => {
-			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
-
-			await expect(goalManager.unlinkTaskFromGoal('non-existent', task.id)).rejects.toThrow(
-				'Goal not found: non-existent'
-			);
-		});
-
-		it('should recalculate progress when task is unlinked', async () => {
-			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
-			const task1 = await taskManager.createTask({ title: 'Task 1', description: '' });
-			const task2 = await taskManager.createTask({ title: 'Task 2', description: '' });
-			await taskManager.updateTaskProgress(task1.id, 50);
-			await taskManager.updateTaskProgress(task2.id, 100);
-
-			await goalManager.linkTaskToGoal(goal.id, task1.id);
-			await goalManager.linkTaskToGoal(goal.id, task2.id);
-
-			// Progress should be 75 (average of 50 and 100)
-			let updated = await goalManager.getGoal(goal.id);
-			expect(updated?.progress).toBe(75);
-
-			// Unlink task2, progress should now be 50
-			updated = await goalManager.unlinkTaskFromGoal(goal.id, task2.id);
-			expect(updated?.progress).toBe(50);
 		});
 	});
 
@@ -611,26 +538,6 @@ describe('GoalManager', () => {
 		});
 	});
 
-	describe('getActiveCount', () => {
-		it('should return 0 for room with no active goals', async () => {
-			const count = await goalManager.getActiveCount();
-
-			expect(count).toBe(0);
-		});
-
-		it('should return correct count of active and needs_human goals', async () => {
-			await goalManager.createGoal({ title: 'Goal 1', description: '' });
-			const goal2 = await goalManager.createGoal({ title: 'Goal 2', description: '' });
-			const goal3 = await goalManager.createGoal({ title: 'Goal 3', description: '' });
-			await goalManager.needsHumanGoal(goal2.id);
-			await goalManager.completeGoal(goal3.id);
-
-			const count = await goalManager.getActiveCount();
-
-			expect(count).toBe(2); // 1 active + 1 needs_human
-		});
-	});
-
 	describe('getActiveGoals', () => {
 		it('should return empty array when no active goals', async () => {
 			const goals = await goalManager.getActiveGoals();
@@ -643,9 +550,9 @@ describe('GoalManager', () => {
 			const goal2 = await goalManager.createGoal({ title: 'Needs Human Goal', description: '' });
 			await goalManager.needsHumanGoal(goal2.id);
 			const goal3 = await goalManager.createGoal({ title: 'Completed Goal', description: '' });
-			await goalManager.completeGoal(goal3.id);
+			await goalManager.updateGoalStatus(goal3.id, 'completed');
 			const goal4 = await goalManager.createGoal({ title: 'Archived Goal', description: '' });
-			await goalManager.archiveGoal(goal4.id);
+			await goalManager.updateGoalStatus(goal4.id, 'archived');
 
 			const goals = await goalManager.getActiveGoals();
 
@@ -718,7 +625,7 @@ describe('GoalManager', () => {
 
 		it('should not return completed goals', async () => {
 			const goal = await goalManager.createGoal({ title: 'Completed Goal', description: '' });
-			await goalManager.completeGoal(goal.id);
+			await goalManager.updateGoalStatus(goal.id, 'completed');
 
 			const nextGoal = await goalManager.getNextGoal();
 
@@ -727,7 +634,7 @@ describe('GoalManager', () => {
 
 		it('should not return archived goals', async () => {
 			const goal = await goalManager.createGoal({ title: 'Archived Goal', description: '' });
-			await goalManager.archiveGoal(goal.id);
+			await goalManager.updateGoalStatus(goal.id, 'archived');
 
 			const nextGoal = await goalManager.getNextGoal();
 
@@ -862,9 +769,9 @@ describe('GoalManager', () => {
 
 			await goalManager.needsHumanGoal(goal.id);
 			await goalManager.reactivateGoal(goal.id);
-			await goalManager.archiveGoal(goal.id);
+			await goalManager.updateGoalStatus(goal.id, 'archived');
 			await goalManager.reactivateGoal(goal.id);
-			await goalManager.completeGoal(goal.id);
+			await goalManager.updateGoalStatus(goal.id, 'completed');
 
 			const final = await goalManager.getGoal(goal.id);
 			expect(final?.status).toBe('completed');

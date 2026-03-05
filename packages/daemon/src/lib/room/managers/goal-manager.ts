@@ -112,15 +112,6 @@ export class GoalManager {
 	}
 
 	/**
-	 * Complete goal
-	 */
-	async completeGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'completed', {
-			progress: 100,
-		});
-	}
-
-	/**
 	 * Mark goal as needing human input
 	 */
 	async needsHumanGoal(goalId: string): Promise<RoomGoal> {
@@ -132,13 +123,6 @@ export class GoalManager {
 	 */
 	async reactivateGoal(goalId: string): Promise<RoomGoal> {
 		return this.updateGoalStatus(goalId, 'active');
-	}
-
-	/**
-	 * Archive goal
-	 */
-	async archiveGoal(goalId: string): Promise<RoomGoal> {
-		return this.updateGoalStatus(goalId, 'archived');
 	}
 
 	/**
@@ -159,26 +143,6 @@ export class GoalManager {
 		const updatedGoal = this.goalRepo.linkTaskToGoal(goalId, taskId);
 		if (!updatedGoal) {
 			throw new Error(`Failed to link task to goal: ${goalId}`);
-		}
-
-		// Recalculate progress
-		await this.recalculateProgress(goalId);
-
-		return this.getGoal(goalId) as Promise<RoomGoal>;
-	}
-
-	/**
-	 * Unlink a task from a goal
-	 */
-	async unlinkTaskFromGoal(goalId: string, taskId: string): Promise<RoomGoal> {
-		const goal = await this.getGoal(goalId);
-		if (!goal) {
-			throw new Error(`Goal not found: ${goalId}`);
-		}
-
-		const updatedGoal = this.goalRepo.unlinkTaskFromGoal(goalId, taskId);
-		if (!updatedGoal) {
-			throw new Error(`Failed to unlink task from goal: ${goalId}`);
 		}
 
 		// Recalculate progress
@@ -272,13 +236,6 @@ export class GoalManager {
 		}
 
 		return updatedGoal;
-	}
-
-	/**
-	 * Get active (non-completed) goals count
-	 */
-	async getActiveCount(): Promise<number> {
-		return this.goalRepo.getActiveGoalCount(this.roomId);
 	}
 
 	/**

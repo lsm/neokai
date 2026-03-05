@@ -398,35 +398,6 @@ describe('RoomManager', () => {
 		});
 	});
 
-	describe('unassignSession', () => {
-		it('should unassign a session from a room', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			roomManager.assignSession(room.id, 'session-1');
-			roomManager.assignSession(room.id, 'session-2');
-
-			const updated = roomManager.unassignSession(room.id, 'session-1');
-
-			expect(updated?.sessionIds).not.toContain('session-1');
-			expect(updated?.sessionIds).toContain('session-2');
-		});
-
-		it('should be idempotent - unassigning non-existent session', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			roomManager.assignSession(room.id, 'session-1');
-
-			const updated = roomManager.unassignSession(room.id, 'non-existent-session');
-
-			expect(updated?.sessionIds).toHaveLength(1);
-			expect(updated?.sessionIds).toContain('session-1');
-		});
-
-		it('should return null for non-existent room', () => {
-			const result = roomManager.unassignSession('non-existent', 'session-1');
-
-			expect(result).toBeNull();
-		});
-	});
-
 	describe('getRoomStatus', () => {
 		it('should return status for a room', () => {
 			const room = roomManager.createRoom({ name: 'Status Room' });
@@ -590,63 +561,6 @@ describe('RoomManager', () => {
 			// First room should be first due to most recent update
 			expect(rooms[0].id).toBe(first.id);
 			expect(rooms[1].id).toBe(second.id);
-		});
-	});
-
-	describe('addAllowedPath', () => {
-		it('should add a path to allowed paths', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			const updated = roomManager.addAllowedPath(room.id, '/new/path');
-
-			expect(updated?.allowedPaths).toEqual([{ path: '/new/path' }]);
-		});
-
-		it('should add a path with description', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			const updated = roomManager.addAllowedPath(room.id, '/new/path', 'Project workspace');
-
-			expect(updated?.allowedPaths).toEqual([
-				{ path: '/new/path', description: 'Project workspace' },
-			]);
-		});
-
-		it('should be idempotent - adding same path twice', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			roomManager.addAllowedPath(room.id, '/path');
-			const updated = roomManager.addAllowedPath(room.id, '/path');
-
-			expect(updated?.allowedPaths).toHaveLength(1);
-		});
-
-		it('should return null for non-existent room', () => {
-			const result = roomManager.addAllowedPath('non-existent', '/path');
-
-			expect(result).toBeNull();
-		});
-	});
-
-	describe('removeAllowedPath', () => {
-		it('should remove a path from allowed paths', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			roomManager.addAllowedPath(room.id, '/path1');
-			roomManager.addAllowedPath(room.id, '/path2');
-			const updated = roomManager.removeAllowedPath(room.id, '/path1');
-
-			expect(updated?.allowedPaths).toEqual([{ path: '/path2' }]);
-		});
-
-		it('should be idempotent - removing non-existent path', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			roomManager.addAllowedPath(room.id, '/path1');
-			const updated = roomManager.removeAllowedPath(room.id, '/non-existent');
-
-			expect(updated?.allowedPaths).toEqual([{ path: '/path1' }]);
-		});
-
-		it('should return null for non-existent room', () => {
-			const result = roomManager.removeAllowedPath('non-existent', '/path');
-
-			expect(result).toBeNull();
 		});
 	});
 
