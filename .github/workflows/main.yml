@@ -130,6 +130,7 @@ jobs:
           - rewind
           - room-1
           - room-2
+          - room-3
           - rpc-1
           - rpc-2
           - rpc-3
@@ -188,8 +189,11 @@ jobs:
           - module: room-2
             test_path: >-
               tests/online/room/room-multi-agent-flow.test.ts
-              tests/online/room/room-planner-two-phase.test.ts
               tests/online/room/room-replan-recovery.test.ts
+            timeout: 10
+          - module: room-3
+            test_path: >-
+              tests/online/room/room-planner-two-phase.test.ts
               tests/online/room/room-reviewer-flow.test.ts
             timeout: 10
           - module: rpc-1

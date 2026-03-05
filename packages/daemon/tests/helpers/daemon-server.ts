@@ -220,6 +220,11 @@ async function createInProcessDaemonServer(
 	const workspace = `/tmp/daemon-online-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	await Bun.$`mkdir -p ${workspace}`;
 
+	// Set worktree base dir to keep worktrees under /tmp (avoids ~/.neokai path issues in CI)
+	if (!process.env.TEST_WORKTREE_BASE_DIR) {
+		process.env.TEST_WORKTREE_BASE_DIR = `/tmp/daemon-worktrees-${Date.now()}`;
+	}
+
 	// Configure daemon
 	process.env.NEOKAI_WORKSPACE_PATH = workspace;
 	const config = getConfig();
