@@ -109,9 +109,8 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				'Build a calculator module',
-				'Create a calculator module with add, subtract, multiply, divide functions. ' +
-					'Each function should be in its own file under src/calc/. ' +
-					'This requires planning: break it into 4 coding tasks (one per function).'
+				'Create two files: src/calc/add.ts (exports add(a, b)) and src/calc/subtract.ts (exports subtract(a, b)). ' +
+					'Break this into exactly 2 coding tasks (one per file). No tests, no config, no setup.'
 			);
 			expect(goal.id).toBeTruthy();
 			console.log(`Goal created: ${goal.id}`);

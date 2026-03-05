@@ -162,7 +162,9 @@ export class TaskGroupManager {
 
 		// Create an isolated worktree for ALL tasks so each group works in its own branch.
 		// Worker and leader sessions share the same worktree for the task.
-		const branchName = taskTitleToBranchName(task.title) ?? `task/${workerSessionId}`;
+		// Colons in session IDs are invalid in git branch names, so sanitize the fallback.
+		const branchName =
+			taskTitleToBranchName(task.title) ?? `task/${workerSessionId.replace(/:/g, '-')}`;
 		const worktreePath = await this.sessionFactory.createWorktree(
 			this.workspacePath,
 			workerSessionId,

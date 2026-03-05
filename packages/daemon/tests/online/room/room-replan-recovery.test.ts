@@ -66,7 +66,8 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				daemon,
 				roomId,
 				'Add a double utility',
-				'Create src/double.ts that exports double(n: number): number which returns n * 2.'
+				'Create a single file src/double.ts that exports function double(n: number): number returning n * 2. ' +
+					'This is one trivial task — just the one file, no tests, no config, no setup.'
 			);
 
 			// Wait for planning to reach terminal state
