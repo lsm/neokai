@@ -11,40 +11,73 @@ Allow humans to interact with room agents during autonomous task execution via t
 - `awaiting_human` group state and `resumeWorkerFromHuman()` exist in `RoomRuntime`
 - `goal.approveTask` RPC exists but only handles approval (not rejection with feedback)
 - Room chat session (`room:chat:${roomId}`) exists with basic room-agent MCP tools (create_goal, list_goals, update_goal, create_task, list_tasks, update_task, cancel_task, get_room_status)
+- `TaskView` calls `request('task.get', ...)` but **no `task.get` RPC handler exists** — it must be added as a prerequisite
 - `TaskView` and `TaskConversationRenderer` display group conversation but have no human input
 - `Room.tsx` can show `ChatContainer` for any session via `sessionViewId` but there is no dedicated Room Chat tab in the UI
 - Group message timeline supports `role: 'human'` with green styling already defined in `TaskConversationRenderer`
+- `sessionFactory` on `RoomRuntime` is `private readonly` — external callers must use a dedicated public method to inject messages
 
 ## Ordered Task List
 
 ---
 
-### Task 1: Backend – `task.sendHumanMessage` RPC handler
+### Task 1: Backend – `task.get` RPC + `task.sendHumanMessage` RPC + shared routing helper
 
 **Agent:** coder
 **Priority:** high
 
 **Description:**
 
-Add a new `task.sendHumanMessage` RPC handler to `packages/daemon/src/lib/rpc-handlers/task-handlers.ts` that routes human messages into the active session group of a task.
+This task has three parts that must all ship together.
 
-Routing logic based on current group state:
-- `awaiting_human`: Call `runtime.resumeWorkerFromHuman(taskId, message, { approved: false })` — resumes the worker with human feedback but without approval flag
-- `awaiting_leader`: Inject message into the leader session via `sessionFactory.injectMessage(group.leaderSessionId, formattedMessage)` where `formattedMessage` wraps the text with a clear `[Human intervention]` header so the leader recognizes it as coming from a human
-- `awaiting_worker`: Return error — worker is running, message cannot be delivered yet (tell human to wait)
-- `completed` / `failed` / no group: Return error with appropriate reason
+**Part A — `task.get` RPC (prerequisite fix)**
 
-In all success cases, append the message to the group timeline via `groupRepo.appendMessage({ groupId, role: 'human', messageType: 'human', content: message })` so it shows up in `TaskConversationRenderer`.
+`TaskView` already calls `request('task.get', { roomId, taskId })` but no handler exists in `task-handlers.ts`. Add it:
+- Look up the task by `roomId` + `taskId` using `TaskManager.getTask()`
+- Return `{ task }` or throw if not found
+- This unblocks `TaskView` from loading task data at all
 
-The RPC also needs access to `RoomRuntimeService` (same as `goal-handlers.ts`) to call `runtime.resumeWorkerFromHuman` and `runtime.taskGroupManager.sessionFactory.injectMessage`. Ensure the handler is wired up in `packages/daemon/src/app.ts` alongside the existing task handlers.
+**Part B — `RoomRuntime.injectMessageToLeader(taskId, message)` public method**
+
+Add a new `public async injectMessageToLeader(taskId: string, message: string): Promise<boolean>` method to `RoomRuntime` (`packages/daemon/src/lib/room/runtime/room-runtime.ts`). This encapsulates the private `sessionFactory` and `groupRepo` access:
+- Look up the group by `taskId`
+- If group state is not `awaiting_leader`, return `false`
+- Format the message with a `[Human intervention]` header so the leader recognizes it
+- Call `this.sessionFactory.injectMessage(group.leaderSessionId, formattedMessage)`
+- Return `true` on success
+
+**Part C — shared `routeHumanMessageToGroup()` helper**
+
+Extract a shared helper function in a new file `packages/daemon/src/lib/room/runtime/human-message-routing.ts`:
+
+```ts
+export async function routeHumanMessageToGroup(
+  taskId: string,
+  message: string,
+  groupRepo: SessionGroupRepository,
+  runtime: RoomRuntime,
+): Promise<{ success: boolean; error?: string }>
+```
+
+Routing logic:
+- `awaiting_human`: Call `runtime.resumeWorkerFromHuman(taskId, message, { approved: false })`. Do NOT call `groupRepo.appendMessage()` — `resumeWorkerFromHuman()` already appends the message internally.
+- `awaiting_leader`: Call `runtime.injectMessageToLeader(taskId, message)` (new public method from Part B). Then append to group timeline via `groupRepo.appendMessage({ groupId, role: 'human', messageType: 'human', content: message })`.
+- `awaiting_worker`: Return `{ success: false, error: 'Worker is running — wait for leader review before sending messages' }`
+- `completed` / `failed` / no group: Return `{ success: false, error: '<appropriate reason>' }`
+
+**Part D — `task.sendHumanMessage` RPC handler**
+
+Add `task.sendHumanMessage { roomId, taskId, message }` to `task-handlers.ts`. It calls `routeHumanMessageToGroup()` using the runtime from `RoomRuntimeService`. Ensure the handler is wired in `packages/daemon/src/app.ts` alongside existing task handlers. Pass `runtimeService` into `setupTaskHandlers()` (same pattern as `goal-handlers.ts`).
 
 **Acceptance criteria:**
+- `task.get { roomId, taskId }` RPC returns `{ task }` or throws if not found
+- `RoomRuntime.injectMessageToLeader(taskId, message)` is a public method that injects into the leader session when group is `awaiting_leader`
+- `routeHumanMessageToGroup()` helper is in `human-message-routing.ts` and covers all group states
 - `task.sendHumanMessage { roomId, taskId, message }` RPC is registered and callable
-- When task group is `awaiting_human`, returns `{ success: true }` and resumes worker
-- When task group is `awaiting_leader`, returns `{ success: true }` and injects message into leader session
-- When task group is `awaiting_worker`, returns `{ success: false, error: "..." }`
-- Human message is appended to group timeline in all success cases
-- Unit tests cover all state branches
+- `awaiting_human` branch: calls `resumeWorkerFromHuman` with no additional `groupRepo.appendMessage` call
+- `awaiting_leader` branch: calls `injectMessageToLeader` + appends to group timeline once
+- `awaiting_worker` branch: returns `{ success: false, error: "..." }`
+- Unit tests cover all state branches of `routeHumanMessageToGroup()`
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
@@ -62,17 +95,19 @@ Add a message composition area at the bottom of `packages/web/src/components/roo
 **When `awaiting_human`:**
 - Prominent "Awaiting your review" banner
 - "Approve" button (calls existing `goal.approveTask` RPC) with green styling
-- Text input + "Send Feedback" button (calls new `task.sendHumanMessage` RPC) that resumes worker with rejection feedback
+- Text input + "Send Feedback" button (calls `task.sendHumanMessage` RPC) that resumes worker with rejection feedback
 
-**When `awaiting_leader` or `awaiting_worker`:**
+**When `awaiting_leader`:**
 - Compact text input area + "Send to Leader" button
 - Calls `task.sendHumanMessage` RPC
-- Disabled with tooltip "Worker is running, wait for leader review" when `awaiting_worker`
+
+**When `awaiting_worker`:**
+- Text input area, disabled, with tooltip "Worker is running — wait for leader review"
 
 **When `completed`, `failed`, or no group:**
 - No input shown
 
-Human messages must render in `TaskConversationRenderer.tsx` with the existing `human` role styling (green left border, already defined). Ensure the component re-fetches group messages after a human message is sent so it appears immediately.
+Human messages must render in `TaskConversationRenderer.tsx` with the existing `human` role styling (green left border, already defined). After a human message is sent, trigger a re-fetch of group messages so the new entry appears immediately in the timeline.
 
 **Acceptance criteria:**
 - TaskView shows Approve + feedback input when `awaiting_human`
@@ -90,30 +125,37 @@ Human messages must render in `TaskConversationRenderer.tsx` with the existing `
 
 **Agent:** coder
 **Priority:** normal
+**Depends on:** Task 1 (for the `routeHumanMessageToGroup` shared helper)
 
 **Description:**
 
-Extend `packages/daemon/src/lib/room/tools/room-agent-tools.ts` with new tools that give the Room Agent full orchestration capabilities for human-in-the-loop flows:
+Extend `packages/daemon/src/lib/room/tools/room-agent-tools.ts` with new tools that give the Room Agent full orchestration capabilities for human-in-the-loop flows.
 
-1. **`approve_task(task_id)`** — Approves a task in `review` status. Calls `runtime.resumeWorkerFromHuman(taskId, approvalMessage, { approved: true })`. Requires `RoomRuntimeService` reference in `RoomAgentToolsConfig`.
+**New tools:**
+
+1. **`approve_task(task_id)`** — Approves a task in `review` status. Calls `runtime.resumeWorkerFromHuman(taskId, approvalMessage, { approved: true })`. Requires `runtimeService: RoomRuntimeService` in `RoomAgentToolsConfig`.
 
 2. **`reject_task(task_id, feedback)`** — Rejects a task with feedback. Calls `runtime.resumeWorkerFromHuman(taskId, feedback, { approved: false })`.
 
-3. **`send_message_to_task(task_id, message)`** — Routes a message to the active session group. Delegates to the same routing logic as `task.sendHumanMessage` (awaiting_human → resume worker, awaiting_leader → inject to leader). Appends message to group timeline.
+3. **`send_message_to_task(task_id, message)`** — Routes a message to the active session group by importing and calling the shared `routeHumanMessageToGroup()` helper from Task 1 (`human-message-routing.ts`). Do NOT re-implement the routing logic — reuse the shared helper.
 
-4. **`get_task_detail(task_id)`** — Returns full task details including current group state, group ID, worker/leader session IDs, feedback iteration count, and whether it's awaiting human review. Useful for the Room Agent to understand what's happening in a task before taking action.
+4. **`get_task_detail(task_id)`** — Returns full task details including current group state, group ID, worker/leader session IDs, feedback iteration count, and whether it's awaiting human review. Uses `TaskManager.getTask()` + `groupRepo.getGroupByTaskId()`.
 
-Also enhance `get_room_status()` to include a `tasksNeedingReview` list with task IDs and titles that are currently in `review` status or `awaiting_human` group state.
+**Enhanced existing tool:**
 
-Update `RoomAgentToolsConfig` interface to include optional `runtimeService: RoomRuntimeService` and `groupRepo: SessionGroupRepository` (already present). Wire the new tools up in `createRoomAgentMcpServer()`.
+Extend `get_room_status()` to include a `tasksNeedingReview` list: task IDs and titles currently in `review` status or whose group is in `awaiting_human` state.
+
+**Config update:**
+
+Update `RoomAgentToolsConfig` interface to include `runtimeService?: RoomRuntimeService`. Wire the new tools in `createRoomAgentMcpServer()`.
 
 **Acceptance criteria:**
-- `approve_task` tool correctly approves tasks in review state
+- `approve_task` tool approves tasks in review state
 - `reject_task` tool resumes worker with rejection feedback
-- `send_message_to_task` routes based on group state with same logic as Task 1
+- `send_message_to_task` uses `routeHumanMessageToGroup()` from `human-message-routing.ts` (no duplicated routing logic)
 - `get_task_detail` returns full task + group state info
 - `get_room_status` includes `tasksNeedingReview` list
-- Tool errors are returned as structured `{ success: false, error: "..." }` responses
+- Tool errors are returned as `{ success: false, error: "..." }`
 - Unit tests for all new tool handlers
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -129,12 +171,12 @@ Update `RoomAgentToolsConfig` interface to include optional `runtimeService: Roo
 Add a "Chat" tab to the Room island (`packages/web/src/islands/Room.tsx`) that provides a conversational interface with the Room Agent session (`room:chat:${roomId}`).
 
 Changes:
-1. Add a `'chat'` value to the `RoomTab` type
+1. Add `'chat'` to the `RoomTab` type
 2. Add a "Chat" tab button in the tab bar, positioned first (before Overview)
 3. When `activeTab === 'chat'`, render `<ChatContainer key={chatSessionId} sessionId={chatSessionId} />` where `chatSessionId = 'room:chat:${roomId}'`
-4. Add a notification badge on the "Chat" tab button when any task is in `review` status (a red dot or count badge). Subscribe to `room.task.update` events in `roomStore` to track review-status task count.
+4. Add a notification badge on the "Chat" tab button when any task is in `review` status (a red dot or count badge). Subscribe to `room.task.update` events in `roomStore` to track the count; `roomStore.tasks.value` already has the task list.
 5. Update router (`packages/web/src/lib/router.ts`) to support a `chat` subpath: `/rooms/${roomId}/chat` navigates to the chat tab. Add `navigateToRoomChat(roomId)` helper.
-6. When a room first loads, if there are tasks in `review` status, default to the `'chat'` tab (or show a banner prompting the human to check the chat tab).
+6. When a room first loads, if there are tasks in `review` status, default to the `'chat'` tab.
 
 **Acceptance criteria:**
 - "Chat" tab appears in Room island tab bar
@@ -142,11 +184,12 @@ Changes:
 - Red notification badge appears on Chat tab when any task is in `review` status
 - `/rooms/${roomId}/chat` URL navigates to the chat tab
 - `navigateToRoomChat(roomId)` helper is exported from `router.ts`
+- Room defaults to Chat tab on load if any task is in `review`
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 5: Frontend – Review notification + Room overview review actions
+### Task 5: Frontend – Review notifications and task list polish
 
 **Agent:** coder
 **Priority:** normal
@@ -156,23 +199,32 @@ Changes:
 
 Polish the human-in-the-loop UX with review notifications and improved task list interactions.
 
-1. **Toast notification on task entering review**: In `packages/web/src/lib/room-store.ts`, when a `room.task.update` event arrives with `task.status === 'review'`, show a toast notification ("Task ready for review: {task.title}") and optionally navigate to the task or chat tab.
+**1. Toast notification on task entering review**
 
-2. **Task list review actions in RoomDashboard**: In `packages/web/src/components/room/RoomTasks.tsx`, for tasks in `review` status:
-   - Show both "Approve" and "Review" (navigate to TaskView) buttons
-   - The current "Approve" button should remain but also show a "View" button to navigate to the task conversation
+In `packages/web/src/lib/room-store.ts`, when a `room.task.update` event arrives with `task.status === 'review'` (and the task was not previously in `review`), show a toast notification: "Task ready for review: {task.title}".
 
-3. **Review count badge on room list**: In `packages/web/src/islands/RoomList.tsx` (or `RoomGrid.tsx`), show a count badge on room entries when they have tasks in `review` or `awaiting_human` group state.
+**2. Task list review actions in RoomDashboard**
 
-4. **TaskView "Awaiting review" indicator**: Emit `room.task.groupState.update` event from daemon when a group transitions to `awaiting_human` state. Subscribe in `TaskView` and show a pulsing "Awaiting your review" badge in the task header.
+In `packages/web/src/components/room/RoomTasks.tsx`, for tasks in `review` status, show both:
+- "Approve" button (existing) — calls `goal.approveTask`
+- "View" button — navigates to TaskView so the human can read the conversation before deciding
 
-For item 4, add the event emission in `RoomRuntime.submitForReview` handler (after `taskGroupManager.submitForReview` succeeds): emit `room.task.groupUpdate` with `{ roomId, taskId, groupId, state: 'awaiting_human' }` via `daemonHub`. Subscribe to this in the frontend `TaskView` component.
+**3. Review count badge on room list**
+
+In `packages/web/src/islands/RoomList.tsx` (or `RoomGrid.tsx`), show a count badge on room entries when they have tasks in `review` status. The count comes from the task list already fetched in the overview.
+
+**4. TaskView "Awaiting review" indicator**
+
+The `awaiting_human` group state already flows through the existing `room.task.update` event: when `submit_for_review` is called, `emitTaskUpdateById` is already called which sets `task.status = 'review'`. `TaskView` already subscribes to `room.task.update` and re-fetches `group` on change. Therefore:
+- In `TaskView`, after `fetchGroup()`, if `group.state === 'awaiting_human'` show a pulsing "Awaiting your review" badge in the header.
+- No new daemon event is needed — reuse the existing `room.task.update` subscription that already calls `fetchGroup()`.
 
 **Acceptance criteria:**
-- Toast appears when a task transitions to `review` status
+- Toast appears when a task first transitions to `review` status
 - RoomTasks shows both "Approve" and "View" buttons for review-status tasks
-- Room list shows review badge count for rooms with pending reviews
-- TaskView header shows pulsing indicator when group state is `awaiting_human`
+- Room list shows review badge count for rooms with tasks in `review`
+- TaskView header shows pulsing indicator when `group.state === 'awaiting_human'`
+- No new daemon event types introduced — all handled via existing `room.task.update`
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
@@ -180,17 +232,16 @@ For item 4, add the event emission in `RoomRuntime.submitForReview` handler (aft
 ## Dependencies
 
 ```
-Task 1 (backend sendHumanMessage RPC)
-  └─> Task 2 (frontend TaskView input)
-        └─> Task 5 (polish + notifications)
+Task 1 (task.get RPC + sendHumanMessage RPC + shared routing helper)
+  ├─> Task 2 (frontend TaskView input)
+  │     └─> Task 5 (polish + notifications)
+  └─> Task 3 (room agent tools — uses shared routing helper)
 
-Task 3 (room agent tools)  [independent]
-
-Task 4 (room chat tab)
+Task 4 (room chat tab)  [independent]
   └─> Task 5 (polish + notifications)
 ```
 
-Tasks 1 and 3 can run in parallel. Task 4 can start immediately. Task 2 depends on Task 1. Task 5 depends on Tasks 2 and 4.
+Tasks 1 and 4 can start immediately in parallel. Task 2 depends on Task 1. Task 3 depends on Task 1 (for the shared helper). Task 5 depends on Tasks 2 and 4.
 
 ## Acceptance Criteria (Overall)
 
@@ -198,5 +249,6 @@ Tasks 1 and 3 can run in parallel. Task 4 can start immediately. Task 2 depends 
 - Human can approve or reject tasks from TaskView
 - Room Agent can approve/reject tasks and send messages to active tasks via chat
 - Room Chat tab is accessible and shows review notifications
+- No routing logic duplication — `routeHumanMessageToGroup()` is the single source of truth
 - All changes tested with unit/integration tests
 - No regressions in existing room runtime behavior
