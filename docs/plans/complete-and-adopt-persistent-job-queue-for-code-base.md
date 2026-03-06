@@ -238,14 +238,19 @@ Replace the in-memory GitHub event pipeline with a persistent job queue so event
 Webhook events have a stable `X-GitHub-Delivery` delivery ID available in `webhook-handler.ts` (line ~141), but **the current `normalizeWebhookEvent` in `event-normalizer.ts` calls `generateEventId()` which returns a random UUID — not the delivery ID**. The delivery ID is not forwarded to the normalizer. To fix this, the webhook handler must pass the `X-GitHub-Delivery` header value directly as the `eventId` field in the `github.event` job payload, bypassing the normalizer's `generateEventId()`:
 ```typescript
 // webhook-handler.ts, when enqueueing the github.event job:
-const deliveryId = req.header('X-GitHub-Delivery') ?? generateUUID();
+const deliveryId = req.header('X-GitHub-Delivery');
+if (!deliveryId) {
+  // Reject requests without a delivery ID — idempotency is impossible without it.
+  // GitHub always sends X-GitHub-Delivery; absence indicates a non-GitHub or malformed request.
+  return c.json({ error: 'Missing X-GitHub-Delivery header' }, 400);
+}
 jobQueueRepo.enqueue({
   queue: QUEUES.GITHUB_EVENT,
   payload: { eventType, eventId: deliveryId, payload: webhookPayload },
   maxRetries: 0,
 });
 ```
-The polling path already uses deterministic IDs as described above. `normalizeWebhookEvent` may still be called for in-process pipeline use, but its output `eventId` should NOT be used as the job's `eventId`.
+The polling path already uses deterministic IDs as described above. `normalizeWebhookEvent` may still be called for in-process pipeline use, but its output `eventId` should NOT be used as the job's `eventId`. Rejecting missing-header requests (HTTP 400) rather than using a fallback UUID is required to maintain idempotency guarantees — a fallback UUID would make the INSERT-first dedup check meaningless for those events.
 
 **Files to modify**:
 
@@ -256,19 +261,30 @@ The polling path already uses deterministic IDs as described above. `normalizeWe
    - Replace in-memory etag/timestamp state with reads/writes to `github_poll_state` table
    - In `start()`, restore repo registrations by reading from `GitHubMappingRepository` (`room_github_mappings` table)
    - Replace `setInterval` with a self-rescheduling `github.poll` job (singleton dedup)
-   - Re-scheduling uses a `finally` block to guarantee next poll is always enqueued regardless of handler success or failure:
+   - Re-scheduling uses a `finally` block with dedup to guarantee next poll is always enqueued but never doubled:
      ```typescript
      handler = async (job) => {
        try {
          await runPollCycle();
        } finally {
-         // Always schedule next poll, even on failure
-         jobQueueRepo.enqueue({
+         // Schedule next poll only if no future-scheduled poll already exists.
+         // Dedup prevents poll chain multiplication if two github.poll jobs are ever
+         // simultaneously present (e.g., crash during startup before dedup check runs).
+         // Without dedup, each job's finally would create another, doubling the chain.
+         const now = Date.now();
+         const existingPoll = jobQueueRepo.listJobs({
            queue: QUEUES.GITHUB_POLL,
-           payload: {},
-           runAt: Date.now() + POLL_INTERVAL_MS,
-           maxRetries: 0,
-         });
+           status: ['pending'],
+           limit: 10,
+         }).find(j => j.runAt !== null && j.runAt > now);
+         if (!existingPoll) {
+           jobQueueRepo.enqueue({
+             queue: QUEUES.GITHUB_POLL,
+             payload: {},
+             runAt: now + POLL_INTERVAL_MS,
+             maxRetries: 0,
+           });
+         }
        }
      };
      ```
@@ -305,9 +321,10 @@ For `github.event`: INSERT-first idempotency requires `maxRetries: 0`. With `max
 - Repository registrations restored from `GitHubMappingRepository` on `start()`.
 - Same event cannot be processed twice: INSERT-first strategy (`INSERT OR IGNORE` at job start, skip pipeline if row already existed) is concurrency-safe with `maxConcurrent: 3`.
 - `github.event` jobs use `maxRetries: 0` (at-most-once delivery). This is required because INSERT-first + retry would cause permanent silent event drops: a retry sees the existing row and skips the pipeline. GitHub webhooks retry on their own; polled events reappear on next poll cycle.
-- `github.poll` re-scheduling uses `finally` block — polling never permanently stalls after handler error (modulo fatal SQLite failure, accepted risk).
+- `github.poll` re-scheduling uses `finally` block with dedup (only enqueues if no future-scheduled poll already exists) — polling never permanently stalls after handler error, and the poll chain never multiplies if duplicate `github.poll` jobs are ever present (modulo fatal SQLite failure, accepted risk).
 - Enqueued `github.event` jobs survive daemon restart.
 - DB migration for `github_processed_events` and `github_poll_state` tables is included and applied at daemon startup.
+- Webhook requests missing `X-GitHub-Delivery` header are rejected with HTTP 400 (fallback UUID would disable idempotency).
 - Webhook `github.event` jobs use `X-GitHub-Delivery` header value as `eventId` (not `generateEventId()` which produces random UUIDs); verified by unit test that re-delivering the same webhook with same delivery ID is idempotent.
 - Unit tests cover: stable ID generation for polled events, stable delivery ID for webhooks, INSERT-first idempotency (first insert succeeds, second is no-op), poll re-scheduling on success and on error, webhook path enqueues job, two-ETag persistence per repo.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
@@ -358,6 +375,13 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
     // Acceptable at current scale (tens of rooms). Future optimization:
     // add unique constraint or dedicated column if room count grows significantly.
     //
+    // Known trade-off: dedup checks against `processing` status means event-driven
+    // ticks are suppressed while a tick is already executing. New state changes during
+    // a long-running tick will not trigger an immediate re-tick; they will be picked up
+    // by the heartbeat (30s). This is an accepted trade-off: removing `processing` from
+    // dedup would allow concurrent tick execution for the same room, which could cause
+    // inconsistent state; separate per-room queuing would add significant complexity.
+    //
     // Check-then-act race: with maxConcurrent: 3, two concurrent handlers could both
     // pass this dedup check for the same room before either enqueue commits. SQLite
     // serializes writes, so both will succeed and produce a duplicate. This is an
@@ -367,7 +391,7 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
   }
   ```
 - Replace all `this.scheduleTick()` call sites in `room-runtime.ts` with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`
-- After each tick handler attempt (success or failure), attempt to schedule a heartbeat in a `try/finally` block. The `finally` placement ensures no room permanently stops ticking even if `runtime.tick()` throws. The heartbeat enqueue **deduplicates against existing pending future-scheduled jobs** (`runAt > now`) — when event-driven ticks fire frequently, without this dedup each tick's `finally` would create a new parallel heartbeat chain. All `room.tick` jobs must use `maxRetries: 0` because the `finally` pattern self-reschedules — with `maxRetries > 0`, each processor retry also fires `finally`, creating duplicate heartbeat jobs.
+- After each tick handler attempt (success or failure), attempt to schedule a heartbeat in a `try/finally` block. The `finally` block must first check `this.runtimes.has(roomId)` — if the runtime was stopped while the tick was in-flight, do NOT enqueue a heartbeat (otherwise the chain loops indefinitely via re-enqueue-on-miss). The heartbeat enqueue deduplicates against existing pending future-scheduled jobs (`runAt > now`) to prevent heartbeat chain multiplication. All `room.tick` jobs must use `maxRetries: 0` because the `finally` pattern self-reschedules — with `maxRetries > 0`, each processor retry also fires `finally`, creating duplicate heartbeat jobs.
 - Register handler in `RoomRuntimeService.start()`:
   ```typescript
   this.jobQueueProcessor.register(QUEUES.ROOM_TICK, async (job) => {
@@ -378,13 +402,23 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
       // Check DB to distinguish: if the room no longer exists, skip re-enqueue.
       const roomExists = this.ctx.roomManager.getRoom(roomId) !== null;
       if (roomExists) {
-        // Recovery still in progress — re-enqueue with delay only (no immediate enqueue).
-        this.jobQueueRepo.enqueue({
+        // Recovery still in progress — re-enqueue with delay, but only if no pending
+        // job for this room already exists. Dedup prevents multiple concurrent workers
+        // (maxConcurrent: 3) from each enqueueing an independent 5s delayed job when
+        // all arrive at this branch simultaneously.
+        const anyPending = this.jobQueueRepo.listJobs({
           queue: QUEUES.ROOM_TICK,
-          payload: { roomId },
-          runAt: Date.now() + 5_000,
-          maxRetries: 0,
-        });
+          status: ['pending'],
+          limit: 1000,
+        }).find(j => (j.payload as any).roomId === roomId);
+        if (!anyPending) {
+          this.jobQueueRepo.enqueue({
+            queue: QUEUES.ROOM_TICK,
+            payload: { roomId },
+            runAt: Date.now() + 5_000,
+            maxRetries: 0,
+          });
+        }
       }
       // Room deleted: do not re-enqueue (prevents perpetual churn)
       return;
@@ -392,8 +426,15 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
     try {
       await runtime.tick();
     } finally {
-      // Heartbeat: schedule a future tick if none already pending for this room.
-      // Placing in finally ensures no room permanently stops ticking on handler error.
+      // Heartbeat: schedule a future tick if (a) runtime is still tracked AND
+      // (b) no future-scheduled heartbeat already exists.
+      //
+      // CRITICAL: Check this.runtimes.has(roomId) first. stopRuntime() may be called
+      // concurrently while a tick is in-flight (room is stopped but tick is still running).
+      // Without this check, the finally block would re-enqueue a heartbeat for a stopped
+      // runtime, causing the re-enqueue-on-miss path to loop indefinitely (room exists in
+      // DB, runtime not in map → re-enqueue with 5s delay → repeat forever).
+      //
       // maxRetries: 0 is required: with the finally pattern, processor retries would
       // each also fire finally, creating duplicate heartbeat jobs (job multiplication).
       //
@@ -401,22 +442,24 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
       // (runAt > now), skip — prevents heartbeat chain multiplication when event-driven
       // ticks fire frequently (each event-driven tick's finally would otherwise create
       // an additional parallel heartbeat chain).
-      const now = Date.now();
-      const existingHeartbeat = this.jobQueueRepo.listJobs({
-        queue: QUEUES.ROOM_TICK,
-        status: ['pending'],
-        limit: 1000,
-      }).find(j =>
-        (j.payload as any).roomId === roomId &&
-        j.runAt !== null && j.runAt > now
-      );
-      if (!existingHeartbeat) {
-        this.jobQueueRepo.enqueue({
+      if (this.runtimes.has(roomId)) {
+        const now = Date.now();
+        const existingHeartbeat = this.jobQueueRepo.listJobs({
           queue: QUEUES.ROOM_TICK,
-          payload: { roomId },
-          runAt: now + 30_000,
-          maxRetries: 0,
-        });
+          status: ['pending'],
+          limit: 1000,
+        }).find(j =>
+          (j.payload as any).roomId === roomId &&
+          j.runAt !== null && j.runAt > now
+        );
+        if (!existingHeartbeat) {
+          this.jobQueueRepo.enqueue({
+            queue: QUEUES.ROOM_TICK,
+            payload: { roomId },
+            runAt: now + 30_000,
+            maxRetries: 0,
+          });
+        }
       }
     }
   });
@@ -438,14 +481,14 @@ The re-enqueue-on-miss tick handler avoids the risk of processing a tick after `
 - `scheduleHeartbeat()` method (if present) removed from `RoomRuntimeService` — replaced by the `finally`-based heartbeat in the tick handler.
 - `jobQueueRepo` added to `RoomRuntimeConfig` interface.
 - All `room.tick` jobs enqueued with `maxRetries: 0` (both `enqueueRoomTick` helper and direct enqueues): prevents job multiplication from retry + finally interaction.
-- Heartbeat enqueue is inside a `try/finally` block so it fires even if `runtime.tick()` throws — no room permanently stops ticking on handler error.
+- Heartbeat enqueue is inside a `try/finally` block so it fires even if `runtime.tick()` throws — no room permanently stops ticking on handler error. The `finally` block checks `this.runtimes.has(roomId)` before enqueueing: if the runtime was stopped while the tick was in-flight, skip re-enqueue to prevent the indefinite re-enqueue-on-miss loop.
 - Handler distinguishes "room deleted" from "runtime loading" via `ctx.roomManager.getRoom(roomId)`; no re-enqueue for deleted rooms.
-- Re-enqueue-on-miss: single delayed job (`runAt = now + 5_000`, `maxRetries: 0`) via direct enqueue when room exists but runtime not found; no `enqueueRoomTick` call in this path.
+- Re-enqueue-on-miss: single delayed job (`runAt = now + 5_000`, `maxRetries: 0`) when room exists but runtime not found; dedup against existing pending jobs prevents multiple concurrent workers (maxConcurrent: 3) from each enqueueing an independent delayed job.
 - Dedup: `enqueueRoomTick` uses `limit: 1000` on `listJobs` and filters by `runAt === null || runAt <= now` — heartbeat jobs (future `runAt`) do NOT suppress event-driven immediate ticks.
 - Heartbeat dedup: `finally` block checks for existing pending future-scheduled job (`runAt > now`) before enqueuing, preventing heartbeat chain multiplication when event-driven ticks fire frequently.
 - Check-then-act race documented as accepted risk (for both `enqueueRoomTick` and heartbeat dedup path).
 - Shutdown ordering enforced in `app.ts` cleanup closure.
-- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule (fires even on tick() throw), re-enqueue-on-miss (single delayed job), no-re-enqueue for deleted room, graceful tick execution.
+- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule (fires even on tick() throw), heartbeat NOT scheduled when runtime stopped during tick (liveness check), re-enqueue-on-miss (single delayed job), no-re-enqueue for deleted room, graceful tick execution.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -487,7 +530,12 @@ Note: `packages/daemon/tests/helpers/daemon-server.ts` has a `spawnDaemonServer(
   }
   ```
 - On daemon startup: enqueue first run with `runAt = now` if no pending/processing cleanup job exists
-- On daemon startup: also run a synchronous one-time prune of `github_processed_events` rows older than 30 days to bound table size in case the daemon has been offline for an extended period (e.g., `> 30` days). This prune must run **before** `jobQueueProcessor.start()` to prevent a stale `processing`-status job from a crashed instance being re-dispatched before old rows are cleaned up (which could cause double-execution of events whose `github_processed_events` row was pruned).
+- On daemon startup: run a synchronous one-time prune of `github_processed_events` rows older than **90 days** (not 30 days) to bound table size after extended offline periods. This prune must run **before** `jobQueueProcessor.start()`.
+
+  **Dedup gap and accepted risk**: If the daemon was offline for > 90 days AND had `github.event` jobs stuck in `processing` state at shutdown, the startup prune could delete those jobs' dedup rows. On restart, the processor reclaims those stale jobs and re-runs the pipeline (duplicate event processing). This is an accepted risk:
+  - The stale reclaim threshold is 5 minutes — any job stuck for > 5 minutes is reclaimed. For a dedup row to be pruned, the daemon must have been offline for > 90 days with those 5-minute-old processing jobs.
+  - Even in that scenario, at-most-once delivery is already the documented guarantee for `github.event` (maxRetries: 0).
+  - The 90-day window was chosen to provide a practical safety margin well beyond normal daemon restart scenarios (typical offline < hours). The ongoing scheduled cleanup prunes rows older than 30 days.
 
 **Cleanup scope** — patterns explicitly removed by this task:
 - `pendingBackgroundTasks` Set in `session-manager.ts` (removed in Task 2; confirm no remaining references)
@@ -503,7 +551,7 @@ Note: `packages/daemon/tests/helpers/daemon-server.ts` has a `spawnDaemonServer(
 - At least 3 online tests covering job persistence and idempotency across processor restart.
 - E2E test verifies UI recovers after WebSocket close/restore using `closeWebSocket()` / `restoreWebSocket()`.
 - Scheduled cleanup job self-reschedules via `finally` block with `maxRetries: 0` (prevents job multiplication: with `maxRetries > 0`, each retry also fires `finally`, creating extra next-day cleanup jobs); verified by unit test.
-- Startup-time synchronous prune of `github_processed_events` rows older than 30 days runs on daemon start **before** `jobQueueProcessor.start()`; verified by unit test.
+- Startup-time synchronous prune of `github_processed_events` rows older than **90 days** runs on daemon start **before** `jobQueueProcessor.start()`; verified by unit test. (90-day window provides safety margin; ongoing cleanup job prunes at 30 days. Risk of dedup gap for daemon offline > 90 days is accepted — at-most-once delivery is already the guarantee.)
 - No stale `pendingBackgroundTasks`, `scheduleTick()`, or `setInterval`-based tick patterns remain in production code.
 - `bun run check` passes (lint + typecheck + knip).
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
