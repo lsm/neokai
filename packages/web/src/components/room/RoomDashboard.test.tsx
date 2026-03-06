@@ -22,6 +22,7 @@ const mockPauseRuntime = vi.fn().mockResolvedValue(undefined);
 const mockResumeRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStopRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStartRuntime = vi.fn().mockResolvedValue(undefined);
+const mockApproveTask = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../lib/room-store.ts', () => ({
 	get roomStore() {
@@ -34,6 +35,7 @@ vi.mock('../../lib/room-store.ts', () => ({
 			resumeRuntime: mockResumeRuntime,
 			stopRuntime: mockStopRuntime,
 			startRuntime: mockStartRuntime,
+			approveTask: mockApproveTask,
 		};
 	},
 }));
@@ -69,6 +71,7 @@ describe('RoomDashboard', () => {
 		mockResumeRuntime.mockClear();
 		mockStopRuntime.mockClear();
 		mockStartRuntime.mockClear();
+		mockApproveTask.mockClear();
 		mockNavigateToRoomTask.mockClear();
 	});
 
@@ -352,6 +355,78 @@ describe('RoomDashboard', () => {
 			await fireEvent.click(confirmBtn);
 
 			expect(mockStopRuntime).toHaveBeenCalledTimes(1);
+		});
+
+		it('should show approve confirmation dialog when Approve is clicked on a review task', async () => {
+			mockTasks.value = [createTask('t1', 'review', { title: 'Review this' })];
+
+			render(<RoomDashboard />);
+
+			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Approve'
+			)!;
+			await fireEvent.click(approveBtn);
+
+			expect(document.body.textContent).toContain('Approve Task');
+			expect(document.body.textContent).toContain('proceed to the next phase');
+		});
+
+		it('should not call approveTask until confirmation is accepted', async () => {
+			mockTasks.value = [createTask('t1', 'review')];
+
+			render(<RoomDashboard />);
+
+			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Approve'
+			)!;
+			await fireEvent.click(approveBtn);
+
+			expect(mockApproveTask).not.toHaveBeenCalled();
+		});
+
+		it('should call approveTask with task id when approve confirmation is accepted', async () => {
+			mockTasks.value = [createTask('task-42', 'review')];
+
+			render(<RoomDashboard />);
+
+			// Click the Approve button on the task
+			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Approve'
+			)!;
+			await fireEvent.click(approveBtn);
+
+			// Accept confirmation - find the confirm button in the modal portal
+			// The modal has a second "Approve" button (the confirm one)
+			const allApproveButtons = Array.from(document.body.querySelectorAll('button')).filter(
+				(b) => b.textContent === 'Approve'
+			);
+			const confirmBtn = allApproveButtons[allApproveButtons.length - 1];
+			await fireEvent.click(confirmBtn);
+
+			expect(mockApproveTask).toHaveBeenCalledWith('task-42');
+		});
+
+		it('should close approve confirmation when cancel is clicked', async () => {
+			mockTasks.value = [createTask('t1', 'review')];
+
+			render(<RoomDashboard />);
+
+			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Approve'
+			)!;
+			await fireEvent.click(approveBtn);
+
+			// Verify modal is open
+			expect(document.body.textContent).toContain('Approve Task');
+
+			// Click Cancel
+			const cancelBtn = Array.from(document.body.querySelectorAll('button')).find(
+				(b) => b.textContent === 'Cancel'
+			)!;
+			await fireEvent.click(cancelBtn);
+
+			// Modal should be closed, approveTask not called
+			expect(mockApproveTask).not.toHaveBeenCalled();
 		});
 	});
 
