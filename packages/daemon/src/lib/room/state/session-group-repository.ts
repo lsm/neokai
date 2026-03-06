@@ -24,6 +24,16 @@ export type GroupState =
 	| 'completed'
 	| 'failed';
 
+/** Rate limit backoff state stored in group metadata */
+export interface RateLimitBackoff {
+	/** When the rate limit was detected (timestamp in ms) */
+	detectedAt: number;
+	/** When the rate limit resets (timestamp in ms) */
+	resetsAt: number;
+	/** Which session hit the limit ('worker' | 'leader') */
+	sessionRole: 'worker' | 'leader';
+}
+
 /** Type-specific metadata for task groups */
 interface TaskGroupMetadata {
 	feedbackIteration: number;
@@ -44,6 +54,8 @@ interface TaskGroupMetadata {
 	submittedForReview?: boolean;
 	/** Whether a human has approved the task (gates planner create_task tool, worker exit gate, complete_task gate) */
 	approved?: boolean;
+	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
+	rateLimit?: RateLimitBackoff | null;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -90,6 +102,8 @@ export interface SessionGroup {
 	submittedForReview: boolean;
 	/** Whether a human has approved the task (gates planner create_task tool, worker exit gate, complete_task gate) */
 	approved: boolean;
+	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
+	rateLimit: RateLimitBackoff | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -358,6 +372,55 @@ export class SessionGroupRepository {
 			.run(JSON.stringify(merged), groupId);
 	}
 
+	// ===== Rate Limit Backoff =====
+
+	/**
+	 * Set rate limit backoff state.
+	 * When set, nagging is paused until resetsAt timestamp.
+	 */
+	setRateLimit(groupId: string, rateLimit: RateLimitBackoff | null): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, rateLimit };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
+	 * Clear rate limit backoff state.
+	 * Called when rate limit has expired or work resumes.
+	 */
+	clearRateLimit(groupId: string): void {
+		this.setRateLimit(groupId, null);
+	}
+
+	/**
+	 * Check if group is currently in rate limit backoff period.
+	 * Returns true if rateLimit is set and current time is before resetsAt.
+	 */
+	isRateLimited(groupId: string): boolean {
+		const group = this.getGroup(groupId);
+		if (!group?.rateLimit) return false;
+		return Date.now() < group.rateLimit.resetsAt;
+	}
+
+	/**
+	 * Get the time remaining until rate limit expires (in ms).
+	 * Returns 0 if not rate limited or already expired.
+	 */
+	getRateLimitRemainingMs(groupId: string): number {
+		const group = this.getGroup(groupId);
+		if (!group?.rateLimit) return 0;
+		const remaining = group.rateLimit.resetsAt - Date.now();
+		return Math.max(0, remaining);
+	}
+
 	/**
 	 * Update the worker member's session_id for a group.
 	 * Used when resuming a worker session (e.g., planner phase 2).
@@ -482,6 +545,7 @@ export class SessionGroupRepository {
 			workspacePath: meta.workspacePath,
 			submittedForReview: meta.submittedForReview ?? false,
 			approved: meta.approved ?? false,
+			rateLimit: meta.rateLimit ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
