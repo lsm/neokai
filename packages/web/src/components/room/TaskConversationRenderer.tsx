@@ -12,7 +12,7 @@
  * real-time updates.
  */
 
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
@@ -85,10 +85,31 @@ export function TaskConversationRenderer({
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
+	// Guards against the fetch/delta race: delta events that arrive while the
+	// initial fetch is still in flight are buffered here and merged on resolve.
+	const fetchingRef = useRef(true);
+	const pendingDeltasRef = useRef<SDKMessage[]>([]);
 
 	useEffect(() => {
 		const channel = `group:${groupId}`;
 		joinRoom(channel);
+		fetchingRef.current = true;
+		pendingDeltasRef.current = [];
+
+		// Subscribe first so no live messages can slip through before the fetch starts.
+		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
+			'state.groupMessages.delta',
+			(event) => {
+				if (event.added && event.added.length > 0) {
+					if (fetchingRef.current) {
+						// Buffer deltas that arrive while the initial fetch is in-flight.
+						pendingDeltasRef.current = [...pendingDeltasRef.current, ...event.added];
+					} else {
+						setMessages((prev) => [...prev, ...event.added]);
+					}
+				}
+			}
+		);
 
 		const fetchAllMessages = async () => {
 			try {
@@ -114,24 +135,26 @@ export function TaskConversationRenderer({
 				const parsed = allGroupMessages
 					.map(parseGroupMessage)
 					.filter((m): m is SDKMessage => m !== null);
-				setMessages(parsed);
+
+				// Merge buffered deltas, deduplicating any messages already in the fetched set.
+				const fetchedUuids = new Set(
+					parsed.map((m) => (m as SDKMessage & { uuid?: string }).uuid).filter(Boolean)
+				);
+				const newDeltas = pendingDeltasRef.current.filter((m) => {
+					const uuid = (m as SDKMessage & { uuid?: string }).uuid;
+					return !uuid || !fetchedUuids.has(uuid);
+				});
+				setMessages([...parsed, ...newDeltas]);
 			} catch {
 				// Non-fatal: group may not have messages yet
 			} finally {
+				fetchingRef.current = false;
+				pendingDeltasRef.current = [];
 				setLoading(false);
 			}
 		};
 
 		fetchAllMessages();
-
-		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
-			'state.groupMessages.delta',
-			(event) => {
-				if (event.added && event.added.length > 0) {
-					setMessages((prev) => [...prev, ...event.added]);
-				}
-			}
-		);
 
 		return () => {
 			unsub();

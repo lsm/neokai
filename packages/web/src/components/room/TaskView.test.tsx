@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for TaskView Component
  *
@@ -11,7 +10,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
-// Static import resolved to mocked version — gives access to .mock.calls for arg assertions
+import { useEffect } from 'preact/hooks';
+// Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
 
 // -------------------------------------------------------
@@ -44,11 +44,23 @@ vi.mock('../../lib/router.ts', () => ({
 	},
 }));
 
-// Mock TaskConversationRenderer so it doesn't need its own deps.
-// We don't call onMessageCountChange here because useAutoScroll is fully mocked
-// and calling setState during render causes a "cannot update during render" warning.
+// mockMessageCount controls how many messages the TaskConversationRenderer mock reports.
+// Set before rendering to simulate message arrival (onMessageCountChange fires in useEffect).
+const mockMessageCount = { value: 0 };
+
+// Mock TaskConversationRenderer — calls onMessageCountChange in a useEffect so tests can
+// exercise the isFirstLoad flip without triggering "setState during render" warnings.
 vi.mock('./TaskConversationRenderer.tsx', () => ({
-	TaskConversationRenderer: () => <div data-testid="conversation" />,
+	TaskConversationRenderer: ({
+		onMessageCountChange,
+	}: {
+		onMessageCountChange?: (n: number) => void;
+	}) => {
+		useEffect(() => {
+			onMessageCountChange?.(mockMessageCount.value);
+		}, [onMessageCountChange]);
+		return <div data-testid="conversation" />;
+	},
 }));
 
 // Mock useAutoScroll so we can control showScrollButton and inspect call args
@@ -63,10 +75,16 @@ vi.mock('../../hooks/useAutoScroll.ts', () => ({
 	})),
 }));
 
-// Mock ScrollToBottomButton
+// Mock ScrollToBottomButton — forwards bottomClass as a data attribute so tests can assert it.
 vi.mock('../ScrollToBottomButton.tsx', () => ({
-	ScrollToBottomButton: ({ onClick }: { onClick: () => void }) => (
-		<button data-testid="scroll-to-bottom" onClick={onClick}>
+	ScrollToBottomButton: ({
+		onClick,
+		bottomClass,
+	}: {
+		onClick: () => void;
+		bottomClass?: string;
+	}) => (
+		<button data-testid="scroll-to-bottom" data-bottom-class={bottomClass} onClick={onClick}>
 			↓
 		</button>
 	),
@@ -150,6 +168,7 @@ describe('TaskView — awaiting_human badge', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
 	});
 
@@ -158,7 +177,7 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('shows pulsing "Awaiting your review" badge when group.state === awaiting_human', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
@@ -176,7 +195,7 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('does NOT show pulsing badge when group.state is not awaiting_human', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -192,7 +211,7 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('does NOT show pulsing badge when group is null', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
@@ -208,7 +227,7 @@ describe('TaskView — awaiting_human badge', () => {
 	});
 
 	it('shows group state label in header', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			return {};
@@ -230,6 +249,7 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
 	});
 
@@ -239,7 +259,8 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 
 	it('does NOT render scroll-to-bottom button when showScrollButton is false', async () => {
 		mockShowScrollButton.value = false;
-		mockRequest.mockImplementation(async (method: string) => {
+		mockMessageCount.value = 0;
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -254,7 +275,7 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 
 	it('renders scroll-to-bottom button when showScrollButton is true', async () => {
 		mockShowScrollButton.value = true;
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -269,7 +290,7 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 
 	it('calls scrollToBottom when scroll-to-bottom button is clicked', async () => {
 		mockShowScrollButton.value = true;
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -294,6 +315,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
 	});
 
@@ -302,7 +324,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('renders InputTextarea in awaiting_human state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
@@ -316,7 +338,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('renders InputTextarea in awaiting_leader state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			return {};
@@ -330,7 +352,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('does NOT render InputTextarea in awaiting_worker state (disabled raw textarea)', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -349,7 +371,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends feedback via task.sendHumanMessage in awaiting_human state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			if (method === 'task.sendHumanMessage') return {};
@@ -377,7 +399,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('approves task via goal.approveTask in awaiting_human state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			if (method === 'goal.approveTask') return {};
@@ -403,7 +425,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 	});
 
 	it('sends message to leader via task.sendHumanMessage in awaiting_leader state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			if (method === 'task.sendHumanMessage') return {};
@@ -439,6 +461,7 @@ describe('TaskView — useAutoScroll call args', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
 	});
 
@@ -447,7 +470,7 @@ describe('TaskView — useAutoScroll call args', () => {
 	});
 
 	it('calls useAutoScroll with enabled:true and isInitialLoad:true on initial render', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
 			return {};
@@ -473,6 +496,7 @@ describe('TaskView — InputTextarea maxChars forwarding', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
 	});
 
@@ -481,7 +505,7 @@ describe('TaskView — InputTextarea maxChars forwarding', () => {
 	});
 
 	it('passes maxChars=50000 to InputTextarea in awaiting_human state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
 			return {};
@@ -498,7 +522,7 @@ describe('TaskView — InputTextarea maxChars forwarding', () => {
 	});
 
 	it('passes maxChars=50000 to InputTextarea in awaiting_leader state', async () => {
-		mockRequest.mockImplementation(async (method: string) => {
+		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
 			return {};
@@ -512,5 +536,92 @@ describe('TaskView — InputTextarea maxChars forwarding', () => {
 
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		expect(textarea.maxLength).toBe(50000);
+	});
+});
+
+describe('TaskView — isFirstLoad state transitions', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('flips isFirstLoad to false after first messages arrive via onMessageCountChange', async () => {
+		// Simulate TaskConversationRenderer reporting 3 messages on mount
+		mockMessageCount.value = 3;
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait until useAutoScroll is called with isInitialLoad:false (after messageCount > 0)
+		await waitFor(() => {
+			const calls = vi.mocked(useAutoScroll).mock.calls;
+			const lastCall = calls[calls.length - 1]?.[0];
+			expect(lastCall?.isInitialLoad).toBe(false);
+		});
+	});
+
+	it('starts with isInitialLoad:true when no messages have arrived yet', async () => {
+		// mockMessageCount.value = 0 (default) — mock never calls onMessageCountChange with > 0
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(vi.mocked(useAutoScroll)).toHaveBeenCalled();
+		});
+
+		const firstCall = vi.mocked(useAutoScroll).mock.calls[0][0];
+		expect(firstCall.isInitialLoad).toBe(true);
+	});
+});
+
+describe('TaskView — ScrollToBottomButton bottomClass', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = true;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('passes bottomClass="bottom-4" to ScrollToBottomButton', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('scroll-to-bottom')).toBeTruthy();
+		});
+
+		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-4');
 	});
 });

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for TaskConversationRenderer Component
  *
@@ -18,7 +17,7 @@ import { render, cleanup, waitFor, act } from '@testing-library/preact';
 
 const mockRequest = vi.fn();
 let deltaHandler: ((event: { added: unknown[]; timestamp: number }) => void) | null = null;
-const mockOnEvent = vi.fn((eventName: string, handler) => {
+const mockOnEvent = vi.fn((eventName: string, handler: (event: unknown) => void) => {
 	if (eventName === 'state.groupMessages.delta') {
 		deltaHandler = handler;
 	}
@@ -174,7 +173,7 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
 		mockRequest.mockImplementation(async () => ({ messages, hasMore: false }));
 
-		let container: HTMLElement | undefined;
+		let container: Element | undefined;
 		expect(() => {
 			({ container } = render(<TaskConversationRenderer groupId="group-1" />));
 		}).not.toThrow();
@@ -182,6 +181,69 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		// Component should mount and show the conversation (or loading/empty state)
 		await waitFor(() => {
 			expect(container?.firstChild).not.toBeNull();
+		});
+	});
+
+	it('merges delta messages that arrive while the initial fetch is in-flight', async () => {
+		// The fetch is delayed via a Promise that we resolve manually.
+		let resolveFetch!: (value: { messages: typeof initial; hasMore: boolean }) => void;
+		const initial = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(
+			() =>
+				new Promise<{ messages: typeof initial; hasMore: boolean }>((resolve) => {
+					resolveFetch = resolve;
+				})
+		);
+
+		const onCountChange = vi.fn();
+		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Delta arrives BEFORE the fetch resolves — should be buffered
+		const deltaMsg = makeRawMessage(2, 'assistant', 'uuid-2');
+		const parsed = JSON.parse(deltaMsg.content) as { uuid?: string };
+		act(() => {
+			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
+		});
+
+		// Resolve the fetch now
+		act(() => {
+			resolveFetch({ messages: initial, hasMore: false });
+		});
+
+		// Both the fetched message AND the buffered delta should appear
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(2);
+		});
+	});
+
+	it('deduplicates delta messages already included in the fetch response', async () => {
+		// The delta fires with uuid-1, which is also returned by the fetch.
+		let resolveFetch!: (value: { messages: typeof initial; hasMore: boolean }) => void;
+		const initial = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(
+			() =>
+				new Promise<{ messages: typeof initial; hasMore: boolean }>((resolve) => {
+					resolveFetch = resolve;
+				})
+		);
+
+		const onCountChange = vi.fn();
+		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Delta arrives with uuid-1 — same as the fetch result
+		const parsed = JSON.parse(initial[0].content) as { uuid?: string };
+		act(() => {
+			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
+		});
+
+		// Fetch resolves with uuid-1 — the delta duplicate should be dropped
+		act(() => {
+			resolveFetch({ messages: initial, hasMore: false });
+		});
+
+		await waitFor(() => {
+			// Should be 1, not 2 — the duplicate is deduplicated
+			expect(onCountChange).toHaveBeenCalledWith(1);
 		});
 	});
 });
