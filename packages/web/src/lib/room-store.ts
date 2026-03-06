@@ -111,6 +111,12 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
+	/** Tasks in review status */
+	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
+
+	/** Count of tasks awaiting review */
+	readonly reviewTaskCount = computed(() => this.reviewTasks.value.length);
+
 	/** Session count */
 	readonly sessionCount = computed(() => this.sessions.value.length);
 
@@ -220,6 +226,17 @@ class RoomStore {
 					if (event.roomId === roomId) {
 						const task = event.task;
 						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
+
+						// Show toast when a known task transitions into review status.
+						// Skip when prevTask is null (task not yet in local state) to avoid
+						// spurious toasts during initial hydration / reconnection.
+						if (task.status === 'review' && idx >= 0) {
+							const prevTask = this.tasks.value[idx];
+							if (prevTask.status !== 'review') {
+								toast.info(`Task ready for review: ${task.title}`);
+							}
+						}
+
 						if (idx >= 0) {
 							this.tasks.value = [
 								...this.tasks.value.slice(0, idx),
