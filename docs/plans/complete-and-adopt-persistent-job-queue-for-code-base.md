@@ -2,20 +2,50 @@
 
 ## Goal
 
-The database-backed persistent job queue (`JobQueueRepository` + `JobQueueProcessor`) is fully implemented but not wired up or used by any daemon code. The goal is to adopt it across all background/async operations currently using in-memory patterns (fire-and-forget Promises, `setInterval` schedulers, in-memory state), replacing them with durable persistent jobs that survive daemon restarts.
+The database-backed persistent job queue (`JobQueueRepository` + `JobQueueProcessor`) is fully implemented but not wired up or used by any daemon code. The goal is to adopt it across all background/async operations currently using in-memory patterns, replacing them with durable persistent jobs that survive daemon restarts.
 
 ## Current State
 
 ### Implemented (ready to use)
-- `packages/daemon/src/storage/repositories/job-queue-repository.ts` — CRUD operations on `job_queue` SQLite table
-- `packages/daemon/src/storage/job-queue-processor.ts` — Background polling loop with handler registry, retry/backoff, stale reclaim
+- `packages/daemon/src/storage/repositories/job-queue-repository.ts` — CRUD on `job_queue` SQLite table
+- `packages/daemon/src/storage/job-queue-processor.ts` — background polling loop with handler registry, retry/backoff, stale reclaim
 - Comprehensive unit tests in `packages/daemon/tests/unit/storage/`
 
-### Not yet adopted (in-memory patterns to replace)
-- **Session background tasks**: Title generation + git branch rename are fire-and-forget Promises tracked only in a `Set` (`pendingBackgroundTasks` in `session-manager.ts`)
-- **GitHub event processing pipeline**: Polling state (etags, timestamps) is in-memory only; events are processed via an event-bus chain with no durability; restart causes reprocessing or missed events
-- **Room runtime tick scheduling**: Room orchestration uses `setInterval` to drive the state machine; a crash mid-tick leaves worker/leader routing in inconsistent state
-- **`app.ts` has no `JobQueueProcessor` wiring**: The processor is never instantiated or started
+### Full inventory of in-memory patterns and disposition
+
+| Pattern | File | Disposition |
+|---------|------|-------------|
+| `pendingBackgroundTasks` Set (title generation + branch rename) | `session-manager.ts` | **Migrate** to `session.title_generation` queue |
+| GitHub polling `setInterval` + in-memory etag/repo-list state | `polling-service.ts` | **Migrate** to `github.poll` queue; restore state from DB on startup |
+| GitHub event pipeline (event-bus chain, no idempotency) | `github-service.ts`, `webhook-handler.ts` | **Migrate** to `github.event` queue |
+| Room runtime `setInterval` heartbeat + `scheduleTick()` (`queueMicrotask`) | `room-runtime.ts` | **Migrate** to `room.tick` queue |
+| WebSocket stale connection checker `setInterval` | `websocket-server-transport.ts` | **Intentionally ephemeral** — process-local connection management; no persistence value; keep as-is |
+| `triggerBackgroundRefresh` fire-and-forget (model cache) | `model-service.ts` | **Intentionally ephemeral** — best-effort cache warming; keep as-is |
+| Event-bus emissions with `.catch(() => {})` in room/message handlers | various `rpc-handlers/` | **Intentionally ephemeral** — in-process fanout; keep as-is |
+| `JobQueueProcessor` not wired to `ReactiveDatabase` change notifier | `app.ts` | **Wire up** in Task 1 |
+
+## Idempotency Key Design (cross-cutting, delivered in Task 1)
+
+All queue handlers must be idempotent. Agreed per-queue strategy:
+
+| Queue | Idempotency key | Strategy |
+|-------|-----------------|----------|
+| `session.title_generation` | `sessionId` | Handler queries DB; skip if `session.title IS NOT NULL` |
+| `github.poll` | n/a (singleton) | Dedup: skip enqueue if a `pending`/`processing` job already exists |
+| `github.event` | `eventId` (GitHub delivery ID) | Check `github_processed_events` table before processing; insert on success |
+| `room.tick` | `roomId` | Dedup: skip enqueue if a `pending`/`processing` job for this `roomId` exists |
+
+## Processor Configuration (reconciled with ADR-0002)
+
+```typescript
+new JobQueueProcessor(db.getJobQueueRepo(), {
+  pollIntervalMs: 1000,      // 1 second (ADR default)
+  maxConcurrent: 3,          // 3 concurrent jobs (ADR default)
+  staleThresholdMs: 300_000, // 5 minutes (ADR recommendation; room ticks may take >1s)
+})
+```
+
+---
 
 ## Tasks
 
@@ -26,20 +56,47 @@ The database-backed persistent job queue (`JobQueueRepository` + `JobQueueProces
 **Priority**: high
 
 **Description**:
-Initialize and start the `JobQueueProcessor` in `packages/daemon/src/app.ts`. This is the foundational plumbing that all subsequent tasks depend on.
+Initialize and start the `JobQueueProcessor` in `packages/daemon/src/app.ts`. This is the foundational plumbing all subsequent tasks depend on.
+
+**Important**: `createDaemonApp` is a factory function, not a class with `start()`/`stop()` methods. The lifecycle entry point for shutdown is a `cleanup()` closure defined inside the factory. All processor lifecycle hooks must follow this existing pattern.
 
 Steps:
-1. Add `JobQueueProcessor` instantiation to `DaemonApp` in `app.ts`, using the existing `Database` facade (`db.getJobQueueRepo()`).
-2. Define a `QUEUES` constants object (e.g. in `packages/daemon/src/lib/job-queue-constants.ts`) enumerating all queue names: `session.title_generation`, `github.event`, `room.tick`.
-3. Call `processor.start()` in `DaemonApp.start()` and `await processor.stop()` in `DaemonApp.stop()` for graceful shutdown.
-4. Expose `getJobQueueProcessor(): JobQueueProcessor` on `DaemonApp` so subsystems can register handlers and enqueue jobs.
-5. Configure processor options: `pollIntervalMs: 500`, `maxConcurrent: 5`, `staleThresholdMs: 30_000`.
+1. Instantiate `JobQueueProcessor` using `db.getJobQueueRepo()`:
+   ```typescript
+   const jobQueueProcessor = new JobQueueProcessor(db.getJobQueueRepo(), {
+     pollIntervalMs: 1000,
+     maxConcurrent: 3,
+     staleThresholdMs: 300_000,
+   });
+   ```
+2. Connect the processor's change notifier to `ReactiveDatabase` so job completions/failures trigger live query updates:
+   ```typescript
+   jobQueueProcessor.setChangeNotifier((table) => reactiveDb.notifyChange(table));
+   ```
+3. Call `jobQueueProcessor.start()` inline after all subsystems are wired.
+4. Add `await jobQueueProcessor.stop()` to the existing `cleanup()` closure **before** `await roomRuntimeService.stop()` and `await sessionManager.cleanup()` — this ordering ensures in-flight jobs (including room ticks) finish before dependent services are torn down.
+5. Pass `jobQueueProcessor` via constructor injection to subsystems that need it (`SessionManager`, `GitHubService`, `RoomRuntimeService`), consistent with how `db` is passed today. Do not expose it as a separate context getter.
+6. Each subsystem registers its own queue handlers in a `start()` lifecycle method, called by `createDaemonApp` after `jobQueueProcessor.start()`.
+7. Define queue name constants in `packages/daemon/src/lib/job-queue-constants.ts`:
+   ```typescript
+   export const QUEUES = {
+     SESSION_TITLE_GENERATION: 'session.title_generation',
+     GITHUB_POLL: 'github.poll',
+     GITHUB_EVENT: 'github.event',
+     ROOM_TICK: 'room.tick',
+     JOB_QUEUE_CLEANUP: 'job_queue.cleanup',
+   } as const;
+   ```
+8. Document the idempotency strategy (table above) as a comment in `job-queue-constants.ts`.
 
 **Acceptance criteria**:
-- `JobQueueProcessor` is created, started, and stopped as part of `DaemonApp` lifecycle.
-- Queue name constants are co-located and re-exported.
-- Existing unit tests for `JobQueueRepository` and `JobQueueProcessor` still pass.
-- New unit test verifies processor lifecycle integration in `DaemonApp`.
+- `JobQueueProcessor` is instantiated and `jobQueueProcessor.start()` is called in `createDaemonApp`.
+- `await jobQueueProcessor.stop()` is in the `cleanup()` closure, before other service teardowns.
+- Change notifier connected to `ReactiveDatabase`.
+- Queue name constants exported from `job-queue-constants.ts` with idempotency strategy documented.
+- `jobQueueProcessor` injected via constructor into `SessionManager`, `GitHubService`, `RoomRuntimeService`.
+- Unit test verifies processor start/stop lifecycle and that `stop()` is called before other cleanup.
+- All existing `JobQueueRepository` and `JobQueueProcessor` unit tests still pass.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -53,23 +110,46 @@ Steps:
 **Description**:
 Replace the fire-and-forget title generation + git branch rename in `SessionManager` with a persistent job on the `session.title_generation` queue.
 
-Files to modify:
-- `packages/daemon/src/lib/session/session-manager.ts` — enqueue a job instead of spawning a Promise; remove `pendingBackgroundTasks` Set
-- `packages/daemon/src/lib/session/session-lifecycle.ts` — extract `generateTitleAndRenameBranch` into a standalone function usable as a queue handler
-- Register handler on `session.title_generation` queue in the session subsystem startup
+**Files to modify**:
+- `packages/daemon/src/lib/session/session-manager.ts` — enqueue a `session.title_generation` job instead of spawning a Promise; remove `pendingBackgroundTasks` Set; register the queue handler in `SessionManager.start()`
+- `packages/daemon/src/lib/session/session-lifecycle.ts` — wrap the existing `generateTitleAndRenameBranch` method (already a method on `SessionLifecycle`, no extraction needed) into a job handler
+
+**Handler registration** via constructor injection:
+```typescript
+class SessionManager {
+  constructor(private readonly jobQueueProcessor: JobQueueProcessor, ...) {}
+
+  start(): void {
+    this.jobQueueProcessor.register(QUEUES.SESSION_TITLE_GENERATION, async (job) => {
+      const { sessionId } = job.payload as { sessionId: string };
+      // Idempotency: skip if title already set
+      const session = this.sessionRepo.getSession(sessionId);
+      if (!session || session.title !== null) return;
+      await this.sessionLifecycle.generateTitleAndRenameBranch(sessionId, ...);
+    });
+  }
+}
+```
+
+**Enqueue point**: In the `message.persisted` event handler where the current fire-and-forget Promise is spawned:
+```typescript
+this.jobQueueProcessor.getRepo().enqueue({
+  queue: QUEUES.SESSION_TITLE_GENERATION,
+  payload: { sessionId, userMessageText },
+  maxRetries: 2,
+});
+```
 
 Job payload: `{ sessionId: string, userMessageText: string }`
 
-Handler behavior:
-- Load session from DB; skip if title already set (idempotent)
-- Call existing `generateTitleAndRenameBranch` logic
-- On success: mark complete; on failure: let the retry/dead-letter mechanism handle it (max 2 retries)
+**Idempotency**: Handler queries DB; if `session.title IS NOT NULL`, returns immediately (safe to retry multiple times).
 
 **Acceptance criteria**:
 - `pendingBackgroundTasks` Set removed from `SessionManager`.
 - Title generation enqueues a persistent job; handler runs via `JobQueueProcessor`.
 - If daemon restarts after enqueue but before handler runs, job is picked up on next start.
-- Unit tests cover: enqueue on first message, idempotency (title already set), handler success and failure/retry paths.
+- Idempotency: handler called twice for same session produces correct result (no double-rename).
+- Unit tests cover: enqueue on first message, idempotency guard (title already set), handler success, handler failure + retry (max 2 retries), dead-letter after max retries.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -81,25 +161,41 @@ Handler behavior:
 **Priority**: normal
 
 **Description**:
-Replace the in-memory GitHub event pipeline with a persistent job queue so events are durable and processing is idempotent across restarts.
+Replace the in-memory GitHub event pipeline with a persistent job queue so events are durable and idempotent across restarts. Persist polling state and restore repository registrations on startup.
 
-Files to modify:
-- `packages/daemon/src/lib/github/polling-service.ts` — persist polling state (etags, last-poll timestamps) to DB settings; enqueue a `github.event` job for each new event instead of emitting directly
-- `packages/daemon/src/lib/github/github-service.ts` — register a handler on `github.event` queue that runs the existing filter→security→route pipeline; add idempotency check by storing processed event IDs in the `settings` table or a new `github_processed_events` table
-- `packages/daemon/src/lib/github/webhook-service.ts` (if it exists) — enqueue jobs instead of direct pipeline calls
+**Schema addition** — new migration adds `github_processed_events` table:
+```sql
+CREATE TABLE github_processed_events (
+  event_id TEXT PRIMARY KEY,  -- GitHub delivery ID
+  processed_at INTEGER NOT NULL
+);
+CREATE INDEX idx_github_processed_events_at ON github_processed_events(processed_at);
+```
+Cleanup: prune rows older than 30 days in the Task 5 scheduled maintenance job.
 
-Job payload: `{ eventType: string, eventId: string, payload: Record<string, unknown> }`
+**Files to modify**:
 
-Handler behavior:
-- Skip if event ID already processed (idempotency)
-- Run filter → security → route pipeline
-- On success: mark processed; on failure: retry up to 3 times before dead-letter
+1. `packages/daemon/src/lib/github/polling-service.ts`:
+   - Persist etags and last-poll timestamps to `settings` table (keyed by repo) instead of in-memory
+   - In `start()`, restore repository registrations by reading from `GitHubMappingRepository` (which persists room→repo mappings in `room_github_mappings`) — this ensures polled repos survive restart without manual re-registration
+   - Replace `setInterval` body: enqueue a `github.poll` job (singleton dedup — skip if `pending`/`processing` already exists); schedule next poll via `runAt = now + pollIntervalMs` after each poll completes
+
+2. `packages/daemon/src/lib/github/github-service.ts`:
+   - Register `github.event` handler in `GitHubService.start()`
+   - Handler runs existing filter→security→route pipeline
+   - Idempotency: check `github_processed_events` table for `eventId` before processing; insert row on success
+
+3. `packages/daemon/src/lib/github/webhook-handler.ts` (correct filename — not `webhook-service.ts`):
+   - Webhook path calls `handleWebhook()` in `github-service.ts`; update to enqueue a `github.event` job instead of calling the pipeline directly
+
+**Retry behavior**: `maxRetries: 3` for `github.event` (transient routing failures). `maxRetries: 0` for `github.poll` (failed polls are simply retried on the next scheduled interval).
 
 **Acceptance criteria**:
-- Polling state (etags, timestamps) survives daemon restart.
-- Same GitHub event cannot be processed twice (idempotency by event ID).
-- Events enqueued but not yet processed survive daemon restart and are picked up on next start.
-- Unit tests cover: enqueue on poll, idempotency, filter/route pipeline via handler, retry on transient error.
+- Polling etags and timestamps persist across daemon restarts.
+- Repository registrations are restored from `GitHubMappingRepository` on startup — no manual re-registration needed.
+- Same GitHub event (by delivery ID) cannot be processed twice, verified by `github_processed_events` table.
+- Events enqueued but not yet processed survive daemon restart and are processed on next start.
+- Unit tests cover: enqueue on poll, idempotency (event already in `github_processed_events`), filter/route pipeline via handler, retry on transient error, webhook path enqueues job.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -111,74 +207,128 @@ Handler behavior:
 **Priority**: normal
 
 **Description**:
-Replace the `setInterval`-based room runtime tick with persistent job scheduling so room state machine operations are durable and crash-safe.
+Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMicrotask`) immediate-trigger in `RoomRuntime` with persistent `room.tick` jobs.
 
-Files to modify:
-- `packages/daemon/src/lib/room/runtime/room-runtime.ts` — remove `setInterval`; on each relevant event (goal created, task updated, worker/leader state change), enqueue a `room.tick` job with `{ roomId }` payload instead of calling `tick()` directly; also schedule a periodic `room.tick` job via `runAt` for heartbeat
-- `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` — register handler on `room.tick` queue; handler calls the existing `tick()` logic for the given roomId
+**`RoomRuntime` has two tick trigger paths** — both must be migrated:
+1. `setInterval(() => this.tick(), this.tickInterval)` (~line 205) — periodic heartbeat
+2. `scheduleTick()` (~line 1550): `queueMicrotask(() => this.tick())` — event-driven immediate trigger with 9+ call sites (goal created, task updated, worker/leader terminal states, leader tool calls, etc.)
 
-Key considerations:
-- Deduplication: if a `room.tick` job for a given roomId is already `pending` or `processing`, skip enqueueing a duplicate (check via `listJobs`)
-- Heartbeat: schedule a `room.tick` job with `runAt = now + 30_000` after each tick completes (replaces `setInterval`)
-- Idempotency: `tick()` handlers already claim idempotency; ensure they hold under job-queue retry
+**Migration approach**:
+- Remove `setInterval`, `tickTimer` field, and `queueMicrotask` from `RoomRuntime`
+- Replace all `this.scheduleTick()` call sites with a shared `enqueueRoomTick(roomId, priority)` helper that checks dedup before enqueueing:
+  ```typescript
+  function enqueueRoomTick(repo: JobQueueRepository, roomId: string, priority = 0): void {
+    const existing = repo.listJobs({ queue: QUEUES.ROOM_TICK, status: ['pending', 'processing'] })
+      .find(j => (j.payload as any).roomId === roomId);
+    if (!existing) {
+      repo.enqueue({ queue: QUEUES.ROOM_TICK, payload: { roomId }, priority });
+    }
+    // Note: listJobs is an O(n) scan; acceptable at current room scale.
+    // Future optimization: unique constraint on (queue, payload_roomId_hash) if needed.
+  }
+  ```
+- After each tick handler completes, enqueue next heartbeat job with `runAt = Date.now() + 30_000`
+- Register handler in `RoomRuntimeService.start()`:
+  ```typescript
+  processor.register(QUEUES.ROOM_TICK, async (job) => {
+    const { roomId } = job.payload as { roomId: string };
+    const runtime = this.runtimes.get(roomId);
+    if (!runtime) return; // Room removed mid-flight; tolerate gracefully
+    await runtime.tick();
+  });
+  ```
+
+**Shutdown ordering** (enforced in `app.ts` cleanup closure):
+1. `await jobQueueProcessor.stop()` — drains in-flight tick jobs
+2. `await roomRuntimeService.stop()` — clears `runtimes` map
+3. `await sessionManager.cleanup()` — cleans up agent sessions
+
+This ordering prevents the tick handler from referencing a cleared `runtimes` map.
+
+**Deduplication note**: The `listJobs` scan for dedup is O(n) with no composite index on `(queue, status, payload.roomId)`. At expected scale (tens of rooms), this is acceptable. If room count grows significantly, add a unique constraint or dedicated column. A comment documenting this trade-off must be included in the implementation.
 
 **Acceptance criteria**:
-- `setInterval` removed from `RoomRuntime`; tick driven by job queue.
-- On daemon restart, pending `room.tick` jobs are picked up and rooms resume operation.
-- No duplicate `room.tick` jobs accumulate for the same room.
-- Unit tests cover: tick enqueue on event, deduplication, heartbeat re-scheduling, handler execution.
+- `setInterval`, `tickTimer`, and `queueMicrotask` removed from `RoomRuntime`.
+- All `scheduleTick()` call sites replaced with `enqueueRoomTick()`.
+- No duplicate `room.tick` jobs accumulate for the same room (dedup verified in tests).
+- Heartbeat re-scheduling: after each tick, a new job is enqueued with `runAt = now + 30_000`.
+- Handler tolerates a missing runtime (room deleted during flight) — returns without error.
+- Shutdown ordering enforced in `app.ts` cleanup closure.
+- Unit tests cover: enqueue on event, dedup (second enqueue skipped), heartbeat re-schedule, handler for unknown `roomId`, graceful tick execution.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 5: Integration Tests, Cleanup, and E2E Validation
+### Task 5: Integration Tests, Cleanup, and Scheduled Maintenance
 
 **Agent**: coder
 **Dependencies**: Tasks 2, 3, 4
 **Priority**: normal
 
 **Description**:
-Add integration and E2E tests validating crash-recovery scenarios, and clean up any remaining in-memory patterns.
+Add integration/online tests validating crash-recovery and idempotency, add a scheduled DB maintenance job, add an E2E test for UI-observable reconnection, and clean up remaining in-memory patterns.
 
-Steps:
-1. **Online/integration tests** (in `packages/daemon/tests/online/`):
-   - Session title generation: simulate daemon restart mid-job; verify title is generated after restart
-   - GitHub event durability: enqueue event, restart processor, verify event is processed exactly once
-   - Room tick recovery: enqueue tick, stop processor, restart it, verify room state progresses
-2. **E2E test** (`packages/e2e/tests/`): verify that after a simulated server restart, a pending session operation (title generation) completes correctly in the UI
-3. **Cleanup**: remove any obsolete fire-and-forget patterns, unused `pendingBackgroundTasks` references, or dead code revealed by this migration
-4. **Job queue maintenance**: add a scheduled `cleanup` job that runs `jobQueueRepo.cleanup()` daily to prune old completed/dead jobs from the DB
+**Online/integration tests** (`packages/daemon/tests/online/`), using `daemon-server.ts` spawned-process mode for restart simulation:
+1. **Session title generation recovery**: enqueue a `session.title_generation` job, stop the processor, restart it, verify the title is generated exactly once
+2. **GitHub event idempotency**: enqueue the same `github.event` job twice; verify it is processed exactly once (check `github_processed_events` table)
+3. **Room tick recovery**: enqueue a `room.tick` job, stop the processor, restart it, verify the room state progresses correctly
+
+**E2E test** (`packages/e2e/tests/`):
+- Verify UI reconnects and displays correct state after WebSocket close and restore (using existing `closeWebSocket()` / `restoreWebSocket()` helpers from `connection-helpers.ts`)
+- This is the correct E2E-compliant mechanism (pure browser-based Playwright, no RPC/internal state access)
+- Server-restart crash-recovery is covered by the online tests above, not E2E
+
+**Scheduled DB maintenance job** (`QUEUES.JOB_QUEUE_CLEANUP`):
+- Register handler in `createDaemonApp` that runs `jobQueueRepo.cleanup(Date.now() - 7 * 24 * 60 * 60 * 1000)` (prune `job_queue` rows older than 7 days) and prunes `github_processed_events` rows older than 30 days
+- Self-rescheduling pattern: after handler completes, enqueue next run with `runAt = Date.now() + 24 * 60 * 60 * 1000`
+- On daemon startup, enqueue first run with `runAt = now` if no pending/processing cleanup job exists
+
+**Cleanup scope** — patterns explicitly removed by this task:
+- `pendingBackgroundTasks` Set in `session-manager.ts` (removed in Task 2; confirm no references remain)
+- `scheduleTick()` method and `tickTimer` field in `room-runtime.ts` (removed in Task 4)
+- Any `void somePromise` usages replaced by queue jobs in Tasks 2–4
+
+**Intentionally kept** (not in cleanup scope):
+- `triggerBackgroundRefresh` in `model-service.ts` — cache warming, ephemeral by design
+- WebSocket stale checker `setInterval` in `websocket-server-transport.ts` — process-local connection management
+- Event-bus `.catch(() => {})` emissions in `rpc-handlers/` — in-process fanout
 
 **Acceptance criteria**:
-- At least 3 online tests covering crash-recovery scenarios across the three migrated subsystems.
-- E2E test confirms UI recovers gracefully from server restart during background operations.
-- No stale in-memory queue patterns remain in production code.
+- At least 3 online tests covering crash-recovery/idempotency for the three migrated subsystems.
+- E2E test confirms UI recovers after WebSocket close/restore using `closeWebSocket()` / `restoreWebSocket()`.
+- Scheduled cleanup job runs daily; self-rescheduling logic verified by unit test.
+- No stale `pendingBackgroundTasks`, `scheduleTick()`, or `setInterval`-based tick patterns remain in production code.
 - `bun run check` passes (lint + typecheck + knip).
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-## Task Dependencies
+## Dependency Graph
 
 ```
-Task 1 (Foundation)
-  └── Task 2 (Session tasks)    ──┐
-  └── Task 3 (GitHub events)    ──┼── Task 5 (Integration + Cleanup)
-  └── Task 4 (Room runtime)     ──┘
+Task 1 (Foundation — wiring, DI, constants, idempotency design)
+  ├── Task 2 (Session title generation)  ──┐
+  ├── Task 3 (GitHub events + polling)   ──┼── Task 5 (Integration tests + cleanup)
+  └── Task 4 (Room runtime tick)         ──┘
 ```
 
-Tasks 2, 3, and 4 can be worked on in parallel after Task 1 is merged. Task 5 waits for Tasks 2–4.
+Tasks 2, 3, and 4 are independent and can run in parallel after Task 1 is merged. Task 5 waits for all three.
+
+---
 
 ## Key Files Reference
 
 | File | Relevance |
 |------|-----------|
-| `packages/daemon/src/app.ts` | DaemonApp wiring (Task 1) |
-| `packages/daemon/src/storage/job-queue-processor.ts` | Existing processor (all tasks) |
-| `packages/daemon/src/storage/repositories/job-queue-repository.ts` | Existing repository (all tasks) |
+| `packages/daemon/src/app.ts` | Factory function with cleanup closure — Task 1 |
+| `packages/daemon/src/storage/job-queue-processor.ts` | Existing processor — all tasks |
+| `packages/daemon/src/storage/repositories/job-queue-repository.ts` | Existing repository — all tasks |
+| `packages/daemon/src/lib/job-queue-constants.ts` | New queue name constants — Task 1 |
 | `packages/daemon/src/lib/session/session-manager.ts` | Task 2 |
 | `packages/daemon/src/lib/session/session-lifecycle.ts` | Task 2 |
 | `packages/daemon/src/lib/github/polling-service.ts` | Task 3 |
 | `packages/daemon/src/lib/github/github-service.ts` | Task 3 |
+| `packages/daemon/src/lib/github/webhook-handler.ts` | Task 3 (correct filename) |
 | `packages/daemon/src/lib/room/runtime/room-runtime.ts` | Task 4 |
 | `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` | Task 4 |
+| `docs/adr/0002-job-queue-migration.md` | Reference ADR |
