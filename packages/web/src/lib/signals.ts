@@ -17,6 +17,9 @@ export const currentRoomSessionIdSignal = signal<string | null>(null);
 // When set, shows the TaskView (Craft + Lead sessions) for the selected task
 export const currentRoomTaskIdSignal = signal<string | null>(null);
 
+// Shared signal for whether the room chat tab is active (URL: /room/:id/chat)
+export const currentRoomChatSignal = signal<boolean>(false);
+
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 
