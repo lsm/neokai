@@ -8,8 +8,8 @@
 // Check if we're running with GLM provider
 export const isGlmProvider = process.env.DEFAULT_PROVIDER === 'glm';
 
-// Planning timeout: GLM needs 7 minutes, Claude needs 5 minutes
-export const PLANNING_TIMEOUT = isGlmProvider ? 420_000 : 300_000;
+// Planning timeout: GLM needs 10 minutes, Claude needs 5 minutes
+export const PLANNING_TIMEOUT = isGlmProvider ? 600_000 : 300_000;
 
 // Coding timeout: GLM needs 10 minutes, Claude needs 7 minutes
 export const CODING_TIMEOUT = isGlmProvider ? 600_000 : 420_000;
