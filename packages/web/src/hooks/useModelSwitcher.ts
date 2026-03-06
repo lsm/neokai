@@ -121,53 +121,35 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					id: string;
 					display_name: string;
 					description: string;
+					alias?: string;
+					provider?: string;
 				}>;
 			};
 
 			const modelInfos: ModelInfo[] = models.map((m) => {
-				// Detect family and provider from model ID patterns
+				// Determine family from model ID
 				let family: string = 'sonnet';
-				let provider: string = 'anthropic';
-
 				const modelId = m.id.toLowerCase();
-				const displayName = m.display_name.toLowerCase();
-
-				// Check if model is provided via Copilot (applies to all families)
-				const isCopilotModel = displayName.includes('copilot');
-
-				// Anthropic Claude families
 				if (modelId.includes('opus')) {
 					family = 'opus';
-					provider = isCopilotModel ? 'github-copilot' : 'anthropic';
 				} else if (modelId.includes('haiku')) {
 					family = 'haiku';
-					provider = isCopilotModel ? 'github-copilot' : 'anthropic';
-				} else if (modelId.includes('sonnet')) {
-					family = 'sonnet';
-					provider = isCopilotModel ? 'github-copilot' : 'anthropic';
-				}
-				// GLM models
-				else if (modelId.startsWith('glm-')) {
+				} else if (modelId.startsWith('glm-')) {
 					family = 'glm';
-					provider = 'glm';
-				}
-				// GPT models (OpenAI or via Copilot)
-				else if (modelId.startsWith('gpt-')) {
+				} else if (modelId.startsWith('gpt-')) {
 					family = 'gpt';
-					provider = isCopilotModel ? 'github-copilot' : 'openai';
-				}
-				// Gemini models
-				else if (modelId.startsWith('gemini-')) {
+				} else if (modelId.startsWith('gemini-')) {
 					family = 'gemini';
-					provider = isCopilotModel ? 'github-copilot' : 'google';
 				}
 
 				return {
 					id: m.id,
 					name: m.display_name,
-					alias: m.id.split('-').pop() || m.id,
+					// Use server-provided alias (unique per provider, e.g. 'copilot-sonnet' for GitHub Copilot)
+					alias: m.alias || m.id,
 					family,
-					provider,
+					// Use server-provided provider for correct routing
+					provider: m.provider || 'anthropic',
 					contextWindow: 200000,
 					description: m.description || '',
 					releaseDate: '',

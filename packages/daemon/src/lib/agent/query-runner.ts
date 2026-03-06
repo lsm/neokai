@@ -127,10 +127,16 @@ export class QueryRunner {
 
 		try {
 			// Verify authentication for the selected provider
-			const { getProviderRegistry } = await import('../providers/factory.js');
-			const providerRegistry = getProviderRegistry();
+			const { initializeProviders } = await import('../providers/factory.js');
+			const providerRegistry = initializeProviders();
 			const modelId = session.config.model || 'sonnet';
-			const provider = providerRegistry.detectProvider(modelId);
+			// Check explicit provider first (stored during session creation when model alias is resolved).
+			// This is critical for pi-mono providers whose canonical model IDs (e.g., claude-sonnet-4.6)
+			// are also claimed by Anthropic, causing incorrect routing if we only use detectProvider().
+			const explicitProviderId = session.config.provider as string | undefined;
+			const provider = explicitProviderId
+				? (providerRegistry.get(explicitProviderId) ?? providerRegistry.detectProvider(modelId))
+				: providerRegistry.detectProvider(modelId);
 
 			// Check if the provider supports getAuthStatus (OAuth providers like OpenAI, GitHub Copilot)
 			if (provider?.getAuthStatus) {
@@ -322,7 +328,14 @@ export class QueryRunner {
 						return;
 					}
 
-					logger.info(`Custom query returned null for ${provider.id}, falling back to SDK`);
+					// createQuery returned null — the provider is not ready (e.g., Copilot token
+					// expired and refresh failed). Do NOT fall through to the standard Claude Agent
+					// SDK: that path spawns a subprocess for a different provider, causing confusing
+					// "Claude Code process exited" errors instead of a clear auth message.
+					throw new Error(
+						`Provider ${provider.displayName ?? provider.id} is not ready. ` +
+							`Please re-authenticate (Settings → Providers → ${provider.displayName ?? provider.id} → Login).`
+					);
 				} catch (customQueryError) {
 					logger.error('Custom query provider failed:', customQueryError);
 

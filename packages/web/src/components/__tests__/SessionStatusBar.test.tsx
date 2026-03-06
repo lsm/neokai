@@ -28,18 +28,21 @@ describe('SessionStatusBar', () => {
 	const mockAvailableModels: ModelInfo[] = [
 		{
 			id: 'opus',
+			alias: 'opus',
 			name: 'Opus 4.5',
 			family: 'opus',
 			isDefault: false,
 		},
 		{
 			id: 'sonnet',
+			alias: 'sonnet',
 			name: 'Sonnet 4.5',
 			family: 'sonnet',
 			isDefault: true,
 		},
 		{
 			id: 'haiku',
+			alias: 'haiku',
 			name: 'Haiku 4.5',
 			family: 'haiku',
 			isDefault: false,

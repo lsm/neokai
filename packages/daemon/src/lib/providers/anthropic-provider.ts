@@ -321,7 +321,7 @@ export class AnthropicProvider implements Provider {
 		}
 
 		// Known other provider prefixes (exclude these)
-		const otherProviderPrefixes = ['glm-', 'deepseek-', 'openai-', 'gpt-', 'qwen-'];
+		const otherProviderPrefixes = ['glm-', 'deepseek-', 'openai-', 'gpt-', 'qwen-', 'copilot-'];
 		if (otherProviderPrefixes.some((prefix) => lower.startsWith(prefix))) {
 			return false;
 		}

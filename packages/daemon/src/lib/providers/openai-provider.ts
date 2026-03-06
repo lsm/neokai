@@ -296,16 +296,24 @@ export class OpenAiProvider implements Provider {
 			return null;
 		}
 
+		// Resolve model alias to canonical ID (pi-ai only knows canonical IDs like
+		// 'gpt-5.3-codex', not NeoKai internal aliases like 'codex')
+		const modelEntry = OPENAI_MODELS.find(
+			(m) => m.id === options.model || m.alias === options.model
+		);
+		const canonicalModelId = modelEntry?.id ?? options.model;
+
 		// Use pi-mono query generator with OpenAI configuration
 		return piMonoQueryGenerator(
 			prompt,
 			{
 				...options,
 				apiKey,
+				model: canonicalModelId,
 			},
 			context,
 			'openai',
-			options.model,
+			canonicalModelId,
 			undefined
 		);
 	}
