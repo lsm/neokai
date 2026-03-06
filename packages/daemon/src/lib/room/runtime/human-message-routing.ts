@@ -29,6 +29,7 @@ export interface HumanMessageResult {
  * @param groupRepo     The SessionGroupRepository for DB access
  * @param taskId        The task ID to route the message to
  * @param message       The human message content
+ * @param messageHub    Optional MessageHub for broadcasting the delta event to frontends
  */
 export async function routeHumanMessageToGroup(
 	runtime: RoomRuntime,
@@ -65,8 +66,8 @@ export async function routeHumanMessageToGroup(
 			}
 			// Store as a 'user' message with JSON content so the frontend renderer can
 			// parse it (renderer calls JSON.parse for all non-'status' message types).
-			// Use Date.now() in turnId to ensure uniqueness across multiple messages
-			// within the same feedbackIteration.
+			// Use crypto.randomUUID() in turnId to guarantee uniqueness even when multiple
+			// messages are sent within the same millisecond.
 			const now = Date.now();
 			const messageContent = {
 				type: 'user',
@@ -77,7 +78,7 @@ export async function routeHumanMessageToGroup(
 				_taskMeta: {
 					authorRole: 'human',
 					authorSessionId: '',
-					turnId: `human_${group.id}_${group.feedbackIteration}_${now}`,
+					turnId: `human_${group.id}_${group.feedbackIteration}_${crypto.randomUUID()}`,
 					iteration: group.feedbackIteration,
 				},
 			};
@@ -88,12 +89,18 @@ export async function routeHumanMessageToGroup(
 				content: JSON.stringify(messageContent),
 			});
 			// Broadcast to subscribed frontends so the message appears immediately.
+			// Wrap in try/catch: persist already succeeded; a broadcast failure must not
+			// surface as an RPC error since the message is safely stored.
 			if (messageHub) {
-				messageHub.event(
-					'state.groupMessages.delta',
-					{ added: [{ ...messageContent, timestamp: now }], timestamp: now },
-					{ channel: `group:${group.id}` }
-				);
+				try {
+					messageHub.event(
+						'state.groupMessages.delta',
+						{ added: [{ ...messageContent, timestamp: now }], timestamp: now },
+						{ channel: `group:${group.id}` }
+					);
+				} catch {
+					// Broadcast failure is non-fatal — message is already persisted.
+				}
 			}
 			return { success: true };
 		}
