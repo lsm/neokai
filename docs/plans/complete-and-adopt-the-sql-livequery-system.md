@@ -7,8 +7,9 @@ but not yet wired into any RPC handlers or frontend components. This plan adopts
 
 1. Fix `notifyChange` gaps for tables that bypass the ReactiveDatabase proxy
 2. Expose LiveQuery as a typed named-query subscription protocol over the MessageHub WebSocket
-3. Remove now-redundant manual daemonHub UI-notification broadcasts from RPC handlers
+3. Remove the one remaining redundant RPC handler broadcast (`task.fail → emitTaskUpdate`)
 4. Replace one-shot RPC + manual event listeners in the frontend with LiveQuery subscriptions
+   (and atomically remove the corresponding daemon-side goal RPC handler broadcasts)
 
 ## Process requirements (applies to all tasks)
 
@@ -58,7 +59,7 @@ When a client calls `liveQuery.subscribe`, the handler captures the `clientId` f
 The LiveQuery engine callback then delivers events to that specific client by calling
 `messageHub.getRouter()!.sendToClient(clientId, message)`. `sendToClient` is defined on
 `MessageHubRouter` at `packages/shared/src/message-hub/router.ts:211` and exposed via the public
-`getRouter()` method (`message-hub.ts:211`).
+`getRouter()` method on `MessageHub` (`message-hub.ts:211`).
 
 This design **never routes LiveQuery callbacks through `daemonHub`**, which eliminates any
 double-emit risk:
@@ -98,6 +99,15 @@ before. Calling it before commit could deliver stale data to subscribers.
 - `packages/daemon/src/lib/room/managers/goal-manager.ts` and
   `packages/daemon/src/storage/repositories/goal-repository.ts` — inject `ReactiveDatabase`;
   call `reactiveDb.notifyChange('goals')` after every write (create, update, delete, link, unlink).
+
+  _Note on GoalManager injection chain:_ `GoalManager` internally creates a `GoalRepository` at
+  `goal-manager.ts:28`. The injection strategy is to pass `ReactiveDatabase` into `GoalManager`'s
+  constructor, which in turn passes it to `GoalRepository`. The three `GoalManager` construction
+  sites are: `packages/daemon/src/lib/rpc-handlers/index.ts:74`,
+  `packages/daemon/src/lib/room/runtime/room-runtime-service.ts:242`, and
+  `packages/daemon/src/storage/index.ts:77` (direct `GoalRepository` construction there; also needs
+  updating). All test construction sites also need updating.
+
 - Update all construction sites of these four classes to pass `reactiveDb`.
 
 **Tests:**
@@ -130,7 +140,11 @@ SQL template server-side. Clients never send raw SQL. Unknown query names are re
 Initial named queries (registered at daemon startup):
 - `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ?`
 - `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ?`
-- `sessionGroupMessages.byGroup` — `SELECT ... FROM session_group_messages WHERE group_id = ?`
+- `sessionGroupMessages.byGroup` — `SELECT ... FROM session_group_messages WHERE group_id = ? ORDER BY created_at ASC`
+
+The `ORDER BY created_at ASC` clause on `sessionGroupMessages.byGroup` is required so that snapshot
+row order and delta diff order are deterministic. The other queries should include stable ordering
+matching their existing repository SELECT patterns.
 
 The SQL column shape for each named query must match what the frontend already expects (aligned with
 existing repository SELECT patterns). Parameter count validation is performed before execution; a
@@ -141,11 +155,16 @@ Named query keys follow the `<entity>.<filter>` convention. The registry is defi
 `RPCHandlerDependencies`; handler code accesses it directly as a module import. The registry `Map`
 is also exported from `live-query-handlers.ts` for testability.
 
-**Room-level authorization:** Named queries that filter by `room_id` (e.g., `tasks.byRoom`,
-`goals.byRoom`) must validate that the `room_id` parameter matches the room the requesting client
-has access to. The `liveQuery.subscribe` handler must check that the provided `room_id` is a room
-the caller's session is authorized for, before registering the subscription. Unknown or unauthorized
-`room_id` values are rejected with an authorization error.
+**Authorization:** For each named query, the handler must validate that the requesting client has
+access to the parameterized resource before registering the subscription:
+- `tasks.byRoom` and `goals.byRoom` (keyed by `room_id`): verify the room exists via
+  `roomManager.getRoom(room_id)`. NeoKai is a single-user deployment — there is no per-user ACL,
+  so existence validation is sufficient. Unknown `room_id` is rejected with an authorization error.
+- `sessionGroupMessages.byGroup` (keyed by `group_id`): look up the `session_groups` table to
+  verify the `group_id` exists and retrieve its `room_id`; then verify that room exists via
+  `roomManager.getRoom(room_id)`. This ensures a client cannot subscribe to an arbitrary
+  `group_id` for a room that does not exist. Unknown `group_id` is rejected with an authorization
+  error.
 
 #### Protocol types (add to `packages/shared/src/live-query-types.ts`)
 
@@ -173,6 +192,13 @@ interface LiveQueryDeltaEvent {
   version: number;
 }
 ```
+
+#### `subscriptionId` collision semantics
+
+If `liveQuery.subscribe` is called with a `subscriptionId` that already exists for the calling
+client, the server silently replaces the prior subscription (disposes the old `LiveQueryHandle`,
+creates a new one). This enables idempotent reconnect re-subscribe without requiring an explicit
+`liveQuery.unsubscribe` call first.
 
 #### `clientId` plumbing
 
@@ -210,13 +236,21 @@ field.
 #### Disconnect cleanup
 
 `MessageHub` must expose a new public `onClientDisconnect(handler: (clientId: string) => void): () => void`
-forwarding method. This method delegates to `this.transport.onClientDisconnect(handler)`, which
-maps to `WebSocketServerTransport.onClientDisconnect` at line 363. (Since `MessageHub` owns the
-transport, this wrapper is a thin delegation.)
+forwarding method. This method retrieves the primary transport using the existing
+`this.primaryTransportName` / `this.transports` pattern (same as `message-hub.ts:709–711`) and
+calls `transport.onClientDisconnect(handler)`. The `IMessageTransport.onClientDisconnect` method
+is optional; the forwarding method must guard against a transport that does not implement it.
 
 The `liveQuery.subscribe` handler setup function calls `messageHub.onClientDisconnect` once at
 handler registration time to install a cleanup callback. The callback receives `clientId` and
 disposes all `LiveQueryHandle` instances keyed to that client.
+
+**Reconnect re-subscribe semantics:** Old server-side subscription handles are fully disposed on
+WebSocket disconnect via the `onClientDisconnect` cleanup above. After reconnect, the client
+receives a new `clientId`. The frontend reconnect path must re-issue `liveQuery.subscribe` — it
+does **not** need to call `liveQuery.unsubscribe` first, because no handles for the old `clientId`
+exist server-side after disconnect. Calling `liveQuery.unsubscribe` in the reconnect path would
+produce a spurious "unknown subscriptionId" error.
 
 #### `RPCHandlerDependencies` extension
 
@@ -227,7 +261,7 @@ Add `liveQueries: LiveQueryEngine` to the dependency interface in
 
 Log lifecycle events at debug level: subscribe (with `clientId`, `subscriptionId`, `queryName`),
 unsubscribe, and disconnect-cleanup. Failures (null router, absent `clientId`, unauthorized
-`room_id`) are logged at warn level.
+`room_id`/`group_id`, unknown query name) are logged at warn level.
 
 **Work:**
 - Add shared types to `packages/shared/src/live-query-types.ts`, export from `packages/shared/src/mod.ts`.
@@ -236,73 +270,72 @@ unsubscribe, and disconnect-cleanup. Failures (null router, absent `clientId`, u
 - Add `onClientDisconnect` forwarding method to `MessageHub`.
 - Define named-query registry as module-level constant in `live-query-handlers.ts`; export it.
 - Add `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` with both handlers.
-- Implement room-level authorization check in `liveQuery.subscribe` for room-scoped queries.
+- Implement per-query authorization checks (room existence for `tasks.byRoom`/`goals.byRoom`;
+  group existence + room existence for `sessionGroupMessages.byGroup`).
+- Implement `subscriptionId` collision semantics (silent replace of prior subscription).
 - Track handles per `clientId + subscriptionId`; register disconnect cleanup via
   `messageHub.onClientDisconnect`.
 - Register handlers in `packages/daemon/src/lib/rpc-handlers/index.ts`; add `liveQueries` to
   the dependency type.
 - Unit tests: subscribe → snapshot → delta → unsubscribe; unknown query name rejected; mismatched
-  params count rejected; unauthorized room_id rejected; absent clientId rejected.
+  params count rejected; unauthorized room_id rejected; unauthorized group_id rejected; absent
+  clientId rejected; subscriptionId collision replaces prior subscription.
 - Online tests: full pipeline with real DB writes triggering deltas to a subscribed client.
 
 **Acceptance criteria:**
 - A client can call `liveQuery.subscribe` with a known named query and receive a snapshot then deltas.
 - Unknown query names are rejected with a clear error.
 - Mismatched parameter count is rejected with a clear error.
-- Unauthorized `room_id` is rejected with an authorization error.
+- Unauthorized `room_id` (non-existent room) is rejected with an authorization error.
+- Unauthorized `group_id` (non-existent group or group belonging to non-existent room) is rejected
+  with an authorization error.
 - Absent `clientId` in `CallContext` is rejected immediately with an error.
+- Re-using an existing `subscriptionId` silently replaces the prior subscription.
 - `liveQuery.unsubscribe` stops further events.
 - WebSocket disconnect disposes all subscriptions for that client.
 - `clientId` is present in `CallContext` (populated at `message-hub.ts:518`).
 - Snapshot is always delivered before any delta for a given subscription.
 - Delta events carry a monotonically increasing `version` field.
 - Events pushed via `messageHub.getRouter()!.sendToClient`; `daemonHub` not involved.
-- `MessageHub.onClientDisconnect` forwarding method added and wired to transport.
+- `MessageHub.onClientDisconnect` forwarding method added and wired to primary transport.
 - All unit and online tests pass.
 
 ---
 
-### Task 3 — Remove redundant UI-notification broadcasts from RPC handlers
+### Task 3 — Remove redundant `emitTaskUpdate` broadcast from `task.fail` RPC handler
 
 **Agent:** coder
 **Depends on:** Task 2
 
-After Tasks 1–2, every task/goal write automatically triggers `notifyChange`, which re-evaluates
-all client LiveQuery subscriptions and pushes deltas via `sendToClient`. The manual `daemonHub`
-broadcasts from RPC handlers that previously served the same UI-update purpose are now redundant.
+After Tasks 1–2, every task write automatically triggers `notifyChange`, which re-evaluates all
+client LiveQuery subscriptions and pushes deltas via `sendToClient`. The `emitTaskUpdate()` call
+in `task.fail` that previously served the same UI-update purpose is now redundant.
 
 **This task does NOT add any daemon-internal LiveQuery subscriptions.** There are no new long-lived
 handles and no new dispose concerns — cleanup is handled entirely by the `liveQuery.unsubscribe`
 and disconnect paths established in Task 2.
 
-**Merge ordering:** Task 3 must be merged to the main branch **before** Tasks 4 and 5. See
-dependency graph below. Merging Task 3 before Task 4 is safe because the frontend still holds the
-old event listeners during that interim — it simply receives fewer events, not zero (runtime-layer
-emits are preserved for scheduling). The dangerous ordering is reversed: Task 4 merged before
-Task 3 would cause duplicate client updates.
+**Merge ordering:** Merging Task 3 independently before Task 4 is safe. The only change is
+removing `emitTaskUpdate()` from `task.fail`. The frontend's `room.task.update` listener in
+`room-store.ts:223` still receives `room.task.update` via the preserved runtime-layer emits in
+`room-runtime.ts` (~14 sites). Task 3 does **not** remove goal-handler emits — those are removed
+atomically in Task 4 alongside the frontend LiveQuery adoption.
 
-#### Emit sites to remove (RPC handler layer only)
+#### Emit site to remove (RPC handler layer only)
 
 - **`task-handlers.ts`**: Remove the `emitTaskUpdate()` call from `task.fail` (line 171).
-  - Note: `task.create` does **not** call `emitTaskUpdate()`; no change needed there.
+  - Note: `task.create` does **not** call `emitTaskUpdate()`; no change needed there. Verify
+    that no other handlers in `task-handlers.ts` call `emitTaskUpdate()` before considering the
+    removal complete.
   - **Keep `emitRoomOverview()` calls**: `room.overview` is emitted only from `task-handlers.ts`
     (confirmed by codebase audit). Task 4 retains the `room.overview` frontend listener for
     room/session metadata. Removing `emitRoomOverview` would make that listener permanently dead.
-- **`goal-handlers.ts`**:
-  - Remove `goal.updated` emits — covered by `goals.byRoom` LiveQuery delta.
-  - Remove `goal.progressUpdated` emits — progress changes modify the goal row; the `goals.byRoom`
-    LiveQuery delta includes all changed columns and delivers the update. Note: the frontend currently
-    has no `goal.progressUpdated` listener in `room-store.ts` (updates were silently dropped); the
-    LiveQuery approach now delivers them correctly for the first time.
-  - Remove `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts:344`
-    but is never actually emitted anywhere in the current codebase (confirmed by grep). No action
-    required, but verify during implementation. If a new emit site is found, remove it — covered
-    by `goals.byRoom` LiveQuery delta.
-  - **Keep `goal.created` emits** — `room-runtime-service.ts:338` subscribes to `goal.created` on
-    `daemonHub` to trigger scheduling. Removing this emit would silently break goal-creation scheduling.
 
-#### Emit sites preserved (runtime/tool layer — do not touch)
+#### Emit sites preserved in this task
 
+- **`goal-handlers.ts`**: All goal emits (`goal.created`, `goal.updated`, `goal.progressUpdated`)
+  are preserved in Task 3. They are removed in Task 4 atomically with the frontend LiveQuery
+  adoption.
 - `packages/daemon/src/lib/room/runtime/room-runtime.ts` — all `emitTaskUpdate`/`emitTaskUpdateById`
   calls (~14 sites). Drive `scheduleTick()` via `room-runtime-service.ts`.
 - `packages/daemon/src/lib/room/tools/room-agent-tools.ts` — task/goal emit calls.
@@ -310,52 +343,68 @@ Task 3 would cause duplicate client updates.
 
 **Tests:**
 - Integration test: RPC `task.fail` no longer produces a `room.task.update` daemonHub event.
-- Integration test: RPC goal writes no longer produce `goal.updated` / `goal.progressUpdated` daemonHub events.
-- Test: `goal.created` still fires from `goal-handlers.ts`.
 - Test: `room.overview` still fires from `task-handlers.ts` after task writes.
-- Test: `liveQuery.delta` reaches a subscribed client after task/goal RPC writes.
+- Test: `liveQuery.delta` reaches a subscribed client after `task.fail` writes.
+- Test: `goal.created`, `goal.updated`, `goal.progressUpdated` still fire from `goal-handlers.ts`.
 
 **Acceptance criteria:**
-- `room.task.update` no longer emitted from `task.fail` RPC handler.
-- `goal.updated` and `goal.progressUpdated` no longer emitted from `goal-handlers.ts`.
-- `goal.created` continues to be emitted from `goal-handlers.ts`.
+- `emitTaskUpdate()` removed from `task.fail` only; no other task-handler emit sites changed.
 - `room.overview` continues to be emitted from `task-handlers.ts`.
-- `liveQuery.delta` events reach subscribed clients for task and goal RPC writes.
+- Goal-handler emits (`goal.created`, `goal.updated`, `goal.progressUpdated`) unchanged.
+- `liveQuery.delta` events reach subscribed clients for task writes.
 - Runtime/tool-layer `room.task.update` emits untouched; scheduling continues to work.
 - All existing tests pass.
 
 ---
 
-### Task 4 — Frontend: adopt `liveQuery.subscribe` in room-store for tasks and goals
+### Task 4 — Frontend: adopt `liveQuery.subscribe` for tasks and goals; remove daemon goal broadcasts
 
 **Agent:** coder
 **Depends on:** Task 3 (which depends on Task 2)
 
-#### What to replace
+This task atomically (a) removes the daemon-side goal RPC handler broadcasts and (b) replaces the
+frontend goal event listeners with LiveQuery subscriptions. Both sides change together to avoid any
+regression window where goal updates go undelivered.
 
+#### Daemon-side changes (goal-handlers.ts)
+
+Remove goal event emits that are now superseded by LiveQuery delta delivery:
+- Remove `goal.updated` emits — covered by `goals.byRoom` LiveQuery delta.
+- Remove `goal.progressUpdated` emits — progress changes modify the goal row; the `goals.byRoom`
+  LiveQuery delta includes all changed columns and delivers the update. Note: the frontend currently
+  has no `goal.progressUpdated` listener in `room-store.ts` (updates were silently dropped); the
+  LiveQuery approach now delivers them correctly for the first time.
+- Remove `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts:344`
+  but is never actually emitted anywhere in the current codebase (confirmed by grep); no action
+  required, but verify during implementation.
+- **Keep `goal.created` emits** — `room-runtime-service.ts:338` subscribes to `goal.created` on
+  `daemonHub` to trigger scheduling. Removing this emit would silently break goal-creation scheduling.
+
+#### Frontend-side changes (room-store.ts)
+
+**What to replace:**
 - `hub.onEvent('room.task.update', ...)` — replace with `liveQuery.subscribe` using `tasks.byRoom`.
 - Goal event listeners in `room-store.ts:255–299`:
   - `goal.created` — replaced by `goals.byRoom` LiveQuery.
   - `goal.updated` — replaced by `goals.byRoom` LiveQuery.
   - `goal.completed` — replaced by `goals.byRoom` LiveQuery.
-  - `goal.progressUpdated` — no listener exists today (updates were silently dropped). The
-    `goals.byRoom` LiveQuery now delivers these correctly; no listener removal needed, but note
-    that goal progress is now surfaced in the UI for the first time.
+  - `goal.progressUpdated` — no listener exists today; LiveQuery now delivers these correctly.
 - The task-update handling portion inside the `hub.onEvent('room.overview', ...)` callback.
 - Tests in `packages/web/src/lib/__tests__/room-store-review.test.ts` that fire `room.task.update`
   events directly — rewrite to use `liveQuery.snapshot`/`liveQuery.delta`.
 
-#### What NOT to remove
-
+**What NOT to remove:**
 The `room.overview` event listener must be kept for its `room` metadata and `sessions` signal
 updates (`room-store.ts:213–218`). Only the task-update portion within it is removed.
 
 #### Reconnect re-subscribe
 
 After WebSocket reconnect, re-issue `liveQuery.subscribe` for the active room. Hook into the
-general `connected` state transition (not just the page-visibility resume path) — use the same
-`onConnection` callback pattern used by `state-channel.ts`. Handle the resulting snapshot to
-fully resync state.
+general `connected` state transition using the `onConnection` callback pattern used by
+`state-channel.ts` (e.g., `hub.onConnection((state) => { if (state === 'connected') ... })`).
+**Do not call `liveQuery.unsubscribe` before re-subscribing** — old handles are disposed
+server-side on disconnect; no handles exist for the old `clientId` after reconnect.
+Handle the resulting snapshot to fully resync state.
 
 #### Subscription ownership
 
@@ -367,6 +416,7 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
 `room-store.unsubscribeRoom(roomId)`.
 
 **Work:**
+- Remove `goal.updated` and `goal.progressUpdated` emits from `goal-handlers.ts` (daemon-side).
 - When a room is selected, call `liveQuery.subscribe` with `tasks.byRoom` and `goals.byRoom`.
 - Handle `liveQuery.snapshot`: replace signal value entirely.
 - Handle `liveQuery.delta`: apply incremental updates using `added`/`removed`/`updated` arrays.
@@ -388,6 +438,8 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
 - `room.task.update`, `goal.created`, `goal.updated`, `goal.completed` listeners removed.
 - `room.overview` listener retained for room/session updates.
 - Goal progress updates surface in the UI (LiveQuery delivers them; were previously dropped).
+- `goal.updated` and `goal.progressUpdated` no longer emitted from `goal-handlers.ts`.
+- `goal.created` continues to be emitted from `goal-handlers.ts`.
 - No double-subscription: hook calls store methods; store owns handles.
 - `room-store-review.test.ts` rewritten to use `liveQuery.snapshot`/`liveQuery.delta`.
 - All Vitest and E2E tests pass.
@@ -414,7 +466,9 @@ Both sites become dead code once the frontend listener is removed. Task 5 must r
 #### Reconnect re-subscribe
 
 After WebSocket reconnect (general `connected` state transition), re-issue `liveQuery.subscribe`
-for the active group and handle the snapshot to resync message state.
+for the active group and handle the snapshot to resync message state. **Do not call
+`liveQuery.unsubscribe` before re-subscribing** — old handles are disposed server-side on
+disconnect.
 
 **Work:**
 - Subscribe via `liveQuery.subscribe` using `sessionGroupMessages.byGroup`.
@@ -439,12 +493,14 @@ for the active group and handle the snapshot to resync message state.
 ## Dependency Graph
 
 ```
-Task 1 ──► Task 2 ──► Task 3 ──► Task 4  (frontend tasks/goals)
+Task 1 ──► Task 2 ──► Task 3 ──► Task 4  (daemon goal cleanup + frontend tasks/goals)
                              └──► Task 5  (frontend task messages)
 ```
 
-Task 3 must complete before Tasks 4 and 5. This prevents a cutover window where the daemon stops
-emitting events the frontend still depends on. Tasks 4 and 5 can run in parallel after Task 3.
+Task 3 must complete before Tasks 4 and 5. Merging Task 3 alone is safe: it only removes
+`emitTaskUpdate()` from `task.fail`, and `room.task.update` continues to arrive via runtime-layer
+emits. Goal emit removal is deferred to Task 4, which removes daemon goal broadcasts and installs
+the frontend LiveQuery replacement atomically. Tasks 4 and 5 can run in parallel after Task 3.
 
 ---
 
