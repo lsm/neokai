@@ -158,12 +158,20 @@ describe('OpenAI Provider (Online)', () => {
 		daemon.trackSession(sessionId);
 
 		// First query: math question
-		const result1 = await sendMessage(daemon, sessionId, 'What is 5+7? Reply with just the number.');
+		const result1 = await sendMessage(
+			daemon,
+			sessionId,
+			'What is 5+7? Reply with just the number.'
+		);
 		expect(result1.messageId).toBeString();
 		await waitForIdle(daemon, sessionId, 30000);
 
 		// Second query: another math question — proves sequential queries work on pi-mono path
-		const result2 = await sendMessage(daemon, sessionId, 'What is 8-3? Reply with just the number.');
+		const result2 = await sendMessage(
+			daemon,
+			sessionId,
+			'What is 8-3? Reply with just the number.'
+		);
 		expect(result2.messageId).toBeString();
 		expect(result2.messageId).not.toBe(result1.messageId);
 		await waitForIdle(daemon, sessionId, 30000);
