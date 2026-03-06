@@ -31,8 +31,13 @@ import type { SessionFactory, WorkerConfig } from './task-group-manager';
 import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
 import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
+import { createLeaderMcpServer } from '../agents/leader-agent';
 import type { PlannerCreateTaskParams, ReplanContext } from '../agents/planner-agent';
-import { createPlannerAgentInit, buildPlannerTaskMessage } from '../agents/planner-agent';
+import {
+	createPlannerAgentInit,
+	createPlannerMcpServer,
+	buildPlannerTaskMessage,
+} from '../agents/planner-agent';
 import { createCoderAgentInit, buildCoderTaskMessage } from '../agents/coder-agent';
 import { createGeneralAgentInit, buildGeneralTaskMessage } from '../agents/general-agent';
 import { buildLeaderTaskContext } from '../agents/leader-agent';
@@ -734,6 +739,86 @@ export class RoomRuntime {
 		return true;
 	}
 
+	/**
+	 * Restore MCP servers for a session group after daemon restart.
+	 *
+	 * MCP servers are runtime-only (non-serializable) and NOT persisted to DB.
+	 * Without this, restored planner sessions lose the create_task tool and
+	 * restored leader sessions lose send_to_worker/complete_task/etc.
+	 */
+	async restoreMcpServersForGroup(group: SessionGroup): Promise<void> {
+		// Restore planner MCP server (worker)
+		if (group.workerRole === 'planner') {
+			const task = await this.taskManager.getTask(group.taskId);
+			if (task) {
+				const isPlanApproved = () => {
+					return this.groupRepo.getGroup(group.id)?.approved ?? false;
+				};
+				const createDraftTask = async (
+					params: PlannerCreateTaskParams
+				): Promise<{ id: string; title: string }> => {
+					const goal = await this.goalManager.getGoalsForTask(task.id).then((g) => g[0] ?? null);
+					const newTask = await this.taskManager.createTask({
+						title: params.title,
+						description: params.description,
+						priority: params.priority,
+						dependsOn: params.dependsOn,
+						taskType: 'coding',
+						status: 'draft',
+						createdByTaskId: task.id,
+						assignedAgent: params.agent,
+					});
+					if (goal) {
+						await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+					}
+					log.info(`Planning (restored) created draft task: ${newTask.id} (${newTask.title})`);
+					return { id: newTask.id, title: newTask.title };
+				};
+				const updateDraftTask = async (
+					taskId: string,
+					updates: {
+						title?: string;
+						description?: string;
+						priority?: TaskPriority;
+						assignedAgent?: AgentType;
+					}
+				): Promise<{ id: string; title: string }> => {
+					return this.taskManager.updateDraftTask(taskId, updates);
+				};
+				const removeDraftTask = async (taskId: string): Promise<boolean> => {
+					return this.taskManager.removeDraftTask(taskId);
+				};
+
+				const goal = await this.goalManager.getGoalsForTask(task.id).then((g) => g[0] ?? null);
+				const mcpServer = createPlannerMcpServer({
+					task,
+					goal: goal!,
+					room: this.room,
+					sessionId: group.workerSessionId,
+					workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
+					createDraftTask,
+					updateDraftTask,
+					removeDraftTask,
+					isPlanApproved,
+				});
+				this.sessionFactory.setSessionMcpServers(group.workerSessionId, {
+					'planner-tools': mcpServer,
+				});
+				log.info(`Restored planner MCP server for group ${group.id}`);
+			}
+		}
+
+		// Restore leader MCP server
+		if (this.sessionFactory.hasSession(group.leaderSessionId)) {
+			const callbacks = this.createLeaderCallbacks(group.id);
+			const leaderMcpServer = createLeaderMcpServer(group.id, callbacks);
+			this.sessionFactory.setSessionMcpServers(group.leaderSessionId, {
+				'leader-agent-tools': leaderMcpServer,
+			});
+			log.info(`Restored leader MCP server for group ${group.id}`);
+		}
+	}
+
 	// =========================================================================
 	// Message Mirroring
 	// =========================================================================
@@ -1327,6 +1412,22 @@ export class RoomRuntime {
 	private async promoteDraftTasksIfPlanning(taskId: string): Promise<void> {
 		const task = await this.taskManager.getTask(taskId);
 		if (!task || task.taskType !== 'planning') return;
+
+		// Safety net: ensure all draft children are linked to the same goal
+		// as the planning task. MCP server closures may have been lost on
+		// daemon restart, so linkTaskToGoal may not have been called.
+		const goals = await this.goalManager.getGoalsForTask(taskId);
+		const goal = goals[0];
+		if (goal) {
+			const drafts = await this.taskManager.getDraftTasksByCreator(taskId);
+			const linked = new Set(goal.linkedTaskIds ?? []);
+			for (const draft of drafts) {
+				if (!linked.has(draft.id)) {
+					await this.goalManager.linkTaskToGoal(goal.id, draft.id);
+					log.info(`Linked draft task ${draft.id} to goal ${goal.id} (safety net)`);
+				}
+			}
+		}
 
 		const promoted = await this.taskManager.promoteDraftTasks(taskId);
 		if (promoted > 0) {

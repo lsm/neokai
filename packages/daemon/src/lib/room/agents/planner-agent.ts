@@ -241,7 +241,7 @@ export function buildPlannerTaskMessage(config: PlannerAgentConfig): string {
 /**
  * Create the MCP server with planning tools.
  */
-function createPlannerMcpServer(config: PlannerAgentConfig) {
+export function createPlannerMcpServer(config: PlannerAgentConfig) {
 	const phaseGateError = {
 		content: [
 			{

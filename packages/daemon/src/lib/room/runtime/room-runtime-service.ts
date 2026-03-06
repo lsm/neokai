@@ -208,6 +208,14 @@ export class RoomRuntimeService {
 				// SDK waits for user input that never arrives.
 				return true;
 			},
+			setSessionMcpServers: (sessionId, mcpServers) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return false;
+				session.setRuntimeMcpServers(
+					mcpServers as Record<string, import('@neokai/shared').McpServerConfig>
+				);
+				return true;
+			},
 			createWorktree: async (basePath, sessionId, branchName) => {
 				try {
 					const result = await worktreeManager.createWorktree({
@@ -387,13 +395,18 @@ export class RoomRuntimeService {
 				);
 			}
 
-			// Inject continuation messages for restored sessions that need to resume work.
-			// Sessions are in cache (lazy-start) but SDK query hasn't started yet.
-			// injectMessage → ensureQueryStarted() starts the query lazily.
+			// Restore MCP servers and inject continuation messages for restored sessions.
+			// MCP servers are runtime-only (non-serializable) and lost on restart.
+			// Must be restored BEFORE continuation messages so the SDK query starts
+			// with the correct tools available (e.g. planner needs create_task).
 			if (result.restoredSessions > 0) {
 				const activeGroups = groupRepo.getActiveGroups(roomId);
 				for (const group of activeGroups) {
 					try {
+						// Restore MCP servers (planner-tools, leader-agent-tools)
+						await runtime.restoreMcpServersForGroup(group);
+
+						// Inject continuation message to resume work
 						if (group.state === 'awaiting_worker') {
 							await sessionFactory.injectMessage(
 								group.workerSessionId,
@@ -408,7 +421,7 @@ export class RoomRuntimeService {
 						// awaiting_human: no message needed — human will provide one
 					} catch (error) {
 						log.error(
-							`Failed to inject continuation for group ${group.id} (${group.state}):`,
+							`Failed to restore/inject continuation for group ${group.id} (${group.state}):`,
 							error
 						);
 					}

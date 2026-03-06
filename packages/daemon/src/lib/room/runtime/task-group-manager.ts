@@ -63,6 +63,11 @@ export interface SessionFactory {
 	 * Returns true if successful, false if session not found in DB.
 	 */
 	restoreSession(sessionId: string): Promise<boolean>;
+	/**
+	 * Set runtime MCP servers on a restored session.
+	 * MCP servers are non-serializable and lost on restart — must be re-created.
+	 */
+	setSessionMcpServers(sessionId: string, mcpServers: Record<string, unknown>): boolean;
 }
 
 /**
