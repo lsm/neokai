@@ -150,7 +150,7 @@ Replace the fire-and-forget title generation + git branch rename in `SessionMana
 // New method added to SessionManager:
 start(): void {
   this.jobQueueProcessor.register(QUEUES.SESSION_TITLE_GENERATION, async (job) => {
-    const { sessionId } = job.payload as { sessionId: string };
+    const { sessionId, userMessageText } = job.payload as { sessionId: string; userMessageText: string };
     // Idempotency: skip if title was already generated.
     // IMPORTANT: Do NOT use session.title !== null — sessions are always created with a
     // placeholder title ('New Session'), so that check is ALWAYS true and would silently
@@ -168,7 +168,9 @@ start(): void {
       await this.sessionLifecycle.generateTitleAndRenameBranch(sessionId, ...);
     } else {
       // Cache miss after restart: title-only fallback (no branch rename)
-      await this.sessionLifecycle.generateTitleOnly(sessionId, ...);
+      // userMessageText comes from the job payload — it is the original user message
+      // text captured at enqueue time and is the only source available after restart.
+      await this.sessionLifecycle.generateTitleOnly(sessionId, userMessageText);
     }
   });
 }
@@ -202,7 +204,9 @@ jobQueueRepo.enqueue({
 - If daemon restarts after enqueue but before handler runs, job is picked up on next start.
 - Idempotency: handler called twice for same session produces correct result (no double-rename).
 - Idempotency guard uses `session.metadata.titleGenerated` (not `session.title !== null`); verified by unit test that second handler invocation returns immediately when `titleGenerated` is true.
-- Unit tests cover: enqueue on first message, idempotency (`titleGenerated = true` → skip), handler success sets `titleGenerated = true`, cache miss fallback, failure + retry (max 2 retries), dead-letter after max retries.
+- `generateTitleOnly` is a new method on `SessionLifecycle` (does not yet exist in codebase); its creation is a required deliverable of this task alongside the handler integration.
+- `userMessageText` is destructured from the job payload alongside `sessionId` and forwarded to both `generateTitleAndRenameBranch` (cache hit) and `generateTitleOnly` (cache miss). The `userMessageText` is the only source of the original message text available after a restart.
+- Unit tests cover: enqueue on first message, idempotency (`titleGenerated = true` → skip), handler success sets `titleGenerated = true`, cache miss fallback (`generateTitleOnly` called with correct `userMessageText`), `generateTitleOnly` leaves `titleGenerated = false` on AI failure (fallback title used — allows retry), failure + retry (max 2 retries), dead-letter after max retries.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -266,6 +270,7 @@ The polling path already uses deterministic IDs as described above. `normalizeWe
 
 2. `packages/daemon/src/lib/github/polling-service.ts`:
    - Replace in-memory etag/timestamp state with reads/writes to `github_poll_state` table
+   - **Injection**: `GitHubPollingService` currently receives only `PollingConfig` in its constructor. The migration adds `jobQueueProcessor`, `jobQueueRepo`, `githubPollStateRepo` (or equivalent DB accessor), and `githubMappingRepo` as constructor dependencies, injected by `GitHubService` (which already receives `jobQueueProcessor`/`jobQueueRepo` from Task 1 and the DB instance).
    - In `start()`, restore repo registrations by reading from `GitHubMappingRepository` (`room_github_mappings` table)
    - Replace `setInterval` with a self-rescheduling `github.poll` job (singleton dedup)
    - Re-scheduling uses a `finally` block with dedup to guarantee next poll is always enqueued but never doubled:
@@ -278,11 +283,18 @@ The polling path already uses deterministic IDs as described above. `normalizeWe
          // Dedup prevents poll chain multiplication if two github.poll jobs are ever
          // simultaneously present (e.g., crash during startup before dedup check runs).
          // Without dedup, each job's finally would create another, doubling the chain.
+         //
+         // Accepted race: this is a check-then-enqueue sequence. Two workers could both
+         // observe "no future job exists" and both enqueue, momentarily doubling the chain.
+         // This is an accepted risk (same as the room tick dedup path): the duplicate is
+         // idempotent (extra poll cycle causes no harm), true atomic dedup would require a
+         // DB-level UNIQUE constraint, and the `github.poll` singleton is recovered by the
+         // dedup guard on the next finally.
          const now = Date.now();
          const existingPoll = jobQueueRepo.listJobs({
            queue: QUEUES.GITHUB_POLL,
            status: ['pending'],
-           limit: 10,
+           limit: 1, // existence check only — limit:1 is sufficient and semantically clearer
          }).find(j => j.runAt !== null && j.runAt > now);
          if (!existingPoll) {
            jobQueueRepo.enqueue({
@@ -355,13 +367,14 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
 **`jobQueueProcessor` and `jobQueueRepo` injection**: `RoomRuntimeService` receives them via the `deps` object passed to `setupRPCHandlers` (wired in Task 1). No refactoring of `RoomRuntimeService` out of `setupRPCHandlers` is required. `RoomRuntime` instances (created by `RoomRuntimeService`) need `jobQueueRepo` to call `enqueueRoomTick()` from within instance methods; add `jobQueueRepo: JobQueueRepository` to the `RoomRuntimeConfig` interface (defined at `room-runtime.ts` line ~76).
 
 **Migration approach**:
-- Remove `setInterval`, `tickTimer` field, `scheduleTick()` method, and all `queueMicrotask` calls from `RoomRuntime`. This includes the main `scheduleTick()` at line ~1550 **and** an additional `queueMicrotask(() => this.tick())` at line ~954 inside the tick mutex path — both must be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`.
+- Remove `setInterval`, `tickTimer` field, `scheduleTick()` method, and all `queueMicrotask` calls from `RoomRuntime`. This includes the main `scheduleTick()` at line ~1550 **and** an additional `queueMicrotask(() => this.tick())` at line ~954 inside the tick mutex path — both must be replaced with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`. **IMPORTANT: the `tickLocked` and `tickQueued` mutex fields must be RETAINED.** With `maxConcurrent: 3`, two `room.tick` jobs for the same `roomId` can run concurrently (dedup is check-then-act, documented as an accepted race); the mutex prevents concurrent `executeTick()` calls within a single runtime. Only the scheduling mechanism (`queueMicrotask`, `setInterval`) is replaced — the in-process tick mutex stays.
 - Remove the `scheduleHeartbeat()` method (if present) from `RoomRuntimeService` — it uses `setInterval`/`setTimeout` internally and is superseded by the `finally`-based heartbeat in the tick handler.
 - **Fix `stopRuntime()` and add `stoppedRooms` tracking**: The current `stopRuntime()` in `room-runtime-service.ts` (line 83) does NOT call `this.runtimes.delete(roomId)`. This means `this.runtimes.has(roomId)` returns `true` even after an individual room stop, making the heartbeat liveness check in the `finally` block ineffective for individual room stops (only effective on full shutdown via `runtimes.clear()`). Required changes to `RoomRuntimeService`:
   1. Add `private stoppedRooms: Set<string> = new Set()` field.
   2. `stopRuntime(roomId)` must call `this.runtimes.delete(roomId)` AND `this.stoppedRooms.add(roomId)`.
-  3. The tick handler's `!runtime` branch must check `this.stoppedRooms.has(roomId)` as the **first** check and return without re-enqueueing. Without this, when a tick job fires after `stopRuntime()` was called, the `!runtime` branch sees the room exists in DB and re-enqueues indefinitely (the perpetual churn loop).
-  4. After `stopRuntime()` deletes from the map, `this.runtimes.has(roomId)` in the heartbeat `finally` block correctly returns `false` for stopped rooms, making the liveness check effective for both individual stops and full shutdown.
+  3. **`startRuntime(roomId)` (at `room-runtime-service.ts:94`) must call `this.stoppedRooms.delete(roomId)` before creating the new runtime** — this clears the stopped marker when a room is restarted. Without this, a stop-then-restart sequence leaves `stoppedRooms` containing the `roomId`; any subsequent tick job hits `stoppedRooms.has(roomId) → true` and returns immediately, permanently preventing the restarted room from ever ticking. Also prevents `stoppedRooms` from growing unbounded across the daemon lifetime.
+  4. The tick handler's `!runtime` branch must check `this.stoppedRooms.has(roomId)` as the **first** check and return without re-enqueueing. Without this, when a tick job fires after `stopRuntime()` was called, the `!runtime` branch sees the room exists in DB and re-enqueues indefinitely (the perpetual churn loop).
+  5. After `stopRuntime()` deletes from the map, `this.runtimes.has(roomId)` in the heartbeat `finally` block correctly returns `false` for stopped rooms, making the liveness check effective for both individual stops and full shutdown.
 - Add an `enqueueRoomTick(repo: JobQueueRepository, roomId: string, priority = 0)` helper function:
   ```typescript
   function enqueueRoomTick(repo: JobQueueRepository, roomId: string, priority = 0): void {
@@ -497,13 +510,14 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
 The re-enqueue-on-miss tick handler avoids the risk of processing a tick after `runtimes` is cleared, because `jobQueueProcessor.stop()` drains all in-flight jobs before `rpcHandlerCleanup()` runs.
 
 **Acceptance criteria**:
-- `setInterval`, `tickTimer`, `scheduleTick()`, and all `queueMicrotask` calls (including the one at line ~954 in the tick mutex path) removed from `RoomRuntime`.
+- `setInterval`, `tickTimer`, `scheduleTick()`, and all `queueMicrotask` calls (including the one at line ~954 in the tick mutex path) removed from `RoomRuntime`. `tickLocked` and `tickQueued` mutex fields are **retained** — they prevent concurrent `executeTick()` under `maxConcurrent: 3` when the check-then-enqueue race allows two `room.tick` jobs for the same room to run simultaneously.
 - All `scheduleTick()` call sites in `room-runtime.ts` replaced with `enqueueRoomTick()` (recovery paths in `runtime-recovery.ts` are automatically covered since they call `onWorkerTerminalState`/`onLeaderTerminalState` which call `scheduleTick()`).
 - `scheduleHeartbeat()` method (if present) removed from `RoomRuntimeService` — replaced by the `finally`-based heartbeat in the tick handler.
 - `jobQueueRepo` added to `RoomRuntimeConfig` interface.
 - All `room.tick` jobs enqueued with `maxRetries: 0` (both `enqueueRoomTick` helper and direct enqueues): prevents job multiplication from retry + finally interaction.
 - Heartbeat enqueue is inside a `try/finally` block so it fires even if `runtime.tick()` throws — no room permanently stops ticking on handler error. The `finally` block checks `this.runtimes.has(roomId)` before enqueueing: if the runtime was stopped while the tick was in-flight, skip re-enqueue to prevent the indefinite re-enqueue-on-miss loop.
 - `stopRuntime()` in `RoomRuntimeService` (line 83) calls `this.runtimes.delete(roomId)` AND `this.stoppedRooms.add(roomId)`. Without `runtimes.delete()`, `this.runtimes.has(roomId)` returns `true` for stopped rooms and the heartbeat liveness check is ineffective for individual room stops.
+- `startRuntime()` in `RoomRuntimeService` (at line 94) calls `this.stoppedRooms.delete(roomId)` before creating the new runtime. Without this, a stop-then-restart sequence permanently suppresses ticking for the restarted room (stale `stoppedRooms` entry causes the tick handler to return early indefinitely).
 - `private stoppedRooms: Set<string> = new Set()` field added to `RoomRuntimeService`.
 - Tick handler's `!runtime` branch checks `this.stoppedRooms.has(roomId)` as the first check and returns without re-enqueueing for explicitly stopped rooms (prevents perpetual churn when a tick fires after `stopRuntime()`).
 - Handler distinguishes "room deleted" from "runtime loading" via `ctx.roomManager.getRoom(roomId)`; no re-enqueue for deleted rooms.
@@ -512,7 +526,7 @@ The re-enqueue-on-miss tick handler avoids the risk of processing a tick after `
 - Heartbeat dedup: `finally` block checks for existing pending future-scheduled job (`runAt > now`) before enqueuing, preventing heartbeat chain multiplication when event-driven ticks fire frequently.
 - Check-then-act race documented as accepted risk (for both `enqueueRoomTick` and heartbeat dedup path).
 - Shutdown ordering enforced in `app.ts` cleanup closure.
-- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule (fires even on tick() throw), heartbeat NOT scheduled when runtime stopped during tick (liveness check), re-enqueue-on-miss (single delayed job), no-re-enqueue for deleted room, no-re-enqueue for explicitly stopped room (stoppedRooms membership), graceful tick execution.
+- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule (fires even on tick() throw), heartbeat NOT scheduled when runtime stopped during tick (liveness check), re-enqueue-on-miss (single delayed job), no-re-enqueue for deleted room, no-re-enqueue for explicitly stopped room (stoppedRooms membership), stop-then-restart resumes ticking normally (stoppedRooms.delete on startRuntime), graceful tick execution.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -540,7 +554,8 @@ Note: `packages/daemon/tests/helpers/daemon-server.ts` has a `spawnDaemonServer(
 - Server-restart crash-recovery is covered by online tests above, not E2E.
 
 **Scheduled DB maintenance job** (`QUEUES.JOB_QUEUE_CLEANUP`):
-- Register handler in `createDaemonApp` that: (1) calls `jobQueueRepo.cleanup(Date.now() - 7 * 24 * 60 * 60 * 1000)` to prune old `job_queue` rows; (2) deletes `github_processed_events` rows older than 30 days
+- Register handler in `createDaemonApp` **before** `jobQueueProcessor.start()` — the cleanup handler registration is inline in `createDaemonApp` (not in a subsystem `start()` method), but must still follow the same ordering rule: all `jobQueueProcessor.register()` calls complete before `jobQueueProcessor.start()` begins polling.
+- Handler: (1) calls `jobQueueRepo.cleanup(Date.now() - 7 * 24 * 60 * 60 * 1000)` to prune old `job_queue` rows; (2) deletes `github_processed_events` rows older than 30 days
 - Self-rescheduling `finally` block (same pattern as `github.poll`). Must include dedup to prevent cleanup chain multiplication if two `job_queue.cleanup` jobs are ever simultaneously present:
   ```typescript
   finally {
@@ -548,11 +563,16 @@ Note: `packages/daemon/tests/helpers/daemon-server.ts` has a `spawnDaemonServer(
     // Without dedup, if two cleanup jobs somehow run concurrently (e.g., crash during
     // startup before dedup check), each job's finally would create an extra next-day
     // cleanup, doubling the chain — same pattern as github.poll (now fixed).
+    //
+    // Accepted race: this is a check-then-enqueue sequence (not atomic). Two concurrent
+    // workers could both observe "no future cleanup" and both enqueue. The duplicate is
+    // harmless (idempotent cleanup), and the dedup guard on the next finally re-collapses
+    // to a singleton. True atomic dedup would require a DB-level UNIQUE constraint.
     const now = Date.now();
     const existingCleanup = jobQueueRepo.listJobs({
       queue: QUEUES.JOB_QUEUE_CLEANUP,
       status: ['pending'],
-      limit: 10,
+      limit: 1, // existence check only — limit:1 is sufficient and semantically clearer
     }).find(j => j.runAt !== null && j.runAt > now);
     if (!existingCleanup) {
       jobQueueRepo.enqueue({
