@@ -139,10 +139,8 @@ export class ModelSwitchHandler {
 			// Check if query is running AND ProcessTransport is ready
 			const transportReady = firstMessageReceived;
 
-			// Detect if this is a cross-provider switch (e.g., Anthropic → GLM)
-			// This is mainly for logging and updating the provider config field
+			// Detect new provider instance to keep provider config aligned with the model
 			const providerRegistry = getProviderRegistry();
-			const currentProviderInstance = providerRegistry.detectProvider(currentResolvedModel);
 			// Use provider from model info to correctly handle shared canonical IDs
 			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and GitHub Copilot).
 			// detectProvider() would always return Anthropic for 'claude-sonnet-4.6'.
@@ -150,12 +148,6 @@ export class ModelSwitchHandler {
 				? (providerRegistry.get(modelInfo.provider) ??
 					providerRegistry.detectProvider(resolvedModel))
 				: providerRegistry.detectProvider(resolvedModel);
-			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
-
-			if (isCrossProviderSwitch) {
-				const _currentProviderId = currentProviderInstance?.id || 'unknown';
-				const _newProviderId = newProviderInstance?.id || 'unknown';
-			}
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
