@@ -8,14 +8,17 @@
  * - task.fail - Fail a task (used by tests to simulate failure)
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
+ * - task.sendHumanMessage - Send a human message to the active agent in a task group
  */
 
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/managers/room-manager';
+import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager } from '../room/managers/task-manager';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
+import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
@@ -40,7 +43,8 @@ export function setupTaskHandlers(
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	db: Database,
-	taskManagerFactory: TaskManagerFactory = createTaskManager
+	taskManagerFactory: TaskManagerFactory = createTaskManager,
+	runtimeService?: RoomRuntimeService
 ): void {
 	/**
 	 * Emit room.task.update event to notify UI clients
@@ -218,5 +222,53 @@ export function setupTaskHandlers(
 		});
 
 		return { messages: result.messages, hasMore: result.hasMore };
+	});
+
+	// task.sendHumanMessage - Send a human message to the active agent in a task group
+	messageHub.onRequest('task.sendHumanMessage', async (data) => {
+		const params = data as { roomId: string; taskId: string; message: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!params.message) {
+			throw new Error('Message is required');
+		}
+		if (!params.message.trim()) {
+			throw new Error('Message cannot be empty');
+		}
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for task.sendHumanMessage');
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		// Cross-room ownership check: verify the task belongs to this room.
+		// TaskManager is room-scoped, so getTask() returns null for tasks in other rooms.
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
+		}
+
+		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const result = await routeHumanMessageToGroup(
+			runtime,
+			groupRepo,
+			params.taskId,
+			params.message
+		);
+
+		if (!result.success) {
+			throw new Error(result.error ?? 'Failed to send human message');
+		}
+
+		return { success: true };
 	});
 }
