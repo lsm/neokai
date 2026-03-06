@@ -110,7 +110,10 @@ describe('RoomRuntime', () => {
 			expect(activeGroups).toHaveLength(1);
 		});
 
-		it('should trigger replanning when planning succeeded but all execution tasks failed', async () => {
+		it('should trigger replanning when planning succeeded but all execution tasks failed (maxPlanningRetries=2)', async () => {
+			// Use a room config with maxPlanningRetries=2 to allow retries
+			ctx.runtime.updateRoom({ ...ctx.runtime['room'], config: { maxPlanningRetries: 2 } });
+
 			// Create goal with a completed planning task and failed execution tasks
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build API',
@@ -156,6 +159,46 @@ describe('RoomRuntime', () => {
 			// planning_attempts should have incremented
 			const goalAfter = await ctx.goalManager.getGoal(goal.id);
 			expect(goalAfter!.planning_attempts).toBeGreaterThan(attemptsBefore);
+		});
+
+		it('should escalate to needs_human immediately when maxPlanningRetries=0 (default) and execution tasks all failed', async () => {
+			// Default room config: maxPlanningRetries = 0 (no retries)
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Build API',
+				description: 'Build the REST API',
+			});
+			const planningTask = await ctx.taskManager.createTask({
+				title: 'Plan: Build API',
+				description: 'Plan the work',
+				taskType: 'planning',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+			await ctx.taskManager.completeTask(planningTask.id, 'Plan created');
+
+			const execTask = await ctx.taskManager.createTask({
+				title: 'Add endpoints',
+				description: 'Add REST endpoints',
+				taskType: 'coding',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, execTask.id);
+			await ctx.taskManager.failTask(execTask.id, 'Compilation error');
+
+			// planning_attempts = 1 (initial planning done), maxPlanningAttempts = 0+1 = 1
+			// So attempts >= maxPlanningAttempts → escalate immediately
+			await ctx.goalManager.incrementPlanningAttempts(goal.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// Should NOT have spawned a new planner session
+			const plannerCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'planner'
+			);
+			expect(plannerCalls.length).toBe(0);
+
+			// Goal should be escalated to needs_human
+			const goalAfter = await ctx.goalManager.getGoal(goal.id);
+			expect(goalAfter!.status).toBe('needs_human');
 		});
 
 		it('should NOT replan when execution tasks are still active', async () => {

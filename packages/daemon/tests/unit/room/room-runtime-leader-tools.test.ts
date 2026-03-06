@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import {
 	createRuntimeTestContext,
 	createGoalAndTask,
+	makeRoom,
 	spawnAndRouteToLeader,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
@@ -247,6 +248,11 @@ describe('RoomRuntime leader tools', () => {
 	});
 
 	describe('replan_goal', () => {
+		beforeEach(() => {
+			// Enable retries so replan_goal tests can trigger replanning
+			ctx.runtime.updateRoom({ ...makeRoom(), config: { maxPlanningRetries: 2 } });
+		});
+
 		async function setupGoalWithMultipleTasks() {
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build auth system',

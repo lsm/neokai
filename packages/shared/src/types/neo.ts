@@ -277,6 +277,8 @@ export interface TaskSummary {
 	progress?: number;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
+	/** Error message for failed tasks */
+	error?: string;
 }
 
 /**

@@ -39,6 +39,33 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 
 	return (
 		<div class="space-y-4">
+			{/* Failed — shown first so failures are immediately visible */}
+			{failed.length > 0 && (
+				<div class="bg-dark-850 border border-red-800/60 rounded-lg overflow-hidden">
+					<div class="px-4 py-3 border-b border-red-800/60 bg-red-900/20 flex items-center gap-2">
+						<svg
+							class="w-4 h-4 text-red-400 flex-shrink-0"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+							/>
+						</svg>
+						<h3 class="font-semibold text-red-400">Failed ({failed.length})</h3>
+					</div>
+					<div class="divide-y divide-dark-700">
+						{failed.map((task) => (
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+						))}
+					</div>
+				</div>
+			)}
+
 			{/* In Progress */}
 			{inProgress.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
@@ -110,20 +137,6 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* Failed */}
-			{failed.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-red-900/20">
-						<h3 class="font-semibold text-red-400">Failed ({failed.length})</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{failed.map((task) => (
 							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>
@@ -205,6 +218,11 @@ function TaskItem({
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
+			{task.status === 'failed' && task.error && (
+				<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={task.error}>
+					{task.error}
+				</p>
+			)}
 			{hasDeps && (
 				<div class="flex items-center gap-1 mt-1.5 flex-wrap">
 					<span class="text-xs text-gray-500">Deps:</span>

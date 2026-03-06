@@ -24,6 +24,7 @@ export interface RoomSettingsProps {
 		defaultPath?: string;
 		defaultModel?: string;
 		allowedModels?: string[];
+		config?: Record<string, unknown>;
 	}) => Promise<void>;
 	onArchive?: () => Promise<void>;
 	onDelete?: () => Promise<void>;
@@ -49,6 +50,11 @@ export function RoomSettings({
 	const defaultPath = useSignal(room.defaultPath || '');
 	// null = all allowed (no restriction); array = explicit set
 	const allowedModels = useSignal<string[] | null>(room.allowedModels ?? null);
+	const maxPlanningRetries = useSignal<number>(
+		typeof (room.config as Record<string, unknown> | undefined)?.['maxPlanningRetries'] === 'number'
+			? ((room.config as Record<string, unknown>)['maxPlanningRetries'] as number)
+			: 0
+	);
 	const isSaving = useSignal(false);
 	const [showArchiveModal, setShowArchiveModal] = useState(false);
 	const [isArchiving, setIsArchiving] = useState(false);
@@ -86,6 +92,9 @@ export function RoomSettings({
 		allowedPaths.value = [...room.allowedPaths];
 		defaultPath.value = room.defaultPath || '';
 		allowedModels.value = room.allowedModels ?? null;
+		const cfg = (room.config as Record<string, unknown> | undefined) ?? {};
+		maxPlanningRetries.value =
+			typeof cfg['maxPlanningRetries'] === 'number' ? (cfg['maxPlanningRetries'] as number) : 0;
 	}, [room]);
 
 	// Models visible in the default model dropdown (only allowed ones, or all if no restriction)
@@ -131,12 +140,19 @@ export function RoomSettings({
 		const modelsChanged =
 			JSON.stringify(origAllowed?.slice().sort()) !== JSON.stringify(currAllowed?.slice().sort());
 
+		const origMaxRetries =
+			typeof ((room.config as Record<string, unknown> | undefined) ?? {})['maxPlanningRetries'] ===
+			'number'
+				? ((room.config as Record<string, unknown>)['maxPlanningRetries'] as number)
+				: 0;
+
 		return (
 			name.value !== room.name ||
 			defaultModel.value !== (room.defaultModel || '') ||
 			JSON.stringify(allowedPaths.value) !== JSON.stringify(room.allowedPaths) ||
 			defaultPath.value !== (room.defaultPath || '') ||
-			modelsChanged
+			modelsChanged ||
+			maxPlanningRetries.value !== origMaxRetries
 		);
 	};
 
@@ -152,6 +168,10 @@ export function RoomSettings({
 				defaultPath: defaultPath.value || undefined,
 				// null → send empty array to mean "all allowed"; explicit list → send list
 				allowedModels: allowedModels.value ?? [],
+				config: {
+					...(room.config as Record<string, unknown> | undefined),
+					maxPlanningRetries: maxPlanningRetries.value,
+				},
 			});
 			toast.success('Settings saved');
 		} catch (err) {
@@ -225,6 +245,31 @@ export function RoomSettings({
 						onInput={(e) => (name.value = (e.target as HTMLInputElement).value)}
 						class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
               placeholder-gray-500 focus:outline-none focus:border-blue-500"
+						disabled={disabled}
+					/>
+				</div>
+
+				{/* Max Planning Retries */}
+				<div>
+					<label for="max-planning-retries" class="block text-sm font-medium text-gray-300 mb-1.5">
+						Max Planning Retries
+					</label>
+					<p class="text-xs text-gray-500 mb-2">
+						How many times the room will retry planning a goal after failure before escalating to
+						human review. 0 means no automatic retries.
+					</p>
+					<input
+						id="max-planning-retries"
+						type="number"
+						min={0}
+						max={5}
+						value={maxPlanningRetries.value}
+						onInput={(e) => {
+							const v = parseInt((e.target as HTMLInputElement).value, 10);
+							if (!isNaN(v) && v >= 0 && v <= 5) maxPlanningRetries.value = v;
+						}}
+						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
+              focus:outline-none focus:border-blue-500"
 						disabled={disabled}
 					/>
 				</div>

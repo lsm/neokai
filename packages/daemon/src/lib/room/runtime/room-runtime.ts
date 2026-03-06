@@ -60,7 +60,8 @@ import {
 
 const log = new Logger('room-runtime');
 
-const MAX_PLANNING_ATTEMPTS = 3;
+/** Default when room config does not specify maxPlanningRetries (no auto-retry) */
+const DEFAULT_MAX_PLANNING_RETRIES = 0;
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -239,6 +240,21 @@ export class RoomRuntime {
 	 */
 	updateRoom(room: Room): void {
 		this.room = room;
+	}
+
+	/**
+	 * Maximum planning attempts for this room.
+	 * Reads from room.config.maxPlanningRetries (default: 0 = no auto-retry).
+	 */
+	private get maxPlanningAttempts(): number {
+		const cfg = this.room.config ?? {};
+		const value = (cfg as Record<string, unknown>)['maxPlanningRetries'];
+		if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+			// maxPlanningRetries is "how many retries after first failure":
+			// 0 = only 1 attempt (no retries), N = N+1 total attempts
+			return value + 1;
+		}
+		return DEFAULT_MAX_PLANNING_RETRIES + 1;
 	}
 
 	// =========================================================================
@@ -1122,9 +1138,9 @@ export class RoomRuntime {
 	 * - status is 'active'
 	 * - has no linked tasks at all, OR all linked tasks are 'failed'
 	 * - has no pending/in_progress/draft/escalated tasks
-	 * - planning_attempts < MAX_PLANNING_ATTEMPTS
+	 * - planning_attempts < this.maxPlanningAttempts
 	 *
-	 * Goals that exceed MAX_PLANNING_ATTEMPTS are transitioned to 'needs_human'.
+	 * Goals that exceed maxPlanningAttempts are transitioned to 'needs_human'.
 	 */
 	private async getNextGoalForPlanning(): Promise<RoomGoal | null> {
 		const activeGoals = await this.goalManager.listGoals('active');
@@ -1169,7 +1185,7 @@ export class RoomRuntime {
 
 			const attempts = goal.planning_attempts ?? 0;
 
-			if (attempts >= MAX_PLANNING_ATTEMPTS) {
+			if (attempts >= this.maxPlanningAttempts) {
 				// Too many failed planning attempts: escalate to human
 				log.warn(
 					`Goal ${goal.id} (${goal.title}) exceeded max planning attempts, marking needs_human`
@@ -1461,7 +1477,7 @@ export class RoomRuntime {
 	 * Guards:
 	 * - Task must be an execution task (not planning)
 	 * - Goal must be active with remaining pending tasks
-	 * - planning_attempts < MAX_PLANNING_ATTEMPTS
+	 * - planning_attempts < this.maxPlanningAttempts
 	 */
 	private async handleReplanGoal(
 		taskId: string,
@@ -1494,7 +1510,7 @@ export class RoomRuntime {
 		}
 
 		const attempts = goal.planning_attempts ?? 0;
-		if (attempts >= MAX_PLANNING_ATTEMPTS) {
+		if (attempts >= this.maxPlanningAttempts) {
 			// Fail the task and escalate instead of replanning
 			await this.taskGroupManager.fail(groupId, reason);
 			this.cleanupMirroring(groupId, `Task failed: ${reason}`);
@@ -1503,7 +1519,7 @@ export class RoomRuntime {
 			this.scheduleTick();
 			return jsonResult({
 				success: false,
-				error: `Max planning attempts (${MAX_PLANNING_ATTEMPTS}) reached. Goal escalated to human.`,
+				error: `Max planning attempts (${this.maxPlanningAttempts}) reached. Goal escalated to human.`,
 			});
 		}
 
