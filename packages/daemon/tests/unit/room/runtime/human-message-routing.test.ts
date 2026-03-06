@@ -143,7 +143,12 @@ describe('routeHumanMessageToGroup', () => {
 			const parsed = JSON.parse(call.content) as {
 				type: string;
 				message: unknown;
-				_taskMeta: { authorRole: string; authorSessionId: string; turnId: string; iteration: number };
+				_taskMeta: {
+					authorRole: string;
+					authorSessionId: string;
+					turnId: string;
+					iteration: number;
+				};
 			};
 			expect(parsed.type).toBe('user');
 			expect(parsed.message).toEqual({
@@ -170,7 +175,13 @@ describe('routeHumanMessageToGroup', () => {
 			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_leader'));
 			const { messageHub, event } = makeMessageHub();
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message, messageHub);
+			const result = await routeHumanMessageToGroup(
+				runtime,
+				groupRepo,
+				taskId,
+				message,
+				messageHub
+			);
 
 			expect(result.success).toBe(true);
 			expect(event).toHaveBeenCalledTimes(1);
@@ -206,7 +217,13 @@ describe('routeHumanMessageToGroup', () => {
 			});
 			const messageHub = { event } as unknown as MessageHub;
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message, messageHub);
+			const result = await routeHumanMessageToGroup(
+				runtime,
+				groupRepo,
+				taskId,
+				message,
+				messageHub
+			);
 
 			// Broadcast failed but persist succeeded — RPC must not surface the error
 			expect(result.success).toBe(true);
