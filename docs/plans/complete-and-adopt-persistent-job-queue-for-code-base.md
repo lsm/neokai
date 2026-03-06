@@ -14,12 +14,72 @@ Replace all in-memory / setInterval-based background task execution in the NeoKa
 | Unit tests | `tests/unit/storage/job-queue-*.test.ts` | Comprehensive |
 | GitHub polling | `packages/daemon/src/lib/github/polling-service.ts` | Uses `setInterval` |
 | Room runtime tick | `packages/daemon/src/lib/room/runtime/room-runtime.ts` | Uses `setInterval` |
+| WebSocket stale check | `packages/daemon/src/lib/websocket-server-transport.ts` | Uses `setInterval` — **explicitly out of scope** (see note below) |
+
+> **WebSocket stale-connection checker scope decision:** `WebSocketServerTransport.checkStaleConnections()` is a transport-layer concern (detecting dead TCP connections), not a business logic background task. It runs every 30s and only closes connections with no activity for >2 min. Migrating it to a DB-backed queue adds latency and persistence overhead that provides no benefit for a purely in-process I/O operation. It stays as `setInterval` in the transport layer.
+
+## Architectural Decisions
+
+### A. How `jobProcessor`/`jobQueue` reach `RoomRuntimeService`
+
+`RoomRuntimeService` is instantiated inside `setupRPCHandlers()`, not in `app.ts`. Rather than lifting `RoomRuntimeService` out (large refactor), we **add `jobProcessor` and `jobQueue` to `RPCHandlerDependencies`** so they are passed into `setupRPCHandlers()`. This is a minimal, low-risk change.
+
+```ts
+// packages/daemon/src/lib/rpc-handlers/index.ts
+export interface RPCHandlerDependencies {
+  // ...existing...
+  jobProcessor: JobQueueProcessor;  // ADD
+  jobQueue: JobQueueRepository;     // ADD
+}
+```
+
+`RoomRuntimeService` (already receiving dependencies via the dependency object) can then receive `jobQueue` for scheduling ticks.
+
+### B. Atomic deduplication strategy
+
+Both `github_poll` and `room_tick` require "at most one pending job" semantics. We add an **`enqueueIfNotPending(params)`** method to `JobQueueRepository` that performs an atomic INSERT with a subquery guard:
+
+```sql
+INSERT INTO job_queue (...)
+SELECT ... WHERE NOT EXISTS (
+  SELECT 1 FROM job_queue
+  WHERE queue = ? AND status IN ('pending', 'processing')
+  -- For room_tick: also filter by json_extract(payload, '$.roomId') = ?
+);
+```
+
+This runs in a single SQLite statement with no TOCTOU gap.
+
+### C. Recurring-job resurrection on failure
+
+Recurring jobs (`github_poll`, `room_tick`) must survive handler failures. The next-interval re-enqueue happens in the handler's **`finally` block**, not only on success. This guarantees the chain never dies regardless of the handler outcome. The job-queue's own retry/dead mechanism handles transient handler errors during the *current* execution; the `finally` re-enqueue ensures the *next* scheduled interval always exists.
+
+```ts
+async (job) => {
+  try {
+    // do work
+  } finally {
+    // always schedule next run
+    jobQueue.enqueueIfNotPending({ queue: job.queue, payload: job.payload, runAt: Date.now() + intervalMs });
+  }
+}
+```
+
+### D. `github_poll` payload contract
+
+The `github_poll` job payload carries **no repository list**. The handler calls `pollingService.pollAllRepositories()` directly — the `GitHubPollingService` already maintains its own repository registry (`addRepository`/`getRepositories`). The payload is `{}`. This means no stale repo lists survive daemon restarts; the polling service is always the source of truth.
+
+Startup reconciliation: when `gitHubService.start()` is called, it enqueues a `github_poll` job (runAt = now) if no pending/processing job already exists (using `enqueueIfNotPending`).
+
+### E. `scheduleTick()` dual-purpose model (P2 clarification)
+
+`RoomRuntime.scheduleTick()` uses `queueMicrotask()` for **event-driven, immediate** ticks (e.g., after a task completes or a leader tool returns). These remain as-is — they are synchronous in-process signals, not scheduled background tasks. Only the **periodic timer** (`setInterval` in `start()`) is replaced by job-based scheduling. The two mechanisms are complementary: jobs handle the heartbeat, `scheduleTick()` handles reactive state transitions.
 
 ## Tasks
 
 ---
 
-### Task 1: Wire `JobQueueProcessor` into `DaemonApp` lifecycle
+### Task 1: Wire `JobQueueProcessor` into `DaemonApp` lifecycle and extend `RPCHandlerDependencies`
 
 **Agent:** coder
 **Risk:** Low
@@ -27,40 +87,42 @@ Replace all in-memory / setInterval-based background task execution in the NeoKa
 
 **Description:**
 
-Instantiate `JobQueueProcessor` and `JobQueueRepository` in `packages/daemon/src/app.ts` and add them to the `DaemonAppContext`. The processor should start before the server begins serving requests and be stopped gracefully during cleanup (after in-flight jobs drain).
-
-Also wire the change notifier so `ReactiveDatabase` is notified when jobs are completed or failed, enabling Live Query support for job status.
+Instantiate `JobQueueProcessor` and `JobQueueRepository` in `packages/daemon/src/app.ts`, add them to `DaemonAppContext`, and pass them into `setupRPCHandlers()`.
 
 **Implementation details:**
 
-In `app.ts`:
-1. Import `JobQueueRepository` and `JobQueueProcessor`.
-2. After `db.initialize()`, create:
-   ```ts
-   const jobQueue = new JobQueueRepository(db.getDatabase());
-   const jobProcessor = new JobQueueProcessor(jobQueue, {
-     pollIntervalMs: 1000,
-     maxConcurrent: 3,
-     staleThresholdMs: 5 * 60 * 1000,
-   });
-   jobProcessor.setChangeNotifier((table) => reactiveDb.notifyChange(table));
-   jobProcessor.start();
-   ```
-3. Add `jobProcessor` and `jobQueue` to `DaemonAppContext` interface.
-4. In `cleanup()`, call `await jobProcessor.stop()` before `sessionManager.cleanup()`.
-5. Return both in the context object.
+1. **`packages/daemon/src/app.ts`:**
+   - Import `JobQueueRepository` and `JobQueueProcessor`.
+   - After `db.initialize()`:
+     ```ts
+     const jobQueue = new JobQueueRepository(db.getDatabase());
+     const jobProcessor = new JobQueueProcessor(jobQueue, {
+       pollIntervalMs: 1000,
+       maxConcurrent: 3,
+       staleThresholdMs: 5 * 60 * 1000,
+     });
+     jobProcessor.setChangeNotifier((table) => reactiveDb.notifyChange(table));
+     jobProcessor.start();
+     ```
+   - Add `jobProcessor` and `jobQueue` to `DaemonAppContext` interface.
+   - Pass `jobProcessor` and `jobQueue` into `setupRPCHandlers()`.
+   - In `cleanup()`, call `await jobProcessor.stop()` before `sessionManager.cleanup()`.
+
+2. **`packages/daemon/src/lib/rpc-handlers/index.ts`:**
+   - Add `jobProcessor: JobQueueProcessor` and `jobQueue: JobQueueRepository` to `RPCHandlerDependencies`.
+   - Thread them into `RoomRuntimeService` construction (future tasks will use them; wire them now even if not yet consumed).
 
 **Acceptance criteria:**
-- `DaemonAppContext` exposes `jobProcessor: JobQueueProcessor` and `jobQueue: JobQueueRepository`.
-- Daemon starts and stops cleanly with the processor running.
+- `DaemonAppContext` exposes `jobProcessor` and `jobQueue`.
+- `RPCHandlerDependencies` includes `jobProcessor` and `jobQueue`.
+- Daemon starts and stops cleanly; `jobProcessor.stop()` is awaited before DB close.
 - `setChangeNotifier` wired to `reactiveDb.notifyChange`.
-- Unit test: processor starts and stops cleanly as part of `createDaemonApp`.
-- Integration test: cleanup waits for in-flight jobs before closing DB.
+- Unit test: processor starts/stops cleanly; cleanup awaits in-flight jobs.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 2: Create job handler infrastructure and the `cleanup` handler
+### Task 2: Add `enqueueIfNotPending()` to `JobQueueRepository` and create handler type infrastructure
 
 **Agent:** coder
 **Risk:** Low
@@ -68,25 +130,30 @@ In `app.ts`:
 
 **Description:**
 
-Create the shared handler type definitions and the database cleanup handler. This establishes the pattern all future handlers will follow.
+Add the atomic deduplication helper and establish the shared handler type infrastructure.
 
-**Files to create:**
-- `packages/daemon/src/lib/job-handlers/types.ts` — `JobHandler` type alias and `JobHandlerContext` interface.
-- `packages/daemon/src/lib/job-handlers/cleanup.handler.ts` — Deletes old completed/dead jobs from `job_queue` (and optionally other tables). Schedules next cleanup job (every 24h).
+**Implementation details:**
 
-**Handler registration in `app.ts`:**
-```ts
-import { createCleanupHandler } from './lib/job-handlers/cleanup.handler';
-jobProcessor.register('cleanup', createCleanupHandler(jobQueue, db));
-// Enqueue initial cleanup job on startup
-jobQueue.enqueue({ queue: 'cleanup', payload: {}, runAt: Date.now() + 24 * 60 * 60 * 1000 });
-```
+1. **`packages/daemon/src/storage/repositories/job-queue-repository.ts`:**
+   - Add `enqueueIfNotPending(params: EnqueueParams & { dedupeKey?: string }): Job | null`.
+   - The method performs a single atomic `INSERT ... WHERE NOT EXISTS (SELECT 1 FROM job_queue WHERE queue = ? AND status IN ('pending', 'processing'))`.
+   - For room ticks, accept an optional `dedupeKey` (e.g., roomId) to scope the uniqueness check to `json_extract(payload, '$.roomId') = ?`.
+   - Returns the created `Job` or `null` if skipped.
+
+2. **`packages/daemon/src/lib/job-handlers/types.ts`:**
+   - Re-export `JobHandler` from `../../storage/job-queue-processor` (no redefinition).
+   - Export `JobHandlerContext` interface with typed dependencies (`db`, `jobQueue`, etc.).
+
+3. **`packages/daemon/src/lib/job-handlers/cleanup.handler.ts`:**
+   - Handler deletes completed/dead jobs older than 7 days (configurable via `payload.maxAgeMs`).
+   - In `finally` block, re-enqueues `cleanup` at `runAt: Date.now() + 24 * 60 * 60 * 1000`.
+   - Register in `app.ts` and enqueue initial job at startup (24h from now).
 
 **Acceptance criteria:**
-- `types.ts` exports `JobHandler` and `JobHandlerContext`.
-- Cleanup handler deletes completed/dead jobs older than 7 days (configurable via payload).
-- Cleanup handler re-enqueues itself for the next 24h run.
-- Unit tests for the cleanup handler with mock dependencies.
+- `enqueueIfNotPending()` is atomic (single SQL statement); unit-tested with concurrent calls.
+- `types.ts` re-exports `JobHandler` from processor, no type drift.
+- Cleanup handler deletes old jobs and always re-enqueues the next cleanup run (in `finally`).
+- Unit tests: `enqueueIfNotPending` idempotency, cleanup handler with mock `JobQueueRepository`.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -99,35 +166,61 @@ jobQueue.enqueue({ queue: 'cleanup', payload: {}, runAt: Date.now() + 24 * 60 * 
 
 **Description:**
 
-Replace `setInterval` in `GitHubPollingService.start()` with a job-based approach. The handler triggers the actual poll and then re-enqueues the next poll job 60 seconds in the future.
+Replace `setInterval` in `GitHubPollingService.start()` with a job-based approach. The handler calls `triggerPoll()` and re-enqueues the next interval unconditionally.
 
 **Implementation details:**
 
-1. In `packages/daemon/src/lib/github/polling-service.ts`:
-   - Add a `triggerPoll(): Promise<void>` public method that calls `this.pollAllRepositories()`.
-   - Remove `setInterval` from `start()`. Keep `start()`/`stop()` for state management but they should no longer own the timer.
+1. **`packages/daemon/src/lib/github/polling-service.ts`:**
+   - Add `triggerPoll(): Promise<void>` as a public method (calls existing `this.pollAllRepositories()`).
+   - Remove `setInterval` from `start()`. `start()` keeps state tracking (`this.running = true`) but no longer owns a timer.
+   - `stop()` sets `this.running = false`.
 
-2. Create `packages/daemon/src/lib/job-handlers/github-poll.handler.ts`:
-   - Handler calls `pollingService.triggerPoll()`.
-   - After success, re-enqueues `github_poll` with `runAt: Date.now() + 60_000`.
-   - Payload: `{ repositories: Array<{ owner: string; repo: string }> }`.
+2. **`packages/daemon/src/lib/github/github-service.ts`:**
+   - Add `getPollingService(): GitHubPollingService` public accessor (returns `this.pollingService`).
+   - Modify `start()`: after starting the polling service state, enqueue the first `github_poll` job immediately using `jobQueue.enqueueIfNotPending({ queue: 'github_poll', payload: {}, runAt: Date.now() })`.
+   - `GitHubService.start()` receives `jobQueue` as a constructor/init parameter (passed from `app.ts`).
 
-3. In `app.ts`, after creating `gitHubService`:
+3. **`packages/daemon/src/lib/job-handlers/github-poll.handler.ts`:**
    ```ts
-   if (gitHubService) {
-     jobProcessor.register('github_poll', createGitHubPollHandler(gitHubService.getPollingService(), jobQueue));
-     jobQueue.enqueue({ queue: 'github_poll', payload: {}, runAt: Date.now() });
+   export function createGitHubPollHandler(
+     pollingService: GitHubPollingService,
+     jobQueue: JobQueueRepository,
+     intervalMs: number,
+   ): JobHandler {
+     return async (job) => {
+       try {
+         await pollingService.triggerPoll();
+         return { polled: pollingService.getRepositories().length };
+       } finally {
+         // Unconditional reschedule — chain never dies
+         jobQueue.enqueueIfNotPending({
+           queue: 'github_poll',
+           payload: {},
+           runAt: Date.now() + intervalMs,
+         });
+       }
+     };
    }
    ```
+   - `intervalMs` comes from `config.githubPollingInterval` (respects configured value, not hardcoded 60s).
 
-**Concurrency:** Only one `github_poll` job should run at a time. The handler checks for existing pending jobs before re-enqueueing.
+4. **`packages/daemon/src/app.ts`:**
+   - Pass `jobQueue` to `createGitHubService(...)`.
+   - After creating `gitHubService`, register handler:
+     ```ts
+     jobProcessor.register('github_poll',
+       createGitHubPollHandler(gitHubService.getPollingService(), jobQueue, config.githubPollingInterval ?? 60_000)
+     );
+     ```
 
 **Acceptance criteria:**
 - `GitHubPollingService` no longer uses `setInterval`.
-- `triggerPoll()` is publicly callable.
-- `github-poll.handler.ts` exists with correct re-scheduling logic.
-- Handler is registered in `app.ts`; initial job enqueued on startup.
-- Unit tests: handler triggers poll, schedules next job, no-ops if pending job exists.
+- `getPollingService()` exists on `GitHubService`.
+- Handler uses `config.githubPollingInterval`, not hardcoded 60s.
+- Handler re-enqueues in `finally` block (runs even on failure).
+- `enqueueIfNotPending` prevents duplicate pending jobs.
+- Startup enqueues initial `github_poll` job.
+- Unit tests: handler calls `triggerPoll`, schedules next job in `finally`, `enqueueIfNotPending` called with correct `runAt`.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -140,45 +233,86 @@ Replace `setInterval` in `GitHubPollingService.start()` with a job-based approac
 
 **Description:**
 
-Replace `setInterval` in `RoomRuntime.start()` with a per-room job-based tick. Each active room gets a `room_tick` job scheduled. After each tick completes, the next tick is scheduled 30 seconds later.
+Replace the periodic `setInterval` in `RoomRuntime.start()` with per-room `room_tick` jobs. The event-driven `scheduleTick()` (using `queueMicrotask`) is **not changed** — it continues to trigger immediate in-process ticks for reactive state transitions.
 
 **Implementation details:**
 
-1. In `packages/daemon/src/lib/room/runtime/room-runtime.ts`:
+1. **`packages/daemon/src/lib/room/runtime/room-runtime.ts`:**
    - Remove `tickTimer` field and `setInterval(() => this.tick(), this.tickInterval)` from `start()`.
-   - Keep `start()` for state transitions (`this.state = 'running'`).
-   - Keep the `tick()` method unchanged (it still has the mutex protection).
+   - `start()` still sets `this.state = 'running'` and calls `this.scheduleTick()` (immediate first tick).
+   - `stop()` still sets `this.state = 'stopped'`. Remove `clearInterval(this.tickTimer)`.
+   - `scheduleTick()` is unchanged (uses `queueMicrotask`, only fires if `state === 'running'`).
 
-2. In `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` (or equivalent service that manages `RoomRuntime` instances):
-   - After calling `runtime.start()`, enqueue the first tick job.
-
-3. Create `packages/daemon/src/lib/job-handlers/room-tick.handler.ts`:
-   - Receives `{ roomId: string }` payload.
-   - Looks up the `RoomRuntime` from the runtime registry.
-   - Calls `await runtime.tick()`.
-   - After tick, if room is still active, re-enqueues `room_tick` with `runAt: Date.now() + 30_000`.
-   - Deduplicates: checks for existing pending `room_tick` job for the same `roomId` before enqueueing.
-
-4. Register the handler in `app.ts` (or wherever runtimes are initialized):
+2. **`packages/daemon/src/lib/job-handlers/room-tick.handler.ts`:**
    ```ts
-   jobProcessor.register('room_tick', createRoomTickHandler(roomRuntimeRegistry, jobQueue));
+   export function createRoomTickHandler(
+     runtimeService: RoomRuntimeService,
+     jobQueue: JobQueueRepository,
+     intervalMs: number,
+   ): JobHandler {
+     return async (job) => {
+       const { roomId } = job.payload as { roomId: string };
+       const runtime = runtimeService.getRuntime(roomId);
+       try {
+         if (!runtime || runtime.getState() !== 'running') {
+           return { skipped: true, reason: 'runtime_not_running' };
+         }
+         await runtime.tick();
+         return { ticked: true };
+       } finally {
+         // Always reschedule if room is still active
+         const stillActive = runtimeService.getRuntime(roomId)?.getState() === 'running';
+         if (stillActive) {
+           jobQueue.enqueueIfNotPending({
+             queue: 'room_tick',
+             payload: { roomId },
+             runAt: Date.now() + intervalMs,
+             dedupeKey: roomId,
+           });
+         }
+       }
+     };
+   }
    ```
 
-5. When a room is stopped/deleted, cancel/ignore pending `room_tick` jobs for that room (handler checks if runtime is still active before ticking).
+3. **`packages/daemon/src/lib/room/runtime/room-runtime-service.ts`:**
+   - Accept `jobQueue: JobQueueRepository` and `tickIntervalMs: number` (from config, default 30s).
+   - In `startRuntime(roomId)`: after `runtime.start()`, call:
+     ```ts
+     this.jobQueue.enqueueIfNotPending({
+       queue: 'room_tick',
+       payload: { roomId },
+       runAt: Date.now() + this.tickIntervalMs,
+       dedupeKey: roomId,
+     });
+     ```
+   - In `stopRuntime(roomId)` and the `room.deleted` / `room.archived` event handler: cancel orphaned jobs:
+     ```ts
+     this.jobQueue.cancelPendingJobs('room_tick', roomId);
+     ```
 
-**Concurrency:** The existing `tickLocked`/`tickQueued` mutex in `RoomRuntime.tick()` prevents overlapping ticks within the same room. The deduplication check prevents multiple `room_tick` jobs from being enqueued for the same room.
+4. **`packages/daemon/src/storage/repositories/job-queue-repository.ts`:**
+   - Add `cancelPendingJobs(queue: string, dedupeKey: string): number` method.
+   - Deletes (or marks `cancelled`) all `pending` jobs in `queue` where `json_extract(payload, '$.roomId') = dedupeKey`.
+
+5. **`packages/daemon/src/lib/rpc-handlers/index.ts`:**
+   - Pass `jobQueue` and `tickIntervalMs` into `RoomRuntimeService` constructor.
+
+**Startup reconciliation:** On daemon restart, `reclaimStale` in `JobQueueProcessor` re-queues stale `room_tick` jobs. The handler checks `runtimeService.getRuntime(roomId)?.getState() === 'running'` before executing; stale jobs for deleted/stopped rooms are silently skipped and not rescheduled (the `finally` block checks `stillActive`).
 
 **Acceptance criteria:**
-- `RoomRuntime` no longer uses `setInterval`.
-- `room-tick.handler.ts` exists; correctly ticks and reschedules.
-- Stopped/deleted rooms do not enqueue further ticks.
-- Unit tests: tick handler, reschedule logic, deduplication, stopped-room skip.
-- Integration tests: multiple rooms tick independently.
+- `RoomRuntime` no longer uses `setInterval` for periodic ticks.
+- `scheduleTick()` / `queueMicrotask` path is unchanged.
+- `RoomRuntimeService.stopRuntime()` cancels pending `room_tick` jobs for the room.
+- Handler skips and does not reschedule if room is not in `running` state.
+- `enqueueIfNotPending` with `dedupeKey` prevents duplicate pending ticks per room.
+- Unit tests: handler tick + reschedule, handler skip on stopped room, no double-enqueue.
+- Integration tests: multiple rooms tick independently; stop one room, its jobs stop.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 5: Add RPC handler for job queue introspection
+### Task 5: Add RPC handlers for job queue introspection
 
 **Agent:** coder
 **Risk:** Low
@@ -186,21 +320,21 @@ Replace `setInterval` in `RoomRuntime.start()` with a per-room job-based tick. E
 
 **Description:**
 
-Expose `job_queue` data via RPC so the frontend (and future UI) can observe background task status. This enables operators and developers to see what is running without needing direct DB access.
+Expose read-only job queue data via RPC for observability.
 
-**RPC methods to add** (in a new or existing rpc-handlers file):
+**RPC methods** (new file `packages/daemon/src/lib/rpc-handlers/jobs.ts`):
 
 | Method | Params | Returns |
 |--------|--------|---------|
 | `jobs.list` | `{ queue?: string; status?: string; limit?: number }` | `Job[]` |
 | `jobs.get` | `{ jobId: string }` | `Job \| null` |
-| `jobs.countByStatus` | `{ queue: string }` | `Record<status, number>` |
+| `jobs.countByStatus` | `{ queue: string }` | `Record<string, number>` |
 
-Wire these handlers in `setupRPCHandlers()` using the `jobQueue` from context.
+Register in `setupRPCHandlers()` using the `jobQueue` from `RPCHandlerDependencies`.
 
 **Acceptance criteria:**
-- `jobs.list`, `jobs.get`, and `jobs.countByStatus` RPC methods are registered and return correct data.
-- Unit tests for each RPC handler.
+- All three RPC methods registered and return correct data.
+- Unit tests for each handler.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -208,26 +342,26 @@ Wire these handlers in `setupRPCHandlers()` using the `jobQueue` from context.
 ## Task Dependencies
 
 ```
-Task 1 (Wire processor to app.ts)
-  └── Task 2 (Handler infra + cleanup handler)
-        ├── Task 3 (GitHub polling migration)
-        └── Task 4 (Room runtime tick migration)
-  └── Task 5 (RPC introspection) [independent of 2/3/4]
+Task 1 (Wire processor + extend RPCHandlerDependencies)
+  ├── Task 2 (enqueueIfNotPending + handler types + cleanup handler)
+  │     ├── Task 3 (GitHub polling migration)       [parallel with Task 4]
+  │     └── Task 4 (Room runtime tick migration)    [parallel with Task 3]
+  └── Task 5 (RPC introspection)                    [parallel with Task 2/3/4]
 ```
-
-Tasks 3 and 4 are independent of each other and can run in parallel after Task 2 completes. Task 5 can start as soon as Task 1 is done.
 
 ## Testing Strategy
 
 - All tasks: unit tests with in-memory SQLite DB.
-- Tasks 3 & 4: integration tests verifying the full job dispatch → execution → reschedule cycle.
-- Task 4: load test verifying no duplicate ticks under concurrent job dispatch.
+- Task 2: concurrent call test for `enqueueIfNotPending` atomicity.
+- Tasks 3 & 4: integration tests — full dispatch → execute → reschedule cycle.
+- Task 4: test that stopping a room cancels pending ticks; test stale job recovery skips deleted rooms.
+- All: verify no `setInterval` left in migrated files (lint rule or grep assertion).
 
 ## Rollback Plan
 
 Each task is independently reversible:
-- Task 1: Remove processor/jobQueue from `app.ts`.
-- Task 2: Delete handler files.
+- Task 1: Remove `jobProcessor`/`jobQueue` from `app.ts` and `RPCHandlerDependencies`.
+- Task 2: Delete handler files; remove `enqueueIfNotPending` / `cancelPendingJobs`.
 - Task 3: Restore `setInterval` in `GitHubPollingService`; delete `github_poll` jobs.
 - Task 4: Restore `setInterval` in `RoomRuntime`; delete `room_tick` jobs.
 - Task 5: Unregister RPC handlers.
