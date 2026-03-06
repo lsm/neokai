@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
+import { render, cleanup, waitFor, fireEvent, act } from '@testing-library/preact';
 import { useEffect } from 'preact/hooks';
 // Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
@@ -623,5 +623,51 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 		});
 
 		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-4');
+	});
+});
+
+describe('TaskView — cancelled flag prevents post-unmount state updates', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('does not call task.getGroup after unmount mid-fetch', async () => {
+		// Defer task.get so we can unmount before it resolves
+		let resolveTaskGet!: (value: { task: ReturnType<typeof makeTask> }) => void;
+		mockRequest.mockImplementation((method: unknown) =>
+			method === 'task.get'
+				? new Promise<{ task: ReturnType<typeof makeTask> }>((resolve) => {
+						resolveTaskGet = resolve;
+					})
+				: Promise.resolve({ group: null })
+		);
+
+		const { unmount } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Unmount before task.get resolves
+		act(() => {
+			unmount();
+		});
+
+		// Resolve task.get after unmount — cancelled flag should block fetchGroup call
+		await act(async () => {
+			resolveTaskGet({ task: makeTask('task-1') });
+		});
+
+		// task.getGroup must NOT have been called since the component was cancelled
+		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
+		// leaveRoom should have been called (cleanup ran)
+		expect(mockLeaveRoom).toHaveBeenCalledWith(`room:room-1`);
 	});
 });

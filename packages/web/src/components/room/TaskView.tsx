@@ -281,14 +281,16 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		const channel = `room:${roomId}`;
 		joinRoom(channel);
 		let cancelled = false;
+		let fetchGroupSeq = 0;
 
 		const fetchGroup = async () => {
+			const seq = ++fetchGroupSeq;
 			try {
 				const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
 					roomId,
 					taskId,
 				});
-				if (!cancelled) setGroup(res.group);
+				if (!cancelled && seq === fetchGroupSeq) setGroup(res.group);
 			} catch {
 				// Group fetch failure is non-fatal — task may not have a group yet
 			}

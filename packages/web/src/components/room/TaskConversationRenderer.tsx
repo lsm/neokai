@@ -139,9 +139,9 @@ export function TaskConversationRenderer({
 		);
 
 		const fetchAllMessages = async () => {
-			let fetchError = false;
+			// Declared outside the try so partial pages are committed even if a later page errors.
+			const allGroupMessages: GroupMessage[] = [];
 			try {
-				const allGroupMessages: GroupMessage[] = [];
 				let afterId = 0;
 				let hasMore = true;
 
@@ -159,13 +159,15 @@ export function TaskConversationRenderer({
 						break;
 					}
 				}
-
-				const parsed = allGroupMessages
-					.map(parseGroupMessage)
-					.filter((m): m is SDKMessage => m !== null);
-
+			} catch {
+				// Non-fatal: partial results in allGroupMessages are still committed below
+			} finally {
 				if (!cancelled) {
-					// Register fetched messages in seenIds and collect unique ones.
+					// Merge fetched pages (may be partial on error) with buffered deltas.
+					const parsed = allGroupMessages
+						.map(parseGroupMessage)
+						.filter((m): m is SDKMessage => m !== null);
+
 					const uniqueParsed = parsed.filter((m) => {
 						const id = getMessageId(m);
 						if (id && seenIdsRef.current.has(id)) return false;
@@ -183,22 +185,8 @@ export function TaskConversationRenderer({
 						return true;
 					});
 
-					setMessages([...uniqueParsed, ...newDeltas]);
-				}
-			} catch {
-				// Non-fatal: group may not have messages yet
-				fetchError = true;
-			} finally {
-				if (!cancelled) {
-					// On fetch error, flush any buffered deltas so live messages aren't lost.
-					if (fetchError && pendingDeltasRef.current.length > 0) {
-						const remainingDeltas = pendingDeltasRef.current.filter((m) => {
-							const id = getMessageId(m);
-							if (id && seenIdsRef.current.has(id)) return false;
-							if (id) seenIdsRef.current.add(id);
-							return true;
-						});
-						if (remainingDeltas.length > 0) setMessages(remainingDeltas);
+					if (uniqueParsed.length > 0 || newDeltas.length > 0) {
+						setMessages([...uniqueParsed, ...newDeltas]);
 					}
 					fetchingRef.current = false;
 					pendingDeltasRef.current = [];

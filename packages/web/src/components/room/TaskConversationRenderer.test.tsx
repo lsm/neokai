@@ -353,22 +353,31 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 	});
 
 	it('preserves buffered deltas when the initial fetch fails', async () => {
-		// The fetch rejects — buffered deltas should still be applied so live messages appear.
-		mockRequest.mockImplementation(async () => {
-			throw new Error('network error');
-		});
+		// Use a deferred reject so the delta is guaranteed to be buffered before the error fires.
+		let rejectFetch!: (err: Error) => void;
+		mockRequest.mockImplementation(
+			() =>
+				new Promise<never>((_, reject) => {
+					rejectFetch = reject;
+				})
+		);
 
 		const onCountChange = vi.fn();
 		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
 
-		// Delta arrives while the (doomed) fetch is in-flight
+		// Delta arrives while the doomed fetch is in-flight (deterministically buffered now)
 		const liveMsg = makeRawMessage(1, 'assistant', 'uuid-live');
 		const parsed = JSON.parse(liveMsg.content) as { uuid?: string };
 		act(() => {
 			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
 		});
 
-		// After the fetch rejects, buffered delta should surface
+		// Reject the fetch now — delta is already in the buffer, guaranteed
+		act(() => {
+			rejectFetch(new Error('network error'));
+		});
+
+		// After the rejection, buffered delta should surface
 		await waitFor(() => {
 			expect(onCountChange).toHaveBeenCalledWith(1);
 		});
