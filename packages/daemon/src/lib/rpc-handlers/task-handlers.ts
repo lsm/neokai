@@ -235,6 +235,9 @@ export function setupTaskHandlers(
 		if (!params.message || !params.message.trim()) {
 			throw new Error('Message is required');
 		}
+		if (params.message.length > 10_000) {
+			throw new Error('Message is too long (max 10,000 characters)');
+		}
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.sendHumanMessage');
 		}

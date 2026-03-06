@@ -58,42 +58,68 @@ interface HumanInputAreaProps {
 	groupState: string;
 	roomId: string;
 	taskId: string;
-	onMessageSent: () => void;
+	/** Called after a successful action that requires a full conversation re-fetch */
+	onMessageSentWithReload: () => void;
 }
 
-function HumanInputArea({ groupState, roomId, taskId, onMessageSent }: HumanInputAreaProps) {
+function HumanInputArea({
+	groupState,
+	roomId,
+	taskId,
+	onMessageSentWithReload,
+}: HumanInputAreaProps) {
 	const { request } = useMessageHub();
 	const [feedbackText, setFeedbackText] = useState('');
 	const [leaderText, setLeaderText] = useState('');
-	const [sending, setSending] = useState(false);
+	// Separate loading states so Approve button doesn't show "Approving…" during feedback send
+	const [approving, setApproving] = useState(false);
+	const [sendingFeedback, setSendingFeedback] = useState(false);
+	const [sendingLeader, setSendingLeader] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
 
-	const sendMessage = async (message: string, clearInput: () => void) => {
-		if (!message.trim() || sending) return;
-		setSending(true);
-		setInputError(null);
-		try {
-			await request('task.sendHumanMessage', { roomId, taskId, message: message.trim() });
-			clearInput();
-			onMessageSent();
-		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to send message');
-		} finally {
-			setSending(false);
-		}
-	};
-
 	const approveTask = async () => {
-		if (sending) return;
-		setSending(true);
+		if (approving || sendingFeedback) return;
+		setApproving(true);
 		setInputError(null);
 		try {
 			await request('goal.approveTask', { roomId, taskId });
-			onMessageSent();
+			// Approval changes group state; re-fetch conversation to pick up the approval message
+			onMessageSentWithReload();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to approve task');
 		} finally {
-			setSending(false);
+			setApproving(false);
+		}
+	};
+
+	const sendFeedback = async () => {
+		if (sendingFeedback || approving || !feedbackText.trim()) return;
+		setSendingFeedback(true);
+		setInputError(null);
+		try {
+			await request('task.sendHumanMessage', { roomId, taskId, message: feedbackText.trim() });
+			setFeedbackText('');
+			// Rejection feedback changes group state; re-fetch conversation to pick up the human message
+			onMessageSentWithReload();
+		} catch (err) {
+			setInputError(err instanceof Error ? err.message : 'Failed to send feedback');
+		} finally {
+			setSendingFeedback(false);
+		}
+	};
+
+	const sendToLeader = async () => {
+		if (sendingLeader || !leaderText.trim()) return;
+		setSendingLeader(true);
+		setInputError(null);
+		try {
+			await request('task.sendHumanMessage', { roomId, taskId, message: leaderText.trim() });
+			setLeaderText('');
+			// state.groupMessages.delta handles the live update — no reload needed
+		} catch (err) {
+			setInputError(err instanceof Error ? err.message : 'Failed to send message');
+		} finally {
+			setSendingLeader(false);
 		}
 	};
 
@@ -112,9 +138,9 @@ function HumanInputArea({ groupState, roomId, taskId, onMessageSent }: HumanInpu
 					<button
 						class="w-full py-2 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
 						onClick={approveTask}
-						disabled={sending}
+						disabled={approving || sendingFeedback}
 					>
-						{sending ? 'Approving…' : '✓ Approve'}
+						{approving ? 'Approving…' : '✓ Approve'}
 					</button>
 					{/* Feedback input */}
 					<div class="space-y-1">
@@ -127,18 +153,18 @@ function HumanInputArea({ groupState, roomId, taskId, onMessageSent }: HumanInpu
 							onKeyDown={(e) => {
 								if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 									e.preventDefault();
-									void sendMessage(feedbackText, () => setFeedbackText(''));
+									void sendFeedback();
 								}
 							}}
-							disabled={sending}
+							disabled={sendingFeedback || approving}
 						/>
 						<div class="flex justify-end">
 							<button
 								class="py-1.5 px-3 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 text-xs transition-colors"
-								onClick={() => void sendMessage(feedbackText, () => setFeedbackText(''))}
-								disabled={sending || !feedbackText.trim()}
+								onClick={() => void sendFeedback()}
+								disabled={sendingFeedback || approving || !feedbackText.trim()}
 							>
-								{sending ? 'Sending…' : 'Send Feedback'}
+								{sendingFeedback ? 'Sending…' : 'Send Feedback'}
 							</button>
 						</div>
 					</div>
@@ -160,18 +186,18 @@ function HumanInputArea({ groupState, roomId, taskId, onMessageSent }: HumanInpu
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 							e.preventDefault();
-							void sendMessage(leaderText, () => setLeaderText(''));
+							void sendToLeader();
 						}
 					}}
-					disabled={sending}
+					disabled={sendingLeader}
 				/>
 				<div class="flex justify-end">
 					<button
 						class="py-1.5 px-3 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 text-xs transition-colors"
-						onClick={() => void sendMessage(leaderText, () => setLeaderText(''))}
-						disabled={sending || !leaderText.trim()}
+						onClick={() => void sendToLeader()}
+						disabled={sendingLeader || !leaderText.trim()}
 					>
-						{sending ? 'Sending…' : 'Send to Leader'}
+						{sendingLeader ? 'Sending…' : 'Send to Leader'}
 					</button>
 				</div>
 				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
@@ -372,7 +398,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					groupState={group!.state}
 					roomId={roomId}
 					taskId={taskId}
-					onMessageSent={() => setConversationKey((k) => k + 1)}
+					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
 				/>
 			)}
 		</div>

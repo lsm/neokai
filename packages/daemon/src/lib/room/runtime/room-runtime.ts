@@ -682,8 +682,17 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group || group.state !== 'awaiting_human') return false;
 
-		// Set approved when explicitly requested or when resuming a planner (always an approval)
-		if (opts?.approved || group.workerRole === 'planner') {
+		// Verify the task belongs to this runtime's room
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return false;
+
+		// Set approved when:
+		// - explicitly requested via opts.approved === true, OR
+		// - resuming a planner (always treated as an approval) UNLESS explicitly denied
+		const shouldApprove =
+			opts?.approved === true ||
+			(group.workerRole === 'planner' && opts?.approved !== false);
+		if (shouldApprove) {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
@@ -722,6 +731,10 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group) return false;
 
+		// Verify the task belongs to this runtime's room (cross-room injection guard)
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return false;
+
 		if (group.state === 'awaiting_human') {
 			// Rejection feedback: resume worker without approval flag
 			return this.resumeWorkerFromHuman(taskId, message, { approved: false });
@@ -742,7 +755,15 @@ export class RoomRuntime {
 				},
 			});
 
-			// Persist in group timeline
+			// Inject into leader session FIRST — only persist + broadcast on success
+			try {
+				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+			} catch (error) {
+				log.error(`Failed to send human message to leader for task ${taskId}:`, error);
+				return false;
+			}
+
+			// Persist in group timeline after successful inject
 			this.groupRepo.appendMessage({
 				groupId: group.id,
 				role: 'human',
@@ -760,14 +781,7 @@ export class RoomRuntime {
 				);
 			}
 
-			// Inject into leader session
-			try {
-				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
-				return true;
-			} catch (error) {
-				log.error(`Failed to send human message to leader for task ${taskId}:`, error);
-				return false;
-			}
+			return true;
 		}
 
 		return false;
