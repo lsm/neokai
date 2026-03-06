@@ -45,6 +45,59 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('depends_on');
 		});
 
+		it('should include pre-planning git sync setup', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('Pre-Planning Setup (MANDATORY)');
+			expect(prompt).toContain('git fetch origin');
+			expect(prompt).toContain('git rebase origin/$DEFAULT_BRANCH');
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD');
+		});
+
+		it('should instruct to stop on rebase conflict', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('rebase fails');
+			expect(prompt).toContain('stop immediately and report the error');
+		});
+
+		it('should combine sync commands in single bash invocation using the empty-check fallback pattern', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// Two-step empty check avoids the || pipeline exit code bug
+			expect(prompt).toContain(
+				`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')`
+			);
+			expect(prompt).toContain(
+				`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')`
+			);
+			expect(prompt).toContain('git fetch origin && git rebase origin/$DEFAULT_BRANCH');
+		});
+
+		it('should use subshell with empty-check fallback for gh pr create --base', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain(
+				`gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")`
+			);
+		});
+
+		it('should include fallback for repos where origin/HEAD is not configured', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('git remote show origin');
+			expect(prompt).toContain("sed -n '/HEAD branch/s/.*: //p'");
+		});
+
+		it('should suppress git symbolic-ref stderr with 2>/dev/null', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
+		});
+
+		it('should place pre-planning setup before Phase 1 planning', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const syncIdx = prompt.indexOf('Pre-Planning Setup (MANDATORY)');
+			const phase1Idx = prompt.indexOf('Phase 1: Planning');
+			expect(syncIdx).toBeGreaterThanOrEqual(0);
+			expect(phase1Idx).toBeGreaterThanOrEqual(0);
+			expect(syncIdx).toBeLessThan(phase1Idx);
+		});
+
 		it('should use goal title for plan path', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('docs/plans/build-stock-app.md');
