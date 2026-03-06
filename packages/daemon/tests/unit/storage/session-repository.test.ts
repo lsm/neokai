@@ -442,6 +442,72 @@ describe('SessionRepository', () => {
 			expect(session?.metadata.messageCount).toBe(100);
 			expect(session?.config.coordinatorMode).toBe(true);
 		});
+
+		it('should correctly persist model and provider when updating config with plain fields', () => {
+			repository.createSession(createDefaultSession());
+
+			repository.updateSession('session-1', {
+				config: { model: 'claude-opus-4-5-20251113', provider: 'anthropic' },
+			});
+
+			const session = repository.getSession('session-1');
+			expect(session?.config.model).toBe('claude-opus-4-5-20251113');
+			expect(session?.config.provider).toBe('anthropic');
+			// Other config fields should be preserved from the original
+			expect(session?.config.maxTokens).toBe(4096);
+		});
+
+		it('should strip function values silently when serializing config', () => {
+			repository.createSession(createDefaultSession());
+			const configWithFn = {
+				model: 'claude-opus-4-5-20251113',
+				// spawnClaudeCodeProcess is a runtime-only function — must not crash
+				spawnClaudeCodeProcess: () => {},
+			} as SessionConfig;
+
+			// Should not throw — functions are silently stripped
+			expect(() => repository.updateSession('session-1', { config: configWithFn })).not.toThrow();
+
+			const session = repository.getSession('session-1');
+			expect(session?.config.model).toBe('claude-opus-4-5-20251113');
+			// Function fields are stripped — not persisted
+			expect(session?.config.spawnClaudeCodeProcess).toBeUndefined();
+		});
+
+		it('should not false-positive on shared (diamond) references in config', () => {
+			repository.createSession(createDefaultSession());
+
+			// A shared object appearing at two separate paths is NOT a cycle.
+			// A flat WeakSet would incorrectly throw here; native JSON.stringify handles it fine.
+			const shared = { command: 'mcp-server' };
+			const configWithDiamond = {
+				model: 'claude-sonnet-4-5-20250929',
+				extra1: shared,
+				extra2: shared, // same reference, different path — valid
+			} as SessionConfig;
+
+			expect(() =>
+				repository.updateSession('session-1', { config: configWithDiamond })
+			).not.toThrow();
+
+			const session = repository.getSession('session-1');
+			expect(session?.config.model).toBe('claude-sonnet-4-5-20250929');
+		});
+
+		it('should throw a clear error when config contains a circular reference', () => {
+			repository.createSession(createDefaultSession());
+
+			// Build a config object with a circular reference (simulates
+			// a live mcpServers object being accidentally passed in)
+			const circular = { value: 'test' } as Record<string, unknown>;
+			circular['self'] = circular;
+
+			expect(() =>
+				repository.updateSession('session-1', {
+					config: { model: 'claude-sonnet-4-5-20250929', extra: circular } as SessionConfig,
+				})
+			).toThrow(/updateSession: failed to serialize config/);
+		});
 	});
 
 	describe('deleteSession', () => {
