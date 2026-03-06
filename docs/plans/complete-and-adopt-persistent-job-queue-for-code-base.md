@@ -325,7 +325,7 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
   }
   ```
 - Replace all `this.scheduleTick()` call sites in `room-runtime.ts` with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`
-- After each tick handler completes, use `enqueueRoomTick()` (not direct `enqueue()`) for the heartbeat to preserve dedup guarantees:
+- After each tick handler completes, schedule the heartbeat with a direct `jobQueueRepo.enqueue({ runAt: Date.now() + 30_000 })` — this is unconditional and intentionally bypasses the dedup helper, since the 30s future job is semantically distinct from any immediate pending job:
 - Register handler in `RoomRuntimeService.start()`:
   ```typescript
   this.jobQueueProcessor.register(QUEUES.ROOM_TICK, async (job) => {
@@ -334,11 +334,9 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
     if (!runtime) {
       // Runtime not found: could be recovery in progress OR room was deleted.
       // Check DB to distinguish: if the room no longer exists, skip re-enqueue.
-      const roomExists = this.roomRepo.getRoom(roomId) !== null;
+      const roomExists = this.ctx.roomManager.getRoom(roomId) !== null;
       if (roomExists) {
-        // Recovery still in progress — re-enqueue with delay
-        enqueueRoomTick(this.jobQueueRepo, roomId, 0);
-        // Use runAt delay via direct enqueue for the re-enqueue-on-miss case:
+        // Recovery still in progress — re-enqueue with delay only (no immediate enqueue).
         this.jobQueueRepo.enqueue({
           queue: QUEUES.ROOM_TICK,
           payload: { roomId },
@@ -349,11 +347,15 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
       return;
     }
     await runtime.tick();
-    // Heartbeat: use enqueueRoomTick to preserve dedup
-    enqueueRoomTick(this.jobQueueRepo, roomId);
+    // Heartbeat: always schedule a future tick unconditionally (bypasses dedup helper
+    // intentionally — the 30s future job is distinct from any immediate pending job).
+    this.jobQueueRepo.enqueue({
+      queue: QUEUES.ROOM_TICK,
+      payload: { roomId },
+      runAt: Date.now() + 30_000,
+    });
   });
   ```
-  Note: the heartbeat `runAt` delay (30s) is omitted from `enqueueRoomTick` since the helper doesn't support `runAt`. Use a direct `jobQueueRepo.enqueue({ runAt: Date.now() + 30_000 })` for the heartbeat — this is intentional and documented: heartbeat always adds a new job even if one is pending (the 30s future job is distinct from any immediate pending job for the same room).
 
 **Startup and recovery ordering**: `roomRuntimeService.start()` is called with `.catch()` (fire-and-forget) inside `setupRPCHandlers`. Because recovery may not be complete when the first tick jobs fire, the handler uses re-enqueue-on-miss (above) rather than silent drop. This ensures rooms always receive their tick once recovery completes, without requiring strict startup sequencing between the processor and recovery.
 
@@ -369,11 +371,12 @@ The re-enqueue-on-miss tick handler avoids the risk of processing a tick after `
 - All `scheduleTick()` call sites in `room-runtime.ts` replaced with `enqueueRoomTick()` (recovery paths in `runtime-recovery.ts` are automatically covered since they call `onWorkerTerminalState`/`onLeaderTerminalState` which call `scheduleTick()`).
 - `jobQueueRepo` added to `RoomRuntimeConfig` interface.
 - Handler distinguishes "room deleted" from "runtime loading": no re-enqueue for deleted rooms.
-- Re-enqueue-on-miss: handler re-enqueues with `runAt = now + 5_000` if room exists but runtime not found.
+- Re-enqueue-on-miss: single delayed job (`runAt = now + 5_000`) via direct enqueue when room exists but runtime not found; no `enqueueRoomTick` call in this path.
 - Dedup: `enqueueRoomTick` uses `limit: 1000` on `listJobs`; check-then-act race documented as accepted risk.
-- Heartbeat re-scheduling: after each successful tick, new job enqueued with `runAt = now + 30_000`.
+- Heartbeat re-scheduling: after each successful tick, direct `jobQueueRepo.enqueue({ runAt = now + 30_000 })` (unconditional, bypasses dedup helper intentionally).
+- Handler distinguishes "room deleted" from "runtime loading" via `ctx.roomManager.getRoom(roomId)`; no re-enqueue for deleted rooms.
 - Shutdown ordering enforced in `app.ts` cleanup closure.
-- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule, re-enqueue-on-miss (runtime loading), no-re-enqueue for deleted room, graceful tick execution.
+- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule, re-enqueue-on-miss (single delayed job), no-re-enqueue for deleted room, graceful tick execution.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -430,6 +433,7 @@ Note: `packages/daemon/tests/helpers/daemon-server.ts` has a `spawnDaemonServer(
 - At least 3 online tests covering job persistence and idempotency across processor restart.
 - E2E test verifies UI recovers after WebSocket close/restore using `closeWebSocket()` / `restoreWebSocket()`.
 - Scheduled cleanup job self-reschedules via `finally` block with `maxRetries: 3`; verified by unit test.
+- Startup-time synchronous prune of `github_processed_events` rows older than 30 days runs on daemon start; verified by unit test.
 - No stale `pendingBackgroundTasks`, `scheduleTick()`, or `setInterval`-based tick patterns remain in production code.
 - `bun run check` passes (lint + typecheck + knip).
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
