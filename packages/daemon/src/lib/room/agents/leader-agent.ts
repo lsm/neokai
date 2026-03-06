@@ -537,6 +537,8 @@ You MUST include this identity block at the top of every PR comment you post.
    - **Error handling**: Are failures handled gracefully at system boundaries?
    - **Tests**: Do tests actually verify the new behavior? Are edge cases covered?
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
+
+   The most critical bugs are often **omissions** — missing error handling, uncovered edge cases, absent validation at system boundaries. Prioritize what's NOT there over what is.
 5. Post your review using \`gh pr review\`:
    - \`gh pr review <PR_NUMBER> --approve --body "..."\`
    - \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
@@ -555,7 +557,10 @@ You MUST include this identity block at the top of every PR comment you post.
 
 ## Guidelines
 
+Treat the code as you would work from a competent but unfamiliar developer — it likely handles the happy path but may miss edge cases and project-specific constraints.
+
 - Review the code as a whole, not just the diff — understand how changes integrate with the existing codebase
+- Check how changes interact with callers, dependencies, and shared state — code that works in isolation often breaks at integration boundaries
 - Verify the original request is fully achieved, not just partially implemented
 - Be constructive and specific — always include file paths and line numbers
 - Focus on issues that matter — don't nitpick formatting or style if a linter handles it
