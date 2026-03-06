@@ -16,4 +16,3 @@ export const CODING_TIMEOUT = isGlmProvider ? 600_000 : 420_000;
 
 // Approval timeout: GLM needs 3 minutes, Claude needs 2 minutes
 export const APPROVAL_TIMEOUT = isGlmProvider ? 180_000 : 120_000;
-
