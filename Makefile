@@ -1,4 +1,4 @@
-.PHONY: dev dev-random serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types
+.PHONY: dev dev-random serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup
 
 dev:
 	@echo "Starting development server..."
@@ -169,3 +169,14 @@ update:
 	@cd packages/shared && bun update --interactive
 	@echo ""
 	@echo "✅ All packages updated!"
+
+# Install git hooks
+setup-hooks:
+	@echo "Installing git hooks..."
+	@cp scripts/git-hooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "✅ Git hooks installed"
+
+# Full development environment setup
+setup: setup-hooks
+	@echo "✅ Development environment ready"
