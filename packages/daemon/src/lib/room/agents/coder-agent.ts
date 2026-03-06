@@ -75,7 +75,7 @@ export function buildCoderSystemPrompt(): string {
 		`2. Fetch each review: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id} --jq '.body'\``
 	);
 	sections.push(`3. Read the review body to understand what changes are requested`);
-	sections.push(`4. Address the feedback holistically — focus on the big-picture issues first`);
+	sections.push(`4. Verify the feedback item by item — address the ones that are true or helpful`);
 	sections.push(`5. Add or update tests if the review calls for it`);
 	sections.push(`6. Push your changes: \`git push\``);
 	sections.push(
