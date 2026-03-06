@@ -43,9 +43,9 @@ export default function Room({ roomId, sessionViewId, taskViewId, chatTabActive 
 	useEffect(() => {
 		roomStore.select(roomId).finally(() => {
 			setInitialLoad(false);
-			// After initial load, default to chat tab if any tasks are in review
-			// (only if not already on the chat tab via URL)
-			if (!chatTabActive) {
+			// Auto-default to chat tab on initial plain room load when tasks are in review.
+			// Skip if already on a subroute (session view, task view, or chat tab via URL).
+			if (!chatTabActive && !sessionViewId && !taskViewId) {
 				const hasReviewTasks = roomStore.tasks.value.some((t) => t.status === 'review');
 				if (hasReviewTasks) {
 					// Use navigateToRoomChat so URL and signal stay in sync
@@ -58,12 +58,15 @@ export default function Room({ roomId, sessionViewId, taskViewId, chatTabActive 
 		};
 	}, [roomId]);
 
-	// Sync activeTab when chatTabActive prop changes (URL navigation, e.g. back button)
+	// Sync activeTab when chatTabActive prop changes (URL navigation, e.g. back button).
+	// Only reset to overview in the else branch if we're still showing chat — this avoids
+	// overriding a user-initiated tab click that already called setActiveTab() before the
+	// signal cleared.
 	useEffect(() => {
 		if (chatTabActive) {
 			setActiveTab('chat');
-		} else {
-			// Reset to overview when navigating away via back button
+		} else if (activeTab === 'chat') {
+			// chatTabActive went false while chat is still displayed → external navigation
 			setActiveTab('overview');
 		}
 	}, [chatTabActive]);
