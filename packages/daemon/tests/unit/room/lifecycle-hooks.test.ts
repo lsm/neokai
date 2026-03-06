@@ -7,6 +7,8 @@ import {
 	checkLeaderPrExists,
 	checkPrHasReviews,
 	checkLeaderDraftsExist,
+	checkWorkerPrMerged,
+	checkLeaderPrMerged,
 	runWorkerExitGate,
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
@@ -300,6 +302,104 @@ describe('checkLeaderDraftsExist', () => {
 	});
 });
 
+describe('checkWorkerPrMerged', () => {
+	test('passes when PR state is MERGED', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails when PR state is OPEN', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
+		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('gh pr merge');
+		expect(result.bounceMessage).toContain('OPEN');
+	});
+
+	test('fails when PR state is CLOSED', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'CLOSED', exitCode: 0 },
+		});
+		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('CLOSED');
+	});
+
+	test('passes gracefully when git fails', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes gracefully when gh fails', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+});
+
+describe('checkLeaderPrMerged', () => {
+	test('passes when PR state is MERGED', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails when PR state is OPEN', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
+		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('send_to_worker');
+		expect(result.bounceMessage).toContain('OPEN');
+	});
+
+	test('fails when PR state is CLOSED', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'CLOSED', exitCode: 0 },
+		});
+		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('CLOSED');
+	});
+
+	test('passes gracefully when git fails', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes gracefully when gh fails', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+});
+
 describe('runWorkerExitGate', () => {
 	test('runs coder hooks and passes when all succeed', async () => {
 		const opts = mockRunner({
@@ -494,33 +594,82 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.bounceMessage).toContain('create_task');
 	});
 
-	test('passes for non-planning tasks with approved (edge case)', async () => {
+	test('passes for coder tasks with approved when PR is MERGED', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'coder',
 				taskType: 'coding',
 				approved: true,
-			})
+			}),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
 
-	test('passes for coder tasks with approved (PR already merged by worker)', async () => {
+	test('fails for coder tasks with approved when PR is still OPEN (merge failed)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'coder',
 				taskType: 'coding',
 				approved: true,
-			})
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('send_to_worker');
+	});
+
+	test('passes gracefully for coder tasks with approved when gh unavailable', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+			}),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
 });
 
 describe('runWorkerExitGate — approved bypass', () => {
-	test('passes for coder when approved is true (post-merge exit)', async () => {
-		// No mock runner — would fail branch/PR checks without approved
-		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }));
+	test('passes for coder when approved and PR is MERGED', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails for coder when approved but PR is still OPEN (merge did not happen)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
+		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('gh pr merge');
+	});
+
+	test('passes gracefully for coder when approved but git/gh unavailable', async () => {
+		// When tools are unavailable, fail open (don't block)
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: '', exitCode: 1 },
+		});
+		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }), opts);
 		expect(result.pass).toBe(true);
 	});
 
