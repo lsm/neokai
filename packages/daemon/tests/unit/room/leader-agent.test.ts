@@ -262,6 +262,20 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this']);
 		});
 
+		it('should route submit_for_review to callback with groupId and prUrl', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.submit_for_review({ pr_url: 'https://github.com/org/repo/pull/42' });
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('submitForReview');
+			expect(callbacks.calls[0].args).toEqual([
+				'group-1',
+				'https://github.com/org/repo/pull/42',
+			]);
+		});
+
 		it('should route replan_goal to callback with groupId', async () => {
 			const callbacks = makeCallbacks();
 			const handlers = createLeaderToolHandlers('group-1', callbacks);
