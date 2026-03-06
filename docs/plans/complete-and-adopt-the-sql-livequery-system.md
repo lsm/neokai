@@ -189,8 +189,11 @@ Clients send a **named query key** + parameters. The daemon resolves the name to
 SQL template server-side. Clients never send raw SQL. Unknown query names are rejected with an error.
 
 Initial named queries (registered at daemon startup):
-- `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ? ORDER BY created_at DESC`
-  (matches `TaskRepository.listTasks` ordering at `task-repository.ts:84`)
+- `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ? ORDER BY created_at DESC, id DESC`
+  (matches `TaskRepository.listTasks` base ordering at `task-repository.ts:84`; `id DESC`
+  tiebreaker prevents non-deterministic ordering when tasks share the same `created_at` timestamp,
+  which occurs frequently in test environments with controlled time or batch task creation; without
+  it the LiveQuery diff engine may spuriously classify stable rows as removed/re-added)
 - `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ? ORDER BY priority DESC, created_at ASC, id ASC`
   (matches `GoalRepository.listGoals` ordering at `goal-repository.ts:86`; `id ASC` tiebreaker
   prevents non-deterministic ordering when two goals share the same priority and timestamp)
@@ -429,7 +432,9 @@ atomically in Task 4 alongside the frontend LiveQuery adoption.
 - `packages/daemon/src/lib/room/runtime/room-runtime.ts:159-170` — `emitGoalProgressForTask`.
 
 **Tests:**
-- Integration test: RPC `task.fail` no longer produces a `room.task.update` daemonHub event.
+- Integration test: RPC `task.fail` no longer produces a handler-layer `room.task.update` daemonHub
+  event (runtime-layer `room.task.update` emits from `room-runtime.ts` are not affected and are
+  not tested here).
 - Test: `room.overview` still fires from `task-handlers.ts` after task writes.
 - Test: `liveQuery.delta` reaches a subscribed client after `task.fail` writes.
 - Test: `goal.created`, `goal.updated`, `goal.progressUpdated` still fire from `goal-handlers.ts`.
@@ -549,6 +554,12 @@ unsubscribe first — see above). Hook into the general `connected` state transi
 `onConnection` callback pattern used by `state-channel.ts` (e.g.,
 `hub.onConnection((state) => { if (state === 'connected') ... })`).
 Handle the resulting snapshot to fully resync state.
+
+**Connection flap safety:** If the connection flaps rapidly and multiple re-subscribe requests
+are sent before a snapshot arrives, the `subscriptionId` collision semantics (silent replace) on
+the server make this safe — each new subscribe atomically replaces the previous one. The
+stale-event guard on the client discards any snapshot/delta from the superseded subscription.
+Rate limiting or debouncing is not required for this single-user deployment.
 
 #### Stale-event guard on rapid room switching
 
@@ -673,10 +684,18 @@ events; `updated` and `removed` arrays are expected to be empty and must be igno
 If this invariant is ever violated, the delta handler will silently ignore the change; future
 tasks would need to extend the handler to support mutations.
 
+**Stale-event guard on rapid task switching:** When a user switches between tasks (and therefore
+between session groups), in-flight snapshots and deltas from the previous group subscription may
+arrive after the new group subscription is established. The same `subscriptionId` guard used in
+Task 4 must be applied here: track the current active `subscriptionId` for the group subscription
+in component/hook state; discard any snapshot or delta whose `subscriptionId` does not match.
+
 **Work:**
 - Subscribe via `liveQuery.subscribe` using `sessionGroupMessages.byGroup`.
-- Handle `liveQuery.snapshot` to load full message history on mount.
-- Handle `liveQuery.delta` to append new messages (`added` array only; ignore `updated`/`removed`).
+- Handle `liveQuery.snapshot`: discard if `subscriptionId` doesn't match current active
+  subscription (stale-snapshot guard); otherwise replace message list entirely.
+- Handle `liveQuery.delta`: discard if `subscriptionId` doesn't match (stale-delta guard);
+  otherwise append new messages (`added` array only; ignore `updated`/`removed`).
 - Remove `state.groupMessages.delta` frontend listener from `TaskConversationRenderer.tsx`.
 - Remove the stale comment at `TaskConversationRenderer.tsx:118` that references `state.groupMessages.delta`.
 - Remove daemon-side emission sites: `room-runtime.ts:888` and `human-message-routing.ts:97`.
@@ -691,6 +710,8 @@ tasks would need to extend the handler to support mutations.
 - `state.groupMessages.delta` listener removed from `TaskConversationRenderer.tsx`.
 - Both daemon-side `state.groupMessages.delta` emission sites removed.
 - Subscription disposed on component unmount.
+- Stale snapshots and deltas arriving with a non-matching `subscriptionId` (from a prior group
+  subscription after rapid task switch) are discarded and do not corrupt the message list.
 - Vitest and E2E tests pass.
 
 ---
