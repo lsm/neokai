@@ -119,21 +119,31 @@ describe('routeHumanMessageToGroup', () => {
 			expect(injectMessageToLeader).toHaveBeenCalledWith(taskId, message);
 			// Content must be JSON-serialized so the frontend renderer can parse it
 			// (renderer calls JSON.parse for all non-'status' message types).
-			expect(appendMessage).toHaveBeenCalledWith({
-				groupId: 'group-1',
-				role: 'human',
-				messageType: 'user',
-				content: JSON.stringify({
-					type: 'user',
-					message: { role: 'user', content: [{ type: 'text', text: message }] },
-					_taskMeta: {
-						authorRole: 'human',
-						authorSessionId: '',
-						turnId: 'human_group-1_0',
-						iteration: 0,
-					},
-				}),
+			// Parse the content to verify structure (turnId includes a timestamp suffix).
+			expect(appendMessage).toHaveBeenCalledTimes(1);
+			const call = appendMessage.mock.calls[0][0] as {
+				groupId: string;
+				role: string;
+				messageType: string;
+				content: string;
+			};
+			expect(call.groupId).toBe('group-1');
+			expect(call.role).toBe('human');
+			expect(call.messageType).toBe('user');
+			const parsed = JSON.parse(call.content) as {
+				type: string;
+				message: unknown;
+				_taskMeta: { authorRole: string; authorSessionId: string; turnId: string; iteration: number };
+			};
+			expect(parsed.type).toBe('user');
+			expect(parsed.message).toEqual({
+				role: 'user',
+				content: [{ type: 'text', text: message }],
 			});
+			expect(parsed._taskMeta.authorRole).toBe('human');
+			expect(parsed._taskMeta.authorSessionId).toBe('');
+			expect(parsed._taskMeta.turnId).toMatch(/^human_group-1_0_\d+$/);
+			expect(parsed._taskMeta.iteration).toBe(0);
 		});
 
 		it('calls appendMessage exactly once', async () => {

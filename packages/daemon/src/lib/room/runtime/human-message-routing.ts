@@ -13,6 +13,7 @@
  * - no group        → error: no active session group for the task
  */
 
+import type { MessageHub } from '@neokai/shared';
 import type { RoomRuntime } from './room-runtime';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 
@@ -33,7 +34,8 @@ export async function routeHumanMessageToGroup(
 	runtime: RoomRuntime,
 	groupRepo: SessionGroupRepository,
 	taskId: string,
-	message: string
+	message: string,
+	messageHub?: MessageHub
 ): Promise<HumanMessageResult> {
 	const group = groupRepo.getGroupByTaskId(taskId);
 
@@ -63,24 +65,36 @@ export async function routeHumanMessageToGroup(
 			}
 			// Store as a 'user' message with JSON content so the frontend renderer can
 			// parse it (renderer calls JSON.parse for all non-'status' message types).
+			// Use Date.now() in turnId to ensure uniqueness across multiple messages
+			// within the same feedbackIteration.
+			const now = Date.now();
+			const messageContent = {
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [{ type: 'text', text: message }],
+				},
+				_taskMeta: {
+					authorRole: 'human',
+					authorSessionId: '',
+					turnId: `human_${group.id}_${group.feedbackIteration}_${now}`,
+					iteration: group.feedbackIteration,
+				},
+			};
 			groupRepo.appendMessage({
 				groupId: group.id,
 				role: 'human',
 				messageType: 'user',
-				content: JSON.stringify({
-					type: 'user',
-					message: {
-						role: 'user',
-						content: [{ type: 'text', text: message }],
-					},
-					_taskMeta: {
-						authorRole: 'human',
-						authorSessionId: '',
-						turnId: `human_${group.id}_${group.feedbackIteration}`,
-						iteration: group.feedbackIteration,
-					},
-				}),
+				content: JSON.stringify(messageContent),
 			});
+			// Broadcast to subscribed frontends so the message appears immediately.
+			if (messageHub) {
+				messageHub.event(
+					'state.groupMessages.delta',
+					{ added: [{ ...messageContent, timestamp: now }], timestamp: now },
+					{ channel: `group:${group.id}` }
+				);
+			}
 			return { success: true };
 		}
 

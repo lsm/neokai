@@ -265,7 +265,8 @@ export function setupTaskHandlers(
 			runtime,
 			groupRepo,
 			params.taskId,
-			params.message.trim()
+			params.message.trim(),
+			messageHub
 		);
 
 		if (!result.success) {

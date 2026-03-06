@@ -125,15 +125,6 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		roomRuntimeService
 	);
 
-	setupTaskHandlers(
-		deps.messageHub,
-		roomManager,
-		deps.daemonHub,
-		deps.db,
-		undefined,
-		roomRuntimeService
-	);
-
 	// Goal handlers (after runtime service — approveTask/rejectTask need runtimeService)
 	setupGoalHandlers(
 		deps.messageHub,
