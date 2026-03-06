@@ -717,74 +717,30 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Send a human message to the active session group for a task.
+	 * Inject a human message directly into the leader session.
 	 *
-	 * - awaiting_human: injects rejection feedback into the existing worker
-	 *   (calls resumeWorkerFromHuman without approval flag)
-	 * - awaiting_leader: persists message in group timeline, emits delta event,
-	 *   and injects the message into the leader session
+	 * Used when the group is awaiting_leader and a human wants to provide
+	 * guidance or additional context to the leader agent.
 	 *
-	 * Returns true if the message was sent, false if the group is not in a
-	 * state that accepts human messages.
+	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only
+	 * (not to session_group_messages). Callers that want the message to appear in
+	 * the group timeline must call groupRepo.appendMessage() separately.
+	 *
+	 * Returns true on success, false if the group is not in awaiting_leader state
+	 * or if the injection fails.
 	 */
-	async sendHumanMessage(taskId: string, message: string): Promise<boolean> {
+	async injectMessageToLeader(taskId: string, message: string): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group) return false;
+		if (!group || group.state !== 'awaiting_leader') return false;
 
-		// Verify the task belongs to this runtime's room (cross-room injection guard)
-		const task = await this.taskManager.getTask(taskId);
-		if (!task) return false;
-
-		if (group.state === 'awaiting_human') {
-			// Rejection feedback: resume worker without approval flag
-			return this.resumeWorkerFromHuman(taskId, message, { approved: false });
+		const formattedMessage = `[Human intervention]\n\n${message}`;
+		try {
+			await this.sessionFactory.injectMessage(group.leaderSessionId, formattedMessage);
+		} catch (error) {
+			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
+			return false;
 		}
-
-		if (group.state === 'awaiting_leader') {
-			const humanContent = JSON.stringify({
-				type: 'user',
-				message: {
-					role: 'user',
-					content: [{ type: 'text', text: message }],
-				},
-				_taskMeta: {
-					authorRole: 'human',
-					authorSessionId: '',
-					turnId: `turn_${group.id}_human_${Date.now()}`,
-					iteration: group.feedbackIteration,
-				},
-			});
-
-			// Inject into leader session FIRST — only persist + broadcast on success
-			try {
-				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
-			} catch (error) {
-				log.error(`Failed to send human message to leader for task ${taskId}:`, error);
-				return false;
-			}
-
-			// Persist in group timeline after successful inject
-			this.groupRepo.appendMessage({
-				groupId: group.id,
-				role: 'human',
-				messageType: 'user',
-				content: humanContent,
-			});
-
-			// Broadcast delta to subscribed frontends
-			if (this.messageHub) {
-				const parsed = JSON.parse(humanContent);
-				this.messageHub.event(
-					'state.groupMessages.delta',
-					{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
-					{ channel: `group:${group.id}` }
-				);
-			}
-
-			return true;
-		}
-
-		return false;
+		return true;
 	}
 
 	// =========================================================================
