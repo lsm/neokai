@@ -300,9 +300,7 @@ describe('Room Agent Tools', () => {
 
 	describe('approve_task', () => {
 		it('should return error when task not found', async () => {
-			const result = parseResult(
-				await handlers.approve_task({ task_id: 'no-such-task' })
-			);
+			const result = parseResult(await handlers.approve_task({ task_id: 'no-such-task' }));
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Task not found');
 		});
