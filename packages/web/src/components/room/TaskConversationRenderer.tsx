@@ -78,6 +78,17 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
+/**
+ * Returns a stable deduplication key for a message.
+ * Agent messages use their uuid; status messages use _taskMeta.turnId as a fallback.
+ * Returns null for messages with no identifiable key (they pass through unfiltered).
+ */
+function getMessageId(msg: SDKMessage): string | null {
+	const uuid = (msg as SDKMessage & { uuid?: string }).uuid;
+	if (uuid) return uuid;
+	return getTaskMeta(msg)?.turnId ?? null;
+}
+
 export function TaskConversationRenderer({
 	groupId,
 	onMessageCountChange,
@@ -85,16 +96,22 @@ export function TaskConversationRenderer({
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
-	// Guards against the fetch/delta race: delta events that arrive while the
-	// initial fetch is still in flight are buffered here and merged on resolve.
+	// Tracks every message ID (uuid or turnId) added to state, enabling deduplication
+	// across: the initial fetch, buffered pre-fetch deltas, and live post-fetch deltas
+	// (e.g. replays on WebSocket reconnect).
+	const seenIdsRef = useRef<Set<string>>(new Set());
+	// Guards the fetch/delta race: deltas received while the fetch is in-flight are
+	// buffered here and merged (with dedup) once the fetch resolves.
 	const fetchingRef = useRef(true);
 	const pendingDeltasRef = useRef<SDKMessage[]>([]);
 
 	useEffect(() => {
 		const channel = `group:${groupId}`;
 		joinRoom(channel);
+		seenIdsRef.current.clear();
 		fetchingRef.current = true;
 		pendingDeltasRef.current = [];
+		let cancelled = false;
 
 		// Subscribe first so no live messages can slip through before the fetch starts.
 		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
@@ -105,7 +122,17 @@ export function TaskConversationRenderer({
 						// Buffer deltas that arrive while the initial fetch is in-flight.
 						pendingDeltasRef.current = [...pendingDeltasRef.current, ...event.added];
 					} else {
-						setMessages((prev) => [...prev, ...event.added]);
+						// Deduplicate against seenIds — handles replays on reconnect and
+						// the same event firing twice within the buffer.
+						const newMessages = event.added.filter((m) => {
+							const id = getMessageId(m);
+							if (id && seenIdsRef.current.has(id)) return false;
+							if (id) seenIdsRef.current.add(id);
+							return true;
+						});
+						if (newMessages.length > 0) {
+							setMessages((prev) => [...prev, ...newMessages]);
+						}
 					}
 				}
 			}
@@ -136,27 +163,42 @@ export function TaskConversationRenderer({
 					.map(parseGroupMessage)
 					.filter((m): m is SDKMessage => m !== null);
 
-				// Merge buffered deltas, deduplicating any messages already in the fetched set.
-				const fetchedUuids = new Set(
-					parsed.map((m) => (m as SDKMessage & { uuid?: string }).uuid).filter(Boolean)
-				);
-				const newDeltas = pendingDeltasRef.current.filter((m) => {
-					const uuid = (m as SDKMessage & { uuid?: string }).uuid;
-					return !uuid || !fetchedUuids.has(uuid);
-				});
-				setMessages([...parsed, ...newDeltas]);
+				if (!cancelled) {
+					// Register fetched messages in seenIds and collect unique ones.
+					const uniqueParsed = parsed.filter((m) => {
+						const id = getMessageId(m);
+						if (id && seenIdsRef.current.has(id)) return false;
+						if (id) seenIdsRef.current.add(id);
+						return true;
+					});
+
+					// Merge buffered deltas, deduplicating against seenIds.
+					// This handles: pre-fetch duplicates in the buffer itself, and
+					// messages already present in the fetch response (uuid or turnId match).
+					const newDeltas = pendingDeltasRef.current.filter((m) => {
+						const id = getMessageId(m);
+						if (id && seenIdsRef.current.has(id)) return false;
+						if (id) seenIdsRef.current.add(id);
+						return true;
+					});
+
+					setMessages([...uniqueParsed, ...newDeltas]);
+				}
 			} catch {
 				// Non-fatal: group may not have messages yet
 			} finally {
-				fetchingRef.current = false;
-				pendingDeltasRef.current = [];
-				setLoading(false);
+				if (!cancelled) {
+					fetchingRef.current = false;
+					pendingDeltasRef.current = [];
+					setLoading(false);
+				}
 			}
 		};
 
 		fetchAllMessages();
 
 		return () => {
+			cancelled = true;
 			unsub();
 			leaveRoom(channel);
 		};

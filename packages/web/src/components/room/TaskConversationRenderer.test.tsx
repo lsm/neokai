@@ -246,4 +246,106 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 			expect(onCountChange).toHaveBeenCalledWith(1);
 		});
 	});
+
+	it('deduplicates within-buffer duplicates (same delta fires twice before fetch)', async () => {
+		let resolveFetch!: (value: { messages: typeof initial; hasMore: boolean }) => void;
+		const initial = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(
+			() =>
+				new Promise<{ messages: typeof initial; hasMore: boolean }>((resolve) => {
+					resolveFetch = resolve;
+				})
+		);
+
+		const onCountChange = vi.fn();
+		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Same delta fires twice before the fetch resolves — buffer should deduplicate
+		const deltaMsg = makeRawMessage(2, 'assistant', 'uuid-2');
+		const parsed = JSON.parse(deltaMsg.content) as { uuid?: string };
+		act(() => {
+			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
+		});
+		act(() => {
+			deltaHandler?.({ added: [parsed], timestamp: Date.now() }); // duplicate
+		});
+
+		act(() => {
+			resolveFetch({ messages: initial, hasMore: false });
+		});
+
+		// 1 fetched + 1 unique buffered delta (duplicate dropped) = 2 total
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(2);
+		});
+		expect(onCountChange).not.toHaveBeenCalledWith(3);
+	});
+
+	it('deduplicates live post-fetch delta replays (same uuid arrives again after fetch)', async () => {
+		const initial = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => ({ messages: initial, hasMore: false }));
+
+		const onCountChange = vi.fn();
+		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Wait for initial fetch to complete
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(1);
+		});
+
+		// Same message replayed via delta after fetch (e.g. WebSocket reconnect)
+		const parsed = JSON.parse(initial[0].content) as { uuid?: string };
+		act(() => {
+			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
+		});
+
+		// Count must remain 1 — replay is silently dropped
+		expect(onCountChange).not.toHaveBeenCalledWith(2);
+	});
+
+	it('deduplicates status messages by turnId when buffered and fetched', async () => {
+		// Status messages have no uuid — dedup uses _taskMeta.turnId instead.
+		let resolveFetch!: (value: {
+			messages: ReturnType<typeof makeStatusMessage>[];
+			hasMore: boolean;
+		}) => void;
+		const statusMsg = makeStatusMessage(1, 'Task started');
+		mockRequest.mockImplementation(
+			() =>
+				new Promise<{ messages: ReturnType<typeof makeStatusMessage>[]; hasMore: boolean }>(
+					(resolve) => {
+						resolveFetch = resolve;
+					}
+				)
+		);
+
+		const onCountChange = vi.fn();
+		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Delta sends the already-parsed SDKMessage form of the same status message
+		const parsedStatus = {
+			type: 'status',
+			text: 'Task started',
+			_taskMeta: {
+				authorRole: 'system',
+				authorSessionId: '',
+				turnId: 'status-1',
+				iteration: 0,
+			},
+		};
+		act(() => {
+			deltaHandler?.({ added: [parsedStatus], timestamp: Date.now() });
+		});
+
+		// Fetch resolves with the same status message — should deduplicate via turnId
+		act(() => {
+			resolveFetch({ messages: [statusMsg], hasMore: false });
+		});
+
+		// Should be 1, not 2 — turnId-based dedup prevents the status divider appearing twice
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(1);
+		});
+		expect(onCountChange).not.toHaveBeenCalledWith(2);
+	});
 });
