@@ -40,14 +40,15 @@ These gaps are addressed in Task 3 of this plan.
 
 ```
 createDaemonApp()
-  ├─ JobQueueProcessor (started AFTER all handlers registered)
+  ├─ JobQueueProcessor (started AFTER all handlers registered via rpcSetup.start())
   │    ├─ queue: 'room.goal.plan'     → planGoalHandler({roomId, goalId})
   │    ├─ queue: 'room.task.execute'  → executeTaskHandler({roomId, taskId})
   │    └─ queue: 'room.tick'          → roomTickHandler({roomId})
-  └─ cleanup(): processor.stop() → rpcHandlerCleanup() → sessionManager.cleanup() → db.close()
+  └─ cleanup(): rpcHandlerCleanup() → processor.stop() → sessionManager.cleanup() → db.close()
 
 RoomRuntimeService
-  ├─ goal.created / goal.reactivated  → enqueue(room.goal.plan) + processor.tick()
+  ├─ goal.created                     → enqueue(room.goal.plan) + processor.tick()
+  ├─ goal.updated (status=active)     → enqueue(room.goal.plan) + processor.tick() [reactivation]
   ├─ room.task.update (pending)       → enqueue(room.task.execute) + processor.tick()
   └─ startup scan: re-enqueue pending goals/tasks not already queued and without active groups
 
@@ -68,7 +69,9 @@ trigger near-zero-latency dispatch (eliminating the up-to-500ms polling lag).
 
 **Deduplication**: Before enqueueing, a `listJobs` check filters duplicates. This is best-effort
 in the single-process model (no DB-level unique constraint). Bun's single-threaded event loop
-makes TOCTOU races very unlikely in practice. Acceptable for the current deployment model.
+makes TOCTOU races very unlikely in practice. Acceptable for the current deployment model. If
+the deployment model ever adds concurrency (multiple processes or worker threads), a
+`UNIQUE (queue, dedup_key, status)` constraint would be required for atomic deduplication.
 
 ---
 
@@ -114,12 +117,14 @@ makes TOCTOU races very unlikely in practice. Acceptable for the current deploym
 
 5. Explicit cleanup order in `cleanup()`:
    ```ts
-   // 1. Stop job queue processor (drains in-flight jobs, no new work)
-   await jobQueueProcessor.stop();
-   // 2. Clear cleanup timer
-   clearInterval(jobCleanupTimer);
-   // 3. Stop RPC handlers (includes RoomRuntimeService.stop())
+   // 1. Stop RPC handlers (includes RoomRuntimeService.stop() — halts all event subscriptions
+   //    so no new enqueue() calls can be made after this point)
    rpcHandlerCleanup();
+   // 2. Stop job queue processor (drains remaining in-flight jobs; safe because no new
+   //    enqueues can arrive — RoomRuntimeService subscriptions are already torn down)
+   await jobQueueProcessor.stop();
+   // 3. Clear cleanup timer
+   clearInterval(jobCleanupTimer);
    // 4. Stop GitHub service
    if (gitHubService) gitHubService.stop();
    // 5. Stop agent sessions
@@ -127,13 +132,18 @@ makes TOCTOU races very unlikely in practice. Acceptable for the current deploym
    // 6. Close database (must be last — processor and runtime are stopped)
    db.close();
    ```
+   **Why this order matters**: Stopping `rpcHandlerCleanup()` first (step 1) tears down
+   `RoomRuntimeService` subscriptions, preventing any new `enqueue()` calls. Only then is
+   `processor.stop()` called (step 2) to drain in-flight work. If processor is stopped first,
+   `RoomRuntimeService` can still enqueue new jobs between steps 1 and 2 that would never be
+   consumed.
 
 #### Acceptance criteria
 
 - `createDaemonApp` returns `jobQueueProcessor` and `jobQueueRepo` in `DaemonAppContext`.
 - Processor is NOT started in this task (started in Task 2 after handlers registered).
-- Cleanup order is: `processor.stop()` → `clearInterval(timer)` → `rpcHandlerCleanup()` →
-  `sessionManager.cleanup()` → `db.close()`.
+- Cleanup order is: `rpcHandlerCleanup()` → `processor.stop()` → `clearInterval(timer)` →
+  `gitHubService.stop()` → `sessionManager.cleanup()` → `db.close()`.
 - Daily cleanup timer is assigned to a variable and cleared in `cleanup()`.
 - `bun run typecheck && bun run lint && make test:daemon` pass with no regressions.
 - Unit tests: processor instantiated with correct options, change notifier wired, cleanup order
@@ -163,10 +173,19 @@ config interface. Update `setupRPCHandlers` in `rpc-handlers/index.ts` to pass t
 **B. Await `RoomRuntimeService.start()` and start processor after**
 
 In `rpc-handlers/index.ts`, change the non-awaited `roomRuntimeService.start().catch(...)` to
-be properly awaited. Because `setupRPCHandlers` currently returns a cleanup function (sync),
-this requires returning a `{ cleanup, ready: Promise<void> }` shape, or making the caller
-(`createDaemonApp`) await a separate `init` method. Then call `jobQueueProcessor.start()` in
-`app.ts` after `roomRuntimeService.start()` has resolved.
+be properly awaited. Prescribed approach: change `setupRPCHandlers` to return
+`{ cleanup: RPCHandlerCleanup; start: () => Promise<void> }` instead of just `RPCHandlerCleanup`.
+The `start()` function awaits `roomRuntimeService.start()`. In `app.ts`, after calling
+`setupRPCHandlers(...)`, call `await rpcSetup.start()` and then `jobQueueProcessor.start()`.
+The cleanup remains `rpcSetup.cleanup`.
+
+```ts
+// In app.ts:
+const rpcSetup = setupRPCHandlers({ ..., jobQueueProcessor, jobQueueRepo });
+await rpcSetup.start();           // awaits RoomRuntimeService.start() (handlers registered)
+jobQueueProcessor.start();        // safe — all handlers are now registered
+const rpcHandlerCleanup = rpcSetup.cleanup;
+```
 
 **C. Register job handlers in `RoomRuntimeService.start()`**
 
@@ -236,15 +255,17 @@ Replace direct `runtime.onGoalCreated()` / `runtime.onTaskStatusChanged()` calls
 enqueues + immediate `processor.tick()`:
 
 ```ts
-// goal.created → enqueue planning job
+// goal.created → enqueue planning job (new goals)
 this.ctx.daemonHub.on('goal.created', (event) => {
-  if (this.isDuplicateJob('room.goal.plan', { goalId: event.goalId })) return;
-  this.ctx.jobQueueRepo.enqueue({
-    queue: 'room.goal.plan',
-    payload: { roomId: event.roomId, goalId: event.goalId },
-    maxRetries: 1,
-  });
-  void this.ctx.jobQueueProcessor.tick();
+  this.enqueueGoalPlan(event.roomId, event.goalId);
+});
+
+// goal.updated with status=active → enqueue planning job (reactivated goals)
+// This is the correct trigger for goal.reactivate — avoids emitting goal.created for
+// an existing goal (which has wrong semantics for frontend consumers).
+this.ctx.daemonHub.on('goal.updated', (event) => {
+  if (event.goal?.status !== 'active') return;
+  this.enqueueGoalPlan(event.roomId, event.goal.id);
 });
 
 // room.task.update (pending) → enqueue execution job
@@ -260,9 +281,21 @@ this.ctx.daemonHub.on('room.task.update', (event) => {
 });
 ```
 
+Where `enqueueGoalPlan(roomId, goalId)` is a private helper encapsulating the dedup check +
+enqueue + `processor.tick()` call for `room.goal.plan` jobs.
+
 `isDuplicateJob(queue, keyPayload)` — private helper that calls `listJobs` for pending and
 processing statuses and checks for payload key match. Document as best-effort (single-process,
 event-loop-safe).
+
+**Why `goal.updated` for reactivation**: The `goal.reactivate` handler emits `goal.updated`
+(not `goal.created`). Emitting `goal.created` for an existing goal would cause semantic
+mismatch for frontend consumers (e.g., UI treats `goal.created` as a new goal event). Using
+`goal.updated` with `status === 'active'` filter is the correct signal. The dedup check
+prevents spurious re-planning when other `goal.updated` events fire (e.g., progress updates)
+— if a `room.goal.plan` job is already pending/processing, the new event is ignored. Even if
+a spurious plan job fires for a fully-planned goal, `runtime.onGoalCreated()` will be a
+no-op (no new group spawned if planning already done).
 
 **F. Replace `scheduleTick()` in `RoomRuntime`**
 
@@ -270,17 +303,29 @@ event-loop-safe).
 private scheduleTick(): void {
   if (this.state !== 'running') return;
   if (!this.jobQueueRepo) {
-    // Fallback for test contexts without job queue wiring
+    // Fallback: test contexts that construct RoomRuntime without job queue wiring.
+    // In production this path must not be taken — log a warning if it is.
+    log.warn('scheduleTick() falling back to queueMicrotask — jobQueueRepo not wired');
     queueMicrotask(() => this.tick());
     return;
   }
-  if (this.isDuplicateTickJob()) return;  // dedup check
+  // Dedup: skip if a PENDING tick job already exists for this room.
+  // Do NOT skip if only a PROCESSING job exists — one pending follow-up must be
+  // allowed while a tick is in flight, so that newly eligible work queued during
+  // the current tick is picked up immediately on completion.
+  const pending = this.jobQueueRepo.listJobs({
+    queue: 'room.tick',
+    status: 'pending',
+    limit: 1,
+  }).some(j => (j.payload as { roomId: string }).roomId === this.room.id);
+  if (pending) return;
+
   this.jobQueueRepo.enqueue({
     queue: 'room.tick',
     payload: { roomId: this.room.id },
     maxRetries: 0,
   });
-  void this.jobQueueProcessor?.tick();
+  void this.jobQueueProcessor?.tick();  // immediate wake-up
 }
 ```
 
@@ -296,8 +341,9 @@ After `recoverRoomRuntime()` for each room:
 
 1. Get active session groups via `groupRepo.getActiveGroups(roomId)` — collect task IDs with
    active groups (already being processed, skip them).
-2. For each `pending` task NOT in the active-group set and with no existing pending/processing
-   `room.task.execute` job: enqueue `room.task.execute`.
+2. For each `pending` task NOT in the active-group set, NOT of `taskType === 'planning'`
+   (planning tasks flow through `room.goal.plan`, not `room.task.execute`), and with no
+   existing pending/processing `room.task.execute` job: enqueue `room.task.execute`.
 3. For each `active` goal with no active planning group and no pending/processing
    `room.goal.plan` job: enqueue `room.goal.plan`.
 4. Call `processor.tick()` once after all startup enqueues.
@@ -305,16 +351,21 @@ After `recoverRoomRuntime()` for each room:
 #### Acceptance criteria
 
 - `goal.created` event enqueues `room.goal.plan` job instead of calling `onGoalCreated` directly.
+- `goal.updated` with `status === 'active'` enqueues `room.goal.plan` job (covers reactivation).
 - `room.task.update` (pending) enqueues `room.task.execute` with `maxRetries: 0`.
 - `scheduleTick()` enqueues `room.tick` + calls `processor.tick()` (replaces `queueMicrotask`).
+- `scheduleTick()` dedup: skips enqueue only when a `pending` (not `processing`) tick job
+  exists — allowing one queued follow-up while a tick is in flight.
+- `scheduleTick()` without `jobQueueRepo` wired logs a warning and falls back to `queueMicrotask`.
 - Duplicate events for same `goalId`/`taskId` (pending job exists) produce no additional job.
 - `room.task.execute` handler re-enqueues with 1s delay when at capacity (no error thrown).
 - `room.task.execute` handler failure explicitly transitions task to `failed` and emits event.
-- Startup recovery skips tasks with active session groups; enqueues jobs for orphaned tasks.
-- Processor is started only after `RoomRuntimeService.start()` resolves and handlers are registered.
+- Startup recovery skips tasks with active session groups and planning-type tasks.
+- `setupRPCHandlers` returns `{ cleanup, start }` and `start()` is awaited before `processor.start()`.
 - `bun run typecheck && bun run lint && make test:daemon` pass.
-- Unit tests for: handler registration, each event subscription, capacity re-enqueue, task
-  failure path, startup recovery (with/without active groups), dedup guard, `scheduleTick` path.
+- Unit tests for: handler registration, each event subscription (goal.created, goal.updated),
+  capacity re-enqueue, task failure path, startup recovery (with/without active groups, planning
+  vs. non-planning tasks), dedup guard, `scheduleTick` dedup semantics (pending-only).
 - Online tests: goal → job → `onGoalCreated` invoked; pending task → job → group dispatched.
 - Changes on branch `feature/room-runtime-job-queue` with PR via `gh pr create` targeting `dev`.
 
@@ -330,31 +381,32 @@ After `recoverRoomRuntime()` for each room:
 
 **A. `task.create` RPC (`packages/daemon/src/lib/rpc-handlers/task-handlers.ts`)**
 
-After creating a task with `status: 'pending'`, emit `room.task.update` so the subscription
-in `RoomRuntimeService` enqueues an execution job:
+The current `task.create` handler does NOT accept or forward a `status` parameter — tasks are
+always created with the repository default. This must be fixed:
+
+1. Add `status?: TaskStatus` to the `task.create` request params type.
+2. Forward it to `taskManager.createTask({ ..., status: params.status })`.
+3. After creation, if the resulting task has `status === 'pending'`, emit `room.task.update`
+   (in addition to the existing `room.overview` emit):
 
 ```ts
-// Existing: emits room.overview for all new tasks
-// Add: emit room.task.update if status is 'pending'
+// After task creation:
+emitRoomOverview(params.roomId);   // existing, fires for all statuses
 if (task.status === 'pending') {
-  void emitTaskUpdate(deps.daemonHub, roomId, task);
+  emitTaskUpdate(params.roomId, task);   // new: triggers room.task.execute job enqueue
 }
 ```
 
-Tasks created as `draft` must NOT emit `room.task.update` (only `room.overview` as today).
+Tasks created as `draft` (the normal planner-tools flow) must NOT emit `room.task.update`.
 
-**B. `goal.reactivate` RPC (`packages/daemon/src/lib/rpc-handlers/goal-handlers.ts`)**
+**B. `goal.reactivate` RPC**
 
-After reactivating a goal, emit `goal.created` so the existing `RoomRuntimeService` subscription
-triggers a planning job:
+This trigger is handled by the `goal.updated` subscription added in Task 2E (subscribes to
+`goal.updated` with `status === 'active'` filter). The `goal.reactivate` handler already
+emits `goal.updated`, so no changes to `goal-handlers.ts` are required for this path.
 
-```ts
-void deps.daemonHub.emit('goal.created', {
-  sessionId: `room:${roomId}`,
-  roomId,
-  goalId: goal.id,
-});
-```
+Task 3B's work: add a unit test confirming that `goal.reactivate` → `goal.updated` event →
+`room.goal.plan` job is enqueued.
 
 **C. Dependency unlock in `RoomRuntime`**
 
@@ -364,17 +416,24 @@ After a task transitions to `completed`, call a new helper
 1. List all `pending` tasks in the room with `dependsOn` containing `completedTaskId`.
 2. For each: call `areDependenciesMet()`. If true and no active group or queued job exists,
    enqueue `room.task.execute` + call `processor.tick()`.
+3. **Scope**: Only direct dependents are checked (tasks whose `dependsOn` includes
+   `completedTaskId`). Further transitive unblocking is handled by the next tick cycle
+   (the `room.task.update` event emitted when B transitions to `pending` will re-trigger
+   the dependency check for B's own dependents).
 
 Wire this helper into the task completion path in `RoomRuntime` (after `completeTask()` calls).
 
 #### Acceptance criteria
 
 - Task created via `task.create` with `status: 'pending'` triggers `room.task.execute` job.
-- Task created with `status: 'draft'` does NOT trigger execution job.
-- Goal reactivated via `goal.reactivate` triggers `room.goal.plan` job.
-- Completing task A enqueues `room.task.execute` for dependent task B iff all of B's deps met.
+- Task created with `status: 'draft'` or without a status does NOT trigger execution job.
+- Goal reactivated via `goal.reactivate` triggers `room.goal.plan` job (via `goal.updated` subscription).
+- Completing task A enqueues `room.task.execute` for direct dependent task B iff all of B's deps met.
+- Completing task A does NOT enqueue B when B has another unmet dependency C.
+- Transitive unlocking (A → B → C) is handled by subsequent tick cycles, not by this helper directly.
 - `bun run typecheck && bun run lint && make test:daemon` pass.
-- Unit tests for each of the three trigger paths.
+- Unit tests for each trigger path: task.create status, goal.reactivate via goal.updated,
+  dependency unlock (single-hop), multi-dep guard.
 - Changes on branch `feature/job-queue-missing-triggers` with PR via `gh pr create` targeting `dev`.
 
 ---
@@ -477,8 +536,14 @@ Task 1 (Wire processor, shutdown ordering, cleanup timer)
 ## Design Notes and Constraints
 
 - **Processor start timing**: `processor.start()` must be called only after `RoomRuntimeService.start()`
-  resolves (handlers must be registered before polling begins). In `rpc-handlers/index.ts`,
-  `roomRuntimeService.start()` is currently not awaited. Task 2 must fix this.
+  resolves (handlers must be registered before polling begins). Task 2B prescribes changing
+  `setupRPCHandlers` to return `{ cleanup, start }` and awaiting `start()` in `app.ts` before
+  calling `processor.start()`.
+
+- **Cleanup ordering**: `rpcHandlerCleanup()` must be called BEFORE `processor.stop()`. This
+  ensures `RoomRuntimeService` event subscriptions are torn down first (no new enqueues), then
+  the processor safely drains in-flight jobs. Reversing this order creates a window where
+  the service can enqueue new jobs after the processor has stopped.
 
 - **`maxRetries` at enqueue sites**:
   - `room.goal.plan`: `maxRetries: 1` (one retry with backoff; planning is idempotent).
