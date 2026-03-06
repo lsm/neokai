@@ -98,7 +98,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			<div class="px-3 py-2">
 				<button
 					onClick={async () => {
-						const sessionId = await roomStore.createSession('New Session');
+						const sessionId = await roomStore.createSession();
 						navigateToRoomSession(roomId, sessionId);
 						onNavigate?.();
 					}}
