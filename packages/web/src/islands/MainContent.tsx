@@ -17,6 +17,7 @@ import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx'
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
 import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 
 export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
@@ -62,9 +63,12 @@ export default function MainContent() {
 		return (
 			<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
 				{/* Settings Header */}
-				<div class="px-6 py-4 border-b border-dark-700">
-					<h2 class="text-lg font-semibold text-gray-100">Global Settings</h2>
-					<p class="text-sm text-gray-400">Default configurations for new sessions</p>
+				<div class="px-6 py-4 border-b border-dark-700 flex items-center gap-3">
+					<MobileMenuButton />
+					<div>
+						<h2 class="text-lg font-semibold text-gray-100">Global Settings</h2>
+						<p class="text-sm text-gray-400">Default configurations for new sessions</p>
+					</div>
 				</div>
 				{/* Settings Content */}
 				<div class="flex-1 overflow-y-auto p-6">
