@@ -466,9 +466,7 @@ describe('SessionRepository', () => {
 			} as SessionConfig;
 
 			// Should not throw — functions are silently stripped
-			expect(() =>
-				repository.updateSession('session-1', { config: configWithFn })
-			).not.toThrow();
+			expect(() => repository.updateSession('session-1', { config: configWithFn })).not.toThrow();
 
 			const session = repository.getSession('session-1');
 			expect(session?.config.model).toBe('claude-opus-4-5-20251113');
