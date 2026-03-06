@@ -135,14 +135,7 @@ async function waitForSDKMessage(
 	});
 }
 
-// Skip all tests when running with GLM provider - they test Claude model switching behavior
-const isGlmProvider = process.env.DEFAULT_PROVIDER === 'glm';
-
-describe.skipIf(
-	isGlmProvider,
-	'Model Switch System Init Message',
-	'Skipped: GLM provider does not support Claude model IDs (opus/sonnet/haiku)',
-	() => {
+describe('Model Switch System Init Message', () => {
 		let daemon: DaemonServerContext;
 
 		// Skip all tests if no Anthropic credentials (model switching requires Claude SDK)
