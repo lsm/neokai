@@ -270,10 +270,7 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('submitForReview');
-			expect(callbacks.calls[0].args).toEqual([
-				'group-1',
-				'https://github.com/org/repo/pull/42',
-			]);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'https://github.com/org/repo/pull/42']);
 		});
 
 		it('should route replan_goal to callback with groupId', async () => {
@@ -461,8 +458,8 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
 			expect(agent.prompt).toContain('APPROVE');
 			expect(agent.prompt).toContain('REQUEST_CHANGES');
-			// Review URL capture
-			expect(agent.prompt).toContain('Capture the review URL');
+			// Review URL capture via REST API
+			expect(agent.prompt).toContain('.html_url');
 			// P0-P3 severity system
 			expect(agent.prompt).toContain('P0 (blocking)');
 			expect(agent.prompt).toContain('P3 (nit)');

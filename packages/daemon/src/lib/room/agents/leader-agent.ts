@@ -475,17 +475,10 @@ const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 const REVIEWER_OUTPUT_FORMAT = `
 ## Required Output Format
 
-After posting your review via \`gh pr review\`, you MUST:
-
-1. Capture the review URL via the REST API (which returns the html_url with the numeric review ID):
-   \`\`\`bash
-   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'
-   \`\`\`
-
-2. End your response with this structured block:
+After posting your review, end your response with this structured block:
 
 ---REVIEW_POSTED---
-url: <the review URL from step 1>
+url: <the html_url returned by the gh api call>
 recommendation: APPROVE | REQUEST_CHANGES
 p0: <count of P0 issues>
 p1: <count of P1 issues>
@@ -539,12 +532,18 @@ You MUST include this identity block at the top of every PR comment you post.
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
 
    The most critical bugs are often **omissions** — missing error handling, uncovered edge cases, absent validation at system boundaries. Prioritize what's NOT there over what is.
-5. Post your review using \`gh pr review\`:
-   - \`gh pr review <PR_NUMBER> --approve --body "..."\`
-   - \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
-   - \`gh pr review <PR_NUMBER> --comment --body "..."\`
+5. Post your review via the REST API, which returns the review URL directly:
+   \`\`\`bash
+   # For APPROVE:
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="APPROVE" --jq '.html_url'
 
-   NOTE: GitHub does not allow \`--approve\` or \`--request-changes\` on your own PRs. If you get a permission error, fall back to \`--comment\`.
+   # For REQUEST_CHANGES:
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="REQUEST_CHANGES" --jq '.html_url'
+   \`\`\`
+
+   NOTE: GitHub does not allow APPROVE or REQUEST_CHANGES on your own PRs. If you get a permission error, fall back to \`-f event="COMMENT"\`.
 
    Include this header in your review body:
    \`\`\`
@@ -552,8 +551,7 @@ You MUST include this identity block at the top of every PR comment you post.
 
    > **Model:** ${model} | **Client:** NeoKai | **Provider:** ${displayProvider}
    \`\`\`
-6. Capture the review URL: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'\`
-7. End with the structured output block below
+6. The \`--jq '.html_url'\` output is the review URL — use it in the structured output block below
 
 ## Guidelines
 
@@ -645,12 +643,18 @@ You MUST include this identity block at the top of every PR comment you post.
 ${cliInstructions}
 
 3. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
-4. Post findings as a proper PR review (NOT a comment) using:
-   - \`gh pr review <PR_NUMBER> --approve --body "..."\`
-   - \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
-   - \`gh pr review <PR_NUMBER> --comment --body "..."\`
+4. Post findings as a proper PR review via the REST API (returns the review URL directly):
+   \`\`\`bash
+   # For APPROVE:
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="APPROVE" --jq '.html_url'
 
-   NOTE: GitHub does not allow \`--approve\` or \`--request-changes\` on your own PRs. If you get a permission error, fall back to \`--comment\`.
+   # For REQUEST_CHANGES:
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="REQUEST_CHANGES" --jq '.html_url'
+   \`\`\`
+
+   NOTE: GitHub does not allow APPROVE or REQUEST_CHANGES on your own PRs. If you get a permission error, fall back to \`-f event="COMMENT"\`.
 
    Include this header:
    \`\`\`
@@ -658,8 +662,7 @@ ${cliInstructions}
 
    > **Model:** ${displayModel} | **Client:** ${cliTool} | **Provider:** ${displayProvider}
    \`\`\`
-5. Capture the review URL: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'\`
-6. End with the structured output block below
+5. The \`--jq '.html_url'\` output is the review URL — use it in the structured output block below
 
 ## Guidelines
 
