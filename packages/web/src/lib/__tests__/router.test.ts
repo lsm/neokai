@@ -13,18 +13,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	getSessionIdFromPath,
 	getRoomIdFromPath,
-	getRoomChatIdFromPath,
 	createSessionPath,
-	createRoomChatPath,
 	navigateToSession,
 	navigateToHome,
-	navigateToRoomChat,
 	initializeRouter,
 	cleanupRouter,
 	getRouterState,
 	isRouterInitialized,
 } from '../router';
-import { currentSessionIdSignal, currentRoomIdSignal, currentRoomChatSignal } from '../signals';
+import { currentSessionIdSignal, currentRoomIdSignal } from '../signals';
 
 // Store original values (use unknown to avoid type errors at module load time)
 let originalHistory: unknown;
@@ -67,7 +64,6 @@ describe('Router Utility', () => {
 		// Reset signals
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 
 		// Reset mocks
 		vi.clearAllMocks();
@@ -95,7 +91,6 @@ describe('Router Utility', () => {
 		// Reset signals
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 	});
 
 	describe('getSessionIdFromPath', () => {
@@ -428,136 +423,20 @@ describe('Router Utility', () => {
 		});
 	});
 
-	describe('getRoomChatIdFromPath', () => {
-		it('should extract room ID from room chat path', () => {
-			const roomId = getRoomChatIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/chat');
+	describe('getRoomIdFromPath', () => {
+		it('should extract room ID from room path', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000');
 			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
 		});
 
-		it('should return null for non-chat room path', () => {
-			const roomId = getRoomChatIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000');
-			expect(roomId).toBeNull();
-		});
-
-		it('should return null for room task path', () => {
-			const roomId = getRoomChatIdFromPath(
-				'/room/550e8400-e29b-41d4-a716-446655440000/task/abc-123'
-			);
-			expect(roomId).toBeNull();
+		it('should extract room ID from room task path', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/task/abc-123');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
 		});
 
 		it('should return null for session path', () => {
-			const roomId = getRoomChatIdFromPath('/session/550e8400-e29b-41d4-a716-446655440000');
+			const roomId = getRoomIdFromPath('/session/550e8400-e29b-41d4-a716-446655440000');
 			expect(roomId).toBeNull();
-		});
-	});
-
-	describe('getRoomIdFromPath (includes chat subpath)', () => {
-		it('should extract room ID from room chat path', () => {
-			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/chat');
-			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
-		});
-	});
-
-	describe('createRoomChatPath', () => {
-		it('should create correct chat path', () => {
-			const path = createRoomChatPath('550e8400-e29b-41d4-a716-446655440000');
-			expect(path).toBe('/room/550e8400-e29b-41d4-a716-446655440000/chat');
-		});
-	});
-
-	describe('navigateToRoomChat', () => {
-		it('should update URL and signals when navigating to room chat', () => {
-			navigateToRoomChat('550e8400-e29b-41d4-a716-446655440000');
-
-			expect(mockHistory.pushState).toHaveBeenCalledWith(
-				{
-					roomId: '550e8400-e29b-41d4-a716-446655440000',
-					chat: true,
-					path: '/room/550e8400-e29b-41d4-a716-446655440000/chat',
-				},
-				'',
-				'/room/550e8400-e29b-41d4-a716-446655440000/chat'
-			);
-			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
-			expect(currentRoomChatSignal.value).toBe(true);
-		});
-
-		it('should use replaceState when replace is true', () => {
-			navigateToRoomChat('550e8400-e29b-41d4-a716-446655440000', true);
-
-			expect(mockHistory.replaceState).toHaveBeenCalledWith(
-				{
-					roomId: '550e8400-e29b-41d4-a716-446655440000',
-					chat: true,
-					path: '/room/550e8400-e29b-41d4-a716-446655440000/chat',
-				},
-				'',
-				'/room/550e8400-e29b-41d4-a716-446655440000/chat'
-			);
-		});
-
-		it('should not navigate if already on chat path', () => {
-			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/chat';
-
-			navigateToRoomChat('550e8400-e29b-41d4-a716-446655440000');
-
-			expect(mockHistory.pushState).not.toHaveBeenCalled();
-			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
-			expect(currentRoomChatSignal.value).toBe(true);
-		});
-	});
-
-	describe('initializeRouter with chat route', () => {
-		it('should set currentRoomChatSignal when URL is room chat path', () => {
-			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/chat';
-
-			initializeRouter();
-
-			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
-			expect(currentRoomChatSignal.value).toBe(true);
-		});
-
-		it('should not set currentRoomChatSignal for plain room path', () => {
-			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000';
-
-			initializeRouter();
-
-			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
-			expect(currentRoomChatSignal.value).toBe(false);
-		});
-	});
-
-	describe('Popstate handling for room chat', () => {
-		it('should update signals when popstate navigates to room chat path', () => {
-			mockLocation.pathname = '/';
-			initializeRouter();
-
-			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/chat';
-
-			const popstateEvent = new PopStateEvent('popstate', {
-				state: { roomId: '550e8400-e29b-41d4-a716-446655440000', chat: true },
-			});
-			window.dispatchEvent(popstateEvent);
-
-			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
-			expect(currentRoomChatSignal.value).toBe(true);
-		});
-
-		it('should clear currentRoomChatSignal when popstate navigates away from chat', () => {
-			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/chat';
-			initializeRouter();
-
-			// Navigate away
-			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000';
-
-			const popstateEvent = new PopStateEvent('popstate', {
-				state: { roomId: '550e8400-e29b-41d4-a716-446655440000' },
-			});
-			window.dispatchEvent(popstateEvent);
-
-			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
-			expect(currentRoomChatSignal.value).toBe(false);
 		});
 	});
 

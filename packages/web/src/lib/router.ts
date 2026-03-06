@@ -17,7 +17,6 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
-	currentRoomChatSignal,
 	navSectionSignal,
 } from './signals.ts';
 
@@ -26,7 +25,6 @@ const SESSION_ROUTE_PATTERN = /^\/session\/([a-f0-9-]+)$/;
 const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
 const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
 const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/;
-const ROOM_CHAT_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 
 /**
@@ -65,20 +63,7 @@ export function getRoomIdFromPath(path: string): string | null {
 
 	// Also check room task pattern
 	const roomTaskMatch = path.match(ROOM_TASK_ROUTE_PATTERN);
-	if (roomTaskMatch) return roomTaskMatch[1];
-
-	// Also check room chat pattern
-	const roomChatMatch = path.match(ROOM_CHAT_ROUTE_PATTERN);
-	return roomChatMatch ? roomChatMatch[1] : null;
-}
-
-/**
- * Extract room ID from a room chat URL path
- * Returns the room ID if on a room chat route, null otherwise
- */
-export function getRoomChatIdFromPath(path: string): string | null {
-	const match = path.match(ROOM_CHAT_ROUTE_PATTERN);
-	return match ? match[1] : null;
+	return roomTaskMatch ? roomTaskMatch[1] : null;
 }
 
 /**
@@ -139,13 +124,6 @@ export function createRoomTaskPath(roomId: string, taskId: string): string {
 }
 
 /**
- * Create room chat URL path (chat tab within room layout)
- */
-export function createRoomChatPath(roomId: string): string {
-	return `/room/${roomId}/chat`;
-}
-
-/**
  * Navigate to a session
  * Updates both the URL and the signal
  *
@@ -164,7 +142,6 @@ export function navigateToSession(sessionId: string, replace = false): void {
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentSessionIdSignal.value = sessionId;
-		currentRoomChatSignal.value = false;
 		return;
 	}
 
@@ -181,7 +158,6 @@ export function navigateToSession(sessionId: string, replace = false): void {
 
 		// Update the signal
 		currentSessionIdSignal.value = sessionId;
-		currentRoomChatSignal.value = false;
 		navSectionSignal.value = 'chats';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
@@ -203,7 +179,6 @@ export function navigateToHome(replace = false): void {
 	if (currentPath === '/') {
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		return;
@@ -217,7 +192,6 @@ export function navigateToHome(replace = false): void {
 
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 	} finally {
@@ -246,7 +220,6 @@ export function navigateToRoom(roomId: string, replace = false): void {
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -264,9 +237,8 @@ export function navigateToRoom(roomId: string, replace = false): void {
 			targetPath
 		);
 
-		// Update the signals - room takes priority, clear session, room session, task, and chat
+		// Update the signals - room takes priority, clear session, room session, and task
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -299,7 +271,6 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -319,7 +290,6 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 
 		// Update the signals
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -350,7 +320,6 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 
 	if (currentPath === targetPath) {
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomTaskIdSignal.value = taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
@@ -364,51 +333,7 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		window.history[historyMethod]({ roomId, taskId, path: targetPath }, '', targetPath);
 
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomTaskIdSignal.value = taskId;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} finally {
-		setTimeout(() => {
-			routerState.isNavigating = false;
-		}, 0);
-	}
-}
-
-/**
- * Navigate to the room chat tab
- * Shows the Chat tab within the room layout at /room/:roomId/chat
- *
- * @param roomId - The room ID
- * @param replace - Whether to replace current history entry (default: false)
- */
-export function navigateToRoomChat(roomId: string, replace = false): void {
-	if (routerState.isNavigating) {
-		return; // Prevent recursive navigation
-	}
-
-	const targetPath = createRoomChatPath(roomId);
-	const currentPath = getCurrentPath();
-
-	if (currentPath === targetPath) {
-		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = true;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		return;
-	}
-
-	routerState.isNavigating = true;
-
-	try {
-		const historyMethod = replace ? 'replaceState' : 'pushState';
-		window.history[historyMethod]({ roomId, chat: true, path: targetPath }, '', targetPath);
-
-		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = true;
-		currentRoomTaskIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
@@ -433,7 +358,6 @@ export function navigateToSessions(replace = false): void {
 		navSectionSignal.value = 'chats';
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		return;
 	}
@@ -446,7 +370,6 @@ export function navigateToSessions(replace = false): void {
 
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} finally {
@@ -497,51 +420,38 @@ function handlePopState(_event: PopStateEvent): void {
 
 	const path = getCurrentPath();
 	const sessionId = getSessionIdFromPath(path);
-	const roomChatId = getRoomChatIdFromPath(path);
 	const roomId = getRoomIdFromPath(path);
 	const roomSession = getRoomSessionIdFromPath(path);
 	const roomTask = getRoomTaskIdFromPath(path);
 
 	// Update the signals to match the URL
-	// Chat route takes priority among room sub-routes, then task, then session, then room, then /sessions
-	if (roomChatId) {
-		currentRoomIdSignal.value = roomChatId;
-		currentRoomChatSignal.value = true;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (roomTask) {
+	// Task takes priority among room sub-routes, then session, then room, then /sessions
+	if (roomTask) {
 		currentRoomIdSignal.value = roomTask.roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomTaskIdSignal.value = roomTask.taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomSession) {
 		currentRoomIdSignal.value = roomSession.roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = roomSession.sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomId) {
 		currentRoomIdSignal.value = roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} else {
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
@@ -567,50 +477,37 @@ export function initializeRouter(): string | null {
 	// Read initial session/room from URL
 	const initialPath = getCurrentPath();
 	const initialSessionId = getSessionIdFromPath(initialPath);
-	const initialRoomChatId = getRoomChatIdFromPath(initialPath);
 	const initialRoomId = getRoomIdFromPath(initialPath);
 	const initialRoomSession = getRoomSessionIdFromPath(initialPath);
 	const initialRoomTask = getRoomTaskIdFromPath(initialPath);
 
-	// Set initial signals - chat route takes priority among room sub-routes, then task, then session, then room, then /sessions
-	if (initialRoomChatId) {
-		currentRoomIdSignal.value = initialRoomChatId;
-		currentRoomChatSignal.value = true;
-		currentRoomTaskIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
-	} else if (initialRoomTask) {
+	// Set initial signals - task takes priority among room sub-routes, then session, then room, then /sessions
+	if (initialRoomTask) {
 		currentRoomIdSignal.value = initialRoomTask.roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomTaskIdSignal.value = initialRoomTask.taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (initialRoomSession) {
 		currentRoomIdSignal.value = initialRoomSession.roomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = initialRoomSession.sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (initialRoomId) {
 		currentRoomIdSignal.value = initialRoomId;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (SESSIONS_ROUTE_PATTERN.test(initialPath)) {
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} else {
 		currentRoomIdSignal.value = null;
-		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = initialSessionId;
