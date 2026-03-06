@@ -47,10 +47,7 @@ import {
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
 
-// GLM provider is slower than Claude - increase timeouts accordingly
-const isGlmProvider = process.env.DEFAULT_PROVIDER === 'glm';
-const PLANNING_TIMEOUT = isGlmProvider ? 420_000 : 300_000;
-const CODING_TIMEOUT = isGlmProvider ? 600_000 : 420_000;
+import { PLANNING_TIMEOUT, CODING_TIMEOUT } from './glm-timeouts';
 
 describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
