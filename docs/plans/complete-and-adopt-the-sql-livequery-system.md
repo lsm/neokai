@@ -93,6 +93,24 @@ unit (e.g., `SessionGroupRepository.createGroup` writes to both `session_groups`
 the LiveQuery engine fires only once after all constituent writes have landed. Call `notifyChange`
 after `commitTransaction()`, not between statements.
 
+**Error paths for `beginTransaction()`:** If an exception is thrown between `beginTransaction()` and
+`commitTransaction()`, `transactionDepth` stays above zero permanently — all subsequent `notifyChange`
+emissions are silently buffered and never delivered, killing LiveQuery reactivity for the process
+lifetime. Every `beginTransaction()` call must be paired with a `try/catch` that calls
+`reactiveDb.abortTransaction()` before re-throwing (`abortTransaction` is defined at
+`reactive-database.ts:173`). The recommended pattern:
+```ts
+reactiveDb.beginTransaction();
+try {
+  // ... all writes ...
+} catch (e) {
+  reactiveDb.abortTransaction();
+  throw e;
+}
+reactiveDb.commitTransaction();
+```
+This applies to every call site that uses `beginTransaction()`, including `SessionGroupRepository.createGroup`.
+
 **One canonical `notifyChange` layer per table:** To prevent a single logical write from firing
 `notifyChange` multiple times (once at the repository layer and again at the manager layer):
 - **`tasks`**: `TaskManager` is the canonical caller. `TaskRepository` does NOT call `notifyChange`.
@@ -104,7 +122,10 @@ after `commitTransaction()`, not between statements.
 - `packages/daemon/src/lib/room/managers/task-manager.ts` — inject `ReactiveDatabase`; call
   `reactiveDb.notifyChange('tasks')` after every write, including the raw `db.prepare` call at
   `task-manager.ts:208–210` (inside `updateDraftTask`, where `assigned_agent` is set via a raw
-  prepare statement that bypasses `TaskRepository.updateTask`).
+  prepare statement that bypasses `TaskRepository.updateTask`). Also explicitly cover the two
+  delegation methods: `promoteDraftTasks()` (delegates to `TaskRepository.promoteDraftTasksByCreator`)
+  and `removeDraftTask()` (delegates to `TaskRepository.deleteTask`) — both result in raw writes
+  and must call `notifyChange('tasks')` after the delegated call returns.
 - `packages/daemon/src/lib/room/state/session-group-repository.ts` — inject `ReactiveDatabase`:
   - Wrap multi-step writes (e.g., `createGroup`) in `beginTransaction()`/`commitTransaction()`.
   - Call `reactiveDb.notifyChange('session_groups')` after writes to `session_groups` rows.
@@ -124,6 +145,16 @@ after `commitTransaction()`, not between statements.
   `packages/daemon/src/storage/index.ts:77` (direct `GoalRepository` construction there; also needs
   updating). All test construction sites also need updating.
 
+- **Thread `reactiveDb` through dependency interfaces:** To reach the factory closures and runtime
+  service, `reactiveDb: ReactiveDatabase` must be added to two interfaces and the corresponding
+  call sites in `app.ts`:
+  - Add `reactiveDb: ReactiveDatabase` to `RPCHandlerDependencies`
+    (`packages/daemon/src/lib/rpc-handlers/index.ts:46–55`).
+  - Add `reactiveDb: ReactiveDatabase` to `RoomRuntimeServiceConfig`
+    (`packages/daemon/src/lib/room/runtime/room-runtime-service.ts:35–44`).
+  - Update `packages/daemon/src/app.ts` to pass `reactiveDb` in the `setupRPCHandlers` call
+    (line 196) and in the `RoomRuntimeService` constructor call (line 105). `reactiveDb` is
+    already available on `DaemonAppContext` at `app.ts:86`.
 - Update all construction sites of these four classes to pass `reactiveDb`.
 
 **Tests:**
@@ -135,6 +166,10 @@ after `commitTransaction()`, not between statements.
   and `goals` after writes through the respective classes.
 - `ReactiveDatabase` is required (no optional fallback) at all construction sites.
 - `notifyChange` is called only after writes are durably committed; never before.
+- Every `beginTransaction()` call is paired with a `try/catch` that calls `abortTransaction()` on
+  failure; `transactionDepth` never gets stuck above zero after an error.
+- `reactiveDb: ReactiveDatabase` added to `RPCHandlerDependencies` and `RoomRuntimeServiceConfig`;
+  `app.ts` passes `reactiveDb` to both `setupRPCHandlers` and `RoomRuntimeService`.
 - All existing tests still pass.
 - New unit tests verify reactive integration for each table.
 
@@ -171,6 +206,17 @@ The SQL column shape for each named query must match what the frontend already e
 existing repository SELECT patterns). Parameter count validation is performed before execution; a
 mismatch is rejected with a typed error.
 
+**Column name aliasing (camelCase):** The LiveQuery engine returns raw SQL row objects, bypassing
+existing repository mappers that normalize column names. SQLite column names use `snake_case`
+(e.g., `room_id`, `created_at`, `assigned_agent`) while the shared TypeScript types (`NeoTask`,
+`RoomGoal`) use `camelCase`. Named-query SELECT statements must use `AS` aliases to produce
+camelCase field names matching the domain types (e.g., `room_id AS roomId`,
+`created_at AS createdAt`, `assigned_agent AS assignedAgent`). The reference for expected field
+names is the existing repository SELECT mappers at `task-repository.ts:205` and
+`goal-repository.ts:211`. Without aliases, every camelCase field read by the frontend silently
+resolves to `undefined`. Contract tests must verify the full delivered row shape matches the
+TypeScript types end-to-end — not just the JSON blob fields.
+
 **JSON blob columns:** SQLite stores array fields (`dependsOn: string[]`, `linkedTaskIds: string[]`
 in `NeoTask`; `linkedTaskIds: string[]` in `RoomGoal`) as JSON text blobs. The LiveQuery engine
 returns raw SQL row objects, so the row-mapping layer must JSON-parse these blob columns before
@@ -196,7 +242,7 @@ access to the parameterized resource before registering the subscription:
   `room_id`; then verify the room exists via `roomManager.getRoom(room_id)`. Unknown `group_id`,
   missing `ref_id` task, or non-existent room is rejected with an authorization error.
 
-#### Protocol types (add to `packages/shared/src/live-query-types.ts`)
+#### Protocol types (create new file `packages/shared/src/live-query-types.ts`)
 
 ```ts
 interface LiveQuerySubscribeRequest {
@@ -409,19 +455,26 @@ regression window where goal updates go undelivered.
 
 #### Daemon-side changes (goal-handlers.ts)
 
-Remove goal event emits that are now superseded by LiveQuery delta delivery:
-- Remove `goal.updated` emits — covered by `goals.byRoom` LiveQuery delta.
-- Remove `goal.progressUpdated` emits — progress changes modify the goal row; the `goals.byRoom`
+Remove goal event emits that are now superseded by LiveQuery delta delivery. There are exactly five
+`emitGoalUpdated()` call sites in `goal-handlers.ts`; all five must be removed:
+1. `goal.update` handler (line 203) — replaced by `goals.byRoom` LiveQuery delta.
+2. `goal.needsHuman` handler (line 222) — marks goal as needing human input; delta covers this.
+3. `goal.reactivate` handler (line 241) — reactivates a paused goal; delta covers this.
+4. `goal.linkTask` handler (line 264) — also remove the paired `emitGoalProgressUpdated` call
+   (line 265); both covered by `goals.byRoom` LiveQuery delta.
+5. `goal.delete` handler (line 285) — deletion surfaces via LiveQuery `removed` array.
+
+Additional removal:
+- `goal.progressUpdated` emits — progress changes modify the goal row; the `goals.byRoom`
   LiveQuery delta includes all changed columns and delivers the update. Note: the frontend currently
   has no `goal.progressUpdated` listener in `room-store.ts` (updates were silently dropped); the
   LiveQuery approach now delivers them correctly for the first time.
-- Remove `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts:344`
+- `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts:344`
   but is never actually emitted anywhere in the current codebase (confirmed by grep); no action
   required, but verify during implementation.
-- For `goal.linkTask` handler (`goal-handlers.ts:264–265`): remove `emitGoalUpdated` and
-  `emitGoalProgressUpdated` calls — both covered by `goals.byRoom` LiveQuery delta.
-- **Keep `goal.created` emits** — `room-runtime-service.ts:338` subscribes to `goal.created` on
-  `daemonHub` to trigger scheduling. Removing this emit would silently break goal-creation scheduling.
+
+**Keep `goal.created` emits** — `room-runtime-service.ts:338` subscribes to `goal.created` on
+`daemonHub` to trigger scheduling. Removing this emit would silently break goal-creation scheduling.
 
 #### Frontend-side changes (room-store.ts)
 
@@ -497,16 +550,17 @@ unsubscribe first — see above). Hook into the general `connected` state transi
 `hub.onConnection((state) => { if (state === 'connected') ... })`).
 Handle the resulting snapshot to fully resync state.
 
-#### Stale-delta guard on rapid room switching
+#### Stale-event guard on rapid room switching
 
 `liveQuery.unsubscribe` is an async RPC call. If a user switches rooms rapidly, in-flight deltas
-from the previous room subscription may arrive after the new room subscription is established.
-The delta handler must guard against stale deliveries: track the current active `subscriptionId`
-per query in the store; when a delta arrives, discard it if its `subscriptionId` does not match
-the current active subscription for that query. This prevents stale deltas from mutating signal
-state for the wrong room.
+**and snapshots** from the previous room subscription may arrive after the new room subscription
+is established. Both the snapshot handler and the delta handler must guard against stale deliveries:
+track the current active `subscriptionId` per query in the store; when a snapshot or delta arrives,
+discard it if its `subscriptionId` does not match the current active subscription for that query.
+A stale snapshot is equally dangerous — it would unconditionally overwrite `this.tasks.value` or
+`this.goals.value` with data from the previous room. This guard applies to both event types.
 
-#### Subscription ownership
+#### Subscription ownership and hook-vs-store integration
 
 `room-store.ts` is a class-based singleton. `useRoomLiveQuery.ts` is a React hook that acts as
 a lifecycle adapter: it calls into room-store's subscription management methods on component
@@ -515,10 +569,25 @@ state; the hook owns the component-lifecycle-bound subscribe/unsubscribe trigger
 be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
 `room-store.unsubscribeRoom(roomId)`.
 
+**Integration with `Room.tsx` and `roomStore.select()`:** The existing `roomStore.select()` call
+at `Room.tsx:45` triggers `fetchInitialState()`, which calls the `room.get` RPC to populate
+`this.room.value` and `this.sessions.value`. After Task 4, `fetchInitialState` still calls
+`room.get` for `room`/`sessions` but must NOT assign `tasks.value` (that write is removed per the
+"Task-state ownership" section above). `useRoomLiveQuery` must be mounted inside `Room.tsx`
+(or a direct child rendered unconditionally with the room selected), called with the current
+`roomId`. On mount, it calls `room-store.subscribeRoom(roomId)` once. On `roomId` change
+(room switch), it calls `room-store.unsubscribeRoom(oldRoomId)` then
+`room-store.subscribeRoom(newRoomId)`. `roomStore.select()` must NOT call `liveQuery.subscribe`
+internally — that is exclusively the hook's responsibility, to avoid double-subscription when
+both paths fire on the same room selection.
+
 **Work:**
-- Remove `goal.updated`, `goal.progressUpdated`, and `goal.linkTask` emits from `goal-handlers.ts`.
+- Remove all five `emitGoalUpdated()` call sites from `goal-handlers.ts`: `goal.update` (line 203),
+  `goal.needsHuman` (line 222), `goal.reactivate` (line 241), `goal.linkTask` (line 264, also
+  remove `emitGoalProgressUpdated`), and `goal.delete` (line 285). Keep `goal.created` emit.
 - When a room is selected, call `liveQuery.subscribe` with `tasks.byRoom` and `goals.byRoom`.
-- Handle `liveQuery.snapshot`: replace `this.tasks.value` / `this.goals.value` entirely.
+- Handle `liveQuery.snapshot`: discard if `subscriptionId` doesn't match current active
+  subscription (stale-snapshot guard); otherwise replace `this.tasks.value` / `this.goals.value` entirely.
 - Handle `liveQuery.delta`: apply `added`/`removed`/`updated` arrays; discard delta if its
   `subscriptionId` doesn't match the current active subscription (stale-delta guard);
   within `updated` processing, implement the review-status toast logic (with hydration guard).
@@ -551,11 +620,13 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
   the `task.create` optimistic append (`room-store.ts:417`) and `fetchGoals()` refetch
   (`room-store.ts:499`) no longer write to signal state.
 - Goal progress updates surface in the UI (LiveQuery delivers them; were previously dropped).
-- `goal.updated`, `goal.progressUpdated`, and `goal.linkTask` emits no longer fired from `goal-handlers.ts`.
+- All five `emitGoalUpdated()` call sites removed from `goal-handlers.ts` (`goal.update`,
+  `goal.needsHuman`, `goal.reactivate`, `goal.linkTask`, `goal.delete`); `goal.created` retained.
 - `goal.created` continues to be emitted from `goal-handlers.ts`.
 - Goal deletion surfaces in the UI via the LiveQuery `removed` array (not the old `goal.updated`
   sentinel); the `removed` entries are applied to `this.goals.value`.
-- Deltas arriving with a stale `subscriptionId` (from a prior room subscription) are discarded.
+- Deltas **and snapshots** arriving with a stale `subscriptionId` (from a prior room subscription)
+  are discarded; neither can overwrite signal state for the wrong room.
 - Review-status toast fires when a LiveQuery delta `updated` entry transitions a known task to
   `review`; toast is suppressed during snapshot hydration and reconnect resync.
 - No double-subscription: hook calls store methods; store owns handles.
