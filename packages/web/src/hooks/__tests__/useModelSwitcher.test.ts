@@ -244,7 +244,9 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'glm-4-plus', display_name: 'GLM 4 Plus', description: '', provider: 'glm' }],
+						models: [
+							{ id: 'glm-4-plus', display_name: 'GLM 4 Plus', description: '', provider: 'glm' },
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -270,7 +272,12 @@ describe('useModelSwitcher', () => {
 					})
 					.mockResolvedValueOnce({
 						models: [
-							{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex', description: '', provider: 'openai' },
+							{
+								id: 'gpt-5.3-codex',
+								display_name: 'GPT-5.3 Codex',
+								description: '',
+								provider: 'openai',
+							},
 							{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', description: '', provider: 'openai' },
 						],
 					}),
@@ -298,7 +305,12 @@ describe('useModelSwitcher', () => {
 					})
 					.mockResolvedValueOnce({
 						models: [
-							{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex (Copilot)', description: '', provider: 'github-copilot' },
+							{
+								id: 'gpt-5.3-codex',
+								display_name: 'GPT-5.3 Codex (Copilot)',
+								description: '',
+								provider: 'github-copilot',
+							},
 						],
 					}),
 			};
@@ -359,7 +371,13 @@ describe('useModelSwitcher', () => {
 					})
 					.mockResolvedValueOnce({
 						models: [
-							{ id: 'claude-opus-4.6', display_name: 'Claude Opus 4.6 (Copilot)', description: '', provider: 'github-copilot', alias: 'copilot-opus' },
+							{
+								id: 'claude-opus-4.6',
+								display_name: 'Claude Opus 4.6 (Copilot)',
+								description: '',
+								provider: 'github-copilot',
+								alias: 'copilot-opus',
+							},
 						],
 					}),
 			};
@@ -810,7 +828,15 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'claude-opus-4-5-20251101', display_name: 'Opus', description: '', alias: 'copilot-opus', provider: 'github-copilot' }],
+						models: [
+							{
+								id: 'claude-opus-4-5-20251101',
+								display_name: 'Opus',
+								description: '',
+								alias: 'copilot-opus',
+								provider: 'github-copilot',
+							},
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);

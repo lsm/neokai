@@ -147,7 +147,8 @@ export class ModelSwitchHandler {
 			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and GitHub Copilot).
 			// detectProvider() would always return Anthropic for 'claude-sonnet-4.6'.
 			const newProviderInstance = modelInfo?.provider
-				? (providerRegistry.get(modelInfo.provider) ?? providerRegistry.detectProvider(resolvedModel))
+				? (providerRegistry.get(modelInfo.provider) ??
+					providerRegistry.detectProvider(resolvedModel))
 				: providerRegistry.detectProvider(resolvedModel);
 			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
 

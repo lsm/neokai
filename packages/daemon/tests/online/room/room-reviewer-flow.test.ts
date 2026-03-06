@@ -39,6 +39,8 @@ import {
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
 
+import { PLANNING_TIMEOUT, CODING_TIMEOUT } from './glm-timeouts';
+
 describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 	let roomId: string;
@@ -126,7 +128,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
-				180_000
+				PLANNING_TIMEOUT
 			);
 
 			if (terminalPlanning.status === 'failed') {
@@ -147,7 +149,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 					daemon,
 					roomId,
 					{ taskType: 'planning', status: ['completed', 'failed'] },
-					180_000
+					PLANNING_TIMEOUT
 				);
 			}
 
@@ -172,7 +174,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['completed', 'review', 'needs_human', 'failed'] },
-				420_000
+				CODING_TIMEOUT
 			);
 
 			// Log terminal status for debugging

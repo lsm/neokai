@@ -27,7 +27,9 @@ describe('WebSocket Protocol', () => {
 	});
 
 	afterEach(async () => {
-		await daemon.waitForExit();
+		if (daemon) {
+			await daemon.waitForExit();
+		}
 	});
 
 	describe('Connection Lifecycle', () => {

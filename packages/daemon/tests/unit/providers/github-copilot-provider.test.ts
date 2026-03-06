@@ -216,8 +216,7 @@ describe('GitHubCopilotProvider', () => {
 			for (const model of models) {
 				// GitHub Copilot proxies to OpenAI for GPT models, so fall back
 				// to the OpenAI registry when pi-ai hasn't added the model yet.
-				const piAiModel =
-					getModel('github-copilot', model.id) || getModel('openai', model.id);
+				const piAiModel = getModel('github-copilot', model.id) || getModel('openai', model.id);
 				expect(piAiModel).toBeDefined();
 			}
 		});

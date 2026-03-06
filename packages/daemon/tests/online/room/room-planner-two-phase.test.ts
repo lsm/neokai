@@ -47,6 +47,8 @@ import {
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
 
+import { PLANNING_TIMEOUT, CODING_TIMEOUT } from './glm-timeouts';
+
 describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 	let roomId: string;
@@ -133,7 +135,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['review', 'completed', 'failed'] },
-				300_000
+				PLANNING_TIMEOUT
 			);
 			console.log(`Planning task reached: ${reviewTask.status}`);
 
@@ -234,7 +236,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 					roomId,
 					planningTask.id,
 					['completed', 'failed'],
-					300_000
+					PLANNING_TIMEOUT
 				);
 				console.log(
 					`Final group state: ${finalGroup.state}, iteration: ${finalGroup.feedbackIteration}`
@@ -297,6 +299,6 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 				expect(codingTasks.length).toBeGreaterThan(0);
 			}
 		},
-		{ timeout: 600_000 }
+		{ timeout: CODING_TIMEOUT }
 	);
 });
