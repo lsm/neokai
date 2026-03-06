@@ -17,7 +17,7 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
-import type { Session, CurrentModelInfo, MessageHub } from '@neokai/shared';
+import type { Session, SessionConfig, CurrentModelInfo, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
@@ -166,8 +166,16 @@ export class ModelSwitchHandler {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
 					session.config.provider = newProviderInstance.id as any;
 				}
+				// Only pass serializable fields — session.config may contain runtime-only
+				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
+				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
-					config: session.config,
+					config: {
+						model: resolvedModel,
+						...(newProviderInstance?.id && {
+							provider: newProviderInstance.id as 'anthropic' | 'glm',
+						}),
+					} as SessionConfig,
 				});
 
 				// Update context tracker model
@@ -192,8 +200,17 @@ export class ModelSwitchHandler {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
 					session.config.provider = newProviderInstance.id as any;
 				}
+				// Only pass serializable fields — session.config may contain runtime-only
+				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
+				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
-					config: session.config,
+					config: {
+						model: resolvedModel,
+						...(isCrossProviderSwitch &&
+							newProviderInstance?.id && {
+								provider: newProviderInstance.id as 'anthropic' | 'glm',
+							}),
+					} as SessionConfig,
 				});
 
 				// Update context tracker model
