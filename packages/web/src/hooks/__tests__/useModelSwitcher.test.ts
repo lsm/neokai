@@ -244,7 +244,7 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'glm-4-plus', display_name: 'GLM 4 Plus', description: '' }],
+						models: [{ id: 'glm-4-plus', display_name: 'GLM 4 Plus', description: '', provider: 'glm' }],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -265,13 +265,13 @@ describe('useModelSwitcher', () => {
 				request: vi
 					.fn()
 					.mockResolvedValueOnce({
-						currentModel: 'gpt-5.1-codex',
+						currentModel: 'gpt-5.3-codex',
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
 						models: [
-							{ id: 'gpt-5.1-codex', display_name: 'GPT-5.1 Codex', description: '' },
-							{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', description: '' },
+							{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex', description: '', provider: 'openai' },
+							{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', description: '', provider: 'openai' },
 						],
 					}),
 			};
@@ -283,7 +283,7 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.1-codex');
+			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
 			expect(gptModel?.provider).toBe('openai');
 			expect(gptModel?.family).toBe('gpt');
 		});
@@ -293,12 +293,12 @@ describe('useModelSwitcher', () => {
 				request: vi
 					.fn()
 					.mockResolvedValueOnce({
-						currentModel: 'gpt-5.1-codex',
+						currentModel: 'gpt-5.3-codex',
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
 						models: [
-							{ id: 'gpt-5.1-codex', display_name: 'GPT-5.1 Codex (Copilot)', description: '' },
+							{ id: 'gpt-5.3-codex', display_name: 'GPT-5.3 Codex (Copilot)', description: '', provider: 'github-copilot' },
 						],
 					}),
 			};
@@ -310,7 +310,7 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.1-codex');
+			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
 			expect(gptModel?.provider).toBe('github-copilot');
 			expect(gptModel?.family).toBe('gpt');
 		});
@@ -329,6 +329,7 @@ describe('useModelSwitcher', () => {
 								id: 'gemini-3.1-pro-preview',
 								display_name: 'Gemini 3.1 Pro (Copilot)',
 								description: '',
+								provider: 'github-copilot',
 							},
 						],
 					}),
@@ -358,7 +359,7 @@ describe('useModelSwitcher', () => {
 					})
 					.mockResolvedValueOnce({
 						models: [
-							{ id: 'claude-opus-4.6', display_name: 'Claude Opus 4.6 (Copilot)', description: '' },
+							{ id: 'claude-opus-4.6', display_name: 'Claude Opus 4.6 (Copilot)', description: '', provider: 'github-copilot', alias: 'copilot-opus' },
 						],
 					}),
 			};
@@ -809,7 +810,7 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'claude-opus-4-5-20251101', display_name: 'Opus', description: '' }],
+						models: [{ id: 'claude-opus-4-5-20251101', display_name: 'Opus', description: '', alias: 'copilot-opus', provider: 'github-copilot' }],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -820,7 +821,8 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			expect(result.current.availableModels[0].alias).toBe('20251101');
+			// Server-provided alias is used directly
+			expect(result.current.availableModels[0].alias).toBe('copilot-opus');
 		});
 	});
 });

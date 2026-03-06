@@ -500,9 +500,22 @@ export async function* piMonoQueryGenerator(
 
 	// Get the model using pi-ai SDK
 	const piAiProvider = mapProviderToPiAi(provider);
-	const model = getModel(piAiProvider as 'openai' | 'github-copilot', modelId as never) as
+	let model = getModel(piAiProvider as 'openai' | 'github-copilot', modelId as never) as
 		| Model<Api>
 		| undefined;
+
+	// Fallback: if a model isn't registered in pi-ai for github-copilot yet (e.g.,
+	// gpt-5.3-codex), synthesize an entry using the same Copilot endpoint/headers
+	// as gpt-5.1-codex. Never fall back to getModel('openai', ...) — OpenAI has a
+	// different baseUrl and the Copilot API key would be rejected there.
+	if (!model && piAiProvider === 'github-copilot') {
+		const template = getModel('github-copilot', 'gpt-5.1-codex') as
+			| (Model<Api> & Record<string, unknown>)
+			| undefined;
+		if (template) {
+			model = { ...template, id: modelId, name: modelId } as Model<Api>;
+		}
+	}
 
 	if (!model) {
 		yield createResultMessage(

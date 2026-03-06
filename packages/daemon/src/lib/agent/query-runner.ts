@@ -328,7 +328,14 @@ export class QueryRunner {
 						return;
 					}
 
-					logger.info(`Custom query returned null for ${provider.id}, falling back to SDK`);
+					// createQuery returned null — the provider is not ready (e.g., Copilot token
+					// expired and refresh failed). Do NOT fall through to the standard Claude Agent
+					// SDK: that path spawns a subprocess for a different provider, causing confusing
+					// "Claude Code process exited" errors instead of a clear auth message.
+					throw new Error(
+						`Provider ${provider.displayName ?? provider.id} is not ready. ` +
+							`Please re-authenticate (Settings → Providers → ${provider.displayName ?? provider.id} → Login).`
+					);
 				} catch (customQueryError) {
 					logger.error('Custom query provider failed:', customQueryError);
 

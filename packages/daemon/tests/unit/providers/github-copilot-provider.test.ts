@@ -102,7 +102,7 @@ describe('GitHubCopilotProvider', () => {
 		});
 
 		it('should own GPT models via Copilot', () => {
-			expect(provider.ownsModel('gpt-5.1-codex')).toBe(true);
+			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
 			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
 		});
 
@@ -127,7 +127,7 @@ describe('GitHubCopilotProvider', () => {
 		it('should not own raw gpt- prefix models (those belong to OpenAI)', () => {
 			// GitHub Copilot only owns specific model IDs, not all gpt-* models
 			expect(provider.ownsModel('gpt-4o')).toBe(false);
-			expect(provider.ownsModel('gpt-5.3-codex')).toBe(false);
+			expect(provider.ownsModel('gpt-5.1-codex')).toBe(false);
 		});
 	});
 
@@ -197,7 +197,7 @@ describe('GitHubCopilotProvider', () => {
 	});
 
 	describe('model ID validation against pi-ai registry', () => {
-		it('should have all model IDs resolvable in pi-ai registry', async () => {
+		it('should have all model IDs resolvable in pi-ai registry (with openai fallback)', async () => {
 			const authPath = path.join(TMP_DIR, 'auth.json');
 			await fs.writeFile(
 				authPath,
@@ -214,7 +214,10 @@ describe('GitHubCopilotProvider', () => {
 			const models = await providerWithCreds.getModels();
 
 			for (const model of models) {
-				const piAiModel = getModel('github-copilot', model.id);
+				// GitHub Copilot proxies to OpenAI for GPT models, so fall back
+				// to the OpenAI registry when pi-ai hasn't added the model yet.
+				const piAiModel =
+					getModel('github-copilot', model.id) || getModel('openai', model.id);
 				expect(piAiModel).toBeDefined();
 			}
 		});

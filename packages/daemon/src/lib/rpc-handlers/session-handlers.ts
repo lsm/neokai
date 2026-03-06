@@ -539,6 +539,8 @@ export function setupSessionHandlers(
 					id: m.id,
 					display_name: m.name,
 					description: m.description,
+					alias: m.alias,
+					provider: m.provider,
 					type: 'model' as const,
 				})),
 				// If forceRefresh is true, indicate that this is a fresh fetch

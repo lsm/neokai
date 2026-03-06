@@ -105,9 +105,12 @@ export class ModelSwitchHandler {
 				return { success: false, model: session.config.model, error };
 			}
 
-			// Resolve alias to full model ID
-			const resolvedModel = await resolveModelAlias(newModel);
-			const modelInfo = await getModelInfo(resolvedModel);
+			// Get model info from the ORIGINAL alias to preserve provider context.
+			// Resolving alias first (e.g., 'copilot-sonnet' → 'claude-sonnet-4.6') and then
+			// calling getModelInfo loses the provider — two providers can share the same
+			// canonical ID (e.g., Anthropic and GitHub Copilot both have 'claude-sonnet-4.6').
+			const modelInfo = await getModelInfo(newModel);
+			const resolvedModel = modelInfo?.id ?? (await resolveModelAlias(newModel));
 
 			// Resolve the current model in case it's also an alias
 			const currentResolvedModel = await resolveModelAlias(session.config.model);
@@ -140,7 +143,12 @@ export class ModelSwitchHandler {
 			// This is mainly for logging and updating the provider config field
 			const providerRegistry = getProviderRegistry();
 			const currentProviderInstance = providerRegistry.detectProvider(currentResolvedModel);
-			const newProviderInstance = providerRegistry.detectProvider(resolvedModel);
+			// Use provider from model info to correctly handle shared canonical IDs
+			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and GitHub Copilot).
+			// detectProvider() would always return Anthropic for 'claude-sonnet-4.6'.
+			const newProviderInstance = modelInfo?.provider
+				? (providerRegistry.get(modelInfo.provider) ?? providerRegistry.detectProvider(resolvedModel))
+				: providerRegistry.detectProvider(resolvedModel);
 			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
 
 			if (isCrossProviderSwitch) {
@@ -154,7 +162,8 @@ export class ModelSwitchHandler {
 				// Keep provider aligned with model for pre-query switches too.
 				// Without this, a stale explicit provider can force wrong model routing.
 				if (newProviderInstance?.id) {
-					session.config.provider = newProviderInstance.id as 'anthropic' | 'glm';
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					session.config.provider = newProviderInstance.id as any;
 				}
 				db.updateSession(session.id, {
 					config: session.config,
@@ -179,7 +188,8 @@ export class ModelSwitchHandler {
 				session.config.model = resolvedModel;
 				// Update provider in session config for cross-provider switches
 				if (isCrossProviderSwitch && newProviderInstance?.id) {
-					session.config.provider = newProviderInstance.id as 'anthropic' | 'glm';
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					session.config.provider = newProviderInstance.id as any;
 				}
 				db.updateSession(session.id, {
 					config: session.config,

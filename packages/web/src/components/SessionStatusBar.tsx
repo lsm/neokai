@@ -381,7 +381,7 @@ export default function SessionStatusBar({
 									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
 										model.id === currentModelInfo?.id ? 'text-blue-400' : 'text-gray-200'
 									}`}
-									onClick={() => handleModelSwitch(model.id)}
+									onClick={() => handleModelSwitch(model.alias)}
 									disabled={modelSwitching}
 								>
 									<span class="text-base">{getModelFamilyIcon(model.family)}</span>
