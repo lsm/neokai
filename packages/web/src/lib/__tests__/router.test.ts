@@ -434,9 +434,93 @@ describe('Router Utility', () => {
 			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
 		});
 
+		it('should extract room ID from room session path', () => {
+			const roomId = getRoomIdFromPath(
+				'/room/550e8400-e29b-41d4-a716-446655440000/session/abc-123-def'
+			);
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
+		it('should extract room ID from legacy chat path (backwards compat)', () => {
+			const roomId = getRoomIdFromPath('/room/550e8400-e29b-41d4-a716-446655440000/chat');
+			expect(roomId).toBe('550e8400-e29b-41d4-a716-446655440000');
+		});
+
 		it('should return null for session path', () => {
 			const roomId = getRoomIdFromPath('/session/550e8400-e29b-41d4-a716-446655440000');
 			expect(roomId).toBeNull();
+		});
+	});
+
+	describe('initializeRouter with room routes', () => {
+		it('should set currentRoomIdSignal when URL is a plain room path', () => {
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000';
+
+			initializeRouter();
+
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should set currentRoomIdSignal when URL is a room task path', () => {
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/task/660e8400-e29b-41d4-a716-446655440001';
+
+			initializeRouter();
+
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should set currentRoomIdSignal when URL is a legacy chat path', () => {
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/chat';
+
+			initializeRouter();
+
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+	});
+
+	describe('Popstate handling for room routes', () => {
+		it('should update signals when popstate navigates to a plain room path', () => {
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000';
+
+			window.dispatchEvent(
+				new PopStateEvent('popstate', { state: { roomId: '550e8400-e29b-41d4-a716-446655440000' } })
+			);
+
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should update signals when popstate navigates to a room task path', () => {
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			mockLocation.pathname =
+				'/room/550e8400-e29b-41d4-a716-446655440000/task/660e8400-e29b-41d4-a716-446655440001';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentSessionIdSignal.value).toBeNull();
+		});
+
+		it('should clear room signals when popstate navigates away from room to home', () => {
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000';
+			initializeRouter();
+			currentRoomIdSignal.value = '550e8400-e29b-41d4-a716-446655440000';
+
+			mockLocation.pathname = '/';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			expect(currentRoomIdSignal.value).toBeNull();
+			expect(currentSessionIdSignal.value).toBeNull();
 		});
 	});
 

@@ -26,6 +26,8 @@ const ROOM_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)$/;
 const ROOM_SESSION_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
 const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
+/** Legacy: /room/:id/chat was removed — treat as plain room route for backwards compat */
+const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
 
 /**
  * Router state and configuration
@@ -63,7 +65,11 @@ export function getRoomIdFromPath(path: string): string | null {
 
 	// Also check room task pattern
 	const roomTaskMatch = path.match(ROOM_TASK_ROUTE_PATTERN);
-	return roomTaskMatch ? roomTaskMatch[1] : null;
+	if (roomTaskMatch) return roomTaskMatch[1];
+
+	// Legacy chat sub-path — the Chat tab was removed; redirect old URLs to the room overview
+	const chatCompatMatch = path.match(ROOM_CHAT_COMPAT_PATTERN);
+	return chatCompatMatch ? chatCompatMatch[1] : null;
 }
 
 /**
