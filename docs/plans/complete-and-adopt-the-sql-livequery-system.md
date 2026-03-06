@@ -85,20 +85,36 @@ all LiveQuery events with no error, making it impossible to catch the regression
 
 **`notifyChange` call-site convention:** `notifyChange` must be called **only after a write has
 been durably committed** — i.e., after the write statement or transaction completes successfully.
-For multi-step transactional writes, call `notifyChange` after the transaction commits, never
-before. Calling it before commit could deliver stale data to subscribers.
+Calling it before commit could deliver stale data to subscribers.
+
+**Multi-step logical writes:** When multiple `db.prepare().run()` calls constitute a single logical
+unit (e.g., `SessionGroupRepository.createGroup` writes to both `session_groups` and
+`session_group_members`), wrap them in `reactiveDb.beginTransaction()` / `commitTransaction()` so
+the LiveQuery engine fires only once after all constituent writes have landed. Call `notifyChange`
+after `commitTransaction()`, not between statements.
+
+**One canonical `notifyChange` layer per table:** To prevent a single logical write from firing
+`notifyChange` multiple times (once at the repository layer and again at the manager layer):
+- **`tasks`**: `TaskManager` is the canonical caller. `TaskRepository` does NOT call `notifyChange`.
+- **`goals`**: `GoalRepository` is the canonical caller — it is the innermost layer that touches
+  the row. `GoalManager` does NOT call `notifyChange` after delegating to `GoalRepository`.
+- **`session_groups` / `session_group_messages`**: `SessionGroupRepository` is the canonical caller.
 
 **Files to modify:**
 - `packages/daemon/src/lib/room/managers/task-manager.ts` — inject `ReactiveDatabase`; call
-  `reactiveDb.notifyChange('tasks')` after every write.
+  `reactiveDb.notifyChange('tasks')` after every write, including the raw `db.prepare` call at
+  `task-manager.ts:208–210` (inside `updateDraftTask`, where `assigned_agent` is set via a raw
+  prepare statement that bypasses `TaskRepository.updateTask`).
 - `packages/daemon/src/lib/room/state/session-group-repository.ts` — inject `ReactiveDatabase`:
-  - Call `reactiveDb.notifyChange('session_groups')` after writes to `session_groups` rows
-    (createGroup, updateGroupState, setApproved, etc.).
+  - Wrap multi-step writes (e.g., `createGroup`) in `beginTransaction()`/`commitTransaction()`.
+  - Call `reactiveDb.notifyChange('session_groups')` after writes to `session_groups` rows.
   - Call `reactiveDb.notifyChange('session_group_messages')` after `appendMessage()` and any
     other `session_group_messages` writes.
-- `packages/daemon/src/lib/room/managers/goal-manager.ts` and
-  `packages/daemon/src/storage/repositories/goal-repository.ts` — inject `ReactiveDatabase`;
+- `packages/daemon/src/storage/repositories/goal-repository.ts` — inject `ReactiveDatabase`;
   call `reactiveDb.notifyChange('goals')` after every write (create, update, delete, link, unlink).
+- `packages/daemon/src/lib/room/managers/goal-manager.ts` — inject `ReactiveDatabase` and pass
+  it to `GoalRepository`; do **not** call `notifyChange` in `GoalManager` itself (repository is
+  the canonical layer).
 
   _Note on GoalManager injection chain:_ `GoalManager` internally creates a `GoalRepository` at
   `goal-manager.ts:28`. The injection strategy is to pass `ReactiveDatabase` into `GoalManager`'s
@@ -140,8 +156,9 @@ SQL template server-side. Clients never send raw SQL. Unknown query names are re
 Initial named queries (registered at daemon startup):
 - `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ? ORDER BY created_at DESC`
   (matches `TaskRepository.listTasks` ordering at `task-repository.ts:84`)
-- `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ? ORDER BY priority DESC, created_at ASC`
-  (matches `GoalRepository.listGoals` ordering at `goal-repository.ts:86`)
+- `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ? ORDER BY priority DESC, created_at ASC, id ASC`
+  (matches `GoalRepository.listGoals` ordering at `goal-repository.ts:86`; `id ASC` tiebreaker
+  prevents non-deterministic ordering when two goals share the same priority and timestamp)
 - `sessionGroupMessages.byGroup` — `SELECT ... FROM session_group_messages WHERE group_id = ? ORDER BY created_at ASC, id ASC`
   (the `id` tiebreaker ensures fully deterministic ordering when two messages share the same
   `created_at` timestamp, e.g. in tests with controlled time or rapid concurrent inserts;
@@ -152,7 +169,14 @@ diff order are deterministic across restarts, concurrent writes, and test enviro
 
 The SQL column shape for each named query must match what the frontend already expects (aligned with
 existing repository SELECT patterns). Parameter count validation is performed before execution; a
-mismatch is rejected with a typed error. Type mismatches are caught by the SQL engine at runtime.
+mismatch is rejected with a typed error.
+
+**JSON blob columns:** SQLite stores array fields (`dependsOn: string[]`, `linkedTaskIds: string[]`
+in `NeoTask`; `linkedTaskIds: string[]` in `RoomGoal`) as JSON text blobs. The LiveQuery engine
+returns raw SQL row objects, so the row-mapping layer must JSON-parse these blob columns before
+delivering snapshot/delta rows to the client. The mapping step must be tested: a snapshot row must
+have `dependsOn` as a parsed `string[]`, not a raw JSON string. Contract tests must verify the
+deserialized shape matches the shared TypeScript types.
 
 Named query keys follow the `<entity>.<filter>` convention. The registry is defined as a
 **module-level constant** (a `Map`) in `live-query-handlers.ts` — it is not added to
@@ -164,11 +188,13 @@ access to the parameterized resource before registering the subscription:
 - `tasks.byRoom` and `goals.byRoom` (keyed by `room_id`): verify the room exists via
   `roomManager.getRoom(room_id)`. NeoKai is a single-user deployment — there is no per-user ACL,
   so existence validation is sufficient. Unknown `room_id` is rejected with an authorization error.
-- `sessionGroupMessages.byGroup` (keyed by `group_id`): look up the `session_groups` table to
-  verify the `group_id` exists and retrieve its `room_id`; then verify that room exists via
-  `roomManager.getRoom(room_id)`. This ensures a client cannot subscribe to an arbitrary
-  `group_id` for a room that does not exist. Unknown `group_id` is rejected with an authorization
-  error.
+- `sessionGroupMessages.byGroup` (keyed by `group_id`): the `session_groups` table has **no
+  `room_id` column** (schema `index.ts:227`). The join path is:
+  `session_groups.ref_id → tasks.id → tasks.room_id` (valid for `group_type = 'task'`, which is
+  the only type in use). Authorization check: look up `session_groups WHERE id = group_id` to get
+  `ref_id` and `group_type`; for `group_type = 'task'` look up `tasks WHERE id = ref_id` to get
+  `room_id`; then verify the room exists via `roomManager.getRoom(room_id)`. Unknown `group_id`,
+  missing `ref_id` task, or non-existent room is rejected with an authorization error.
 
 #### Protocol types (add to `packages/shared/src/live-query-types.ts`)
 
@@ -183,11 +209,13 @@ interface LiveQueryUnsubscribeRequest { subscriptionId: string }
 interface LiveQueryUnsubscribeResponse { ok: true }
 
 // Server-pushed via router.sendToClient, not broadcast
+// HubMessage.method = 'liveQuery.snapshot'
 interface LiveQuerySnapshotEvent {
   subscriptionId: string;
   rows: unknown[];
   version: number;
 }
+// HubMessage.method = 'liveQuery.delta'
 interface LiveQueryDeltaEvent {
   subscriptionId: string;
   added?: unknown[];
@@ -245,9 +273,15 @@ forwarding method. This method retrieves the primary transport using the existin
 calls `transport.onClientDisconnect(handler)`. The `IMessageTransport.onClientDisconnect` method
 is optional; the forwarding method must guard against a transport that does not implement it.
 
-The `liveQuery.subscribe` handler setup function calls `messageHub.onClientDisconnect` once at
-handler registration time to install a cleanup callback. The callback receives `clientId` and
-disposes all `LiveQueryHandle` instances keyed to that client.
+The `liveQuery.subscribe` **handler setup function** (called once at server startup when
+`live-query-handlers.ts` is initialized) calls `messageHub.onClientDisconnect` **exactly once**
+to register a single cleanup callback. The callback internally iterates all subscription handles
+keyed to the disconnected `clientId` and disposes them. It is **not** called on each individual
+`liveQuery.subscribe` RPC request — doing so would leak a new listener per subscribe call.
+
+The unsubscribe function returned by `messageHub.onClientDisconnect` must be stored and invoked
+during `MessageHub` teardown/dispose to prevent listener leaks in test environments. Unit tests
+must verify the listener count does not grow across subscribe/unsubscribe cycles.
 
 **Reconnect re-subscribe semantics:** Old server-side subscription handles are fully disposed on
 WebSocket disconnect via the `onClientDisconnect` cleanup above. After reconnect, the client
@@ -384,6 +418,8 @@ Remove goal event emits that are now superseded by LiveQuery delta delivery:
 - Remove `goal.completed` emits if present — `goal.completed` is defined in `daemon-hub.ts:344`
   but is never actually emitted anywhere in the current codebase (confirmed by grep); no action
   required, but verify during implementation.
+- For `goal.linkTask` handler (`goal-handlers.ts:264–265`): remove `emitGoalUpdated` and
+  `emitGoalProgressUpdated` calls — both covered by `goals.byRoom` LiveQuery delta.
 - **Keep `goal.created` emits** — `room-runtime-service.ts:338` subscribes to `goal.created` on
   `daemonHub` to trigger scheduling. Removing this emit would silently break goal-creation scheduling.
 
@@ -414,7 +450,16 @@ Remove goal event emits that are now superseded by LiveQuery delta delivery:
 **Task-state ownership after migration:** LiveQuery (`liveQuery.snapshot` on subscribe and
 `liveQuery.delta` on change) is the **sole** writer to `this.tasks.value` and `this.goals.value`
 after Task 4. No other code path (event handler, RPC response) should overwrite these signals.
-This prevents the `room.overview` event and `fetchInitialState` from racing with LiveQuery.
+In addition to the two `tasks.value` writes already identified, the following optimistic/refetch
+writes must also be removed:
+- `room-store.ts:417` — direct `this.tasks.value` append after `task.create` RPC response.
+  LiveQuery delta will deliver the new task; remove the optimistic append.
+- `room-store.ts:499` — `this.goals.value = response.goals ?? []` inside `fetchGoals()`, which
+  is called by `createGoal`, `updateGoal`, `deleteGoal`, and `linkTaskToGoal` after each
+  mutation. Remove the `this.goals.value` assignment from `fetchGoals()` (the method may still
+  be called for other purposes, but must not overwrite the signal). LiveQuery delta delivers all
+  goal mutations. If `fetchGoals()` is only used for the refetch pattern, it can be removed
+  entirely after Task 4.
 
 **Review-status toast notification:** The current `room.task.update` handler shows a toast when a
 known task transitions to `review` status (`room-store.ts:230–238`):
@@ -435,14 +480,31 @@ resync.
 The five existing toast test cases in `room-store-review.test.ts` must be retained and rewritten
 to drive the LiveQuery delta path.
 
+#### Unsubscribe vs reconnect semantics
+
+Two distinct scenarios require different behavior:
+- **Room switch while connected:** Call `liveQuery.unsubscribe` on the old room subscription
+  before subscribing to the new room. The old server-side handle must be explicitly disposed.
+- **Transport disconnect then reconnect:** Do **not** call `liveQuery.unsubscribe`. Old handles
+  are already disposed server-side via the `onClientDisconnect` cleanup. Calling unsubscribe after
+  reconnect would produce a spurious "unknown subscriptionId" error.
+
 #### Reconnect re-subscribe
 
-After WebSocket reconnect, re-issue `liveQuery.subscribe` for the active room. Hook into the
-general `connected` state transition using the `onConnection` callback pattern used by
-`state-channel.ts` (e.g., `hub.onConnection((state) => { if (state === 'connected') ... })`).
-**Do not call `liveQuery.unsubscribe` before re-subscribing** — old handles are disposed
-server-side on disconnect; no handles exist for the old `clientId` after reconnect.
+After WebSocket reconnect, re-issue `liveQuery.subscribe` for the active room (without calling
+unsubscribe first — see above). Hook into the general `connected` state transition using the
+`onConnection` callback pattern used by `state-channel.ts` (e.g.,
+`hub.onConnection((state) => { if (state === 'connected') ... })`).
 Handle the resulting snapshot to fully resync state.
+
+#### Stale-delta guard on rapid room switching
+
+`liveQuery.unsubscribe` is an async RPC call. If a user switches rooms rapidly, in-flight deltas
+from the previous room subscription may arrive after the new room subscription is established.
+The delta handler must guard against stale deliveries: track the current active `subscriptionId`
+per query in the store; when a delta arrives, discard it if its `subscriptionId` does not match
+the current active subscription for that query. This prevents stale deltas from mutating signal
+state for the wrong room.
 
 #### Subscription ownership
 
@@ -454,17 +516,23 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
 `room-store.unsubscribeRoom(roomId)`.
 
 **Work:**
-- Remove `goal.updated` and `goal.progressUpdated` emits from `goal-handlers.ts` (daemon-side).
+- Remove `goal.updated`, `goal.progressUpdated`, and `goal.linkTask` emits from `goal-handlers.ts`.
 - When a room is selected, call `liveQuery.subscribe` with `tasks.byRoom` and `goals.byRoom`.
 - Handle `liveQuery.snapshot`: replace `this.tasks.value` / `this.goals.value` entirely.
-- Handle `liveQuery.delta`: apply incremental updates using `added`/`removed`/`updated` arrays;
+- Handle `liveQuery.delta`: apply `added`/`removed`/`updated` arrays; discard delta if its
+  `subscriptionId` doesn't match the current active subscription (stale-delta guard);
   within `updated` processing, implement the review-status toast logic (with hydration guard).
-- Call `liveQuery.unsubscribe` in the cleanup path when switching rooms or disconnecting.
+- Call `liveQuery.unsubscribe` on room switch (connected); do NOT call on disconnect/reconnect.
 - Create `packages/web/src/hooks/useRoomLiveQuery.ts` — lifecycle adapter hook; room-store owns
   handles and signals, hook calls store methods on mount/unmount/room-switch.
 - Remove `hub.onEvent('room.task.update', ...)` and the three goal event listeners.
 - Retain the `room.overview` listener; remove only its `this.tasks.value` assignment.
 - Remove `this.tasks.value` population from `fetchInitialState` (the `room.get` call itself stays).
+- Remove `this.tasks.value = [...this.tasks.value, task]` from the `task.create` response path
+  (`room-store.ts:417`). LiveQuery delta delivers the new task.
+- Remove `this.goals.value = response.goals ?? []` from `fetchGoals()` (`room-store.ts:499`);
+  remove or simplify the `fetchGoals()` call-sites in `createGoal`, `updateGoal`, `deleteGoal`,
+  `linkTaskToGoal`. LiveQuery delta delivers all goal mutations.
 - Rewrite affected tests in `room-store-review.test.ts`; retain all five toast test cases.
 - Add Vitest tests for `useRoomLiveQuery` hook.
 - Add/update E2E test: task created by agent appears in UI without page reload; switching rooms
@@ -479,10 +547,15 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
 - `room.overview` listener retained for `room`/`sessions` signal updates; `tasks.value` no longer
   written by the `room.overview` handler or by `fetchInitialState`.
 - LiveQuery snapshot and delta are the sole writers to `this.tasks.value` and `this.goals.value`.
-- No other code path (event handler, RPC response) overwrites task or goal signals.
+- No other code path (event handler, RPC response) overwrites task or goal signals — specifically:
+  the `task.create` optimistic append (`room-store.ts:417`) and `fetchGoals()` refetch
+  (`room-store.ts:499`) no longer write to signal state.
 - Goal progress updates surface in the UI (LiveQuery delivers them; were previously dropped).
-- `goal.updated` and `goal.progressUpdated` no longer emitted from `goal-handlers.ts`.
+- `goal.updated`, `goal.progressUpdated`, and `goal.linkTask` emits no longer fired from `goal-handlers.ts`.
 - `goal.created` continues to be emitted from `goal-handlers.ts`.
+- Goal deletion surfaces in the UI via the LiveQuery `removed` array (not the old `goal.updated`
+  sentinel); the `removed` entries are applied to `this.goals.value`.
+- Deltas arriving with a stale `subscriptionId` (from a prior room subscription) are discarded.
 - Review-status toast fires when a LiveQuery delta `updated` entry transitions a known task to
   `review`; toast is suppressed during snapshot hydration and reconnect resync.
 - No double-subscription: hook calls store methods; store owns handles.
@@ -523,13 +596,21 @@ for the active group and handle the snapshot to resync message state. **Do not c
 `liveQuery.unsubscribe` before re-subscribing** — old handles are disposed server-side on
 disconnect.
 
+**Append-only invariant:** `session_group_messages` is an append-only table — rows are never
+updated or deleted after insertion. Task 5 therefore only handles the `added` array from delta
+events; `updated` and `removed` arrays are expected to be empty and must be ignored (not applied).
+If this invariant is ever violated, the delta handler will silently ignore the change; future
+tasks would need to extend the handler to support mutations.
+
 **Work:**
 - Subscribe via `liveQuery.subscribe` using `sessionGroupMessages.byGroup`.
 - Handle `liveQuery.snapshot` to load full message history on mount.
-- Handle `liveQuery.delta` to append new messages (`added` array).
+- Handle `liveQuery.delta` to append new messages (`added` array only; ignore `updated`/`removed`).
 - Remove `state.groupMessages.delta` frontend listener from `TaskConversationRenderer.tsx`.
+- Remove the stale comment at `TaskConversationRenderer.tsx:118` that references `state.groupMessages.delta`.
 - Remove daemon-side emission sites: `room-runtime.ts:888` and `human-message-routing.ts:97`.
-- Implement reconnect re-subscribe via general `connected` transition.
+- Implement reconnect re-subscribe via general `connected` transition (without prior unsubscribe —
+  old handles disposed server-side on disconnect).
 - Unsubscribe on component unmount or task deselection.
 - Add Vitest tests for the hook; add/update E2E test for live message appearance in TaskView.
 
@@ -554,6 +635,12 @@ Task 3 must complete before Tasks 4 and 5. Merging Task 3 alone is safe: it only
 `emitTaskUpdate()` from `task.fail`, and `room.task.update` continues to arrive via runtime-layer
 emits. Goal emit removal is deferred to Task 4, which removes daemon goal broadcasts and installs
 the frontend LiveQuery replacement atomically. Tasks 4 and 5 can run in parallel after Task 3.
+
+Task 5 strictly requires only Task 2 for the subscribe/unsubscribe protocol. The dependency on
+Task 3 is intentional for **rollout discipline**: keeping all frontend LiveQuery adoption gated
+behind Task 3 ensures that the daemon cleanup PR (which verifies the LiveQuery pipeline works
+end-to-end for tasks) is merged before the message-streaming migration is deployed. This prevents
+Task 5 from shipping against an unvalidated Task 2 in production.
 
 ---
 
