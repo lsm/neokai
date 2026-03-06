@@ -2,16 +2,18 @@
 
 ## Goal
 
-The SQL LiveQuery system (`packages/daemon/src/storage/live-query.ts`) is fully implemented and tested but
-not yet used anywhere in the codebase. This plan adopts it progressively by:
+The SQL LiveQuery engine (`packages/daemon/src/storage/live-query.ts`) is fully implemented and tested
+but not yet wired into any RPC handlers or frontend components. This plan adopts it progressively:
 
-1. Exposing LiveQuery as a subscription protocol over the MessageHub WebSocket
-2. Adding `notifyChange` coverage for tables that bypass the ReactiveDatabase proxy
-3. Replacing ad-hoc manual event emissions in RPC handlers with LiveQuery-backed subscriptions for tasks
-4. Adopting LiveQuery-backed subscriptions on the frontend for task/goal lists in room view
+1. Fix `notifyChange` gaps for tables that bypass the ReactiveDatabase proxy
+2. Expose LiveQuery as a typed named-query subscription protocol over the MessageHub WebSocket
+3. Replace manual `daemonHub.emit` calls in the RPC handler layer with LiveQuery-backed subscriptions
+4. Replace one-shot RPC + manual event listeners in the frontend with LiveQuery subscriptions
 
-The adoption follows a bottom-up approach: daemon transport layer first, then one high-value domain
-(tasks), then front-end consumption, ending with clean-up of now-redundant manual event code.
+## Process requirements (applies to all tasks)
+
+All coding tasks must be on a feature branch with a GitHub PR created via `gh pr create`. This
+requirement is not repeated in individual task acceptance criteria below.
 
 ---
 
@@ -20,204 +22,300 @@ The adoption follows a bottom-up approach: daemon transport layer first, then on
 ### What is implemented
 
 - **`LiveQueryEngine`** — registers parameterized SQL queries, re-evaluates them on `ReactiveDatabase`
-  change events, computes row-level diffs (added/removed/updated), and invokes registered callbacks
-  only when results change. Located at `packages/daemon/src/storage/live-query.ts`.
-- **`ReactiveDatabase`** — a proxy around the `Database` facade that intercepts write calls and emits
+  change events, computes row-level diffs (added/removed/updated), invokes callbacks only when
+  results change. Located at `packages/daemon/src/storage/live-query.ts`.
+- **`ReactiveDatabase`** — wraps the `Database` facade; intercepts write calls and emits
   `change` / `change:<table>` events. Located at `packages/daemon/src/storage/reactive-database.ts`.
 - Both are instantiated in `packages/daemon/src/app.ts` and exposed on `DaemonAppContext`.
-- Unit tests: 919 lines covering snapshots, deltas, multi-subscriber, disposal, parameterized queries,
-  JOIN queries (`live-query.test.ts`).
-- Integration tests: 558 lines covering full pipeline with real DB (`live-query-integration.test.ts`).
+- Unit tests (live-query.test.ts): 918 lines. Integration tests (live-query-integration.test.ts): 557 lines.
 
 ### What is missing
 
-1. **No WebSocket transport** — there is no RPC/subscription endpoint that clients can use to register
-   a LiveQuery and receive snapshots + deltas.
-2. **`tasks` and `session_groups` tables bypass the proxy** — `TaskManager` and
-   `SessionGroupRepository` write directly via raw SQL (not through the Database facade), so their
-   writes do not trigger `ReactiveDatabase` events. `notifyChange()` must be called manually after
-   each write.
-3. **No frontend usage** — `room-store.ts` uses one-shot RPC calls (`task.list`, `room.overview`) plus
-   manual event listeners (`room.task.update`, `room.overview`) instead of LiveQuery subscriptions.
+1. **`notifyChange` gaps** — Four tables are written via raw `BunDatabase` (not the `Database` facade)
+   and therefore bypass the `ReactiveDatabase` proxy entirely:
+   - `tasks` — written by `TaskManager` (takes raw `BunDatabase`)
+   - `session_groups` — written by `SessionGroupRepository` (takes raw `BunDatabase`)
+   - `session_group_messages` — written by `SessionGroupRepository.appendMessage()` (same)
+   - `goals` — written by `GoalManager` and `GoalRepository` (both take raw `BunDatabase`). Note:
+     these methods appear in `METHOD_TABLE_MAP` in `reactive-database.ts`, but those mappings are
+     inert because `GoalManager` never calls the `Database` facade — it receives raw `BunDatabase`
+     directly (`goal-manager.ts:25`).
+
+2. **No WebSocket transport** — no RPC endpoint lets clients register queries and receive deltas.
+
+3. **No frontend usage** — `room-store.ts` uses one-shot RPCs plus manual event listeners.
+
+### Important constraint: `room.task.update` drives agent scheduling
+
+`packages/daemon/src/lib/room/runtime/room-runtime-service.ts:343–345` subscribes to
+`room.task.update` on `daemonHub` and calls `onTaskStatusChanged()` → `scheduleTick()`. This is what
+drives the room runtime forward. The `room-runtime.ts` class also emits `room.task.update` from many
+internal write sites (`emitTaskUpdate`/`emitTaskUpdateById`, called from ~14 locations). These
+runtime-layer emits must **not** be removed; they drive agent execution and are unrelated to UI
+updates. Task 3 below only migrates the RPC handler layer emits, not the runtime-layer emits.
 
 ---
 
 ## Tasks
 
-### Task 1 — Add `notifyChange` calls for tables that bypass the proxy
+### Task 1 — Add `notifyChange` for tables that bypass the ReactiveDatabase proxy
 
 **Agent:** coder
-**Depends on:** nothing (independent prerequisite)
+**Depends on:** nothing
 
-The `tasks` and `session_groups` tables are written to directly via SQL in:
-- `packages/daemon/src/lib/room/managers/task-manager.ts`
-- `packages/daemon/src/lib/room/state/session-group-repository.ts`
+Four tables are written via raw `BunDatabase` and never trigger `ReactiveDatabase` events.
+LiveQuery subscriptions on these tables will silently never fire unless `notifyChange` is called.
 
-These writes never go through the `Database` facade, so `ReactiveDatabase` never emits change events
-for them, meaning `LiveQueryEngine` never re-evaluates queries on these tables.
+**Files to modify:**
+- `packages/daemon/src/lib/room/managers/task-manager.ts` — after every write method, call
+  `reactiveDb.notifyChange('tasks')`.
+- `packages/daemon/src/lib/room/state/session-group-repository.ts`:
+  - After writes to `session_groups` rows (createGroup, updateGroupState, setApproved, etc.) call
+    `reactiveDb.notifyChange('session_groups')`.
+  - After `appendMessage()` and any other `session_group_messages` writes, call
+    `reactiveDb.notifyChange('session_group_messages')`.
+- `packages/daemon/src/lib/room/managers/goal-manager.ts` and
+  `packages/daemon/src/storage/repositories/goal-repository.ts` — after every write (create, update,
+  delete, link, unlink), call `reactiveDb.notifyChange('goals')`.
+- Each class needs `ReactiveDatabase` injected. Prefer required injection and update all call sites.
+  If breaking all call sites is too disruptive, accept an optional parameter with a no-op fallback.
 
-**Work:**
-- In `TaskManager` constructor or all write methods (`createTask`, `updateTaskStatus`,
-  `updateTaskPriority`, etc.) call `reactiveDb.notifyChange('tasks')` after each write.
-- In `SessionGroupRepository` write methods (`createGroup`, `updateGroupState`, etc.) call
-  `reactiveDb.notifyChange('session_groups')` after each write.
-- Both classes need `ReactiveDatabase` injected (or accept it as an optional parameter to avoid
-  breaking existing call sites; prefer required injection and update all call sites).
-- Add unit tests verifying that a LiveQuery on `tasks` / `session_groups` fires after a write via
-  these classes.
+**Tests:**
+- Unit tests verifying that a `LiveQueryEngine` subscription on `tasks` fires after a `TaskManager`
+  write, and similarly for `session_groups`, `session_group_messages`, and `goals`.
 
 **Acceptance criteria:**
-- `LiveQueryEngine` re-evaluates queries on `tasks` when `TaskManager` creates/updates/deletes a task.
-- `LiveQueryEngine` re-evaluates queries on `session_groups` when `SessionGroupRepository` mutates a group.
+- `LiveQueryEngine` re-evaluates queries on all four tables after writes through the respective classes.
 - All existing tests still pass.
-- New tests in `packages/daemon/tests/unit/` verify the reactive integration.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+- New tests in `packages/daemon/tests/unit/` verify the reactive integration for each table.
 
 ---
 
-### Task 2 — Add a `query.subscribe` / `query.unsubscribe` RPC protocol over MessageHub
+### Task 2 — Add `liveQuery.subscribe` / `liveQuery.unsubscribe` RPC protocol over MessageHub
 
 **Agent:** coder
 **Depends on:** Task 1
 
-Expose the `LiveQueryEngine` to WebSocket clients via a subscription RPC pair:
+Expose `LiveQueryEngine` to WebSocket clients. Naming follows the ADR
+(`docs/adr/0001-live-query-and-job-queue.md`): `liveQuery.subscribe` / `liveQuery.unsubscribe`.
 
-- **`query.subscribe`** — client sends `{ sql, params, subscriptionId }`, daemon registers a
-  LiveQuery and immediately pushes a `query.snapshot` event with the full initial result set, then
-  pushes `query.delta` events as rows change.
-- **`query.unsubscribe`** — client sends `{ subscriptionId }`, daemon disposes the handle.
-- On WebSocket disconnect, all handles owned by that client are disposed automatically.
+#### Security model: named queries, not raw SQL
 
-**Protocol types** (to be added to `packages/shared/src/`):
+Clients send a **named query key** (a string identifier) plus parameters. The daemon resolves the
+name to a pre-registered SQL template server-side. Clients never send raw SQL. This prevents
+arbitrary reads against sensitive tables (global_settings, API keys, OAuth tokens, etc.).
+
+Named queries are registered at daemon startup in a `liveQueryRegistry` map:
+- `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ?`
+- `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ?`
+- `sessionGroupMessages.byGroup` — `SELECT ... FROM session_group_messages WHERE group_id = ?`
+
+Unknown query names are rejected with an error response.
+
+#### Protocol types (add to `packages/shared/src/live-query-types.ts`)
+
 ```ts
-// RPC request/response
-interface QuerySubscribeRequest { sql: string; params?: unknown[]; subscriptionId: string; }
-interface QuerySubscribeResponse { ok: true; }
-interface QueryUnsubscribeRequest { subscriptionId: string; }
-interface QueryUnsubscribeResponse { ok: true; }
+interface LiveQuerySubscribeRequest {
+  queryName: string;          // server-registered named query key
+  params: unknown[];
+  subscriptionId: string;     // client-chosen, unique per client connection
+}
+interface LiveQuerySubscribeResponse { ok: true }
+interface LiveQueryUnsubscribeRequest { subscriptionId: string }
+interface LiveQueryUnsubscribeResponse { ok: true }
 
 // Server-pushed events
-interface QuerySnapshotEvent { subscriptionId: string; rows: unknown[]; version: number; }
-interface QueryDeltaEvent {
+interface LiveQuerySnapshotEvent {
   subscriptionId: string;
-  added?: unknown[]; removed?: unknown[]; updated?: unknown[];
+  rows: unknown[];
+  version: number;
+}
+interface LiveQueryDeltaEvent {
+  subscriptionId: string;
+  added?: unknown[];
+  removed?: unknown[];
+  updated?: unknown[];
   version: number;
 }
 ```
 
+#### `clientId` plumbing
+
+`CallContext` (`packages/shared/src/message-hub/types.ts:57`) does not include `clientId`. Task 2
+must extend `CallContext` with a `clientId?: string` field, populated by `WebSocketServerTransport`
+when dispatching requests so `liveQuery.subscribe` can key subscriptions per client.
+
+#### Disconnect cleanup
+
+Wire per-client subscription disposal to `WebSocketServerTransport.onClientDisconnect(handler)`
+(line ~363 of `packages/daemon/src/lib/websocket-server-transport.ts`). The handler receives the
+`clientId`; dispose all LiveQuery handles keyed to that client.
+
+#### `RPCHandlerDependencies` extension
+
+Add `liveQueries: LiveQueryEngine` to the dependency interface in
+`packages/daemon/src/lib/rpc-handlers/index.ts` so the new handlers can access the engine.
+
 **Work:**
-- Add shared types to `packages/shared/src/query-types.ts` and export from `packages/shared/src/mod.ts`.
-- Add `query-subscription-handlers.ts` in `packages/daemon/src/lib/rpc-handlers/`.
-- Register handlers in `packages/daemon/src/lib/rpc-handlers/index.ts`.
-- Track per-client subscription handles keyed by `clientId + subscriptionId`; dispose on disconnect.
-- Add unit tests for `subscribe → snapshot → delta → unsubscribe` flow.
-- Add online tests exercising the full pipeline with real DB changes.
+- Add shared types to `packages/shared/src/live-query-types.ts`, export from `packages/shared/src/mod.ts`.
+- Extend `CallContext` with `clientId?: string`; populate it in `WebSocketServerTransport`.
+- Add `liveQueryRegistry` (named-query map) to `DaemonAppContext`; register the initial named queries.
+- Add `packages/daemon/src/lib/rpc-handlers/live-query-handlers.ts` with `liveQuery.subscribe` and
+  `liveQuery.unsubscribe` handlers.
+- Track handles per `clientId + subscriptionId`; register `onClientDisconnect` for cleanup.
+- Register handlers in `packages/daemon/src/lib/rpc-handlers/index.ts`; add `liveQueries` to
+  the dependency type.
+- Unit tests: subscribe → snapshot → delta → unsubscribe; unknown query name rejected.
+- Online tests: full pipeline with real DB writes triggering deltas over the registered handler.
 
 **Acceptance criteria:**
-- A client can call `query.subscribe` and receive a snapshot followed by deltas.
-- Disposing (via `query.unsubscribe` or disconnect) stops further events.
-- `subscriptionId` namespacing prevents cross-client leaks.
+- A client can call `liveQuery.subscribe` with a known named query and receive a snapshot then deltas.
+- Unknown query names are rejected with a clear error.
+- `liveQuery.unsubscribe` stops further events.
+- WebSocket disconnect disposes all subscriptions for that client (no zombie handles).
+- `clientId` is available in the handler context (via extended `CallContext`).
 - Tests in `packages/daemon/tests/unit/` and `packages/daemon/tests/online/` pass.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
 
-### Task 3 — Replace manual task/goal event emissions with LiveQuery subscriptions in RPC handlers
+### Task 3 — Replace manual task/goal event emissions in RPC handlers with LiveQuery subscriptions
 
 **Agent:** coder
 **Depends on:** Task 2
 
-Currently, `task-handlers.ts` and `goal-handlers.ts` manually call `daemonHub.emit('room.task.update', ...)` and `daemonHub.emit('room.overview', ...)` after every write. This is fragile (callers must remember to emit) and duplicates update logic. With LiveQuery available, the daemon can subscribe internally and push deltas automatically.
+**Scope boundary — RPC handler layer only.** The `room-runtime.ts` internal
+`emitTaskUpdate`/`emitTaskUpdateById` calls (and the corresponding calls in `room-agent-tools.ts`)
+must **not** be removed — they drive `scheduleTick()` in `room-runtime-service.ts` and are entirely
+separate from UI update concerns.
+
+**Emit sites being migrated (RPC handlers only):**
+- `packages/daemon/src/lib/rpc-handlers/task-handlers.ts` — `emitTaskUpdate()` and
+  `emitRoomOverview()` called from `task.create`, `task.fail`.
+- `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` — manual goal event emits.
+
+**Emit sites NOT being touched (runtime/tool layer — preserve as-is):**
+- `packages/daemon/src/lib/room/runtime/room-runtime.ts` — ~14 `emitTaskUpdate`/`emitTaskUpdateById`
+  call sites. Must remain intact.
+- `packages/daemon/src/lib/room/tools/room-agent-tools.ts` — task emit calls from tool handlers.
 
 **Work:**
-- In `setupTaskHandlers`, after registering request handlers, create a LiveQuery subscription on the
-  `tasks` table (filtered by `room_id`) using the `liveQueries` engine from `DaemonAppContext`.
-- On each delta, emit `room.task.update` (for individual task changes) and `room.overview` only when
-  the set changes structurally (adds/removes).
-- Remove the explicit `emitTaskUpdate` / `emitRoomOverview` calls from individual request handlers.
-- Do the same for goals in `goal-handlers.ts`: subscribe on `goals` table, emit `room.goal.update`
-  on delta.
-- Wire `liveQueries` into both handler setup functions (add parameter to their signatures).
-- Add integration tests verifying that a task write triggers the event without the handler explicitly
-  emitting it.
+- In `setupTaskHandlers`, register a daemon-side LiveQuery subscription on `tasks` filtered by
+  `room_id`. The delta callback calls `daemonHub.emit('room.task.update', ...)` — so the
+  `room-runtime-service.ts` subscriber (line ~343) continues to receive it and scheduling is
+  unaffected.
+- Remove the now-redundant explicit `emitTaskUpdate`/`emitRoomOverview` calls from the RPC handlers
+  that are now covered by the LiveQuery callback.
+- In `setupGoalHandlers`, register a daemon-side LiveQuery on `goals` filtered by `room_id`. The
+  delta callback calls `daemonHub.emit('goal.updated', ...)` (use the **existing** event name;
+  there is no `room.goal.update` event — use `goal.updated` as defined in `daemon-hub.ts:332`).
+- Both setup functions must return a `dispose` callback; the cleanup path in
+  `packages/daemon/src/lib/rpc-handlers/index.ts` must call these on shutdown or room deletion.
+- Add `liveQueries: LiveQueryEngine` parameter to both handler setup functions.
+
+**Tests:**
+- Integration tests verifying a task write triggers `room.task.update` via the LiveQuery path
+  without a direct handler emit.
+- Test that the dispose callback stops events after teardown.
 
 **Acceptance criteria:**
-- Task writes from `task.create`, `task.fail`, room agent writes all trigger `room.task.update` events
-  without any explicit `emit` call in those code paths.
-- Goal writes trigger `room.goal.update` events automatically.
-- No double-emit occurs (previous manual calls removed).
-- All existing unit and online tests still pass.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+- Task writes from `task.create`, `task.fail` trigger `room.task.update` via LiveQuery subscription.
+- Goal writes trigger `goal.updated` via LiveQuery subscription.
+- No double-emit: the RPC handler manual emits removed; the runtime-layer emits untouched.
+- `room-runtime-service.ts` scheduling continues to work (still receives `room.task.update`).
+- Setup functions return dispose handles wired into `rpc-handlers/index.ts` cleanup.
+- All existing tests pass.
 
 ---
 
-### Task 4 — Frontend: adopt `query.subscribe` in room-store for tasks and goals
+### Task 4 — Frontend: adopt `liveQuery.subscribe` in room-store for tasks and goals
 
 **Agent:** coder
 **Depends on:** Task 2
 
-Replace the one-shot `task.list` RPC call + manual `room.task.update` / `room.overview` event listeners in `room-store.ts` with a LiveQuery subscription using the new `query.subscribe` protocol.
+**What to replace:**
+- `hub.onEvent('room.task.update', ...)` — replace with `liveQuery.subscribe` using `tasks.byRoom`.
+- Goal event listeners `goal.created`, `goal.updated`, `goal.completed`
+  (`room-store.ts:255–299`) — replace with `liveQuery.subscribe` using `goals.byRoom`.
+- The task-update handling portion inside the `hub.onEvent('room.overview', ...)` callback.
+- Existing tests in `packages/web/src/lib/__tests__/room-store-review.test.ts` that fire
+  `room.task.update` events directly must be rewritten to use `liveQuery.snapshot`/`liveQuery.delta`.
+
+**What NOT to remove:**
+- The `room.overview` event listener itself must be kept for its `room` metadata and `sessions`
+  signal updates (`room-store.ts:213–218`). Only the task-update portion within it is removed.
+
+**Reconnect re-subscribe:**
+- After WebSocket reconnect, re-issue `liveQuery.subscribe` for the active room. Use the
+  `connection-manager.ts` reconnect path (lines ~493–507) as the hook. Handle the resulting snapshot
+  to fully resync state.
 
 **Work:**
-- In `room-store.ts`, when a room is selected, call `query.subscribe` with a tasks query
-  (`SELECT ... FROM tasks WHERE room_id = ?`) and a goals query (`SELECT ... FROM goals WHERE room_id = ?`).
-- Handle `query.snapshot` to replace the signal value entirely (equivalent to initial load).
-- Handle `query.delta` to apply incremental updates to the signal (using `added`, `removed`, `updated`
-  arrays), avoiding a full re-render.
-- Remove the manual `hub.onEvent('room.task.update', ...)` and `hub.onEvent('room.overview', ...)`
-  listeners that are now redundant.
-- Call `query.unsubscribe` in the cleanup function when switching rooms or disconnecting.
-- Add a `useRoomLiveQuery` hook in `packages/web/src/hooks/` that encapsulates subscribe/unsubscribe
-  lifecycle for reuse.
-- Add Vitest unit tests for the hook and store changes.
-- Add or update an E2E test verifying that creating a task in the daemon reflects in the UI without
-  a page reload.
+- When a room is selected, call `liveQuery.subscribe` with `tasks.byRoom` and `goals.byRoom`.
+- Handle `liveQuery.snapshot`: replace signal value entirely (equivalent to initial load).
+- Handle `liveQuery.delta`: apply incremental updates using `added`/`removed`/`updated` arrays.
+- Call `liveQuery.unsubscribe` in the cleanup path when switching rooms or disconnecting.
+- Create `packages/web/src/hooks/useRoomLiveQuery.ts` — encapsulates subscribe/snapshot/delta/
+  unsubscribe lifecycle including reconnect re-subscribe.
+- Remove redundant `hub.onEvent('room.task.update', ...)` and the three goal event listeners.
+- Retain the `room.overview` listener (remove only its task-update portion).
+- Rewrite affected tests in `room-store-review.test.ts`.
+- Add Vitest tests for `useRoomLiveQuery` hook.
+- Add/update E2E test: task created by daemon appears in UI without page reload; switching rooms
+  shows only the new room's tasks within one render cycle.
 
 **Acceptance criteria:**
-- Room task list updates in real-time without manual event wiring.
-- Switching rooms disposes old subscriptions and creates new ones.
-- No stale task data after room switch.
-- `room.task.update` listener removed from `room-store.ts`.
-- Tests in `packages/web/` (Vitest) and `packages/e2e/` (Playwright) pass.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+- Room task and goal lists update in real-time via `liveQuery.delta`.
+- After WebSocket reconnect, subscriptions re-established and snapshot resyncs state.
+- After switching rooms, task list reflects only the new room's tasks within one render cycle.
+- `room.task.update`, `goal.created`, `goal.updated`, `goal.completed` listeners removed.
+- `room.overview` listener retained for room/session updates.
+- `room-store-review.test.ts` rewritten to use `liveQuery.snapshot`/`liveQuery.delta`.
+- All Vitest and E2E tests pass.
 
 ---
 
-### Task 5 — Frontend: adopt `query.subscribe` for session-group messages in TaskView
+### Task 5 — Frontend: adopt `liveQuery.subscribe` for session-group messages in TaskView
 
 **Agent:** coder
 **Depends on:** Task 2
 
-Task detail views need real-time updates as the room agent progresses. Currently, messages from a
-session group are fetched on demand via `task.getGroupMessages`. This should be replaced with a
-LiveQuery subscription so new messages appear automatically.
+**Existing real-time path being replaced:**
+`TaskConversationRenderer.tsx` already has a real-time path via `state.groupMessages.delta` events
+(lines ~122–136). Task 5 replaces this custom protocol with the standardized `liveQuery.subscribe`
+protocol. The goal is protocol consolidation, not adding real-time updating from scratch.
+
+**Reconnect re-subscribe:**
+After WebSocket reconnect, re-issue `liveQuery.subscribe` for the active group and handle the
+snapshot to resync message state.
 
 **Work:**
-- In the TaskView component (or a dedicated hook), subscribe to session group messages via
-  `query.subscribe` with a SQL query on `session_group_messages WHERE group_id = ?`.
-- Handle `query.snapshot` and `query.delta` to incrementally append new messages to the view.
+- In the TaskView component (or a dedicated hook), subscribe via `liveQuery.subscribe` using
+  `sessionGroupMessages.byGroup` named query.
+- Handle `liveQuery.snapshot` to load full message history on mount.
+- Handle `liveQuery.delta` to append new messages (`added` array) as agents post them.
+- Remove the `state.groupMessages.delta` listener being replaced.
+- Implement reconnect re-subscribe in the hook.
 - Unsubscribe on component unmount or task deselection.
-- Ensure the subscription uses `session_groups` / `session_group_messages` correctly (Task 1 ensures
-  writes to these tables trigger events).
-- Add Vitest tests for the hook, E2E test for live message appearance in TaskView.
+- Add Vitest tests for the hook; add/update E2E test for live message appearance in TaskView.
 
 **Acceptance criteria:**
-- New messages in a task group appear in TaskView without polling or manual refresh.
-- Subscription is cleaned up on unmount.
-- Tests in `packages/web/` and `packages/e2e/` pass.
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
+- New messages appear in TaskView without polling or manual refresh.
+- After WebSocket reconnect, messages resync via snapshot.
+- `state.groupMessages.delta` listener removed from `TaskConversationRenderer.tsx`.
+- Subscription disposed on component unmount.
+- Vitest and E2E tests pass.
 
 ---
 
 ## Dependency Graph
 
 ```
-Task 1 ──► Task 2 ──► Task 3 (daemon cleanup)
-                 └──► Task 4 (frontend tasks/goals)
-                 └──► Task 5 (frontend task messages)
+Task 1 ──► Task 2 ──► Task 3  (daemon RPC handler cleanup)
+                 ├──► Task 4  (frontend tasks/goals)
+                 └──► Task 5  (frontend task messages)
 ```
 
-Tasks 3, 4, 5 all depend on Task 2 but are independent of each other and can run in parallel.
+Tasks 3, 4, and 5 all depend on Task 2 and can run in parallel after it completes.
 
 ---
 
@@ -229,12 +327,18 @@ Tasks 3, 4, 5 all depend on Task 2 but are independent of each other and can run
 | ReactiveDatabase | `packages/daemon/src/storage/reactive-database.ts` |
 | App context | `packages/daemon/src/app.ts` |
 | TaskManager | `packages/daemon/src/lib/room/managers/task-manager.ts` |
+| GoalManager | `packages/daemon/src/lib/room/managers/goal-manager.ts` |
+| GoalRepository | `packages/daemon/src/storage/repositories/goal-repository.ts` |
 | SessionGroupRepository | `packages/daemon/src/lib/room/state/session-group-repository.ts` |
 | Task RPC handlers | `packages/daemon/src/lib/rpc-handlers/task-handlers.ts` |
 | Goal RPC handlers | `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` |
 | RPC handler index | `packages/daemon/src/lib/rpc-handlers/index.ts` |
+| Room runtime (preserve emits) | `packages/daemon/src/lib/room/runtime/room-runtime.ts` |
+| Room runtime service (scheduling) | `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` |
+| Shared types | `packages/shared/src/message-hub/types.ts`, `packages/shared/src/mod.ts` |
+| WS transport (disconnect hook) | `packages/daemon/src/lib/websocket-server-transport.ts` |
 | Room store | `packages/web/src/lib/room-store.ts` |
-| State channel | `packages/web/src/lib/state-channel.ts` |
-| Shared types | `packages/shared/src/mod.ts` |
-| LiveQuery tests | `packages/daemon/tests/unit/storage/live-query.test.ts` |
-| Integration tests | `packages/daemon/tests/unit/storage/live-query-integration.test.ts` |
+| Room store tests | `packages/web/src/lib/__tests__/room-store-review.test.ts` |
+| ADR | `docs/adr/0001-live-query-and-job-queue.md` |
+| LiveQuery unit tests | `packages/daemon/tests/unit/storage/live-query.test.ts` |
+| LiveQuery integration tests | `packages/daemon/tests/unit/storage/live-query-integration.test.ts` |
