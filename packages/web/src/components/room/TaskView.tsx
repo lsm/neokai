@@ -15,7 +15,7 @@
  * appears when the user has scrolled up.
  */
 
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { NeoTask } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
@@ -149,7 +149,8 @@ function HumanInputArea({
 					>
 						{approving ? 'Approving…' : '✓ Approve'}
 					</button>
-					{/* Feedback input using shared InputTextarea */}
+					{/* Feedback input using shared InputTextarea.
+					    Large maxChars so users can paste diffs/logs freely. */}
 					<InputTextarea
 						content={feedbackText}
 						onContentChange={setFeedbackText}
@@ -162,6 +163,7 @@ function HumanInputArea({
 						onSubmit={() => void sendFeedback()}
 						disabled={sendingFeedback || approving}
 						placeholder="Or send feedback to request changes… (⌘↵ to send)"
+						maxChars={50000}
 					/>
 					{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 				</div>
@@ -172,7 +174,8 @@ function HumanInputArea({
 	if (groupState === 'awaiting_leader') {
 		return (
 			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-				{/* Message input using shared InputTextarea */}
+				{/* Message input using shared InputTextarea.
+				    Large maxChars so users can paste context/diffs freely. */}
 				<InputTextarea
 					content={leaderText}
 					onContentChange={setLeaderText}
@@ -185,6 +188,7 @@ function HumanInputArea({
 					onSubmit={() => void sendToLeader()}
 					disabled={sendingLeader}
 					placeholder="Send a message to the leader… (⌘↵ to send)"
+					maxChars={50000}
 				/>
 				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 			</div>
@@ -218,17 +222,54 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [conversationKey, setConversationKey] = useState(0);
 	const [messageCount, setMessageCount] = useState(0);
 
+	// Tracks whether the conversation pane is showing its first batch of messages.
+	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
+	// and becomes false once the first non-zero messageCount arrives — at which point
+	// useAutoScroll fires its initial-load scroll path.
+	const [isFirstLoad, setIsFirstLoad] = useState(true);
+
+	// autoScroll mirrors whether the user is near the bottom of the scroll container.
+	// Driven by isNearBottom from useAutoScroll so that arriving messages don't force-scroll
+	// the user back down when they've intentionally scrolled up to read history.
+	const [autoScroll, setAutoScroll] = useState(true);
+
 	// Refs for scroll container
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
-	const { showScrollButton, scrollToBottom } = useAutoScroll({
+	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
-		enabled: true,
+		enabled: autoScroll,
 		messageCount,
-		isInitialLoad: loading,
+		isInitialLoad: isFirstLoad,
 	});
+
+	// Keep autoScroll in sync with scroll position: disable when user scrolls up,
+	// re-enable automatically when they scroll back to the bottom.
+	useEffect(() => {
+		setAutoScroll(isNearBottom);
+	}, [isNearBottom]);
+
+	// Reset conversation scroll state each time the conversation reloads
+	useEffect(() => {
+		setIsFirstLoad(true);
+		setMessageCount(0);
+		setAutoScroll(true);
+	}, [conversationKey]);
+
+	// Mark initial load done after first messages arrive (fires after the render where
+	// useAutoScroll sees isFirstLoad:true and messageCount>0, so the initial scroll fires first)
+	useEffect(() => {
+		if (messageCount > 0 && isFirstLoad) {
+			setIsFirstLoad(false);
+		}
+	}, [messageCount, isFirstLoad]);
+
+	const handleScrollToBottom = useCallback(() => {
+		scrollToBottom(true);
+		setAutoScroll(true);
+	}, [scrollToBottom]);
 
 	const fetchGroup = async () => {
 		try {
@@ -407,7 +448,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 
 				{/* Scroll-to-bottom button — shown when user has scrolled up */}
-				{showScrollButton && <ScrollToBottomButton onClick={() => scrollToBottom(true)} />}
+				{showScrollButton && <ScrollToBottomButton onClick={handleScrollToBottom} />}
 			</div>
 
 			{/* Human input area */}

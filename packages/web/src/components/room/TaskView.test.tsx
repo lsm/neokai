@@ -42,19 +42,11 @@ vi.mock('../../lib/router.ts', () => ({
 	},
 }));
 
-// Mock TaskConversationRenderer so it doesn't need its own deps
+// Mock TaskConversationRenderer so it doesn't need its own deps.
+// We don't call onMessageCountChange here because useAutoScroll is fully mocked
+// and calling setState during render causes a "cannot update during render" warning.
 vi.mock('./TaskConversationRenderer.tsx', () => ({
-	TaskConversationRenderer: ({
-		onMessageCountChange,
-	}: {
-		onMessageCountChange?: (count: number) => void;
-	}) => {
-		// Simulate 5 messages to the parent (for autoscroll hook)
-		if (onMessageCountChange) {
-			onMessageCountChange(5);
-		}
-		return <div data-testid="conversation" />;
-	},
+	TaskConversationRenderer: () => <div data-testid="conversation" />,
 }));
 
 // Mock useAutoScroll so we can control showScrollButton
@@ -62,7 +54,7 @@ const mockScrollToBottom = vi.fn();
 const mockShowScrollButton = { value: false };
 
 vi.mock('../../hooks/useAutoScroll.ts', () => ({
-	useAutoScroll: vi.fn(({ messageCount: _mc }) => ({
+	useAutoScroll: vi.fn(() => ({
 		showScrollButton: mockShowScrollButton.value,
 		scrollToBottom: mockScrollToBottom,
 		isNearBottom: !mockShowScrollButton.value,

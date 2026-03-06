@@ -174,11 +174,14 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
 		mockRequest.mockImplementation(async () => ({ messages, hasMore: false }));
 
-		// Should not throw even without the optional prop
-		expect(() => render(<TaskConversationRenderer groupId="group-1" />)).not.toThrow();
+		let container: HTMLElement | undefined;
+		expect(() => {
+			({ container } = render(<TaskConversationRenderer groupId="group-1" />));
+		}).not.toThrow();
 
+		// Component should mount and show the conversation (or loading/empty state)
 		await waitFor(() => {
-			// Just ensure it renders without crashing
+			expect(container?.firstChild).not.toBeNull();
 		});
 	});
 });
