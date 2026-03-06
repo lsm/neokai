@@ -12,7 +12,7 @@
  * real-time updates.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
@@ -37,6 +37,8 @@ interface GroupMessage {
 
 interface TaskConversationRendererProps {
 	groupId: string;
+	/** Called whenever the message list length changes, so the parent can drive autoscroll */
+	onMessageCountChange?: (count: number) => void;
 }
 
 const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
@@ -76,11 +78,13 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-export function TaskConversationRenderer({ groupId }: TaskConversationRendererProps) {
+export function TaskConversationRenderer({
+	groupId,
+	onMessageCountChange,
+}: TaskConversationRendererProps) {
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
-	const scrollRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		const channel = `group:${groupId}`;
@@ -125,12 +129,6 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 			(event) => {
 				if (event.added && event.added.length > 0) {
 					setMessages((prev) => [...prev, ...event.added]);
-					requestAnimationFrame(() => {
-						scrollRef.current?.scrollTo({
-							top: scrollRef.current.scrollHeight,
-							behavior: 'smooth',
-						});
-					});
 				}
 			}
 		);
@@ -140,6 +138,11 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 			leaveRoom(channel);
 		};
 	}, [groupId]);
+
+	// Notify parent when message count changes so it can drive autoscroll
+	useEffect(() => {
+		onMessageCountChange?.(messages.length);
+	}, [messages.length, onMessageCountChange]);
 
 	const maps = useMessageMaps(messages, groupId);
 
@@ -175,7 +178,7 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 	}
 
 	return (
-		<div ref={scrollRef} class="flex-1 overflow-y-auto px-4 py-3 space-y-0.5">
+		<div class="px-4 py-3 space-y-0.5">
 			{messages.map((msg, i) => {
 				const meta = getTaskMeta(msg);
 				const role = meta?.authorRole ?? 'system';
