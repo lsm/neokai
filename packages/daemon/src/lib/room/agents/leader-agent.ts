@@ -540,10 +540,12 @@ You MUST include this identity block at the top of every PR comment you post.
    - **Error handling**: Are failures handled gracefully at system boundaries?
    - **Tests**: Do tests actually verify the new behavior? Are edge cases covered?
    - **Over-engineering**: Is there unnecessary complexity, dead code, or premature abstraction?
-5. Post your review as a proper PR review (NOT a comment) using:
-   - If approving: \`gh pr review <PR_NUMBER> --approve --body "..."\`
-   - If requesting changes: \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
-   - If commenting only: \`gh pr review <PR_NUMBER> --comment --body "..."\`
+5. Post your review using \`gh pr review\`:
+   - \`gh pr review <PR_NUMBER> --approve --body "..."\`
+   - \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
+   - \`gh pr review <PR_NUMBER> --comment --body "..."\`
+
+   NOTE: GitHub does not allow \`--approve\` or \`--request-changes\` on your own PRs. If you get a permission error, fall back to \`--comment\`.
 
    Include this header in your review body:
    \`\`\`
@@ -551,9 +553,6 @@ You MUST include this identity block at the top of every PR comment you post.
 
    > **Model:** ${model} | **Client:** NeoKai | **Provider:** ${displayProvider}
    \`\`\`
-
-   IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
-   a proper PR review that the system can detect. Using \`gh pr comment\` will NOT count as a review.
 6. Capture the review URL: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'\`
 7. End with the structured output block below
 
@@ -645,9 +644,11 @@ ${cliInstructions}
 
 3. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
 4. Post findings as a proper PR review (NOT a comment) using:
-   - If approving: \`gh pr review <PR_NUMBER> --approve --body "..."\`
-   - If requesting changes: \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
-   - If commenting only: \`gh pr review <PR_NUMBER> --comment --body "..."\`
+   - \`gh pr review <PR_NUMBER> --approve --body "..."\`
+   - \`gh pr review <PR_NUMBER> --request-changes --body "..."\`
+   - \`gh pr review <PR_NUMBER> --comment --body "..."\`
+
+   NOTE: GitHub does not allow \`--approve\` or \`--request-changes\` on your own PRs. If you get a permission error, fall back to \`--comment\`.
 
    Include this header:
    \`\`\`
@@ -655,9 +656,6 @@ ${cliInstructions}
 
    > **Model:** ${displayModel} | **Client:** ${cliTool} | **Provider:** ${displayProvider}
    \`\`\`
-
-   IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
-   a proper PR review that the system can detect.
 5. Capture the review URL: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'\`
 6. End with the structured output block below
 
