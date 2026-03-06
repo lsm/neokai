@@ -137,7 +137,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 
 			sections.push(`## Plan Review Orchestration Workflow\n`);
 			sections.push(
-				`You are the lead reviewer. You do NOT review the plan yourself. You delegate reviews to specialist reviewer sub-agents, consolidate their findings, and make the routing decision.\n`
+				`You are a coordinator. You do NOT review the plan yourself. You delegate reviews to specialist reviewer sub-agents, collect their review links, and forward those links to the worker.\n`
+			);
+			sections.push(
+				`**Every iteration follows the same workflow** — including after the worker addresses feedback. Always re-dispatch reviewers; never evaluate the fix yourself.\n`
 			);
 
 			sections.push(`### Step 1: Understand the Plan`);
@@ -161,13 +164,13 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				);
 			}
 
-			sections.push(`\n### Step 3: Consolidate Verdicts`);
+			sections.push(`\n### Step 3: Collect Review Results`);
 			sections.push(
-				`Each reviewer returns a verdict between \`---VERDICT---\` and \`---END_VERDICT---\` markers with P0/P1/P2/P3 severity levels.\n`
+				`Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL, recommendation, and P0/P1/P2/P3 issue counts.\n`
 			);
-			sections.push(`### Step 4: Decide Next Action\n`);
+			sections.push(`### Step 4: Route\n`);
 			sections.push(
-				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with consolidated feedback about what to change in the plan`
+				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
 			);
 			sections.push(
 				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval`
@@ -218,7 +221,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 
 			sections.push(`## Review Orchestration Workflow\n`);
 			sections.push(
-				`You are the lead reviewer. You do NOT review code yourself. You delegate reviews to specialist reviewer sub-agents, consolidate their findings, and make the routing decision.\n`
+				`You are a coordinator. You do NOT review code yourself. You delegate reviews to specialist reviewer sub-agents, collect their review links, and forward those links to the worker.\n`
+			);
+			sections.push(
+				`**Every iteration follows the same workflow** — including after the worker addresses feedback. Always re-dispatch reviewers; never evaluate the fix yourself.\n`
 			);
 
 			sections.push(`### Step 1: Understand What Was Done`);
@@ -242,13 +248,17 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				);
 			}
 
-			sections.push(`\n### Step 3: Consolidate Verdicts`);
+			sections.push(`\n### Step 3: Collect Review Results`);
 			sections.push(
-				`Each reviewer returns a verdict between \`---VERDICT---\` and \`---END_VERDICT---\` markers with P0/P1/P2/P3 severity levels.\n`
+				`Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL, recommendation, and P0/P1/P2/P3 issue counts.\n`
 			);
-			sections.push(`### Step 4: Decide Next Action\n`);
-			sections.push(`- **Any P0/P1/P2 issues** → \`send_to_worker\` with consolidated feedback`);
-			sections.push(`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`);
+			sections.push(`### Step 4: Route\n`);
+			sections.push(
+				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+			);
+			sections.push(
+				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`
+			);
 			sections.push(`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``);
 		} else {
 			sections.push(`\n## Code Review Guidelines\n`);
@@ -464,23 +474,27 @@ const REVIEWER_TOOLS: AgentDefinition['tools'] = [
 	'WebSearch',
 ];
 
-const REVIEWER_VERDICT_FORMAT = `
+const REVIEWER_OUTPUT_FORMAT = `
 ## Required Output Format
 
-You MUST end your response with a structured verdict in exactly this format:
+After posting your review via \`gh pr review\`, you MUST:
 
----VERDICT---
-issues_found: <number>
+1. Capture the review URL via the REST API (which returns the html_url with the numeric review ID):
+   \`\`\`bash
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'
+   \`\`\`
+
+2. End your response with this structured block:
+
+---REVIEW_POSTED---
+url: <the review URL from step 1>
 recommendation: APPROVE | REQUEST_CHANGES | COMMENT_ONLY
-p0:
-- <file:line> <description of blocking issue>
-p1:
-- <file:line> <description of should-fix issue>
-p2:
-- <file:line> <description of important suggestion>
-p3:
-- <file:line> <description of minor nit>
----END_VERDICT---
+p0: <count of P0 issues>
+p1: <count of P1 issues>
+p2: <count of P2 issues>
+p3: <count of P3 issues>
+summary: <1-2 sentence summary of key findings>
+---END_REVIEW_POSTED---
 
 Severity levels:
 - P0 (blocking): Bugs, security vulnerabilities, data loss risks, broken functionality
@@ -491,8 +505,7 @@ Severity levels:
 Decision rules:
 - Use "REQUEST_CHANGES" when any P0, P1, or P2 issues exist — all must be addressed
 - Use "APPROVE" when only P3 issues or no issues exist
-- Use "COMMENT_ONLY" when you only have P3 nits and the code is otherwise good
-- List "none" under a severity level if there are no issues at that level`;
+- Use "COMMENT_ONLY" when you only have P3 nits and the code is otherwise good`;
 
 /**
  * Build prompt for an SDK-native reviewer agent (reviews code directly).
@@ -541,7 +554,8 @@ You MUST include this identity block at the top of every PR comment you post.
 
    IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
    a proper PR review that the system can detect. Using \`gh pr comment\` will NOT count as a review.
-6. Return your verdict in the structured format below
+6. Capture the review URL: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'\`
+7. End with the structured output block below
 
 ## Guidelines
 
@@ -551,7 +565,7 @@ You MUST include this identity block at the top of every PR comment you post.
 - Focus on issues that matter — don't nitpick formatting or style if a linter handles it
 - Check that tests actually test the new/changed behavior, not just exist
 - ALWAYS include the identity block in PR comments
-${REVIEWER_VERDICT_FORMAT}`;
+${REVIEWER_OUTPUT_FORMAT}`;
 }
 
 /**
@@ -644,7 +658,8 @@ ${cliInstructions}
 
    IMPORTANT: You MUST use \`gh pr review\`, not \`gh pr comment\`. Only \`gh pr review\` creates
    a proper PR review that the system can detect.
-5. Return your verdict in the structured format below
+5. Capture the review URL: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews --jq '.[-1] | .html_url'\`
+6. End with the structured output block below
 
 ## Guidelines
 
@@ -653,7 +668,7 @@ ${cliInstructions}
 - Do NOT do independent analysis, read source files for review, or add your own findings
 - Be specific about file paths and line numbers (from the CLI output)
 - ALWAYS include the identity block in PR comments
-${REVIEWER_VERDICT_FORMAT}`;
+${REVIEWER_OUTPUT_FORMAT}`;
 }
 
 /**
@@ -781,7 +796,7 @@ export function createLeaderAgentInit(
 		// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
 		const leaderAgentDef: AgentDefinition = {
 			description:
-				'Lead reviewer that orchestrates code review. Dispatches reviewer sub-agents, consolidates their findings, and makes routing decisions using MCP tools.',
+				'Coordinator that orchestrates code review. Dispatches reviewer sub-agents, collects their review links, and routes decisions using MCP tools.',
 			prompt: buildLeaderSystemPrompt(config),
 			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob'],
 			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
