@@ -19,7 +19,7 @@ import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
 // -------------------------------------------------------
 
 const mockRequest = vi.fn();
-const mockOnEvent = vi.fn(() => () => {}); // returns unsub noop
+const mockOnEvent = vi.fn((_eventName: string, _handler: (event: unknown) => void) => () => {});
 const mockJoinRoom = vi.fn();
 const mockLeaveRoom = vi.fn();
 
@@ -669,5 +669,42 @@ describe('TaskView — cancelled flag prevents post-unmount state updates', () =
 		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
 		// leaveRoom should have been called (cleanup ran)
 		expect(mockLeaveRoom).toHaveBeenCalledWith(`room:room-1`);
+	});
+
+	it('does not call task.getGroup when room.task.update fires after unmount', async () => {
+		// Capture the room.task.update event handler so we can fire it manually
+		let taskUpdateHandler: ((event: unknown) => void) | null = null;
+		mockOnEvent.mockImplementation((eventName: string, handler: (event: unknown) => void) => {
+			if (eventName === 'room.task.update') taskUpdateHandler = handler;
+			return () => {};
+		});
+		mockRequest.mockImplementation(async (method: unknown) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { unmount } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait for initial load to complete
+		await waitFor(() => {
+			expect(taskUpdateHandler).not.toBeNull();
+		});
+
+		// Reset call count to track only post-unmount calls
+		mockRequest.mockClear();
+
+		// Unmount the component
+		act(() => {
+			unmount();
+		});
+
+		// Fire room.task.update event after unmount
+		await act(async () => {
+			taskUpdateHandler?.({ task: makeTask('task-1', 'completed'), roomId: 'room-1' });
+		});
+
+		// The event fired after unmount must not trigger a task.getGroup request
+		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
 	});
 });

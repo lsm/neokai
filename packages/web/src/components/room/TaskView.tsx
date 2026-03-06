@@ -314,8 +314,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
 		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
-			if (event.task.id === taskId) {
-				if (!cancelled) setTask(event.task);
+			if (event.task.id === taskId && !cancelled) {
+				setTask(event.task);
 				void fetchGroup();
 			}
 		});
