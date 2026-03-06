@@ -41,9 +41,6 @@ export const navSectionSignal = signal<NavSection>('home');
 // Mobile drawer signals
 export const contextPanelOpenSignal = signal<boolean>(false);
 
-// NavRail mobile open state
-export const navRailOpenSignal = signal<boolean>(false);
-
 // Create Room modal open state - shared between ContextPanel and Lobby
 export const createRoomModalSignal = signal<boolean>(false);
 

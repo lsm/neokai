@@ -13,13 +13,13 @@ import type { Session, SessionFeatures } from '@neokai/shared';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
-import { contextPanelOpenSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
 import { navigateToRoom } from '../lib/router';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { Tooltip } from './ui/Tooltip';
 import { GitBranchIcon } from './icons/GitBranchIcon';
+import { MobileMenuButton } from './ui/MobileMenuButton';
 
 export interface RoomContext {
 	roomName: string;
@@ -61,10 +61,6 @@ export function ChatHeader({
 	readonly = false,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
-
-	const handleMenuClick = () => {
-		contextPanelOpenSignal.value = true;
-	};
 
 	const getHeaderActions = () => {
 		const actions: Array<
@@ -192,21 +188,7 @@ export function ChatHeader({
 			class={`flex-shrink-0 bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4 relative z-10`}
 		>
 			<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
-				{/* Hamburger menu button - visible only on mobile */}
-				<button
-					onClick={handleMenuClick}
-					class={`md:hidden p-2 -ml-2 bg-dark-850 border ${borderColors.ui.default} rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0`}
-					title="Open menu"
-				>
-					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M4 6h16M4 12h16M4 18h16"
-						/>
-					</svg>
-				</button>
+				<MobileMenuButton />
 
 				{/* Session title and stats */}
 				<div class="flex-1 min-w-0">

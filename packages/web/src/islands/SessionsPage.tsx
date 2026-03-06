@@ -10,6 +10,7 @@ import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
 import { GitBranchIcon } from '../components/icons/GitBranchIcon.tsx';
 import { Button } from '../components/ui/Button.tsx';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 
 function StatusDot({ sessionId }: { sessionId: string }) {
@@ -144,8 +145,9 @@ export function SessionsPage() {
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
 			{/* Header */}
-			<div class="px-6 py-4 border-b border-dark-700 pl-16 md:pl-6 flex items-center justify-between">
-				<div>
+			<div class="px-6 py-4 border-b border-dark-700 flex items-center justify-between gap-3">
+				<MobileMenuButton />
+				<div class="flex-1 min-w-0">
 					<h2 class="text-lg font-semibold text-gray-100">Sessions</h2>
 					<p class="text-sm text-gray-400">
 						{sessionsList.length} session{sessionsList.length !== 1 ? 's' : ''}
