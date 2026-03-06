@@ -251,12 +251,18 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setAutoScroll(isNearBottom);
 	}, [isNearBottom]);
 
-	// Reset conversation scroll state each time the conversation reloads
+	// Reset conversation scroll state whenever the rendered conversation changes.
+	// This covers two cases:
+	//   1. conversationKey bumps (manual reload after approve/feedback)
+	//   2. group.id changes (room.task.update event spawns a new group)
+	// Using the combined renderer key mirrors the `key` prop on TaskConversationRenderer,
+	// so any remount that causes the child to re-fetch messages also resets the parent scroll state.
+	const rendererKey = group ? `${group.id}-${conversationKey}` : `null-${conversationKey}`;
 	useEffect(() => {
 		setIsFirstLoad(true);
 		setMessageCount(0);
 		setAutoScroll(true);
-	}, [conversationKey]);
+	}, [rendererKey]);
 
 	// Mark initial load done after first messages arrive (fires after the render where
 	// useAutoScroll sees isFirstLoad:true and messageCount>0, so the initial scroll fires first)
@@ -447,8 +453,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* Scroll-to-bottom button — shown when user has scrolled up */}
-				{showScrollButton && <ScrollToBottomButton onClick={handleScrollToBottom} />}
+				{/* Scroll-to-bottom button — shown when user has scrolled up.
+				    bottomClass="bottom-4" because HumanInputArea is a sibling
+				    outside this container, not an overlapping footer. */}
+				{showScrollButton && (
+					<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-4" />
+				)}
 			</div>
 
 			{/* Human input area */}

@@ -11,6 +11,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent } from '@testing-library/preact';
+// Static import resolved to mocked version — gives access to .mock.calls for arg assertions
+import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
 
 // -------------------------------------------------------
 // Mocks
@@ -49,7 +51,7 @@ vi.mock('./TaskConversationRenderer.tsx', () => ({
 	TaskConversationRenderer: () => <div data-testid="conversation" />,
 }));
 
-// Mock useAutoScroll so we can control showScrollButton
+// Mock useAutoScroll so we can control showScrollButton and inspect call args
 const mockScrollToBottom = vi.fn();
 const mockShowScrollButton = { value: false };
 
@@ -70,7 +72,8 @@ vi.mock('../ScrollToBottomButton.tsx', () => ({
 	),
 }));
 
-// Mock InputTextarea so we don't need its full dependencies
+// Mock InputTextarea so we don't need its full dependencies.
+// Forwards maxChars as maxLength so tests can verify the 50000 limit is passed.
 vi.mock('../InputTextarea.tsx', () => ({
 	InputTextarea: ({
 		content,
@@ -78,12 +81,14 @@ vi.mock('../InputTextarea.tsx', () => ({
 		onSubmit,
 		disabled,
 		placeholder,
+		maxChars,
 	}: {
 		content: string;
 		onContentChange: (v: string) => void;
 		onSubmit: () => void;
 		disabled?: boolean;
 		placeholder?: string;
+		maxChars?: number;
 	}) => (
 		<div data-testid="input-textarea">
 			<textarea
@@ -92,6 +97,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 				onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 				disabled={disabled}
 				placeholder={placeholder}
+				maxLength={maxChars}
 			/>
 			<button data-testid="input-textarea-send" onClick={onSubmit} disabled={disabled}>
 				Send
@@ -144,6 +150,7 @@ describe('TaskView — awaiting_human badge', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		vi.mocked(useAutoScroll).mockClear();
 	});
 
 	afterEach(() => {
@@ -223,6 +230,7 @@ describe('TaskView — autoscroll / ScrollToBottomButton', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		vi.mocked(useAutoScroll).mockClear();
 	});
 
 	afterEach(() => {
@@ -286,6 +294,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		mockShowScrollButton.value = false;
+		vi.mocked(useAutoScroll).mockClear();
 	});
 
 	afterEach(() => {
@@ -419,5 +428,89 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				message: 'Please focus on auth first',
 			});
 		});
+	});
+});
+
+describe('TaskView — useAutoScroll call args', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('calls useAutoScroll with enabled:true and isInitialLoad:true on initial render', async () => {
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(vi.mocked(useAutoScroll)).toHaveBeenCalled();
+		});
+
+		// On the initial render, autoScroll=true and isFirstLoad=true
+		const firstCall = vi.mocked(useAutoScroll).mock.calls[0][0];
+		expect(firstCall).toMatchObject({ enabled: true, isInitialLoad: true });
+	});
+});
+
+describe('TaskView — InputTextarea maxChars forwarding', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('passes maxChars=50000 to InputTextarea in awaiting_human state', async () => {
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.maxLength).toBe(50000);
+	});
+
+	it('passes maxChars=50000 to InputTextarea in awaiting_leader state', async () => {
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.maxLength).toBe(50000);
 	});
 });
