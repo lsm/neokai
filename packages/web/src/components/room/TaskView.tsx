@@ -4,6 +4,7 @@
  * Shows the task detail view with:
  * - Task header (title, status, progress, group state)
  * - Unified conversation timeline (Worker + Leader messages in sub-agent blocks)
+ * - Human input area (context-sensitive based on group.state)
  *
  * Uses session group messages for a single merged timeline.
  *
@@ -53,12 +54,156 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	draft: 'text-gray-500',
 };
 
+interface HumanInputAreaProps {
+	groupState: string;
+	roomId: string;
+	taskId: string;
+	onMessageSent: () => void;
+}
+
+function HumanInputArea({ groupState, roomId, taskId, onMessageSent }: HumanInputAreaProps) {
+	const { request } = useMessageHub();
+	const [feedbackText, setFeedbackText] = useState('');
+	const [leaderText, setLeaderText] = useState('');
+	const [sending, setSending] = useState(false);
+	const [inputError, setInputError] = useState<string | null>(null);
+
+	const sendMessage = async (message: string, clearInput: () => void) => {
+		if (!message.trim() || sending) return;
+		setSending(true);
+		setInputError(null);
+		try {
+			await request('task.sendHumanMessage', { roomId, taskId, message: message.trim() });
+			clearInput();
+			onMessageSent();
+		} catch (err) {
+			setInputError(err instanceof Error ? err.message : 'Failed to send message');
+		} finally {
+			setSending(false);
+		}
+	};
+
+	const approveTask = async () => {
+		if (sending) return;
+		setSending(true);
+		setInputError(null);
+		try {
+			await request('goal.approveTask', { roomId, taskId });
+			onMessageSent();
+		} catch (err) {
+			setInputError(err instanceof Error ? err.message : 'Failed to approve task');
+		} finally {
+			setSending(false);
+		}
+	};
+
+	if (groupState === 'awaiting_human') {
+		return (
+			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0">
+				{/* Prominent banner */}
+				<div class="px-4 py-2 bg-amber-900/20 border-b border-amber-800/30 flex items-center gap-2">
+					<span class="text-amber-400 text-sm font-medium">⏳ Awaiting your review</span>
+					<span class="text-xs text-amber-500/70 ml-auto">
+						Review the PR and approve or provide feedback
+					</span>
+				</div>
+				<div class="px-4 py-3 space-y-2">
+					{/* Approve button */}
+					<button
+						class="w-full py-2 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+						onClick={approveTask}
+						disabled={sending}
+					>
+						{sending ? 'Approving…' : '✓ Approve'}
+					</button>
+					{/* Feedback input */}
+					<div class="space-y-1">
+						<textarea
+							class="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-dark-500 focus:ring-1 focus:ring-dark-500"
+							placeholder="Or send feedback to request changes… (⌘↵ to send)"
+							rows={2}
+							value={feedbackText}
+							onInput={(e) => setFeedbackText((e.target as HTMLTextAreaElement).value)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+									e.preventDefault();
+									void sendMessage(feedbackText, () => setFeedbackText(''));
+								}
+							}}
+							disabled={sending}
+						/>
+						<div class="flex justify-end">
+							<button
+								class="py-1.5 px-3 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 text-xs transition-colors"
+								onClick={() => void sendMessage(feedbackText, () => setFeedbackText(''))}
+								disabled={sending || !feedbackText.trim()}
+							>
+								{sending ? 'Sending…' : 'Send Feedback'}
+							</button>
+						</div>
+					</div>
+					{inputError && <p class="text-xs text-red-400">{inputError}</p>}
+				</div>
+			</div>
+		);
+	}
+
+	if (groupState === 'awaiting_leader') {
+		return (
+			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
+				<textarea
+					class="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-dark-500 focus:ring-1 focus:ring-dark-500"
+					placeholder="Send a message to the leader… (⌘↵ to send)"
+					rows={2}
+					value={leaderText}
+					onInput={(e) => setLeaderText((e.target as HTMLTextAreaElement).value)}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+							e.preventDefault();
+							void sendMessage(leaderText, () => setLeaderText(''));
+						}
+					}}
+					disabled={sending}
+				/>
+				<div class="flex justify-end">
+					<button
+						class="py-1.5 px-3 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 text-xs transition-colors"
+						onClick={() => void sendMessage(leaderText, () => setLeaderText(''))}
+						disabled={sending || !leaderText.trim()}
+					>
+						{sending ? 'Sending…' : 'Send to Leader'}
+					</button>
+				</div>
+				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
+			</div>
+		);
+	}
+
+	if (groupState === 'awaiting_worker') {
+		return (
+			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3">
+				<div title="Worker is running — wait for leader review">
+					<textarea
+						class="w-full bg-dark-800 border border-dark-600/50 rounded px-3 py-2 text-sm text-gray-600 placeholder-gray-600 resize-none cursor-not-allowed"
+						placeholder="Worker is running — wait for leader review"
+						rows={2}
+						disabled
+					/>
+				</div>
+			</div>
+		);
+	}
+
+	return null;
+}
+
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
 	const [group, setGroup] = useState<TaskGroupInfo | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [conversationKey, setConversationKey] = useState(0);
 
 	const fetchGroup = async () => {
 		try {
@@ -130,6 +275,13 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
 
+	// Show input area when group is active and in an interactive state
+	const showInput =
+		group !== null &&
+		(group.state === 'awaiting_human' ||
+			group.state === 'awaiting_leader' ||
+			group.state === 'awaiting_worker');
+
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
@@ -192,7 +344,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 			{/* Conversation timeline */}
 			{group ? (
-				<TaskConversationRenderer key={group.id} groupId={group.id} />
+				<TaskConversationRenderer key={`${group.id}-${conversationKey}`} groupId={group.id} />
 			) : (
 				<div class="flex-1 flex items-center justify-center text-center p-8">
 					<div>
@@ -212,6 +364,16 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						</p>
 					</div>
 				</div>
+			)}
+
+			{/* Human input area */}
+			{showInput && (
+				<HumanInputArea
+					groupState={group!.state}
+					roomId={roomId}
+					taskId={taskId}
+					onMessageSent={() => setConversationKey((k) => k + 1)}
+				/>
 			)}
 		</div>
 	);

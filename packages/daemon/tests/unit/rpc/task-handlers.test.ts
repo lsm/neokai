@@ -6,6 +6,7 @@
  * - task.list - List tasks in a room
  * - task.get - Get task details
  * - task.fail - Fail a task
+ * - task.sendHumanMessage - Send a human message to the active group
  *
  * Mocks TaskManager to focus on RPC handler logic.
  */
@@ -19,6 +20,7 @@ import {
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
+import type { RoomRuntimeService } from '../../../src/lib/room/runtime/room-runtime-service';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -159,6 +161,21 @@ function createMockDatabase(): Database {
 	return {
 		getDatabase: mock(() => mockRawDb),
 	} as unknown as Database;
+}
+
+// Helper to create mock RoomRuntimeService
+function createMockRuntimeService(sendHumanMessageResult = true): {
+	runtimeService: RoomRuntimeService;
+	sendHumanMessage: ReturnType<typeof mock>;
+	getRuntime: ReturnType<typeof mock>;
+} {
+	const sendHumanMessage = mock(async () => sendHumanMessageResult);
+	const mockRuntime = { sendHumanMessage };
+	const getRuntime = mock(() => mockRuntime);
+	const runtimeService = {
+		getRuntime,
+	} as unknown as RoomRuntimeService;
+	return { runtimeService, sendHumanMessage, getRuntime };
 }
 
 describe('Task RPC Handlers', () => {
@@ -374,5 +391,191 @@ describe('Task RPC Handlers', () => {
 				expect.objectContaining({ roomId: 'room-123' })
 			);
 		});
+	});
+});
+
+describe('task.sendHumanMessage handler', () => {
+	let messageHubData: ReturnType<typeof createMockMessageHub>;
+	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
+	let roomManagerData: ReturnType<typeof createMockRoomManager>;
+	let db: Database;
+
+	beforeEach(() => {
+		messageHubData = createMockMessageHub();
+		daemonHubData = createMockDaemonHub();
+		roomManagerData = createMockRoomManager();
+		db = createMockDatabase();
+	});
+
+	afterEach(() => {
+		mock.restore();
+	});
+
+	it('sends human message successfully when runtime is available', async () => {
+		const { runtimeService, sendHumanMessage } = createMockRuntimeService(true);
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage');
+		expect(handler).toBeDefined();
+
+		const result = (await handler!(
+			{ roomId: 'room-123', taskId: 'task-123', message: 'Looks good!' },
+			{}
+		)) as { success: boolean };
+
+		expect(sendHumanMessage).toHaveBeenCalledWith('task-123', 'Looks good!');
+		expect(result.success).toBe(true);
+	});
+
+	it('trims whitespace from message before sending', async () => {
+		const { runtimeService, sendHumanMessage } = createMockRuntimeService(true);
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await handler!({ roomId: 'room-123', taskId: 'task-123', message: '  please fix it  ' }, {});
+
+		expect(sendHumanMessage).toHaveBeenCalledWith('task-123', 'please fix it');
+	});
+
+	it('throws error when roomId is missing', async () => {
+		const { runtimeService } = createMockRuntimeService();
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(handler!({ taskId: 'task-123', message: 'hello' }, {})).rejects.toThrow(
+			'Room ID is required'
+		);
+	});
+
+	it('throws error when taskId is missing', async () => {
+		const { runtimeService } = createMockRuntimeService();
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(handler!({ roomId: 'room-123', message: 'hello' }, {})).rejects.toThrow(
+			'Task ID is required'
+		);
+	});
+
+	it('throws error when message is missing', async () => {
+		const { runtimeService } = createMockRuntimeService();
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+			'Message is required'
+		);
+	});
+
+	it('throws error when message is empty/whitespace', async () => {
+		const { runtimeService } = createMockRuntimeService();
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(
+			handler!({ roomId: 'room-123', taskId: 'task-123', message: '   ' }, {})
+		).rejects.toThrow('Message is required');
+	});
+
+	it('throws error when runtimeService is not provided', async () => {
+		// Set up without runtimeService
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager
+			// no runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(
+			handler!({ roomId: 'room-123', taskId: 'task-123', message: 'hello' }, {})
+		).rejects.toThrow('Runtime service is required');
+	});
+
+	it('throws error when no runtime found for room', async () => {
+		const getRuntime = mock(() => null);
+		const runtimeService = { getRuntime } as unknown as RoomRuntimeService;
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(
+			handler!({ roomId: 'room-999', taskId: 'task-123', message: 'hello' }, {})
+		).rejects.toThrow('No runtime found for room: room-999');
+	});
+
+	it('throws error when sendHumanMessage returns false (wrong state)', async () => {
+		const { runtimeService } = createMockRuntimeService(false);
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		await expect(
+			handler!({ roomId: 'room-123', taskId: 'task-123', message: 'hello' }, {})
+		).rejects.toThrow('Cannot send message');
 	});
 });

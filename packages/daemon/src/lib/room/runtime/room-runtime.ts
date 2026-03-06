@@ -707,6 +707,72 @@ export class RoomRuntime {
 		return true;
 	}
 
+	/**
+	 * Send a human message to the active session group for a task.
+	 *
+	 * - awaiting_human: injects rejection feedback into the existing worker
+	 *   (calls resumeWorkerFromHuman without approval flag)
+	 * - awaiting_leader: persists message in group timeline, emits delta event,
+	 *   and injects the message into the leader session
+	 *
+	 * Returns true if the message was sent, false if the group is not in a
+	 * state that accepts human messages.
+	 */
+	async sendHumanMessage(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group) return false;
+
+		if (group.state === 'awaiting_human') {
+			// Rejection feedback: resume worker without approval flag
+			return this.resumeWorkerFromHuman(taskId, message, { approved: false });
+		}
+
+		if (group.state === 'awaiting_leader') {
+			const humanContent = JSON.stringify({
+				type: 'user',
+				message: {
+					role: 'user',
+					content: [{ type: 'text', text: message }],
+				},
+				_taskMeta: {
+					authorRole: 'human',
+					authorSessionId: '',
+					turnId: `turn_${group.id}_human_${Date.now()}`,
+					iteration: group.feedbackIteration,
+				},
+			});
+
+			// Persist in group timeline
+			this.groupRepo.appendMessage({
+				groupId: group.id,
+				role: 'human',
+				messageType: 'user',
+				content: humanContent,
+			});
+
+			// Broadcast delta to subscribed frontends
+			if (this.messageHub) {
+				const parsed = JSON.parse(humanContent);
+				this.messageHub.event(
+					'state.groupMessages.delta',
+					{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+					{ channel: `group:${group.id}` }
+				);
+			}
+
+			// Inject into leader session
+			try {
+				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+				return true;
+			} catch (error) {
+				log.error(`Failed to send human message to leader for task ${taskId}:`, error);
+				return false;
+			}
+		}
+
+		return false;
+	}
+
 	// =========================================================================
 	// Message Mirroring
 	// =========================================================================

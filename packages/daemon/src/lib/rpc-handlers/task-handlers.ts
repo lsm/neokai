@@ -16,6 +16,7 @@ import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/managers/room-manager';
 import { TaskManager } from '../room/managers/task-manager';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
+import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
@@ -40,7 +41,8 @@ export function setupTaskHandlers(
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	db: Database,
-	taskManagerFactory: TaskManagerFactory = createTaskManager
+	taskManagerFactory: TaskManagerFactory = createTaskManager,
+	runtimeService?: RoomRuntimeService
 ): void {
 	/**
 	 * Emit room.task.update event to notify UI clients
@@ -218,5 +220,38 @@ export function setupTaskHandlers(
 		});
 
 		return { messages: result.messages, hasMore: result.hasMore };
+	});
+
+	// task.sendHumanMessage - Send a human message to the active session group
+	messageHub.onRequest('task.sendHumanMessage', async (data) => {
+		const params = data as { roomId: string; taskId: string; message: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!params.message || !params.message.trim()) {
+			throw new Error('Message is required');
+		}
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for task.sendHumanMessage');
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const sent = await runtime.sendHumanMessage(params.taskId, params.message.trim());
+		if (!sent) {
+			throw new Error(
+				`Cannot send message: task is not in awaiting_human or awaiting_leader state`
+			);
+		}
+
+		log.info(`Human message sent to task ${params.taskId} in room ${params.roomId}`);
+		return { success: true };
 	});
 }
