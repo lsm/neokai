@@ -189,6 +189,23 @@ const rpcHandlerCleanup = rpcSetup.cleanup;
 
 **C. Register job handlers in `RoomRuntimeService.start()`**
 
+**Ordering within `start()`**: handler registration must be the **first** operation, before
+`subscribeToEvents()` and before `initializeExistingRooms()`. If `initializeExistingRooms()` ran
+first, startup-recovery enqueues + `processor.tick()` at the end of initialization (Task 2G
+step 4) could dequeue a job before its handler is registered — causing the processor to skip or
+fail the job.
+
+```ts
+async start(): Promise<void> {
+  // 1. Register handlers FIRST (processor may tick during later steps)
+  this.registerJobHandlers();     // Task 2C
+  // 2. Subscribe to DaemonHub events
+  this.subscribeToEvents();       // Task 2E
+  // 3. Recover existing rooms (may enqueue + processor.tick())
+  await this.initializeExistingRooms();  // Task 2G
+}
+```
+
 Register before calling `processor.start()`:
 
 ```ts
@@ -256,6 +273,14 @@ this.ctx.jobQueueProcessor.register('room.tick', async (job) => {
   If any guard fails, return early without spawning. This preserves the dependency ordering
   guarantee currently provided by the tick loop's existing checks at `room-runtime.ts:1098`.
 
+  **Dual-dispatch race**: a concurrent `room.task.execute` job and a `room.tick` job can both
+  call `dispatchTask()` simultaneously since they enter through different code paths (the existing
+  `tickMutex` only guards `tick()`). This race is safe in the single-process model: session-group
+  creation is a DB write that SQLite serializes — the second caller's guard 3 (`groupRepo` check)
+  will detect the already-created group and return early. Accept this behavior explicitly and
+  add a unit test that verifies: two concurrent `dispatchTask(taskId)` calls produce exactly one
+  session group (second call's guard 3 fires and aborts).
+
 **E. Replace event subscriptions in `subscribeToEvents()`**
 
 Replace direct `runtime.onGoalCreated()` / `runtime.onTaskStatusChanged()` calls with job
@@ -290,7 +315,20 @@ this.ctx.daemonHub.on('room.task.update', (event) => {
 ```
 
 Where `enqueueGoalPlan(roomId, goalId)` is a private helper encapsulating the dedup check +
-enqueue + `processor.tick()` call for `room.goal.plan` jobs.
+enqueue + `processor.tick()` call for `room.goal.plan` jobs. **Must include `maxRetries: 1`**
+(planning is idempotent; one retry with backoff is safe and recovers transient failures):
+
+```ts
+private enqueueGoalPlan(roomId: string, goalId: string): void {
+  if (this.isDuplicateJob('room.goal.plan', { goalId })) return;
+  this.ctx.jobQueueRepo.enqueue({
+    queue: 'room.goal.plan',
+    payload: { roomId, goalId },
+    maxRetries: 1,   // one retry with exponential backoff; planning is idempotent
+  });
+  void this.ctx.jobQueueProcessor.tick();
+}
+```
 
 `isDuplicateJob(queue, keyPayload)` — private helper that calls `listJobs` for pending and
 processing statuses and checks for payload key match. Document as best-effort (single-process,
@@ -344,6 +382,26 @@ private scheduleTick(): void {
 Add optional `jobQueueRepo?: JobQueueRepository` and `jobQueueProcessor?: JobQueueProcessor`
 to `RoomRuntimeConfig` (preserves testability without full job queue setup).
 
+**Explicit pass-through in `createOrGetRuntime()`**: when constructing `new RoomRuntime(...)`,
+pass `jobQueueRepo` and `jobQueueProcessor` from the service config:
+
+```ts
+private createOrGetRuntime(roomId: string): RoomRuntime {
+  if (this.runtimes.has(roomId)) return this.runtimes.get(roomId)!;
+  const runtime = new RoomRuntime({
+    ...otherConfig,
+    jobQueueRepo: this.ctx.jobQueueRepo,          // required for scheduleTick()
+    jobQueueProcessor: this.ctx.jobQueueProcessor, // required for immediate wake-up
+  });
+  this.runtimes.set(roomId, runtime);
+  return runtime;
+}
+```
+
+If this pass-through is omitted, every `scheduleTick()` silently falls back to `queueMicrotask`
+(with a `log.warn`), but the plan's durability guarantee is broken in production. Add an AC to
+verify the pass-through is correct.
+
 The existing `setInterval` periodic safety net remains (30s), but its role is reduced to a
 secondary fallback. Explicitly keep it for crash-recovery edge cases.
 
@@ -377,10 +435,15 @@ After `recoverRoomRuntime()` for each room:
 - `room.task.execute` handler failure explicitly transitions task to `failed` and emits event.
 - Startup recovery skips tasks with active session groups and planning-type tasks.
 - `setupRPCHandlers` returns `{ cleanup, start }` and `start()` is awaited before `processor.start()`.
+- Handler registration is the first operation in `RoomRuntimeService.start()`, before `subscribeToEvents()` and `initializeExistingRooms()`.
+- `createOrGetRuntime()` passes `jobQueueRepo` and `jobQueueProcessor` from service config to `new RoomRuntime(...)`. Verified by unit test: a `RoomRuntime` created via `createOrGetRuntime()` enqueues a `room.tick` job in `scheduleTick()` (no fallback `queueMicrotask`).
+- Dual-dispatch safety: concurrent `dispatchTask(taskId)` calls produce exactly one session group (second call's session-group guard fires and aborts). Verified by unit test.
+- `enqueueGoalPlan` uses `maxRetries: 1` for `room.goal.plan` jobs.
 - `bun run typecheck && bun run lint && make test:daemon` pass.
 - Unit tests for: handler registration, each event subscription (goal.created, goal.updated),
   capacity re-enqueue, task failure path, startup recovery (with/without active groups, planning
-  vs. non-planning tasks), dedup guard, `scheduleTick` dedup semantics (pending-only).
+  vs. non-planning tasks), dedup guard, `scheduleTick` dedup semantics (pending-only),
+  concurrent `dispatchTask` guard, `createOrGetRuntime` pass-through.
 - Online tests: goal → job → `onGoalCreated` invoked; pending task → job → group dispatched.
 - Changes on branch `feature/room-runtime-job-queue` with PR via `gh pr create` targeting `dev`.
 
@@ -416,9 +479,22 @@ if (task.status === 'pending') {
 ```
 
 Tasks created without an explicit status (or with `status: 'draft'`) must NOT emit
-`room.task.update`. Existing callers of `task.create` that relied on the implicit `pending`
-default will need to be updated to pass `status: 'pending'` explicitly if that was their intent
-— verify there are no such callers before landing this change.
+`room.task.update`.
+
+**Caller audit (blocking step — must complete before changing the default)**:
+
+Before changing the default, audit ALL callers of `task.create`:
+- **Web frontend**: `packages/web/src/lib/room-store.ts` (at line ~410) calls `task.create`
+  without a `status` param. This caller currently gets tasks as `pending` (implicitly runnable).
+  Changing the default to `draft` would silently break this: UI-created tasks would never execute.
+  This caller MUST be updated to pass `status: 'pending'` explicitly before the default is changed.
+- **Planner-tool callers**: search for any `task.create` invocations in MCP tool handlers or
+  other server-side code and update them to pass explicit status.
+- **E2E / test fixtures**: check test helpers that call `task.create` and update accordingly.
+
+The implementing agent must grep for all `task.create` call sites across the full monorepo,
+confirm intent for each, and update callers to pass `status` explicitly before modifying the
+handler default. Landing the default change without updating callers is a behavioral regression.
 
 **B. `goal.reactivate` RPC**
 
@@ -449,7 +525,7 @@ Wire this helper into the task completion path in `RoomRuntime` (after `complete
 - Task created via `task.create` with `status: 'pending'` triggers `room.task.execute` job.
 - Task created with `status: 'draft'` does NOT trigger execution job.
 - Task created without an explicit status defaults to `draft` and does NOT trigger execution job.
-- No existing `task.create` callers rely on the implicit `pending` default (verified by audit).
+- All existing `task.create` callers audited monorepo-wide (including `packages/web/src/lib/room-store.ts` and any planner-tool handlers). Callers that need `pending` tasks pass `status: 'pending'` explicitly before the handler default is changed.
 - Goal reactivated via `goal.reactivate` triggers `room.goal.plan` job (via `goal.updated` subscription).
 - Completing task A enqueues `room.task.execute` for direct dependent task B iff all of B's deps met.
 - Completing task A does NOT enqueue B when B has another unmet dependency C.
@@ -548,8 +624,9 @@ Task 1 (Wire processor, shutdown ordering, cleanup timer)
 | `packages/daemon/src/lib/rpc-handlers/index.ts` | `RPCHandlerDependencies`, await start (Tasks 1, 2) |
 | `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` | Handler registration, subscriptions, startup scan (Task 2) |
 | `packages/daemon/src/lib/room/runtime/room-runtime.ts` | `scheduleTick`, `dispatchTask`, `isAtCapacity` (Task 2) |
-| `packages/daemon/src/lib/rpc-handlers/task-handlers.ts` | `task.create` emit fix (Task 3) |
-| `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` | `goal.reactivate` emit fix (Task 3) |
+| `packages/daemon/src/lib/rpc-handlers/task-handlers.ts` | `task.create` status + emit fix (Task 3) |
+| `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` | verify only — no code change needed (Task 3B) |
+| `packages/web/src/lib/room-store.ts` | `task.create` caller audit — must pass `status: 'pending'` explicitly (Task 3) |
 | `packages/daemon/src/lib/rpc-handlers/job-queue-handlers.ts` | New monitoring RPC (Task 4) |
 | `packages/daemon/tests/unit/room/job-queue-integration.test.ts` | New integration unit tests (Task 5) |
 | `packages/daemon/tests/online/room-job-queue.test.ts` | New online tests (Task 5) |
