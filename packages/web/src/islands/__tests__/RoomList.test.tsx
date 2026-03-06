@@ -13,11 +13,22 @@ import type { Room } from '@neokai/shared';
 
 // Define signals after imports - use getters in vi.mock to defer evaluation
 let mockRooms: ReturnType<typeof signal<Room[]>>;
+let mockRoomId: ReturnType<typeof signal<string | null>>;
+let mockReviewTaskCount: ReturnType<typeof signal<number>>;
 
 vi.mock('../../lib/lobby-store.ts', () => ({
 	get lobbyStore() {
 		return {
 			rooms: mockRooms,
+		};
+	},
+}));
+
+vi.mock('../../lib/room-store.ts', () => ({
+	get roomStore() {
+		return {
+			roomId: mockRoomId,
+			reviewTaskCount: mockReviewTaskCount,
 		};
 	},
 }));
@@ -32,6 +43,8 @@ vi.mock('../../lib/router.ts', () => ({
 
 // Initialize signals after mocks are set up
 mockRooms = signal<Room[]>([]);
+mockRoomId = signal<string | null>(null);
+mockReviewTaskCount = signal<number>(0);
 
 import { RoomList } from '../RoomList';
 
@@ -74,6 +87,8 @@ describe('RoomList', () => {
 	beforeEach(() => {
 		cleanup();
 		mockRooms.value = [];
+		mockRoomId.value = null;
+		mockReviewTaskCount.value = 0;
 		mockNavigateToRoom.mockClear();
 		mockOnRoomSelect.mockClear();
 	});
@@ -409,6 +424,53 @@ describe('RoomList', () => {
 			rerender(<RoomList />);
 
 			expect(container.textContent).not.toContain('Another Room');
+		});
+	});
+
+	describe('Review Count Badge', () => {
+		it('should not show review badge when no tasks are in review', () => {
+			mockRooms.value = [mockRoom1];
+			mockRoomId.value = 'room-1';
+			mockReviewTaskCount.value = 0;
+
+			const { container } = render(<RoomList />);
+
+			expect(container.textContent).not.toContain('review');
+		});
+
+		it('should show review badge for active room when it has review tasks', () => {
+			mockRooms.value = [mockRoom1];
+			mockRoomId.value = 'room-1';
+			mockReviewTaskCount.value = 2;
+
+			const { container } = render(<RoomList />);
+
+			expect(container.textContent).toContain('2 review');
+		});
+
+		it('should NOT show review badge for a non-active room', () => {
+			mockRooms.value = [mockRoom1, mockRoom2];
+			mockRoomId.value = 'room-2'; // room-2 is active, not room-1
+			mockReviewTaskCount.value = 3;
+
+			const { container } = render(<RoomList />);
+
+			// room-1 should not show badge since it is not active
+			const buttons = container.querySelectorAll('button');
+			const room1Btn = Array.from(buttons).find((b) => b.textContent?.includes('Test Room'));
+			expect(room1Btn?.textContent).not.toContain('review');
+		});
+
+		it('should show review badge with correct styling', () => {
+			mockRooms.value = [mockRoom1];
+			mockRoomId.value = 'room-1';
+			mockReviewTaskCount.value = 1;
+
+			const { container } = render(<RoomList />);
+
+			const badge = container.querySelector('.bg-purple-800\\/60');
+			expect(badge).toBeTruthy();
+			expect(badge?.textContent).toContain('1 review');
 		});
 	});
 });

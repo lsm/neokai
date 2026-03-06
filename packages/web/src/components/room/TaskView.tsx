@@ -332,10 +332,17 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						)}
 					</div>
 					{group && (
-						<p class="text-xs text-gray-500 mt-0.5">
-							{GROUP_STATE_LABELS[group.state] ?? group.state}
-							{group.feedbackIteration > 0 && ` · iteration ${group.feedbackIteration}`}
-						</p>
+						<div class="flex items-center gap-2 mt-0.5">
+							<p class="text-xs text-gray-500">
+								{GROUP_STATE_LABELS[group.state] ?? group.state}
+								{group.feedbackIteration > 0 && ` · iteration ${group.feedbackIteration}`}
+							</p>
+							{group.state === 'awaiting_human' && (
+								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
+									Awaiting your review
+								</span>
+							)}
+						</div>
 					)}
 				</div>
 				{task.progress != null && task.progress > 0 && (

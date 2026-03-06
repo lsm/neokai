@@ -111,6 +111,12 @@ class RoomStore {
 		this.tasks.value.filter((t) => t.status === 'completed')
 	);
 
+	/** Tasks in review status */
+	readonly reviewTasks = computed(() => this.tasks.value.filter((t) => t.status === 'review'));
+
+	/** Count of tasks awaiting review */
+	readonly reviewTaskCount = computed(() => this.reviewTasks.value.length);
+
 	/** Session count */
 	readonly sessionCount = computed(() => this.sessions.value.length);
 
@@ -220,6 +226,15 @@ class RoomStore {
 					if (event.roomId === roomId) {
 						const task = event.task;
 						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
+
+						// Show toast when task first transitions to review status
+						if (task.status === 'review') {
+							const prevTask = idx >= 0 ? this.tasks.value[idx] : null;
+							if (!prevTask || prevTask.status !== 'review') {
+								toast.info(`Task ready for review: ${task.title}`);
+							}
+						}
+
 						if (idx >= 0) {
 							this.tasks.value = [
 								...this.tasks.value.slice(0, idx),
