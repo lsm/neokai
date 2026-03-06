@@ -86,9 +86,24 @@ describe('Coder Agent', () => {
 			expect(prompt).toContain('stop immediately and report the error');
 		});
 
-		it('uses --base flag when creating PR', () => {
+		it('uses --base flag with inline substitution when creating PR', () => {
 			const prompt = buildCoderSystemPrompt();
-			expect(prompt).toContain('gh pr create --fill --base $DEFAULT_BRANCH');
+			// Must use inline $() so shell variable doesn't need to persist across tool calls
+			expect(prompt).toContain('--base $(git symbolic-ref refs/remotes/origin/HEAD');
+		});
+
+		it('combines sync commands in a single bash call to avoid variable persistence issues', () => {
+			const prompt = buildCoderSystemPrompt();
+			// All three sync operations must be && chained in one invocation
+			expect(prompt).toContain(
+				'DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed \'s@^refs/remotes/origin/@@\' || git remote show origin | sed -n \'/HEAD branch/s/.*: //p\') && git fetch origin && git rebase origin/$DEFAULT_BRANCH'
+			);
+		});
+
+		it('includes fallback for repos where origin/HEAD is not configured', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('git remote show origin');
+			expect(prompt).toContain("sed -n '/HEAD branch/s/.*: //p'");
 		});
 
 		it('sync step appears before implementation step', () => {

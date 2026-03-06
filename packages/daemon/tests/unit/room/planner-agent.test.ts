@@ -59,9 +59,23 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('stop immediately and report the error');
 		});
 
-		it('should use --base flag when creating plan PR', () => {
+		it('should combine sync commands in single bash call to avoid variable persistence issues', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
-			expect(prompt).toContain('gh pr create --base $DEFAULT_BRANCH');
+			expect(prompt).toContain(
+				'DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed \'s@^refs/remotes/origin/@@\' || git remote show origin | sed -n \'/HEAD branch/s/.*: //p\') && git fetch origin && git rebase origin/$DEFAULT_BRANCH'
+			);
+		});
+
+		it('should use --base flag with inline substitution when creating plan PR', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// Must use inline $() so shell variable doesn't need to persist across tool calls
+			expect(prompt).toContain('--base $(git symbolic-ref refs/remotes/origin/HEAD');
+		});
+
+		it('should include fallback for repos where origin/HEAD is not configured', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('git remote show origin');
+			expect(prompt).toContain("sed -n '/HEAD branch/s/.*: //p'");
 		});
 
 		it('should place pre-planning setup before Phase 1 planning', () => {

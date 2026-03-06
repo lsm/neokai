@@ -53,17 +53,20 @@ export function buildCoderSystemPrompt(): string {
 			`The branch has already been created for you. Follow this workflow:`
 	);
 	sections.push(
-		`1. **Sync with the default branch first** (run these commands before anything else):\n` +
-			`   a. Identify the default branch: \`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')\`\n` +
-			`   b. Fetch latest refs: \`git fetch origin\`\n` +
-			`   c. Rebase onto the default branch: \`git rebase origin/$DEFAULT_BRANCH\`\n` +
-			`   d. **If the rebase fails with conflicts, stop immediately and report the error** — do NOT continue on a stale base`
+		`1. **Sync with the default branch first** — run this as a **single bash command** so the variable persists:\n` +
+			`   \`\`\`bash\n` +
+			`   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@' || git remote show origin | sed -n '/HEAD branch/s/.*: //p') && git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
+			`   \`\`\`\n` +
+			`   **If the rebase fails with conflicts, stop immediately and report the error** — do NOT continue on a stale base`
 	);
 	sections.push(`2. Implement the task, making logical commits along the way`);
 	sections.push(`3. Add or update tests to cover the new/changed behavior — tests are mandatory`);
 	sections.push(`4. Push your branch: \`git push -u origin HEAD\``);
 	sections.push(
-		`5. Create a pull request: \`gh pr create --fill --base $DEFAULT_BRANCH\` (use the default branch identified in step 1)`
+		`5. Create a pull request using inline branch resolution (no shell variable needed):\n` +
+			`   \`\`\`bash\n` +
+			`   gh pr create --fill --base $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@' || git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
+			`   \`\`\``
 	);
 	sections.push(`6. Finish your response`);
 	sections.push(``);
