@@ -114,7 +114,7 @@ b. `JobQueueProcessor` has no `getRepo()` accessor. Rather than adding one, inje
 - `await jobQueueProcessor.stop()` is in the `cleanup()` closure before `rpcHandlerCleanup()`.
 - Change notifier connected to `ReactiveDatabase`.
 - `listJobs` extended to accept `status?: JobStatus | JobStatus[]`.
-- `jobQueueProcessor` and `jobQueueRepo` injected into `setupRPCHandlers` via the `deps` object.
+- `jobQueueProcessor` and `jobQueueRepo` injected into `setupRPCHandlers` via the `deps` object; `RPCHandlerDependencies` TypeScript interface updated to include both fields.
 - Queue name constants exported from `job-queue-constants.ts`.
 - Unit test verifies processor starts and stops correctly; confirms `stop()` is awaited before `rpcHandlerCleanup()`.
 - All existing `JobQueueRepository` and `JobQueueProcessor` unit tests still pass.
@@ -132,28 +132,34 @@ b. `JobQueueProcessor` has no `getRepo()` accessor. Rather than adding one, inje
 Replace the fire-and-forget title generation + git branch rename in `SessionManager` with a persistent job on the `session.title_generation` queue.
 
 **Files to modify**:
-- `packages/daemon/src/lib/session/session-manager.ts` — enqueue a `session.title_generation` job; remove `pendingBackgroundTasks` Set; register handler in `SessionManager.start()` (called by `createDaemonApp` after `jobQueueProcessor.start()`)
+- `packages/daemon/src/lib/session/session-manager.ts` — add a `start()` lifecycle method (does not currently exist); enqueue a `session.title_generation` job; remove `pendingBackgroundTasks` Set. `createDaemonApp` calls `sessionManager.start()` after `jobQueueProcessor.start()`.
 - `packages/daemon/src/lib/session/session-lifecycle.ts` — wrap the existing `generateTitleAndRenameBranch` method (no extraction needed; already a method on `SessionLifecycle`) in the job handler
 
 **Behavioral change**: Currently the `message.persisted` event handler does `await titleGenTask` (line 162 of `session-manager.ts`), blocking until title generation completes. After this migration the handler enqueues a job synchronously and returns immediately. This is the intended change — the handler must NOT await title generation; the job queue provides durability instead.
 
 **Handler registration** via constructor injection (`SessionManager` receives `jobQueueProcessor` and `jobQueueRepo`):
 ```typescript
+// New method added to SessionManager:
 start(): void {
   this.jobQueueProcessor.register(QUEUES.SESSION_TITLE_GENERATION, async (job) => {
     const { sessionId } = job.payload as { sessionId: string };
     // Idempotency: skip if title already set
     const session = this.sessionRepo.getSession(sessionId);
     if (!session || session.title !== null) return;
-    // Note: generateTitleAndRenameBranch requires the session in the in-memory cache.
-    // On restart, if the session is not cached, fall back to DB-only title generation
-    // (set title from userMessageText without renaming the branch).
-    await this.sessionLifecycle.generateTitleAndRenameBranch(sessionId, ...);
+    if (this.sessionCache.has(sessionId)) {
+      // Session in cache: full path (title generation + branch rename)
+      await this.sessionLifecycle.generateTitleAndRenameBranch(sessionId, ...);
+    } else {
+      // Cache miss after restart: title-only fallback (no branch rename)
+      await this.sessionLifecycle.generateTitleOnly(sessionId, ...);
+    }
   });
 }
 ```
 
-**Cache miss handling**: `generateTitleAndRenameBranch` reads from `sessionCache`. After a daemon restart the session may not be cached. The handler must check if the session is in cache; if not, apply a graceful fallback (title generation without branch rename, which is safe to retry).
+**Cache miss handling**: `generateTitleAndRenameBranch` requires the session in the in-memory cache. After a daemon restart the session may not be cached. The handler checks the cache:
+- **Cache hit**: calls the full `generateTitleAndRenameBranch` (title + branch rename)
+- **Cache miss**: calls a new `generateTitleOnly` helper on `SessionLifecycle` that sets the title from `userMessageText` without the branch rename. This is safe to retry and does not require the cache. Both `generateTitleAndRenameBranch` and `generateTitleOnly` check `session.title !== null` to guard idempotency.
 
 Job payload: `{ sessionId: string, userMessageText: string }`
 
@@ -201,11 +207,12 @@ Replace the in-memory GitHub event pipeline with a persistent job queue so event
    CREATE INDEX idx_github_processed_events_at ON github_processed_events(processed_at);
    ```
 
-2. `github_poll_state` table (replaces in-memory etags/timestamps; the existing `global_settings` table is a single JSON blob and is not suitable for per-repo structured state):
+2. `github_poll_state` table (replaces in-memory etags/timestamps; the existing `global_settings` table is a single JSON blob and is not suitable for per-repo structured state). Note: `polling-service.ts` tracks two separate ETags per repo (`issuesEtag` and `commentsEtag` at lines 26–27), so the schema needs two separate columns:
    ```sql
    CREATE TABLE github_poll_state (
      repo_full_name TEXT PRIMARY KEY,
-     etag TEXT,
+     issues_etag TEXT,
+     comments_etag TEXT,
      last_poll_at INTEGER NOT NULL DEFAULT 0
    );
    ```
@@ -259,14 +266,16 @@ Job payloads:
 
 **Retry behavior**: `maxRetries: 3` for `github.event`. `maxRetries: 0` for `github.poll` (re-scheduling handled in `finally` block; processor retry not needed).
 
+**Residual risk**: If `jobQueueRepo.enqueue()` inside the `finally` block throws (e.g., SQLite disk failure), the next poll will not be scheduled. This is an accepted risk: SQLite write failures at this level typically indicate a fatal daemon condition (disk full, WAL corruption) and the daemon will crash and restart, re-enqueuing the poll on startup. No additional fallback is specified.
+
 **Acceptance criteria**:
 - Polled events use deterministic stable IDs (verified by unit test: normalizing same data twice produces same ID).
-- Per-repo poll state (etags, timestamps) stored in `github_poll_state` table, survives restart.
+- Per-repo poll state (`issues_etag`, `comments_etag`, `last_poll_at`) stored in `github_poll_state` table, survives restart.
 - Repository registrations restored from `GitHubMappingRepository` on `start()`.
 - Same event cannot be processed twice (idempotency via `github_processed_events`).
-- `github.poll` re-scheduling uses `finally` block — polling never permanently stalls after handler error.
+- `github.poll` re-scheduling uses `finally` block — polling never permanently stalls after handler error (modulo fatal SQLite failure, accepted risk).
 - Enqueued `github.event` jobs survive daemon restart.
-- Unit tests cover: stable ID generation, idempotency check, poll re-scheduling on success and on error, webhook path enqueues job.
+- Unit tests cover: stable ID generation, idempotency check, poll re-scheduling on success and on error, webhook path enqueues job, two-ETag persistence per repo.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -283,20 +292,22 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
 **`RoomRuntime` has two tick trigger paths** — both must be migrated:
 1. `setInterval(() => this.tick(), this.tickInterval)` (~line 205) — periodic heartbeat
 2. `scheduleTick()` (~line 1550): `queueMicrotask(() => this.tick())` — event-driven immediate trigger with 9+ call sites (goal created, task updated, worker/leader terminal states, leader tool calls, etc.)
-3. `runtime-recovery.ts` calls `runtime.tick()` directly during recovery — this must also be replaced with `enqueueRoomTick()` so the tick mutex and dedup guarantees apply during recovery.
+3. Recovery paths via `runtime-recovery.ts`: that file calls `runtime.onWorkerTerminalState()` (line 153) and `runtime.onLeaderTerminalState()` (line 194), which internally call `this.scheduleTick()`. No changes are needed to `runtime-recovery.ts` itself — replacing `scheduleTick()` in `room-runtime.ts` automatically covers the recovery paths.
 
-**`jobQueueProcessor` and `jobQueueRepo` injection**: `RoomRuntimeService` receives them via the `deps` object passed to `setupRPCHandlers` (wired in Task 1). No refactoring of `RoomRuntimeService` out of `setupRPCHandlers` is required.
+**`jobQueueProcessor` and `jobQueueRepo` injection**: `RoomRuntimeService` receives them via the `deps` object passed to `setupRPCHandlers` (wired in Task 1). No refactoring of `RoomRuntimeService` out of `setupRPCHandlers` is required. `RoomRuntime` instances (created by `RoomRuntimeService`) need `jobQueueRepo` to call `enqueueRoomTick()` from within instance methods; add `jobQueueRepo: JobQueueRepository` to the `RoomRuntimeConfig` interface (defined at `room-runtime.ts` line ~76).
 
 **Migration approach**:
 - Remove `setInterval`, `tickTimer` field, and `queueMicrotask` from `RoomRuntime`
 - Add an `enqueueRoomTick(repo: JobQueueRepository, roomId: string, priority = 0)` helper function:
   ```typescript
   function enqueueRoomTick(repo: JobQueueRepository, roomId: string, priority = 0): void {
-    // Dedup: skip if pending or processing job exists for this room
-    // listJobs now supports status array (extended in Task 1)
+    // Dedup: skip if pending or processing job exists for this room.
+    // listJobs now supports status array (extended in Task 1).
+    // limit: 1000 overrides the default cap of 100 to avoid missed dedup under high job volume.
     const existing = repo.listJobs({
       queue: QUEUES.ROOM_TICK,
       status: ['pending', 'processing'],
+      limit: 1000,
     }).find(j => (j.payload as any).roomId === roomId);
     if (!existing) {
       repo.enqueue({ queue: QUEUES.ROOM_TICK, payload: { roomId }, priority });
@@ -304,34 +315,45 @@ Replace **both** the `setInterval` heartbeat and the `scheduleTick()` (`queueMic
     // Note: listJobs is an O(n) scan with no index on payload contents.
     // Acceptable at current scale (tens of rooms). Future optimization:
     // add unique constraint or dedicated column if room count grows significantly.
+    //
+    // Check-then-act race: with maxConcurrent: 3, two concurrent handlers could both
+    // pass this dedup check for the same room before either enqueue commits. SQLite
+    // serializes writes, so both will succeed and produce a duplicate. This is an
+    // accepted risk: the extra job is idempotent (tick handles duplicate execution),
+    // and true atomic dedup would require a DB-level UNIQUE constraint which adds
+    // complexity not warranted at current scale.
   }
   ```
-- Replace all `this.scheduleTick()` call sites and the `runtime.tick()` call in `runtime-recovery.ts` with `enqueueRoomTick(repo, roomId, priority)`
-- After each tick handler completes, enqueue next heartbeat with `runAt = Date.now() + 30_000`
+- Replace all `this.scheduleTick()` call sites in `room-runtime.ts` with `enqueueRoomTick(this.jobQueueRepo, this.roomId, priority)`
+- After each tick handler completes, use `enqueueRoomTick()` (not direct `enqueue()`) for the heartbeat to preserve dedup guarantees:
 - Register handler in `RoomRuntimeService.start()`:
   ```typescript
   this.jobQueueProcessor.register(QUEUES.ROOM_TICK, async (job) => {
     const { roomId } = job.payload as { roomId: string };
     const runtime = this.runtimes.get(roomId);
     if (!runtime) {
-      // Runtime not ready yet (recovery in progress) or room deleted.
-      // Re-enqueue with a short delay so recovery has time to complete.
-      this.jobQueueRepo.enqueue({
-        queue: QUEUES.ROOM_TICK,
-        payload: { roomId },
-        runAt: Date.now() + 5_000,
-      });
+      // Runtime not found: could be recovery in progress OR room was deleted.
+      // Check DB to distinguish: if the room no longer exists, skip re-enqueue.
+      const roomExists = this.roomRepo.getRoom(roomId) !== null;
+      if (roomExists) {
+        // Recovery still in progress — re-enqueue with delay
+        enqueueRoomTick(this.jobQueueRepo, roomId, 0);
+        // Use runAt delay via direct enqueue for the re-enqueue-on-miss case:
+        this.jobQueueRepo.enqueue({
+          queue: QUEUES.ROOM_TICK,
+          payload: { roomId },
+          runAt: Date.now() + 5_000,
+        });
+      }
+      // Room deleted: do not re-enqueue (prevents perpetual churn)
       return;
     }
     await runtime.tick();
-    // Heartbeat: schedule next tick
-    this.jobQueueRepo.enqueue({
-      queue: QUEUES.ROOM_TICK,
-      payload: { roomId },
-      runAt: Date.now() + 30_000,
-    });
+    // Heartbeat: use enqueueRoomTick to preserve dedup
+    enqueueRoomTick(this.jobQueueRepo, roomId);
   });
   ```
+  Note: the heartbeat `runAt` delay (30s) is omitted from `enqueueRoomTick` since the helper doesn't support `runAt`. Use a direct `jobQueueRepo.enqueue({ runAt: Date.now() + 30_000 })` for the heartbeat — this is intentional and documented: heartbeat always adds a new job even if one is pending (the 30s future job is distinct from any immediate pending job for the same room).
 
 **Startup and recovery ordering**: `roomRuntimeService.start()` is called with `.catch()` (fire-and-forget) inside `setupRPCHandlers`. Because recovery may not be complete when the first tick jobs fire, the handler uses re-enqueue-on-miss (above) rather than silent drop. This ensures rooms always receive their tick once recovery completes, without requiring strict startup sequencing between the processor and recovery.
 
@@ -344,13 +366,14 @@ The re-enqueue-on-miss tick handler avoids the risk of processing a tick after `
 
 **Acceptance criteria**:
 - `setInterval`, `tickTimer`, and `queueMicrotask` removed from `RoomRuntime`.
-- All `scheduleTick()` call sites replaced with `enqueueRoomTick()`.
-- `runtime-recovery.ts` uses `enqueueRoomTick()` instead of `runtime.tick()`.
-- Re-enqueue-on-miss: handler re-enqueues with `runAt = now + 5_000` if runtime not found.
-- Dedup: no duplicate `room.tick` jobs accumulate for the same room.
+- All `scheduleTick()` call sites in `room-runtime.ts` replaced with `enqueueRoomTick()` (recovery paths in `runtime-recovery.ts` are automatically covered since they call `onWorkerTerminalState`/`onLeaderTerminalState` which call `scheduleTick()`).
+- `jobQueueRepo` added to `RoomRuntimeConfig` interface.
+- Handler distinguishes "room deleted" from "runtime loading": no re-enqueue for deleted rooms.
+- Re-enqueue-on-miss: handler re-enqueues with `runAt = now + 5_000` if room exists but runtime not found.
+- Dedup: `enqueueRoomTick` uses `limit: 1000` on `listJobs`; check-then-act race documented as accepted risk.
 - Heartbeat re-scheduling: after each successful tick, new job enqueued with `runAt = now + 30_000`.
 - Shutdown ordering enforced in `app.ts` cleanup closure.
-- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule, re-enqueue-on-miss (runtime not found), graceful tick execution.
+- Unit tests cover: enqueue on event, dedup, heartbeat re-schedule, re-enqueue-on-miss (runtime loading), no-re-enqueue for deleted room, graceful tick execution.
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 ---
@@ -366,7 +389,7 @@ Add integration/online tests validating job persistence and idempotency, add a s
 
 **Online/integration tests** (`packages/daemon/tests/online/`):
 
-Note: `packages/daemon/tests/helpers/daemon-server.ts` provides only an in-process `createDaemonApp()` wrapper — there is no spawned-process mode for real kill/restart simulation. The crash-recovery scenarios below are validated by stopping and restarting the `JobQueueProcessor` within a single process, which is sufficient to verify that jobs persist across processor stop/start cycles (SQLite persistence is process-independent).
+Note: `packages/daemon/tests/helpers/daemon-server.ts` has a `spawnDaemonServer()` function (lines 78–189) that spawns a real child process, selectable via `DAEMON_TEST_SPAWN=true`. However, the crash-recovery scenarios below use in-process processor stop/start rather than real process kill, which is sufficient to verify SQLite job persistence (persistence is process-independent) and avoids the complexity of spawned-process lifecycle in test setup.
 
 1. **Session title generation persistence**: enqueue a `session.title_generation` job, stop and restart the processor in-process, verify the job is picked up and the title is set exactly once.
 2. **GitHub event idempotency**: enqueue the same `github.event` job payload twice (same `eventId`); verify it is processed exactly once (check `github_processed_events` table has one row).
@@ -391,6 +414,7 @@ Note: `packages/daemon/tests/helpers/daemon-server.ts` provides only an in-proce
   }
   ```
 - On daemon startup: enqueue first run with `runAt = now` if no pending/processing cleanup job exists
+- On daemon startup: also run a synchronous one-time prune of `github_processed_events` rows older than 30 days to bound table size in case the daemon has been offline for an extended period (e.g., `> 30` days)
 
 **Cleanup scope** — patterns explicitly removed by this task:
 - `pendingBackgroundTasks` Set in `session-manager.ts` (removed in Task 2; confirm no remaining references)
@@ -442,5 +466,5 @@ Tasks 2, 3, and 4 are independent and can run in parallel after Task 1 is merged
 | `packages/daemon/src/lib/github/webhook-handler.ts` | Task 3 |
 | `packages/daemon/src/lib/room/runtime/room-runtime.ts` | Task 4 |
 | `packages/daemon/src/lib/room/runtime/room-runtime-service.ts` | Task 4 |
-| `packages/daemon/src/lib/room/runtime/runtime-recovery.ts` | Task 4 — replace direct `tick()` call with `enqueueRoomTick()` |
+| `packages/daemon/src/lib/room/runtime/runtime-recovery.ts` | Task 4 — no direct changes; covered by `scheduleTick()` replacement in `room-runtime.ts` |
 | `docs/adr/0002-job-queue-migration.md` | Reference ADR |
