@@ -64,7 +64,7 @@ function RoomListItem({ room, onClick, reviewCount }: RoomListItemProps) {
 				<div class="flex items-center gap-1.5 flex-shrink-0">
 					{hasReview && (
 						<span class="text-xs bg-purple-800/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium">
-							{reviewCount} review
+							{reviewCount} review{reviewCount !== 1 ? 's' : ''}
 						</span>
 					)}
 					{isArchived && (

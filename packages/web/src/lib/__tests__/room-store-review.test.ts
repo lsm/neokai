@@ -80,17 +80,20 @@ describe('RoomStore — review toast notification', () => {
 		vi.clearAllMocks();
 	});
 
-	it('fires an info toast when a new task arrives in review status', async () => {
+	it('does NOT fire a toast when an unknown task arrives in review (hydration guard)', async () => {
+		// Simulates a race where room.task.update arrives before fetchInitialState
+		// populates tasks — the task is not yet in local state (idx === -1).
 		await roomStore.select('room-1');
+		// tasks.value is empty (initial state not hydrated yet)
+		roomStore.tasks.value = [];
 
 		const handler = mockEventHandlers.get('room.task.update');
 		expect(handler).toBeDefined();
 
 		handler({ roomId: 'room-1', task: makeTask('t1', 'review', 'My Review Task') });
 
-		expect(toastsSignal.value.length).toBe(1);
-		expect(toastsSignal.value[0].type).toBe('info');
-		expect(toastsSignal.value[0].message).toBe('Task ready for review: My Review Task');
+		// No toast because prevTask was null (not previously known)
+		expect(toastsSignal.value.length).toBe(0);
 	});
 
 	it('fires a toast when existing task transitions from in_progress to review', async () => {

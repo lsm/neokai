@@ -227,10 +227,12 @@ class RoomStore {
 						const task = event.task;
 						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
 
-						// Show toast when task first transitions to review status
-						if (task.status === 'review') {
-							const prevTask = idx >= 0 ? this.tasks.value[idx] : null;
-							if (!prevTask || prevTask.status !== 'review') {
+						// Show toast when a known task transitions into review status.
+						// Skip when prevTask is null (task not yet in local state) to avoid
+						// spurious toasts during initial hydration / reconnection.
+						if (task.status === 'review' && idx >= 0) {
+							const prevTask = this.tasks.value[idx];
+							if (prevTask.status !== 'review') {
 								toast.info(`Task ready for review: ${task.title}`);
 							}
 						}

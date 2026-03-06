@@ -445,7 +445,18 @@ describe('RoomList', () => {
 
 			const { container } = render(<RoomList />);
 
-			expect(container.textContent).toContain('2 review');
+			expect(container.textContent).toContain('2 reviews');
+		});
+
+		it('should use singular "review" when count is 1', () => {
+			mockRooms.value = [mockRoom1];
+			mockRoomId.value = 'room-1';
+			mockReviewTaskCount.value = 1;
+
+			const { container } = render(<RoomList />);
+
+			expect(container.textContent).toContain('1 review');
+			expect(container.textContent).not.toContain('1 reviews');
 		});
 
 		it('should NOT show review badge for a non-active room', () => {
@@ -464,13 +475,13 @@ describe('RoomList', () => {
 		it('should show review badge with correct styling', () => {
 			mockRooms.value = [mockRoom1];
 			mockRoomId.value = 'room-1';
-			mockReviewTaskCount.value = 1;
+			mockReviewTaskCount.value = 3;
 
 			const { container } = render(<RoomList />);
 
 			const badge = container.querySelector('.bg-purple-800\\/60');
 			expect(badge).toBeTruthy();
-			expect(badge?.textContent).toContain('1 review');
+			expect(badge?.textContent).toContain('3 reviews');
 		});
 	});
 });

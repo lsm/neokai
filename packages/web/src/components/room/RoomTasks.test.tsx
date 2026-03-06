@@ -150,6 +150,42 @@ describe('RoomTasks', () => {
 			);
 			expect(viewBtn).toBeFalsy();
 		});
+
+		it('should NOT call onTaskClick when Approve button is clicked (stopPropagation)', () => {
+			const onApprove = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onApprove={onApprove} onTaskClick={onTaskClick} />
+			);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Approve')
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(onApprove).toHaveBeenCalledWith('task-42');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should NOT call onTaskClick when View button is clicked (stopPropagation)', () => {
+			const onView = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onView={onView} onTaskClick={onTaskClick} />
+			);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			) as HTMLButtonElement;
+			fireEvent.click(viewBtn);
+
+			expect(onView).toHaveBeenCalledWith('task-42');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Pending Section', () => {
