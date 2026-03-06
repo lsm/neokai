@@ -45,6 +45,34 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('depends_on');
 		});
 
+		it('should include pre-planning git sync setup', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('Pre-Planning Setup (MANDATORY)');
+			expect(prompt).toContain('git fetch origin');
+			expect(prompt).toContain('git rebase origin/$DEFAULT_BRANCH');
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD');
+		});
+
+		it('should instruct to stop on rebase conflict', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('rebase fails');
+			expect(prompt).toContain('stop immediately and report the error');
+		});
+
+		it('should use --base flag when creating plan PR', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('gh pr create --base $DEFAULT_BRANCH');
+		});
+
+		it('should place pre-planning setup before Phase 1 planning', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const syncIdx = prompt.indexOf('Pre-Planning Setup (MANDATORY)');
+			const phase1Idx = prompt.indexOf('Phase 1: Planning');
+			expect(syncIdx).toBeGreaterThanOrEqual(0);
+			expect(phase1Idx).toBeGreaterThanOrEqual(0);
+			expect(syncIdx).toBeLessThan(phase1Idx);
+		});
+
 		it('should use goal title for plan path', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('docs/plans/build-stock-app.md');

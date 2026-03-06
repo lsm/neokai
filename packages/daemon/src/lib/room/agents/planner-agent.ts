@@ -122,6 +122,16 @@ export function buildPlannerSystemPrompt(goalTitle?: string): string {
 		`2. **Task creation phase**: After the plan is approved, merge the PR and create tasks`
 	);
 
+	sections.push(`\n## Pre-Planning Setup (MANDATORY)\n`);
+	sections.push(
+		`Before reading any files or writing the plan, sync with the default branch:\n` +
+			`1. Identify the default branch: \`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')\`\n` +
+			`2. Fetch latest refs: \`git fetch origin\`\n` +
+			`3. Rebase onto the default branch: \`git rebase origin/$DEFAULT_BRANCH\`\n` +
+			`4. **If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase\n` +
+			`5. Keep the default branch name for use in step 3 of the Plan Deliverable below`
+	);
+
 	sections.push(`\n## Phase 1: Planning\n`);
 	sections.push(`1. Read relevant files to understand the current codebase state`);
 	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
@@ -148,7 +158,7 @@ export function buildPlannerSystemPrompt(goalTitle?: string): string {
 	);
 	sections.push(`2. Create a feature branch, commit the plan file, and push it`);
 	sections.push(
-		`3. Create a GitHub PR via \`gh pr create\` with the plan summary as the PR description`
+		`3. Create a GitHub PR via \`gh pr create --base $DEFAULT_BRANCH\` (from Pre-Planning Setup) with the plan summary as the PR description`
 	);
 	sections.push(
 		`4. Finish your response — the Leader will dispatch reviewers, then submit for human approval`

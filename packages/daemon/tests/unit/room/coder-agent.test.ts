@@ -72,6 +72,34 @@ describe('Coder Agent', () => {
 			expect(prompt).toContain('Do NOT commit directly to the main/dev/master branch');
 		});
 
+		it('includes git fetch and rebase as the first step', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('Sync with the default branch first');
+			expect(prompt).toContain('git fetch origin');
+			expect(prompt).toContain('git rebase origin/$DEFAULT_BRANCH');
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD');
+		});
+
+		it('instructs to stop on rebase conflict rather than continuing', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('rebase fails');
+			expect(prompt).toContain('stop immediately and report the error');
+		});
+
+		it('uses --base flag when creating PR', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('gh pr create --fill --base $DEFAULT_BRANCH');
+		});
+
+		it('sync step appears before implementation step', () => {
+			const prompt = buildCoderSystemPrompt();
+			const syncIdx = prompt.indexOf('Sync with the default branch first');
+			const implementIdx = prompt.indexOf('Implement the task');
+			expect(syncIdx).toBeGreaterThanOrEqual(0);
+			expect(implementIdx).toBeGreaterThanOrEqual(0);
+			expect(syncIdx).toBeLessThan(implementIdx);
+		});
+
 		it('includes coder agent role description', () => {
 			const prompt = buildCoderSystemPrompt();
 			expect(prompt).toContain('You are a Coder Agent');
