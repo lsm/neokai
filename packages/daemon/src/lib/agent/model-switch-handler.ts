@@ -16,14 +16,8 @@
  * fresh system:init is emitted with the correct model.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type {
-	Provider,
-	Session,
-	SessionConfig,
-	CurrentModelInfo,
-	MessageHub,
-} from '@neokai/shared';
+import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Session, CurrentModelInfo, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
@@ -81,16 +75,13 @@ export class ModelSwitchHandler {
 	}
 
 	/**
-	 * Switch to a different model mid-session.
+	 * Switch to a different model mid-session
 	 *
 	 * Always restarts the query to ensure SDK emits a fresh system:init message
 	 * with the correct model. This is necessary because SDK's setModel() doesn't
 	 * update the cached system:init, causing stale model info in the UI.
-	 *
-	 * @param newModel - Model ID or alias to switch to
-	 * @param newProvider - Provider ID for the new model (required)
 	 */
-	async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
+	async switchModel(newModel: string): Promise<ModelSwitchResult> {
 		const {
 			session,
 			db,
@@ -106,12 +97,8 @@ export class ModelSwitchHandler {
 		} = this.ctx;
 
 		try {
-			if (!session.config.provider) {
-				throw new Error('Session has no provider configured');
-			}
-
-			// Validate the new model against the new provider
-			const isValid = await isValidModel(newModel, 'global', newProvider);
+			// Validate the model
+			const isValid = await isValidModel(newModel);
 			if (!isValid) {
 				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
 				logger.error(`${error}`);
@@ -119,29 +106,17 @@ export class ModelSwitchHandler {
 			}
 
 			// Get model info from the ORIGINAL alias to preserve provider context.
-			// Resolving alias first (e.g., 'copilot-anthropic-sonnet' → 'claude-sonnet-4.6')
-			// and then calling getModelInfo loses the provider — two providers can share
-			// the same canonical ID (e.g., Anthropic and anthropic-copilot both have
-			// 'claude-sonnet-4.6').
-			// Use newProvider to correctly disambiguate same-ID models across providers.
-			const modelInfo = await getModelInfo(newModel, 'global', newProvider);
-			// modelInfo is non-null here because isValidModel passed above;
-			// fall back to newModel as-is for defensive safety (unreachable in practice).
-			const resolvedModel = modelInfo?.id ?? newModel;
+			// Resolving alias first (e.g., 'copilot-sonnet' → 'claude-sonnet-4.6') and then
+			// calling getModelInfo loses the provider — two providers can share the same
+			// canonical ID (e.g., Anthropic and GitHub Copilot both have 'claude-sonnet-4.6').
+			const modelInfo = await getModelInfo(newModel);
+			const resolvedModel = modelInfo?.id ?? (await resolveModelAlias(newModel));
 
-			// Resolve the current model in case it's also an alias.
-			// Use session.config.provider (the current provider) for the current model.
-			const currentResolvedModel = await resolveModelAlias(
-				session.config.model,
-				'global',
-				session.config.provider
-			);
+			// Resolve the current model in case it's also an alias
+			const currentResolvedModel = await resolveModelAlias(session.config.model);
 
-			// Check if already using this model (compare resolved IDs and provider).
-			// Must check provider too: two providers can share the same canonical ID
-			// (e.g., anthropic and anthropic-copilot both have claude-sonnet-4.6),
-			// so switching providers on the same model ID is a meaningful operation.
-			if (currentResolvedModel === resolvedModel && session.config.provider === newProvider) {
+			// Check if already using this model (compare resolved IDs)
+			if (currentResolvedModel === resolvedModel) {
 				return {
 					success: true,
 					model: resolvedModel,
@@ -164,34 +139,35 @@ export class ModelSwitchHandler {
 			// Check if query is running AND ProcessTransport is ready
 			const transportReady = firstMessageReceived;
 
-			// Locate the provider instance for the new model.
-			// newProvider is a required string, so detectProviderForModel always receives
-			// an explicit provider — no heuristic fallback is needed.
+			// Detect if this is a cross-provider switch (e.g., Anthropic → GLM)
+			// This is mainly for logging and updating the provider config field
 			const providerRegistry = getProviderRegistry();
-			const newProviderInstance = providerRegistry.detectProviderForModel(
-				resolvedModel,
-				newProvider
-			);
+			const currentProviderInstance = providerRegistry.detectProvider(currentResolvedModel);
+			// Use provider from model info to correctly handle shared canonical IDs
+			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and GitHub Copilot).
+			// detectProvider() would always return Anthropic for 'claude-sonnet-4.6'.
+			const newProviderInstance = modelInfo?.provider
+				? (providerRegistry.get(modelInfo.provider) ??
+					providerRegistry.detectProvider(resolvedModel))
+				: providerRegistry.detectProvider(resolvedModel);
+			const isCrossProviderSwitch = currentProviderInstance?.id !== newProviderInstance?.id;
 
-			if (!newProviderInstance) {
-				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${newProvider}' is not registered.`;
-				logger.error(errMsg);
-				return { success: false, model: session.config.model, error: errMsg };
+			if (isCrossProviderSwitch) {
+				const _currentProviderId = currentProviderInstance?.id || 'unknown';
+				const _newProviderId = newProviderInstance?.id || 'unknown';
 			}
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
 				session.config.model = resolvedModel;
-				// newProviderInstance is guaranteed non-null here (we returned early above).
-				session.config.provider = newProviderInstance.id as Provider;
-				// Only pass serializable fields — session.config may contain runtime-only
-				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
-				// cannot be JSON-stringified and would cause a cyclic structure error.
+				// Keep provider aligned with model for pre-query switches too.
+				// Without this, a stale explicit provider can force wrong model routing.
+				if (newProviderInstance?.id) {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					session.config.provider = newProviderInstance.id as any;
+				}
 				db.updateSession(session.id, {
-					config: {
-						model: resolvedModel,
-						provider: newProviderInstance.id as Provider,
-					} as SessionConfig,
+					config: session.config,
 				});
 
 				// Update context tracker model
@@ -211,16 +187,13 @@ export class ModelSwitchHandler {
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
-				// newProviderInstance is guaranteed non-null here (we returned early above).
-				session.config.provider = newProviderInstance.id as Provider;
-				// Only pass serializable fields — session.config may contain runtime-only
-				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
-				// cannot be JSON-stringified and would cause a cyclic structure error.
+				// Update provider in session config for cross-provider switches
+				if (isCrossProviderSwitch && newProviderInstance?.id) {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					session.config.provider = newProviderInstance.id as any;
+				}
 				db.updateSession(session.id, {
-					config: {
-						model: resolvedModel,
-						provider: newProviderInstance.id as Provider,
-					} as SessionConfig,
+					config: session.config,
 				});
 
 				// Update context tracker model

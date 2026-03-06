@@ -153,8 +153,11 @@ This applies to every call site that uses `beginTransaction()`, including `Sessi
   - Add `reactiveDb: ReactiveDatabase` to `RoomRuntimeServiceConfig`
     (`packages/daemon/src/lib/room/runtime/room-runtime-service.ts:35–44`).
   - Update `packages/daemon/src/app.ts` to pass `reactiveDb` in the `setupRPCHandlers` call
-    (line 196) and in the `RoomRuntimeService` constructor call (line 105). `reactiveDb` is
-    already available on `DaemonAppContext` at `app.ts:86`.
+    (line 196). `reactiveDb` is already available on `DaemonAppContext` at `app.ts:86`.
+  - Inside `setupRPCHandlers` in `packages/daemon/src/lib/rpc-handlers/index.ts`, pass
+    `deps.reactiveDb` to the `new RoomRuntimeService({...})` constructor at line 105.
+    `RoomRuntimeService` is **not** constructed in `app.ts`; it is constructed inside
+    `setupRPCHandlers`, which receives `reactiveDb` via the extended `RPCHandlerDependencies`.
 - Update all construction sites of these four classes to pass `reactiveDb`.
 
 **Tests:**
@@ -169,7 +172,8 @@ This applies to every call site that uses `beginTransaction()`, including `Sessi
 - Every `beginTransaction()` call is paired with a `try/catch` that calls `abortTransaction()` on
   failure; `transactionDepth` never gets stuck above zero after an error.
 - `reactiveDb: ReactiveDatabase` added to `RPCHandlerDependencies` and `RoomRuntimeServiceConfig`;
-  `app.ts` passes `reactiveDb` to both `setupRPCHandlers` and `RoomRuntimeService`.
+  `app.ts` passes `reactiveDb` to `setupRPCHandlers` (line 196); `rpc-handlers/index.ts` passes
+  `deps.reactiveDb` to the `RoomRuntimeService` constructor (line 105).
 - All existing tests still pass.
 - New unit tests verify reactive integration for each table.
 
@@ -210,22 +214,30 @@ existing repository SELECT patterns). Parameter count validation is performed be
 mismatch is rejected with a typed error.
 
 **Column name aliasing (camelCase):** The LiveQuery engine returns raw SQL row objects, bypassing
-existing repository mappers that normalize column names. SQLite column names use `snake_case`
+existing repository mappers that normalize column names. Most SQLite column names use `snake_case`
 (e.g., `room_id`, `created_at`, `assigned_agent`) while the shared TypeScript types (`NeoTask`,
-`RoomGoal`) use `camelCase`. Named-query SELECT statements must use `AS` aliases to produce
-camelCase field names matching the domain types (e.g., `room_id AS roomId`,
-`created_at AS createdAt`, `assigned_agent AS assignedAgent`). The reference for expected field
-names is the existing repository SELECT mappers at `task-repository.ts:205` and
-`goal-repository.ts:211`. Without aliases, every camelCase field read by the frontend silently
-resolves to `undefined`. Contract tests must verify the full delivered row shape matches the
-TypeScript types end-to-end — not just the JSON blob fields.
+`RoomGoal`) use `camelCase`. Named-query SELECT statements must use `AS` aliases for these columns
+(e.g., `room_id AS roomId`, `created_at AS createdAt`, `assigned_agent AS assignedAgent`). The
+reference for expected field names is the existing repository SELECT mappers at
+`task-repository.ts:205` and `goal-repository.ts:211`. Without aliases, every camelCase field
+read by the frontend silently resolves to `undefined`. Contract tests must verify the full
+delivered row shape matches the TypeScript types end-to-end — not just the JSON blob fields.
 
-**JSON blob columns:** SQLite stores array fields (`dependsOn: string[]`, `linkedTaskIds: string[]`
-in `NeoTask`; `linkedTaskIds: string[]` in `RoomGoal`) as JSON text blobs. The LiveQuery engine
-returns raw SQL row objects, so the row-mapping layer must JSON-parse these blob columns before
-delivering snapshot/delta rows to the client. The mapping step must be tested: a snapshot row must
-have `dependsOn` as a parsed `string[]`, not a raw JSON string. Contract tests must verify the
-deserialized shape matches the shared TypeScript types.
+**`RoomGoal` snake_case exception:** Two fields in `RoomGoal` intentionally remain snake_case:
+`planning_attempts` and `goal_review_attempts` (confirmed at `packages/shared/src/types/neo.ts:94`
+and `goal-repository.ts:212-213`). These columns must **not** be aliased to camelCase in the
+`goals.byRoom` named query — select them as `planning_attempts` and `goal_review_attempts` to
+match the TypeScript type exactly.
+
+**JSON blob columns:** SQLite stores certain fields as JSON text blobs. The row-mapping layer must
+JSON-parse them before delivering snapshot/delta rows to the client:
+- `NeoTask`: `dependsOn` (stored as `depends_on`), `linkedTaskIds` (stored as `linked_task_ids`)
+- `RoomGoal`: `linkedTaskIds` (stored as `linked_task_ids`), `metrics` (stored as `metrics`,
+  type `Record<string, number>`) — confirmed JSON-parsed at `goal-repository.ts:221`
+
+The mapping step must be tested: a snapshot row for `tasks.byRoom` must have `dependsOn` as a
+parsed `string[]` (not a raw JSON string), and a row for `goals.byRoom` must have `metrics` as a
+parsed object. Contract tests must verify the deserialized shape matches the shared TypeScript types.
 
 Named query keys follow the `<entity>.<filter>` convention. The registry is defined as a
 **module-level constant** (a `Map`) in `live-query-handlers.ts` — it is not added to
@@ -238,7 +250,7 @@ access to the parameterized resource before registering the subscription:
   `roomManager.getRoom(room_id)`. NeoKai is a single-user deployment — there is no per-user ACL,
   so existence validation is sufficient. Unknown `room_id` is rejected with an authorization error.
 - `sessionGroupMessages.byGroup` (keyed by `group_id`): the `session_groups` table has **no
-  `room_id` column** (schema `index.ts:227`). The join path is:
+  `room_id` column** (`packages/daemon/src/storage/schema/index.ts:227`). The join path is:
   `session_groups.ref_id → tasks.id → tasks.room_id` (valid for `group_type = 'task'`, which is
   the only type in use). Authorization check: look up `session_groups WHERE id = group_id` to get
   `ref_id` and `group_type`; for `group_type = 'task'` look up `tasks WHERE id = ref_id` to get
@@ -626,7 +638,9 @@ both paths fire on the same room selection.
 - `room.task.update`, `goal.created`, `goal.updated`, `goal.completed` listeners removed.
 - `room.overview` listener retained for `room`/`sessions` signal updates; `tasks.value` no longer
   written by the `room.overview` handler or by `fetchInitialState`.
-- LiveQuery snapshot and delta are the sole writers to `this.tasks.value` and `this.goals.value`.
+- LiveQuery snapshot and delta are the sole **data** writers to `this.tasks.value` and
+  `this.goals.value`; lifecycle resets to `[]` at `room-store.ts:175` (tasks) and `:178` (goals)
+  on room deselect/switch are permitted and must be retained.
 - No other code path (event handler, RPC response) overwrites task or goal signals — specifically:
   the `task.create` optimistic append (`room-store.ts:417`) and `fetchGoals()` refetch
   (`room-store.ts:499`) no longer write to signal state.
@@ -697,7 +711,7 @@ in component/hook state; discard any snapshot or delta whose `subscriptionId` do
 - Handle `liveQuery.delta`: discard if `subscriptionId` doesn't match (stale-delta guard);
   otherwise append new messages (`added` array only; ignore `updated`/`removed`).
 - Remove `state.groupMessages.delta` frontend listener from `TaskConversationRenderer.tsx`.
-- Remove the stale comment at `TaskConversationRenderer.tsx:118` that references `state.groupMessages.delta`.
+- Remove the stale JSDoc comment at `TaskConversationRenderer.tsx:11` that references `state.groupMessages.delta` (the actual listener usage is at line 124).
 - Remove daemon-side emission sites: `room-runtime.ts:888` and `human-message-routing.ts:97`.
 - Implement reconnect re-subscribe via general `connected` transition (without prior unsubscribe —
   old handles disposed server-side on disconnect).
