@@ -488,7 +488,7 @@ After posting your review via \`gh pr review\`, you MUST:
 
 ---REVIEW_POSTED---
 url: <the review URL from step 1>
-recommendation: APPROVE | REQUEST_CHANGES | COMMENT_ONLY
+recommendation: APPROVE | REQUEST_CHANGES
 p0: <count of P0 issues>
 p1: <count of P1 issues>
 p2: <count of P2 issues>
@@ -503,9 +503,8 @@ Severity levels:
 - P3 (nit): Style nits, minor cosmetic issues, optional documentation
 
 Decision rules:
-- Use "REQUEST_CHANGES" when any P0, P1, or P2 issues exist — all must be addressed
-- Use "APPROVE" when only P3 issues or no issues exist
-- Use "COMMENT_ONLY" when you only have P3 nits and the code is otherwise good`;
+- Use "REQUEST_CHANGES" when any P0, P1, or P2 issues exist
+- Use "APPROVE" when only P3 issues or no issues exist`;
 
 /**
  * Build prompt for an SDK-native reviewer agent (reviews code directly).

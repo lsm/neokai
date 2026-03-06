@@ -447,7 +447,6 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
 			expect(agent.prompt).toContain('APPROVE');
 			expect(agent.prompt).toContain('REQUEST_CHANGES');
-			expect(agent.prompt).toContain('COMMENT_ONLY');
 			// Review URL capture
 			expect(agent.prompt).toContain('Capture the review URL');
 			// P0-P3 severity system
