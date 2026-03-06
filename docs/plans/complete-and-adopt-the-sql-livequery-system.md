@@ -138,13 +138,17 @@ Clients send a **named query key** + parameters. The daemon resolves the name to
 SQL template server-side. Clients never send raw SQL. Unknown query names are rejected with an error.
 
 Initial named queries (registered at daemon startup):
-- `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ?`
-- `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ?`
-- `sessionGroupMessages.byGroup` — `SELECT ... FROM session_group_messages WHERE group_id = ? ORDER BY created_at ASC`
+- `tasks.byRoom` — `SELECT ... FROM tasks WHERE room_id = ? ORDER BY created_at DESC`
+  (matches `TaskRepository.listTasks` ordering at `task-repository.ts:84`)
+- `goals.byRoom` — `SELECT ... FROM goals WHERE room_id = ? ORDER BY priority DESC, created_at ASC`
+  (matches `GoalRepository.listGoals` ordering at `goal-repository.ts:86`)
+- `sessionGroupMessages.byGroup` — `SELECT ... FROM session_group_messages WHERE group_id = ? ORDER BY created_at ASC, id ASC`
+  (the `id` tiebreaker ensures fully deterministic ordering when two messages share the same
+  `created_at` timestamp, e.g. in tests with controlled time or rapid concurrent inserts;
+  without it the LiveQuery diff engine may spuriously classify stable rows as removed/re-added)
 
-The `ORDER BY created_at ASC` clause on `sessionGroupMessages.byGroup` is required so that snapshot
-row order and delta diff order are deterministic. The other queries should include stable ordering
-matching their existing repository SELECT patterns.
+Stable `ORDER BY` clauses are required on all named queries so that snapshot row order and delta
+diff order are deterministic across restarts, concurrent writes, and test environments.
 
 The SQL column shape for each named query must match what the frontend already expects (aligned with
 existing repository SELECT patterns). Parameter count validation is performed before execution; a
@@ -338,7 +342,10 @@ atomically in Task 4 alongside the frontend LiveQuery adoption.
   adoption.
 - `packages/daemon/src/lib/room/runtime/room-runtime.ts` — all `emitTaskUpdate`/`emitTaskUpdateById`
   calls (~14 sites). Drive `scheduleTick()` via `room-runtime-service.ts`.
-- `packages/daemon/src/lib/room/tools/room-agent-tools.ts` — task/goal emit calls.
+- `packages/daemon/src/lib/room/tools/room-agent-tools.ts` — task/goal emit calls. These emits
+  drive scheduling via `room-runtime-service.ts:344`. After Task 4 removes the frontend
+  `room.task.update` listener, these emits continue to serve scheduling but are no longer the
+  UI update path. Do not remove them.
 - `packages/daemon/src/lib/room/runtime/room-runtime.ts:159-170` — `emitGoalProgressForTask`.
 
 **Tests:**
@@ -389,13 +396,44 @@ Remove goal event emits that are now superseded by LiveQuery delta delivery:
   - `goal.updated` — replaced by `goals.byRoom` LiveQuery.
   - `goal.completed` — replaced by `goals.byRoom` LiveQuery.
   - `goal.progressUpdated` — no listener exists today; LiveQuery now delivers these correctly.
-- The task-update handling portion inside the `hub.onEvent('room.overview', ...)` callback.
+- The `this.tasks.value = overview.allTasks ?? overview.activeTasks` assignment inside the
+  `hub.onEvent('room.overview', ...)` callback (`room-store.ts:217`) — LiveQuery snapshot is
+  now the canonical source for task state.
+- The `this.tasks.value = overview.allTasks ?? overview.activeTasks` assignment inside
+  `fetchInitialState` (`room-store.ts:334`) — stop populating `tasks.value` from the `room.get`
+  RPC response; tasks are now loaded via the `liveQuery.snapshot` delivered on subscribe.
 - Tests in `packages/web/src/lib/__tests__/room-store-review.test.ts` that fire `room.task.update`
   events directly — rewrite to use `liveQuery.snapshot`/`liveQuery.delta`.
 
 **What NOT to remove:**
-The `room.overview` event listener must be kept for its `room` metadata and `sessions` signal
-updates (`room-store.ts:213–218`). Only the task-update portion within it is removed.
+- The `room.overview` event listener must be kept for its `this.room.value` and `this.sessions.value`
+  assignments (`room-store.ts:213–218`). Only the `this.tasks.value` assignment within it is removed.
+- The `room.get` RPC call in `fetchInitialState` itself is kept — it still populates `this.room.value`
+  and `this.sessions.value`. Only the `tasks.value` population is removed from it.
+
+**Task-state ownership after migration:** LiveQuery (`liveQuery.snapshot` on subscribe and
+`liveQuery.delta` on change) is the **sole** writer to `this.tasks.value` and `this.goals.value`
+after Task 4. No other code path (event handler, RPC response) should overwrite these signals.
+This prevents the `room.overview` event and `fetchInitialState` from racing with LiveQuery.
+
+**Review-status toast notification:** The current `room.task.update` handler shows a toast when a
+known task transitions to `review` status (`room-store.ts:230–238`):
+```ts
+if (task.status === 'review' && idx >= 0) {
+  const prevTask = this.tasks.value[idx];
+  if (prevTask.status !== 'review') {
+    toast.info(`Task ready for review: ${task.title}`);
+  }
+}
+```
+This logic must be reimplemented in the LiveQuery delta handler's `updated` array processing.
+The same hydration guard applies: only show the toast if the task was already known in local state
+(i.e., the task exists in the current `tasks.value` before the delta is applied) and its previous
+status was not `'review'`. Toasts must not fire during initial snapshot hydration or reconnect
+resync.
+
+The five existing toast test cases in `room-store-review.test.ts` must be retained and rewritten
+to drive the LiveQuery delta path.
 
 #### Reconnect re-subscribe
 
@@ -418,14 +456,16 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
 **Work:**
 - Remove `goal.updated` and `goal.progressUpdated` emits from `goal-handlers.ts` (daemon-side).
 - When a room is selected, call `liveQuery.subscribe` with `tasks.byRoom` and `goals.byRoom`.
-- Handle `liveQuery.snapshot`: replace signal value entirely.
-- Handle `liveQuery.delta`: apply incremental updates using `added`/`removed`/`updated` arrays.
+- Handle `liveQuery.snapshot`: replace `this.tasks.value` / `this.goals.value` entirely.
+- Handle `liveQuery.delta`: apply incremental updates using `added`/`removed`/`updated` arrays;
+  within `updated` processing, implement the review-status toast logic (with hydration guard).
 - Call `liveQuery.unsubscribe` in the cleanup path when switching rooms or disconnecting.
 - Create `packages/web/src/hooks/useRoomLiveQuery.ts` — lifecycle adapter hook; room-store owns
   handles and signals, hook calls store methods on mount/unmount/room-switch.
 - Remove `hub.onEvent('room.task.update', ...)` and the three goal event listeners.
-- Retain the `room.overview` listener; remove only its task-update portion.
-- Rewrite affected tests in `room-store-review.test.ts`.
+- Retain the `room.overview` listener; remove only its `this.tasks.value` assignment.
+- Remove `this.tasks.value` population from `fetchInitialState` (the `room.get` call itself stays).
+- Rewrite affected tests in `room-store-review.test.ts`; retain all five toast test cases.
 - Add Vitest tests for `useRoomLiveQuery` hook.
 - Add/update E2E test: task created by agent appears in UI without page reload; switching rooms
   shows only the new room's tasks within one render cycle.
@@ -436,12 +476,18 @@ be no double-subscription: the hook calls `room-store.subscribeRoom(roomId)` and
   snapshot resyncs state.
 - After switching rooms, task list reflects only the new room's tasks within one render cycle.
 - `room.task.update`, `goal.created`, `goal.updated`, `goal.completed` listeners removed.
-- `room.overview` listener retained for room/session updates.
+- `room.overview` listener retained for `room`/`sessions` signal updates; `tasks.value` no longer
+  written by the `room.overview` handler or by `fetchInitialState`.
+- LiveQuery snapshot and delta are the sole writers to `this.tasks.value` and `this.goals.value`.
+- No other code path (event handler, RPC response) overwrites task or goal signals.
 - Goal progress updates surface in the UI (LiveQuery delivers them; were previously dropped).
 - `goal.updated` and `goal.progressUpdated` no longer emitted from `goal-handlers.ts`.
 - `goal.created` continues to be emitted from `goal-handlers.ts`.
+- Review-status toast fires when a LiveQuery delta `updated` entry transitions a known task to
+  `review`; toast is suppressed during snapshot hydration and reconnect resync.
 - No double-subscription: hook calls store methods; store owns handles.
-- `room-store-review.test.ts` rewritten to use `liveQuery.snapshot`/`liveQuery.delta`.
+- `room-store-review.test.ts` rewritten to use `liveQuery.snapshot`/`liveQuery.delta`; all five
+  existing review-toast test cases retained and passing.
 - All Vitest and E2E tests pass.
 
 ---
@@ -462,6 +508,13 @@ The daemon emits `state.groupMessages.delta` from two sites:
 - `packages/daemon/src/lib/room/runtime/human-message-routing.ts:97`
 
 Both sites become dead code once the frontend listener is removed. Task 5 must remove them.
+
+#### `task.getGroupMessages` RPC endpoint
+
+After Task 5 adoption, the `task.getGroupMessages` RPC endpoint (`task-handlers.ts:210–211`)
+becomes unused by the primary frontend path (`liveQuery.snapshot` now provides the initial load).
+**Retain the endpoint** — do not remove it. It may be used by external tooling, tests, or future
+consumers. No deprecation marker is needed in this task.
 
 #### Reconnect re-subscribe
 
