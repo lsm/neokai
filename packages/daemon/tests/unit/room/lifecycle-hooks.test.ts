@@ -321,6 +321,7 @@ describe('checkWorkerPrMerged', () => {
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('gh pr merge');
 		expect(result.bounceMessage).toContain('OPEN');
+		expect(result.bounceMessage).toContain('feat/add-alerts');
 	});
 
 	test('fails when PR state is CLOSED with reopen instructions', async () => {
@@ -332,6 +333,7 @@ describe('checkWorkerPrMerged', () => {
 		expect(result.pass).toBe(false);
 		expect(result.reason).toContain('CLOSED');
 		expect(result.bounceMessage).toContain('gh pr reopen');
+		expect(result.bounceMessage).toContain('feat/add-alerts');
 	});
 
 	test('passes gracefully when git fails', async () => {
@@ -380,6 +382,7 @@ describe('checkLeaderPrMerged', () => {
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('send_to_worker');
 		expect(result.bounceMessage).toContain('OPEN');
+		expect(result.bounceMessage).toContain('feat/add-alerts');
 	});
 
 	test('fails when PR state is CLOSED with reopen instructions', async () => {
@@ -391,6 +394,7 @@ describe('checkLeaderPrMerged', () => {
 		expect(result.pass).toBe(false);
 		expect(result.reason).toContain('CLOSED');
 		expect(result.bounceMessage).toContain('gh pr reopen');
+		expect(result.bounceMessage).toContain('feat/add-alerts');
 	});
 
 	test('passes gracefully when git fails', async () => {

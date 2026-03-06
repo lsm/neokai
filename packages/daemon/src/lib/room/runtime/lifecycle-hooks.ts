@@ -245,11 +245,11 @@ export async function checkWorkerPrMerged(
 			reason: `PR on branch "${branch}" is CLOSED (closed without merging). Cannot merge a closed PR directly.`,
 			bounceMessage:
 				`The PR for branch "${branch}" is CLOSED — it was closed without merging.\n\n` +
-				'A closed PR cannot be merged directly. To fix this:\n' +
-				'1. Reopen the PR: `gh pr reopen ${branch}`\n' +
-				'2. Then merge: `gh pr merge ${branch} --merge`\n' +
-				'3. Verify: `gh pr view ${branch} --json state --jq .state` (must return "MERGED")\n' +
-				'4. Then finish your response.',
+				`A closed PR cannot be merged directly. To fix this:\n` +
+				`1. Reopen the PR: \`gh pr reopen ${branch}\`\n` +
+				`2. Then merge: \`gh pr merge ${branch} --merge\`\n` +
+				`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
+				`4. Then finish your response.`,
 		};
 	}
 
@@ -258,11 +258,11 @@ export async function checkWorkerPrMerged(
 		reason: `PR on branch "${branch}" is not merged (state: ${prState}). Worker must merge before exiting.`,
 		bounceMessage:
 			`The PR for branch "${branch}" is not merged yet (state: ${prState}).\n\n` +
-			'You were asked to merge the PR. Please complete this step:\n' +
-			'1. Run: `gh pr merge ${branch} --merge`\n' +
-			'2. If that fails, try: `gh pr merge ${branch} --squash`\n' +
-			'3. Verify: `gh pr view ${branch} --json state --jq .state` (must return "MERGED")\n' +
-			'4. Then finish your response.',
+			`You were asked to merge the PR. Please complete this step:\n` +
+			`1. Run: \`gh pr merge ${branch} --merge\`\n` +
+			`2. If that fails, try: \`gh pr merge ${branch} --squash\`\n` +
+			`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
+			`4. Then finish your response.`,
 	};
 }
 
