@@ -476,6 +476,26 @@ describe('SessionRepository', () => {
 			expect(session?.config.spawnClaudeCodeProcess).toBeUndefined();
 		});
 
+		it('should not false-positive on shared (diamond) references in config', () => {
+			repository.createSession(createDefaultSession());
+
+			// A shared object appearing at two separate paths is NOT a cycle.
+			// A flat WeakSet would incorrectly throw here; native JSON.stringify handles it fine.
+			const shared = { command: 'mcp-server' };
+			const configWithDiamond = {
+				model: 'claude-sonnet-4-5-20250929',
+				extra1: shared,
+				extra2: shared, // same reference, different path — valid
+			} as SessionConfig;
+
+			expect(() =>
+				repository.updateSession('session-1', { config: configWithDiamond })
+			).not.toThrow();
+
+			const session = repository.getSession('session-1');
+			expect(session?.config.model).toBe('claude-sonnet-4-5-20250929');
+		});
+
 		it('should throw a clear error when config contains a circular reference', () => {
 			repository.createSession(createDefaultSession());
 

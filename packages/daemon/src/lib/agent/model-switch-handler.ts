@@ -195,8 +195,9 @@ export class ModelSwitchHandler {
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
-				// Update provider in session config for cross-provider switches
-				if (isCrossProviderSwitch && newProviderInstance?.id) {
+				// Keep provider aligned with model (same as the pre-query branch —
+				// unconditionally update so same-provider switches don’t leave stale state).
+				if (newProviderInstance?.id) {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
 					session.config.provider = newProviderInstance.id as any;
 				}
@@ -206,10 +207,9 @@ export class ModelSwitchHandler {
 				db.updateSession(session.id, {
 					config: {
 						model: resolvedModel,
-						...(isCrossProviderSwitch &&
-							newProviderInstance?.id && {
-								provider: newProviderInstance.id as 'anthropic' | 'glm',
-							}),
+						...(newProviderInstance?.id && {
+							provider: newProviderInstance.id as 'anthropic' | 'glm',
+						}),
 					} as SessionConfig,
 				});
 
