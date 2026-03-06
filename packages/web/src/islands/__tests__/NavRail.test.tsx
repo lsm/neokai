@@ -122,18 +122,19 @@ describe('NavRail', () => {
 	});
 
 	describe('Mobile Visibility', () => {
-		it('should have -translate-x-full class for mobile (hidden via transform on small screens)', () => {
+		it('should be hidden on mobile via hidden class', () => {
 			const { container } = render(<NavRail />);
 
 			const navRail = container.querySelector('div');
-			expect(navRail?.className).toContain('-translate-x-full');
+			expect(navRail?.className).toContain('hidden');
 		});
 
-		it('should have md:translate-x-0 class for tablet/desktop visibility', () => {
+		it('should be visible on desktop via md:flex class', () => {
 			const { container } = render(<NavRail />);
 
 			const navRail = container.querySelector('div');
-			expect(navRail?.className).toContain('md:translate-x-0');
+			expect(navRail?.className).toContain('md:relative');
+			expect(navRail?.className).toContain('md:flex');
 		});
 
 		it('should have correct width class (w-16)', () => {

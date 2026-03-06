@@ -115,8 +115,9 @@ describe('SessionStatusBar', () => {
 				<SessionStatusBar {...defaultProps} contextUsage={mockContextUsage} />
 			);
 
-			// Should show percentage
-			expect(container.textContent).toContain('25.0%');
+			// Should show circle with percentage number
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 	});
 
@@ -308,22 +309,23 @@ describe('SessionStatusBar', () => {
 	});
 
 	describe('Context Usage Display', () => {
-		it('should display context percentage', () => {
+		it('should display context percentage in circle', () => {
 			const { container } = render(
 				<SessionStatusBar {...defaultProps} contextUsage={mockContextUsage} />
 			);
 
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 
-		it('should display progress bar', () => {
+		it('should display circle indicator', () => {
 			const { container } = render(
 				<SessionStatusBar {...defaultProps} contextUsage={mockContextUsage} />
 			);
 
-			// Should have a progress bar
-			const progressBar = container.querySelector('.bg-dark-700.rounded-full');
-			expect(progressBar).toBeTruthy();
+			// Should have an SVG circle indicator
+			const svg = container.querySelector('svg circle');
+			expect(svg).toBeTruthy();
 		});
 
 		it('should use default max context when not provided', () => {
@@ -332,7 +334,8 @@ describe('SessionStatusBar', () => {
 			);
 
 			// Should render without error
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 
 		it('should use custom max context when provided', () => {
@@ -345,7 +348,8 @@ describe('SessionStatusBar', () => {
 			);
 
 			// Should render with the context percentage
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 	});
 

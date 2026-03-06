@@ -75,6 +75,117 @@ describe('RoomTasks', () => {
 			expect(header).toBeTruthy();
 			expect(header?.textContent).toContain('Review');
 		});
+
+		it('should show Approve button for review tasks when onApprove is provided', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('t1', 'review', { title: 'Review me' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Approve')
+			);
+			expect(approveBtn).toBeTruthy();
+		});
+
+		it('should show View button for review tasks when onView is provided', () => {
+			const onView = vi.fn();
+			const tasks = [createTask('t1', 'review', { title: 'Review me' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			);
+			expect(viewBtn).toBeTruthy();
+		});
+
+		it('should NOT show View button when onView is not provided', () => {
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			);
+			expect(viewBtn).toBeFalsy();
+		});
+
+		it('should call onView with task id when View button is clicked', () => {
+			const onView = vi.fn();
+			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			) as HTMLButtonElement;
+			fireEvent.click(viewBtn);
+
+			expect(onView).toHaveBeenCalledWith('task-42');
+		});
+
+		it('should show both Approve and View buttons when both callbacks are provided', () => {
+			const onApprove = vi.fn();
+			const onView = vi.fn();
+			const tasks = [createTask('t1', 'review', { title: 'Review me' })];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onApprove={onApprove} onView={onView} />
+			);
+
+			const btns = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+			expect(btns.some((t) => t?.includes('Approve'))).toBe(true);
+			expect(btns.some((t) => t?.includes('View'))).toBe(true);
+		});
+
+		it('should NOT show View button for non-review tasks', () => {
+			const onView = vi.fn();
+			const tasks = [createTask('t1', 'in_progress')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onView={onView} />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			);
+			expect(viewBtn).toBeFalsy();
+		});
+
+		it('should NOT call onTaskClick when Approve button is clicked (stopPropagation)', () => {
+			const onApprove = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onApprove={onApprove} onTaskClick={onTaskClick} />
+			);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Approve')
+			) as HTMLButtonElement;
+			fireEvent.click(approveBtn);
+
+			expect(onApprove).toHaveBeenCalledWith('task-42');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
+
+		it('should NOT call onTaskClick when View button is clicked (stopPropagation)', () => {
+			const onView = vi.fn();
+			const onTaskClick = vi.fn();
+			const tasks = [createTask('task-42', 'review', { title: 'Review me' })];
+
+			const { container } = render(
+				<RoomTasks tasks={tasks} onView={onView} onTaskClick={onTaskClick} />
+			);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			) as HTMLButtonElement;
+			fireEvent.click(viewBtn);
+
+			expect(onView).toHaveBeenCalledWith('task-42');
+			expect(onTaskClick).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Pending Section', () => {

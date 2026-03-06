@@ -10,7 +10,7 @@ import { signal } from '@preact/signals';
 
 describe('MainContent Logic', () => {
 	describe('Session Selection Logic', () => {
-		it('should show RecentSessions when no session is selected', () => {
+		it('should show Lobby when no session is selected', () => {
 			const currentSessionId = signal<string | null>(null);
 			const sessions = signal([
 				{ id: 'session-1', title: 'Session 1' },
@@ -23,7 +23,7 @@ describe('MainContent Logic', () => {
 
 			expect(sessionId).toBeNull();
 			expect(sessionExists).toBeFalsy();
-			// Component would render RecentSessions
+			// Component would render Lobby
 		});
 
 		it('should show ChatContainer when a valid session is selected', () => {
@@ -42,7 +42,7 @@ describe('MainContent Logic', () => {
 			// Component would render ChatContainer
 		});
 
-		it('should show RecentSessions when selected session does not exist in list', () => {
+		it('should show Lobby when selected session does not exist in list', () => {
 			const currentSessionId = signal<string | null>('deleted-session');
 			const sessions = signal([
 				{ id: 'session-1', title: 'Session 1' },
@@ -55,10 +55,10 @@ describe('MainContent Logic', () => {
 
 			expect(sessionId).toBe('deleted-session');
 			expect(sessionExists).toBe(false);
-			// Component would render RecentSessions (handles deleted session case)
+			// Component would render Lobby (handles deleted session case)
 		});
 
-		it('should show RecentSessions when sessions list is empty', () => {
+		it('should show Lobby when sessions list is empty', () => {
 			const currentSessionId = signal<string | null>('session-1');
 			const sessions = signal<Array<{ id: string; title: string }>>([]);
 
@@ -68,7 +68,7 @@ describe('MainContent Logic', () => {
 
 			expect(sessionsList.length).toBe(0);
 			expect(sessionExists).toBe(false);
-			// Component would render RecentSessions
+			// Component would render Lobby
 		});
 	});
 
@@ -206,26 +206,26 @@ describe('MainContent Logic', () => {
 			expect(showChatContainer).toBe(true);
 		});
 
-		it('should determine RecentSessions view when no session', () => {
+		it('should determine Lobby view when no session', () => {
 			const currentSessionId: string | null = null;
 			const sessions = [{ id: 'session-1' }, { id: 'session-2' }];
 
 			const showChatContainer =
 				currentSessionId !== null && sessions.some((s) => s.id === currentSessionId);
-			const showRecentSessions = !showChatContainer;
+			const showLobby = !showChatContainer;
 
-			expect(showRecentSessions).toBe(true);
+			expect(showLobby).toBe(true);
 		});
 
-		it('should determine RecentSessions view when session not found', () => {
+		it('should determine Lobby view when session not found', () => {
 			const currentSessionId = 'deleted-session';
 			const sessions = [{ id: 'session-1' }, { id: 'session-2' }];
 
 			const showChatContainer =
 				currentSessionId !== null && sessions.some((s) => s.id === currentSessionId);
-			const showRecentSessions = !showChatContainer;
+			const showLobby = !showChatContainer;
 
-			expect(showRecentSessions).toBe(true);
+			expect(showLobby).toBe(true);
 		});
 	});
 });

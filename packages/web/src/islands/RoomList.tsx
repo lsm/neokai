@@ -1,5 +1,6 @@
 import type { Room } from '@neokai/shared';
 import { lobbyStore } from '../lib/lobby-store.ts';
+import { roomStore } from '../lib/room-store.ts';
 import { navigateToRoom } from '../lib/router.ts';
 
 interface RoomListProps {
@@ -9,6 +10,8 @@ interface RoomListProps {
 
 export function RoomList({ onRoomSelect }: RoomListProps) {
 	const rooms = lobbyStore.rooms.value;
+	const activeRoomId = roomStore.roomId.value;
+	const reviewTaskCount = roomStore.reviewTaskCount.value;
 
 	const handleRoomClick = (roomId: string) => {
 		navigateToRoom(roomId);
@@ -26,7 +29,12 @@ export function RoomList({ onRoomSelect }: RoomListProps) {
 			)}
 
 			{rooms.map((room) => (
-				<RoomListItem key={room.id} room={room} onClick={() => handleRoomClick(room.id)} />
+				<RoomListItem
+					key={room.id}
+					room={room}
+					onClick={() => handleRoomClick(room.id)}
+					reviewCount={activeRoomId === room.id ? reviewTaskCount : 0}
+				/>
 			))}
 		</div>
 	);
@@ -35,11 +43,13 @@ export function RoomList({ onRoomSelect }: RoomListProps) {
 interface RoomListItemProps {
 	room: Room;
 	onClick: () => void;
+	reviewCount?: number;
 }
 
-function RoomListItem({ room, onClick }: RoomListItemProps) {
+function RoomListItem({ room, onClick, reviewCount }: RoomListItemProps) {
 	const sessionCount = room.sessionIds.length;
 	const isArchived = room.status === 'archived';
+	const hasReview = (reviewCount ?? 0) > 0;
 
 	return (
 		<button
@@ -51,9 +61,16 @@ function RoomListItem({ room, onClick }: RoomListItemProps) {
 		>
 			<div class="flex items-center justify-between">
 				<h3 class="font-medium text-gray-100 truncate text-sm">{room.name}</h3>
-				{isArchived && (
-					<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">Archived</span>
-				)}
+				<div class="flex items-center gap-1.5 flex-shrink-0">
+					{hasReview && (
+						<span class="text-xs bg-purple-800/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium">
+							{reviewCount} review{reviewCount !== 1 ? 's' : ''}
+						</span>
+					)}
+					{isArchived && (
+						<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">Archived</span>
+					)}
+				</div>
 			</div>
 			{room.background && <p class="text-xs text-gray-500 mt-1 truncate">{room.background}</p>}
 			<div class="flex items-center gap-3 mt-2 text-xs text-gray-400">

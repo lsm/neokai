@@ -32,6 +32,7 @@ import { createSession } from '../lib/api-helpers';
 import { toast } from '../lib/toast';
 import { createRoomModalSignal } from '../lib/signals';
 import { isUserSession } from '../lib/session-utils';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
@@ -106,10 +107,11 @@ export default function Lobby() {
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
 			{/* Header - compact on mobile, expanded on desktop */}
-			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-3 py-2 md:px-4 md:py-4 pl-16 md:pl-4">
+			<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-3 py-2 md:px-4 md:py-4">
 				<div class="flex items-center justify-between gap-2">
+					<MobileMenuButton />
 					{/* Mobile: title only (no subtitle to save space) */}
-					<div class="min-w-0">
+					<div class="min-w-0 flex-1">
 						<h2 class="text-lg md:text-xl font-bold text-gray-100 truncate">Neo Lobby</h2>
 						<p class="hidden md:block text-sm text-gray-400 mt-0.5">Your agent command center</p>
 					</div>

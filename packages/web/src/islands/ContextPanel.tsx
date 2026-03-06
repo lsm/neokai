@@ -5,16 +5,26 @@ import {
 	currentRoomIdSignal,
 	settingsSectionSignal,
 	createRoomModalSignal,
+	type NavSection,
 	type SettingsSection,
 } from '../lib/signals.ts';
 import { authStatus, connectionState } from '../lib/state.ts';
 import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
-import { navigateToSession } from '../lib/router.ts';
+import {
+	navigateToSession,
+	navigateToSessions,
+	navigateToSettings,
+	navigateToHome,
+	navigateToRooms,
+} from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import { cn } from '../lib/utils.ts';
 import { Button } from '../components/ui/Button.tsx';
+import { NavIconButton } from '../components/ui/NavIconButton.tsx';
+import { DaemonStatusIndicator } from '../components/DaemonStatusIndicator.tsx';
+import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
@@ -205,6 +215,24 @@ export function ContextPanel() {
 		contextPanelOpenSignal.value = false;
 	};
 
+	const handleMobileNavClick = (section: NavSection) => {
+		switch (section) {
+			case 'home':
+				navSectionSignal.value = 'home';
+				navigateToHome();
+				break;
+			case 'chats':
+				navigateToSessions();
+				break;
+			case 'rooms':
+				navigateToRooms();
+				break;
+			case 'settings':
+				navigateToSettings();
+				break;
+		}
+	};
+
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
@@ -232,6 +260,32 @@ export function ContextPanel() {
 					${isPanelOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
 				`}
 			>
+				{/* Mobile nav strip - replaces NavRail on mobile */}
+				<div
+					class={`flex items-center gap-1 px-2 py-2 border-b ${borderColors.ui.default} md:hidden`}
+				>
+					{MAIN_NAV_ITEMS.map((item) => (
+						<NavIconButton
+							key={item.id}
+							active={navSection === item.id}
+							onClick={() => handleMobileNavClick(item.id)}
+							label={item.label}
+						>
+							{item.icon}
+						</NavIconButton>
+					))}
+					<div class="ml-auto flex items-center gap-1">
+						<DaemonStatusIndicator />
+						<NavIconButton
+							active={navSection === SETTINGS_NAV_ITEM.id}
+							onClick={() => handleMobileNavClick(SETTINGS_NAV_ITEM.id)}
+							label={SETTINGS_NAV_ITEM.label}
+						>
+							{SETTINGS_NAV_ITEM.icon}
+						</NavIconButton>
+					</div>
+				</div>
+
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
 					<div class="flex items-center justify-between mb-3">

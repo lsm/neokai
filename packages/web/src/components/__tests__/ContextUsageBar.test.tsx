@@ -7,51 +7,9 @@
 import { describe, it, expect } from 'vitest';
  */
 
-import { render, cleanup, fireEvent, act } from '@testing-library/preact';
+import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { ContextInfo } from '@neokai/shared';
 import ContextUsageBar from '../ContextUsageBar';
-
-// Helper to create a mock ResizeObserver that fires with a specific width
-function createMockResizeObserver(width: number) {
-	return class MockResizeObserver {
-		private callback: ResizeObserverCallback;
-
-		constructor(callback: ResizeObserverCallback) {
-			this.callback = callback;
-		}
-
-		observe(_element: Element) {
-			// Fire immediately with the mocked width
-			const entry: ResizeObserverEntry = {
-				target: _element as Element,
-				contentRect: {
-					width,
-					height: 100,
-					top: 0,
-					left: 0,
-					bottom: 100,
-					right: width,
-					x: 0,
-					y: 0,
-					toJSON: () => ({}),
-				},
-				borderBoxSize: [] as unknown as ResizeObserverSize[],
-				contentBoxSize: [] as unknown as ResizeObserverSize[],
-				devicePixelContentBoxSize: [] as unknown as ResizeObserverSize[],
-			};
-
-			// Use setTimeout to simulate async behavior
-			setTimeout(() => {
-				act(() => {
-					this.callback([entry], this as unknown as ResizeObserver);
-				});
-			}, 0);
-		}
-
-		unobserve() {}
-		disconnect() {}
-	};
-}
 
 describe('ContextUsageBar', () => {
 	const mockContextUsage: ContextInfo = {
@@ -66,56 +24,31 @@ describe('ContextUsageBar', () => {
 		},
 	};
 
-	let originalResizeObserver: typeof ResizeObserver;
-
 	beforeEach(() => {
 		cleanup();
-		originalResizeObserver = window.ResizeObserver;
 	});
 
 	afterEach(() => {
 		cleanup();
-		window.ResizeObserver = originalResizeObserver;
 	});
 
 	describe('Basic Rendering', () => {
-		it('should render percentage text', () => {
+		it('should render circle indicator with percentage', () => {
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-			expect(container.textContent).toContain('25.0%');
-		});
-
-		it('should render progress bar', () => {
-			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
-
-			const progressBar = container.querySelector('.bg-dark-700.rounded-full');
-			expect(progressBar).toBeTruthy();
-		});
-
-		it('should render compact pie chart when container is narrow', async () => {
-			// Mock ResizeObserver to report narrow width (< 400px threshold)
-			window.ResizeObserver = createMockResizeObserver(300);
-
-			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
-
-			// Wait for ResizeObserver callback to fire
-			await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
-
-			const pieChart = container.querySelector('svg');
-			expect(pieChart).toBeTruthy();
-		});
-
-		it('should render percentage in pie chart center when compact', async () => {
-			// Mock ResizeObserver to report narrow width (< 400px threshold)
-			window.ResizeObserver = createMockResizeObserver(300);
-
-			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
-
-			// Wait for ResizeObserver callback to fire
-			await act(() => new Promise((resolve) => setTimeout(resolve, 10)));
+			const svg = container.querySelector('svg');
+			expect(svg).toBeTruthy();
 
 			const svgText = container.querySelector('svg text');
 			expect(svgText?.textContent).toBe('25');
+		});
+
+		it('should render progress arc in circle', () => {
+			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			const circles = container.querySelectorAll('svg circle');
+			// Background circle + progress arc
+			expect(circles.length).toBe(2);
 		});
 	});
 
@@ -157,17 +90,25 @@ describe('ContextUsageBar', () => {
 	});
 
 	describe('Progress Bar Width', () => {
-		it('should set progress bar width based on percentage', () => {
+		it('should set progress bar width in dropdown based on percentage', () => {
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			// Open dropdown to see the bar
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
 
 			const progressFill = container.querySelector('.bg-green-500');
 			const style = progressFill?.getAttribute('style');
 			expect(style).toContain('width: 25%');
 		});
 
-		it('should cap progress bar at 100%', () => {
+		it('should cap progress bar at 100% in dropdown', () => {
 			const overUsage: ContextInfo = { ...mockContextUsage, percentUsed: 150 };
 			const { container } = render(<ContextUsageBar contextUsage={overUsage} />);
+
+			// Open dropdown
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
 
 			const progressFill = container.querySelector('.bg-red-500');
 			const style = progressFill?.getAttribute('style');
@@ -344,7 +285,8 @@ describe('ContextUsageBar', () => {
 				<ContextUsageBar contextUsage={usageWithoutCapacity} maxContextTokens={200000} />
 			);
 
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 
 		it('should use custom max context when provided', () => {
@@ -352,8 +294,8 @@ describe('ContextUsageBar', () => {
 				<ContextUsageBar contextUsage={mockContextUsage} maxContextTokens={100000} />
 			);
 
-			// Should still render properly
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 	});
 
@@ -361,11 +303,12 @@ describe('ContextUsageBar', () => {
 		it('should handle undefined contextUsage', () => {
 			const { container } = render(<ContextUsageBar contextUsage={undefined} />);
 
-			// Should render without crashing
-			expect(container.textContent).toContain('0.0%');
+			// Should render without crashing, circle shows 0
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('0');
 		});
 
-		it('should show 0% when totalUsed is 0', () => {
+		it('should show 0 when totalUsed is 0', () => {
 			const emptyUsage: ContextInfo = {
 				totalUsed: 0,
 				totalCapacity: 200000,
@@ -373,7 +316,8 @@ describe('ContextUsageBar', () => {
 			};
 			const { container } = render(<ContextUsageBar contextUsage={emptyUsage} />);
 
-			expect(container.textContent).toContain('0.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('0');
 		});
 	});
 

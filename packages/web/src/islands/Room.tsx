@@ -22,6 +22,7 @@ import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../component
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 import { toast } from '../lib/toast';
 
 type RoomTab = 'chat' | 'overview' | 'context' | 'agents' | 'goals' | 'settings';
@@ -173,7 +174,10 @@ export default function Room({ roomId, sessionViewId, taskViewId, chatTabActive 
 					<>
 						{/* Header */}
 						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
-							<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
+							<div class="flex items-center gap-3">
+								<MobileMenuButton />
+								<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
+							</div>
 						</div>
 
 						{/* Tab bar */}

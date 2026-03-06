@@ -286,6 +286,7 @@ export class RoomRuntimeService {
 			taskManager,
 			groupRepo,
 			daemonHub: this.ctx.daemonHub,
+			runtimeService: this,
 		}) as unknown as McpServerConfig;
 
 		// Reuse the SessionManager-owned room chat AgentSession to avoid duplicate

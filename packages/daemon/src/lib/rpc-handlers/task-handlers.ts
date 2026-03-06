@@ -240,6 +240,9 @@ export function setupTaskHandlers(
 		if (!params.message.trim()) {
 			throw new Error('Message cannot be empty');
 		}
+		if (params.message.length > 10_000) {
+			throw new Error('Message is too long (max 10,000 characters)');
+		}
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.sendHumanMessage');
 		}
@@ -262,7 +265,8 @@ export function setupTaskHandlers(
 			runtime,
 			groupRepo,
 			params.taskId,
-			params.message
+			params.message.trim(),
+			messageHub
 		);
 
 		if (!result.success) {

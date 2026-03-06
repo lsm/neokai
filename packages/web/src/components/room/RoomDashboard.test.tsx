@@ -461,6 +461,35 @@ describe('RoomDashboard', () => {
 
 			expect(container.textContent).toContain('Tasks');
 		});
+
+		it('should call navigateToRoomTask when View button is clicked on a review task', async () => {
+			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
+
+			const { container } = render(<RoomDashboard />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			)!;
+			expect(viewBtn).toBeTruthy();
+
+			await fireEvent.click(viewBtn);
+
+			expect(mockNavigateToRoomTask).toHaveBeenCalledWith('room-1', 'task-99');
+		});
+
+		it('should NOT call onTaskClick row handler when View button is clicked', async () => {
+			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
+
+			const { container } = render(<RoomDashboard />);
+
+			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('View')
+			)!;
+			await fireEvent.click(viewBtn);
+
+			// navigateToRoomTask should be called exactly once (from onView), not twice
+			expect(mockNavigateToRoomTask).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('Sessions Section', () => {

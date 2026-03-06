@@ -16,9 +16,10 @@ interface RoomTasksProps {
 	tasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
+	onView?: (taskId: string) => void;
 }
 
-export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
+export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksProps) {
 	if (tasks.length === 0) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
@@ -66,6 +67,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove }: RoomTasksProps) {
 								allTasks={tasks}
 								onClick={onTaskClick}
 								onApprove={onApprove}
+								onView={onView}
 							/>
 						))}
 					</div>
@@ -144,14 +146,17 @@ function TaskItem({
 	allTasks,
 	onClick,
 	onApprove,
+	onView,
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
 	onClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
+	onView?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
 	const showApprove = task.status === 'review' && !!onApprove;
+	const showView = task.status === 'review' && !!onView;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 
@@ -184,6 +189,17 @@ function TaskItem({
 							class="px-2 py-1 text-xs font-medium text-green-400 bg-green-900/20 hover:bg-green-900/40 border border-green-700/50 rounded transition-colors"
 						>
 							Approve
+						</button>
+					)}
+					{showView && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onView(task.id);
+							}}
+							class="px-2 py-1 text-xs font-medium text-blue-400 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-700/50 rounded transition-colors"
+						>
+							View
 						</button>
 					)}
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
