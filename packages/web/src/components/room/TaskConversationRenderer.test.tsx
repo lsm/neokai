@@ -278,6 +278,7 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		await waitFor(() => {
 			expect(onCountChange).toHaveBeenCalledWith(2);
 		});
+		await act(async () => {}); // flush pending async effects
 		expect(onCountChange).not.toHaveBeenCalledWith(3);
 	});
 
@@ -298,6 +299,7 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		act(() => {
 			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
 		});
+		await act(async () => {}); // flush pending async effects
 
 		// Count must remain 1 — replay is silently dropped
 		expect(onCountChange).not.toHaveBeenCalledWith(2);
@@ -346,6 +348,29 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		await waitFor(() => {
 			expect(onCountChange).toHaveBeenCalledWith(1);
 		});
+		await act(async () => {}); // flush pending async effects
 		expect(onCountChange).not.toHaveBeenCalledWith(2);
+	});
+
+	it('preserves buffered deltas when the initial fetch fails', async () => {
+		// The fetch rejects — buffered deltas should still be applied so live messages appear.
+		mockRequest.mockImplementation(async () => {
+			throw new Error('network error');
+		});
+
+		const onCountChange = vi.fn();
+		render(<TaskConversationRenderer groupId="group-1" onMessageCountChange={onCountChange} />);
+
+		// Delta arrives while the (doomed) fetch is in-flight
+		const liveMsg = makeRawMessage(1, 'assistant', 'uuid-live');
+		const parsed = JSON.parse(liveMsg.content) as { uuid?: string };
+		act(() => {
+			deltaHandler?.({ added: [parsed], timestamp: Date.now() });
+		});
+
+		// After the fetch rejects, buffered delta should surface
+		await waitFor(() => {
+			expect(onCountChange).toHaveBeenCalledWith(1);
+		});
 	});
 });

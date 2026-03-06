@@ -139,6 +139,7 @@ export function TaskConversationRenderer({
 		);
 
 		const fetchAllMessages = async () => {
+			let fetchError = false;
 			try {
 				const allGroupMessages: GroupMessage[] = [];
 				let afterId = 0;
@@ -186,8 +187,19 @@ export function TaskConversationRenderer({
 				}
 			} catch {
 				// Non-fatal: group may not have messages yet
+				fetchError = true;
 			} finally {
 				if (!cancelled) {
+					// On fetch error, flush any buffered deltas so live messages aren't lost.
+					if (fetchError && pendingDeltasRef.current.length > 0) {
+						const remainingDeltas = pendingDeltasRef.current.filter((m) => {
+							const id = getMessageId(m);
+							if (id && seenIdsRef.current.has(id)) return false;
+							if (id) seenIdsRef.current.add(id);
+							return true;
+						});
+						if (remainingDeltas.length > 0) setMessages(remainingDeltas);
+					}
 					fetchingRef.current = false;
 					pendingDeltasRef.current = [];
 					setLoading(false);

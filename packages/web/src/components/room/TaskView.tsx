@@ -277,31 +277,34 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setAutoScroll(true);
 	}, [scrollToBottom]);
 
-	const fetchGroup = async () => {
-		try {
-			const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
-				roomId,
-				taskId,
-			});
-			setGroup(res.group);
-		} catch {
-			// Group fetch failure is non-fatal — task may not have a group yet
-		}
-	};
-
 	useEffect(() => {
 		const channel = `room:${roomId}`;
 		joinRoom(channel);
+		let cancelled = false;
+
+		const fetchGroup = async () => {
+			try {
+				const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
+					roomId,
+					taskId,
+				});
+				if (!cancelled) setGroup(res.group);
+			} catch {
+				// Group fetch failure is non-fatal — task may not have a group yet
+			}
+		};
 
 		const load = async () => {
 			try {
 				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
-				setTask(taskRes.task);
-				await fetchGroup();
+				if (!cancelled) {
+					setTask(taskRes.task);
+					await fetchGroup();
+				}
 			} catch (err) {
-				setError(err instanceof Error ? err.message : 'Failed to load task');
+				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load task');
 			} finally {
-				setLoading(false);
+				if (!cancelled) setLoading(false);
 			}
 		};
 
@@ -310,12 +313,13 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
 		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
 			if (event.task.id === taskId) {
-				setTask(event.task);
-				fetchGroup();
+				if (!cancelled) setTask(event.task);
+				void fetchGroup();
 			}
 		});
 
 		return () => {
+			cancelled = true;
 			unsub();
 			leaveRoom(channel);
 		};
