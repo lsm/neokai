@@ -687,8 +687,16 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group || group.state !== 'awaiting_human') return false;
 
-		// Set approved when explicitly requested or when resuming a planner (always an approval)
-		if (opts?.approved || group.workerRole === 'planner') {
+		// Verify the task belongs to this runtime's room
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return false;
+
+		// Set approved when:
+		// - explicitly requested via opts.approved === true, OR
+		// - resuming a planner (always treated as an approval) UNLESS explicitly denied
+		const shouldApprove =
+			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
+		if (shouldApprove) {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
