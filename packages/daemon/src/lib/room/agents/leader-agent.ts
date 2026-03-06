@@ -256,9 +256,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(
 				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
 			);
-			sections.push(
-				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`
-			);
+			sections.push(`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`);
 			sections.push(`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``);
 		} else {
 			sections.push(`\n## Code Review Guidelines\n`);
