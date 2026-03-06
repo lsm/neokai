@@ -136,105 +136,265 @@ async function waitForSDKMessage(
 }
 
 describe('Model Switch System Init Message', () => {
-		let daemon: DaemonServerContext;
+	let daemon: DaemonServerContext;
 
-		// Skip all tests if no Anthropic credentials (model switching requires Claude SDK)
-		const hasAnthropicCredentials =
-			process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	// Skip all tests if no Anthropic credentials (model switching requires Claude SDK)
+	const hasAnthropicCredentials =
+		process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
-		beforeEach(async () => {
-			if (!hasAnthropicCredentials) {
-				return; // Skip setup if no credentials
-			}
-			daemon = await createDaemonServer();
-		}, 30000);
+	beforeEach(async () => {
+		if (!hasAnthropicCredentials) {
+			return; // Skip setup if no credentials
+		}
+		daemon = await createDaemonServer();
+	}, 30000);
 
-		afterEach(async () => {
-			if (!hasAnthropicCredentials) {
-				return; // Skip cleanup if no credentials
-			}
-			if (daemon) {
-				daemon.kill('SIGTERM');
-				await daemon.waitForExit();
-			}
-		}, 20000);
+	afterEach(async () => {
+		if (!hasAnthropicCredentials) {
+			return; // Skip cleanup if no credentials
+		}
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, 20000);
 
-		test('should show correct model in system:init after switching to opus', async () => {
-			if (!hasAnthropicCredentials) {
-				console.log('Skipping - no Anthropic API credentials');
-				return;
-			}
-			// 1. Create session with Sonnet model (default)
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-model-switch-system-init-${Date.now()}`,
-				title: 'Model Switch System Init Test',
-				config: {
-					model: 'sonnet', // Start with Sonnet
-					permissionMode: 'acceptEdits',
-				},
-			})) as { sessionId: string };
+	test('should show correct model in system:init after switching to opus', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
+		// 1. Create session with Sonnet model (default)
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-model-switch-system-init-${Date.now()}`,
+			title: 'Model Switch System Init Test',
+			config: {
+				model: 'sonnet', // Start with Sonnet
+				permissionMode: 'acceptEdits',
+			},
+		})) as { sessionId: string };
 
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
 
-			// 2. Switch model to Opus
-			const switchResult = (await daemon.messageHub.request('session.model.switch', {
-				sessionId,
-				model: 'opus',
-			})) as { success: boolean; model: string; error?: string };
+		// 2. Switch model to Opus
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
+			sessionId,
+			model: 'opus',
+		})) as { success: boolean; model: string; error?: string };
 
-			expect(switchResult.success).toBe(true);
-			expect(switchResult.model).toBe('opus');
+		expect(switchResult.success).toBe(true);
+		expect(switchResult.model).toBe('opus');
 
-			// Verify session config was updated
-			const sessionAfterSwitch = (await daemon.messageHub.request('session.get', {
-				sessionId,
-			})) as { session: { config: { model: string } } };
-			expect(sessionAfterSwitch.session.config.model).toBe('opus');
+		// Verify session config was updated
+		const sessionAfterSwitch = (await daemon.messageHub.request('session.get', {
+			sessionId,
+		})) as { session: { config: { model: string } } };
+		expect(sessionAfterSwitch.session.config.model).toBe('opus');
 
-			// 3. Send a message (this triggers SDK to emit system:init)
-			// Set up subscription BEFORE sending message to catch system:init
+		// 3. Send a message (this triggers SDK to emit system:init)
+		// Set up subscription BEFORE sending message to catch system:init
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+
+		await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
+
+		// 4. Wait for system:init message
+		const systemInitMessage = await systemInitPromise;
+
+		// 5. Verify system:init shows Opus model
+		expect(systemInitMessage.type).toBe('system');
+		expect(systemInitMessage.subtype).toBe('init');
+		expect(systemInitMessage.model).toBeDefined();
+
+		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
+		// Note: 'default' is the legacy Sonnet identifier, 'sonnet' is the new canonical ID
+		const model = systemInitMessage.model as string;
+		const isOpusModel = model === 'opus' || model.includes('opus');
+		if (!isOpusModel) {
+			// Log the actual model value for debugging
+			console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
+		}
+		expect(isOpusModel).toBe(true);
+
+		// Wait for processing to complete
+		await waitForIdle(daemon, sessionId, 60000);
+
+		// Verify final state
+		const finalState = (await daemon.messageHub.request('agent.getState', {
+			sessionId,
+		})) as { state: { status: string } };
+		expect(finalState.state.status).toBe('idle');
+	}, 90000);
+
+	test('should show correct model in system:init when switching from sonnet to haiku', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
+		// Create session with Sonnet
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku-${Date.now()}`,
+			title: 'Sonnet to Haiku Test',
+			config: {
+				model: 'sonnet',
+				permissionMode: 'acceptEdits',
+			},
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		// Switch to Haiku
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
+			sessionId,
+			model: 'haiku',
+		})) as { success: boolean; model: string };
+
+		expect(switchResult.success).toBe(true);
+		expect(switchResult.model).toBe('haiku');
+
+		// Send message and wait for system:init
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+		await sendMessage(daemon, sessionId, 'Say hello. Just respond "Hello".');
+
+		const systemInitMessage = await systemInitPromise;
+
+		// Verify system:init shows Haiku model
+		expect(systemInitMessage.type).toBe('system');
+		expect(systemInitMessage.subtype).toBe('init');
+
+		const model = systemInitMessage.model as string;
+		const isHaikuModel = model === 'haiku' || model.includes('haiku');
+		if (!isHaikuModel) {
+			console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+		}
+		expect(isHaikuModel).toBe(true);
+
+		// Wait for completion
+		await waitForIdle(daemon, sessionId, 60000);
+	}, 90000);
+
+	test('should show correct model when switching before first message', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
+		// Create session
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-switch-before-first-message-${Date.now()}`,
+			title: 'Switch Before First Message Test',
+			config: {
+				model: 'sonnet',
+				permissionMode: 'acceptEdits',
+			},
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		// Switch model BEFORE sending any messages
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
+			sessionId,
+			model: 'haiku',
+		})) as { success: boolean; model: string };
+
+		expect(switchResult.success).toBe(true);
+
+		// Send first message - should use Haiku from the start
+		const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+		await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
+
+		const systemInitMessage = await systemInitPromise;
+
+		// System:init should show Haiku (the switched model)
+		const model = systemInitMessage.model as string;
+		const isHaikuModel = model === 'haiku' || model.includes('haiku');
+		if (!isHaikuModel) {
+			console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+		}
+		expect(isHaikuModel).toBe(true);
+
+		await waitForIdle(daemon, sessionId, 60000);
+	}, 90000);
+
+	// Skip: Flaky test due to API rate limits/timing issues in CI
+	test.skip('should show correct model when switching AFTER query is already running', async () => {
+		if (!hasAnthropicCredentials) {
+			console.log('Skipping - no Anthropic API credentials');
+			return;
+		}
+		// Create session with Sonnet
+		const createResult = (await daemon.messageHub.request('session.create', {
+			workspacePath: `${TMP_DIR}/test-switch-after-running-${Date.now()}`,
+			title: 'Switch After Running Test',
+			config: {
+				model: 'sonnet',
+				permissionMode: 'acceptEdits',
+			},
+		})) as { sessionId: string };
+
+		const { sessionId } = createResult;
+		daemon.trackSession(sessionId);
+
+		// Send first message to START the query with Sonnet
+		await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
+		await waitForIdle(daemon, sessionId, 60000);
+
+		// NOW switch to Opus (query is already running)
+		const switchResult = (await daemon.messageHub.request('session.model.switch', {
+			sessionId,
+			model: 'opus',
+		})) as { success: boolean; model: string };
+
+		expect(switchResult.success).toBe(true);
+		expect(switchResult.model).toBe('opus');
+
+		// Send second message - should get system:init with Opus.
+		// Retry once because real provider startup can intermittently timeout in CI.
+		let systemInitMessage: Record<string, unknown> | undefined;
+		let lastError: unknown;
+		for (let attempt = 1; attempt <= 2; attempt++) {
 			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-
-			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
-
-			// 4. Wait for system:init message
-			const systemInitMessage = await systemInitPromise;
-
-			// 5. Verify system:init shows Opus model
-			expect(systemInitMessage.type).toBe('system');
-			expect(systemInitMessage.subtype).toBe('init');
-			expect(systemInitMessage.model).toBeDefined();
-
-			// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
-			// Note: 'default' is the legacy Sonnet identifier, 'sonnet' is the new canonical ID
-			const model = systemInitMessage.model as string;
-			const isOpusModel = model === 'opus' || model.includes('opus');
-			if (!isOpusModel) {
-				// Log the actual model value for debugging
-				console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
-			}
-			expect(isOpusModel).toBe(true);
-
-			// Wait for processing to complete
-			await waitForIdle(daemon, sessionId, 60000);
-
-			// Verify final state
-			const finalState = (await daemon.messageHub.request('agent.getState', {
+			await sendMessage(
+				daemon,
 				sessionId,
-			})) as { state: { status: string } };
-			expect(finalState.state.status).toBe('idle');
-		}, 90000);
-
-		test('should show correct model in system:init when switching from sonnet to haiku', async () => {
-			if (!hasAnthropicCredentials) {
-				console.log('Skipping - no Anthropic API credentials');
-				return;
+				attempt === 1 ? 'What is 2+2? Just the number.' : 'Retry: what is 3+3? Just the number.'
+			);
+			try {
+				systemInitMessage = await systemInitPromise;
+				break;
+			} catch (error) {
+				lastError = error;
+				// Best-effort settle before retrying.
+				await waitForIdle(daemon, sessionId, 60000).catch(() => {});
 			}
-			// Create session with Sonnet
+		}
+
+		if (!systemInitMessage) {
+			throw lastError instanceof Error ? lastError : new Error('Missing system:init after retry');
+		}
+
+		// Verify system:init shows Opus (not Sonnet)
+		// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
+		const model = systemInitMessage.model as string;
+		const isOpusModel = model === 'opus' || model.includes('opus');
+		if (!isOpusModel) {
+			// Log the actual model value for debugging
+			console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
+		}
+		expect(isOpusModel).toBe(true);
+
+		await waitForIdle(daemon, sessionId, 60000);
+	}, 120000);
+
+	// TODO: Re-enable when GLM API connectivity is stable
+	// These tests are flaky due to GLM API timeouts in CI
+	describe.skip('Cross-Provider Switching', () => {
+		test('should show correct model when switching from Claude to GLM', async () => {
+			// Create session with Claude Sonnet
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku-${Date.now()}`,
-				title: 'Sonnet to Haiku Test',
+				workspacePath: `${TMP_DIR}/test-switch-claude-to-glm-${Date.now()}`,
+				title: 'Claude to GLM Test',
 				config: {
 					model: 'sonnet',
 					permissionMode: 'acceptEdits',
@@ -244,7 +404,57 @@ describe('Model Switch System Init Message', () => {
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// Switch to Haiku
+			// Send first message with Claude
+			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Switch to GLM (cross-provider switch)
+			const switchResult = (await daemon.messageHub.request('session.model.switch', {
+				sessionId,
+				model: 'glm-5',
+			})) as { success: boolean; model: string };
+
+			expect(switchResult.success).toBe(true);
+			expect(switchResult.model).toBe('glm-5');
+
+			// Send message with GLM - should get system:init with GLM model
+			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
+
+			const systemInitMessage = await systemInitPromise;
+
+			// Verify system:init shows GLM model
+			// The SDK's system:init message returns the original GLM model ID (glm-5)
+			// even though translateModelIdForSdk translates it to 'default' for the query
+			const model = systemInitMessage.model as string;
+			const isGlmModel = model.includes('glm');
+			if (!isGlmModel) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
+			expect(isGlmModel).toBe(true);
+
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 120000);
+
+		test('should show correct model when switching from GLM to Claude', async () => {
+			// Create session with GLM
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: `${TMP_DIR}/test-switch-glm-to-claude-${Date.now()}`,
+				title: 'GLM to Claude Test',
+				config: {
+					model: 'glm-5',
+					permissionMode: 'acceptEdits',
+				},
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			// Send first message with GLM
+			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
+			await waitForIdle(daemon, sessionId, 60000);
+
+			// Switch to Claude Haiku (cross-provider switch)
 			const switchResult = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'haiku',
@@ -253,80 +463,28 @@ describe('Model Switch System Init Message', () => {
 			expect(switchResult.success).toBe(true);
 			expect(switchResult.model).toBe('haiku');
 
-			// Send message and wait for system:init
-			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-			await sendMessage(daemon, sessionId, 'Say hello. Just respond "Hello".');
-
-			const systemInitMessage = await systemInitPromise;
-
-			// Verify system:init shows Haiku model
-			expect(systemInitMessage.type).toBe('system');
-			expect(systemInitMessage.subtype).toBe('init');
-
-			const model = systemInitMessage.model as string;
-			const isHaikuModel = model === 'haiku' || model.includes('haiku');
-			if (!isHaikuModel) {
-				console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
-			}
-			expect(isHaikuModel).toBe(true);
-
-			// Wait for completion
-			await waitForIdle(daemon, sessionId, 60000);
-		}, 90000);
-
-		test('should show correct model when switching before first message', async () => {
-			if (!hasAnthropicCredentials) {
-				console.log('Skipping - no Anthropic API credentials');
-				return;
-			}
-			// Create session
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-switch-before-first-message-${Date.now()}`,
-				title: 'Switch Before First Message Test',
-				config: {
-					model: 'sonnet',
-					permissionMode: 'acceptEdits',
-				},
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Switch model BEFORE sending any messages
-			const switchResult = (await daemon.messageHub.request('session.model.switch', {
-				sessionId,
-				model: 'haiku',
-			})) as { success: boolean; model: string };
-
-			expect(switchResult.success).toBe(true);
-
-			// Send first message - should use Haiku from the start
+			// Send message with Claude - should get system:init with Claude model
 			const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
 			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
 
 			const systemInitMessage = await systemInitPromise;
 
-			// System:init should show Haiku (the switched model)
+			// Verify system:init shows Claude/Haiku model
 			const model = systemInitMessage.model as string;
-			const isHaikuModel = model === 'haiku' || model.includes('haiku');
-			if (!isHaikuModel) {
-				console.error(`Expected model to be 'haiku' or contain 'haiku', got: '${model}'`);
+			const isClaudeModel = model.includes('haiku') || model.includes('claude');
+			if (!isClaudeModel) {
+				console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
 			}
-			expect(isHaikuModel).toBe(true);
+			expect(isClaudeModel).toBe(true);
 
 			await waitForIdle(daemon, sessionId, 60000);
-		}, 90000);
+		}, 120000);
 
-		// Skip: Flaky test due to API rate limits/timing issues in CI
-		test.skip('should show correct model when switching AFTER query is already running', async () => {
-			if (!hasAnthropicCredentials) {
-				console.log('Skipping - no Anthropic API credentials');
-				return;
-			}
-			// Create session with Sonnet
+		test('should handle multiple cross-provider switches', async () => {
+			// Create session with Claude Sonnet
 			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: `${TMP_DIR}/test-switch-after-running-${Date.now()}`,
-				title: 'Switch After Running Test',
+				workspacePath: `${TMP_DIR}/test-multiple-cross-provider-switches-${Date.now()}`,
+				title: 'Multiple Cross-Provider Switches Test',
 				config: {
 					model: 'sonnet',
 					permissionMode: 'acceptEdits',
@@ -336,227 +494,68 @@ describe('Model Switch System Init Message', () => {
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// Send first message to START the query with Sonnet
-			await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
+			// 1. Start with Sonnet
+			let systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+			await sendMessage(daemon, sessionId, 'Message 1');
+			let systemInitMessage = await systemInitPromise;
+			let model = systemInitMessage.model as string;
+			const isValidModel =
+				model.includes('sonnet') || model.includes('claude') || model === 'default';
+			if (!isValidModel) {
+				console.error(`Expected model to be Sonnet, got: '${model}'`);
+			}
+			expect(isValidModel).toBe(true);
 			await waitForIdle(daemon, sessionId, 60000);
 
-			// NOW switch to Opus (query is already running)
-			const switchResult = (await daemon.messageHub.request('session.model.switch', {
+			// 2. Switch to GLM
+			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
-				model: 'opus',
-			})) as { success: boolean; model: string };
-
-			expect(switchResult.success).toBe(true);
-			expect(switchResult.model).toBe('opus');
-
-			// Send second message - should get system:init with Opus.
-			// Retry once because real provider startup can intermittently timeout in CI.
-			let systemInitMessage: Record<string, unknown> | undefined;
-			let lastError: unknown;
-			for (let attempt = 1; attempt <= 2; attempt++) {
-				const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(
-					daemon,
-					sessionId,
-					attempt === 1 ? 'What is 2+2? Just the number.' : 'Retry: what is 3+3? Just the number.'
-				);
-				try {
-					systemInitMessage = await systemInitPromise;
-					break;
-				} catch (error) {
-					lastError = error;
-					// Best-effort settle before retrying.
-					await waitForIdle(daemon, sessionId, 60000).catch(() => {});
-				}
+				model: 'glm-5',
+			});
+			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+			await sendMessage(daemon, sessionId, 'Message 2');
+			systemInitMessage = await systemInitPromise;
+			model = systemInitMessage.model as string;
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel = model.includes('glm');
+			if (!isGlmModel) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
 			}
-
-			if (!systemInitMessage) {
-				throw lastError instanceof Error ? lastError : new Error('Missing system:init after retry');
-			}
-
-			// Verify system:init shows Opus (not Sonnet)
-			// The model field should contain 'opus' (SDK uses short IDs: opus, sonnet, haiku, default)
-			const model = systemInitMessage.model as string;
-			const isOpusModel = model === 'opus' || model.includes('opus');
-			if (!isOpusModel) {
-				// Log the actual model value for debugging
-				console.error(`Expected model to be 'opus' or contain 'opus', got: '${model}'`);
-			}
-			expect(isOpusModel).toBe(true);
-
+			expect(isGlmModel).toBe(true);
 			await waitForIdle(daemon, sessionId, 60000);
-		}, 120000);
 
-		// TODO: Re-enable when GLM API connectivity is stable
-		// These tests are flaky due to GLM API timeouts in CI
-		describe.skip('Cross-Provider Switching', () => {
-			test('should show correct model when switching from Claude to GLM', async () => {
-				// Create session with Claude Sonnet
-				const createResult = (await daemon.messageHub.request('session.create', {
-					workspacePath: `${TMP_DIR}/test-switch-claude-to-glm-${Date.now()}`,
-					title: 'Claude to GLM Test',
-					config: {
-						model: 'sonnet',
-						permissionMode: 'acceptEdits',
-					},
-				})) as { sessionId: string };
+			// 3. Switch back to Claude Haiku
+			await daemon.messageHub.request('session.model.switch', {
+				sessionId,
+				model: 'haiku',
+			});
+			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+			await sendMessage(daemon, sessionId, 'Message 3');
+			systemInitMessage = await systemInitPromise;
+			model = systemInitMessage.model as string;
+			const isHaikuModel = model.includes('haiku') || model.includes('claude');
+			if (!isHaikuModel) {
+				console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
+			}
+			expect(isHaikuModel).toBe(true);
+			await waitForIdle(daemon, sessionId, 60000);
 
-				const { sessionId } = createResult;
-				daemon.trackSession(sessionId);
-
-				// Send first message with Claude
-				await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
-				await waitForIdle(daemon, sessionId, 60000);
-
-				// Switch to GLM (cross-provider switch)
-				const switchResult = (await daemon.messageHub.request('session.model.switch', {
-					sessionId,
-					model: 'glm-5',
-				})) as { success: boolean; model: string };
-
-				expect(switchResult.success).toBe(true);
-				expect(switchResult.model).toBe('glm-5');
-
-				// Send message with GLM - should get system:init with GLM model
-				const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
-
-				const systemInitMessage = await systemInitPromise;
-
-				// Verify system:init shows GLM model
-				// The SDK's system:init message returns the original GLM model ID (glm-5)
-				// even though translateModelIdForSdk translates it to 'default' for the query
-				const model = systemInitMessage.model as string;
-				const isGlmModel = model.includes('glm');
-				if (!isGlmModel) {
-					console.error(`Expected model to contain 'glm', got: '${model}'`);
-				}
-				expect(isGlmModel).toBe(true);
-
-				await waitForIdle(daemon, sessionId, 60000);
-			}, 120000);
-
-			test('should show correct model when switching from GLM to Claude', async () => {
-				// Create session with GLM
-				const createResult = (await daemon.messageHub.request('session.create', {
-					workspacePath: `${TMP_DIR}/test-switch-glm-to-claude-${Date.now()}`,
-					title: 'GLM to Claude Test',
-					config: {
-						model: 'glm-5',
-						permissionMode: 'acceptEdits',
-					},
-				})) as { sessionId: string };
-
-				const { sessionId } = createResult;
-				daemon.trackSession(sessionId);
-
-				// Send first message with GLM
-				await sendMessage(daemon, sessionId, 'What is 1+1? Just the number.');
-				await waitForIdle(daemon, sessionId, 60000);
-
-				// Switch to Claude Haiku (cross-provider switch)
-				const switchResult = (await daemon.messageHub.request('session.model.switch', {
-					sessionId,
-					model: 'haiku',
-				})) as { success: boolean; model: string };
-
-				expect(switchResult.success).toBe(true);
-				expect(switchResult.model).toBe('haiku');
-
-				// Send message with Claude - should get system:init with Claude model
-				const systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
-
-				const systemInitMessage = await systemInitPromise;
-
-				// Verify system:init shows Claude/Haiku model
-				const model = systemInitMessage.model as string;
-				const isClaudeModel = model.includes('haiku') || model.includes('claude');
-				if (!isClaudeModel) {
-					console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
-				}
-				expect(isClaudeModel).toBe(true);
-
-				await waitForIdle(daemon, sessionId, 60000);
-			}, 120000);
-
-			test('should handle multiple cross-provider switches', async () => {
-				// Create session with Claude Sonnet
-				const createResult = (await daemon.messageHub.request('session.create', {
-					workspacePath: `${TMP_DIR}/test-multiple-cross-provider-switches-${Date.now()}`,
-					title: 'Multiple Cross-Provider Switches Test',
-					config: {
-						model: 'sonnet',
-						permissionMode: 'acceptEdits',
-					},
-				})) as { sessionId: string };
-
-				const { sessionId } = createResult;
-				daemon.trackSession(sessionId);
-
-				// 1. Start with Sonnet
-				let systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(daemon, sessionId, 'Message 1');
-				let systemInitMessage = await systemInitPromise;
-				let model = systemInitMessage.model as string;
-				const isValidModel =
-					model.includes('sonnet') || model.includes('claude') || model === 'default';
-				if (!isValidModel) {
-					console.error(`Expected model to be Sonnet, got: '${model}'`);
-				}
-				expect(isValidModel).toBe(true);
-				await waitForIdle(daemon, sessionId, 60000);
-
-				// 2. Switch to GLM
-				await daemon.messageHub.request('session.model.switch', {
-					sessionId,
-					model: 'glm-5',
-				});
-				systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(daemon, sessionId, 'Message 2');
-				systemInitMessage = await systemInitPromise;
-				model = systemInitMessage.model as string;
-				// The SDK's system:init message returns the original GLM model ID
-				const isGlmModel = model.includes('glm');
-				if (!isGlmModel) {
-					console.error(`Expected model to contain 'glm', got: '${model}'`);
-				}
-				expect(isGlmModel).toBe(true);
-				await waitForIdle(daemon, sessionId, 60000);
-
-				// 3. Switch back to Claude Haiku
-				await daemon.messageHub.request('session.model.switch', {
-					sessionId,
-					model: 'haiku',
-				});
-				systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(daemon, sessionId, 'Message 3');
-				systemInitMessage = await systemInitPromise;
-				model = systemInitMessage.model as string;
-				const isHaikuModel = model.includes('haiku') || model.includes('claude');
-				if (!isHaikuModel) {
-					console.error(`Expected model to contain 'haiku' or 'claude', got: '${model}'`);
-				}
-				expect(isHaikuModel).toBe(true);
-				await waitForIdle(daemon, sessionId, 60000);
-
-				// 4. Switch to GLM again
-				await daemon.messageHub.request('session.model.switch', {
-					sessionId,
-					model: 'glm-5',
-				});
-				systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
-				await sendMessage(daemon, sessionId, 'Message 4');
-				systemInitMessage = await systemInitPromise;
-				model = systemInitMessage.model as string;
-				// The SDK's system:init message returns the original GLM model ID
-				const isGlmModel2 = model.includes('glm');
-				if (!isGlmModel2) {
-					console.error(`Expected model to contain 'glm', got: '${model}'`);
-				}
-				expect(isGlmModel2).toBe(true);
-				await waitForIdle(daemon, sessionId, 60000);
-			}, 300000);
-		});
-	}
-);
+			// 4. Switch to GLM again
+			await daemon.messageHub.request('session.model.switch', {
+				sessionId,
+				model: 'glm-5',
+			});
+			systemInitPromise = waitForSDKMessage(daemon, sessionId, 'system', 'init');
+			await sendMessage(daemon, sessionId, 'Message 4');
+			systemInitMessage = await systemInitPromise;
+			model = systemInitMessage.model as string;
+			// The SDK's system:init message returns the original GLM model ID
+			const isGlmModel2 = model.includes('glm');
+			if (!isGlmModel2) {
+				console.error(`Expected model to contain 'glm', got: '${model}'`);
+			}
+			expect(isGlmModel2).toBe(true);
+			await waitForIdle(daemon, sessionId, 60000);
+		}, 300000);
+	});
+});
