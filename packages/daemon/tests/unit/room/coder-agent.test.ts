@@ -86,24 +86,37 @@ describe('Coder Agent', () => {
 			expect(prompt).toContain('stop immediately and report the error');
 		});
 
-		it('uses --base flag with inline substitution when creating PR', () => {
+		it('uses subshell with empty-check fallback for gh pr create --base', () => {
 			const prompt = buildCoderSystemPrompt();
-			// Must use inline $() so shell variable doesn't need to persist across tool calls
-			expect(prompt).toContain('--base $(git symbolic-ref refs/remotes/origin/HEAD');
+			// Uses $() subshell so no persistent variable is required across tool calls
+			expect(prompt).toContain(
+				`gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")`
+			);
 		});
 
-		it('combines sync commands in a single bash call to avoid variable persistence issues', () => {
+		it('combines sync commands in a single bash invocation using the empty-check fallback pattern', () => {
 			const prompt = buildCoderSystemPrompt();
-			// All three sync operations must be && chained in one invocation
+			// Two-step empty check: symbolic-ref first, then remote show if empty.
+			// This avoids the || pipeline exit code bug where sed exits 0 even when
+			// git symbolic-ref fails, causing the || fallback to never trigger.
 			expect(prompt).toContain(
-				'DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed \'s@^refs/remotes/origin/@@\' || git remote show origin | sed -n \'/HEAD branch/s/.*: //p\') && git fetch origin && git rebase origin/$DEFAULT_BRANCH'
+				`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')`
 			);
+			expect(prompt).toContain(
+				`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')`
+			);
+			expect(prompt).toContain('git fetch origin && git rebase origin/$DEFAULT_BRANCH');
 		});
 
 		it('includes fallback for repos where origin/HEAD is not configured', () => {
 			const prompt = buildCoderSystemPrompt();
 			expect(prompt).toContain('git remote show origin');
 			expect(prompt).toContain("sed -n '/HEAD branch/s/.*: //p'");
+		});
+
+		it('suppresses git symbolic-ref stderr with 2>/dev/null', () => {
+			const prompt = buildCoderSystemPrompt();
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
 		});
 
 		it('sync step appears before implementation step', () => {

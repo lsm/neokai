@@ -59,23 +59,34 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('stop immediately and report the error');
 		});
 
-		it('should combine sync commands in single bash call to avoid variable persistence issues', () => {
+		it('should combine sync commands in single bash invocation using the empty-check fallback pattern', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
+			// Two-step empty check avoids the || pipeline exit code bug
 			expect(prompt).toContain(
-				'DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed \'s@^refs/remotes/origin/@@\' || git remote show origin | sed -n \'/HEAD branch/s/.*: //p\') && git fetch origin && git rebase origin/$DEFAULT_BRANCH'
+				`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')`
 			);
+			expect(prompt).toContain(
+				`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')`
+			);
+			expect(prompt).toContain('git fetch origin && git rebase origin/$DEFAULT_BRANCH');
 		});
 
-		it('should use --base flag with inline substitution when creating plan PR', () => {
+		it('should use subshell with empty-check fallback for gh pr create --base', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
-			// Must use inline $() so shell variable doesn't need to persist across tool calls
-			expect(prompt).toContain('--base $(git symbolic-ref refs/remotes/origin/HEAD');
+			expect(prompt).toContain(
+				`gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")`
+			);
 		});
 
 		it('should include fallback for repos where origin/HEAD is not configured', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('git remote show origin');
 			expect(prompt).toContain("sed -n '/HEAD branch/s/.*: //p'");
+		});
+
+		it('should suppress git symbolic-ref stderr with 2>/dev/null', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
 		});
 
 		it('should place pre-planning setup before Phase 1 planning', () => {

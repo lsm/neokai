@@ -125,9 +125,11 @@ export function buildPlannerSystemPrompt(goalTitle?: string): string {
 	sections.push(`\n## Pre-Planning Setup (MANDATORY)\n`);
 	sections.push(
 		`Before reading any files or writing the plan, sync with the default branch.\n` +
-			`Run this as a **single bash command** (so the variable persists within the call):\n` +
+			`Run all three lines as a **single bash invocation** (variables persist within one call):\n` +
 			`\`\`\`bash\n` +
-			`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@' || git remote show origin | sed -n '/HEAD branch/s/.*: //p') && git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
+			`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
+			`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
+			`git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
 			`\`\`\`\n` +
 			`**If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase`
 	);
@@ -158,9 +160,9 @@ export function buildPlannerSystemPrompt(goalTitle?: string): string {
 	);
 	sections.push(`2. Create a feature branch, commit the plan file, and push it`);
 	sections.push(
-		`3. Create a GitHub PR using inline branch resolution with the plan summary as the PR description:\n` +
+		`3. Create a GitHub PR — detect the default branch inside the subshell with the plan summary as the PR description:\n` +
 			`   \`\`\`bash\n` +
-			`   gh pr create --base $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@' || git remote show origin | sed -n '/HEAD branch/s/.*: //p') --fill\n` +
+			`   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
 			`   \`\`\``
 	);
 	sections.push(

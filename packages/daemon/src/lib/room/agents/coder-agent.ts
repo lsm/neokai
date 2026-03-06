@@ -53,9 +53,11 @@ export function buildCoderSystemPrompt(): string {
 			`The branch has already been created for you. Follow this workflow:`
 	);
 	sections.push(
-		`1. **Sync with the default branch first** — run this as a **single bash command** so the variable persists:\n` +
+		`1. **Sync with the default branch first** — run all three lines as a **single bash invocation** (variables persist within one call):\n` +
 			`   \`\`\`bash\n` +
-			`   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@' || git remote show origin | sed -n '/HEAD branch/s/.*: //p') && git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
+			`   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
+			`   [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
+			`   git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
 			`   \`\`\`\n` +
 			`   **If the rebase fails with conflicts, stop immediately and report the error** — do NOT continue on a stale base`
 	);
@@ -63,9 +65,9 @@ export function buildCoderSystemPrompt(): string {
 	sections.push(`3. Add or update tests to cover the new/changed behavior — tests are mandatory`);
 	sections.push(`4. Push your branch: \`git push -u origin HEAD\``);
 	sections.push(
-		`5. Create a pull request using inline branch resolution (no shell variable needed):\n` +
+		`5. Create a pull request — detect the default branch inside the subshell (no persistent variable needed):\n` +
 			`   \`\`\`bash\n` +
-			`   gh pr create --fill --base $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@' || git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
+			`   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
 			`   \`\`\``
 	);
 	sections.push(`6. Finish your response`);
