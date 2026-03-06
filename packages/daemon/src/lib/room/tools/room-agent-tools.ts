@@ -232,8 +232,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!runtime) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, args.task_id, args.message);
-			return jsonResult(result as unknown as Record<string, unknown>);
+			const { success, error } = await routeHumanMessageToGroup(
+				runtime,
+				groupRepo,
+				args.task_id,
+				args.message
+			);
+			return jsonResult(error !== undefined ? { success, error } : { success });
 		},
 
 		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
