@@ -98,6 +98,37 @@ describe('Room Agent Tools', () => {
 		return JSON.parse(result.content[0].text) as Record<string, unknown>;
 	}
 
+	function insertGroup(taskId: string, state: string = 'awaiting_human') {
+		const groupId = `group-${taskId}`;
+		const metadata = JSON.stringify({
+			feedbackIteration: 0,
+			leaderContractViolations: 0,
+			leaderCalledTool: false,
+			lastProcessedLeaderTurnId: null,
+			lastForwardedMessageId: null,
+			activeWorkStartedAt: null,
+			activeWorkElapsed: 0,
+			hibernatedAt: null,
+			tokensUsed: 0,
+			workerRole: 'coder',
+			submittedForReview: false,
+			approved: false,
+		});
+		db.run(
+			'INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+			[groupId, 'task', taskId, state, 0, metadata, Date.now()]
+		);
+		db.run(
+			'INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, ?, ?)',
+			[groupId, 'worker-session-1', 'worker', Date.now()]
+		);
+		db.run(
+			'INSERT INTO session_group_members (group_id, session_id, role, joined_at) VALUES (?, ?, ?, ?)',
+			[groupId, 'leader-session-1', 'leader', Date.now()]
+		);
+		return groupId;
+	}
+
 	describe('create_goal', () => {
 		it('should create a goal', async () => {
 			const result = parseResult(
@@ -214,10 +245,340 @@ describe('Room Agent Tools', () => {
 				goals: { total: number };
 				tasks: { total: number };
 				activeGroups: number;
+				tasksNeedingReview: unknown[];
 			};
 			expect(status.goals.total).toBe(1);
 			expect(status.tasks.total).toBe(1);
 			expect(status.activeGroups).toBe(0);
+			expect(status.tasksNeedingReview).toEqual([]);
+		});
+
+		it('should include tasks in review status in tasksNeedingReview', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T1', description: 'd' }));
+			const taskId = created.taskId as string;
+			// Set task to review status
+			await taskManager.reviewTask(taskId);
+
+			const result = parseResult(await handlers.get_room_status());
+			const status = result.status as {
+				tasksNeedingReview: Array<{ taskId: string; title: string }>;
+			};
+			expect(status.tasksNeedingReview.length).toBe(1);
+			expect(status.tasksNeedingReview[0].taskId).toBe(taskId);
+			expect(status.tasksNeedingReview[0].title).toBe('T1');
+		});
+
+		it('should include tasks with awaiting_human group state in tasksNeedingReview', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T2', description: 'd' }));
+			const taskId = created.taskId as string;
+			// Create a group in awaiting_human state (without task being in review status)
+			insertGroup(taskId, 'awaiting_human');
+
+			const result = parseResult(await handlers.get_room_status());
+			const status = result.status as {
+				tasksNeedingReview: Array<{ taskId: string; title: string }>;
+			};
+			expect(status.tasksNeedingReview.length).toBe(1);
+			expect(status.tasksNeedingReview[0].taskId).toBe(taskId);
+		});
+
+		it('should not duplicate tasks in tasksNeedingReview when both review status and awaiting_human group', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T3', description: 'd' }));
+			const taskId = created.taskId as string;
+			await taskManager.reviewTask(taskId);
+			insertGroup(taskId, 'awaiting_human');
+
+			const result = parseResult(await handlers.get_room_status());
+			const status = result.status as {
+				tasksNeedingReview: Array<{ taskId: string }>;
+			};
+			// Should appear only once despite matching both criteria
+			expect(status.tasksNeedingReview.length).toBe(1);
+			expect(status.tasksNeedingReview[0].taskId).toBe(taskId);
+		});
+	});
+
+	describe('approve_task', () => {
+		it('should return error when task not found', async () => {
+			const result = parseResult(
+				await handlers.approve_task({ task_id: 'no-such-task' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error when runtimeService not configured', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const result = parseResult(
+				await handlers.approve_task({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Runtime service not available');
+		});
+
+		it('should return error when runtime not found for room', async () => {
+			const mockRuntimeService = { getRuntime: () => null };
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: mockRuntimeService,
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const result = parseResult(await h.approve_task({ task_id: created.taskId as string }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Room runtime not found');
+		});
+
+		it('should call resumeWorkerFromHuman with approved:true on success', async () => {
+			let capturedArgs: unknown[] = [];
+			const mockRuntime = {
+				resumeWorkerFromHuman: async (...args: unknown[]) => {
+					capturedArgs = args;
+					return true;
+				},
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			const result = parseResult(await h.approve_task({ task_id: taskId }));
+
+			expect(result.success).toBe(true);
+			expect(capturedArgs[0]).toBe(taskId);
+			expect(capturedArgs[2]).toEqual({ approved: true });
+		});
+
+		it('should return error when runtime resumeWorkerFromHuman returns false', async () => {
+			const mockRuntime = {
+				resumeWorkerFromHuman: async () => false,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const result = parseResult(await h.approve_task({ task_id: created.taskId as string }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to approve task');
+		});
+	});
+
+	describe('reject_task', () => {
+		it('should return error when task not found', async () => {
+			const result = parseResult(
+				await handlers.reject_task({ task_id: 'no-such-task', feedback: 'Not good' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error when runtimeService not configured', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const result = parseResult(
+				await handlers.reject_task({ task_id: created.taskId as string, feedback: 'Needs work' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Runtime service not available');
+		});
+
+		it('should call resumeWorkerFromHuman with approved:false and feedback', async () => {
+			let capturedArgs: unknown[] = [];
+			const mockRuntime = {
+				resumeWorkerFromHuman: async (...args: unknown[]) => {
+					capturedArgs = args;
+					return true;
+				},
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			const result = parseResult(
+				await h.reject_task({ task_id: taskId, feedback: 'Please fix the tests' })
+			);
+
+			expect(result.success).toBe(true);
+			expect(capturedArgs[0]).toBe(taskId);
+			expect(capturedArgs[1]).toBe('Please fix the tests');
+			expect(capturedArgs[2]).toEqual({ approved: false });
+		});
+	});
+
+	describe('send_message_to_task', () => {
+		it('should return error when task not found', async () => {
+			const result = parseResult(
+				await handlers.send_message_to_task({ task_id: 'no-such-task', message: 'hello' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error when runtimeService not configured', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const result = parseResult(
+				await handlers.send_message_to_task({
+					task_id: created.taskId as string,
+					message: 'hello',
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Runtime service not available');
+		});
+
+		it('should route message to worker when group is in awaiting_human state', async () => {
+			let capturedArgs: unknown[] = [];
+			const mockRuntime = {
+				resumeWorkerFromHuman: async (...args: unknown[]) => {
+					capturedArgs = args;
+					return true;
+				},
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			insertGroup(taskId, 'awaiting_human');
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'Looks good, proceed' })
+			);
+			expect(result.success).toBe(true);
+			// routeHumanMessageToGroup calls resumeWorkerFromHuman for awaiting_human state
+			expect(capturedArgs[0]).toBe(taskId);
+			expect(capturedArgs[1]).toBe('Looks good, proceed');
+		});
+
+		it('should route message to leader when group is in awaiting_leader state', async () => {
+			let capturedArgs: unknown[] = [];
+			const mockRuntime = {
+				resumeWorkerFromHuman: async () => true,
+				injectMessageToLeader: async (...args: unknown[]) => {
+					capturedArgs = args;
+					return true;
+				},
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			insertGroup(taskId, 'awaiting_leader');
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'Check the edge cases' })
+			);
+			expect(result.success).toBe(true);
+			expect(capturedArgs[0]).toBe(taskId);
+		});
+
+		it('should return error when no active group for task', async () => {
+			const mockRuntime = {
+				resumeWorkerFromHuman: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: created.taskId as string, message: 'hello' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('No active session group');
+		});
+	});
+
+	describe('get_task_detail', () => {
+		it('should return error when task not found', async () => {
+			const result = parseResult(await handlers.get_task_detail({ task_id: 'no-such-task' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return task details without group when no group exists', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'My task', description: 'Do something' })
+			);
+			const taskId = created.taskId as string;
+
+			const result = parseResult(await handlers.get_task_detail({ task_id: taskId }));
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; title: string };
+			expect(task.id).toBe(taskId);
+			expect(task.title).toBe('My task');
+			expect(result.group).toBeNull();
+		});
+
+		it('should return full task and group details when group exists', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'Task with group', description: 'd' })
+			);
+			const taskId = created.taskId as string;
+			insertGroup(taskId, 'awaiting_human');
+
+			const result = parseResult(await handlers.get_task_detail({ task_id: taskId }));
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; title: string };
+			expect(task.id).toBe(taskId);
+
+			const group = result.group as {
+				id: string;
+				state: string;
+				workerSessionId: string;
+				leaderSessionId: string;
+				feedbackIteration: number;
+				awaitingHumanReview: boolean;
+			};
+			expect(group).not.toBeNull();
+			expect(group.id).toBe(`group-${taskId}`);
+			expect(group.state).toBe('awaiting_human');
+			expect(group.workerSessionId).toBe('worker-session-1');
+			expect(group.leaderSessionId).toBe('leader-session-1');
+			expect(group.feedbackIteration).toBe(0);
+			expect(group.awaitingHumanReview).toBe(true);
+		});
+
+		it('should report awaitingHumanReview as false for non-awaiting_human states', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			insertGroup(taskId, 'awaiting_leader');
+
+			const result = parseResult(await handlers.get_task_detail({ task_id: taskId }));
+			const group = result.group as { state: string; awaitingHumanReview: boolean };
+			expect(group.state).toBe('awaiting_leader');
+			expect(group.awaitingHumanReview).toBe(false);
 		});
 	});
 });

@@ -6,7 +6,8 @@
  * these tools are attached to it.
  *
  * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
- *        update_task, cancel_task, get_room_status
+ *        update_task, cancel_task, get_room_status, approve_task, reject_task,
+ *        send_message_to_task, get_task_detail
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -16,6 +17,8 @@ import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
+import type { RoomRuntime } from '../runtime/room-runtime';
+import { routeHumanMessageToGroup } from '../runtime/human-message-routing';
 
 export interface RoomAgentToolsConfig {
 	roomId: string;
@@ -23,6 +26,9 @@ export interface RoomAgentToolsConfig {
 	taskManager: TaskManager;
 	groupRepo: SessionGroupRepository;
 	daemonHub?: DaemonHub;
+	runtimeService?: {
+		getRuntime(roomId: string): RoomRuntime | null;
+	};
 }
 
 interface ToolResult {
@@ -38,7 +44,7 @@ function jsonResult(data: Record<string, unknown>): ToolResult {
  * Returns a map of tool name -> handler function.
  */
 export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
-	const { goalManager, taskManager, groupRepo, roomId, daemonHub } = config;
+	const { goalManager, taskManager, groupRepo, roomId, daemonHub, runtimeService } = config;
 
 	return {
 		async create_goal(args: {
@@ -164,10 +170,111 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
 		},
 
+		async approve_task(args: { task_id: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (!runtimeService) {
+				return jsonResult({ success: false, error: 'Runtime service not available' });
+			}
+			const runtime = runtimeService.getRuntime(roomId);
+			if (!runtime) {
+				return jsonResult({ success: false, error: 'Room runtime not found' });
+			}
+			const approved = await runtime.resumeWorkerFromHuman(
+				args.task_id,
+				'Task approved. Please proceed.',
+				{ approved: true }
+			);
+			if (!approved) {
+				return jsonResult({
+					success: false,
+					error: 'Failed to approve task — task may not be awaiting review',
+				});
+			}
+			return jsonResult({ success: true, message: `Task ${args.task_id} approved` });
+		},
+
+		async reject_task(args: { task_id: string; feedback: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (!runtimeService) {
+				return jsonResult({ success: false, error: 'Runtime service not available' });
+			}
+			const runtime = runtimeService.getRuntime(roomId);
+			if (!runtime) {
+				return jsonResult({ success: false, error: 'Room runtime not found' });
+			}
+			const resumed = await runtime.resumeWorkerFromHuman(args.task_id, args.feedback, {
+				approved: false,
+			});
+			if (!resumed) {
+				return jsonResult({
+					success: false,
+					error: 'Failed to reject task — task may not be awaiting review',
+				});
+			}
+			return jsonResult({ success: true, message: `Task ${args.task_id} rejected with feedback` });
+		},
+
+		async send_message_to_task(args: { task_id: string; message: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			if (!runtimeService) {
+				return jsonResult({ success: false, error: 'Runtime service not available' });
+			}
+			const runtime = runtimeService.getRuntime(roomId);
+			if (!runtime) {
+				return jsonResult({ success: false, error: 'Room runtime not found' });
+			}
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, args.task_id, args.message);
+			return jsonResult(result as unknown as Record<string, unknown>);
+		},
+
+		async get_task_detail(args: { task_id: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+			const group = groupRepo.getGroupByTaskId(args.task_id);
+			return jsonResult({
+				success: true,
+				task,
+				group: group
+					? {
+							id: group.id,
+							state: group.state,
+							workerSessionId: group.workerSessionId,
+							leaderSessionId: group.leaderSessionId,
+							feedbackIteration: group.feedbackIteration,
+							awaitingHumanReview: group.state === 'awaiting_human',
+						}
+					: null,
+			});
+		},
+
 		async get_room_status(): Promise<ToolResult> {
 			const goals = await goalManager.listGoals();
 			const tasks = await taskManager.listTasks();
 			const activeGroups = groupRepo.getActiveGroups(roomId);
+
+			// Collect task IDs that need human review:
+			// either the task is in 'review' status OR the group is in 'awaiting_human' state
+			const needsReviewIds = new Set<string>();
+			tasks.filter((t) => t.status === 'review').forEach((t) => needsReviewIds.add(t.id));
+			activeGroups
+				.filter((g) => g.state === 'awaiting_human')
+				.forEach((g) => needsReviewIds.add(g.taskId));
+
+			const tasksNeedingReview = [...needsReviewIds].map((taskId) => {
+				const task = tasks.find((t) => t.id === taskId);
+				return { taskId, title: task?.title ?? '' };
+			});
 
 			return jsonResult({
 				success: true,
@@ -193,6 +300,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						state: g.state,
 						iteration: g.feedbackIteration,
 					})),
+					tasksNeedingReview,
 				},
 			});
 		},
@@ -274,8 +382,38 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			(args) => handlers.cancel_task(args)
 		),
 		tool(
+			'approve_task',
+			'Approve a task that is awaiting human review, allowing the worker to proceed',
+			{ task_id: z.string().describe('ID of the task to approve') },
+			(args) => handlers.approve_task(args)
+		),
+		tool(
+			'reject_task',
+			'Reject a task that is awaiting human review, sending feedback to the worker',
+			{
+				task_id: z.string().describe('ID of the task to reject'),
+				feedback: z.string().describe('Feedback explaining what needs to be fixed or improved'),
+			},
+			(args) => handlers.reject_task(args)
+		),
+		tool(
+			'send_message_to_task',
+			'Send a message to the active agent session for a task (routes to worker or leader based on current state)',
+			{
+				task_id: z.string().describe('ID of the task to send the message to'),
+				message: z.string().describe('The message content to send'),
+			},
+			(args) => handlers.send_message_to_task(args)
+		),
+		tool(
+			'get_task_detail',
+			'Get full details for a task including current group state, session IDs, and whether it is awaiting human review',
+			{ task_id: z.string().describe('ID of the task to get details for') },
+			(args) => handlers.get_task_detail(args)
+		),
+		tool(
 			'get_room_status',
-			'Get an overview of the room state including goals, tasks, and active groups',
+			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
 		),
