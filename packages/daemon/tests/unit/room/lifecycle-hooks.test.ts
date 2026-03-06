@@ -323,7 +323,7 @@ describe('checkWorkerPrMerged', () => {
 		expect(result.bounceMessage).toContain('OPEN');
 	});
 
-	test('fails when PR state is CLOSED', async () => {
+	test('fails when PR state is CLOSED with reopen instructions', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'CLOSED', exitCode: 0 },
@@ -331,6 +331,7 @@ describe('checkWorkerPrMerged', () => {
 		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
 		expect(result.pass).toBe(false);
 		expect(result.reason).toContain('CLOSED');
+		expect(result.bounceMessage).toContain('gh pr reopen');
 	});
 
 	test('passes gracefully when git fails', async () => {
@@ -345,6 +346,15 @@ describe('checkWorkerPrMerged', () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes gracefully when gh returns empty state with exit 0 (indeterminate)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 0 },
 		});
 		const result = await checkWorkerPrMerged(makeWorkerCtx({ approved: true }), opts);
 		expect(result.pass).toBe(true);
@@ -372,7 +382,7 @@ describe('checkLeaderPrMerged', () => {
 		expect(result.bounceMessage).toContain('OPEN');
 	});
 
-	test('fails when PR state is CLOSED', async () => {
+	test('fails when PR state is CLOSED with reopen instructions', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'CLOSED', exitCode: 0 },
@@ -380,6 +390,7 @@ describe('checkLeaderPrMerged', () => {
 		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
 		expect(result.pass).toBe(false);
 		expect(result.reason).toContain('CLOSED');
+		expect(result.bounceMessage).toContain('gh pr reopen');
 	});
 
 	test('passes gracefully when git fails', async () => {
@@ -394,6 +405,15 @@ describe('checkLeaderPrMerged', () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes gracefully when gh returns empty state with exit 0 (indeterminate)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 0 },
 		});
 		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
 		expect(result.pass).toBe(true);
@@ -662,6 +682,16 @@ describe('runWorkerExitGate — approved bypass', () => {
 		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }), opts);
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('gh pr merge');
+	});
+
+	test('fails for coder when approved but PR is CLOSED with reopen instructions', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'CLOSED', exitCode: 0 },
+		});
+		const result = await runWorkerExitGate(makeWorkerCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('gh pr reopen');
 	});
 
 	test('passes gracefully for coder when approved but git/gh unavailable', async () => {
