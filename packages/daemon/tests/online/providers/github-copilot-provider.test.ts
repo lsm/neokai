@@ -7,7 +7,7 @@
  * - Makes real API calls (uses GitHub Copilot quota)
  *
  * MODELS:
- * - Uses claude-sonnet-4-6 and gpt-5-mini available through GitHub Copilot
+ * - Uses claude-sonnet-4.6 and gpt-5-mini available through GitHub Copilot
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -53,7 +53,7 @@ describe('GitHub Copilot Provider (Online)', () => {
 		}
 	}
 
-	test('should have simple conversation with claude-sonnet-4-6', async () => {
+	test('should have simple conversation with claude-sonnet-4.6', async () => {
 		// Check if GitHub Copilot is authenticated
 		if (!(await isGitHubCopilotAuthenticated())) {
 			console.log('Skipping - GitHub Copilot not authenticated. Login via Settings.');
@@ -65,7 +65,7 @@ describe('GitHub Copilot Provider (Online)', () => {
 			workspacePath: `${TMP_DIR}/test-github-copilot-sonnet-${Date.now()}`,
 			title: 'GitHub Copilot Claude Sonnet Test',
 			config: {
-				model: 'claude-sonnet-4-6',
+				model: 'claude-sonnet-4.6',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
@@ -143,7 +143,7 @@ describe('GitHub Copilot Provider (Online)', () => {
 			workspacePath: `${TMP_DIR}/test-github-copilot-multi-turn-${Date.now()}`,
 			title: 'GitHub Copilot Multi-turn Test',
 			config: {
-				model: 'claude-sonnet-4-6',
+				model: 'claude-sonnet-4.6',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
