@@ -249,6 +249,13 @@ this.ctx.jobQueueProcessor.register('room.tick', async (job) => {
   existing `tick()` loop into a targeted method. `tick()` continues to work by calling
   `dispatchTask()` internally for each eligible task.
 
+  **`dispatchTask` must re-verify before spawning** (same guards the tick loop currently applies):
+  1. Task still has status `pending` (re-fetch from DB; status may have changed since enqueue).
+  2. `areDependenciesMet(task)` returns true (guard against tasks enqueued before deps complete).
+  3. No active session group exists for this task (`groupRepo` check).
+  If any guard fails, return early without spawning. This preserves the dependency ordering
+  guarantee currently provided by the tick loop's existing checks at `room-runtime.ts:1098`.
+
 **E. Replace event subscriptions in `subscribeToEvents()`**
 
 Replace direct `runtime.onGoalCreated()` / `runtime.onTaskStatusChanged()` calls with job
@@ -263,9 +270,10 @@ this.ctx.daemonHub.on('goal.created', (event) => {
 // goal.updated with status=active → enqueue planning job (reactivated goals)
 // This is the correct trigger for goal.reactivate — avoids emitting goal.created for
 // an existing goal (which has wrong semantics for frontend consumers).
+// Use event.goalId (guaranteed field), NOT event.goal?.id (optional partial field).
 this.ctx.daemonHub.on('goal.updated', (event) => {
   if (event.goal?.status !== 'active') return;
-  this.enqueueGoalPlan(event.roomId, event.goal.id);
+  this.enqueueGoalPlan(event.roomId, event.goalId);  // goalId is guaranteed; goal is Partial
 });
 
 // room.task.update (pending) → enqueue execution job
@@ -313,10 +321,14 @@ private scheduleTick(): void {
   // Do NOT skip if only a PROCESSING job exists — one pending follow-up must be
   // allowed while a tick is in flight, so that newly eligible work queued during
   // the current tick is picked up immediately on completion.
+  //
+  // NOTE: Do NOT pass limit: 1 here. With multiple rooms, the first pending
+  // room.tick job may belong to a different room; limit:1 would cause a false-
+  // negative and enqueue a duplicate tick for this room. Fetch all pending tick
+  // jobs (up to the default limit of 100) and filter by roomId in-process.
   const pending = this.jobQueueRepo.listJobs({
     queue: 'room.tick',
     status: 'pending',
-    limit: 1,
   }).some(j => (j.payload as { roomId: string }).roomId === this.room.id);
   if (pending) return;
 
@@ -359,6 +371,9 @@ After `recoverRoomRuntime()` for each room:
 - `scheduleTick()` without `jobQueueRepo` wired logs a warning and falls back to `queueMicrotask`.
 - Duplicate events for same `goalId`/`taskId` (pending job exists) produce no additional job.
 - `room.task.execute` handler re-enqueues with 1s delay when at capacity (no error thrown).
+- `room.task.execute` handler (via `dispatchTask`) re-verifies task is still `pending`, all
+  `dependsOn` tasks are `completed`, and no active session group exists — returns early if any
+  guard fails (no spawn, no error).
 - `room.task.execute` handler failure explicitly transitions task to `failed` and emits event.
 - Startup recovery skips tasks with active session groups and planning-type tasks.
 - `setupRPCHandlers` returns `{ cleanup, start }` and `start()` is awaited before `processor.start()`.
@@ -381,11 +396,14 @@ After `recoverRoomRuntime()` for each room:
 
 **A. `task.create` RPC (`packages/daemon/src/lib/rpc-handlers/task-handlers.ts`)**
 
-The current `task.create` handler does NOT accept or forward a `status` parameter — tasks are
-always created with the repository default. This must be fixed:
+The current `task.create` handler does NOT accept or forward a `status` parameter.
+`task-repository.ts` defaults to `status ?? 'pending'` when no status is provided, meaning all
+tasks created via this RPC currently land as `pending`. This is addressed with two changes:
 
 1. Add `status?: TaskStatus` to the `task.create` request params type.
-2. Forward it to `taskManager.createTask({ ..., status: params.status })`.
+2. When forwarding to `taskManager.createTask()`, explicitly default to `'draft'` when no
+   status is supplied: `status: params.status ?? 'draft'`. This makes the caller's intent
+   explicit — tasks that should execute immediately must pass `status: 'pending'` explicitly.
 3. After creation, if the resulting task has `status === 'pending'`, emit `room.task.update`
    (in addition to the existing `room.overview` emit):
 
@@ -397,7 +415,10 @@ if (task.status === 'pending') {
 }
 ```
 
-Tasks created as `draft` (the normal planner-tools flow) must NOT emit `room.task.update`.
+Tasks created without an explicit status (or with `status: 'draft'`) must NOT emit
+`room.task.update`. Existing callers of `task.create` that relied on the implicit `pending`
+default will need to be updated to pass `status: 'pending'` explicitly if that was their intent
+— verify there are no such callers before landing this change.
 
 **B. `goal.reactivate` RPC**
 
@@ -426,7 +447,9 @@ Wire this helper into the task completion path in `RoomRuntime` (after `complete
 #### Acceptance criteria
 
 - Task created via `task.create` with `status: 'pending'` triggers `room.task.execute` job.
-- Task created with `status: 'draft'` or without a status does NOT trigger execution job.
+- Task created with `status: 'draft'` does NOT trigger execution job.
+- Task created without an explicit status defaults to `draft` and does NOT trigger execution job.
+- No existing `task.create` callers rely on the implicit `pending` default (verified by audit).
 - Goal reactivated via `goal.reactivate` triggers `room.goal.plan` job (via `goal.updated` subscription).
 - Completing task A enqueues `room.task.execute` for direct dependent task B iff all of B's deps met.
 - Completing task A does NOT enqueue B when B has another unmet dependency C.
