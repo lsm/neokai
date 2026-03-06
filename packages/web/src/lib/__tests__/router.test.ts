@@ -522,6 +522,30 @@ describe('Router Utility', () => {
 			expect(currentRoomIdSignal.value).toBeNull();
 			expect(currentSessionIdSignal.value).toBeNull();
 		});
+
+		it('should call replaceState to canonicalize legacy /room/:id/chat URL on popstate', () => {
+			mockLocation.pathname = '/';
+			initializeRouter();
+
+			// Simulate pressing browser back to a legacy chat URL
+			mockLocation.pathname = '/room/550e8400-e29b-41d4-a716-446655440000/chat';
+
+			window.dispatchEvent(new PopStateEvent('popstate', {}));
+
+			// Signals should point at the room
+			expect(currentRoomIdSignal.value).toBe('550e8400-e29b-41d4-a716-446655440000');
+			expect(currentSessionIdSignal.value).toBeNull();
+
+			// URL must be canonicalized to /room/:id (not left as /room/:id/chat)
+			expect(mockHistory.replaceState).toHaveBeenCalledWith(
+				{
+					roomId: '550e8400-e29b-41d4-a716-446655440000',
+					path: '/room/550e8400-e29b-41d4-a716-446655440000',
+				},
+				'',
+				'/room/550e8400-e29b-41d4-a716-446655440000'
+			);
+		});
 	});
 
 	describe('Integration scenarios', () => {

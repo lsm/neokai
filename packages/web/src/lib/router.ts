@@ -450,6 +450,11 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
+		// Normalize legacy /room/:id/chat URL → /room/:id so the address bar stays clean
+		if (ROOM_CHAT_COMPAT_PATTERN.test(path)) {
+			const canonicalPath = createRoomPath(roomId);
+			window.history.replaceState({ roomId, path: canonicalPath }, '', canonicalPath);
+		}
 	} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
