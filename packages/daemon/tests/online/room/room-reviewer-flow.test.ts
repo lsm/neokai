@@ -39,6 +39,11 @@ import {
 const savedModel = process.env.DEFAULT_MODEL;
 process.env.DEFAULT_MODEL = 'sonnet';
 
+// GLM provider is slower than Claude - increase timeouts accordingly
+const isGlmProvider = process.env.DEFAULT_PROVIDER === 'glm';
+const PLANNING_TIMEOUT = isGlmProvider ? 300_000 : 180_000;
+const CODING_TIMEOUT = isGlmProvider ? 600_000 : 420_000;
+
 describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 	let daemon: DaemonServerContext;
 	let roomId: string;
@@ -126,7 +131,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
-				180_000
+				PLANNING_TIMEOUT
 			);
 
 			if (terminalPlanning.status === 'failed') {
@@ -147,7 +152,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 					daemon,
 					roomId,
 					{ taskType: 'planning', status: ['completed', 'failed'] },
-					180_000
+					PLANNING_TIMEOUT
 				);
 			}
 
@@ -172,7 +177,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				{ taskType: 'coding', status: ['completed', 'review', 'needs_human', 'failed'] },
-				420_000
+				CODING_TIMEOUT
 			);
 
 			// Log terminal status for debugging
