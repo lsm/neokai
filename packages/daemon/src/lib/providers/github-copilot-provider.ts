@@ -243,16 +243,24 @@ export class GitHubCopilotProvider implements Provider {
 			return null;
 		}
 
+		// Resolve model alias to canonical ID (pi-ai only knows canonical IDs like
+		// 'claude-sonnet-4.6', not NeoKai internal aliases like 'copilot-sonnet')
+		const modelEntry = GITHUB_COPILOT_MODELS.find(
+			(m) => m.id === options.model || m.alias === options.model
+		);
+		const canonicalModelId = modelEntry?.id ?? options.model;
+
 		// Create query generator with GitHub Copilot configuration
 		return piMonoQueryGenerator(
 			prompt,
 			{
 				...options,
 				apiKey: copilotApiKey,
+				model: canonicalModelId,
 			},
 			context,
 			'github-copilot',
-			options.model,
+			canonicalModelId,
 			// Tool execution callback would be injected by QueryRunner
 			undefined
 		);

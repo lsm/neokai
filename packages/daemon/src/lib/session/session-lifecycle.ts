@@ -100,7 +100,8 @@ export class SessionLifecycle {
 		// Validate and resolve model ID using cached models
 		// Priority: params.config.model > globalSettings.model > server default
 		const requestedModel = params.config?.model || globalSettings.model;
-		const modelId = await this.getValidatedModelId(requestedModel);
+		const { id: modelId, provider: resolvedProvider } =
+			await this.getValidatedModelId(requestedModel);
 
 		// Determine if title should be auto-generated
 		// If title is provided, mark as generated to skip auto-title generation
@@ -174,8 +175,11 @@ export class SessionLifecycle {
 				thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
 				coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
 				permissionMode: params.config?.permissionMode,
-				// Provider: Allow explicit override, otherwise default to 'anthropic'
-				provider: params.config?.provider,
+				// Provider: Allow explicit override; fall back to resolved provider from model alias.
+				// Critical for pi-mono providers (GitHub Copilot, OpenAI) whose models may share
+				// canonical IDs with Anthropic (e.g., copilot-sonnet → claude-sonnet-4.6).
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				provider: (params.config?.provider ?? resolvedProvider) as any,
 				// Tools config: Use global defaults for new sessions
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and NeoKai tools are configurable based on global settings
@@ -838,8 +842,14 @@ ${messageText.slice(0, 2000)}`;
 	/**
 	 * Get a validated model ID by using cached dynamic models
 	 * Falls back to static model if dynamic loading failed or is unavailable
+	 *
+	 * Returns both the canonical model ID and the provider that owns it.
+	 * The provider is needed to correctly route pi-mono providers (GitHub Copilot, OpenAI)
+	 * whose models may share canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
 	 */
-	private async getValidatedModelId(requestedModel?: string): Promise<string> {
+	private async getValidatedModelId(
+		requestedModel?: string
+	): Promise<{ id: string; provider?: string }> {
 		// Get available models from cache (already loaded on app startup)
 		try {
 			const { getAvailableModels } = await import('../model-service');
@@ -852,7 +862,7 @@ ${messageText.slice(0, 2000)}`;
 						(m) => m.id === requestedModel || m.alias === requestedModel
 					);
 					if (found) {
-						return found.id;
+						return { id: found.id, provider: found.provider };
 					}
 				}
 
@@ -864,7 +874,7 @@ ${messageText.slice(0, 2000)}`;
 				);
 
 				if (defaultByConfig) {
-					return defaultByConfig.id;
+					return { id: defaultByConfig.id, provider: defaultByConfig.provider };
 				}
 
 				// Fallback: prefer Sonnet family if no configured default found
@@ -872,7 +882,7 @@ ${messageText.slice(0, 2000)}`;
 					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
 
 				if (defaultModel) {
-					return defaultModel.id;
+					return { id: defaultModel.id, provider: defaultModel.provider };
 				}
 			}
 		} catch (error) {
@@ -882,7 +892,7 @@ ${messageText.slice(0, 2000)}`;
 		// Fallback to config default model or requested model
 		// IMPORTANT: Always return full model ID, never aliases
 		const fallbackModel = requestedModel || this.config.defaultModel;
-		return fallbackModel;
+		return { id: fallbackModel };
 	}
 }
 
