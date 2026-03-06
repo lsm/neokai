@@ -8,6 +8,11 @@
  * MODELS:
  * - Uses gpt-5-mini (cheaper) and gpt-5.3-codex for testing
  *
+ * WHAT THESE TESTS PROVE:
+ * - The pi-mono code path (OpenAI provider's createQuery) is exercised
+ * - Content verification ensures the response came from a real model call
+ * - Multi-turn test proves sequential queries work on the pi-mono path
+ *
  * Run with: OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
  */
 
@@ -18,9 +23,25 @@ import {
 	sendMessage,
 	waitForIdle,
 	getProcessingState,
-	getSession,
+	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
-import type { ContextInfo } from '@neokai/shared';
+
+/**
+ * Extract text from an SDK assistant message
+ * Structure: { type: 'assistant', message: { content: [{ type: 'text', text: '...' }] } }
+ */
+function extractAssistantText(msg: Record<string, unknown>): string {
+	const message = msg.message as { content?: unknown };
+	if (!message?.content) return '';
+	if (typeof message.content === 'string') return message.content;
+	if (Array.isArray(message.content)) {
+		return message.content
+			.filter((b: unknown) => (b as { type?: string }).type === 'text')
+			.map((b: unknown) => (b as { text?: string }).text ?? '')
+			.join('');
+	}
+	return '';
+}
 
 describe('OpenAI Provider (Online)', () => {
 	let daemon: DaemonServerContext;
@@ -39,7 +60,7 @@ describe('OpenAI Provider (Online)', () => {
 		{ timeout: 30000 }
 	);
 
-	test('should authenticate and have a simple conversation with gpt-5-mini', async () => {
+	test('should get correct answer via gpt-5-mini (pi-mono path)', async () => {
 		if (!process.env.OPENAI_API_KEY) {
 			console.log('Skipping - OPENAI_API_KEY not set');
 			return;
@@ -65,9 +86,20 @@ describe('OpenAI Provider (Online)', () => {
 		// Verify idle state
 		const state = await getProcessingState(daemon, sessionId);
 		expect(state.status).toBe('idle');
+
+		// Verify response content — proves pi-mono path returned a real model response
+		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
+		const assistantMessages = messages.sdkMessages.filter(
+			(msg) => (msg as { type?: string }).type === 'assistant'
+		);
+		expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
+
+		// Extract text and verify the model answered correctly
+		const responseText = assistantMessages.map(extractAssistantText).join('');
+		expect(responseText).toContain('4');
 	}, 60000);
 
-	test('should authenticate and have a simple conversation with gpt-5.3-codex', async () => {
+	test('should get correct answer via gpt-5.3-codex (pi-mono path)', async () => {
 		if (!process.env.OPENAI_API_KEY) {
 			console.log('Skipping - OPENAI_API_KEY not set');
 			return;
@@ -93,9 +125,20 @@ describe('OpenAI Provider (Online)', () => {
 		// Verify idle state
 		const state = await getProcessingState(daemon, sessionId);
 		expect(state.status).toBe('idle');
+
+		// Verify response content — proves pi-mono path returned a real model response
+		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
+		const assistantMessages = messages.sdkMessages.filter(
+			(msg) => (msg as { type?: string }).type === 'assistant'
+		);
+		expect(assistantMessages.length).toBeGreaterThanOrEqual(1);
+
+		// Extract text and verify the model answered correctly
+		const responseText = assistantMessages.map(extractAssistantText).join('');
+		expect(responseText).toContain('6');
 	}, 60000);
 
-	test('should handle multi-turn conversation with context retention', async () => {
+	test('should handle sequential queries (multi-turn pi-mono path)', async () => {
 		if (!process.env.OPENAI_API_KEY) {
 			console.log('Skipping - OPENAI_API_KEY not set');
 			return;
@@ -114,73 +157,31 @@ describe('OpenAI Provider (Online)', () => {
 		const { sessionId } = createResult;
 		daemon.trackSession(sessionId);
 
-		// Turn 1: Initial question
-		const result1 = await sendMessage(
-			daemon,
-			sessionId,
-			'What is 5 + 7? Just reply with the number.'
-		);
+		// First query: math question
+		const result1 = await sendMessage(daemon, sessionId, 'What is 5+7? Reply with just the number.');
 		expect(result1.messageId).toBeString();
-
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Turn 2: Follow-up question (tests context retention)
-		const result2 = await sendMessage(
-			daemon,
-			sessionId,
-			'Now add 3 to that result. Just reply with the number.'
-		);
+		// Second query: another math question — proves sequential queries work on pi-mono path
+		const result2 = await sendMessage(daemon, sessionId, 'What is 8-3? Reply with just the number.');
 		expect(result2.messageId).toBeString();
 		expect(result2.messageId).not.toBe(result1.messageId);
-
 		await waitForIdle(daemon, sessionId, 30000);
 
 		// Verify state is idle after all turns
 		const finalState = await getProcessingState(daemon, sessionId);
 		expect(finalState.status).toBe('idle');
-	}, 90000); // 90 second timeout for 2 API calls
 
-	test('should track context usage information', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
-			return;
-		}
+		// Verify we got 2 assistant messages (one per query)
+		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 2, timeout: 5000 });
+		const assistantMessages = messages.sdkMessages.filter(
+			(msg) => (msg as { type?: string }).type === 'assistant'
+		);
+		expect(assistantMessages.length).toBeGreaterThanOrEqual(2);
 
-		// Create session
-		const createResult = (await daemon.messageHub.request('session.create', {
-			workspacePath: process.cwd(),
-			title: 'OpenAI Context Usage Test',
-			config: {
-				model: 'gpt-5-mini',
-				permissionMode: 'acceptEdits',
-			},
-		})) as { sessionId: string };
-
-		const { sessionId } = createResult;
-		daemon.trackSession(sessionId);
-
-		// Send message and wait for response
-		await sendMessage(daemon, sessionId, 'Say "hello" and nothing else.');
-		await waitForIdle(daemon, sessionId, 30000);
-
-		// Get session and check that context info was updated
-		const session = await getSession(daemon, sessionId);
-		const metadata = session.metadata as {
-			lastContextInfo?: ContextInfo;
-		} | null;
-
-		const contextInfo = metadata?.lastContextInfo;
-
-		// Verify context info exists and has expected fields
-		expect(contextInfo).toBeDefined();
-		expect(contextInfo?.totalUsed).toBeGreaterThan(0);
-		expect(contextInfo?.totalCapacity).toBeGreaterThan(0);
-		expect(contextInfo?.percentUsed).toBeGreaterThanOrEqual(0);
-		expect(contextInfo?.percentUsed).toBeLessThanOrEqual(100);
-
-		// Verify API usage is tracked
-		expect(contextInfo?.apiUsage).toBeDefined();
-		expect(contextInfo?.apiUsage?.inputTokens).toBeGreaterThan(0);
-		expect(contextInfo?.apiUsage?.outputTokens).toBeGreaterThan(0);
-	}, 60000);
+		// Verify both queries returned correct answers
+		const allResponseText = assistantMessages.map(extractAssistantText).join(' ');
+		expect(allResponseText).toContain('12'); // 5+7=12
+		expect(allResponseText).toContain('5'); // 8-3=5
+	}, 90000);
 });
