@@ -2,8 +2,6 @@
  * Room components package
  *
  * Components for room-based task management and goals configuration.
- *
- * Note: Room chat uses unified session architecture via ChatContainer with sessionId="room:{roomId}"
  */
 
 // @public - Library export

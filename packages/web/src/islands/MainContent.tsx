@@ -3,7 +3,6 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
-	currentRoomChatSignal,
 	navSectionSignal,
 	settingsSectionSignal,
 } from '../lib/signals.ts';
@@ -26,7 +25,6 @@ export default function MainContent() {
 	const roomId = currentRoomIdSignal.value;
 	const roomSessionId = currentRoomSessionIdSignal.value;
 	const roomTaskId = currentRoomTaskIdSignal.value;
-	const roomChatActive = currentRoomChatSignal.value;
 	const sessionsList = sessions.value;
 	const navSection = navSectionSignal.value;
 	const settingsSection = settingsSectionSignal.value;
@@ -34,13 +32,7 @@ export default function MainContent() {
 	// Room route takes priority
 	if (roomId) {
 		return (
-			<Room
-				key={roomId}
-				roomId={roomId}
-				sessionViewId={roomSessionId}
-				taskViewId={roomTaskId}
-				chatTabActive={roomChatActive}
-			/>
+			<Room key={roomId} roomId={roomId} sessionViewId={roomSessionId} taskViewId={roomTaskId} />
 		);
 	}
 
