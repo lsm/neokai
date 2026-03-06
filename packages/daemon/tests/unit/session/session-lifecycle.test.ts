@@ -363,6 +363,23 @@ describe('SessionLifecycle', () => {
 			expect(mockDb.createSession).toHaveBeenCalled();
 		});
 
+		it('should set titleGenerated to false for room session created without a title', async () => {
+			// Regression: "+ New Session" in the Room UI must NOT pass a hardcoded title
+			// so the daemon can auto-generate a meaningful one after the first response.
+			await lifecycle.create({
+				roomId: 'room-123',
+				// no title provided
+			});
+
+			expect(mockDb.createSession).toHaveBeenCalledWith(
+				expect.objectContaining({
+					metadata: expect.objectContaining({
+						titleGenerated: false,
+					}),
+				})
+			);
+		});
+
 		it('should create session with createdBy field', async () => {
 			await lifecycle.create({
 				createdBy: 'neo',
