@@ -8,8 +8,8 @@
  * 1. Goal created → planning → execution task promoted
  * 2. Coder worker implements the task
  * 3. Leader receives worker output and dispatches reviewer sub-agents
- * 4. Reviewer sub-agents review the code and return verdicts
- * 5. Leader consolidates verdicts and decides: complete or send back
+ * 4. Reviewer sub-agents review the code and post reviews to the PR
+ * 5. Leader collects review links and routes: forward URLs to worker or submit for review
  * 6. Task reaches terminal state (completed, review, or needs_human)
  *
  * Assertions:

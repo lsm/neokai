@@ -89,6 +89,10 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'replanGoal', args: [groupId, reason] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
+		async submitForReview(groupId: string, prUrl: string) {
+			calls.push({ method: 'submitForReview', args: [groupId, prUrl] });
+			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
+		},
 	};
 }
 
@@ -153,18 +157,18 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('Review Orchestration Workflow');
 			expect(prompt).toContain('reviewer-opus');
 			expect(prompt).toContain('reviewer-sonnet');
-			expect(prompt).toContain('---VERDICT---');
+			expect(prompt).toContain('---REVIEW_POSTED---');
 			expect(prompt).toContain('Task(subagent_type:');
-			// Severity levels and decision criteria
-			expect(prompt).toContain('P0/P1/P2');
-			expect(prompt).toContain('P3');
+			// Routing decision criteria (P0-P3 severity-based)
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('P3 nits');
 		});
 
 		it('should use simple review guidelines without sub-agents', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Review Guidelines');
 			expect(prompt).not.toContain('Review Orchestration Workflow');
-			expect(prompt).not.toContain('---VERDICT---');
+			expect(prompt).not.toContain('---REVIEW_POSTED---');
 		});
 
 		it('includes available specialists when sub-agents configured', () => {
@@ -256,6 +260,17 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('failTask');
 			expect(callbacks.calls[0].args).toEqual(['group-1', 'API does not support this']);
+		});
+
+		it('should route submit_for_review to callback with groupId and prUrl', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.submit_for_review({ pr_url: 'https://github.com/org/repo/pull/42' });
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('submitForReview');
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'https://github.com/org/repo/pull/42']);
 		});
 
 		it('should route replan_goal to callback with groupId', async () => {
@@ -435,24 +450,25 @@ describe('Leader Agent', () => {
 	});
 
 	describe('buildReviewerAgents', () => {
-		it('should create SDK reviewer with structured verdict format in prompt', () => {
+		it('should create SDK reviewer with review-posted output format in prompt', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
 			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
-			expect(agent.prompt).toContain('---VERDICT---');
-			expect(agent.prompt).toContain('---END_VERDICT---');
+			expect(agent.prompt).toContain('---REVIEW_POSTED---');
+			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
 			expect(agent.prompt).toContain('APPROVE');
 			expect(agent.prompt).toContain('REQUEST_CHANGES');
-			expect(agent.prompt).toContain('COMMENT_ONLY');
-			// P3 severity level
-			expect(agent.prompt).toContain('p3:');
+			// Review URL capture via REST API
+			expect(agent.prompt).toContain('.html_url');
+			// P0-P3 severity system
+			expect(agent.prompt).toContain('P0 (blocking)');
 			expect(agent.prompt).toContain('P3 (nit)');
 			// Comprehensive review, not just diff
 			expect(agent.prompt).toContain('not just diffs');
-			expect(agent.prompt).toContain('original request');
+			expect(agent.prompt).toContain('original ask');
 		});
 
-		it('should create CLI reviewer with structured verdict format in prompt', () => {
+		it('should create CLI reviewer with review-posted output format in prompt', () => {
 			const agents = buildReviewerAgents([
 				{ model: 'custom-cli', type: 'cli', driver_model: 'haiku' },
 			]);
@@ -460,8 +476,8 @@ describe('Leader Agent', () => {
 			expect(agent).toBeDefined();
 			expect(agent.model).toBe('haiku');
 			expect(agent.prompt).toContain('custom-cli');
-			expect(agent.prompt).toContain('---VERDICT---');
-			expect(agent.prompt).toContain('---END_VERDICT---');
+			expect(agent.prompt).toContain('---REVIEW_POSTED---');
+			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
 		});
 
 		it('should include read-only tools for reviewers', () => {

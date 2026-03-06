@@ -53,13 +53,33 @@ export function buildCoderSystemPrompt(): string {
 			`The branch has already been created for you. Follow this workflow:`
 	);
 	sections.push(`1. Implement the task, making logical commits along the way`);
-	sections.push(`2. Push your branch: \`git push -u origin HEAD\``);
-	sections.push(`3. Create a pull request: \`gh pr create --fill\``);
-	sections.push(`4. Finish your response`);
+	sections.push(`2. Add or update tests to cover the new/changed behavior — tests are mandatory`);
+	sections.push(`3. Push your branch: \`git push -u origin HEAD\``);
+	sections.push(`4. Create a pull request: \`gh pr create --fill\``);
+	sections.push(`5. Finish your response`);
 	sections.push(``);
 	sections.push(
 		`**IMPORTANT**: Do NOT commit directly to the main/dev/master branch. ` +
 			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
+	);
+
+	// Review feedback handling
+	sections.push(`\n## Addressing Review Feedback\n`);
+	sections.push(
+		`When you receive feedback containing GitHub review URLs, fetch each review by its ID:`
+	);
+	sections.push(
+		`1. Extract the review ID from the URL (e.g. \`#pullrequestreview-3900806436\` → ID is \`3900806436\`)`
+	);
+	sections.push(
+		`2. Fetch each review: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id} --jq '.body'\``
+	);
+	sections.push(`3. Read the review body to understand what changes are requested`);
+	sections.push(`4. Verify the feedback item by item — address the ones that are true or helpful`);
+	sections.push(`5. Add or update tests if the review calls for it`);
+	sections.push(`6. Push your changes: \`git push\``);
+	sections.push(
+		`7. Finish your response — the leader will re-dispatch reviewers for the next round`
 	);
 
 	return sections.join('\n');
