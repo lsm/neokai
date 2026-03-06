@@ -44,24 +44,27 @@ export default function Room({ roomId, sessionViewId, taskViewId, chatTabActive 
 		roomStore.select(roomId).finally(() => {
 			setInitialLoad(false);
 			// After initial load, default to chat tab if any tasks are in review
-			// (only if not already overridden by URL or user interaction)
-			setActiveTab((prev) => {
-				if (prev === 'overview' && !chatTabActive) {
-					const hasReviewTasks = roomStore.tasks.value.some((t) => t.status === 'review');
-					return hasReviewTasks ? 'chat' : 'overview';
+			// (only if not already on the chat tab via URL)
+			if (!chatTabActive) {
+				const hasReviewTasks = roomStore.tasks.value.some((t) => t.status === 'review');
+				if (hasReviewTasks) {
+					// Use navigateToRoomChat so URL and signal stay in sync
+					navigateToRoomChat(roomId);
 				}
-				return prev;
-			});
+			}
 		});
 		return () => {
 			roomStore.select(null);
 		};
 	}, [roomId]);
 
-	// Sync activeTab when chatTabActive prop changes (URL navigation)
+	// Sync activeTab when chatTabActive prop changes (URL navigation, e.g. back button)
 	useEffect(() => {
 		if (chatTabActive) {
 			setActiveTab('chat');
+		} else {
+			// Reset to overview when navigating away via back button
+			setActiveTab('overview');
 		}
 	}, [chatTabActive]);
 
@@ -70,8 +73,8 @@ export default function Room({ roomId, sessionViewId, taskViewId, chatTabActive 
 		setActiveTab(tab);
 		if (tab === 'chat') {
 			navigateToRoomChat(roomId);
-		} else if (activeTab === 'chat') {
-			// Coming off chat tab, go back to plain room URL
+		} else {
+			// Navigating away from any tab (including chat) to a non-chat tab
 			navigateToRoom(roomId);
 		}
 	};

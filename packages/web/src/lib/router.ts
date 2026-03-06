@@ -164,6 +164,7 @@ export function navigateToSession(sessionId: string, replace = false): void {
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentSessionIdSignal.value = sessionId;
+		currentRoomChatSignal.value = false;
 		return;
 	}
 
@@ -180,6 +181,7 @@ export function navigateToSession(sessionId: string, replace = false): void {
 
 		// Update the signal
 		currentSessionIdSignal.value = sessionId;
+		currentRoomChatSignal.value = false;
 		navSectionSignal.value = 'chats';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
@@ -431,6 +433,7 @@ export function navigateToSessions(replace = false): void {
 		navSectionSignal.value = 'chats';
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		return;
 	}
@@ -443,6 +446,7 @@ export function navigateToSessions(replace = false): void {
 
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		currentRoomChatSignal.value = false;
 		currentRoomSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} finally {
