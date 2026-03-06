@@ -690,8 +690,7 @@ export class RoomRuntime {
 		// - explicitly requested via opts.approved === true, OR
 		// - resuming a planner (always treated as an approval) UNLESS explicitly denied
 		const shouldApprove =
-			opts?.approved === true ||
-			(group.workerRole === 'planner' && opts?.approved !== false);
+			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
 		if (shouldApprove) {
 			this.groupRepo.setApproved(group.id, true);
 		}

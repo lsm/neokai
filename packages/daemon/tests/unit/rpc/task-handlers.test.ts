@@ -164,18 +164,57 @@ function createMockDatabase(): Database {
 }
 
 // Helper to create mock RoomRuntimeService
-function createMockRuntimeService(sendHumanMessageResult = true): {
+// routeHumanMessageToGroup calls runtime.injectMessageToLeader (awaiting_leader)
+// or runtime.resumeWorkerFromHuman (awaiting_human)
+function createMockRuntimeService(methodResult = true): {
 	runtimeService: RoomRuntimeService;
-	sendHumanMessage: ReturnType<typeof mock>;
+	injectMessageToLeader: ReturnType<typeof mock>;
+	resumeWorkerFromHuman: ReturnType<typeof mock>;
 	getRuntime: ReturnType<typeof mock>;
 } {
-	const sendHumanMessage = mock(async () => sendHumanMessageResult);
-	const mockRuntime = { sendHumanMessage };
+	const injectMessageToLeader = mock(async () => methodResult);
+	const resumeWorkerFromHuman = mock(async () => methodResult);
+	const mockRuntime = { injectMessageToLeader, resumeWorkerFromHuman };
 	const getRuntime = mock(() => mockRuntime);
 	const runtimeService = {
 		getRuntime,
 	} as unknown as RoomRuntimeService;
-	return { runtimeService, sendHumanMessage, getRuntime };
+	return { runtimeService, injectMessageToLeader, resumeWorkerFromHuman, getRuntime };
+}
+
+// Helper to create a mock Database that returns a group with the given state
+function createMockDatabaseWithGroup(groupState: string = 'awaiting_leader'): Database {
+	const groupRow = {
+		id: 'group-123',
+		ref_id: 'task-123',
+		group_type: 'task_pair',
+		state: groupState,
+		version: 1,
+		metadata: JSON.stringify({
+			workerRole: 'coder',
+			feedbackIteration: 0,
+			approved: false,
+			leaderCalledTool: false,
+			leaderContractViolations: 0,
+		}),
+		worker_session_id: 'worker-session-123',
+		leader_session_id: 'leader-session-123',
+		created_at: Date.now(),
+		completed_at: null,
+	};
+	const mockRawDb = {
+		prepare: mock(() => ({
+			run: mock(() => ({ changes: 1 })),
+			get: mock(() => groupRow),
+			all: mock(() => []),
+		})),
+		run: mock(() => ({ changes: 1 })),
+		get: mock(() => groupRow),
+		all: mock(() => []),
+	};
+	return {
+		getDatabase: mock(() => mockRawDb),
+	} as unknown as Database;
 }
 
 describe('Task RPC Handlers', () => {
@@ -398,13 +437,11 @@ describe('task.sendHumanMessage handler', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let daemonHubData: ReturnType<typeof createMockDaemonHub>;
 	let roomManagerData: ReturnType<typeof createMockRoomManager>;
-	let db: Database;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
 		daemonHubData = createMockDaemonHub();
 		roomManagerData = createMockRoomManager();
-		db = createMockDatabase();
 	});
 
 	afterEach(() => {
@@ -412,7 +449,8 @@ describe('task.sendHumanMessage handler', () => {
 	});
 
 	it('sends human message successfully when runtime is available', async () => {
-		const { runtimeService, sendHumanMessage } = createMockRuntimeService(true);
+		const { runtimeService, injectMessageToLeader } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -431,12 +469,13 @@ describe('task.sendHumanMessage handler', () => {
 			{}
 		)) as { success: boolean };
 
-		expect(sendHumanMessage).toHaveBeenCalledWith('task-123', 'Looks good!');
+		expect(injectMessageToLeader).toHaveBeenCalledWith('task-123', 'Looks good!');
 		expect(result.success).toBe(true);
 	});
 
 	it('trims whitespace from message before sending', async () => {
-		const { runtimeService, sendHumanMessage } = createMockRuntimeService(true);
+		const { runtimeService, injectMessageToLeader } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -450,11 +489,12 @@ describe('task.sendHumanMessage handler', () => {
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		await handler!({ roomId: 'room-123', taskId: 'task-123', message: '  please fix it  ' }, {});
 
-		expect(sendHumanMessage).toHaveBeenCalledWith('task-123', 'please fix it');
+		expect(injectMessageToLeader).toHaveBeenCalledWith('task-123', 'please fix it');
 	});
 
 	it('throws error when roomId is missing', async () => {
 		const { runtimeService } = createMockRuntimeService();
+		const db = createMockDatabase();
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -473,6 +513,7 @@ describe('task.sendHumanMessage handler', () => {
 
 	it('throws error when taskId is missing', async () => {
 		const { runtimeService } = createMockRuntimeService();
+		const db = createMockDatabase();
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -491,6 +532,7 @@ describe('task.sendHumanMessage handler', () => {
 
 	it('throws error when message is missing', async () => {
 		const { runtimeService } = createMockRuntimeService();
+		const db = createMockDatabase();
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -509,6 +551,7 @@ describe('task.sendHumanMessage handler', () => {
 
 	it('throws error when message is empty/whitespace', async () => {
 		const { runtimeService } = createMockRuntimeService();
+		const db = createMockDatabase();
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -522,10 +565,11 @@ describe('task.sendHumanMessage handler', () => {
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		await expect(
 			handler!({ roomId: 'room-123', taskId: 'task-123', message: '   ' }, {})
-		).rejects.toThrow('Message is required');
+		).rejects.toThrow('Message cannot be empty');
 	});
 
 	it('throws error when runtimeService is not provided', async () => {
+		const db = createMockDatabase();
 		// Set up without runtimeService
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -543,6 +587,7 @@ describe('task.sendHumanMessage handler', () => {
 	});
 
 	it('throws error when no runtime found for room', async () => {
+		const db = createMockDatabase();
 		const getRuntime = mock(() => null);
 		const runtimeService = { getRuntime } as unknown as RoomRuntimeService;
 
@@ -561,8 +606,9 @@ describe('task.sendHumanMessage handler', () => {
 		).rejects.toThrow('No runtime found for room: room-999');
 	});
 
-	it('throws error when sendHumanMessage returns false (wrong state)', async () => {
-		const { runtimeService } = createMockRuntimeService(false);
+	it('throws error when group is in awaiting_worker state (cannot accept messages)', async () => {
+		const { runtimeService } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_worker');
 
 		setupTaskHandlers(
 			messageHubData.hub,
@@ -576,6 +622,50 @@ describe('task.sendHumanMessage handler', () => {
 		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
 		await expect(
 			handler!({ roomId: 'room-123', taskId: 'task-123', message: 'hello' }, {})
-		).rejects.toThrow('Cannot send message');
+		).rejects.toThrow('Worker is running');
+	});
+
+	it('throws error when message exceeds 10,000 characters', async () => {
+		const { runtimeService } = createMockRuntimeService(true);
+		const db = createMockDatabase();
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		const oversizedMessage = 'a'.repeat(10_001);
+		await expect(
+			handler!({ roomId: 'room-123', taskId: 'task-123', message: oversizedMessage }, {})
+		).rejects.toThrow('Message is too long');
+	});
+
+	it('accepts message at exactly 10,000 characters', async () => {
+		const { runtimeService, injectMessageToLeader } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_leader');
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		const maxMessage = 'a'.repeat(10_000);
+		const result = (await handler!(
+			{ roomId: 'room-123', taskId: 'task-123', message: maxMessage },
+			{}
+		)) as { success: boolean };
+
+		expect(injectMessageToLeader).toHaveBeenCalledWith('task-123', maxMessage);
+		expect(result.success).toBe(true);
 	});
 });
