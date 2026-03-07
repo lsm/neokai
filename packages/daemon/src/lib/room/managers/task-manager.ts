@@ -4,7 +4,7 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (draft -> pending -> in_progress -> completed/failed/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/failed/cancelled/review)
  * - Task assignment to sessions
  */
 
@@ -153,6 +153,39 @@ export class TaskManager {
 	}
 
 	/**
+	 * Cancel task (intentionally stopped, distinct from failure).
+	 * Cascades cancellation to any pending tasks that depend on this task,
+	 * since they can never be satisfied once their dependency is cancelled.
+	 */
+	async cancelTask(taskId: string): Promise<NeoTask> {
+		const all = await this.cancelTaskCascade(taskId);
+		return all[0];
+	}
+
+	/**
+	 * Cancel task and cascade to pending dependents recursively.
+	 * Returns all cancelled tasks (root first, then cascaded) so callers can
+	 * emit update events for every affected task.
+	 */
+	async cancelTaskCascade(taskId: string): Promise<NeoTask[]> {
+		return this.doCancelCascade(taskId, []);
+	}
+
+	private async doCancelCascade(taskId: string, acc: NeoTask[]): Promise<NeoTask[]> {
+		const result = await this.updateTaskStatus(taskId, 'cancelled');
+		acc.push(result);
+
+		const pendingTasks = await this.listTasks({ status: 'pending' });
+		for (const t of pendingTasks) {
+			if (t.dependsOn?.includes(taskId)) {
+				await this.doCancelCascade(t.id, acc);
+			}
+		}
+
+		return acc;
+	}
+
+	/**
 	 * Move task to review (work done, awaiting human approval)
 	 */
 	async reviewTask(taskId: string, prUrl?: string): Promise<NeoTask> {
@@ -244,13 +277,22 @@ export class TaskManager {
 	/**
 	 * Cancel all pending tasks in the given list.
 	 * Used during mid-execution replanning to clear stale plan.
+	 *
+	 * Note: each call to cancelTask cascades to pending dependents, so tasks
+	 * outside the explicit list may also be cancelled if they depended on a
+	 * task in the list. The return count reflects only directly-cancelled tasks.
 	 */
 	async cancelPendingTasks(taskIds: string[]): Promise<number> {
 		let cancelled = 0;
+		const alreadyCancelled = new Set<string>();
 		for (const taskId of taskIds) {
+			if (alreadyCancelled.has(taskId)) continue;
 			const task = await this.getTask(taskId);
 			if (task && task.status === 'pending') {
-				await this.failTask(taskId, 'Cancelled: goal replanning triggered');
+				const all = await this.cancelTaskCascade(taskId);
+				for (const ct of all) {
+					alreadyCancelled.add(ct.id);
+				}
 				cancelled++;
 			}
 		}

@@ -510,8 +510,22 @@ export class TaskGroupManager {
 
 	/**
 	 * Cancel a group - urgent control from human.
+	 * Marks the group as failed (terminal group state) and the task as cancelled.
 	 */
 	async cancel(groupId: string): Promise<SessionGroup | null> {
-		return this.fail(groupId, 'Cancelled by user');
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) return null;
+
+		const updated = this.groupRepo.failGroup(groupId, group.version);
+		if (!updated) return null;
+
+		// Mark task as cancelled (distinct from failed — intentionally stopped by user)
+		await this.taskManager.cancelTask(group.taskId);
+
+		this.observer.unobserve(group.workerSessionId);
+		this.observer.unobserve(group.leaderSessionId);
+		this.pendingLeaderInits.delete(groupId);
+
+		return updated;
 	}
 }

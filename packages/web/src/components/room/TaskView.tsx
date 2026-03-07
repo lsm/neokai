@@ -59,6 +59,7 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	failed: 'text-red-400',
 	review: 'text-purple-400',
 	draft: 'text-gray-500',
+	cancelled: 'text-gray-500',
 };
 
 interface HumanInputAreaProps {
@@ -451,7 +452,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 													? 'This task is awaiting human review.'
 													: task.status === 'draft'
 														? 'This task is a draft and has not been scheduled yet.'
-														: 'No agent group has been spawned yet.'}
+														: task.status === 'cancelled'
+															? 'This task was cancelled.'
+															: 'No agent group has been spawned yet.'}
 								</p>
 							</div>
 						</div>

@@ -111,7 +111,11 @@ export class TaskRepository {
 			if (params.status === 'in_progress') {
 				fields.push('started_at = ?');
 				values.push(Date.now());
-			} else if (params.status === 'completed' || params.status === 'failed') {
+			} else if (
+				params.status === 'completed' ||
+				params.status === 'failed' ||
+				params.status === 'cancelled'
+			) {
 				fields.push('completed_at = ?');
 				values.push(Date.now());
 			}
@@ -177,11 +181,11 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Count all active (non-completed, non-failed) tasks for a room
+	 * Count all active (non-completed, non-failed, non-cancelled) tasks for a room
 	 */
 	countActiveTasks(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'failed')`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`
 		);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;
