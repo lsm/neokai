@@ -248,7 +248,7 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const header = container.querySelector('.text-red-400');
+			const header = container.querySelector('h3.text-red-400');
 			expect(header).toBeTruthy();
 			expect(header?.textContent).toContain('Failed (1)');
 		});
@@ -268,6 +268,45 @@ describe('RoomTasks', () => {
 
 			const redHeader = container.querySelector('.bg-red-900\\/20');
 			expect(redHeader).toBeTruthy();
+		});
+
+		it('should show error message for failed tasks with error', () => {
+			const tasks = [
+				createTask('t1', 'failed', { title: 'Broken task', error: 'Something went wrong' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Something went wrong');
+		});
+
+		it('should not show error message for failed tasks without error', () => {
+			const tasks = [createTask('t1', 'failed', { title: 'Broken task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// No error paragraph should appear
+			const errorEls = container.querySelectorAll('.text-red-400');
+			// Only the header elements should have text-red-400, no error paragraph
+			for (const el of Array.from(errorEls)) {
+				expect(el.tagName.toLowerCase()).not.toBe('p');
+			}
+		});
+
+		it('should appear before in-progress tasks in the DOM', () => {
+			const tasks = [createTask('t1', 'in_progress'), createTask('t2', 'failed')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const headers = container.querySelectorAll('h3');
+			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
+
+			const failedIdx = headerTexts.findIndex((t) => t.includes('Failed'));
+			const inProgressIdx = headerTexts.findIndex((t) => t.includes('In Progress'));
+
+			expect(failedIdx).toBeGreaterThanOrEqual(0);
+			expect(inProgressIdx).toBeGreaterThanOrEqual(0);
+			expect(failedIdx).toBeLessThan(inProgressIdx);
 		});
 	});
 
