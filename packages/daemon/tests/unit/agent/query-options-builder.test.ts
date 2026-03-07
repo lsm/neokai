@@ -13,8 +13,10 @@ import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
 import { homedir } from 'os';
+import { resetProviderRegistry } from '../../../src/lib/providers/registry';
 
-// Mock the provider registry and factory
+// Mock the provider registry - but re-export resetProviderRegistry from real module
+// This allows global test setup to reset the registry between test files
 const mockProviders: unknown[] = [];
 mock.module('../../../src/lib/providers/registry', () => ({
 	getProviderRegistry: () => ({
@@ -25,7 +27,7 @@ mock.module('../../../src/lib/providers/registry', () => ({
 		register: () => {},
 		unregister: () => {},
 	}),
-	resetProviderRegistry: () => {},
+	resetProviderRegistry, // Re-export the real function
 }));
 
 mock.module('../../../src/lib/providers/factory', () => ({
