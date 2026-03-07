@@ -51,13 +51,11 @@ describe('SessionGroupRepository', () => {
 				joined_at INTEGER NOT NULL,
 				PRIMARY KEY (group_id, session_id)
 			);
-			CREATE TABLE session_group_messages (
+			CREATE TABLE task_group_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-				session_id TEXT,
-				role TEXT NOT NULL,
-				message_type TEXT NOT NULL,
-				content TEXT NOT NULL,
+				kind TEXT NOT NULL,
+				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
 
@@ -238,43 +236,39 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
-	describe('appendMessage / getMessages', () => {
-		it('should append and retrieve messages', () => {
+	describe('appendEvent / getEvents', () => {
+		it('should append and retrieve events', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			const msgId = repo.appendMessage({
+			const eventId = repo.appendEvent({
 				groupId: group.id,
-				sessionId: workerSessionId,
-				role: 'coder',
-				messageType: 'text',
-				content: 'Hello from Coder',
+				kind: 'status',
+				payloadJson: JSON.stringify({ text: 'Hello status' }),
 			});
-			expect(msgId).toBeGreaterThan(0);
+			expect(eventId).toBeGreaterThan(0);
 
-			const { messages, hasMore } = repo.getMessages(group.id);
-			expect(messages).toHaveLength(1);
-			expect(messages[0].role).toBe('coder');
-			expect(messages[0].content).toBe('Hello from Coder');
-			expect(messages[0].sessionId).toBe(workerSessionId);
+			const { events, hasMore } = repo.getEvents(group.id);
+			expect(events).toHaveLength(1);
+			expect(events[0].kind).toBe('status');
+			expect(events[0].payloadJson).toBe(JSON.stringify({ text: 'Hello status' }));
 			expect(hasMore).toBe(false);
 		});
 
-		it('should paginate messages', () => {
+		it('should paginate events', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			for (let i = 0; i < 5; i++) {
-				repo.appendMessage({
+				repo.appendEvent({
 					groupId: group.id,
-					role: 'coder',
-					messageType: 'text',
-					content: `msg ${i}`,
+					kind: 'status',
+					payloadJson: JSON.stringify({ text: `event ${i}` }),
 				});
 			}
 
-			const page1 = repo.getMessages(group.id, { limit: 3 });
-			expect(page1.messages).toHaveLength(3);
+			const page1 = repo.getEvents(group.id, { limit: 3 });
+			expect(page1.events).toHaveLength(3);
 			expect(page1.hasMore).toBe(true);
 
-			const page2 = repo.getMessages(group.id, { afterId: page1.messages.at(-1)!.id });
-			expect(page2.messages).toHaveLength(2);
+			const page2 = repo.getEvents(group.id, { afterId: page1.events.at(-1)!.id });
+			expect(page2.events).toHaveLength(2);
 			expect(page2.hasMore).toBe(false);
 		});
 	});

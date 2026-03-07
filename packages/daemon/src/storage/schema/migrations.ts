@@ -78,6 +78,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 18: Add 'cancelled' to tasks status CHECK constraint
 	runMigration18(db);
+
+	// Migration 19: Remove legacy mirrored session_group_messages table
+	runMigration19(db);
 }
 
 /**
@@ -946,6 +949,11 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
  * - Rebuilds the table if the type CHECK constraint is outdated, mapping any
  *   dev-only type values to their production equivalents before the rebuild.
  */
+function runMigration19(db: BunDatabase): void {
+	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
+	db.exec(`DROP INDEX IF EXISTS idx_sgmsg_group`);
+}
+
 function runMigrationRoomCleanup(db: BunDatabase): void {
 	db.exec(`PRAGMA foreign_keys = OFF`);
 	try {

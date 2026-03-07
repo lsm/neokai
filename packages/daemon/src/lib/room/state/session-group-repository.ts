@@ -1,5 +1,5 @@
 /**
- * SessionGroupRepository - CRUD for session_groups, session_group_members, session_group_messages
+ * SessionGroupRepository - CRUD for session_groups, session_group_members, task_group_events
  *
  * Generic multi-agent collaboration groups. For (Worker, Leader) task groups:
  *   group_type = 'task', ref_id = task_id
@@ -108,13 +108,11 @@ export interface SessionGroup {
 	completedAt: number | null;
 }
 
-export interface SessionGroupMessage {
+export interface TaskGroupEvent {
 	id: number;
 	groupId: string;
-	sessionId: string | null;
-	role: string;
-	messageType: string;
-	content: string;
+	kind: string;
+	payloadJson: string | null;
 	createdAt: number;
 }
 
@@ -452,41 +450,32 @@ export class SessionGroupRepository {
 		});
 	}
 
-	// ===== Messages (append-only unified conversation timeline) =====
+	// ===== Group events (status/system timeline, no mirrored SDK chat) =====
 
-	appendMessage(params: {
+	appendEvent(params: {
 		groupId: string;
-		sessionId?: string;
-		role: string;
-		messageType: string;
-		content: string;
+		kind: string;
+		payloadJson?: string;
 	}): number {
 		const result = this.db
 			.prepare(
-				`INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
+				`INSERT INTO task_group_events (group_id, kind, payload_json, created_at)
+			 VALUES (?, ?, ?, ?)`
 			)
-			.run(
-				params.groupId,
-				params.sessionId ?? null,
-				params.role,
-				params.messageType,
-				params.content,
-				Date.now()
-			);
+			.run(params.groupId, params.kind, params.payloadJson ?? null, Date.now());
 		return Number(result.lastInsertRowid);
 	}
 
-	getMessages(
+	getEvents(
 		groupId: string,
 		options?: { afterId?: number; limit?: number }
-	): { messages: SessionGroupMessage[]; hasMore: boolean } {
+	): { events: TaskGroupEvent[]; hasMore: boolean } {
 		const limit = options?.limit ?? 100;
 		const afterId = options?.afterId ?? 0;
 
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM session_group_messages
+				`SELECT * FROM task_group_events
 			 WHERE group_id = ? AND id > ?
 			 ORDER BY id ASC
 			 LIMIT ?`
@@ -494,17 +483,15 @@ export class SessionGroupRepository {
 			.all(groupId, afterId, limit + 1) as Record<string, unknown>[];
 
 		const hasMore = rows.length > limit;
-		const messages = rows.slice(0, limit).map((r) => ({
+		const events = rows.slice(0, limit).map((r) => ({
 			id: r.id as number,
 			groupId: r.group_id as string,
-			sessionId: r.session_id as string | null,
-			role: r.role as string,
-			messageType: r.message_type as string,
-			content: r.content as string,
+			kind: r.kind as string,
+			payloadJson: r.payload_json as string | null,
 			createdAt: r.created_at as number,
 		}));
 
-		return { messages, hasMore };
+		return { events, hasMore };
 	}
 
 	// ===== Private helpers =====

@@ -2,8 +2,8 @@
  * Tests for routeHumanMessageToGroup
  *
  * Covers all session group state branches:
- * - awaiting_human  → calls resumeWorkerFromHuman, no appendMessage
- * - awaiting_leader → calls injectMessageToLeader + appendMessage
+ * - awaiting_human  → calls resumeWorkerFromHuman
+ * - awaiting_leader → calls injectMessageToLeader
  * - awaiting_worker → returns error
  * - completed       → returns error
  * - failed          → returns error
@@ -18,7 +18,6 @@ import type {
 	SessionGroup,
 	GroupState,
 } from '../../../../src/lib/room/state/session-group-repository';
-import type { MessageHub } from '@neokai/shared';
 
 function makeGroup(state: GroupState): SessionGroup {
 	return {
@@ -81,15 +80,6 @@ function makeGroupRepo(group: SessionGroup | null): {
 	return { groupRepo, getGroupByTaskId, appendMessage };
 }
 
-function makeMessageHub(): {
-	messageHub: MessageHub;
-	event: ReturnType<typeof mock>;
-} {
-	const event = mock(() => {});
-	const messageHub = { event } as unknown as MessageHub;
-	return { messageHub, event };
-}
-
 describe('routeHumanMessageToGroup', () => {
 	const taskId = 'task-1';
 	const message = 'Hello from human';
@@ -119,7 +109,7 @@ describe('routeHumanMessageToGroup', () => {
 	});
 
 	describe('awaiting_leader state', () => {
-		it('calls injectMessageToLeader and appends to timeline on success', async () => {
+		it('calls injectMessageToLeader on success', async () => {
 			const { runtime, injectMessageToLeader } = makeRuntime(true, true);
 			const { groupRepo, appendMessage } = makeGroupRepo(makeGroup('awaiting_leader'));
 
@@ -127,112 +117,10 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(true);
 			expect(injectMessageToLeader).toHaveBeenCalledWith(taskId, message);
-			// Content must be JSON-serialized so the frontend renderer can parse it
-			// (renderer calls JSON.parse for all non-'status' message types).
-			// Parse the content to verify structure (turnId includes a timestamp suffix).
-			expect(appendMessage).toHaveBeenCalledTimes(1);
-			const call = appendMessage.mock.calls[0][0] as {
-				groupId: string;
-				role: string;
-				messageType: string;
-				content: string;
-			};
-			expect(call.groupId).toBe('group-1');
-			expect(call.role).toBe('human');
-			expect(call.messageType).toBe('user');
-			const parsed = JSON.parse(call.content) as {
-				type: string;
-				message: unknown;
-				_taskMeta: {
-					authorRole: string;
-					authorSessionId: string;
-					turnId: string;
-					iteration: number;
-				};
-			};
-			expect(parsed.type).toBe('user');
-			expect(parsed.message).toEqual({
-				role: 'user',
-				content: [{ type: 'text', text: message }],
-			});
-			expect(parsed._taskMeta.authorRole).toBe('human');
-			expect(parsed._taskMeta.authorSessionId).toBe('');
-			expect(parsed._taskMeta.turnId).toMatch(/^human_group-1_0_[0-9a-f-]{36}$/);
-			expect(parsed._taskMeta.iteration).toBe(0);
+			expect(appendMessage).not.toHaveBeenCalled();
 		});
 
-		it('calls appendMessage exactly once', async () => {
-			const { runtime } = makeRuntime(true, true);
-			const { groupRepo, appendMessage } = makeGroupRepo(makeGroup('awaiting_leader'));
-
-			await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
-
-			expect(appendMessage).toHaveBeenCalledTimes(1);
-		});
-
-		it('emits state.groupMessages.delta on the group channel when messageHub is provided', async () => {
-			const { runtime } = makeRuntime(true, true);
-			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_leader'));
-			const { messageHub, event } = makeMessageHub();
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskId,
-				message,
-				messageHub
-			);
-
-			expect(result.success).toBe(true);
-			expect(event).toHaveBeenCalledTimes(1);
-			const [eventName, payload, options] = event.mock.calls[0] as [
-				string,
-				{ added: Array<{ type: string; _taskMeta: { authorRole: string } }>; timestamp: number },
-				{ channel: string },
-			];
-			expect(eventName).toBe('state.groupMessages.delta');
-			expect(options.channel).toBe('group:group-1');
-			expect(Array.isArray(payload.added)).toBe(true);
-			expect(payload.added).toHaveLength(1);
-			expect(payload.added[0].type).toBe('user');
-			expect(payload.added[0]._taskMeta.authorRole).toBe('human');
-			expect(typeof payload.timestamp).toBe('number');
-		});
-
-		it('does not emit delta when messageHub is not provided', async () => {
-			const { runtime } = makeRuntime(true, true);
-			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_leader'));
-
-			// No messageHub argument — no event should be emitted, result still succeeds
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
-
-			expect(result.success).toBe(true);
-		});
-
-		it('returns success even when messageHub.event throws', async () => {
-			const { runtime } = makeRuntime(true, true);
-			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_leader'));
-			const event = mock(() => {
-				throw new Error('hub closed');
-			});
-			const messageHub = { event } as unknown as MessageHub;
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskId,
-				message,
-				messageHub
-			);
-
-			// Broadcast failed but persist succeeded — RPC must not surface the error
-			expect(result.success).toBe(true);
-		});
-
-		it('returns error and does not append when injectMessageToLeader fails (simulates catch path)', async () => {
-			// injectMessageToLeader returns false when sessionFactory.injectMessage() throws
-			// (the real method catches the error and returns false).
-			// routeHumanMessageToGroup must propagate the failure and NOT call appendMessage.
+		it('returns error and does not append when injectMessageToLeader fails', async () => {
 			const { runtime } = makeRuntime(true, false);
 			const { groupRepo, appendMessage } = makeGroupRepo(makeGroup('awaiting_leader'));
 

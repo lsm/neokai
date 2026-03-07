@@ -620,7 +620,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				{/* Scroll-to-bottom button — shown when user has scrolled up.
 				    bottomClass="bottom-4" because HumanInputArea is a sibling
 				    outside this container, not an overlapping footer. */}
-				<div class="absolute right-2 flex flex-col gap-2" style={{ bottom: '1rem' }}>
+				<div class="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2" style={{ bottom: '1rem' }}>
 					{/* Autoscroll toggle */}
 					<button
 						class={`p-2 rounded-full shadow-lg transition-colors ${

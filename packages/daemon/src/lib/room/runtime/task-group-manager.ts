@@ -233,32 +233,6 @@ export class TaskGroupManager {
 		// Create and start ONLY the worker session
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
-		// Store the initial task message in the group timeline BEFORE injecting it
-		// into the SDK, so the frontend can display the user prompt. The mirroring
-		// subscription (setupMirroring) won't be active yet when the SDK receives
-		// this message, so we must persist it explicitly.
-		const shortSessionId = workerSessionId.slice(0, 8);
-		const taskMsgContent = JSON.stringify({
-			type: 'user',
-			message: {
-				role: 'user',
-				content: [{ type: 'text', text: workerConfig.taskMessage }],
-			},
-			_taskMeta: {
-				authorRole: 'human',
-				authorSessionId: workerSessionId,
-				turnId: `turn_${group.id}_0_${shortSessionId}`,
-				iteration: 0,
-			},
-		});
-		this.groupRepo.appendMessage({
-			groupId: group.id,
-			sessionId: workerSessionId,
-			role: 'human',
-			messageType: 'user',
-			content: taskMsgContent,
-		});
-
 		// Kick off worker so the SDK streaming loop starts processing immediately.
 		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
 
@@ -487,27 +461,6 @@ export class TaskGroupManager {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
 
-		// Persist approval message in group timeline
-		this.groupRepo.appendMessage({
-			groupId,
-			sessionId: group.workerSessionId,
-			role: 'human',
-			messageType: 'user',
-			content: JSON.stringify({
-				type: 'user',
-				message: {
-					role: 'user',
-					content: [{ type: 'text', text: message }],
-				},
-				_taskMeta: {
-					authorRole: 'human',
-					authorSessionId: group.workerSessionId,
-					turnId: `turn_${groupId}_phase2`,
-					iteration: 0,
-				},
-			}),
-		});
-
 		// Inject approval message into existing worker session.
 		// If injection fails (e.g., session not in cache after restart), rollback
 		// the group state so the task stays in review for retry.
@@ -545,14 +498,6 @@ export class TaskGroupManager {
 
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);
-
-		// Append escalation reason to group timeline for diagnosability
-		this.groupRepo.appendMessage({
-			groupId,
-			role: 'system',
-			messageType: 'status',
-			content: `Escalated for human review: ${reason}`,
-		});
 
 		return updated;
 	}
