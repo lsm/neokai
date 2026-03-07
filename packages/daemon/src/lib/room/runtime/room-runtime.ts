@@ -108,6 +108,12 @@ export interface RoomRuntimeConfig {
 	messageHub?: MessageHub;
 	/** Hook options for lifecycle gates (test injection point) */
 	hookOptions?: HookOptions;
+	/** Fetch room from DB by ID (for lazy leader init with current config) */
+	getRoom: (roomId: string) => Room | null;
+	/** Fetch task from DB by ID (for lazy leader init with current data) */
+	getTask: (taskId: string) => Promise<NeoTask | null>;
+	/** Fetch goal from DB by ID (for lazy leader init with current data) */
+	getGoal: (goalId: string) => Promise<RoomGoal | null>;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -133,7 +139,7 @@ export class RoomRuntime {
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
-	private readonly defaultModel?: string;
+	private readonly getRoomById: (roomId: string) => Room | null;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -193,7 +199,7 @@ export class RoomRuntime {
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
-		this.defaultModel = config.defaultModel;
+		this.getRoomById = config.getRoom;
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -203,6 +209,9 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			getRoom: config.getRoom,
+			getTask: config.getTask,
+			getGoal: config.getGoal,
 		});
 	}
 
@@ -277,9 +286,11 @@ export class RoomRuntime {
 	/**
 	 * Maximum planning attempts for this room.
 	 * Reads from room.config.maxPlanningRetries (default: 0 = no auto-retry).
+	 * Fetches fresh room from DB to get current config.
 	 */
 	private get maxPlanningAttempts(): number {
-		const cfg = this.room.config ?? {};
+		const currentRoom = this.getRoomById(this.room.id);
+		const cfg = currentRoom?.config ?? this.room.config ?? {};
 		const value = (cfg as Record<string, unknown>)['maxPlanningRetries'];
 		if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
 			// maxPlanningRetries is "how many retries after first failure":
@@ -332,11 +343,8 @@ export class RoomRuntime {
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
 			if (dirty) {
 				log.info(`Worktree dirty for group ${groupId} — sending worker back to clean up.`);
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: 'Worktree has uncommitted changes. Sending worker back to clean up.',
+				this.appendGroupEvent(groupId, 'status', {
+					text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -367,11 +375,8 @@ export class RoomRuntime {
 			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			if (!gateResult.pass) {
 				log.info(`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`);
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Worker exit gate: ${gateResult.reason}`,
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Worker exit gate: ${gateResult.reason}`,
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -404,11 +409,10 @@ export class RoomRuntime {
 					`Rate limit detected in worker output for group ${groupId}. ` +
 						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 				);
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+				this.appendGroupEvent(groupId, 'rate_limited', {
+					text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+					resetsAt: rateLimitBackoff.resetsAt,
+					sessionRole: 'worker',
 				});
 				this.scheduleTickAfterRateLimitReset(groupId);
 				return;
@@ -452,16 +456,15 @@ export class RoomRuntime {
 			this.groupRepo.updateLastForwardedMessageId(groupId, lastMessage.id, group.version);
 		}
 
-		// Insert status message into group timeline
-		this.groupRepo.appendMessage({
-			groupId,
-			role: 'system',
-			messageType: 'status',
-			content: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
+		// Insert status event into group timeline
+		this.appendGroupEvent(groupId, 'status', {
+			text: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
 		});
 
-		// Route to Leader
-		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope);
+		// Route to Leader (room fetched from DB via getRoom)
+		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, (groupId) =>
+			this.createLeaderCallbacks(groupId)
+		);
 
 		// Update task progress based on review iteration
 		// Formula: iteration 1 → 20%, then +60%/maxRounds per subsequent round, capped at 80%
@@ -555,10 +558,11 @@ export class RoomRuntime {
 				// do NOT call cleanupMirroring (keeps mirroring running, consistent behaviour).
 				// The reason is persisted in the group timeline by escalateToHumanReview().
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
-					await this.taskGroupManager.escalateToHumanReview(
-						groupId,
-						`Max feedback iterations (${this.maxFeedbackIterations}) reached`
-					);
+					const reason = `Max feedback iterations (${this.maxFeedbackIterations}) reached`;
+					await this.taskGroupManager.escalateToHumanReview(groupId, reason);
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Escalated for human review: ${reason}`,
+					});
 					await this.emitTaskUpdateById(group.taskId);
 					await this.emitGoalProgressForTask(group.taskId);
 					this.scheduleTick();
@@ -575,12 +579,9 @@ export class RoomRuntime {
 				// Clear any rate limit backoff since we're starting a new iteration
 				this.groupRepo.clearRateLimit(groupId);
 
-				// Insert status message into group timeline
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
+				// Insert status event into group timeline
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
 				});
 
 				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
@@ -615,7 +616,8 @@ export class RoomRuntime {
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask) {
-						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
+						const currentRoom = this.getRoomById(this.room.id);
+						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
 
@@ -635,11 +637,8 @@ export class RoomRuntime {
 						const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendMessage({
-								groupId,
-								role: 'system',
-								messageType: 'status',
-								content: `Leader complete gate: ${gateResult.reason}`,
+							this.appendGroupEvent(groupId, 'status', {
+								text: `Leader complete gate: ${gateResult.reason}`,
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -684,7 +683,8 @@ export class RoomRuntime {
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask && (group.workerRole === 'coder' || group.workerRole === 'planner')) {
-						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
+						const currentRoom = this.getRoomById(this.room.id);
+						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
 
@@ -699,11 +699,8 @@ export class RoomRuntime {
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendMessage({
-								groupId,
-								role: 'system',
-								messageType: 'status',
-								content: `Leader submit gate: ${gateResult.reason}`,
+							this.appendGroupEvent(groupId, 'status', {
+								text: `Leader submit gate: ${gateResult.reason}`,
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -815,9 +812,8 @@ export class RoomRuntime {
 	 * Used when the group is awaiting_leader and a human wants to provide
 	 * guidance or additional context to the leader agent.
 	 *
-	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only
-	 * (not to session_group_messages). Callers that want the message to appear in
-	 * the group timeline must call groupRepo.appendMessage() separately.
+	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only.
+	 * Task timelines are reconstructed from SDK messages + task_group_events.
 	 *
 	 * Returns true on success, false if the group is not in awaiting_leader state
 	 * or if the injection fails.
@@ -886,11 +882,13 @@ export class RoomRuntime {
 					return this.taskManager.removeDraftTask(taskId);
 				};
 
+				// Fetch fresh room from DB for MCP server init (config may have changed)
+				const currentRoom = this.getRoomById(this.room.id) ?? this.room;
 				const goal = await this.goalManager.getGoalsForTask(task.id).then((g) => g[0] ?? null);
 				const mcpServer = createPlannerMcpServer({
 					task,
 					goal: goal!,
-					room: this.room,
+					room: currentRoom,
 					sessionId: group.workerSessionId,
 					workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
 					createDraftTask,
@@ -921,15 +919,14 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Set up message mirroring for a group's worker/leader sessions.
-	 * Subscribes to DaemonHub sdk.message events and appends enriched messages
-	 * into the group's session_group_messages timeline.
+	 * Set up live message forwarding for a group's worker/leader sessions.
 	 *
-	 * Messages are enriched with _taskMeta (authorRole, turnId, iteration) so
-	 * the frontend can render them with turn-based grouping and color-coding.
+	 * Subscribes to DaemonHub sdk.message events and broadcasts enriched deltas
+	 * on state.groupMessages.delta for TaskConversationRenderer.
 	 *
-	 * turnId is computed deterministically: `turn_{groupId}_{iteration}_{shortSessionId}`
-	 * This avoids in-memory state and survives daemon restarts.
+	 * IMPORTANT: We intentionally do NOT mirror worker/leader SDK messages into
+	 * any group message table anymore. Task view history is reconstructed from each
+	 * session's sdk_messages stream via task.getGroupMessages.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -959,11 +956,10 @@ export class RoomRuntime {
 								`Rate limit detected in ${role} message for group ${group.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.groupRepo.appendMessage({
-								groupId: group.id,
-								role: 'system',
-								messageType: 'status',
-								content: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+							this.appendGroupEvent(group.id, 'rate_limited', {
+								text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+								resetsAt: rateLimitBackoff.resetsAt,
+								sessionRole,
 							});
 						}
 					}
@@ -973,30 +969,20 @@ export class RoomRuntime {
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
 					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-					const enrichedContent = JSON.stringify({
-						...event.message,
-						_taskMeta: {
-							authorRole: role,
-							authorSessionId: sessionId,
-							turnId,
-							iteration,
-						},
-					});
-
-					this.groupRepo.appendMessage({
-						groupId: group.id,
-						sessionId,
-						role,
-						messageType: event.message.type as string,
-						content: enrichedContent,
-					});
-
-					// Broadcast delta to subscribed frontends
+					// Broadcast enriched delta to subscribed frontends.
 					if (this.messageHub) {
-						const parsed = JSON.parse(enrichedContent);
+						const enrichedMessage = {
+							...event.message,
+							_taskMeta: {
+								authorRole: role,
+								authorSessionId: sessionId,
+								turnId,
+								iteration,
+							},
+						};
 						this.messageHub.event(
 							'state.groupMessages.delta',
-							{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+							{ added: [{ ...enrichedMessage, timestamp: Date.now() }], timestamp: Date.now() },
 							{ channel: `group:${group.id}` }
 						);
 					}
@@ -1019,6 +1005,29 @@ export class RoomRuntime {
 	 * Clean up mirroring subscriptions for a group.
 	 * Optionally inserts a final status message into the group timeline.
 	 */
+	private appendGroupEvent(
+		groupId: string,
+		kind: string,
+		payload?: { text?: string; [key: string]: unknown }
+	): void {
+		this.groupRepo.appendEvent({
+			groupId,
+			kind,
+			payloadJson: payload ? JSON.stringify(payload) : undefined,
+		});
+		if (this.messageHub) {
+			const now = Date.now();
+			this.messageHub.event(
+				'state.groupMessages.delta',
+				{
+					added: [{ type: 'status', text: payload?.text ?? kind, timestamp: now }],
+					timestamp: now,
+				},
+				{ channel: `group:${groupId}` }
+			);
+		}
+	}
+
 	private cleanupMirroring(groupId: string, statusText?: string): void {
 		const cleanup = this.mirroringCleanups.get(groupId);
 		if (cleanup) {
@@ -1027,12 +1036,7 @@ export class RoomRuntime {
 		}
 
 		if (statusText) {
-			this.groupRepo.appendMessage({
-				groupId,
-				role: 'system',
-				messageType: 'status',
-				content: statusText,
-			});
+			this.appendGroupEvent(groupId, 'status', { text: statusText });
 		}
 	}
 
@@ -1354,6 +1358,9 @@ export class RoomRuntime {
 			return this.taskManager.removeDraftTask(taskId);
 		};
 
+		// Fetch fresh room from DB for worker/leader init (config may have changed)
+		const currentRoom = this.getRoomById(this.room.id) ?? this.room;
+
 		// Build WorkerConfig for the Planner agent
 		// isPlanApproved uses a mutable ref — groupId is set after spawn() returns
 		let spawnedGroupId: string | null = null;
@@ -1364,7 +1371,7 @@ export class RoomRuntime {
 		const plannerConfig = {
 			task: planningTask,
 			goal,
-			room: this.room,
+			room: currentRoom,
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
 			model: this.taskGroupManager.model,
@@ -1382,7 +1389,7 @@ export class RoomRuntime {
 			leaderTaskContext: buildLeaderTaskContext({
 				task: planningTask,
 				goal,
-				room: this.room,
+				room: currentRoom,
 				sessionId: '', // not used by buildLeaderTaskContext
 				workspacePath: this.taskGroupManager.workspacePath,
 				groupId: '', // not used by buildLeaderTaskContext
@@ -1398,7 +1405,7 @@ export class RoomRuntime {
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
-				this.room,
+				currentRoom,
 				planningTask,
 				goal,
 				(groupId, state) => this.onWorkerTerminalState(groupId, state),
@@ -1443,6 +1450,9 @@ export class RoomRuntime {
 			.filter((t) => goalLinkedIds.has(t.id) && t.id !== task.id)
 			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);
 
+		// Fetch fresh room from DB for worker/leader init (config may have changed)
+		const currentRoom = this.getRoomById(this.room.id) ?? this.room;
+
 		// Determine worker config based on assigned agent type
 		const agentType = task.assignedAgent ?? 'coder';
 		let workerConfig: WorkerConfig;
@@ -1451,7 +1461,7 @@ export class RoomRuntime {
 		const leaderContextConfig = {
 			task,
 			goal,
-			room: this.room,
+			room: currentRoom,
 			sessionId: '',
 			workspacePath: this.taskGroupManager.workspacePath,
 			groupId: '',
@@ -1463,7 +1473,7 @@ export class RoomRuntime {
 			const generalConfig = {
 				task,
 				goal,
-				room: this.room,
+				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: this.taskGroupManager.model,
@@ -1481,7 +1491,7 @@ export class RoomRuntime {
 			const coderConfig = {
 				task,
 				goal,
-				room: this.room,
+				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
 				model: this.taskGroupManager.model,
@@ -1499,7 +1509,7 @@ export class RoomRuntime {
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
-				this.room,
+				currentRoom,
 				task,
 				goal,
 				(groupId, state) => this.onWorkerTerminalState(groupId, state),

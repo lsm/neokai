@@ -190,11 +190,12 @@ describe('TaskGroupManager', () => {
 				session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
 				PRIMARY KEY (group_id, session_id)
 			);
-			CREATE TABLE session_group_messages (
+			CREATE TABLE task_group_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-				session_id TEXT, role TEXT NOT NULL, message_type TEXT NOT NULL,
-				content TEXT NOT NULL, created_at INTEGER NOT NULL
+				kind TEXT NOT NULL,
+				payload_json TEXT,
+				created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
@@ -206,6 +207,7 @@ describe('TaskGroupManager', () => {
 		goalManager = new GoalManager(db as never, 'room-1');
 		sessionFactory = createMockSessionFactory();
 
+		const room = makeRoom();
 		manager = new TaskGroupManager({
 			groupRepo,
 			sessionObserver: observer,
@@ -213,6 +215,9 @@ describe('TaskGroupManager', () => {
 			goalManager,
 			sessionFactory,
 			workspacePath: '/workspace',
+			getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+			getTask: (taskId) => taskManager.getTask(taskId),
+			getGoal: (goalId) => goalManager.getGoal(goalId),
 		});
 	});
 
@@ -331,7 +336,7 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeWorkerToLeader(group.id, 'Worker output here');
+			await manager.routeWorkerToLeader(group.id, 'Worker output here', (_groupId) => callbacks);
 
 			const injectCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
@@ -354,7 +359,11 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			const updated = await manager.routeWorkerToLeader(group.id, 'Worker output');
+			const updated = await manager.routeWorkerToLeader(
+				group.id,
+				'Worker output',
+				(_groupId) => callbacks
+			);
 
 			expect(updated!.state).toBe('awaiting_leader');
 		});
@@ -376,13 +385,19 @@ describe('TaskGroupManager', () => {
 			// Manually set violations
 			groupRepo.updateLeaderContractViolations(group.id, 1, 'turn-1', group.version);
 
-			const afterRoute = await manager.routeWorkerToLeader(group.id, 'Output');
+			const afterRoute = await manager.routeWorkerToLeader(
+				group.id,
+				'Output',
+				(_groupId) => callbacks
+			);
 
 			expect(afterRoute!.leaderContractViolations).toBe(0);
 		});
 
 		it('should return null for non-existent group', async () => {
-			const result = await manager.routeWorkerToLeader('nonexistent', 'output');
+			const result = await manager.routeWorkerToLeader('nonexistent', 'output', () =>
+				createMockLeaderCallbacks()
+			);
 			expect(result).toBeNull();
 		});
 	});
@@ -403,7 +418,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			// First route to Leader so group is in awaiting_leader state
-			await manager.routeWorkerToLeader(group.id, 'Worker output');
+			await manager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
 
 			await manager.routeLeaderToWorker(group.id, 'Fix the tests');
 
@@ -430,7 +445,7 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeWorkerToLeader(group.id, 'Output');
+			await manager.routeWorkerToLeader(group.id, 'Output', (_groupId) => callbacks);
 			const updated = await manager.routeLeaderToWorker(group.id, 'Feedback');
 
 			expect(updated!.state).toBe('awaiting_worker');
@@ -572,7 +587,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			// Trigger first review round so leader session is created and observed
-			await manager.routeWorkerToLeader(group.id, 'Worker output');
+			await manager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
 
 			await manager.escalateToHumanReview(group.id, 'Max iterations');
 

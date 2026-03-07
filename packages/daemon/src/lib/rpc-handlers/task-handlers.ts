@@ -19,6 +19,7 @@ import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager } from '../room/managers/task-manager';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
+import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('task-handlers');
@@ -207,21 +208,138 @@ export function setupTaskHandlers(
 		};
 	});
 
-	// task.getGroupMessages - Get messages for a session group
+	// task.getGroupMessages - Get a unified timeline for a session group
 	messageHub.onRequest('task.getGroupMessages', async (data) => {
-		const params = data as { groupId: string; afterId?: number; limit?: number };
+		const params = data as { groupId: string; afterId?: number; cursor?: string; limit?: number };
 
 		if (!params.groupId) {
 			throw new Error('Group ID is required');
 		}
 
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
-		const result = groupRepo.getMessages(params.groupId, {
-			afterId: params.afterId,
-			limit: params.limit,
-		});
+		const group = groupRepo.getGroup(params.groupId);
+		if (!group) {
+			return { messages: [], hasMore: false };
+		}
 
-		return { messages: result.messages, hasMore: result.hasMore };
+		const sdkRepo = new SDKMessageRepository(db.getDatabase());
+		const fetchAllSessionMessages = (sessionId: string): unknown[] => {
+			const pageSize = 500;
+			let before: number | undefined;
+			const all: unknown[] = [];
+			while (true) {
+				const page = sdkRepo.getSDKMessages(sessionId, pageSize, before);
+				if (page.messages.length === 0) break;
+				all.unshift(...page.messages);
+				if (!page.hasMore) break;
+				const oldest = page.messages[0] as { timestamp?: number };
+				if (typeof oldest.timestamp !== 'number') break;
+				before = oldest.timestamp;
+			}
+			return all;
+		};
+		const workerMessages = fetchAllSessionMessages(group.workerSessionId);
+		const leaderMessages = fetchAllSessionMessages(group.leaderSessionId);
+
+		const toEnrichedTimeline = (messages: unknown[], sessionId: string, role: string) => {
+			const shortSessionId = sessionId.slice(0, 8);
+			return messages.map((message, idx) => {
+				const messageObj = message as Record<string, unknown>;
+				const timestamp =
+					typeof messageObj.timestamp === 'number' ? messageObj.timestamp : Date.now();
+				const uuid = typeof messageObj.uuid === 'string' ? messageObj.uuid : `${idx}`;
+				const turnId = `turn_${group.id}_${group.feedbackIteration}_${shortSessionId}_${uuid}`;
+				const { sendStatus: _sendStatus, ...messageWithoutSendStatus } = messageObj;
+				const enriched = {
+					...messageWithoutSendStatus,
+					_taskMeta: {
+						authorRole: role,
+						authorSessionId: sessionId,
+						turnId,
+						iteration: group.feedbackIteration,
+					},
+				};
+				const sourceKey = `sdk:${sessionId}:${uuid}`;
+				return {
+					createdAt: timestamp,
+					sourceKey,
+					groupId: group.id,
+					sessionId,
+					role,
+					messageType: typeof messageObj.type === 'string' ? messageObj.type : 'unknown',
+					content: JSON.stringify(enriched),
+				};
+			});
+		};
+
+		const fetchAllGroupEvents = (groupId: string) => {
+			const pageSize = 500;
+			let afterId = 0;
+			const all = [] as ReturnType<SessionGroupRepository['getEvents']>['events'];
+			while (true) {
+				const page = groupRepo.getEvents(groupId, { limit: pageSize, afterId });
+				all.push(...page.events);
+				if (!page.hasMore || page.events.length === 0) break;
+				afterId = page.events[page.events.length - 1].id;
+			}
+			return all;
+		};
+		const groupEvents = fetchAllGroupEvents(group.id);
+
+		const merged = [
+			...toEnrichedTimeline(workerMessages as unknown[], group.workerSessionId, group.workerRole),
+			...toEnrichedTimeline(leaderMessages as unknown[], group.leaderSessionId, 'leader'),
+			...groupEvents.map((event) => {
+				let text = event.kind;
+				if (event.payloadJson) {
+					try {
+						const parsed = JSON.parse(event.payloadJson) as { text?: string };
+						if (parsed.text) text = parsed.text;
+					} catch {
+						// keep default text
+					}
+				}
+				return {
+					createdAt: event.createdAt,
+					sourceKey: `event:${event.id}`,
+					groupId: event.groupId,
+					sessionId: null,
+					role: 'system',
+					messageType: 'status',
+					content: text,
+				};
+			}),
+		]
+			.sort((a, b) => {
+				if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+				return a.sourceKey.localeCompare(b.sourceKey);
+			})
+			.map((msg) => ({
+				cursor: `${String(msg.createdAt).padStart(16, '0')}|${msg.sourceKey}`,
+				...msg,
+			}));
+
+		const limit = params.limit ?? 100;
+		const cursor = params.cursor;
+		const filtered = cursor
+			? merged.filter((m) => m.cursor > cursor)
+			: params.afterId != null
+				? merged.slice(params.afterId)
+				: merged;
+		const page = filtered.slice(0, limit + 1);
+		const hasMore = page.length > limit;
+		const messages = page.slice(0, limit).map((msg, idx) => ({
+			id: idx + 1,
+			groupId: msg.groupId,
+			sessionId: msg.sessionId,
+			role: msg.role,
+			messageType: msg.messageType,
+			content: msg.content,
+			createdAt: msg.createdAt,
+		}));
+		const nextCursor = messages.length > 0 ? page[messages.length - 1].cursor : null;
+
+		return { messages, hasMore, nextCursor };
 	});
 
 	// task.sendHumanMessage - Send a human message to the active agent in a task group

@@ -2,7 +2,7 @@
  * TaskConversationRenderer
  *
  * Renders a flat chronological conversation timeline for a task group.
- * Messages are fetched from session_group_messages via task.getGroupMessages RPC
+ * Messages are fetched via task.getGroupMessages RPC
  * with pagination to fetch ALL messages (not just the first 100).
  *
  * Each message is rendered inline with a thin colored left border indicating
@@ -142,19 +142,24 @@ export function TaskConversationRenderer({
 			// Declared outside the try so partial pages are committed even if a later page errors.
 			const allGroupMessages: GroupMessage[] = [];
 			try {
-				let afterId = 0;
+				let cursor: string | null = null;
 				let hasMore = true;
 
 				// Paginate through all messages
 				while (hasMore) {
-					const res = await request<{ messages: GroupMessage[]; hasMore: boolean }>(
-						'task.getGroupMessages',
-						{ groupId, afterId, limit: 500 }
-					);
+					const res = await request<{
+						messages: GroupMessage[];
+						hasMore: boolean;
+						nextCursor?: string | null;
+					}>('task.getGroupMessages', {
+						groupId,
+						cursor: cursor ?? undefined,
+						limit: 500,
+					});
 					allGroupMessages.push(...res.messages);
 					hasMore = res.hasMore;
 					if (res.messages.length > 0) {
-						afterId = res.messages[res.messages.length - 1].id;
+						cursor = res.nextCursor ?? null;
 					} else {
 						break;
 					}

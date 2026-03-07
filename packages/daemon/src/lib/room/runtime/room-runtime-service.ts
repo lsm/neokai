@@ -282,6 +282,9 @@ export class RoomRuntimeService {
 				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
 			daemonHub: this.ctx.daemonHub,
 			messageHub: this.ctx.messageHub,
+			getRoom: (roomId) => this.ctx.roomManager.getRoom(roomId),
+			getTask: (taskId) => taskManager.getTask(taskId),
+			getGoal: (goalId) => goalManager.getGoal(goalId),
 		});
 
 		this.runtimes.set(room.id, runtime);
