@@ -9,7 +9,7 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../../storage/database';
@@ -246,7 +246,17 @@ export class RoomRuntimeService {
 
 		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
 
-		const maxReviewRounds = (room.config?.maxReviewRounds as number) ?? undefined;
+		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
+		const rawRounds = roomConfig.maxReviewRounds;
+		const maxReviewRounds =
+			typeof rawRounds === 'number' && rawRounds >= 1
+				? Math.min(Math.floor(rawRounds), MAX_REVIEW_ROUNDS_LIMIT)
+				: undefined;
+		const rawGroups = roomConfig.maxConcurrentGroups;
+		const maxConcurrentGroups =
+			typeof rawGroups === 'number' && rawGroups >= 1
+				? Math.min(Math.floor(rawGroups), MAX_CONCURRENT_GROUPS_LIMIT)
+				: undefined;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -258,6 +268,7 @@ export class RoomRuntimeService {
 			workspacePath,
 			model: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
+			maxConcurrentGroups,
 			getWorkerMessages: (sessionId, afterMessageId) =>
 				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
 			daemonHub: this.ctx.daemonHub,

@@ -22,6 +22,8 @@ import {
 	type TaskPriority,
 	type AgentType,
 	type RuntimeState,
+	MAX_CONCURRENT_GROUPS_LIMIT,
+	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
 import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
 import type { TaskManager } from '../managers/task-manager';
@@ -61,6 +63,8 @@ import {
 
 const log = new Logger('room-runtime');
 
+export const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
+export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
 /** Default when room config does not specify maxPlanningRetries (no auto-retry) */
 const DEFAULT_MAX_PLANNING_RETRIES = 0;
 
@@ -86,7 +90,7 @@ export interface RoomRuntimeConfig {
 	model?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
-	/** Max feedback iterations before auto-escalation (default: 10) */
+	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
 	/** Tick interval in ms (default: 30000) */
 	tickInterval?: number;
@@ -120,8 +124,8 @@ export class RoomRuntime {
 	private readonly taskManager: TaskManager;
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
-	private readonly maxConcurrentGroups: number;
-	private readonly maxFeedbackIterations: number;
+	private maxConcurrentGroups: number;
+	private maxFeedbackIterations: number;
 	private readonly tickInterval: number;
 	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
@@ -179,8 +183,8 @@ export class RoomRuntime {
 		this.taskManager = config.taskManager;
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
-		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
-		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 10;
+		this.maxConcurrentGroups = config.maxConcurrentGroups ?? DEFAULT_MAX_CONCURRENT_GROUPS;
+		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
 		this.tickInterval = config.tickInterval ?? 30_000;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
@@ -238,9 +242,22 @@ export class RoomRuntime {
 	/**
 	 * Update the room reference with the latest data.
 	 * Called when room config changes so lifecycle hooks see the current config.
+	 * Also picks up new maxConcurrentGroups and maxReviewRounds values reactively.
+	 * Stale or removed config keys fall back to their documented defaults.
 	 */
 	updateRoom(room: Room): void {
 		this.room = room;
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		const rawGroups = config.maxConcurrentGroups;
+		this.maxConcurrentGroups =
+			typeof rawGroups === 'number' && rawGroups >= 1
+				? Math.min(Math.floor(rawGroups), MAX_CONCURRENT_GROUPS_LIMIT)
+				: DEFAULT_MAX_CONCURRENT_GROUPS;
+		const rawRounds = config.maxReviewRounds;
+		this.maxFeedbackIterations =
+			typeof rawRounds === 'number' && rawRounds >= 1
+				? Math.min(Math.floor(rawRounds), MAX_REVIEW_ROUNDS_LIMIT)
+				: DEFAULT_MAX_FEEDBACK_ITERATIONS;
 	}
 
 	/**
