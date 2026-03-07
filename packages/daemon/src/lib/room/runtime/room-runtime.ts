@@ -22,6 +22,8 @@ import {
 	type TaskPriority,
 	type AgentType,
 	type RuntimeState,
+	MAX_CONCURRENT_GROUPS_LIMIT,
+	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
 import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
 import type { TaskManager } from '../managers/task-manager';
@@ -62,9 +64,8 @@ const log = new Logger('room-runtime');
 
 const MAX_PLANNING_ATTEMPTS = 3;
 export const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
-export const MAX_CONCURRENT_GROUPS_LIMIT = 10;
 export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
-export const MAX_REVIEW_ROUNDS_LIMIT = 20;
+export { MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT };
 
 export type { RuntimeState } from '@neokai/shared';
 

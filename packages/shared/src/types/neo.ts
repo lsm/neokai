@@ -9,6 +9,11 @@
 // Room Types
 // ============================================================================
 
+/** Maximum number of concurrent task groups allowed per room */
+export const MAX_CONCURRENT_GROUPS_LIMIT = 10;
+/** Maximum number of review round iterations allowed per room */
+export const MAX_REVIEW_ROUNDS_LIMIT = 20;
+
 /**
  * Room status
  */

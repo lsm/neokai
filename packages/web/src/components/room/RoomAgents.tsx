@@ -13,7 +13,7 @@
 
 import { useSignal, useComputed } from '@preact/signals';
 import { useCallback, useEffect, useRef } from 'preact/hooks';
-import type { Room } from '@neokai/shared';
+import { type Room, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { roomStore } from '../../lib/room-store';
 import { Button } from '../ui/Button';
@@ -732,11 +732,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 					<input
 						type="number"
 						min={1}
-						max={20}
+						max={MAX_REVIEW_ROUNDS_LIMIT}
 						value={maxReviewRounds.value}
 						onInput={(e) => {
 							const val = parseInt((e.target as HTMLInputElement).value, 10);
-							if (!isNaN(val) && val >= 1 && val <= 20) {
+							if (!isNaN(val) && val >= 1 && val <= MAX_REVIEW_ROUNDS_LIMIT) {
 								maxReviewRounds.value = val;
 							}
 						}}
@@ -755,11 +755,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 					<input
 						type="number"
 						min={1}
-						max={10}
+						max={MAX_CONCURRENT_GROUPS_LIMIT}
 						value={maxConcurrentGroups.value}
 						onInput={(e) => {
 							const val = parseInt((e.target as HTMLInputElement).value, 10);
-							if (!isNaN(val) && val >= 1 && val <= 10) {
+							if (!isNaN(val) && val >= 1 && val <= MAX_CONCURRENT_GROUPS_LIMIT) {
 								maxConcurrentGroups.value = val;
 							}
 						}}
