@@ -9,12 +9,19 @@
  * Uses session group messages for a single merged timeline.
  *
  * Subscribes to room.task.update events to refresh group info when status changes.
+ *
+ * Autoscroll: uses the shared useAutoScroll hook + ScrollToBottomButton so the
+ * conversation area scrolls to the bottom on new messages and the floating button
+ * appears when the user has scrolled up.
  */
 
-import { useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { NeoTask } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
+import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { ScrollToBottomButton } from '../ScrollToBottomButton';
+import { InputTextarea } from '../InputTextarea';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
 
 interface TaskGroupInfo {
@@ -142,32 +149,22 @@ function HumanInputArea({
 					>
 						{approving ? 'Approving…' : '✓ Approve'}
 					</button>
-					{/* Feedback input */}
-					<div class="space-y-1">
-						<textarea
-							class="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-dark-500 focus:ring-1 focus:ring-dark-500"
-							placeholder="Or send feedback to request changes… (⌘↵ to send)"
-							rows={2}
-							value={feedbackText}
-							onInput={(e) => setFeedbackText((e.target as HTMLTextAreaElement).value)}
-							onKeyDown={(e) => {
-								if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-									e.preventDefault();
-									void sendFeedback();
-								}
-							}}
-							disabled={sendingFeedback || approving}
-						/>
-						<div class="flex justify-end">
-							<button
-								class="py-1.5 px-3 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 text-xs transition-colors"
-								onClick={() => void sendFeedback()}
-								disabled={sendingFeedback || approving || !feedbackText.trim()}
-							>
-								{sendingFeedback ? 'Sending…' : 'Send Feedback'}
-							</button>
-						</div>
-					</div>
+					{/* Feedback input using shared InputTextarea.
+					    Large maxChars so users can paste diffs/logs freely. */}
+					<InputTextarea
+						content={feedbackText}
+						onContentChange={setFeedbackText}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+								e.preventDefault();
+								void sendFeedback();
+							}
+						}}
+						onSubmit={() => void sendFeedback()}
+						disabled={sendingFeedback || approving}
+						placeholder="Or send feedback to request changes… (⌘↵ to send)"
+						maxChars={50000}
+					/>
 					{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 				</div>
 			</div>
@@ -177,29 +174,22 @@ function HumanInputArea({
 	if (groupState === 'awaiting_leader') {
 		return (
 			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-				<textarea
-					class="w-full bg-dark-800 border border-dark-600 rounded px-3 py-2 text-sm text-gray-200 placeholder-gray-500 resize-none focus:outline-none focus:border-dark-500 focus:ring-1 focus:ring-dark-500"
-					placeholder="Send a message to the leader… (⌘↵ to send)"
-					rows={2}
-					value={leaderText}
-					onInput={(e) => setLeaderText((e.target as HTMLTextAreaElement).value)}
+				{/* Message input using shared InputTextarea.
+				    Large maxChars so users can paste context/diffs freely. */}
+				<InputTextarea
+					content={leaderText}
+					onContentChange={setLeaderText}
 					onKeyDown={(e) => {
 						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 							e.preventDefault();
 							void sendToLeader();
 						}
 					}}
+					onSubmit={() => void sendToLeader()}
 					disabled={sendingLeader}
+					placeholder="Send a message to the leader… (⌘↵ to send)"
+					maxChars={50000}
 				/>
-				<div class="flex justify-end">
-					<button
-						class="py-1.5 px-3 rounded bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-200 text-xs transition-colors"
-						onClick={() => void sendToLeader()}
-						disabled={sendingLeader || !leaderText.trim()}
-					>
-						{sendingLeader ? 'Sending…' : 'Send to Leader'}
-					</button>
-				</div>
 				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 			</div>
 		);
@@ -230,32 +220,93 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [conversationKey, setConversationKey] = useState(0);
+	const [messageCount, setMessageCount] = useState(0);
 
-	const fetchGroup = async () => {
-		try {
-			const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
-				roomId,
-				taskId,
-			});
-			setGroup(res.group);
-		} catch {
-			// Group fetch failure is non-fatal — task may not have a group yet
+	// Tracks whether the conversation pane is showing its first batch of messages.
+	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
+	// and becomes false once the first non-zero messageCount arrives — at which point
+	// useAutoScroll fires its initial-load scroll path.
+	const [isFirstLoad, setIsFirstLoad] = useState(true);
+
+	// autoScroll mirrors whether the user is near the bottom of the scroll container.
+	// Driven by isNearBottom from useAutoScroll so that arriving messages don't force-scroll
+	// the user back down when they've intentionally scrolled up to read history.
+	const [autoScroll, setAutoScroll] = useState(true);
+
+	// Refs for scroll container
+	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const messagesEndRef = useRef<HTMLDivElement>(null);
+
+	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
+		containerRef: messagesContainerRef,
+		endRef: messagesEndRef,
+		enabled: autoScroll,
+		messageCount,
+		isInitialLoad: isFirstLoad,
+	});
+
+	// Keep autoScroll in sync with scroll position: disable when user scrolls up,
+	// re-enable automatically when they scroll back to the bottom.
+	useEffect(() => {
+		setAutoScroll(isNearBottom);
+	}, [isNearBottom]);
+
+	// Reset conversation scroll state whenever the rendered conversation changes.
+	// This covers two cases:
+	//   1. conversationKey bumps (manual reload after approve/feedback)
+	//   2. group.id changes (room.task.update event spawns a new group)
+	// Using the combined renderer key mirrors the `key` prop on TaskConversationRenderer,
+	// so any remount that causes the child to re-fetch messages also resets the parent scroll state.
+	const rendererKey = group ? `${group.id}-${conversationKey}` : `null-${conversationKey}`;
+	useEffect(() => {
+		setIsFirstLoad(true);
+		setMessageCount(0);
+		setAutoScroll(true);
+	}, [rendererKey]);
+
+	// Mark initial load done after first messages arrive (fires after the render where
+	// useAutoScroll sees isFirstLoad:true and messageCount>0, so the initial scroll fires first)
+	useEffect(() => {
+		if (messageCount > 0 && isFirstLoad) {
+			setIsFirstLoad(false);
 		}
-	};
+	}, [messageCount, isFirstLoad]);
+
+	const handleScrollToBottom = useCallback(() => {
+		scrollToBottom(true);
+		setAutoScroll(true);
+	}, [scrollToBottom]);
 
 	useEffect(() => {
 		const channel = `room:${roomId}`;
 		joinRoom(channel);
+		let cancelled = false;
+		let fetchGroupSeq = 0;
+
+		const fetchGroup = async () => {
+			const seq = ++fetchGroupSeq;
+			try {
+				const res = await request<{ group: TaskGroupInfo | null }>('task.getGroup', {
+					roomId,
+					taskId,
+				});
+				if (!cancelled && seq === fetchGroupSeq) setGroup(res.group);
+			} catch {
+				// Group fetch failure is non-fatal — task may not have a group yet
+			}
+		};
 
 		const load = async () => {
 			try {
 				const taskRes = await request<{ task: NeoTask }>('task.get', { roomId, taskId });
-				setTask(taskRes.task);
-				await fetchGroup();
+				if (!cancelled) {
+					setTask(taskRes.task);
+					await fetchGroup();
+				}
 			} catch (err) {
-				setError(err instanceof Error ? err.message : 'Failed to load task');
+				if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load task');
 			} finally {
-				setLoading(false);
+				if (!cancelled) setLoading(false);
 			}
 		};
 
@@ -263,13 +314,14 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
 		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
-			if (event.task.id === taskId) {
+			if (event.task.id === taskId && !cancelled) {
 				setTask(event.task);
-				fetchGroup();
+				void fetchGroup();
 			}
 		});
 
 		return () => {
+			cancelled = true;
 			unsub();
 			leaveRoom(channel);
 		};
@@ -375,29 +427,45 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 			)}
 
-			{/* Conversation timeline */}
-			{group ? (
-				<TaskConversationRenderer key={`${group.id}-${conversationKey}`} groupId={group.id} />
-			) : (
-				<div class="flex-1 flex items-center justify-center text-center p-8">
-					<div>
-						<p class="text-gray-400 mb-1">No active agent group</p>
-						<p class="text-sm text-gray-500">
-							{task.status === 'pending'
-								? 'Waiting for the runtime to pick up this task.'
-								: task.status === 'completed'
-									? 'This task has been completed.'
-									: task.status === 'failed'
-										? 'This task has failed.'
-										: task.status === 'review'
-											? 'This task is awaiting human review.'
-											: task.status === 'draft'
-												? 'This task is a draft and has not been scheduled yet.'
-												: 'No agent group has been spawned yet.'}
-						</p>
-					</div>
+			{/* Conversation timeline — scroll container owned here for autoscroll support */}
+			<div class="flex-1 relative min-h-0">
+				<div ref={messagesContainerRef} class="absolute inset-0 overflow-y-auto flex flex-col">
+					{group ? (
+						<TaskConversationRenderer
+							key={`${group.id}-${conversationKey}`}
+							groupId={group.id}
+							onMessageCountChange={setMessageCount}
+						/>
+					) : (
+						<div class="flex-1 flex items-center justify-center text-center p-8">
+							<div>
+								<p class="text-gray-400 mb-1">No active agent group</p>
+								<p class="text-sm text-gray-500">
+									{task.status === 'pending'
+										? 'Waiting for the runtime to pick up this task.'
+										: task.status === 'completed'
+											? 'This task has been completed.'
+											: task.status === 'failed'
+												? 'This task has failed.'
+												: task.status === 'review'
+													? 'This task is awaiting human review.'
+													: task.status === 'draft'
+														? 'This task is a draft and has not been scheduled yet.'
+														: 'No agent group has been spawned yet.'}
+								</p>
+							</div>
+						</div>
+					)}
+					<div ref={messagesEndRef} />
 				</div>
-			)}
+
+				{/* Scroll-to-bottom button — shown when user has scrolled up.
+				    bottomClass="bottom-4" because HumanInputArea is a sibling
+				    outside this container, not an overlapping footer. */}
+				{showScrollButton && (
+					<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-4" />
+				)}
+			</div>
 
 			{/* Human input area */}
 			{showInput && (
