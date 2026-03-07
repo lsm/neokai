@@ -15,15 +15,15 @@
  * appears when the user has scrolled up.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { NeoTask, SessionInfo } from '@neokai/shared';
-import { useMessageHub } from '../../hooks/useMessageHub';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
+import { useMessageHub } from '../../hooks/useMessageHub';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
-import { ScrollToBottomButton } from '../ScrollToBottomButton';
-import { InputTextarea } from '../InputTextarea';
-import { TaskConversationRenderer } from './TaskConversationRenderer';
 import { copyToClipboard } from '../../lib/utils';
+import { InputTextarea } from '../InputTextarea';
+import { ScrollToBottomButton } from '../ScrollToBottomButton';
+import { TaskConversationRenderer } from './TaskConversationRenderer';
 
 interface CopyButtonProps {
 	text: string;
@@ -704,9 +704,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			</div>
 
 			{/* Human input area */}
-			{showInput && (
+			{showInput && group && (
 				<HumanInputArea
-					groupState={group!.state}
+					groupState={group.state}
 					roomId={roomId}
 					taskId={taskId}
 					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
