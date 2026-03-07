@@ -446,8 +446,10 @@ export class RoomRuntime {
 			content: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
 		});
 
-		// Route to Leader
-		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope);
+		// Route to Leader (pass current room to ensure config changes are respected)
+		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, this.room, (groupId) =>
+			this.createLeaderCallbacks(groupId)
+		);
 
 		// Update task progress based on review iteration
 		// Formula: iteration 1 → 20%, then +60%/maxRounds per subsequent round, capped at 80%
