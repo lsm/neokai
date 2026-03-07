@@ -249,7 +249,9 @@ export class RoomRuntimeService {
 		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
 		const rawRounds = roomConfig.maxReviewRounds;
 		const maxReviewRounds =
-			typeof rawRounds === 'number' && rawRounds >= 1 ? Math.floor(rawRounds) : undefined;
+			typeof rawRounds === 'number' && rawRounds >= 1
+				? Math.min(Math.floor(rawRounds), 20)
+				: undefined;
 		const rawGroups = roomConfig.maxConcurrentGroups;
 		const maxConcurrentGroups =
 			typeof rawGroups === 'number' && rawGroups >= 1

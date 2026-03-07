@@ -61,7 +61,9 @@ import {
 const log = new Logger('room-runtime');
 
 const MAX_PLANNING_ATTEMPTS = 3;
+const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
 const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
+const MAX_REVIEW_ROUNDS_LIMIT = 20;
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -178,7 +180,7 @@ export class RoomRuntime {
 		this.taskManager = config.taskManager;
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
-		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
+		this.maxConcurrentGroups = config.maxConcurrentGroups ?? DEFAULT_MAX_CONCURRENT_GROUPS;
 		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
 		this.tickInterval = config.tickInterval ?? 30_000;
 		this.getWorkerMessages = config.getWorkerMessages;
@@ -245,11 +247,13 @@ export class RoomRuntime {
 		const config = (room.config ?? {}) as Record<string, unknown>;
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
-			typeof rawGroups === 'number' && rawGroups >= 1 ? Math.min(Math.floor(rawGroups), 10) : 1;
+			typeof rawGroups === 'number' && rawGroups >= 1
+				? Math.min(Math.floor(rawGroups), 10)
+				: DEFAULT_MAX_CONCURRENT_GROUPS;
 		const rawRounds = config.maxReviewRounds;
 		this.maxFeedbackIterations =
 			typeof rawRounds === 'number' && rawRounds >= 1
-				? Math.floor(rawRounds)
+				? Math.min(Math.floor(rawRounds), MAX_REVIEW_ROUNDS_LIMIT)
 				: DEFAULT_MAX_FEEDBACK_ITERATIONS;
 	}
 
