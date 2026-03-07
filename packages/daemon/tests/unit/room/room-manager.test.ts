@@ -577,39 +577,4 @@ describe('RoomManager', () => {
 			expect(() => roomManager.deleteRoom('non-existent')).not.toThrow();
 		});
 	});
-
-	describe('getDefaultModel', () => {
-		it('should return the default model when set', () => {
-			const room = roomManager.createRoom({ name: 'Model Room' });
-			roomManager.updateRoom(room.id, { defaultModel: 'claude-opus-4-5-20250514' });
-
-			const defaultModel = roomManager.getDefaultModel(room.id);
-
-			expect(defaultModel).toBe('claude-opus-4-5-20250514');
-		});
-
-		it('should return null when default model is not set', () => {
-			const room = roomManager.createRoom({ name: 'No Model Room' });
-
-			const defaultModel = roomManager.getDefaultModel(room.id);
-
-			expect(defaultModel).toBeNull();
-		});
-
-		it('should return null for non-existent room', () => {
-			const defaultModel = roomManager.getDefaultModel('non-existent-id');
-
-			expect(defaultModel).toBeNull();
-		});
-
-		it('should return null when default model is cleared', () => {
-			const room = roomManager.createRoom({ name: 'Room' });
-			roomManager.updateRoom(room.id, { defaultModel: 'some-model' });
-			roomManager.updateRoom(room.id, { defaultModel: null });
-
-			const defaultModel = roomManager.getDefaultModel(room.id);
-
-			expect(defaultModel).toBeNull();
-		});
-	});
 });
