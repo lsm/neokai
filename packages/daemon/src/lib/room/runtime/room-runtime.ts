@@ -106,6 +106,8 @@ export interface RoomRuntimeConfig {
 	messageHub?: MessageHub;
 	/** Hook options for lifecycle gates (test injection point) */
 	hookOptions?: HookOptions;
+	/** Fetch room from DB by ID (for lazy leader init with current config) */
+	getRoom: (roomId: string) => Room | null;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -199,6 +201,7 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			getRoom: config.getRoom,
 		});
 	}
 
@@ -446,8 +449,8 @@ export class RoomRuntime {
 			content: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
 		});
 
-		// Route to Leader (pass current room to ensure config changes are respected)
-		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, this.room, (groupId) =>
+		// Route to Leader (room fetched from DB via getRoom)
+		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, (groupId) =>
 			this.createLeaderCallbacks(groupId)
 		);
 

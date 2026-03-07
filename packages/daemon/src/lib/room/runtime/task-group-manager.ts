@@ -107,6 +107,8 @@ export interface TaskGroupManagerConfig {
 	sessionFactory: SessionFactory;
 	workspacePath: string;
 	model?: string;
+	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
+	getRoom: (roomId: string) => Room | null;
 }
 
 /** Deferred leader config stored until first routeWorkerToLeader call */
@@ -129,6 +131,7 @@ export class TaskGroupManager {
 	private readonly taskManager: TaskManager;
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
+	private readonly getRoom: (roomId: string) => Room | null;
 	readonly workspacePath: string;
 	readonly model?: string;
 
@@ -141,6 +144,7 @@ export class TaskGroupManager {
 		this.taskManager = config.taskManager;
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
+		this.getRoom = config.getRoom;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
 	}
@@ -266,14 +270,11 @@ export class TaskGroupManager {
 	 *
 	 * Called when worker reaches a terminal state (idle, waiting_for_input, interrupted).
 	 *
-	 * @param room - Current room with latest config (passed from RoomRuntime to ensure
-	 *               room config changes like agentSubagents.leader are respected)
 	 * @param leaderCallbacksFactory - Factory to create leader tool callbacks
 	 */
 	async routeWorkerToLeader(
 		groupId: string,
 		workerOutput: string,
-		room: Room,
 		leaderCallbacksFactory: LeaderCallbacksFactory
 	): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -283,14 +284,20 @@ export class TaskGroupManager {
 		let leaderTaskContext: string | undefined;
 		const pending = this.pendingLeaderConfigs.get(groupId);
 		if (pending) {
-			// Build leader init NOW with the CURRENT room config.
+			// Fetch CURRENT room config from DB (not cached).
 			// This ensures room config changes (like agentSubagents.leader) made
 			// after spawn() are respected when the leader starts.
+			const room = this.getRoom(pending.roomId);
+			if (!room) {
+				await this.fail(groupId, `Room ${pending.roomId} not found`);
+				return null;
+			}
+
 			const leaderCallbacks = leaderCallbacksFactory(pending.groupId);
 			const leaderConfig: LeaderAgentConfig = {
 				task: pending.task,
 				goal: pending.goal,
-				room, // Use the current room, not the one from spawn time
+				room, // Fresh from DB
 				sessionId: pending.sessionId,
 				workspacePath: pending.workspacePath,
 				groupId: pending.groupId,

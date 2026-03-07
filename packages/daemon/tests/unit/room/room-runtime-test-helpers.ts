@@ -154,9 +154,10 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	const taskManager = new TaskManager(db as never, 'room-1');
 	const goalManager = new GoalManager(db as never, 'room-1');
 	const sessionFactory = createMockSessionFactory();
+	const room = makeRoom(opts?.room);
 
 	const runtime = new RoomRuntime({
-		room: makeRoom(opts?.room),
+		room,
 		groupRepo,
 		sessionObserver: observer,
 		taskManager,
@@ -167,6 +168,8 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
 		tickInterval: 60_000,
 		hookOptions: opts?.hookOptions,
+		// Return the test room (reads from DB not needed for unit tests)
+		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 	});
 
 	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };

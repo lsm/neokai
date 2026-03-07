@@ -206,6 +206,7 @@ describe('TaskGroupManager', () => {
 		goalManager = new GoalManager(db as never, 'room-1');
 		sessionFactory = createMockSessionFactory();
 
+		const room = makeRoom();
 		manager = new TaskGroupManager({
 			groupRepo,
 			sessionObserver: observer,
@@ -213,6 +214,7 @@ describe('TaskGroupManager', () => {
 			goalManager,
 			sessionFactory,
 			workspacePath: '/workspace',
+			getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		});
 	});
 
@@ -331,12 +333,7 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeWorkerToLeader(
-				group.id,
-				'Worker output here',
-				room,
-				(_groupId) => callbacks
-			);
+			await manager.routeWorkerToLeader(group.id, 'Worker output here', (_groupId) => callbacks);
 
 			const injectCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
@@ -362,7 +359,6 @@ describe('TaskGroupManager', () => {
 			const updated = await manager.routeWorkerToLeader(
 				group.id,
 				'Worker output',
-				room,
 				(_groupId) => callbacks
 			);
 
@@ -389,7 +385,6 @@ describe('TaskGroupManager', () => {
 			const afterRoute = await manager.routeWorkerToLeader(
 				group.id,
 				'Output',
-				room,
 				(_groupId) => callbacks
 			);
 
@@ -397,7 +392,7 @@ describe('TaskGroupManager', () => {
 		});
 
 		it('should return null for non-existent group', async () => {
-			const result = await manager.routeWorkerToLeader('nonexistent', 'output', room, () =>
+			const result = await manager.routeWorkerToLeader('nonexistent', 'output', () =>
 				createMockLeaderCallbacks()
 			);
 			expect(result).toBeNull();
@@ -420,7 +415,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			// First route to Leader so group is in awaiting_leader state
-			await manager.routeWorkerToLeader(group.id, 'Worker output', room, (_groupId) => callbacks);
+			await manager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
 
 			await manager.routeLeaderToWorker(group.id, 'Fix the tests');
 
@@ -447,7 +442,7 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			await manager.routeWorkerToLeader(group.id, 'Output', room, (_groupId) => callbacks);
+			await manager.routeWorkerToLeader(group.id, 'Output', (_groupId) => callbacks);
 			const updated = await manager.routeLeaderToWorker(group.id, 'Feedback');
 
 			expect(updated!.state).toBe('awaiting_worker');
@@ -589,7 +584,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			// Trigger first review round so leader session is created and observed
-			await manager.routeWorkerToLeader(group.id, 'Worker output', room, (_groupId) => callbacks);
+			await manager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
 
 			await manager.escalateToHumanReview(group.id, 'Max iterations');
 
