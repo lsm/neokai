@@ -107,12 +107,23 @@ export interface TaskGroupManagerConfig {
 	sessionFactory: SessionFactory;
 	workspacePath: string;
 	model?: string;
+	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
+	getRoom: (roomId: string) => Room | null;
+	/** Fetch task from DB by ID. Used to get CURRENT task data at route time. */
+	getTask: (taskId: string) => Promise<NeoTask | null>;
+	/** Fetch goal from DB by ID. Used to get CURRENT goal data at route time. */
+	getGoal: (goalId: string) => Promise<RoomGoal | null>;
 }
 
-/** Deferred leader session info stored until first routeWorkerToLeader call */
-interface PendingLeaderInfo {
-	init: AgentSessionInit;
+/** Deferred leader config stored until first routeWorkerToLeader call */
+interface DeferredLeaderConfig {
+	roomId: string;
+	taskId: string;
+	goalId: string;
+	groupId: string;
 	sessionId: string;
+	workspacePath: string;
+	reviewContext?: ReviewContext;
 	onTerminal: (groupId: string, state: TerminalState) => void;
 	/** Task/goal context to prepend to the worker envelope on first review round */
 	leaderTaskContext?: string;
@@ -124,11 +135,14 @@ export class TaskGroupManager {
 	private readonly taskManager: TaskManager;
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
+	private readonly getRoom: (roomId: string) => Room | null;
+	private readonly getTaskById: (taskId: string) => Promise<NeoTask | null>;
+	private readonly getGoalById: (goalId: string) => Promise<RoomGoal | null>;
 	readonly workspacePath: string;
 	readonly model?: string;
 
-	/** Deferred leader inits — created in spawn(), consumed in routeWorkerToLeader() */
-	private pendingLeaderInits = new Map<string, PendingLeaderInfo>();
+	/** Deferred leader configs — created in spawn(), consumed in routeWorkerToLeader() */
+	private pendingLeaderConfigs = new Map<string, DeferredLeaderConfig>();
 
 	constructor(config: TaskGroupManagerConfig) {
 		this.groupRepo = config.groupRepo;
@@ -136,6 +150,9 @@ export class TaskGroupManager {
 		this.taskManager = config.taskManager;
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
+		this.getRoom = config.getRoom;
+		this.getTaskById = config.getTask;
+		this.getGoalById = config.getGoal;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
 	}
@@ -195,25 +212,17 @@ export class TaskGroupManager {
 			groupWorkspacePath
 		);
 
-		// Build Leader init using the actual group.id from the DB record — but don't start yet.
-		// Leader reuses the worker's worktree path (no separate worktree).
-		const leaderCallbacks = leaderCallbacksFactory(group.id);
-		const leaderConfig: LeaderAgentConfig = {
-			task,
-			goal,
-			room,
+		// Store leader config for deferred creation in routeWorkerToLeader.
+		// Only IDs are stored; objects are fetched from DB at route time to ensure
+		// config changes (room, task, goal) are respected when the leader starts.
+		this.pendingLeaderConfigs.set(group.id, {
+			roomId: room.id,
+			taskId: task.id,
+			goalId: goal.id,
+			groupId: group.id,
 			sessionId: leaderSessionId,
 			workspacePath: groupWorkspacePath,
-			groupId: group.id,
-			model: this.model,
 			reviewContext,
-		};
-		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
-
-		// Store leader init for deferred creation in routeWorkerToLeader
-		this.pendingLeaderInits.set(group.id, {
-			init: leaderInit,
-			sessionId: leaderSessionId,
 			onTerminal: onLeaderTerminal,
 			leaderTaskContext: workerConfig.leaderTaskContext,
 		});
@@ -268,23 +277,63 @@ export class TaskGroupManager {
 	 * Increments feedbackIteration to track review rounds (1-based).
 	 *
 	 * Called when worker reaches a terminal state (idle, waiting_for_input, interrupted).
+	 *
+	 * @param leaderCallbacksFactory - Factory to create leader tool callbacks
 	 */
-	async routeWorkerToLeader(groupId: string, workerOutput: string): Promise<SessionGroup | null> {
+	async routeWorkerToLeader(
+		groupId: string,
+		workerOutput: string,
+		leaderCallbacksFactory: LeaderCallbacksFactory
+	): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
 		// Lazy-start leader session if this is the first review round
 		let leaderTaskContext: string | undefined;
-		const pending = this.pendingLeaderInits.get(groupId);
+		const pending = this.pendingLeaderConfigs.get(groupId);
 		if (pending) {
-			await this.sessionFactory.createAndStartSession(pending.init, 'leader');
+			// Fetch CURRENT room, task, goal from DB (not cached).
+			// This ensures config changes made after spawn() are respected
+			// when the leader starts.
+			const room = this.getRoom(pending.roomId);
+			if (!room) {
+				await this.fail(groupId, `Room ${pending.roomId} not found`);
+				return null;
+			}
+
+			const task = await this.getTaskById(pending.taskId);
+			if (!task) {
+				await this.fail(groupId, `Task ${pending.taskId} not found`);
+				return null;
+			}
+
+			const goal = await this.getGoalById(pending.goalId);
+			if (!goal) {
+				await this.fail(groupId, `Goal ${pending.goalId} not found`);
+				return null;
+			}
+
+			const leaderCallbacks = leaderCallbacksFactory(pending.groupId);
+			const leaderConfig: LeaderAgentConfig = {
+				task,
+				goal,
+				room, // Fresh from DB
+				sessionId: pending.sessionId,
+				workspacePath: pending.workspacePath,
+				groupId: pending.groupId,
+				model: this.model,
+				reviewContext: pending.reviewContext,
+			};
+			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
+
+			await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
 			this.observer.observe(pending.sessionId, (state) => {
 				pending.onTerminal(groupId, state);
 			});
 			leaderTaskContext = pending.leaderTaskContext;
-			this.pendingLeaderInits.delete(groupId);
+			this.pendingLeaderConfigs.delete(groupId);
 		} else if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
-			// After restart: pending init lost and leader session doesn't exist.
+			// After restart: pending config lost and leader session doesn't exist.
 			// Fail the group — task will be re-queued on next tick.
 			await this.fail(groupId, 'Leader session lost during restart; task will be re-queued');
 			return null;
@@ -359,7 +408,7 @@ export class TaskGroupManager {
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
-		this.pendingLeaderInits.delete(groupId);
+		this.pendingLeaderConfigs.delete(groupId);
 
 		return updated;
 	}
@@ -383,7 +432,7 @@ export class TaskGroupManager {
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
-		this.pendingLeaderInits.delete(groupId);
+		this.pendingLeaderConfigs.delete(groupId);
 
 		return updated;
 	}
@@ -524,7 +573,7 @@ export class TaskGroupManager {
 
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
-		this.pendingLeaderInits.delete(groupId);
+		this.pendingLeaderConfigs.delete(groupId);
 
 		return updated;
 	}
