@@ -147,11 +147,11 @@ export function TaskConversationRenderer({
 
 				// Paginate through all messages
 				while (hasMore) {
-					const res = await request<{
+					const res: {
 						messages: GroupMessage[];
 						hasMore: boolean;
 						nextCursor?: string | null;
-					}>('task.getGroupMessages', {
+					} = await request('task.getGroupMessages', {
 						groupId,
 						cursor: cursor ?? undefined,
 						limit: 500,

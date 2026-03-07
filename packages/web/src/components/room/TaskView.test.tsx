@@ -408,12 +408,17 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
+		// Verify approve button is in the HeaderReviewBar (amber-900/20 background)
 		await waitFor(() => {
-			const approveBtn = container.querySelector('button.bg-green-700');
+			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
+			expect(headerReviewBar).not.toBeNull();
+			const approveBtn = headerReviewBar?.querySelector('button.bg-green-700');
 			expect(approveBtn).not.toBeNull();
 		});
 
-		const approveBtn = container.querySelector('button.bg-green-700') as HTMLButtonElement;
+		const approveBtn = container.querySelector(
+			'.bg-amber-900\\/20 button.bg-green-700'
+		) as HTMLButtonElement;
 		fireEvent.click(approveBtn);
 
 		await waitFor(() => {
@@ -422,6 +427,27 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				taskId: 'task-1',
 			});
 		});
+	});
+
+	it('shows feedback textarea in bottom area (not in header) when awaiting_human', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { container, getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		// Verify the feedback textarea is in the bottom area (border-t, not in amber header)
+		const inputWrapper = getByTestId('input-textarea').closest('.border-t');
+		expect(inputWrapper).not.toBeNull();
+		// Verify it's NOT in the amber header bar
+		const amberBar = container.querySelector('.bg-amber-900\\/20');
+		expect(amberBar?.contains(getByTestId('input-textarea'))).toBe(false);
 	});
 
 	it('sends message to leader via task.sendHumanMessage in awaiting_leader state', async () => {
