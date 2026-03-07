@@ -210,7 +210,7 @@ export function setupTaskHandlers(
 
 	// task.getGroupMessages - Get a unified timeline for a session group
 	messageHub.onRequest('task.getGroupMessages', async (data) => {
-		const params = data as { groupId: string; afterId?: number; limit?: number };
+		const params = data as { groupId: string; afterId?: number; cursor?: string; limit?: number };
 
 		if (!params.groupId) {
 			throw new Error('Group ID is required');
@@ -259,8 +259,10 @@ export function setupTaskHandlers(
 						iteration: group.feedbackIteration,
 					},
 				};
+				const sourceKey = `sdk:${sessionId}:${uuid}`;
 				return {
 					createdAt: timestamp,
+					sourceKey,
 					groupId: group.id,
 					sessionId,
 					role,
@@ -299,6 +301,7 @@ export function setupTaskHandlers(
 				}
 				return {
 					createdAt: event.createdAt,
+					sourceKey: `event:${event.id}`,
 					groupId: event.groupId,
 					sessionId: null,
 					role: 'system',
@@ -307,16 +310,36 @@ export function setupTaskHandlers(
 				};
 			}),
 		]
-			.sort((a, b) => a.createdAt - b.createdAt)
-			.map((msg, idx) => ({ id: idx + 1, ...msg }));
+			.sort((a, b) => {
+				if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+				return a.sourceKey.localeCompare(b.sourceKey);
+			})
+			.map((msg) => ({
+				cursor: `${String(msg.createdAt).padStart(16, '0')}|${msg.sourceKey}`,
+				...msg,
+			}));
 
-		const afterId = params.afterId ?? 0;
 		const limit = params.limit ?? 100;
-		const page = merged.filter((m) => m.id > afterId).slice(0, limit + 1);
+		const cursor = params.cursor;
+		const filtered = cursor
+			? merged.filter((m) => m.cursor > cursor)
+			: params.afterId != null
+				? merged.slice(params.afterId)
+				: merged;
+		const page = filtered.slice(0, limit + 1);
 		const hasMore = page.length > limit;
-		const messages = page.slice(0, limit);
+		const messages = page.slice(0, limit).map((msg, idx) => ({
+			id: idx + 1,
+			groupId: msg.groupId,
+			sessionId: msg.sessionId,
+			role: msg.role,
+			messageType: msg.messageType,
+			content: msg.content,
+			createdAt: msg.createdAt,
+		}));
+		const nextCursor = messages.length > 0 ? page[messages.length - 1].cursor : null;
 
-		return { messages, hasMore };
+		return { messages, hasMore, nextCursor };
 	});
 
 	// task.sendHumanMessage - Send a human message to the active agent in a task group

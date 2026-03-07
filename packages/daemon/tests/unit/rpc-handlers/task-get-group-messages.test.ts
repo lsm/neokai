@@ -210,4 +210,68 @@ describe('task.getGroupMessages RPC handler', () => {
 		expect(second.content).toBe('Mid status marker');
 		expect(third.uuid).toBe('l-1');
 	});
+
+	it('paginates with cursor without skipping messages between pages', async () => {
+		const workerMsg1 = { type: 'assistant', uuid: 'w-1', message: { content: [] } };
+		const workerMsg2 = { type: 'assistant', uuid: 'w-2', message: { content: [] } };
+		const leaderMsg = { type: 'assistant', uuid: 'l-1', message: { content: [] } };
+
+		const { hub, handlers } = createMockMessageHub();
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb({
+				sdkBySession: {
+					'worker-session': [
+						{
+							sdk_message: JSON.stringify(workerMsg1),
+							timestamp: new Date(1000).toISOString(),
+							send_status: null,
+						},
+						{
+							sdk_message: JSON.stringify(workerMsg2),
+							timestamp: new Date(2000).toISOString(),
+							send_status: null,
+						},
+					],
+					'leader-session': [
+						{
+							sdk_message: JSON.stringify(leaderMsg),
+							timestamp: new Date(3000).toISOString(),
+							send_status: null,
+						},
+					],
+				},
+			})
+		);
+
+		const handler = handlers.get('task.getGroupMessages');
+		expect(handler).toBeDefined();
+
+		const page1 = (await handler!({ groupId: 'group-1', limit: 2 }, {})) as {
+			messages: Array<{ content: string }>;
+			hasMore: boolean;
+			nextCursor?: string | null;
+		};
+		expect(page1.messages.length).toBe(2);
+		expect(page1.hasMore).toBe(true);
+		expect(page1.nextCursor).toBeDefined();
+
+		const uuidsPage1 = page1.messages.map((m) => JSON.parse(m.content).uuid as string);
+		expect(uuidsPage1).toEqual(['w-1', 'w-2']);
+
+		const page2 = (await handler!(
+			{ groupId: 'group-1', limit: 2, cursor: page1.nextCursor },
+			{}
+		)) as {
+			messages: Array<{ content: string }>;
+			hasMore: boolean;
+			nextCursor?: string | null;
+		};
+		expect(page2.messages.length).toBe(1);
+		expect(page2.hasMore).toBe(false);
+		const uuidsPage2 = page2.messages.map((m) => JSON.parse(m.content).uuid as string);
+		expect(uuidsPage2).toEqual(['l-1']);
+	});
 });
