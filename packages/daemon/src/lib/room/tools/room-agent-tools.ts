@@ -132,14 +132,24 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 		async update_task(args: {
 			task_id: string;
+			title?: string;
+			description?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
 		}): Promise<ToolResult> {
 			const task = await taskManager.getTask(args.task_id);
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			if (args.priority) {
-				await taskManager.updateTaskPriority(args.task_id, args.priority);
+			const updates: {
+				title?: string;
+				description?: string;
+				priority?: 'low' | 'normal' | 'high' | 'urgent';
+			} = {};
+			if (args.title !== undefined) updates.title = args.title;
+			if (args.description !== undefined) updates.description = args.description;
+			if (args.priority !== undefined) updates.priority = args.priority;
+			if (Object.keys(updates).length > 0) {
+				await taskManager.updateTaskFields(args.task_id, updates);
 			}
 			const updated = await taskManager.getTask(args.task_id);
 			// Notify UI of the update
@@ -373,9 +383,11 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'update_task',
-			'Update an existing task',
+			'Update an existing task (title, description, and/or priority)',
 			{
 				task_id: z.string().describe('ID of the task to update'),
+				title: z.string().optional().describe('New title for the task'),
+				description: z.string().optional().describe('New description for the task'),
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
 			},
 			(args) => handlers.update_task(args)

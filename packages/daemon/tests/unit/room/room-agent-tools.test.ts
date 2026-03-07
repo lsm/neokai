@@ -223,6 +223,126 @@ describe('Room Agent Tools', () => {
 		});
 	});
 
+	describe('update_task', () => {
+		it('should return error for non-existent task', async () => {
+			const result = parseResult(
+				await handlers.update_task({ task_id: 'no-such-task', priority: 'high' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should update task priority', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'My task', description: 'd' })
+			);
+			const taskId = created.taskId as string;
+
+			const result = parseResult(await handlers.update_task({ task_id: taskId, priority: 'high' }));
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; priority: string };
+			expect(task.priority).toBe('high');
+		});
+
+		it('should update task title', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'Original title', description: 'desc' })
+			);
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, title: 'Updated title' })
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; title: string };
+			expect(task.title).toBe('Updated title');
+		});
+
+		it('should update task description', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'T', description: 'Original description' })
+			);
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, description: 'Updated description' })
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; description: string };
+			expect(task.description).toBe('Updated description');
+		});
+
+		it('should update title, description, and priority together', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'Old', description: 'Old desc' })
+			);
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.update_task({
+					task_id: taskId,
+					title: 'New title',
+					description: 'New description',
+					priority: 'urgent',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { title: string; description: string; priority: string };
+			expect(task.title).toBe('New title');
+			expect(task.description).toBe('New description');
+			expect(task.priority).toBe('urgent');
+		});
+
+		it('should preserve existing fields when updating only one field', async () => {
+			const created = parseResult(
+				await handlers.create_task({
+					title: 'Keep title',
+					description: 'Keep desc',
+					priority: 'low',
+				})
+			);
+			const taskId = created.taskId as string;
+
+			// Update only priority
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, priority: 'urgent' })
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { title: string; description: string; priority: string };
+			expect(task.title).toBe('Keep title');
+			expect(task.description).toBe('Keep desc');
+			expect(task.priority).toBe('urgent');
+		});
+
+		it('should work for tasks with any status', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			// Move task to in_progress status
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, title: 'Updated while in_progress' })
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { title: string; status: string };
+			expect(task.title).toBe('Updated while in_progress');
+			expect(task.status).toBe('in_progress');
+		});
+
+		it('should return updated task in response', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'desc' }));
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, title: 'New title' })
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; title: string };
+			expect(task.id).toBe(taskId);
+			expect(task.title).toBe('New title');
+		});
+	});
+
 	describe('cancel_task', () => {
 		it('should cancel a task', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
