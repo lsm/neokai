@@ -139,8 +139,13 @@ describe('Auth RPC Handlers', () => {
 		});
 
 		it('returns providers with auth status', async () => {
+			// Use getProviderRegistry directly to ensure we get the same instance the handler uses
+			const testRegistry = getProviderRegistry();
 			const mockProvider = createMockProvider();
-			registry.register(mockProvider);
+			testRegistry.register(mockProvider);
+
+			// Verify provider was registered
+			expect(testRegistry.getAll()).toHaveLength(1);
 
 			const handler = messageHubData.handlers.get('auth.providers');
 			expect(handler).toBeDefined();
@@ -155,11 +160,12 @@ describe('Auth RPC Handlers', () => {
 		});
 
 		it('uses isAvailable when getAuthStatus not implemented', async () => {
+			const testRegistry = getProviderRegistry();
 			const mockProvider = createMockProvider({
 				getAuthStatus: undefined,
 				isAvailable: mock(async () => false),
 			});
-			registry.register(mockProvider);
+			testRegistry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.providers');
 			expect(handler).toBeDefined();
@@ -172,12 +178,13 @@ describe('Auth RPC Handlers', () => {
 		});
 
 		it('handles errors from getAuthStatus', async () => {
+			const testRegistry = getProviderRegistry();
 			const mockProvider = createMockProvider({
 				getAuthStatus: mock(async () => {
 					throw new Error('Auth check failed');
 				}),
 			});
-			registry.register(mockProvider);
+			testRegistry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.providers');
 			expect(handler).toBeDefined();
