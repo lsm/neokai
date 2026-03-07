@@ -5,7 +5,7 @@
  * Tests the public API: cn, copyToClipboard, formatRelativeTime, formatTokens
  */
 
-import { cn, copyToClipboard, formatRelativeTime, formatTokens } from '../utils';
+import { cn, copyToClipboard, formatRelativeTime, formatTokens, parsePrUrl } from '../utils';
 
 describe('cn', () => {
 	it('should merge single class name', () => {
@@ -273,6 +273,45 @@ describe('formatRelativeTime', () => {
 		// 7 days should show formatted date (not "7d ago")
 		const result = formatRelativeTime(date);
 		expect(result).not.toMatch(/ago$/);
+	});
+});
+
+describe('parsePrUrl', () => {
+	it('should parse a standard GitHub PR URL', () => {
+		const result = parsePrUrl('https://github.com/lsm/neokai/pull/210');
+		expect(result).toEqual({ number: 210, url: 'https://github.com/lsm/neokai/pull/210' });
+	});
+
+	it('should parse an http GitHub PR URL', () => {
+		const result = parsePrUrl('http://github.com/owner/repo/pull/42');
+		expect(result).toEqual({ number: 42, url: 'http://github.com/owner/repo/pull/42' });
+	});
+
+	it('should parse PR number 1', () => {
+		const result = parsePrUrl('https://github.com/org/project/pull/1');
+		expect(result).toEqual({ number: 1, url: 'https://github.com/org/project/pull/1' });
+	});
+
+	it('should return null for non-PR URLs', () => {
+		expect(parsePrUrl('https://github.com/owner/repo')).toBeNull();
+		expect(parsePrUrl('https://github.com/owner/repo/issues/5')).toBeNull();
+		expect(parsePrUrl('https://gitlab.com/owner/repo/merge_requests/1')).toBeNull();
+	});
+
+	it('should return null for empty string', () => {
+		expect(parsePrUrl('')).toBeNull();
+	});
+
+	it('should return null for arbitrary text', () => {
+		expect(parsePrUrl('Working on feature X')).toBeNull();
+		expect(parsePrUrl('Creating pull request…')).toBeNull();
+	});
+
+	it('should correctly extract PR number from URL with extra trailing content', () => {
+		// URL with trailing path segments — only the pull number matters
+		const result = parsePrUrl('https://github.com/foo/bar/pull/999');
+		expect(result).not.toBeNull();
+		expect(result?.number).toBe(999);
 	});
 });
 

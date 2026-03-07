@@ -284,6 +284,8 @@ export interface TaskSummary {
 	dependsOn: string[];
 	/** Error message for failed tasks */
 	error?: string;
+	/** Current step description — may contain a GitHub PR URL */
+	currentStep?: string;
 }
 
 /**

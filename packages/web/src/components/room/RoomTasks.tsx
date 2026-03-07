@@ -11,6 +11,7 @@
  */
 
 import type { TaskSummary } from '@neokai/shared';
+import { parsePrUrl } from '../../lib/utils';
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
@@ -172,6 +173,7 @@ function TaskItem({
 	const showView = task.status === 'review' && !!onView;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
+	const pr = task.currentStep ? parsePrUrl(task.currentStep) : null;
 
 	return (
 		<div
@@ -186,6 +188,18 @@ function TaskItem({
 							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
 								Blocked
 							</span>
+						)}
+						{pr && (
+							<a
+								href={pr.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-xs px-1.5 py-0.5 rounded bg-blue-900/20 text-blue-400 hover:text-blue-300 hover:bg-blue-900/40 border border-blue-700/40 flex-shrink-0 transition-colors"
+								onClick={(e) => e.stopPropagation()}
+								title={pr.url}
+							>
+								PR #{pr.number}
+							</a>
 						)}
 					</div>
 				</div>

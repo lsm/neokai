@@ -79,6 +79,18 @@ export function formatRelativeTime(date: Date): string {
 }
 
 /**
+ * Parse a GitHub pull request URL and extract the PR number.
+ * Returns the PR number and original URL, or null if the URL is not a valid GitHub PR URL.
+ *
+ * Supported format: https://github.com/{owner}/{repo}/pull/{number}
+ */
+export function parsePrUrl(url: string): { number: number; url: string } | null {
+	const match = /https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/.exec(url);
+	if (!match) return null;
+	return { number: parseInt(match[1], 10), url };
+}
+
+/**
  * Format token count in k format (e.g., 16500 -> "16.5k")
  */
 export function formatTokens(tokens: number): string {
