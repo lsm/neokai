@@ -43,32 +43,51 @@ Create a summary with recommendations for which tests to convert.
 
 **Agent: coder**
 
-Convert the following room tests to support mock mode (similar to `room-chat-constraints.test.ts`):
-- `room-advanced-scenarios.test.ts` - verify room scenario handling (no multi-agent)
-- Any other room tests from Task 1 that don't require multi-agent tool execution
+Convert room tests to support mock mode (similar to `room-chat-constraints.test.ts`):
 
-Use `installRoomAutoMock` or `mockControls.setDefaultResponses` to enable mock mode.
+Reference pattern from `room-chat-constraints.test.ts`:
+```typescript
+const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
+const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const IDLE_TIMEOUT = IS_MOCK ? 5000 : 120000;
+
+// In beforeEach:
+if (IS_MOCK && daemon.mockControls) {
+    daemon.mockControls.setDefaultResponses(simpleTextResponse('response'));
+}
+```
+
+Files to convert:
+- `room-advanced-scenarios.test.ts` - verify room scenario handling (no multi-agent)
+- Other room tests identified in Task 1 audit that don't require multi-agent tool execution
 
 **Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_AGENT_SDK_MOCK=1` with timeout ≤30s
-- Tests still work with real API (default mode)
-- Mock timeout ≤5s, real API timeout ≥60s
+- Tests pass with `NEOKAI_AGENT_SDK_MOCK=1` with mock timeout ≤5s
+- Tests still work with real API (default mode) with timeout ≥60s
+- Follows the IS_MOCK pattern for conditional timeouts
 
 ### Task 3: Convert remaining feature tests to mock mode
 
 **Agent: coder**
 
 Convert any feature tests identified in Task 1 that aren't already supporting mock:
+
+Reference pattern (same as Task 2):
+- Use `NEOKAI_AGENT_SDK_MOCK` environment variable detection
+- Set conditional timeouts based on mock vs real mode
+
+Files to convert (from Task 1 audit):
 - `auto-title.test.ts` - verify title generation metadata without real API
-- Other tests identified in audit
+- Other tests identified in audit that don't require real AI behavior
 
 **Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
 
 **Acceptance Criteria:**
-- Tests pass with mock SDK with timeout ≤30s
+- Tests pass with mock SDK with timeout ≤5s
 - Tests verify the core functionality (state transitions, persistence, etc.)
+- Follows the IS_MOCK pattern for conditional timeouts
 
 ### Task 4: Enhance mock SDK if needed
 
