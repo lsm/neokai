@@ -6,6 +6,7 @@ import {
 	createLeaderToolHandlers,
 	createLeaderAgentInit,
 	toAgentModel,
+	toShortModelName,
 	type LeaderAgentConfig,
 	type LeaderToolCallbacks,
 } from '../../../src/lib/room/agents/leader-agent';
@@ -561,6 +562,184 @@ describe('Leader Agent', () => {
 
 		it('should map claude-sonnet-4.6 style IDs to sonnet', () => {
 			expect(toAgentModel('claude-sonnet-4.6')).toBe('sonnet');
+		});
+	});
+
+	describe('toShortModelName', () => {
+		it('should return codex-review for exact match', () => {
+			expect(toShortModelName('codex-review')).toBe('codex-review');
+		});
+
+		it('should return codex for gpt-5.3-codex', () => {
+			expect(toShortModelName('gpt-5.3-codex')).toBe('codex');
+		});
+
+		it('should return copilot for copilot', () => {
+			expect(toShortModelName('copilot')).toBe('copilot');
+		});
+
+		it('should return opus for claude-opus-4-6', () => {
+			expect(toShortModelName('claude-opus-4-6')).toBe('opus');
+		});
+
+		it('should return sonnet for claude-sonnet-4-5-20250929', () => {
+			expect(toShortModelName('claude-sonnet-4-5-20250929')).toBe('sonnet');
+		});
+
+		it('should return haiku for claude-haiku-4-5', () => {
+			expect(toShortModelName('claude-haiku-4-5')).toBe('haiku');
+		});
+
+		it('should return truncated fallback for unknown models', () => {
+			const result = toShortModelName('some-unknown-model');
+			expect(result).toBe('some-unknown-model');
+		});
+	});
+
+	describe('buildReviewerAgents — CLI enhancements', () => {
+		it('should use leaderModel as default driver when no driver_model specified', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }], 'claude-opus-4-6');
+			const agent = agents['reviewer-copilot'];
+			expect(agent.model).toBe('opus');
+		});
+
+		it('should fall back to sonnet when neither driver_model nor leaderModel given', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }]);
+			const agent = agents['reviewer-copilot'];
+			expect(agent.model).toBe('sonnet');
+		});
+
+		it('should prefer explicit driver_model over leaderModel', () => {
+			const agents = buildReviewerAgents(
+				[{ model: 'copilot', type: 'cli', driver_model: 'haiku' }],
+				'claude-opus-4-6'
+			);
+			const agent = agents['reviewer-copilot'];
+			expect(agent.model).toBe('haiku');
+		});
+
+		it('should pass cliModel to CLI reviewer prompt', () => {
+			const agents = buildReviewerAgents([
+				{ model: 'copilot', type: 'cli', cliModel: 'gpt-5.3-codex' },
+			]);
+			const agent = agents['reviewer-copilot'];
+			expect(agent.prompt).toContain('--model gpt-5.3-codex');
+		});
+
+		it('should warn against --model when cliModel is not set', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }]);
+			const agent = agents['reviewer-copilot'];
+			// When no cliModel, the bash command should not have --model flag
+			expect(agent.prompt).toContain('--max-autopilot-continues 10 \\');
+			expect(agent.prompt).not.toContain('--max-autopilot-continues 10 --model');
+			expect(agent.prompt).toContain('Do NOT pass `--model`');
+		});
+
+		it('should include synchronous execution rules in CLI reviewer prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }]);
+			const agent = agents['reviewer-copilot'];
+			expect(agent.prompt).toContain('timeout: 600000');
+			expect(agent.prompt).toContain('Do NOT use `run_in_background`');
+			expect(agent.prompt).toContain('recommendation: TIMEOUT');
+		});
+
+		it('should use codex review subcommand for codex-review model', () => {
+			const agents = buildReviewerAgents([{ model: 'codex-review', type: 'cli' }]);
+			const agent = agents['reviewer-codex-review'];
+			expect(agent).toBeDefined();
+			expect(agent.prompt).toContain('codex review');
+			expect(agent.prompt).toContain('--base <BASE_BRANCH>');
+			expect(agent.prompt).toContain('review quota');
+		});
+
+		it('should use codex exec for codex model', () => {
+			const agents = buildReviewerAgents([{ model: 'codex', type: 'cli' }]);
+			const agent = agents['reviewer-codex'];
+			expect(agent).toBeDefined();
+			expect(agent.prompt).toContain('codex exec');
+			expect(agent.prompt).toContain('--sandbox read-only');
+			expect(agent.prompt).toContain('agent/exec quota');
+		});
+
+		it('should include copilot-specific flags in copilot CLI prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }]);
+			const agent = agents['reviewer-copilot'];
+			expect(agent.prompt).toContain('-s');
+			expect(agent.prompt).toContain('--no-ask-user');
+			expect(agent.prompt).toContain('--autopilot');
+		});
+
+		it('should display cliModel in reviewer identity block', () => {
+			const agents = buildReviewerAgents([
+				{ model: 'copilot', type: 'cli', cliModel: 'claude-opus-4.6' },
+			]);
+			const agent = agents['reviewer-copilot'];
+			expect(agent.prompt).toContain('**Model:** claude-opus-4.6');
+		});
+
+		it('should resolve codex-review modelId to gpt-5.3-codex', () => {
+			const agents = buildReviewerAgents([{ model: 'codex-review', type: 'cli' }]);
+			const agent = agents['reviewer-codex-review'];
+			// The description should mention codex-review
+			expect(agent.description).toContain('codex-review');
+		});
+	});
+
+	describe('buildLeaderSystemPrompt — TIMEOUT/ERROR routing', () => {
+		it('should include TIMEOUT/ERROR routing in code review orchestration', () => {
+			const prompt = buildLeaderSystemPrompt(
+				makeConfig({
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'claude-opus-4-6' }],
+							},
+						},
+					}),
+				})
+			);
+			expect(prompt).toContain('TIMEOUT or ERROR');
+			expect(prompt).toContain('Ignore that reviewer');
+			expect(prompt).toContain('let human decide');
+		});
+
+		it('should include TIMEOUT/ERROR routing in plan review orchestration', () => {
+			const prompt = buildLeaderSystemPrompt(
+				makeConfig({
+					reviewContext: 'plan_review',
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'claude-opus-4-6' }],
+							},
+						},
+					}),
+				})
+			);
+			expect(prompt).toContain('TIMEOUT or ERROR');
+			expect(prompt).toContain('Ignore that reviewer');
+		});
+	});
+
+	describe('createLeaderAgentInit — leaderModel passed to reviewers', () => {
+		it('should pass leader model to buildReviewerAgents as default driver', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(
+				makeConfig({
+					model: 'claude-opus-4-6',
+					room: makeRoom({
+						config: {
+							agentSubagents: {
+								leader: [{ model: 'copilot', type: 'cli' }],
+							},
+						},
+					}),
+				}),
+				callbacks
+			);
+			const reviewerAgent = init.agents!['reviewer-copilot'];
+			// Driver model should be opus (inherited from leader model)
+			expect(reviewerAgent.model).toBe('opus');
 		});
 	});
 });

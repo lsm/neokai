@@ -54,7 +54,14 @@ const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
 		name: 'Codex',
 		command: 'codex',
 		provider: 'OpenAI',
-		knownModels: ['gpt-5.3-codex', 'o3', 'o4-mini', 'gpt-4.1'],
+		knownModels: ['gpt-5.3-codex', 'gpt-5.4'],
+	},
+	{
+		id: 'codex-review',
+		name: 'Codex Review',
+		command: 'codex',
+		provider: 'OpenAI',
+		knownModels: ['gpt-5.3-codex', 'gpt-5.4'],
 	},
 	{
 		id: 'gemini',
@@ -76,6 +83,13 @@ const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
 		provider: 'GitHub',
 		versionCommand: 'gh copilot --help',
 		authCheckCommand: 'gh auth status',
+		knownModels: [
+			'claude-opus-4.6',
+			'claude-sonnet-4.6',
+			'gemini-3.1-pro-preview',
+			'gpt-5.3-codex',
+			'gpt-5.4',
+		],
 	},
 ];
 
