@@ -154,10 +154,16 @@ describe('RoomRuntime flow', () => {
 		});
 
 		it('should escalate task to human review (not fail) when max feedback iterations reached', async () => {
-			// maxFeedbackIterations = 5 (set in test helpers).
+			// maxFeedbackIterations = 5 (set below).
 			// feedbackIteration is incremented by routeWorkerToLeader (1-based).
 			// The check fires when feedbackIteration >= maxFeedbackIterations,
 			// i.e., on the 5th review round when the leader tries send_to_worker.
+
+			// Override the context to set maxFeedbackIterations to 5
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({ maxFeedbackIterations: 5 });
+
 			const { task } = await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
