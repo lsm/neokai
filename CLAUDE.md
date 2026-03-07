@@ -39,12 +39,15 @@ Each package's `tsconfig.json` defines path aliases that resolve to source files
 
 ```bash
 # Development
-make dev                  # Start dev server on port 9283 (workspace: tmp/workspace)
-make dev-random           # Start dev server on random available port
+make dev WORKSPACE=/path/to/workspace    # Start dev server on random available port
+
+# Production
+make serve-random WORKSPACE=/path/to/workspace   # Production server on random port
+make run WORKSPACE=/path/to/workspace [PORT=8080] # Production server (PORT optional)
 
 # Testing
-make test:daemon       # Daemon tests only (bun test) with coverage
-make test:web          # Web tests only (vitest run) with coverage
+make test-daemon       # Daemon tests only (bun test) with coverage
+make test-web          # Web tests only (vitest run) with coverage
 
 # Run a single test file
 cd packages/daemon && bun test tests/unit/some-test.test.ts
