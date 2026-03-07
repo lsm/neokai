@@ -21,6 +21,13 @@ function resolveLeaderModel(room: Room, globalDefault: string): string {
 	return leaderModel;
 }
 
+function resolveWorkerModel(room: Room, globalDefault: string): string {
+	const roomConfig = (room.config ?? {}) as RoomConfig;
+	const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
+	const workerModel = agentModels?.worker ?? room.defaultModel ?? globalDefault;
+	return workerModel;
+}
+
 describe('Leader model resolution', () => {
 	describe('resolveLeaderModel', () => {
 		it('should use room.defaultModel when agentModels.leader is not set', () => {
@@ -123,6 +130,81 @@ describe('Leader model resolution', () => {
 
 			const result = resolveLeaderModel(room, 'global-default');
 			expect(result).toBe('global-default');
+		});
+	});
+});
+
+describe('Worker model resolution', () => {
+	describe('resolveWorkerModel', () => {
+		it('should use room.defaultModel when agentModels.worker is not set', () => {
+			const room: Room = {
+				id: 'room-1',
+				defaultModel: 'room-default-model',
+				config: {},
+			};
+
+			const result = resolveWorkerModel(room, 'global-default');
+			expect(result).toBe('room-default-model');
+		});
+
+		it('should prefer room.config.agentModels.worker over room.defaultModel', () => {
+			const room: Room = {
+				id: 'room-2',
+				defaultModel: 'room-default-model',
+				config: {
+					agentModels: {
+						worker: 'worker-specific-model',
+					},
+				},
+			};
+
+			const result = resolveWorkerModel(room, 'global-default');
+			expect(result).toBe('worker-specific-model');
+		});
+
+		it('should fall back to global default when neither room.defaultModel nor agentModels.worker is set', () => {
+			const room: Room = {
+				id: 'room-3',
+				config: {},
+			};
+
+			const result = resolveWorkerModel(room, 'global-default');
+			expect(result).toBe('global-default');
+		});
+
+		it('should prioritize agentModels.worker when set', () => {
+			const room: Room = {
+				id: 'room-4',
+				defaultModel: 'room-default',
+				config: {
+					agentModels: {
+						worker: 'haiku-4',
+						leader: 'sonnet-4.6',
+					},
+				},
+			};
+
+			const result = resolveWorkerModel(room, 'global-default');
+			expect(result).toBe('haiku-4');
+		});
+
+		it('should allow different worker and leader models', () => {
+			const room: Room = {
+				id: 'room-5',
+				defaultModel: 'room-default',
+				config: {
+					agentModels: {
+						worker: 'haiku-4',
+						leader: 'sonnet-4.6',
+					},
+				},
+			};
+
+			const workerResult = resolveWorkerModel(room, 'global-default');
+			const leaderResult = resolveLeaderModel(room, 'global-default');
+
+			expect(workerResult).toBe('haiku-4');
+			expect(leaderResult).toBe('sonnet-4.6');
 		});
 	});
 });

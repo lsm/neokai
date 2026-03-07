@@ -203,4 +203,14 @@ export class RoomManager {
 			totalActiveTasks: roomStatuses.reduce((sum, r) => sum + (r?.activeTaskCount ?? 0), 0),
 		};
 	}
+
+	/**
+	 * Get the default model for a specific room.
+	 * Returns the room's defaultModel if set, otherwise returns null.
+	 */
+	getDefaultModel(roomId: string): string | null {
+		const room = this.roomRepo.getRoom(roomId);
+		if (!room) return null;
+		return room.defaultModel ?? null;
+	}
 }

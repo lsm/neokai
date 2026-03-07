@@ -87,7 +87,10 @@ export interface RoomRuntimeConfig {
 	goalManager: GoalManager;
 	sessionFactory: SessionFactory;
 	workspacePath: string;
+	/** Leader model (agentModels.leader > room.defaultModel > global default) */
 	model?: string;
+	/** Worker model (agentModels.worker > room.defaultModel > global default) */
+	workerModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
@@ -207,6 +210,7 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			workerModel: config.workerModel,
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
@@ -1362,7 +1366,7 @@ export class RoomRuntime {
 			room: currentRoom,
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
-			model: this.taskGroupManager.model,
+			model: this.taskGroupManager.getWorkerModel(),
 			createDraftTask,
 			updateDraftTask,
 			removeDraftTask,
@@ -1464,7 +1468,7 @@ export class RoomRuntime {
 				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: this.taskGroupManager.model,
+				model: this.taskGroupManager.getWorkerModel(),
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -1482,7 +1486,7 @@ export class RoomRuntime {
 				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: this.taskGroupManager.model,
+				model: this.taskGroupManager.getWorkerModel(),
 				previousTaskSummaries,
 			};
 			workerConfig = {
