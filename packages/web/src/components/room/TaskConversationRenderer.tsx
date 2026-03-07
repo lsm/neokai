@@ -2,7 +2,7 @@
  * TaskConversationRenderer
  *
  * Renders a flat chronological conversation timeline for a task group.
- * Messages are fetched from session_group_messages via task.getGroupMessages RPC
+ * Messages are fetched via task.getGroupMessages RPC
  * with pagination to fetch ALL messages (not just the first 100).
  *
  * Each message is rendered inline with a thin colored left border indicating
