@@ -87,7 +87,7 @@ export function formatRelativeTime(date: Date): string {
 export function parsePrUrl(url: string): { number: number; url: string } | null {
 	const match = /https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/.exec(url);
 	if (!match) return null;
-	return { number: parseInt(match[1], 10), url };
+	return { number: parseInt(match[1], 10), url: match[0] };
 }
 
 /**

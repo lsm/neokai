@@ -309,9 +309,18 @@ describe('parsePrUrl', () => {
 
 	it('should correctly extract PR number from URL with extra trailing content', () => {
 		// URL with trailing path segments — only the pull number matters
-		const result = parsePrUrl('https://github.com/foo/bar/pull/999');
+		const result = parsePrUrl('https://github.com/foo/bar/pull/999/commits');
 		expect(result).not.toBeNull();
 		expect(result?.number).toBe(999);
+		// Should return clean URL without trailing path
+		expect(result?.url).toBe('https://github.com/foo/bar/pull/999');
+	});
+
+	it('should extract clean URL from text containing PR URL', () => {
+		const result = parsePrUrl('Check this PR https://github.com/owner/repo/pull/123 for details');
+		expect(result).not.toBeNull();
+		expect(result?.number).toBe(123);
+		expect(result?.url).toBe('https://github.com/owner/repo/pull/123');
 	});
 });
 
