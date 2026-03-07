@@ -108,6 +108,10 @@ export interface RoomRuntimeConfig {
 	hookOptions?: HookOptions;
 	/** Fetch room from DB by ID (for lazy leader init with current config) */
 	getRoom: (roomId: string) => Room | null;
+	/** Fetch task from DB by ID (for lazy leader init with current data) */
+	getTask: (taskId: string) => Promise<NeoTask | null>;
+	/** Fetch goal from DB by ID (for lazy leader init with current data) */
+	getGoal: (goalId: string) => Promise<RoomGoal | null>;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -202,6 +206,8 @@ export class RoomRuntime {
 			workspacePath: config.workspacePath,
 			model: config.model,
 			getRoom: config.getRoom,
+			getTask: config.getTask,
+			getGoal: config.getGoal,
 		});
 	}
 

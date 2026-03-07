@@ -109,13 +109,17 @@ export interface TaskGroupManagerConfig {
 	model?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
 	getRoom: (roomId: string) => Room | null;
+	/** Fetch task from DB by ID. Used to get CURRENT task data at route time. */
+	getTask: (taskId: string) => Promise<NeoTask | null>;
+	/** Fetch goal from DB by ID. Used to get CURRENT goal data at route time. */
+	getGoal: (goalId: string) => Promise<RoomGoal | null>;
 }
 
 /** Deferred leader config stored until first routeWorkerToLeader call */
 interface DeferredLeaderConfig {
 	roomId: string;
-	task: NeoTask;
-	goal: RoomGoal;
+	taskId: string;
+	goalId: string;
 	groupId: string;
 	sessionId: string;
 	workspacePath: string;
@@ -132,6 +136,8 @@ export class TaskGroupManager {
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
 	private readonly getRoom: (roomId: string) => Room | null;
+	private readonly getTaskById: (taskId: string) => Promise<NeoTask | null>;
+	private readonly getGoalById: (goalId: string) => Promise<RoomGoal | null>;
 	readonly workspacePath: string;
 	readonly model?: string;
 
@@ -145,6 +151,8 @@ export class TaskGroupManager {
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
 		this.getRoom = config.getRoom;
+		this.getTaskById = config.getTask;
+		this.getGoalById = config.getGoal;
 		this.workspacePath = config.workspacePath;
 		this.model = config.model;
 	}
@@ -205,12 +213,12 @@ export class TaskGroupManager {
 		);
 
 		// Store leader config for deferred creation in routeWorkerToLeader.
-		// The leader init is built lazily with the CURRENT room config at route time,
-		// ensuring room config changes (like agentSubagents.leader) are respected.
+		// Only IDs are stored; objects are fetched from DB at route time to ensure
+		// config changes (room, task, goal) are respected when the leader starts.
 		this.pendingLeaderConfigs.set(group.id, {
 			roomId: room.id,
-			task,
-			goal,
+			taskId: task.id,
+			goalId: goal.id,
 			groupId: group.id,
 			sessionId: leaderSessionId,
 			workspacePath: groupWorkspacePath,
@@ -284,19 +292,31 @@ export class TaskGroupManager {
 		let leaderTaskContext: string | undefined;
 		const pending = this.pendingLeaderConfigs.get(groupId);
 		if (pending) {
-			// Fetch CURRENT room config from DB (not cached).
-			// This ensures room config changes (like agentSubagents.leader) made
-			// after spawn() are respected when the leader starts.
+			// Fetch CURRENT room, task, goal from DB (not cached).
+			// This ensures config changes made after spawn() are respected
+			// when the leader starts.
 			const room = this.getRoom(pending.roomId);
 			if (!room) {
 				await this.fail(groupId, `Room ${pending.roomId} not found`);
 				return null;
 			}
 
+			const task = await this.getTaskById(pending.taskId);
+			if (!task) {
+				await this.fail(groupId, `Task ${pending.taskId} not found`);
+				return null;
+			}
+
+			const goal = await this.getGoalById(pending.goalId);
+			if (!goal) {
+				await this.fail(groupId, `Goal ${pending.goalId} not found`);
+				return null;
+			}
+
 			const leaderCallbacks = leaderCallbacksFactory(pending.groupId);
 			const leaderConfig: LeaderAgentConfig = {
-				task: pending.task,
-				goal: pending.goal,
+				task,
+				goal,
 				room, // Fresh from DB
 				sessionId: pending.sessionId,
 				workspacePath: pending.workspacePath,

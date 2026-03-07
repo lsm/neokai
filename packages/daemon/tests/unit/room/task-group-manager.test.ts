@@ -215,6 +215,8 @@ describe('TaskGroupManager', () => {
 			sessionFactory,
 			workspacePath: '/workspace',
 			getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+			getTask: (taskId) => taskManager.getTask(taskId),
+			getGoal: (goalId) => goalManager.getGoal(goalId),
 		});
 	});
 

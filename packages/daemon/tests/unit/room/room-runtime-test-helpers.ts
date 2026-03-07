@@ -168,8 +168,10 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
 		tickInterval: 60_000,
 		hookOptions: opts?.hookOptions,
-		// Return the test room (reads from DB not needed for unit tests)
+		// Fetch from managers (reads from DB) instead of caching objects
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+		getTask: (taskId) => taskManager.getTask(taskId),
+		getGoal: (goalId) => goalManager.getGoal(goalId),
 	});
 
 	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
