@@ -106,7 +106,10 @@ export interface TaskGroupManagerConfig {
 	goalManager: GoalManager;
 	sessionFactory: SessionFactory;
 	workspacePath: string;
+	/** Leader model */
 	model?: string;
+	/** Worker model (defaults to model if not set) */
+	workerModel?: string;
 	/** Fetch room from DB by ID. Used to get CURRENT room config at route time. */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID. Used to get CURRENT task data at route time. */
@@ -140,6 +143,7 @@ export class TaskGroupManager {
 	private readonly getGoalById: (goalId: string) => Promise<RoomGoal | null>;
 	readonly workspacePath: string;
 	private _model?: string;
+	readonly workerModel?: string;
 
 	/** Deferred leader configs — created in spawn(), consumed in routeWorkerToLeader() */
 	private pendingLeaderConfigs = new Map<string, DeferredLeaderConfig>();
@@ -155,6 +159,7 @@ export class TaskGroupManager {
 		this.getGoalById = config.getGoal;
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
+		this.workerModel = config.workerModel;
 	}
 
 	/** Get the current model for leader sessions */
@@ -165,6 +170,14 @@ export class TaskGroupManager {
 	/** Update the model for new leader sessions (e.g., when room settings change) */
 	updateModel(model: string | undefined): void {
 		this._model = model;
+	}
+
+	/**
+	 * Get the effective model to use for worker sessions.
+	 * Returns workerModel if set, otherwise falls back to model.
+	 */
+	getWorkerModel(): string | undefined {
+		return this.workerModel ?? this._model;
 	}
 
 	/**
@@ -498,7 +511,7 @@ export class TaskGroupManager {
 	 * Unlike submitForReview (triggered by leader's submit_for_review tool call),
 	 * this escalation has no PR URL — it is a runtime-enforced lifecycle boundary.
 	 */
-	async escalateToHumanReview(groupId: string, reason: string): Promise<SessionGroup | null> {
+	async escalateToHumanReview(groupId: string, _reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 

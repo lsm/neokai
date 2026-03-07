@@ -263,6 +263,15 @@ export function setupRoomRuntimeHandlers(
 		return { state: state ?? 'stopped' };
 	});
 
+	// room.runtime.models - Get resolved leader/worker models for a room
+	messageHub.onRequest('room.runtime.models', async (data) => {
+		const params = data as { roomId: string };
+		if (!params.roomId) throw new Error('Room ID is required');
+		const leaderModel = roomRuntimeService.getLeaderModel(params.roomId);
+		const workerModel = roomRuntimeService.getWorkerModel(params.roomId);
+		return { leaderModel, workerModel };
+	});
+
 	// room.runtime.pause - Pause runtime
 	messageHub.onRequest('room.runtime.pause', async (data) => {
 		const params = data as { roomId: string };

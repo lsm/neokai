@@ -6,10 +6,10 @@
  * - Back navigation to rooms list
  * - Task stats strip
  * - Room Dashboard pinned at top
- * - Sessions list below
+ * - Sessions list below (with filter toggle for archived sessions)
  */
 
-import { useMemo } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
@@ -43,6 +43,7 @@ interface RoomContextPanelProps {
 export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) {
 	const sessions = roomStore.sessions.value;
 	const tasks = roomStore.tasks.value;
+	const [showArchived, setShowArchived] = useState(false);
 
 	const pendingCount = useMemo(() => tasks.filter((t) => t.status === 'pending').length, [tasks]);
 	const activeCount = useMemo(
@@ -50,6 +51,17 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		[tasks]
 	);
 	const doneCount = useMemo(() => tasks.filter((t) => t.status === 'completed').length, [tasks]);
+
+	// Filter sessions based on showArchived toggle
+	const filteredSessions = useMemo(() => {
+		if (showArchived) return sessions;
+		return sessions.filter((s) => s.status !== 'archived');
+	}, [sessions, showArchived]);
+
+	const hasArchivedSessions = useMemo(
+		() => sessions.some((s) => s.status === 'archived'),
+		[sessions]
+	);
 
 	const roomAgentSessionId = `room:chat:${roomId}`;
 
@@ -136,6 +148,21 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			{/* Divider */}
 			<div class="border-t border-dark-700 mx-3 mb-1" />
 
+			{/* Sessions filter toggle */}
+			{hasArchivedSessions && (
+				<div class="px-3 py-1.5 flex items-center justify-between">
+					<span class="text-xs text-gray-500">
+						{filteredSessions.length} session{filteredSessions.length !== 1 ? 's' : ''}
+					</span>
+					<button
+						onClick={() => setShowArchived(!showArchived)}
+						class="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+					>
+						{showArchived ? 'Hide archived' : 'Show archived'}
+					</button>
+				</div>
+			)}
+
 			{/* Sessions */}
 			<div class="flex-1 overflow-y-auto">
 				{/* Pinned: Room Dashboard */}
@@ -191,12 +218,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				</button>
 
 				{/* Sessions */}
-				{sessions.length === 0 ? (
+				{filteredSessions.length === 0 ? (
 					<div class="px-4 py-5 text-center">
 						<p class="text-xs text-gray-500">No sessions yet</p>
 					</div>
 				) : (
-					sessions.map((session) => (
+					filteredSessions.map((session) => (
 						<button
 							key={session.id}
 							onClick={() => handleSessionClick(session.id)}

@@ -93,6 +93,12 @@ class RoomStore {
 	/** Runtime state for this room (running/paused/stopped) */
 	readonly runtimeState = signal<RuntimeState | null>(null);
 
+	/** Resolved leader/worker models for this room */
+	readonly runtimeModels = signal<{ leaderModel: string | null; workerModel: string | null }>({
+		leaderModel: null,
+		workerModel: null,
+	});
+
 	// ========================================
 	// Computed Accessors
 	// ========================================
@@ -347,6 +353,9 @@ class RoomStore {
 			} catch {
 				// Runtime may not exist yet
 			}
+
+			// Fetch runtime models (leader/worker)
+			await this.fetchRuntimeModels();
 		} catch (err) {
 			logger.error('Failed to fetch room state:', err);
 			this.error.value = err instanceof Error ? err.message : 'Failed to load room';
@@ -637,6 +646,26 @@ class RoomStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 		await hub.request('room.runtime.start', { roomId });
+	}
+
+	/**
+	 * Fetch the resolved leader/worker models for the current room
+	 */
+	async fetchRuntimeModels(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) return;
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) return;
+
+		try {
+			const models = await hub.request<{ leaderModel: string | null; workerModel: string | null }>(
+				'room.runtime.models',
+				{ roomId }
+			);
+			this.runtimeModels.value = models;
+		} catch {
+			// Runtime may not exist yet, models will remain null
+		}
 	}
 
 	// ========================================

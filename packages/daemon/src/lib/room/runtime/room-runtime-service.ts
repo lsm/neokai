@@ -66,6 +66,32 @@ export class RoomRuntimeService {
 		return this.runtimes.get(roomId) ?? null;
 	}
 
+	/**
+	 * Get the resolved leader model for a room.
+	 * Returns agentModels.leader > room.defaultModel > global default.
+	 */
+	getLeaderModel(roomId: string): string | null {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return null;
+
+		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
+		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
+		return agentModels?.leader ?? room.defaultModel ?? this.ctx.defaultModel;
+	}
+
+	/**
+	 * Get the resolved worker model for a room.
+	 * Returns agentModels.worker > room.defaultModel > global default.
+	 */
+	getWorkerModel(roomId: string): string | null {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return null;
+
+		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
+		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
+		return agentModels?.worker ?? room.defaultModel ?? this.ctx.defaultModel;
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
@@ -265,6 +291,10 @@ export class RoomRuntimeService {
 			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
 			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
 			this.ctx.defaultModel;
+		const workerModel =
+			(agentModels?.worker && agentModels.worker.trim() !== '' ? agentModels.worker : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.ctx.defaultModel;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -275,6 +305,7 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: leaderModel,
+			workerModel,
 			defaultModel: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,

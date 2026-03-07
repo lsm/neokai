@@ -87,7 +87,10 @@ export interface RoomRuntimeConfig {
 	goalManager: GoalManager;
 	sessionFactory: SessionFactory;
 	workspacePath: string;
+	/** Leader model (agentModels.leader > room.defaultModel > global default) */
 	model?: string;
+	/** Worker model (agentModels.worker > room.defaultModel > global default) */
+	workerModel?: string;
 	/** Global default model for fallback when room doesn't specify one */
 	defaultModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
@@ -211,6 +214,7 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			workerModel: config.workerModel,
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
@@ -258,10 +262,7 @@ export class RoomRuntime {
 	 * Resolve model for a room agent role.
 	 * Priority: room.config.agentModels[role] > room.defaultModel > global default.
 	 */
-	private resolveAgentModel(
-		room: Room,
-		role: 'leader' | 'planner' | 'coder' | 'general'
-	): string {
+	private resolveAgentModel(room: Room, role: 'leader' | 'planner' | 'coder' | 'general'): string {
 		const config = (room.config ?? {}) as Record<string, unknown>;
 		const agentModels = config.agentModels as Record<string, string> | undefined;
 		const roleModel = agentModels?.[role];
