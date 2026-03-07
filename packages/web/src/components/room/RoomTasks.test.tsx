@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for RoomTasks Component
  *
@@ -19,14 +18,15 @@ describe('RoomTasks', () => {
 
 	const createTask = (
 		id: string,
-		status: string,
+		status: TaskSummary['status'],
 		overrides?: Partial<TaskSummary>
 	): TaskSummary => ({
 		id,
 		title: `Task ${id}`,
-		status: status as TaskSummary['status'],
+		status,
 		priority: 'normal',
 		progress: 0,
+		dependsOn: [],
 		...overrides,
 	});
 

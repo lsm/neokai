@@ -299,9 +299,9 @@ export interface TaskSummary {
 export interface RoomOverview {
 	room: Room;
 	sessions: SessionSummary[];
-	/** Non-completed/non-failed tasks (backward compat) */
+	/** Non-terminal tasks (excludes completed, failed, cancelled) — backward compat */
 	activeTasks: TaskSummary[];
-	/** All tasks including completed and failed */
+	/** All tasks including completed, failed, and cancelled */
 	allTasks?: TaskSummary[];
 	/** Current runtime state */
 	runtimeState?: RuntimeState;

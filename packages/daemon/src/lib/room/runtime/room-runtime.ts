@@ -1252,12 +1252,13 @@ export class RoomRuntime {
 					)
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
+				const isTerminal = (status: string) => status === 'failed' || status === 'cancelled';
 				const allExecutionFailed =
-					executionTasks.length > 0 && executionTasks.every((t) => t.status === 'failed');
-				const allFailed = validTasks.length > 0 && validTasks.every((t) => t.status === 'failed');
+					executionTasks.length > 0 && executionTasks.every((t) => isTerminal(t.status));
+				const allFailed = validTasks.length > 0 && validTasks.every((t) => isTerminal(t.status));
 
-				// Re-plan if no active tasks and either all tasks failed or
-				// all execution tasks failed (planning may have succeeded)
+				// Re-plan if no active tasks and either all tasks reached a terminal state
+				// (failed or cancelled) or all execution tasks reached a terminal state
 				needsPlanning = !hasActiveTask && (allFailed || allExecutionFailed);
 			}
 

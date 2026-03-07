@@ -4,7 +4,7 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (draft -> pending -> in_progress -> completed/failed/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/failed/cancelled/review)
  * - Task assignment to sessions
  */
 
@@ -257,7 +257,7 @@ export class TaskManager {
 		for (const taskId of taskIds) {
 			const task = await this.getTask(taskId);
 			if (task && task.status === 'pending') {
-				await this.failTask(taskId, 'Cancelled: goal replanning triggered');
+				await this.cancelTask(taskId);
 				cancelled++;
 			}
 		}

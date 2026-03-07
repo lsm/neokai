@@ -300,15 +300,15 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.success).toBe(true);
 			expect(parsed.message).toContain('Replanning triggered');
 
-			// The current task should be failed
+			// The current task should be failed (leader explicitly failed it via replan_goal)
 			const updatedTask = await ctx.taskManager.getTask(task1.id);
 			expect(updatedTask!.status).toBe('failed');
 
-			// Remaining pending tasks should be cancelled
+			// Remaining pending tasks should be cancelled (not failed — intentionally stopped)
 			const t2 = await ctx.taskManager.getTask(task2.id);
 			const t3 = await ctx.taskManager.getTask(task3.id);
-			expect(t2!.status).toBe('failed');
-			expect(t3!.status).toBe('failed');
+			expect(t2!.status).toBe('cancelled');
+			expect(t3!.status).toBe('cancelled');
 
 			// A new planning group should have been spawned
 			const allActiveGroups = ctx.groupRepo.getActiveGroups('room-1');
