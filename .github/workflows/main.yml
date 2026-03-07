@@ -267,7 +267,11 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
-          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || 'glm') || '' }}
+          MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
+          # Prefer MiniMax for online tests when available; fallback to GLM.
+          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm')) || '' }}
+          # Prefer MiniMax highspeed as the default model when using MiniMax.
+          DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.5-highspeed' || '' }}
 
       - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon
