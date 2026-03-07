@@ -88,6 +88,8 @@ export interface RoomRuntimeConfig {
 	sessionFactory: SessionFactory;
 	workspacePath: string;
 	model?: string;
+	/** Global default model for fallback when room doesn't specify one */
+	defaultModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
@@ -259,6 +261,16 @@ export class RoomRuntime {
 	updateRoom(room: Room): void {
 		this.room = room;
 		const config = (room.config ?? {}) as Record<string, unknown>;
+
+		// Update leader model: agentModels.leader > room.defaultModel > global default
+		// Filter out empty strings as they're not valid model identifiers
+		const agentModels = config.agentModels as Record<string, string> | undefined;
+		const leaderModel =
+			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.defaultModel;
+		this.taskGroupManager.updateModel(leaderModel);
+
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
 			typeof rawGroups === 'number' && rawGroups >= 1

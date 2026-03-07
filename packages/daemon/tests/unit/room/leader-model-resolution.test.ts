@@ -14,10 +14,17 @@ interface Room {
 	config?: RoomConfig;
 }
 
+/**
+ * Resolve leader model with priority: agentModels.leader > room.defaultModel > global default
+ * Empty strings are filtered out as they're not valid model identifiers.
+ */
 function resolveLeaderModel(room: Room, globalDefault: string): string {
 	const roomConfig = (room.config ?? {}) as RoomConfig;
 	const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
-	const leaderModel = agentModels?.leader ?? room.defaultModel ?? globalDefault;
+	const leaderModel =
+		(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
+		(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+		globalDefault;
 	return leaderModel;
 }
 
@@ -70,9 +77,8 @@ describe('Leader model resolution', () => {
 			expect(result).toBe('global-default');
 		});
 
-		it('should use room.defaultModel when explicitly set to empty string (intentional override)', () => {
-			// Empty string is a valid value - if user sets it explicitly, it's used as-is
-			// The ?? operator only falls back on null/undefined
+		it('should fall back from empty string room.defaultModel to global default', () => {
+			// Empty string is not a valid model identifier, should fall back to global default
 			const room: Room = {
 				id: 'room-5',
 				defaultModel: '',
@@ -80,11 +86,11 @@ describe('Leader model resolution', () => {
 			};
 
 			const result = resolveLeaderModel(room, 'global-default');
-			expect(result).toBe(''); // Empty string is a valid value
+			expect(result).toBe('global-default');
 		});
 
-		it('should use agentModels.leader even when empty string (explicit override)', () => {
-			// Empty string is treated as a valid value - intentional override
+		it('should fall back from empty string agentModels.leader to room.defaultModel', () => {
+			// Empty string is not a valid model identifier, should fall back to room.defaultModel
 			const room: Room = {
 				id: 'room-6',
 				defaultModel: 'room-default',
@@ -95,9 +101,8 @@ describe('Leader model resolution', () => {
 				},
 			};
 
-			// Empty string is used as-is (?? only falls back on null/undefined)
 			const result = resolveLeaderModel(room, 'global-default');
-			expect(result).toBe('');
+			expect(result).toBe('room-default');
 		});
 
 		it('should prioritize agentModels.leader when set', () => {
@@ -119,6 +124,21 @@ describe('Leader model resolution', () => {
 		it('should handle missing config object', () => {
 			const room: Room = {
 				id: 'room-8',
+			};
+
+			const result = resolveLeaderModel(room, 'global-default');
+			expect(result).toBe('global-default');
+		});
+
+		it('should handle whitespace-only strings as invalid', () => {
+			const room: Room = {
+				id: 'room-9',
+				defaultModel: '   ',
+				config: {
+					agentModels: {
+						leader: '\t\n',
+					},
+				},
 			};
 
 			const result = resolveLeaderModel(room, 'global-default');
