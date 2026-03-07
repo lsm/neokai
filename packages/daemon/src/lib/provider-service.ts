@@ -161,6 +161,9 @@ export class ProviderService {
 		if (providerId === 'glm') {
 			return process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 		}
+		if (providerId === 'minimax') {
+			return process.env.MINIMAX_API_KEY;
+		}
 
 		return undefined;
 	}
