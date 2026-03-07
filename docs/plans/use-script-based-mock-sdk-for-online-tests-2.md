@@ -26,7 +26,8 @@ Currently (11 tests already support mock mode):
 - `selective-rewind.test.ts` - supports mock mode
 - `rewind-feature.test.ts` - supports mock mode
 - `sdk-streaming-failures.test.ts` - supports mock mode
-- Most other room tests (multi-agent flows) make real API calls
+
+Note: Most other room tests (multi-agent flows) make real API calls
 
 ## Tasks
 
@@ -97,6 +98,7 @@ Files to convert (from Task 1 audit):
 
 **Acceptance Criteria:**
 - Tests pass with mock SDK with mock timeout ≤5s (idle/response time)
+- Tests still work with real API (default mode) with timeout ≥60s (idle/response time)
 - Total test execution time reduced by ≥50% compared to real API mode
 - Tests verify the core functionality (state transitions, persistence, etc.)
 - Follows the IS_MOCK pattern for conditional timeouts
@@ -141,9 +143,10 @@ Run all converted tests to verify they work correctly:
 - Measure execution time improvement
 
 **Acceptance Criteria:**
-- All converted tests pass in mock mode
+- All converted tests pass in mock mode with timeout ≤5s (idle/response time)
+- Tests still pass in real API mode with timeout ≥60s (idle/response time)
 - Test execution time reduced by ≥50% (e.g., from 120s to ≤60s per test)
-- API costs reduced for CI runs
+- API costs reduced for CI runs (baseline established in Task 1)
 
 ## Dependencies
 
