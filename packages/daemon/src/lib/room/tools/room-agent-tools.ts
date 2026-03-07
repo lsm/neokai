@@ -169,14 +169,17 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			const updated = await taskManager.cancelTask(args.task_id);
-			// Notify UI of the status change
+			// cancelTaskCascade returns root + all cascade-cancelled dependents
+			const cancelledTasks = await taskManager.cancelTaskCascade(args.task_id);
+			// Notify UI of status change for every affected task
 			if (daemonHub) {
-				void daemonHub.emit('room.task.update', {
-					sessionId: `room:${roomId}`,
-					roomId,
-					task: updated,
-				});
+				for (const cancelledTask of cancelledTasks) {
+					void daemonHub.emit('room.task.update', {
+						sessionId: `room:${roomId}`,
+						roomId,
+						task: cancelledTask,
+					});
+				}
 			}
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
 		},

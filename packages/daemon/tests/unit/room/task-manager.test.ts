@@ -5,7 +5,7 @@
  * - Initialization
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (pending -> in_progress -> completed/failed)
+ * - Status transitions (pending -> in_progress -> completed/failed/cancelled)
  * - Task assignment to sessions
  * - Progress updates
  * - Priority handling
