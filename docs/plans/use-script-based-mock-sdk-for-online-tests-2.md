@@ -1,6 +1,6 @@
 # Plan: Use Script-Based Mock SDK for Online Tests
 
-**Created:** March 2025
+**Created:** March 2026
 
 ## Goal
 
@@ -17,11 +17,14 @@ The codebase already has a comprehensive mock SDK (`packages/daemon/tests/helper
 Currently:
 - `agent-pipeline.test.ts` uses mock SDK (always)
 - `room-chat-constraints.test.ts` supports mock mode via `NEOKAI_AGENT_SDK_MOCK=1`
+- `message-persistence.test.ts` already supports mock mode
+- `message-delivery-mode-queue.test.ts` already supports mock mode
+- `rpc-message-handlers.test.ts` already supports mock mode
 - Most other room tests make real API calls
 
 ## Tasks
 
-### Task 1: Audit and categorize online tests (2 tests)
+### Task 1: Audit and categorize online tests
 
 **Agent: general**
 
@@ -34,54 +37,40 @@ Create a summary with recommendations for which tests to convert.
 
 **Acceptance Criteria:**
 - Document listing all online test files with their category
-- Recommendations for conversion priority
+- Recommendations for conversion priority with specific file names
 
-### Task 2: Convert room chat tests to mock mode (2 tests)
+### Task 2: Convert room chat tests to mock mode
 
 **Agent: coder**
 
 Convert the following room tests to support mock mode (similar to `room-chat-constraints.test.ts`):
-- `room-advanced-scenarios.test.ts`
-- Identify any other room tests that don't require multi-agent tool execution
+- `room-advanced-scenarios.test.ts` - verify room scenario handling (no multi-agent)
+- Any other room tests from Task 1 that don't require multi-agent tool execution
 
 Use `installRoomAutoMock` or `mockControls.setDefaultResponses` to enable mock mode.
 
 **Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_AGENT_SDK_MOCK=1`
+- Tests pass with `NEOKAI_AGENT_SDK_MOCK=1` with timeout ≤30s
 - Tests still work with real API (default mode)
-- Timeouts adjusted appropriately for mock vs real mode
+- Mock timeout ≤5s, real API timeout ≥60s
 
-### Task 3: Convert feature tests to mock mode (3 tests)
+### Task 3: Convert remaining feature tests to mock mode
 
 **Agent: coder**
 
-Convert the following feature tests to use mock SDK:
+Convert any feature tests identified in Task 1 that aren't already supporting mock:
 - `auto-title.test.ts` - verify title generation metadata without real API
-- `message-persistence.test.ts` - verify DB persistence with mock responses
-- `message-delivery-mode-queue.test.ts` - verify queue behavior with mock
+- Other tests identified in audit
 
 **Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
 
 **Acceptance Criteria:**
-- Tests pass with mock SDK
+- Tests pass with mock SDK with timeout ≤30s
 - Tests verify the core functionality (state transitions, persistence, etc.)
 
-### Task 4: Convert RPC/state tests to mock mode (2 tests)
-
-**Agent: coder**
-
-Convert RPC/state tests that don't need real AI:
-- `rpc-message-handlers.test.ts` - verify message handling with mock
-- `rpc-state-sync.test.ts` - verify state synchronization with mock
-
-**Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
-
-**Acceptance Criteria:**
-- Tests use mock SDK and verify the harness pipeline
-
-### Task 5: Enhance mock SDK if needed (0-2 tests)
+### Task 4: Enhance mock SDK if needed
 
 **Agent: coder**
 
@@ -90,7 +79,7 @@ Based on the conversion work, identify any gaps in the mock SDK:
 - Extend room scripts if needed for specific test scenarios
 - Document any limitations
 
-This task is optional depending on findings from Tasks 2-4.
+This task is optional depending on findings from Tasks 1-3.
 
 **Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
 
@@ -98,23 +87,41 @@ This task is optional depending on findings from Tasks 2-4.
 - Any enhancements are backwards-compatible
 - New features are documented in mock-sdk.ts
 
-### Task 6: Run converted tests and verify (1 test)
+### Task 5: Update CI to run tests in mock mode by default
+
+**Agent: coder**
+
+Update CI configuration to run converted tests in mock mode by default:
+- Modify test runner scripts to set `NEOKAI_AGENT_SDK_MOCK=1` for appropriate tests
+- Ensure API-dependent tests still run with real API (perhaps on a separate schedule or with explicit flag)
+- Document which tests require real API
+
+**Changes must be on a feature branch with a GitHub PR created via `gh pr create`**
+
+**Acceptance Criteria:**
+- CI runs most online tests in mock mode
+- Execution time reduction ≥50% for converted tests
+- No regression in test coverage
+
+### Task 6: Verify and measure improvements
 
 **Agent: general**
 
 Run all converted tests to verify they work correctly:
-- Run with `NEOKAI_AGENT_SDK_MOCK=1` (mock mode)
-- Run without the env var (should fail gracefully or skip)
+- Run with `NEOKAI_AGENT_SDK_MOCK=1` (mock mode) - all should pass
+- Run without the env var - tests that can't use mock should skip or fail gracefully
+- Measure execution time improvement
 
 **Acceptance Criteria:**
 - All converted tests pass in mock mode
-- Test execution time is significantly reduced compared to real API mode
+- Test execution time reduced by ≥50% (e.g., from 120s to ≤60s per test)
+- API costs reduced for CI runs
 
 ## Dependencies
 
-- Task 1 must complete before Tasks 2-4 (to know what to convert)
+- Task 1 must complete before Tasks 2-3 (to know what to convert)
 - Tasks 2-4 can run in parallel after Task 1
-- Task 5 depends on Tasks 2-4 (may need enhancements)
+- Task 5 depends on Tasks 2-4 (CI changes after tests are ready)
 - Task 6 depends on all conversion tasks
 
 ## Notes
