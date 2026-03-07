@@ -17,7 +17,9 @@ describe('RoomRepository', () => {
 
 	beforeEach(() => {
 		// Create temp directory and file-based database
-		tempDir = `/tmp/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		// Use process.env.TMPDIR to support custom temp directory setups
+		const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+		tempDir = `${tmpBase}/neokai-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 		require('fs').mkdirSync(tempDir, { recursive: true });
 		db = new Database(`${tempDir}/test.db`);
 		createTables(db);

@@ -13,6 +13,7 @@ import { MessageHub } from '@neokai/shared';
 import { setupAuthHandlers } from '../../../src/lib/rpc-handlers/auth-handlers';
 import type { AuthManager } from '../../../src/lib/auth-manager';
 import type { Provider } from '../../../src/lib/providers/types';
+import { resetProviderRegistry, getProviderRegistry } from '../../../src/lib/providers/registry';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -43,8 +44,18 @@ function createMockProvider(overrides: Partial<Provider> = {}): Provider {
 	} as Provider;
 }
 
-// Mock Provider Registry
-const mockProviders: Provider[] = [];
+// Pre-created mock providers for use in tests
+const mockProvider = createMockProvider();
+const mockProviderNoOAuth = createMockProvider({
+	id: 'test-provider-no-oauth',
+	displayName: 'Test Provider No OAuth',
+	startOAuthFlow: undefined,
+});
+const mockProviderNoLogout = createMockProvider({
+	id: 'test-provider-no-logout',
+	displayName: 'Test Provider No Logout',
+	logout: undefined,
+});
 
 // Helper to create a minimal mock MessageHub that captures handlers
 function createMockMessageHub(): {
@@ -77,20 +88,16 @@ function createMockMessageHub(): {
 	return { hub, handlers };
 }
 
-// Mock the provider registry
-mock.module('../../../src/lib/providers/registry', () => ({
-	getProviderRegistry: () => ({
-		getAll: () => mockProviders,
-		get: (id: string) => mockProviders.find((p) => p.id === id),
-	}),
-}));
-
 describe('Auth RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
+	let registry: ReturnType<typeof getProviderRegistry>;
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
-		mockProviders.length = 0;
+
+		// Reset provider registry
+		resetProviderRegistry();
+		registry = getProviderRegistry();
 
 		// Reset mocks
 		mockAuthManager.getAuthStatus.mockClear();
@@ -127,7 +134,7 @@ describe('Auth RPC Handlers', () => {
 
 		it('returns providers with auth status', async () => {
 			const mockProvider = createMockProvider();
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.providers');
 			expect(handler).toBeDefined();
@@ -146,7 +153,7 @@ describe('Auth RPC Handlers', () => {
 				getAuthStatus: undefined,
 				isAvailable: mock(async () => false),
 			});
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.providers');
 			expect(handler).toBeDefined();
@@ -164,7 +171,7 @@ describe('Auth RPC Handlers', () => {
 					throw new Error('Auth check failed');
 				}),
 			});
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.providers');
 			expect(handler).toBeDefined();
@@ -196,7 +203,7 @@ describe('Auth RPC Handlers', () => {
 			const mockProvider = createMockProvider({
 				startOAuthFlow: undefined,
 			});
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.login');
 			expect(handler).toBeDefined();
@@ -212,7 +219,7 @@ describe('Auth RPC Handlers', () => {
 
 		it('returns OAuth flow data on success', async () => {
 			const mockProvider = createMockProvider();
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.login');
 			expect(handler).toBeDefined();
@@ -232,7 +239,7 @@ describe('Auth RPC Handlers', () => {
 					throw new Error('OAuth failed');
 				}),
 			});
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.login');
 			expect(handler).toBeDefined();
@@ -265,7 +272,7 @@ describe('Auth RPC Handlers', () => {
 			const mockProvider = createMockProvider({
 				logout: undefined,
 			});
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.logout');
 			expect(handler).toBeDefined();
@@ -281,7 +288,7 @@ describe('Auth RPC Handlers', () => {
 
 		it('returns success on logout', async () => {
 			const mockProvider = createMockProvider();
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.logout');
 			expect(handler).toBeDefined();
@@ -300,7 +307,7 @@ describe('Auth RPC Handlers', () => {
 					throw new Error('Logout failed');
 				}),
 			});
-			mockProviders.push(mockProvider);
+			registry.register(mockProvider);
 
 			const handler = messageHubData.handlers.get('auth.logout');
 			expect(handler).toBeDefined();
