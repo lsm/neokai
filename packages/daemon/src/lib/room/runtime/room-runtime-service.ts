@@ -258,6 +258,10 @@ export class RoomRuntimeService {
 				? Math.min(Math.floor(rawGroups), MAX_CONCURRENT_GROUPS_LIMIT)
 				: undefined;
 
+		// Resolve leader model: agentModels.leader > room.defaultModel > global default
+		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
+		const leaderModel = agentModels?.leader ?? room.defaultModel ?? this.ctx.defaultModel;
+
 		const runtime = new RoomRuntime({
 			room,
 			groupRepo,
@@ -266,7 +270,7 @@ export class RoomRuntimeService {
 			goalManager,
 			sessionFactory,
 			workspacePath,
-			model: this.ctx.defaultModel,
+			model: leaderModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,
 			getWorkerMessages: (sessionId, afterMessageId) =>

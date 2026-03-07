@@ -75,6 +75,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
 	runMigration17(db);
+
+	// Migration 18: Add 'cancelled' to tasks status CHECK constraint
+	runMigration18(db);
 }
 
 /**
@@ -773,6 +776,7 @@ function runMigration17(db: BunDatabase): void {
 
 		// Determine which optional columns exist so we can carry them over
 		const hasGoalReviewAttempts = tableHasColumn(db, 'goals', 'goal_review_attempts');
+		const hasPlanningAttempts = tableHasColumn(db, 'goals', 'planning_attempts');
 
 		db.exec(`
 			CREATE TABLE goals_new (
@@ -810,8 +814,10 @@ function runMigration17(db: BunDatabase): void {
 			'created_at',
 			'updated_at',
 			'completed_at',
-			'planning_attempts',
 		];
+		if (hasPlanningAttempts) {
+			cols.push('planning_attempts');
+		}
 		if (hasGoalReviewAttempts) {
 			cols.push('goal_review_attempts');
 		}
@@ -823,6 +829,87 @@ function runMigration17(db: BunDatabase): void {
 
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 18: Add 'cancelled' to tasks status CHECK constraint
+ *
+ * Cancelled tasks are intentionally stopped by the user — semantically distinct from failed.
+ * Uses the same table-rebuild pattern required by SQLite's lack of ALTER CONSTRAINT support.
+ */
+function runMigration18(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Test if migration is needed by inspecting the CHECK constraint in the schema text.
+	// We use sqlite_master instead of a probe INSERT to avoid triggering a FK violation:
+	// tasks.room_id references rooms(id), and inserting with a fake room_id would fail
+	// when foreign_keys=ON (which the app enables at startup), spuriously triggering a
+	// full table-rebuild on every startup even for already-migrated databases.
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+		.get() as { sql: string } | null;
+	const needsMigration = tableInfo !== null && !tableInfo.sql.includes("'cancelled'");
+
+	if (!needsMigration) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		db.exec(`DROP TABLE IF EXISTS tasks_new`);
+
+		db.exec(`
+			CREATE TABLE tasks_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled')),
+				priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT DEFAULT '[]',
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+				assigned_agent TEXT DEFAULT 'coder',
+				created_by_task_id TEXT,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
+		const cols = [
+			'id',
+			'room_id',
+			'title',
+			'description',
+			'status',
+			'priority',
+			'progress',
+			'current_step',
+			'result',
+			'error',
+			'depends_on',
+			'created_at',
+			'started_at',
+			'completed_at',
+		];
+		const optionalCols = ['task_type', 'assigned_agent', 'created_by_task_id'];
+		for (const col of optionalCols) {
+			if (tableHasColumn(db, 'tasks', col)) cols.push(col);
+		}
+		const selectCols = cols.join(', ');
+		db.exec(`INSERT INTO tasks_new (${selectCols}) SELECT ${selectCols} FROM tasks`);
+		db.exec(`DROP TABLE tasks`);
+		db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
 	}

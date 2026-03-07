@@ -16,13 +16,60 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
-import type { NeoTask } from '@neokai/shared';
+import type { NeoTask, SessionInfo } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { InputTextarea } from '../InputTextarea';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
+import { copyToClipboard } from '../../lib/utils';
+
+interface CopyButtonProps {
+	text: string;
+}
+
+function CopyButton({ text }: CopyButtonProps) {
+	const [copied, setCopied] = useState(false);
+
+	const handleCopy = async () => {
+		const success = await copyToClipboard(text);
+		if (success) {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 1500);
+		}
+	};
+
+	return (
+		<button
+			class={`ml-1 p-0.5 rounded transition-colors ${
+				copied ? 'text-green-400' : 'text-gray-500 hover:text-gray-300'
+			}`}
+			onClick={handleCopy}
+			title={copied ? 'Copied!' : 'Copy to clipboard'}
+		>
+			{copied ? (
+				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M5 13l4 4L19 7"
+					/>
+				</svg>
+			) : (
+				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+					/>
+				</svg>
+			)}
+		</button>
+	);
+}
 
 interface TaskGroupInfo {
 	id: string;
@@ -59,6 +106,7 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	failed: 'text-red-400',
 	review: 'text-purple-400',
 	draft: 'text-gray-500',
+	cancelled: 'text-gray-500',
 };
 
 interface HumanInputAreaProps {
@@ -222,34 +270,31 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [conversationKey, setConversationKey] = useState(0);
 	const [messageCount, setMessageCount] = useState(0);
 
+	// Session info for worker and leader (for displaying worktree path and agent info)
+	const [workerSession, setWorkerSession] = useState<SessionInfo | null>(null);
+	const [leaderSession, setLeaderSession] = useState<SessionInfo | null>(null);
+
+	// UI state for info panel and autoscroll toggle
+	const [showInfoPanel, setShowInfoPanel] = useState(false);
+	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
 	// and becomes false once the first non-zero messageCount arrives — at which point
 	// useAutoScroll fires its initial-load scroll path.
 	const [isFirstLoad, setIsFirstLoad] = useState(true);
 
-	// autoScroll mirrors whether the user is near the bottom of the scroll container.
-	// Driven by isNearBottom from useAutoScroll so that arriving messages don't force-scroll
-	// the user back down when they've intentionally scrolled up to read history.
-	const [autoScroll, setAutoScroll] = useState(true);
-
 	// Refs for scroll container
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
-	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
+	const { showScrollButton, scrollToBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
-		enabled: autoScroll,
+		enabled: autoScrollEnabled,
 		messageCount,
 		isInitialLoad: isFirstLoad,
 	});
-
-	// Keep autoScroll in sync with scroll position: disable when user scrolls up,
-	// re-enable automatically when they scroll back to the bottom.
-	useEffect(() => {
-		setAutoScroll(isNearBottom);
-	}, [isNearBottom]);
 
 	// Reset conversation scroll state whenever the rendered conversation changes.
 	// This covers two cases:
@@ -261,7 +306,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	useEffect(() => {
 		setIsFirstLoad(true);
 		setMessageCount(0);
-		setAutoScroll(true);
+		setAutoScrollEnabled(true);
 	}, [rendererKey]);
 
 	// Mark initial load done after first messages arrive (fires after the render where
@@ -274,7 +319,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 	const handleScrollToBottom = useCallback(() => {
 		scrollToBottom(true);
-		setAutoScroll(true);
+		setAutoScrollEnabled(true);
 	}, [scrollToBottom]);
 
 	useEffect(() => {
@@ -290,9 +335,37 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					roomId,
 					taskId,
 				});
-				if (!cancelled && seq === fetchGroupSeq) setGroup(res.group);
+				if (!cancelled && seq === fetchGroupSeq) {
+					setGroup(res.group);
+					// Fetch session info for worker and leader
+					void fetchSessionInfo(res.group);
+				}
 			} catch {
 				// Group fetch failure is non-fatal — task may not have a group yet
+			}
+		};
+
+		const fetchSessionInfo = async (grp: TaskGroupInfo | null) => {
+			if (!grp) {
+				setWorkerSession(null);
+				setLeaderSession(null);
+				return;
+			}
+			try {
+				const [workerRes, leaderRes] = await Promise.all([
+					request<{ session: SessionInfo }>('session.get', {
+						sessionId: grp.workerSessionId,
+					}).catch(() => null),
+					request<{ session: SessionInfo }>('session.get', {
+						sessionId: grp.leaderSessionId,
+					}).catch(() => null),
+				]);
+				if (!cancelled) {
+					setWorkerSession(workerRes?.session ?? null);
+					setLeaderSession(leaderRes?.session ?? null);
+				}
+			} catch {
+				// Session fetch failure is non-fatal
 			}
 		};
 
@@ -408,7 +481,90 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					</div>
 				)}
+				{/* Info toggle button */}
+				<button
+					class={`p-1.5 rounded transition-colors ${
+						showInfoPanel
+							? 'bg-blue-600 text-white'
+							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
+					}`}
+					onClick={() => setShowInfoPanel(!showInfoPanel)}
+					title="Task info"
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+						/>
+					</svg>
+				</button>
 			</div>
+
+			{/* Info panel */}
+			{showInfoPanel && (
+				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-3 flex-shrink-0">
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+						<div>
+							<span class="text-gray-500">Task ID:</span>
+							<span class="text-gray-300 ml-2 font-mono">{task.id}</span>
+							<CopyButton text={task.id} />
+						</div>
+						{group && (
+							<>
+								<div>
+									<span class="text-gray-500">Group ID:</span>
+									<span class="text-gray-300 ml-2 font-mono">{group.id}</span>
+									<CopyButton text={group.id} />
+								</div>
+								<div>
+									<span class="text-gray-500">Worker:</span>
+									<span class="text-gray-300 ml-2 font-mono">
+										{group.workerSessionId.slice(0, 8)}...
+									</span>
+									<CopyButton text={group.workerSessionId} />
+								</div>
+								<div>
+									<span class="text-gray-500">Leader:</span>
+									<span class="text-gray-300 ml-2 font-mono">
+										{group.leaderSessionId.slice(0, 8)}...
+									</span>
+									<CopyButton text={group.leaderSessionId} />
+								</div>
+							</>
+						)}
+						{workerSession && (
+							<div class="md:col-span-2">
+								<span class="text-gray-500">Worker worktree:</span>
+								<span class="text-gray-300 ml-2 font-mono break-all">
+									{workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
+								</span>
+								<CopyButton
+									text={workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
+								/>
+								{workerSession.config.model && (
+									<span class="text-gray-500 ml-2">(model: {workerSession.config.model})</span>
+								)}
+							</div>
+						)}
+						{leaderSession && (
+							<div class="md:col-span-2">
+								<span class="text-gray-500">Leader worktree:</span>
+								<span class="text-gray-300 ml-2 font-mono break-all">
+									{leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
+								</span>
+								<CopyButton
+									text={leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
+								/>
+								{leaderSession.config.model && (
+									<span class="text-gray-500 ml-2">(model: {leaderSession.config.model})</span>
+								)}
+							</div>
+						)}
+					</div>
+				</div>
+			)}
 
 			{/* Dependencies */}
 			{task.dependsOn && task.dependsOn.length > 0 && (
@@ -451,7 +607,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 													? 'This task is awaiting human review.'
 													: task.status === 'draft'
 														? 'This task is a draft and has not been scheduled yet.'
-														: 'No agent group has been spawned yet.'}
+														: task.status === 'cancelled'
+															? 'This task was cancelled.'
+															: 'No agent group has been spawned yet.'}
 								</p>
 							</div>
 						</div>
@@ -462,9 +620,30 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				{/* Scroll-to-bottom button — shown when user has scrolled up.
 				    bottomClass="bottom-4" because HumanInputArea is a sibling
 				    outside this container, not an overlapping footer. */}
-				{showScrollButton && (
-					<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-4" />
-				)}
+				<div class="absolute right-2 flex flex-col gap-2" style={{ bottom: '1rem' }}>
+					{/* Autoscroll toggle */}
+					<button
+						class={`p-2 rounded-full shadow-lg transition-colors ${
+							autoScrollEnabled
+								? 'bg-blue-600 text-white hover:bg-blue-500'
+								: 'bg-dark-700 text-gray-400 hover:text-gray-200 hover:bg-dark-600'
+						}`}
+						onClick={() => setAutoScrollEnabled(!autoScrollEnabled)}
+						title={autoScrollEnabled ? 'Disable auto-scroll' : 'Enable auto-scroll'}
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M19 14l-7 7m0 0l-7-7m7 7V3"
+							/>
+						</svg>
+					</button>
+					{showScrollButton && (
+						<ScrollToBottomButton onClick={handleScrollToBottom} bottomClass="bottom-0" />
+					)}
+				</div>
 			</div>
 
 			{/* Human input area */}

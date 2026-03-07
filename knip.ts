@@ -49,6 +49,7 @@ const config: KnipConfig = {
 		'packages/daemon/tests/mocks/**', // Test mocks
 		'packages/daemon/tests/helpers/**', // Test helpers (used by online tests outside knip scan)
 		'packages/shared/src/sdk/**', // SDK types from Claude Agent SDK (not all used)
+		'.claude/**', // Claude Code worktrees and session files
 	],
 
 	// Workspace dependencies (don't flag as unlisted)

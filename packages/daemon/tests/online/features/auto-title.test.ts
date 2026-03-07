@@ -4,7 +4,7 @@
  * These tests verify that the auto-title generation feature works correctly
  * with real SDK calls. The feature should:
  * - Generate a title during workspace initialization on first message
- * - Use Haiku model for title generation
+ * - Use session's configured model for title generation
  * - Update session metadata with titleGenerated flag
  * - Only generate title once per session
  * - Handle workspace paths correctly (critical for SDK query)

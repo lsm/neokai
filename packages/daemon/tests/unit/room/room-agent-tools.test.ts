@@ -362,8 +362,18 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(await handlers.cancel_task({ task_id: created.taskId as string }));
 			expect(result.success).toBe(true);
 
-			const tasks = parseResult(await handlers.list_tasks({ status: 'failed' }));
-			expect((tasks.tasks as unknown[]).length).toBe(1);
+			// cancelled status is distinct from failed
+			const cancelledTasks = parseResult(await handlers.list_tasks({ status: 'cancelled' }));
+			expect((cancelledTasks.tasks as unknown[]).length).toBe(1);
+
+			const failedTasks = parseResult(await handlers.list_tasks({ status: 'failed' }));
+			expect((failedTasks.tasks as unknown[]).length).toBe(0);
+		});
+
+		it('should return error when task not found', async () => {
+			const result = parseResult(await handlers.cancel_task({ task_id: 'no-such-task' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
 		});
 	});
 
@@ -376,14 +386,28 @@ describe('Room Agent Tools', () => {
 
 			const status = result.status as {
 				goals: { total: number };
-				tasks: { total: number };
+				tasks: { total: number; cancelled: number };
 				activeGroups: number;
 				tasksNeedingReview: unknown[];
 			};
 			expect(status.goals.total).toBe(1);
 			expect(status.tasks.total).toBe(1);
+			expect(status.tasks.cancelled).toBe(0);
 			expect(status.activeGroups).toBe(0);
 			expect(status.tasksNeedingReview).toEqual([]);
+		});
+
+		it('should count cancelled tasks separately from failed', async () => {
+			const t1 = parseResult(await handlers.create_task({ title: 'To cancel', description: 'd' }));
+			await handlers.cancel_task({ task_id: t1.taskId as string });
+
+			const result = parseResult(await handlers.get_room_status());
+			const status = result.status as {
+				tasks: { total: number; failed: number; cancelled: number };
+			};
+			expect(status.tasks.total).toBe(1);
+			expect(status.tasks.failed).toBe(0);
+			expect(status.tasks.cancelled).toBe(1);
 		});
 
 		it('should include tasks in review status in tasksNeedingReview', async () => {

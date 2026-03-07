@@ -1252,12 +1252,13 @@ export class RoomRuntime {
 					)
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
+				const isTerminal = (status: string) => status === 'failed' || status === 'cancelled';
 				const allExecutionFailed =
-					executionTasks.length > 0 && executionTasks.every((t) => t.status === 'failed');
-				const allFailed = validTasks.length > 0 && validTasks.every((t) => t.status === 'failed');
+					executionTasks.length > 0 && executionTasks.every((t) => isTerminal(t.status));
+				const allFailed = validTasks.length > 0 && validTasks.every((t) => isTerminal(t.status));
 
-				// Re-plan if no active tasks and either all tasks failed or
-				// all execution tasks failed (planning may have succeeded)
+				// Re-plan if no active tasks and either all tasks reached a terminal state
+				// (failed or cancelled) or all execution tasks reached a terminal state
 				needsPlanning = !hasActiveTask && (allFailed || allExecutionFailed);
 			}
 
@@ -1615,9 +1616,11 @@ export class RoomRuntime {
 		const pendingTasks = validTasks.filter((t) => t.status === 'pending');
 
 		const cancelledCount = await this.taskManager.cancelPendingTasks(pendingTasks.map((t) => t.id));
-		// Notify UI about cancelled tasks
-		for (const t of pendingTasks) {
-			await this.emitTaskUpdateById(t.id);
+		// Notify UI about all linked tasks — emit for every linked task ID so that
+		// cascade-cancelled dependents (which may be in linkedTaskIds but not in
+		// the explicit pendingTasks filter) also get a UI update.
+		for (const id of linkedTaskIds) {
+			await this.emitTaskUpdateById(id);
 		}
 		log.info(
 			`Replan: cancelled ${cancelledCount} pending tasks for goal ${goal.id} (attempt ${attempts + 1})`

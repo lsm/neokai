@@ -588,7 +588,7 @@ describe('TaskGroupManager', () => {
 	});
 
 	describe('cancel', () => {
-		it('should fail the group with cancel reason', async () => {
+		it('should fail the group and mark the task as cancelled (not failed)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -604,7 +604,11 @@ describe('TaskGroupManager', () => {
 
 			const updated = await manager.cancel(group.id);
 
+			// Group state is 'failed' (terminal group state) but the underlying
+			// task status must be 'cancelled' (semantically distinct from 'failed').
 			expect(updated!.state).toBe('failed');
+			const cancelledTask = await taskManager.getTask(task.id);
+			expect(cancelledTask?.status).toBe('cancelled');
 		});
 	});
 });

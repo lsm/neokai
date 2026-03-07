@@ -1,13 +1,11 @@
 .PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup
 
-# Development server - uses random available port
-# Usage: make dev WORKSPACE=/path/to/workspace
+# Default workspace for development
+WORKSPACE ?= tmp/workspace
+
+# Development server - uses random available port by default
+# Usage: make dev [WORKSPACE=/path/to/workspace]
 dev:
-	@if [ -z "$(WORKSPACE)" ]; then \
-		echo "Error: WORKSPACE parameter is required"; \
-		echo "Usage: make dev WORKSPACE=/path/to/workspace"; \
-		exit 1; \
-	fi
 	@echo "Finding available port..."
 	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
 	echo "Starting development server on port $$PORT..."; \
@@ -20,14 +18,13 @@ dev:
 	echo ""; \
 	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace $(WORKSPACE) --port $$PORT
 
+# Alias for dev-random (deprecated, use make dev)
+dev-random:
+	@$(MAKE) dev WORKSPACE=$(WORKSPACE)
+
 # Production server on random port - starts production build on available port
-# Usage: make serve-random WORKSPACE=/path/to/workspace
+# Usage: make serve-random [WORKSPACE=/path/to/workspace]
 serve-random:
-	@if [ -z "$(WORKSPACE)" ]; then \
-		echo "Error: WORKSPACE parameter is required"; \
-		echo "Usage: make serve-random WORKSPACE=/path/to/workspace"; \
-		exit 1; \
-	fi
 	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
 	echo "Running with PORT=$$PORT WORKSPACE=$(WORKSPACE)"; \
 	$(MAKE) run PORT=$$PORT WORKSPACE=$(WORKSPACE)
@@ -46,11 +43,6 @@ self-test:
 # Run production server with custom workspace and port
 # Usage: make run WORKSPACE=/path/to/workspace PORT=8080
 run:
-	@if [ -z "$(WORKSPACE)" ]; then \
-		echo "Error: WORKSPACE parameter is required"; \
-		echo "Usage: make run WORKSPACE=/path/to/workspace [PORT=8080]"; \
-		exit 1; \
-	fi
 	@mkdir -p tmp
 	@if [ -n "$(PORT)" ]; then \
 		echo "$(PORT)" > tmp/.dev-server-running; \
