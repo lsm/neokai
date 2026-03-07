@@ -19,6 +19,100 @@ describe('RoomRuntime flow', () => {
 		ctx.db.close();
 	});
 
+	describe('agent model resolution', () => {
+		it('should use planner and leader models from room.config.agentModels', async () => {
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					defaultModel: 'room-default-model',
+					config: {
+						agentModels: {
+							planner: 'planner-model',
+							leader: 'leader-model',
+						},
+					},
+				}),
+			});
+
+			await ctx.goalManager.createGoal({
+				title: 'Planning goal',
+				description: 'Needs a plan',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			expect(createCalls).toHaveLength(1);
+			expect(createCalls[0].args[1]).toBe('planner');
+			expect((createCalls[0].args[0] as { model?: string }).model).toBe('planner-model');
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			const leaderCall = ctx.sessionFactory.calls
+				.filter((c) => c.method === 'createAndStartSession')
+				.find((c) => c.args[1] === 'leader');
+			expect(leaderCall).toBeDefined();
+			expect((leaderCall!.args[0] as { model?: string }).model).toBe('leader-model');
+		});
+
+		it('should use role-specific worker model for coder and general tasks', async () => {
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					defaultModel: 'room-default-model',
+					config: {
+						agentModels: {
+							coder: 'coder-model',
+							general: 'general-model',
+							leader: 'leader-model',
+						},
+					},
+				}),
+			});
+
+			await createGoalAndTask(ctx, { assignedAgent: 'coder' });
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			let createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			expect(createCalls[0].args[1]).toBe('coder');
+			expect((createCalls[0].args[0] as { model?: string }).model).toBe('coder-model');
+
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					defaultModel: 'room-default-model',
+					config: {
+						agentModels: {
+							coder: 'coder-model',
+							general: 'general-model',
+							leader: 'leader-model',
+						},
+					},
+				}),
+			});
+			await createGoalAndTask(ctx, { assignedAgent: 'general' });
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			expect(createCalls[0].args[1]).toBe('general');
+			expect((createCalls[0].args[0] as { model?: string }).model).toBe('general-model');
+		});
+	});
+
 	describe('onWorkerTerminalState', () => {
 		it('should route worker output to leader', async () => {
 			await createGoalAndTask(ctx);
