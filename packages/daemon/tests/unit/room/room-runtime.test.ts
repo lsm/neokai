@@ -3,6 +3,7 @@ import {
 	createRuntimeTestContext,
 	createGoalAndTask,
 	makeRoom,
+	spawnAndRouteToLeader,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
 
@@ -208,15 +209,21 @@ describe('RoomRuntime', () => {
 	});
 
 	describe('config defaults', () => {
-		it('should use maxFeedbackIterations default of 3 when not configured', () => {
-			// Create a context without explicit maxFeedbackIterations (uses the new default of 3).
-			// The test helper defaults to 5 to avoid coupling; passing undefined verifies the
-			// RoomRuntime constructor itself uses 3.
-			const defaultCtx = createRuntimeTestContext({ maxFeedbackIterations: undefined });
-			defaultCtx.runtime.start();
-			expect(defaultCtx.runtime.getState()).toBe('running');
-			defaultCtx.runtime.stop();
-			defaultCtx.db.close();
+		it('should use maxFeedbackIterations default of 3 when not configured', async () => {
+			// The helper no longer applies a ?? 5 fallback, so the runtime uses its own default (3).
+			// Verify behaviorally: saturate feedbackIteration to 3 and assert send_to_worker fails.
+			const { group } = await spawnAndRouteToLeader(ctx);
+			// After routeWorkerToLeader feedbackIteration is 1; increment twice more to reach 3.
+			let g = ctx.groupRepo.getGroup(group.id)!;
+			g = ctx.groupRepo.incrementFeedbackIteration(g.id, g.version)!;
+			g = ctx.groupRepo.incrementFeedbackIteration(g.id, g.version)!;
+			// feedbackIteration == 3 == maxFeedbackIterations (default) → must fail
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'one more round',
+			});
+			const parsed = JSON.parse(result.content[0].text) as { success: boolean; error?: string };
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Max feedback iterations');
 		});
 	});
 
@@ -268,9 +275,18 @@ describe('RoomRuntime', () => {
 		});
 
 		it('should update maxReviewRounds (maxFeedbackIterations) reactively', async () => {
-			ctx.runtime.start();
-			ctx.runtime.updateRoom(makeRoom({ config: { maxReviewRounds: 5 } }));
-			expect(ctx.runtime.getState()).toBe('running');
+			// Lower the cap to 1 reactively before any groups are spawned.
+			ctx.runtime.updateRoom(makeRoom({ config: { maxReviewRounds: 1 } }));
+			// spawnAndRouteToLeader starts the runtime and routes the worker to the leader,
+			// incrementing feedbackIteration to 1.
+			const { group } = await spawnAndRouteToLeader(ctx);
+			// feedbackIteration == 1 == maxFeedbackIterations (reactively set to 1) → must fail
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'one more',
+			});
+			const parsed = JSON.parse(result.content[0].text) as { success: boolean; error?: string };
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Max feedback iterations');
 		});
 
 		it('decreasing maxConcurrentGroups does not kill running groups', async () => {

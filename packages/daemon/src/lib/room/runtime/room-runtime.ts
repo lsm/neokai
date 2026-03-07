@@ -84,7 +84,7 @@ export interface RoomRuntimeConfig {
 	model?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
-	/** Max feedback iterations before auto-escalation (default: 10) */
+	/** Max feedback iterations before auto-escalation (default: 3) */
 	maxFeedbackIterations?: number;
 	/** Tick interval in ms (default: 30000) */
 	tickInterval?: number;
@@ -237,16 +237,17 @@ export class RoomRuntime {
 	 * Update the room reference with the latest data.
 	 * Called when room config changes so lifecycle hooks see the current config.
 	 * Also picks up new maxConcurrentGroups and maxReviewRounds values reactively.
+	 * Stale or removed config keys fall back to their documented defaults.
 	 */
 	updateRoom(room: Room): void {
 		this.room = room;
-		const config = room.config as Record<string, unknown> | undefined;
-		if (config?.maxConcurrentGroups !== undefined) {
-			this.maxConcurrentGroups = config.maxConcurrentGroups as number;
-		}
-		if (config?.maxReviewRounds !== undefined) {
-			this.maxFeedbackIterations = config.maxReviewRounds as number;
-		}
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		const rawGroups = config.maxConcurrentGroups;
+		this.maxConcurrentGroups =
+			typeof rawGroups === 'number' && rawGroups >= 1 ? Math.min(Math.floor(rawGroups), 10) : 1;
+		const rawRounds = config.maxReviewRounds;
+		this.maxFeedbackIterations =
+			typeof rawRounds === 'number' && rawRounds >= 1 ? Math.floor(rawRounds) : 3;
 	}
 
 	// =========================================================================

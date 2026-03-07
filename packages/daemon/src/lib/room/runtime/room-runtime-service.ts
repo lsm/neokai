@@ -247,8 +247,14 @@ export class RoomRuntimeService {
 		const workspacePath = room.defaultPath ?? this.ctx.defaultWorkspacePath;
 
 		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
-		const maxReviewRounds = roomConfig.maxReviewRounds as number | undefined;
-		const maxConcurrentGroups = roomConfig.maxConcurrentGroups as number | undefined;
+		const rawRounds = roomConfig.maxReviewRounds;
+		const maxReviewRounds =
+			typeof rawRounds === 'number' && rawRounds >= 1 ? Math.floor(rawRounds) : undefined;
+		const rawGroups = roomConfig.maxConcurrentGroups;
+		const maxConcurrentGroups =
+			typeof rawGroups === 'number' && rawGroups >= 1
+				? Math.min(Math.floor(rawGroups), 10)
+				: undefined;
 
 		const runtime = new RoomRuntime({
 			room,
