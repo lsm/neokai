@@ -59,6 +59,7 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	failed: 'text-red-400',
 	review: 'text-purple-400',
 	draft: 'text-gray-500',
+	cancelled: 'text-gray-500',
 };
 
 interface HumanInputAreaProps {

@@ -359,12 +359,70 @@ describe('TaskManager', () => {
 
 			expect(updated.status).toBe('cancelled');
 			expect(updated.error).toBeUndefined();
+			expect(updated.completedAt).toBeDefined();
 		});
 
 		it('should throw error for non-existent task', async () => {
 			await expect(taskManager.cancelTask('non-existent')).rejects.toThrow(
 				'Task not found: non-existent'
 			);
+		});
+
+		it('should cascade cancellation to pending dependent tasks', async () => {
+			const dep = await taskManager.createTask({ title: 'Dep', description: '' });
+			const dependent = await taskManager.createTask({
+				title: 'Dependent',
+				description: '',
+				dependsOn: [dep.id],
+			});
+
+			await taskManager.cancelTask(dep.id);
+
+			const cancelledDep = await taskManager.getTask(dep.id);
+			const cancelledDependent = await taskManager.getTask(dependent.id);
+			expect(cancelledDep?.status).toBe('cancelled');
+			expect(cancelledDependent?.status).toBe('cancelled');
+		});
+
+		it('should cascade transitively through dependency chains', async () => {
+			const a = await taskManager.createTask({ title: 'A', description: '' });
+			const b = await taskManager.createTask({
+				title: 'B',
+				description: '',
+				dependsOn: [a.id],
+			});
+			const c = await taskManager.createTask({
+				title: 'C',
+				description: '',
+				dependsOn: [b.id],
+			});
+
+			await taskManager.cancelTask(a.id);
+
+			const [ra, rb, rc] = await Promise.all([
+				taskManager.getTask(a.id),
+				taskManager.getTask(b.id),
+				taskManager.getTask(c.id),
+			]);
+			expect(ra?.status).toBe('cancelled');
+			expect(rb?.status).toBe('cancelled');
+			expect(rc?.status).toBe('cancelled');
+		});
+
+		it('should not cascade to in_progress dependent tasks', async () => {
+			const dep = await taskManager.createTask({ title: 'Dep', description: '' });
+			const running = await taskManager.createTask({
+				title: 'Running',
+				description: '',
+				dependsOn: [dep.id],
+			});
+			await taskManager.startTask(running.id);
+
+			await taskManager.cancelTask(dep.id);
+
+			const afterCancel = await taskManager.getTask(running.id);
+			// in_progress task is NOT cascaded — it's already running
+			expect(afterCancel?.status).toBe('in_progress');
 		});
 	});
 

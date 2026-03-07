@@ -153,10 +153,22 @@ export class TaskManager {
 	}
 
 	/**
-	 * Cancel task (intentionally stopped, distinct from failure)
+	 * Cancel task (intentionally stopped, distinct from failure).
+	 * Cascades cancellation to any pending tasks that depend on this task,
+	 * since they can never be satisfied once their dependency is cancelled.
 	 */
 	async cancelTask(taskId: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'cancelled');
+		const result = await this.updateTaskStatus(taskId, 'cancelled');
+
+		// Cascade: cancel pending tasks that depend on this task
+		const pendingTasks = await this.listTasks({ status: 'pending' });
+		for (const pendingTask of pendingTasks) {
+			if (pendingTask.dependsOn?.includes(taskId)) {
+				await this.cancelTask(pendingTask.id); // recursive for transitive deps
+			}
+		}
+
+		return result;
 	}
 
 	/**

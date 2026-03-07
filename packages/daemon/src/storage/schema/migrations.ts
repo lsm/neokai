@@ -842,18 +842,15 @@ function runMigration18(db: BunDatabase): void {
 		return;
 	}
 
-	// Test if migration is needed by trying to insert a 'cancelled' status
-	const testId = '__migration18_task_test__';
-	let needsMigration = false;
-	try {
-		db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-			 VALUES (?, 'test', 'test', 'test', 'cancelled', 'normal', '[]', 0)`
-		).run(testId);
-		db.prepare(`DELETE FROM tasks WHERE id = ?`).run(testId);
-	} catch {
-		needsMigration = true;
-	}
+	// Test if migration is needed by inspecting the CHECK constraint in the schema text.
+	// We use sqlite_master instead of a probe INSERT to avoid triggering a FK violation:
+	// tasks.room_id references rooms(id), and inserting with a fake room_id would fail
+	// when foreign_keys=ON (which the app enables at startup), spuriously triggering a
+	// full table-rebuild on every startup even for already-migrated databases.
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+		.get() as { sql: string } | null;
+	const needsMigration = tableInfo !== null && !tableInfo.sql.includes("'cancelled'");
 
 	if (!needsMigration) return;
 
