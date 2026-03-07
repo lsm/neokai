@@ -125,7 +125,7 @@ export class TaskGroupManager {
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
 	readonly workspacePath: string;
-	readonly model?: string;
+	private _model?: string;
 
 	/** Deferred leader inits — created in spawn(), consumed in routeWorkerToLeader() */
 	private pendingLeaderInits = new Map<string, PendingLeaderInfo>();
@@ -137,7 +137,17 @@ export class TaskGroupManager {
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
 		this.workspacePath = config.workspacePath;
-		this.model = config.model;
+		this._model = config.model;
+	}
+
+	/** Get the current model for leader sessions */
+	get model(): string | undefined {
+		return this._model;
+	}
+
+	/** Update the model for new leader sessions (e.g., when room settings change) */
+	updateModel(model: string | undefined): void {
+		this._model = model;
 	}
 
 	/**

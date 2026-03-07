@@ -259,8 +259,12 @@ export class RoomRuntimeService {
 				: undefined;
 
 		// Resolve leader model: agentModels.leader > room.defaultModel > global default
+		// Filter out empty strings as they're not valid model identifiers
 		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
-		const leaderModel = agentModels?.leader ?? room.defaultModel ?? this.ctx.defaultModel;
+		const leaderModel =
+			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.ctx.defaultModel;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -271,6 +275,7 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: leaderModel,
+			defaultModel: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,
 			getWorkerMessages: (sessionId, afterMessageId) =>
