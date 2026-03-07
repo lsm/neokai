@@ -491,7 +491,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				availableModels.value = (modelsRes.models ?? []).map((m) => ({
 					id: m.id,
 					name: m.display_name ?? m.name ?? m.id,
-					provider: m.provider ?? 'anthropic',
+					provider: m.provider ?? 'unknown',
 					family: detectFamily(m.id, m.provider),
 				}));
 				cliAgents.value = cliRes.agents ?? [];
