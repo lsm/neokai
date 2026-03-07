@@ -58,7 +58,8 @@
 			"!coverage",
 			"!**/coverage",
 			"!**/settings.local.json",
-			"!packages/shared/src/sdk"
+			"!packages/shared/src/sdk",
+			"!.claude"
 		]
 	}
 }

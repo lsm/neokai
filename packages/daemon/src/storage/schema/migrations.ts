@@ -776,6 +776,7 @@ function runMigration17(db: BunDatabase): void {
 
 		// Determine which optional columns exist so we can carry them over
 		const hasGoalReviewAttempts = tableHasColumn(db, 'goals', 'goal_review_attempts');
+		const hasPlanningAttempts = tableHasColumn(db, 'goals', 'planning_attempts');
 
 		db.exec(`
 			CREATE TABLE goals_new (
@@ -813,8 +814,10 @@ function runMigration17(db: BunDatabase): void {
 			'created_at',
 			'updated_at',
 			'completed_at',
-			'planning_attempts',
 		];
+		if (hasPlanningAttempts) {
+			cols.push('planning_attempts');
+		}
 		if (hasGoalReviewAttempts) {
 			cols.push('goal_review_attempts');
 		}
