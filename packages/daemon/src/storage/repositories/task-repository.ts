@@ -21,8 +21,8 @@ export class TaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at, is_archived)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -36,7 +36,8 @@ export class TaskRepository {
 			params.taskType ?? 'coding',
 			params.assignedAgent ?? 'coder',
 			params.createdByTaskId ?? null,
-			now
+			now,
+			0
 		);
 
 		return this.getTask(id)!;
@@ -80,6 +81,14 @@ export class TaskRepository {
 		if (filter?.priority) {
 			query += ` AND priority = ?`;
 			params.push(filter.priority);
+		}
+		if (filter?.includeArchived === true) {
+			// Show all tasks including archived
+		} else if (filter?.includeArchived === false) {
+			query += ` AND is_archived = 0`;
+		} else {
+			// Default: exclude archived tasks
+			query += ` AND is_archived = 0`;
 		}
 		query += ` ORDER BY created_at DESC`;
 
@@ -170,6 +179,33 @@ export class TaskRepository {
 	}
 
 	/**
+	 * Archive a task
+	 */
+	archiveTask(id: string): NeoTask | null {
+		const stmt = this.db.prepare(`UPDATE tasks SET is_archived = 1 WHERE id = ?`);
+		stmt.run(id);
+		return this.getTask(id);
+	}
+
+	/**
+	 * Unarchive a task
+	 */
+	unarchiveTask(id: string): NeoTask | null {
+		const stmt = this.db.prepare(`UPDATE tasks SET is_archived = 0 WHERE id = ?`);
+		stmt.run(id);
+		return this.getTask(id);
+	}
+
+	/**
+	 * Check if a task is archived
+	 */
+	isTaskArchived(id: string): boolean {
+		const stmt = this.db.prepare(`SELECT is_archived FROM tasks WHERE id = ?`);
+		const row = stmt.get(id) as { is_archived: number } | undefined;
+		return row ? row.is_archived === 1 : false;
+	}
+
+	/**
 	 * Count tasks for a room by status
 	 */
 	countTasksByStatus(roomId: string, status: string): number {
@@ -225,6 +261,7 @@ export class TaskRepository {
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
+			isArchived: (row.is_archived as number) === 1,
 		};
 	}
 }

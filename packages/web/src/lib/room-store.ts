@@ -421,6 +421,28 @@ class RoomStore {
 	}
 
 	/**
+	 * Load all tasks including archived ones
+	 */
+	async loadAllTasks(): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		const { tasks } = await hub.request<{ tasks: TaskSummary[] }>('task.list', {
+			roomId,
+			includeArchived: true,
+		});
+
+		this.tasks.value = tasks;
+	}
+
+	/**
 	 * Approve a task in review status (human approval).
 	 * Routes through the runtime so planning tasks trigger phase 2 (merge PR + create tasks).
 	 */
@@ -436,6 +458,50 @@ class RoomStore {
 		}
 
 		await hub.request<{ success: boolean }>('goal.approveTask', {
+			roomId,
+			taskId,
+		});
+
+		// Task state updates arrive via room.task.update events
+	}
+
+	/**
+	 * Archive a task
+	 */
+	async archiveTask(taskId: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ task: NeoTask }>('task.archive', {
+			roomId,
+			taskId,
+		});
+
+		// Task state updates arrive via room.task.update events
+	}
+
+	/**
+	 * Unarchive a task
+	 */
+	async unarchiveTask(taskId: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ task: NeoTask }>('task.unarchive', {
 			roomId,
 			taskId,
 		});

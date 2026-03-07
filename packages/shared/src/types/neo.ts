@@ -211,6 +211,8 @@ export interface NeoTask {
 	startedAt?: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
+	/** Whether the task is archived (hidden from default view) */
+	isArchived?: boolean;
 }
 
 /**
@@ -219,6 +221,8 @@ export interface NeoTask {
 export interface TaskFilter {
 	status?: TaskStatus;
 	priority?: TaskPriority;
+	/** Include archived tasks in results. Default: false (exclude archived) */
+	includeArchived?: boolean;
 }
 
 /**
@@ -291,6 +295,8 @@ export interface TaskSummary {
 	dependsOn: string[];
 	/** Error message for failed tasks */
 	error?: string;
+	/** Whether the task is archived (hidden from default view) */
+	isArchived?: boolean;
 }
 
 /**

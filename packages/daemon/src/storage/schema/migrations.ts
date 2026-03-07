@@ -81,6 +81,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 19: Remove legacy mirrored session_group_messages table
 	runMigration19(db);
+
+	// Migration 20: Add is_archived column to tasks table
+	runMigration20(db);
 }
 
 /**
@@ -1051,4 +1054,19 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
 	}
+}
+
+/**
+ * Migration 20: Add is_archived column to tasks table
+ *
+ * Tasks can now be archived to hide them from the default task list view.
+ */
+function runMigration20(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (tableHasColumn(db, 'tasks', 'is_archived')) {
+		return; // Already migrated
+	}
+	db.exec(`ALTER TABLE tasks ADD COLUMN is_archived INTEGER DEFAULT 0`);
 }

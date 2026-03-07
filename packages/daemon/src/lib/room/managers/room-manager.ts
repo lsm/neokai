@@ -123,6 +123,7 @@ export class RoomManager {
 		const room = this.roomRepo.getRoom(roomId);
 		if (!room) return null;
 
+		// Default: exclude archived tasks from overview
 		const tasks = this.taskRepo.listTasks(roomId);
 		const toSummary = (task: NeoTask): TaskSummary => ({
 			id: task.id,
@@ -132,6 +133,7 @@ export class RoomManager {
 			progress: task.progress,
 			dependsOn: task.dependsOn,
 			error: task.error,
+			isArchived: task.isArchived,
 		});
 		const nonTerminal = tasks.filter(
 			(t) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled'
