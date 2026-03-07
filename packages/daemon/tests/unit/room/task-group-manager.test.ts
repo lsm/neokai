@@ -190,11 +190,12 @@ describe('TaskGroupManager', () => {
 				session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
 				PRIMARY KEY (group_id, session_id)
 			);
-			CREATE TABLE session_group_messages (
+			CREATE TABLE task_group_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-				session_id TEXT, role TEXT NOT NULL, message_type TEXT NOT NULL,
-				content TEXT NOT NULL, created_at INTEGER NOT NULL
+				kind TEXT NOT NULL,
+				payload_json TEXT,
+				created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
 		`);
