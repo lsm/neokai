@@ -414,10 +414,8 @@ interface SubagentConfig {
 	model: string;
 	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
 	provider?: string;
-	/** For CLI-only models: use a driver model that calls the CLI via Bash */
+	/** Marks this reviewer as CLI-based (external tool orchestrated via Bash) */
 	type?: 'cli';
-	/** Model to use as driver when type is 'cli'. Defaults to leader's model. */
-	driver_model?: string;
 	/** Full model ID when different from the short name in 'model' */
 	modelId?: string;
 	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
@@ -766,7 +764,7 @@ export function buildReviewerAgents(
 ): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
 	const usedNames = new Set<string>();
-	const defaultDriverModel = leaderModel ?? 'sonnet';
+	const runtimeModelLabel = leaderModel ?? 'sonnet';
 
 	for (const reviewer of reviewers) {
 		const name = toReviewerName(reviewer, usedNames);
@@ -774,20 +772,21 @@ export function buildReviewerAgents(
 		const modelId = resolveModelId(reviewer);
 
 		if (reviewer.type === 'cli') {
-			const driverModel = reviewer.driver_model ?? defaultDriverModel;
-			// CLI-based reviewer: a driver model calls the external tool via Bash
+			const orchestratorModel = runtimeModelLabel;
+			// CLI-based reviewer: always inherit Leader runtime model.
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${driverModel}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
+				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${orchestratorModel}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
 				tools: REVIEWER_TOOLS,
-				model: toAgentModel(driverModel),
+				model: 'inherit',
 				prompt: buildCliReviewerPrompt(reviewer.model, provider, modelId, reviewer.cliModel),
 			};
 		} else {
-			// Direct SDK reviewer: uses the specified model natively
+			// SDK reviewers also inherit Leader runtime model by default.
+			// The configured reviewer model is still used for identity/prompting.
 			agents[name] = {
 				description: `Code reviewer using ${modelId} (${provider}). Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
-				model: toAgentModel(reviewer.model),
+				model: 'inherit',
 				prompt: buildSdkReviewerPrompt(modelId, provider),
 			};
 		}

@@ -71,7 +71,6 @@ interface SubagentConfig {
 	model: string;
 	provider?: string;
 	type?: 'cli';
-	driver_model?: string;
 	cliModel?: string;
 }
 
