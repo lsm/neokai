@@ -534,6 +534,83 @@ describe('TaskGroupManager', () => {
 		});
 	});
 
+	describe('resumeWorkerFromHuman', () => {
+		async function spawnAndRouteToLeaderAndHuman() {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+			// Route worker → leader (sets awaiting_leader, increments feedbackIteration to 1)
+			await manager.routeWorkerToLeader(group.id, 'Worker output');
+			// Manually put group in awaiting_human state
+			groupRepo.updateGroupState(group.id, 'awaiting_human', groupRepo.getGroup(group.id)!.version);
+			return { group, task };
+		}
+
+		it('should set humanMessagePending flag when resuming worker from human', async () => {
+			const { group } = await spawnAndRouteToLeaderAndHuman();
+
+			await manager.resumeWorkerFromHuman(group.id, 'I have a question about something');
+
+			const updated = groupRepo.getGroup(group.id)!;
+			expect(updated.humanMessagePending).toBe(true);
+		});
+
+		it('should NOT increment feedbackIteration when worker was resumed by human message', async () => {
+			const { group } = await spawnAndRouteToLeaderAndHuman();
+
+			const beforeIteration = groupRepo.getGroup(group.id)!.feedbackIteration;
+			expect(beforeIteration).toBe(1); // already incremented by routeWorkerToLeader
+
+			// Human sends a message → worker resumes
+			await manager.resumeWorkerFromHuman(group.id, 'What is the plan?');
+			expect(groupRepo.getGroup(group.id)!.humanMessagePending).toBe(true);
+
+			// Worker finishes → routes to leader → should NOT increment feedbackIteration
+			await manager.routeWorkerToLeader(group.id, 'Worker output after human message');
+
+			const afterIteration = groupRepo.getGroup(group.id)!.feedbackIteration;
+			expect(afterIteration).toBe(beforeIteration); // still 1, not 2
+		});
+
+		it('should clear humanMessagePending flag after routeWorkerToLeader skips increment', async () => {
+			const { group } = await spawnAndRouteToLeaderAndHuman();
+
+			await manager.resumeWorkerFromHuman(group.id, 'Human question');
+			expect(groupRepo.getGroup(group.id)!.humanMessagePending).toBe(true);
+
+			await manager.routeWorkerToLeader(group.id, 'Worker answer');
+			expect(groupRepo.getGroup(group.id)!.humanMessagePending).toBe(false);
+		});
+
+		it('should increment feedbackIteration normally for leader-driven feedback (no humanMessagePending)', async () => {
+			const { group } = await spawnAndRouteToLeaderAndHuman();
+
+			const beforeIteration = groupRepo.getGroup(group.id)!.feedbackIteration;
+
+			// Simulate group back to awaiting_worker via leader feedback (not human)
+			groupRepo.updateGroupState(
+				group.id,
+				'awaiting_worker',
+				groupRepo.getGroup(group.id)!.version
+			);
+			// humanMessagePending is NOT set (leader feedback, not human message)
+
+			// Worker finishes → routes to leader → SHOULD increment feedbackIteration
+			await manager.routeWorkerToLeader(group.id, 'Worker output for leader round');
+			const afterIteration = groupRepo.getGroup(group.id)!.feedbackIteration;
+			expect(afterIteration).toBe(beforeIteration + 1);
+		});
+	});
+
 	describe('cancel', () => {
 		it('should fail the group with cancel reason', async () => {
 			const task = await createTask();

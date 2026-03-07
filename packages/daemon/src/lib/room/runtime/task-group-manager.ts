@@ -304,8 +304,16 @@ export class TaskGroupManager {
 		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
 
 		if (updated) {
-			// Increment feedback iteration (1-based: first review = iteration 1)
-			this.groupRepo.incrementFeedbackIteration(groupId, updated.version);
+			// Only increment feedbackIteration for leader-driven review rounds.
+			// When the worker was resumed by a human message (humanMessagePending=true),
+			// skip the increment so human questions don't burn feedback iterations.
+			if (group.humanMessagePending) {
+				// Clear the flag — this was a human-driven run, not a feedback iteration.
+				this.groupRepo.setHumanMessagePending(groupId, false);
+			} else {
+				// Increment feedback iteration (1-based: first review = iteration 1)
+				this.groupRepo.incrementFeedbackIteration(groupId, updated.version);
+			}
 			// Reset leader contract state for the new review round
 			const afterIncrement = this.groupRepo.getGroup(groupId);
 			if (afterIncrement) {
@@ -427,6 +435,11 @@ export class TaskGroupManager {
 		// Transition: awaiting_human → awaiting_worker
 		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
 		if (!updated) return false;
+
+		// Mark that the worker was resumed by a human message (not leader feedback).
+		// routeWorkerToLeader checks this flag and skips feedbackIteration increment
+		// so human questions/approvals don't count as feedback iterations.
+		this.groupRepo.setHumanMessagePending(groupId, true);
 
 		// Reset state for the new review round
 		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);

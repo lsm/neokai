@@ -56,6 +56,12 @@ interface TaskGroupMetadata {
 	approved?: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit?: RateLimitBackoff | null;
+	/**
+	 * True when the worker was resumed by a direct human message (via task.sendHumanMessage)
+	 * rather than by leader feedback. When set, routeWorkerToLeader will NOT increment
+	 * feedbackIteration so human questions don't burn feedback iterations.
+	 */
+	humanMessagePending?: boolean;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -104,6 +110,8 @@ export interface SessionGroup {
 	approved: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit: RateLimitBackoff | null;
+	/** True when worker was resumed by a human message; causes routeWorkerToLeader to skip feedbackIteration increment */
+	humanMessagePending: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -401,6 +409,25 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set humanMessagePending flag without version check.
+	 * When true, the next routeWorkerToLeader will skip feedbackIteration increment
+	 * because the worker was resumed by a human question, not leader feedback.
+	 */
+	setHumanMessagePending(groupId: string, value: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, humanMessagePending: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Check if group is currently in rate limit backoff period.
 	 * Returns true if rateLimit is set and current time is before resetsAt.
 	 */
@@ -546,6 +573,7 @@ export class SessionGroupRepository {
 			submittedForReview: meta.submittedForReview ?? false,
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
+			humanMessagePending: meta.humanMessagePending ?? false,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

@@ -153,6 +153,59 @@ describe('RoomRuntime flow', () => {
 			expect(finalTask!.result).toBe('Error handling added');
 		});
 
+		it('should NOT increment feedbackIteration when worker is resumed by a human message', async () => {
+			await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Worker finishes → leader reviews → feedbackIteration = 1
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(1);
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+
+			// Leader calls send_to_worker → feedbackIteration stays 1, state = awaiting_worker
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Please fix the tests',
+			});
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(1);
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+
+			// Worker finishes again → leader reviews → feedbackIteration = 2
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(2);
+
+			// Manually transition to awaiting_human (simulating submit_for_review)
+			const beforeHuman = ctx.groupRepo.getGroup(group.id)!;
+			ctx.groupRepo.updateGroupState(group.id, 'awaiting_human', beforeHuman.version);
+
+			// Human sends a question via task.sendHumanMessage
+			const resumed = await ctx.runtime.resumeWorkerFromHuman(
+				group.taskId,
+				'Can you explain your approach?',
+				{ approved: false }
+			);
+			expect(resumed).toBe(true);
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			expect(ctx.groupRepo.getGroup(group.id)!.humanMessagePending).toBe(true);
+
+			// Worker finishes responding to human → routes to leader
+			// feedbackIteration should NOT increment (still 2, not 3)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(2); // unchanged!
+			expect(ctx.groupRepo.getGroup(group.id)!.humanMessagePending).toBe(false); // cleared
+		});
+
 		it('should complete a three-iteration cycle and track feedback iterations accurately', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
