@@ -405,6 +405,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 	const agentModels = useSignal<AgentModels>({});
 	const agentSubagents = useSignal<AgentSubagents>({});
 	const maxReviewRounds = useSignal<number>(3);
+	const maxConcurrentGroups = useSignal<number>(1);
 	const selectedDefaultModel = useSignal(room.defaultModel || '');
 	const expandedAgents = useSignal<Set<string>>(new Set());
 	const isSaving = useSignal(false);
@@ -457,6 +458,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		}
 
 		maxReviewRounds.value = (config.maxReviewRounds as number) ?? 3;
+		maxConcurrentGroups.value = (config.maxConcurrentGroups as number) ?? 1;
 	}, [room]);
 
 	// Change detection
@@ -473,6 +475,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 			agentModels: config.agentModels ?? {},
 			agentSubagents: origSubagents,
 			maxReviewRounds: config.maxReviewRounds ?? 3,
+			maxConcurrentGroups: config.maxConcurrentGroups ?? 1,
 		});
 	});
 
@@ -482,6 +485,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 			agentModels: agentModels.value,
 			agentSubagents: agentSubagents.value,
 			maxReviewRounds: maxReviewRounds.value,
+			maxConcurrentGroups: maxConcurrentGroups.value,
 		});
 	});
 
@@ -588,6 +592,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				agentSubagents: cleanedSubagents,
 				reviewers: undefined,
 				maxReviewRounds: maxReviewRounds.value,
+				maxConcurrentGroups: maxConcurrentGroups.value,
 			});
 			toast.success('Agent configuration saved');
 		} catch (err) {
@@ -732,6 +737,29 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 							const val = parseInt((e.target as HTMLInputElement).value, 10);
 							if (!isNaN(val) && val >= 1) {
 								maxReviewRounds.value = val;
+							}
+						}}
+						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+						disabled={disabled}
+					/>
+				</div>
+
+				{/* Max concurrent tasks */}
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1">Max Concurrent Tasks</label>
+					<p class="text-xs text-gray-500 mb-2">
+						Maximum number of tasks running in parallel. Increasing this takes effect on the next
+						tick without restarting.
+					</p>
+					<input
+						type="number"
+						min={1}
+						max={10}
+						value={maxConcurrentGroups.value}
+						onInput={(e) => {
+							const val = parseInt((e.target as HTMLInputElement).value, 10);
+							if (!isNaN(val) && val >= 1) {
+								maxConcurrentGroups.value = val;
 							}
 						}}
 						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"

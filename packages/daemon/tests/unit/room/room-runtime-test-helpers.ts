@@ -136,6 +136,8 @@ export interface RuntimeTestContext {
 export interface RuntimeTestContextOptions {
 	hookOptions?: HookOptions;
 	room?: Partial<Room>;
+	maxConcurrentGroups?: number;
+	maxFeedbackIterations?: number;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -161,8 +163,8 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		goalManager,
 		sessionFactory,
 		workspacePath: '/workspace',
-		maxConcurrentGroups: 1,
-		maxFeedbackIterations: 5,
+		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
+		maxFeedbackIterations: opts?.maxFeedbackIterations ?? 5,
 		tickInterval: 60_000,
 		hookOptions: opts?.hookOptions,
 	});

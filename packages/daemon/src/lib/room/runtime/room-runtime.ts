@@ -118,8 +118,8 @@ export class RoomRuntime {
 	private readonly taskManager: TaskManager;
 	private readonly goalManager: GoalManager;
 	private readonly sessionFactory: SessionFactory;
-	private readonly maxConcurrentGroups: number;
-	private readonly maxFeedbackIterations: number;
+	private maxConcurrentGroups: number;
+	private maxFeedbackIterations: number;
 	private readonly tickInterval: number;
 	private readonly getWorkerMessages: RoomRuntimeConfig['getWorkerMessages'];
 	private readonly daemonHub?: DaemonHub;
@@ -178,7 +178,7 @@ export class RoomRuntime {
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
-		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 10;
+		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 3;
 		this.tickInterval = config.tickInterval ?? 30_000;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
@@ -236,9 +236,17 @@ export class RoomRuntime {
 	/**
 	 * Update the room reference with the latest data.
 	 * Called when room config changes so lifecycle hooks see the current config.
+	 * Also picks up new maxConcurrentGroups and maxReviewRounds values reactively.
 	 */
 	updateRoom(room: Room): void {
 		this.room = room;
+		const config = room.config as Record<string, unknown> | undefined;
+		if (config?.maxConcurrentGroups !== undefined) {
+			this.maxConcurrentGroups = config.maxConcurrentGroups as number;
+		}
+		if (config?.maxReviewRounds !== undefined) {
+			this.maxFeedbackIterations = config.maxReviewRounds as number;
+		}
 	}
 
 	// =========================================================================
