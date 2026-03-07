@@ -1,22 +1,21 @@
 /**
- * Selective Rewind Feature Online Tests
+ * Selective Rewind Feature Tests
  *
- * These tests verify the selective rewind feature with real SDK calls:
+ * These tests verify the selective rewind feature:
  * 1. Selective rewind can delete specific messages and all messages after
  * 2. Mode selection (conversation, both) works correctly
  * 3. Error handling for invalid inputs (empty/nonexistent messageIds)
  * 4. Message count verification after rewind
  *
- * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Mock SDK: Set NEOKAI_AGENT_SDK_MOCK=1 for offline testing
  *
- * MODEL:
- * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * Run with mock:
+ *   NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/rewind/selective-rewind.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-// Bun automatically loads .env from project root when running tests
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
@@ -45,22 +44,28 @@ interface SelectiveRewindResult {
 	rewindCase?: string;
 }
 
-// Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+// Detect mock mode for faster timeouts
+const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
+const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
+const IDLE_TIMEOUT = IS_MOCK ? 10000 : 90000;
+const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 180000;
 
 describe('Selective Rewind Feature', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	}, 30000);
+	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
 		if (daemon) {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	}, 20000);
+	}, SETUP_TIMEOUT);
 
 	/**
 	 * Helper to list messages for a session
