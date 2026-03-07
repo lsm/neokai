@@ -471,6 +471,30 @@ export class TaskGroupManager {
 	}
 
 	/**
+	 * Escalate a group to human review because max feedback iterations were reached.
+	 *
+	 * Called by the runtime (NOT the leader) when feedbackIteration >= maxFeedbackIterations.
+	 * Transitions the group to 'awaiting_human' and the task to 'review' so a human
+	 * can inspect progress and decide whether to approve, reject, or provide guidance.
+	 *
+	 * Unlike submitForReview (triggered by leader's submit_for_review tool call),
+	 * this escalation has no PR URL — it is a runtime-enforced lifecycle boundary.
+	 */
+	async escalateToHumanReview(groupId: string, _reason: string): Promise<SessionGroup | null> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) return null;
+
+		// Pause the group in awaiting_human (slot stays occupied but paused)
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
+		if (!updated) return null;
+
+		// Move task to review status (no PR URL — runtime-enforced escalation)
+		await this.taskManager.reviewTask(group.taskId);
+
+		return updated;
+	}
+
+	/**
 	 * Cancel a group - urgent control from human.
 	 */
 	async cancel(groupId: string): Promise<SessionGroup | null> {
