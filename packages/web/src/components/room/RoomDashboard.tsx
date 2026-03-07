@@ -36,9 +36,9 @@ function RuntimeStateIndicator({ state }: { state: RuntimeState }) {
 export function RoomDashboard() {
 	const tasks = roomStore.tasks.value;
 	const sessions = roomStore.sessions.value;
-	const room = roomStore.room.value;
 	const roomId = roomStore.roomId.value;
 	const runtimeState = roomStore.runtimeState.value;
+	const runtimeModels = roomStore.runtimeModels.value;
 	const [actionLoading, setActionLoading] = useState(false);
 	const [showPauseConfirm, setShowPauseConfirm] = useState(false);
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
@@ -46,8 +46,8 @@ export function RoomDashboard() {
 	const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
 	const [approvalLoading, setApprovalLoading] = useState(false);
 
-	// Get the room's model (defaultModel from room config)
-	const currentModel = room?.defaultModel;
+	// Get the resolved models (leader and worker)
+	const { leaderModel, workerModel } = runtimeModels;
 
 	const handlePause = async () => {
 		setActionLoading(true);
@@ -176,8 +176,8 @@ export function RoomDashboard() {
 
 			{/* Model indicator and archive button */}
 			<div class="flex items-center justify-between">
-				{currentModel && (
-					<div class="flex items-center gap-2 px-3 py-1.5 bg-dark-800 rounded-md">
+				{(leaderModel || workerModel) && (
+					<div class="flex items-center gap-3 px-3 py-1.5 bg-dark-800 rounded-md">
 						<svg
 							class="w-4 h-4 text-gray-400"
 							fill="none"
@@ -191,9 +191,18 @@ export function RoomDashboard() {
 								d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
 							/>
 						</svg>
-						<span class="text-xs text-gray-400">
-							Model: <span class="text-gray-300 font-medium">{currentModel}</span>
-						</span>
+						<div class="flex items-center gap-3 text-xs">
+							{leaderModel && (
+								<span class="text-gray-400">
+									Leader: <span class="text-gray-300 font-medium">{leaderModel}</span>
+								</span>
+							)}
+							{workerModel && (
+								<span class="text-gray-400">
+									Worker: <span class="text-gray-300 font-medium">{workerModel}</span>
+								</span>
+							)}
+						</div>
 					</div>
 				)}
 				<button
