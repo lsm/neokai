@@ -284,10 +284,17 @@ export class RoomRuntimeService {
 				? Math.min(Math.floor(rawGroups), MAX_CONCURRENT_GROUPS_LIMIT)
 				: undefined;
 
-		// Resolve models: agentModels.leader/worker > room.defaultModel > global default
+		// Resolve leader model: agentModels.leader > room.defaultModel > global default
+		// Filter out empty strings as they're not valid model identifiers
 		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
-		const leaderModel = agentModels?.leader ?? room.defaultModel ?? this.ctx.defaultModel;
-		const workerModel = agentModels?.worker ?? room.defaultModel ?? this.ctx.defaultModel;
+		const leaderModel =
+			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.ctx.defaultModel;
+		const workerModel =
+			(agentModels?.worker && agentModels.worker.trim() !== '' ? agentModels.worker : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.ctx.defaultModel;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -299,6 +306,7 @@ export class RoomRuntimeService {
 			workspacePath,
 			model: leaderModel,
 			workerModel,
+			defaultModel: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,
 			getWorkerMessages: (sessionId, afterMessageId) =>

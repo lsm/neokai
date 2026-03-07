@@ -24,6 +24,7 @@ interface ModelInfo {
 	id: string;
 	name: string;
 	family: string;
+	provider: string;
 }
 
 interface CliAgentInfo {
@@ -46,11 +47,11 @@ const MODEL_FAMILY_ICONS: Record<string, string> = {
 	__default__: '💎',
 };
 
-function detectFamily(id: string): string {
+function detectFamily(id: string, provider?: string): string {
 	if (id.includes('opus')) return 'opus';
 	if (id.includes('haiku')) return 'haiku';
-	if (id.toLowerCase().startsWith('glm-')) return 'glm';
-	if (id.toLowerCase().startsWith('minimax-')) return 'minimax';
+	if (provider === 'glm' || id.toLowerCase().startsWith('glm-')) return 'glm';
+	if (provider === 'minimax' || id.toLowerCase().startsWith('minimax-')) return 'minimax';
 	return 'sonnet';
 }
 
@@ -71,7 +72,6 @@ interface SubagentConfig {
 	model: string;
 	provider?: string;
 	type?: 'cli';
-	driver_model?: string;
 	cliModel?: string;
 }
 
@@ -477,7 +477,12 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				const hub = await connectionManager.getHub();
 				const [modelsRes, cliRes] = await Promise.all([
 					hub.request<{
-						models: Array<{ id: string; display_name?: string; name?: string }>;
+						models: Array<{
+							id: string;
+							display_name?: string;
+							name?: string;
+							provider?: string;
+						}>;
 					}>('models.list'),
 					hub
 						.request<{ agents: CliAgentInfo[] }>('agents.cli.list')
@@ -486,7 +491,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				availableModels.value = (modelsRes.models ?? []).map((m) => ({
 					id: m.id,
 					name: m.display_name ?? m.name ?? m.id,
-					family: detectFamily(m.id),
+					provider: m.provider ?? 'unknown',
+					family: detectFamily(m.id, m.provider),
 				}));
 				cliAgents.value = cliRes.agents ?? [];
 			} catch {
@@ -553,6 +559,13 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		const m = availableModels.value.find((m) => m.id === selectedDefaultModel.value);
 		return m ? `Default (${m.name})` : `Default (${selectedDefaultModel.value})`;
 	});
+
+	// SDK subagents currently run inside the parent SDK/provider context.
+	// Restrict subagent model selection to Anthropic models to avoid
+	// implying independent provider routing (e.g. glm/minimax per subagent).
+	const sdkSubagentModels = useComputed(() =>
+		availableModels.value.filter((m) => m.provider === 'anthropic')
+	);
 
 	const updateAgentModel = useCallback(
 		(key: string, model: string) => {
@@ -780,9 +793,9 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 										</div>
 
 										{/* Sub Agent Models */}
-										<div class="text-xs text-gray-500 mb-2">Sub Agent Models</div>
+										<div class="text-xs text-gray-500 mb-2">Sub Agent Models (Anthropic)</div>
 										<ModelTagsInput
-											models={availableModels.value}
+											models={sdkSubagentModels.value}
 											selected={getSdkSubagentsFor(agent.key)
 												.map((s) => s.model)
 												.filter(Boolean)}

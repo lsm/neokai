@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach } from 'bun:test';
-import { RoomRuntimeService, type RoomRuntimeServiceConfig } from '../../../src/lib/room/runtime/room-runtime-service';
+import {
+	RoomRuntimeService,
+	type RoomRuntimeServiceConfig,
+} from '../../../src/lib/room/runtime/room-runtime-service';
 import type { RoomManager } from '../../../src/lib/room/managers/room-manager';
 import type { Room } from '@neokai/shared';
 

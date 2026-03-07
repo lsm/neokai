@@ -91,6 +91,8 @@ export interface RoomRuntimeConfig {
 	model?: string;
 	/** Worker model (agentModels.worker > room.defaultModel > global default) */
 	workerModel?: string;
+	/** Global default model for fallback when room doesn't specify one */
+	defaultModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
@@ -127,7 +129,7 @@ export class RoomRuntime {
 	private tickQueued = false;
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
 
-	private room: Room;
+	private readonly roomId: string;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
 	private readonly taskManager: TaskManager;
@@ -141,6 +143,7 @@ export class RoomRuntime {
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
 	private readonly getRoomById: (roomId: string) => Room | null;
+	private readonly defaultModel: string;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -154,8 +157,8 @@ export class RoomRuntime {
 	private emitTaskUpdate(task: NeoTask): void {
 		if (!this.daemonHub) return;
 		void this.daemonHub.emit('room.task.update', {
-			sessionId: `room:${this.room.id}`,
-			roomId: this.room.id,
+			sessionId: `room:${this.roomId}`,
+			roomId: this.roomId,
 			task,
 		});
 	}
@@ -178,8 +181,8 @@ export class RoomRuntime {
 		const goals = await this.goalManager.getGoalsForTask(taskId);
 		for (const goal of goals) {
 			void this.daemonHub.emit('goal.progressUpdated', {
-				sessionId: `room:${this.room.id}`,
-				roomId: this.room.id,
+				sessionId: `room:${this.roomId}`,
+				roomId: this.roomId,
 				goalId: goal.id,
 				progress: goal.progress,
 			});
@@ -187,7 +190,7 @@ export class RoomRuntime {
 	}
 
 	constructor(config: RoomRuntimeConfig) {
-		this.room = config.room;
+		this.roomId = config.room.id;
 		this.groupRepo = config.groupRepo;
 		this.observer = config.sessionObserver;
 		this.taskManager = config.taskManager;
@@ -201,6 +204,7 @@ export class RoomRuntime {
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
 		this.getRoomById = config.getRoom;
+		this.defaultModel = config.defaultModel ?? 'sonnet';
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -255,14 +259,37 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Update the room reference with the latest data.
-	 * Called when room config changes so lifecycle hooks see the current config.
-	 * Also picks up new maxConcurrentGroups and maxReviewRounds values reactively.
-	 * Stale or removed config keys fall back to their documented defaults.
+	 * Resolve model for a room agent role.
+	 * Priority: room.config.agentModels[role] > room.defaultModel > global default.
 	 */
-	updateRoom(room: Room): void {
-		this.room = room;
+	private resolveAgentModel(room: Room, role: 'leader' | 'planner' | 'coder' | 'general'): string {
 		const config = (room.config ?? {}) as Record<string, unknown>;
+		const agentModels = config.agentModels as Record<string, string> | undefined;
+		const roleModel = agentModels?.[role];
+		if (typeof roleModel === 'string' && roleModel.trim() !== '') {
+			return roleModel;
+		}
+		if (typeof room.defaultModel === 'string' && room.defaultModel.trim() !== '') {
+			return room.defaultModel;
+		}
+		return this.defaultModel;
+	}
+
+	/**
+	 * Update runtime config from the latest room state.
+	 * Called when room config changes so lifecycle hooks see current values.
+	 */
+	updateRoom(_room: Room): void {
+		const currentRoom = this.getRoomById(this.roomId);
+		if (!currentRoom) {
+			log.warn(`Cannot refresh room runtime config: room not found (${this.roomId})`);
+			return;
+		}
+		const config = (currentRoom.config ?? {}) as Record<string, unknown>;
+
+		// Keep TaskGroupManager model aligned to the current Leader model.
+		this.taskGroupManager.updateModel(this.resolveAgentModel(currentRoom, 'leader'));
+
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
 			typeof rawGroups === 'number' && rawGroups >= 1
@@ -281,8 +308,8 @@ export class RoomRuntime {
 	 * Fetches fresh room from DB to get current config.
 	 */
 	private get maxPlanningAttempts(): number {
-		const currentRoom = this.getRoomById(this.room.id);
-		const cfg = currentRoom?.config ?? this.room.config ?? {};
+		const currentRoom = this.getRoomById(this.roomId);
+		const cfg = currentRoom?.config ?? {};
 		const value = (cfg as Record<string, unknown>)['maxPlanningRetries'];
 		if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
 			// maxPlanningRetries is "how many retries after first failure":
@@ -608,7 +635,7 @@ export class RoomRuntime {
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask) {
-						const currentRoom = this.getRoomById(this.room.id);
+						const currentRoom = this.getRoomById(this.roomId);
 						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
@@ -675,7 +702,7 @@ export class RoomRuntime {
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask && (group.workerRole === 'coder' || group.workerRole === 'planner')) {
-						const currentRoom = this.getRoomById(this.room.id);
+						const currentRoom = this.getRoomById(this.roomId);
 						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
@@ -875,7 +902,10 @@ export class RoomRuntime {
 				};
 
 				// Fetch fresh room from DB for MCP server init (config may have changed)
-				const currentRoom = this.getRoomById(this.room.id) ?? this.room;
+				const currentRoom = this.getRoomById(this.roomId);
+				if (!currentRoom) {
+					throw new Error(`Room not found while restoring planner MCP server: ${this.roomId}`);
+				}
 				const goal = await this.goalManager.getGoalsForTask(task.id).then((g) => g[0] ?? null);
 				const mcpServer = createPlannerMcpServer({
 					task,
@@ -1070,7 +1100,7 @@ export class RoomRuntime {
 	 * checkpoints when there are no zombies (common case).
 	 */
 	private findZombieGroups(): SessionGroup[] {
-		const allActiveGroups = this.groupRepo.getActiveGroups(this.room.id);
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
 		const zombies: SessionGroup[] = [];
 
 		for (const group of allActiveGroups) {
@@ -1182,7 +1212,7 @@ export class RoomRuntime {
 
 		// Check capacity — awaiting_human groups are paused and don't consume slots
 		const activeGroups = this.groupRepo
-			.getActiveGroups(this.room.id)
+			.getActiveGroups(this.roomId)
 			.filter((g) => g.state !== 'awaiting_human');
 		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
 
@@ -1351,7 +1381,14 @@ export class RoomRuntime {
 		};
 
 		// Fetch fresh room from DB for worker/leader init (config may have changed)
-		const currentRoom = this.getRoomById(this.room.id) ?? this.room;
+		const currentRoom = this.getRoomById(this.roomId);
+		if (!currentRoom) {
+			await this.taskManager.failTask(planningTask.id, `Room not found: ${this.roomId}`);
+			await this.emitTaskUpdateById(planningTask.id);
+			return;
+		}
+		const plannerModel = this.resolveAgentModel(currentRoom, 'planner');
+		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
 
 		// Build WorkerConfig for the Planner agent
 		// isPlanApproved uses a mutable ref — groupId is set after spawn() returns
@@ -1366,7 +1403,7 @@ export class RoomRuntime {
 			room: currentRoom,
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
-			model: this.taskGroupManager.getWorkerModel(),
+			model: plannerModel,
 			createDraftTask,
 			updateDraftTask,
 			removeDraftTask,
@@ -1385,7 +1422,7 @@ export class RoomRuntime {
 				sessionId: '', // not used by buildLeaderTaskContext
 				workspacePath: this.taskGroupManager.workspacePath,
 				groupId: '', // not used by buildLeaderTaskContext
-				model: this.taskGroupManager.model,
+				model: leaderModel,
 				reviewContext: 'plan_review',
 			}),
 		};
@@ -1443,10 +1480,18 @@ export class RoomRuntime {
 			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);
 
 		// Fetch fresh room from DB for worker/leader init (config may have changed)
-		const currentRoom = this.getRoomById(this.room.id) ?? this.room;
+		const currentRoom = this.getRoomById(this.roomId);
+		if (!currentRoom) {
+			await this.taskManager.failTask(task.id, `Room not found: ${this.roomId}`);
+			await this.emitTaskUpdateById(task.id);
+			return;
+		}
 
 		// Determine worker config based on assigned agent type
 		const agentType = task.assignedAgent ?? 'coder';
+		const workerRole = agentType === 'general' ? 'general' : 'coder';
+		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
+		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
 		let workerConfig: WorkerConfig;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
@@ -1457,7 +1502,7 @@ export class RoomRuntime {
 			sessionId: '',
 			workspacePath: this.taskGroupManager.workspacePath,
 			groupId: '',
-			model: this.taskGroupManager.model,
+			model: leaderModel,
 			reviewContext: 'code_review' as const,
 		};
 
@@ -1468,7 +1513,7 @@ export class RoomRuntime {
 				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: this.taskGroupManager.getWorkerModel(),
+				model: workerModel,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -1486,7 +1531,7 @@ export class RoomRuntime {
 				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: this.taskGroupManager.getWorkerModel(),
+				model: workerModel,
 				previousTaskSummaries,
 			};
 			workerConfig = {

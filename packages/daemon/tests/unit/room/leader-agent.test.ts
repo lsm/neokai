@@ -470,12 +470,10 @@ describe('Leader Agent', () => {
 		});
 
 		it('should create CLI reviewer with review-posted output format in prompt', () => {
-			const agents = buildReviewerAgents([
-				{ model: 'custom-cli', type: 'cli', driver_model: 'haiku' },
-			]);
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
 			const agent = agents['reviewer-custom-cli'];
 			expect(agent).toBeDefined();
-			expect(agent.model).toBe('haiku');
+			expect(agent.model).toBe('inherit');
 			expect(agent.prompt).toContain('custom-cli');
 			expect(agent.prompt).toContain('---REVIEW_POSTED---');
 			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
@@ -492,26 +490,24 @@ describe('Leader Agent', () => {
 			expect(agent.tools).not.toContain('Write');
 		});
 
-		it('should map full model ID to valid AgentModel for SDK-native reviewer', () => {
+		it('should set SDK-native reviewer runtime model to inherit', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6-20250929' }]);
 			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
-			expect(agent.model).toBe('opus');
+			expect(agent.model).toBe('inherit');
 		});
 
-		it('should map full model ID to valid AgentModel for CLI reviewer', () => {
-			const agents = buildReviewerAgents([
-				{ model: 'custom-cli', type: 'cli', driver_model: 'claude-sonnet-4-5-20250929' },
-			]);
-			const agent = agents['reviewer-custom-cli'];
-			expect(agent).toBeDefined();
-			expect(agent.model).toBe('sonnet');
-		});
-
-		it('should default CLI reviewer to sonnet when no driver_model given', () => {
+		it('should set CLI reviewer runtime model to inherit', () => {
 			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
 			const agent = agents['reviewer-custom-cli'];
-			expect(agent.model).toBe('sonnet');
+			expect(agent).toBeDefined();
+			expect(agent.model).toBe('inherit');
+		});
+
+		it('should default CLI reviewer runtime model to inherit', () => {
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent.model).toBe('inherit');
 		});
 	});
 
@@ -597,25 +593,22 @@ describe('Leader Agent', () => {
 	});
 
 	describe('buildReviewerAgents — CLI enhancements', () => {
-		it('should use leaderModel as default driver when no driver_model specified', () => {
+		it('should use inherit reviewer runtime model', () => {
 			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }], 'claude-opus-4-6');
 			const agent = agents['reviewer-copilot'];
-			expect(agent.model).toBe('opus');
+			expect(agent.model).toBe('inherit');
 		});
 
-		it('should fall back to sonnet when neither driver_model nor leaderModel given', () => {
+		it('should still use inherit when leaderModel is absent', () => {
 			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }]);
 			const agent = agents['reviewer-copilot'];
-			expect(agent.model).toBe('sonnet');
+			expect(agent.model).toBe('inherit');
 		});
 
-		it('should prefer explicit driver_model over leaderModel', () => {
-			const agents = buildReviewerAgents(
-				[{ model: 'copilot', type: 'cli', driver_model: 'haiku' }],
-				'claude-opus-4-6'
-			);
+		it('should ignore leaderModel for reviewer runtime model and keep inherit', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }], 'claude-opus-4-6');
 			const agent = agents['reviewer-copilot'];
-			expect(agent.model).toBe('haiku');
+			expect(agent.model).toBe('inherit');
 		});
 
 		it('should pass cliModel to CLI reviewer prompt', () => {
@@ -721,8 +714,8 @@ describe('Leader Agent', () => {
 		});
 	});
 
-	describe('createLeaderAgentInit — leaderModel passed to reviewers', () => {
-		it('should pass leader model to buildReviewerAgents as default driver', () => {
+	describe('createLeaderAgentInit — reviewer runtime model inheritance', () => {
+		it('should set reviewer runtime model to inherit by default', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(
 				makeConfig({
@@ -738,8 +731,7 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			const reviewerAgent = init.agents!['reviewer-copilot'];
-			// Driver model should be opus (inherited from leader model)
-			expect(reviewerAgent.model).toBe('opus');
+			expect(reviewerAgent.model).toBe('inherit');
 		});
 	});
 });

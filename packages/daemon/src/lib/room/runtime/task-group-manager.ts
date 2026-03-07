@@ -142,7 +142,7 @@ export class TaskGroupManager {
 	private readonly getTaskById: (taskId: string) => Promise<NeoTask | null>;
 	private readonly getGoalById: (goalId: string) => Promise<RoomGoal | null>;
 	readonly workspacePath: string;
-	readonly model?: string;
+	private _model?: string;
 	readonly workerModel?: string;
 
 	/** Deferred leader configs — created in spawn(), consumed in routeWorkerToLeader() */
@@ -158,8 +158,18 @@ export class TaskGroupManager {
 		this.getTaskById = config.getTask;
 		this.getGoalById = config.getGoal;
 		this.workspacePath = config.workspacePath;
-		this.model = config.model;
+		this._model = config.model;
 		this.workerModel = config.workerModel;
+	}
+
+	/** Get the current model for leader sessions */
+	get model(): string | undefined {
+		return this._model;
+	}
+
+	/** Update the model for new leader sessions (e.g., when room settings change) */
+	updateModel(model: string | undefined): void {
+		this._model = model;
 	}
 
 	/**
@@ -167,7 +177,7 @@ export class TaskGroupManager {
 	 * Returns workerModel if set, otherwise falls back to model.
 	 */
 	getWorkerModel(): string | undefined {
-		return this.workerModel ?? this.model;
+		return this.workerModel ?? this._model;
 	}
 
 	/**

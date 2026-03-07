@@ -452,11 +452,7 @@ export class SessionGroupRepository {
 
 	// ===== Group events (status/system timeline, no mirrored SDK chat) =====
 
-	appendEvent(params: {
-		groupId: string;
-		kind: string;
-		payloadJson?: string;
-	}): number {
+	appendEvent(params: { groupId: string; kind: string; payloadJson?: string }): number {
 		const result = this.db
 			.prepare(
 				`INSERT INTO task_group_events (group_id, kind, payload_json, created_at)
