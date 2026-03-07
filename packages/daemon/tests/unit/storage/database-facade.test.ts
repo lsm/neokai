@@ -43,7 +43,9 @@ describe('Database Facade', () => {
 
 	beforeEach(async () => {
 		// Create a temporary database file
-		dbPath = `/tmp/test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
+		// Use process.env.TMPDIR to support custom temp directory setups
+		const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+		dbPath = `${tmpBase}/test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`;
 		db = new Database(dbPath);
 		await db.initialize();
 	});

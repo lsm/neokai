@@ -1,38 +1,33 @@
 .PHONY: dev dev-random serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup
 
-dev:
-	@echo "Starting development server..."
-	@mkdir -p tmp/workspace
-	@NODE_ENV=development bun run packages/cli/main.ts --workspace tmp/workspace
+# Default workspace for development
+WORKSPACE ?= tmp/workspace
 
-# Development server on random port - finds available port and starts server
-dev-random:
+# Development server - uses random available port by default
+# Usage: make dev [WORKSPACE=/path/to/workspace]
+dev:
 	@echo "Finding available port..."
 	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
 	echo "Starting development server on port $$PORT..."; \
-	mkdir -p tmp/workspace; \
+	mkdir -p $(WORKSPACE); \
 	echo ""; \
 	echo "================================================"; \
-	echo "🚀 Server starting on http://localhost:$$PORT"; \
+	echo "🚀 Development server starting on http://localhost:$$PORT"; \
+	echo "   Workspace: $(WORKSPACE)"; \
 	echo "================================================"; \
 	echo ""; \
-	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace tmp/workspace --port $$PORT
+	NODE_ENV=development NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace $(WORKSPACE) --port $$PORT
+
+# Alias for dev-random (deprecated, use make dev)
+dev-random:
+	@$(MAKE) dev WORKSPACE=$(WORKSPACE)
 
 # Production server on random port - starts production build on available port
+# Usage: make serve-random [WORKSPACE=/path/to/workspace]
 serve-random:
-	@echo "Finding available port..."
 	@PORT=$$(node -e "const net = require('net'); const server = net.createServer(); server.listen(0, () => { const port = server.address().port; console.log(port); server.close(); });"); \
-	echo "Building production bundle..."; \
-	$(MAKE) build; \
-	echo ""; \
-	echo "Starting production server on port $$PORT..."; \
-	mkdir -p tmp/workspace; \
-	echo ""; \
-	echo "================================================"; \
-	echo "🚀 Production server starting on http://localhost:$$PORT"; \
-	echo "================================================"; \
-	echo ""; \
-	NODE_ENV=production NEOKAI_PORT=$$PORT bun run packages/cli/main.ts --workspace tmp/workspace --port $$PORT
+	echo "Running with PORT=$$PORT WORKSPACE=$(WORKSPACE)"; \
+	$(MAKE) run PORT=$$PORT WORKSPACE=$(WORKSPACE)
 
 # Self-developing mode - production build serving the current directory on port 9983
 # This is a convenience wrapper around `make run`
@@ -48,23 +43,21 @@ self-test:
 # Run production server with custom workspace and port
 # Usage: make run WORKSPACE=/path/to/workspace PORT=8080
 run:
-	@if [ -z "$(WORKSPACE)" ]; then \
-		echo "Error: WORKSPACE parameter is required"; \
-		echo "Usage: make run WORKSPACE=/path/to/workspace PORT=8080"; \
-		exit 1; \
-	fi
-	@if [ -z "$(PORT)" ]; then \
-		echo "Error: PORT parameter is required"; \
-		echo "Usage: make run WORKSPACE=/path/to/workspace PORT=8080"; \
-		exit 1; \
+	@mkdir -p tmp
+	@if [ -n "$(PORT)" ]; then \
+		echo "$(PORT)" > tmp/.dev-server-running; \
 	fi
 	@echo "Starting production server..."
 	@echo "   Workspace: $(WORKSPACE)"
-	@echo "   Listening on port $(PORT)"
-	@mkdir -p tmp
-	@echo "$(PORT)" > tmp/.dev-server-running
+	@if [ -n "$(PORT)" ]; then \
+		echo "   Listening on port $(PORT)"; \
+	fi
 	@$(MAKE) build
-	@NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE)
+	@if [ -n "$(PORT)" ]; then \
+		NODE_ENV=production bun run packages/cli/main.ts --port $(PORT) --workspace $(WORKSPACE); \
+	else \
+		NODE_ENV=production bun run packages/cli/main.ts --workspace $(WORKSPACE); \
+	fi
 
 # Run E2E tests with an auto-started server on a random port (self-contained, no server needed)
 # Usage: make run-e2e TEST=tests/features/slash-cmd.e2e.ts

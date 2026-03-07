@@ -1,20 +1,31 @@
 /**
- * Room Chat Constraints (API-dependent)
+ * Room Chat Constraints
  *
  * Verifies room chat sessions:
  * - Do not use Claude Code preset system prompt
  * - Use restricted built-in tool allowlist
  * - Still respond to a simple user message
  *
- * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Mock SDK: Set NEOKAI_AGENT_SDK_MOCK=1 for offline testing
+ *
+ * Run with mock:
+ *   NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/room/room-chat-constraints.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
+import { simpleTextResponse } from '../../helpers/mock-sdk';
+
+// Detect mock mode for faster timeouts
+const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
+const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const TEARDOWN_TIMEOUT = IS_MOCK ? 10000 : 20000;
+const IDLE_TIMEOUT = IS_MOCK ? 5000 : 120000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 180000;
 
 const ROOM_CHAT_ALLOWED_TOOLS = [
 	'Read',
@@ -47,22 +58,24 @@ function getMainThreadAssistantText(messages: Array<Record<string, unknown>>): s
 	return texts.join('\n').trim();
 }
 
-describe('Room Chat Constraints (API-dependent)', () => {
+describe('Room Chat Constraints', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	}, 30000);
 
-	afterEach(
-		async () => {
-			if (daemon) {
-				daemon.kill('SIGTERM');
-				await daemon.waitForExit();
-			}
-		},
-		{ timeout: 20000 }
-	);
+		// Update mock response if in mock mode
+		if (IS_MOCK && daemon.mockControls) {
+			daemon.mockControls.setDefaultResponses(simpleTextResponse('room ok'));
+		}
+	}, SETUP_TIMEOUT);
+
+	afterEach(async () => {
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, TEARDOWN_TIMEOUT);
 
 	test(
 		'should disable Claude preset, keep restricted tools, and answer a simple message',
@@ -107,7 +120,7 @@ describe('Room Chat Constraints (API-dependent)', () => {
 			);
 
 			await sendMessage(daemon, roomChatSessionId, 'Reply with exactly: room ok');
-			await waitForIdle(daemon, roomChatSessionId, 120000);
+			await waitForIdle(daemon, roomChatSessionId, IDLE_TIMEOUT);
 
 			const messageResult = (await daemon.messageHub.request('message.sdkMessages', {
 				sessionId: roomChatSessionId,
@@ -121,6 +134,6 @@ describe('Room Chat Constraints (API-dependent)', () => {
 			expect(assistantText.toLowerCase()).toContain('room ok');
 			expect(resultMessages).toHaveLength(1);
 		},
-		{ timeout: 180000 }
+		TEST_TIMEOUT
 	);
 });

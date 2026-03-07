@@ -244,7 +244,9 @@ describe('DatabaseCore', () => {
 	describe('error handling', () => {
 		it('should handle invalid path gracefully', async () => {
 			// This should work - the directory will be created
-			dbCore = new DatabaseCore('/tmp/test-db-core-invalid/test.db');
+			// Use process.env.TMPDIR to support custom temp directory setups
+			const tmpBase = (process.env.TMPDIR || '/tmp').replace(/\/$/, '');
+			dbCore = new DatabaseCore(`${tmpBase}/test-db-core-invalid/test.db`);
 			await expect(dbCore.initialize()).resolves.toBeUndefined();
 		});
 	});

@@ -10,7 +10,7 @@
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls
+ * - Makes real API calls (mock mode not supported for multi-agent flow)
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
