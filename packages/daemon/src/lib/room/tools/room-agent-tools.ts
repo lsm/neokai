@@ -169,7 +169,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			const updated = await taskManager.failTask(args.task_id, 'Cancelled by user');
+			const updated = await taskManager.cancelTask(args.task_id);
 			// Notify UI of the status change
 			if (daemonHub) {
 				void daemonHub.emit('room.task.update', {
@@ -308,6 +308,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						review: tasks.filter((t) => t.status === 'review').length,
 						completed: tasks.filter((t) => t.status === 'completed').length,
 						failed: tasks.filter((t) => t.status === 'failed').length,
+						cancelled: tasks.filter((t) => t.status === 'cancelled').length,
 					},
 					activeGroups: activeGroups.length,
 					groups: activeGroups.map((g) => ({
@@ -376,7 +377,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
-					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed'])
+					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'])
 					.optional()
 					.describe('Filter by status'),
 			},
@@ -395,7 +396,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'cancel_task',
-			'Cancel a task (marks as failed and cleans up agent sessions)',
+			'Cancel a task (marks as cancelled — distinct from failed — and cleans up agent sessions)',
 			{ task_id: z.string().describe('ID of the task to cancel') },
 			(args) => handlers.cancel_task(args)
 		),

@@ -153,6 +153,13 @@ export class TaskManager {
 	}
 
 	/**
+	 * Cancel task (intentionally stopped, distinct from failure)
+	 */
+	async cancelTask(taskId: string): Promise<NeoTask> {
+		return this.updateTaskStatus(taskId, 'cancelled');
+	}
+
+	/**
 	 * Move task to review (work done, awaiting human approval)
 	 */
 	async reviewTask(taskId: string, prUrl?: string): Promise<NeoTask> {

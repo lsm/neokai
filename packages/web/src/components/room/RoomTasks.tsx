@@ -8,6 +8,7 @@
  * - Draft
  * - Completed
  * - Failed
+ * - Cancelled
  */
 
 import type { TaskSummary } from '@neokai/shared';
@@ -36,6 +37,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 	const draft = tasks.filter((t) => t.status === 'draft');
 	const completed = tasks.filter((t) => t.status === 'completed');
 	const failed = tasks.filter((t) => t.status === 'failed');
+	const cancelled = tasks.filter((t) => t.status === 'cancelled');
 
 	return (
 		<div class="space-y-4">
@@ -137,6 +139,20 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
+							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* Cancelled */}
+			{cancelled.length > 0 && (
+				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
+					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
+						<h3 class="font-semibold text-gray-500">Cancelled ({cancelled.length})</h3>
+					</div>
+					<div class="divide-y divide-dark-700">
+						{cancelled.map((task) => (
 							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
 						))}
 					</div>

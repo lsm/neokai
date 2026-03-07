@@ -351,6 +351,23 @@ describe('TaskManager', () => {
 		});
 	});
 
+	describe('cancelTask', () => {
+		it('should cancel task with cancelled status (not failed)', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+
+			const updated = await taskManager.cancelTask(task.id);
+
+			expect(updated.status).toBe('cancelled');
+			expect(updated.error).toBeUndefined();
+		});
+
+		it('should throw error for non-existent task', async () => {
+			await expect(taskManager.cancelTask('non-existent')).rejects.toThrow(
+				'Task not found: non-existent'
+			);
+		});
+	});
+
 	describe('reviewTask', () => {
 		it('should mark task for review', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });

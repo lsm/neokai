@@ -310,6 +310,53 @@ describe('RoomTasks', () => {
 		});
 	});
 
+	describe('Cancelled Section', () => {
+		it('should render cancelled section with muted gray header', () => {
+			const tasks = [createTask('t1', 'cancelled', { title: 'Stopped task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const header = container.querySelector('.text-gray-500');
+			expect(header).toBeTruthy();
+			expect(header?.textContent).toContain('Cancelled (1)');
+		});
+
+		it('should show cancelled task titles', () => {
+			const tasks = [createTask('t1', 'cancelled', { title: 'Stopped task' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Stopped task');
+		});
+
+		it('should not show Approve button for cancelled tasks', () => {
+			const onApprove = vi.fn();
+			const tasks = [createTask('t1', 'cancelled')];
+
+			const { container } = render(<RoomTasks tasks={tasks} onApprove={onApprove} />);
+
+			const approveBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+				b.textContent?.includes('Approve')
+			);
+			expect(approveBtn).toBeFalsy();
+		});
+
+		it('should render cancelled separately from failed', () => {
+			const tasks = [
+				createTask('t1', 'failed', { title: 'Error task' }),
+				createTask('t2', 'cancelled', { title: 'Stopped task' }),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const headers = container.querySelectorAll('h3');
+			const headerTexts = Array.from(headers).map((h) => h.textContent);
+
+			expect(headerTexts).toContain('Failed (1)');
+			expect(headerTexts).toContain('Cancelled (1)');
+		});
+	});
+
 	describe('Multiple Status Groups', () => {
 		it('should render all status groups when tasks exist in each', () => {
 			const tasks = [
@@ -319,6 +366,7 @@ describe('RoomTasks', () => {
 				createTask('t4', 'draft'),
 				createTask('t5', 'completed'),
 				createTask('t6', 'failed'),
+				createTask('t7', 'cancelled'),
 			];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
@@ -332,6 +380,7 @@ describe('RoomTasks', () => {
 			expect(headerTexts).toContain('Draft (1)');
 			expect(headerTexts).toContain('Completed (1)');
 			expect(headerTexts).toContain('Failed (1)');
+			expect(headerTexts).toContain('Cancelled (1)');
 		});
 
 		it('should only render sections for statuses that have tasks', () => {

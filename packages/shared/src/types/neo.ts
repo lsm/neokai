@@ -149,7 +149,14 @@ export interface UpdateRoomParams {
 /**
  * Task status
  */
-export type TaskStatus = 'draft' | 'pending' | 'in_progress' | 'review' | 'completed' | 'failed';
+export type TaskStatus =
+	| 'draft'
+	| 'pending'
+	| 'in_progress'
+	| 'review'
+	| 'completed'
+	| 'failed'
+	| 'cancelled';
 
 /**
  * Task priority
