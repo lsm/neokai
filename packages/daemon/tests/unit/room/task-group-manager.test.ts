@@ -591,6 +591,47 @@ describe('TaskGroupManager', () => {
 			expect(groupRepo.getGroup(group.id)!.humanMessagePending).toBe(false);
 		});
 
+		it('should clear humanMessagePending flag on rollback when injectMessage fails', async () => {
+			const { group } = await spawnAndRouteToLeaderAndHuman();
+
+			// Create a factory that fails on injectMessage
+			const failingFactory = {
+				...sessionFactory,
+				async injectMessage(_sessionId: string, _msg: string) {
+					throw new Error('session not found');
+				},
+			};
+			// Temporarily swap the factory by creating a new manager with the failing one
+			const { TaskGroupManager: Mgr } = await import(
+				'../../../src/lib/room/runtime/task-group-manager'
+			);
+			const failingManager = new Mgr(
+				failingFactory as unknown as Parameters<typeof Mgr.prototype.resumeWorkerFromHuman>[never],
+				groupRepo,
+				observer,
+				db as never,
+				'/tmp/workspace'
+			);
+
+			// Manually set state to awaiting_human and ensure humanMessagePending is false
+			groupRepo.updateGroupState(group.id, 'awaiting_human', groupRepo.getGroup(group.id)!.version);
+			expect(groupRepo.getGroup(group.id)!.humanMessagePending).toBe(false);
+
+			// resumeWorkerFromHuman should throw (injectMessage fails) and rollback
+			let threw = false;
+			try {
+				await failingManager.resumeWorkerFromHuman(group.id, 'Human question');
+			} catch {
+				threw = true;
+			}
+			expect(threw).toBe(true);
+
+			// After rollback: state back to awaiting_human, humanMessagePending cleared
+			const afterRollback = groupRepo.getGroup(group.id)!;
+			expect(afterRollback.state).toBe('awaiting_human');
+			expect(afterRollback.humanMessagePending).toBe(false);
+		});
+
 		it('should increment feedbackIteration normally for leader-driven feedback (no humanMessagePending)', async () => {
 			const { group } = await spawnAndRouteToLeaderAndHuman();
 

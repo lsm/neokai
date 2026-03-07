@@ -472,11 +472,13 @@ export class TaskGroupManager {
 		try {
 			await this.sessionFactory.injectMessage(group.workerSessionId, message);
 		} catch (error) {
-			// Rollback: revert group back to awaiting_human
+			// Rollback: revert group back to awaiting_human and clear humanMessagePending
+			// so the flag doesn't linger in awaiting_human state after the failed injection.
 			const current = this.groupRepo.getGroup(groupId);
 			if (current && current.state === 'awaiting_worker') {
 				this.groupRepo.updateGroupState(groupId, 'awaiting_human', current.version);
 			}
+			this.groupRepo.setHumanMessagePending(groupId, false);
 			throw error;
 		}
 
