@@ -48,6 +48,7 @@ import {
 	formatLeaderContractNudge,
 	sortTasksByPriority,
 } from './message-routing';
+import { isRateLimitError, createRateLimitBackoff } from './rate-limit-utils';
 import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
@@ -270,6 +271,13 @@ export class RoomRuntime {
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
 
+		// Check rate limit backoff
+		if (this.groupRepo.isRateLimited(groupId)) {
+			log.info(`Worker reached terminal state while rate limited - pausing routing to Leader`);
+			this.scheduleTickAfterRateLimitReset(groupId);
+			return;
+		}
+
 		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
 		// Applies to all workers — planners create plan files under docs/plans/ and commit to branches.
 		{
@@ -340,6 +348,26 @@ export class RoomRuntime {
 						.join('\n\n')
 				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
 
+		// Check for rate limit errors in worker output
+		if (isRateLimitError(workerOutputText)) {
+			const rateLimitBackoff = createRateLimitBackoff(workerOutputText, 'worker');
+			if (rateLimitBackoff) {
+				this.groupRepo.setRateLimit(groupId, rateLimitBackoff);
+				log.info(
+					`Rate limit detected in worker output for group ${groupId}. ` +
+						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
+				);
+				this.groupRepo.appendMessage({
+					groupId,
+					role: 'system',
+					messageType: 'status',
+					content: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+				});
+				this.scheduleTickAfterRateLimitReset(groupId);
+				return;
+			}
+		}
+
 		// Collect tool call summaries across all messages
 		const toolCallNames = workerMessages.flatMap((m) => m.toolCallNames);
 
@@ -406,6 +434,13 @@ export class RoomRuntime {
 	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group || group.state !== 'awaiting_leader') return;
+
+		// Check rate limit backoff
+		if (this.groupRepo.isRateLimited(groupId)) {
+			log.info(`Leader reached terminal state while rate limited - pausing nudge`);
+			this.scheduleTickAfterRateLimitReset(groupId);
+			return;
+		}
 
 		// Check if Leader called a tool (persisted in DB metadata)
 		const calledTool = group.leaderCalledTool;
@@ -486,6 +521,9 @@ export class RoomRuntime {
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
+
+				// Clear any rate limit backoff since we're starting a new iteration
+				this.groupRepo.clearRateLimit(groupId);
 
 				// Insert status message into group timeline
 				this.groupRepo.appendMessage({
@@ -857,6 +895,27 @@ export class RoomRuntime {
 					const uuid = 'uuid' in event.message ? (event.message.uuid as string) : null;
 					if (uuid && mirroredUuids.has(uuid)) return;
 					if (uuid) mirroredUuids.add(uuid);
+
+					// Check for rate limit errors in the message content
+					// This detects rate limits in real-time for both Worker and Leader sessions
+					const messageContent = JSON.stringify(event.message);
+					if (isRateLimitError(messageContent)) {
+						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
+						const rateLimitBackoff = createRateLimitBackoff(messageContent, sessionRole);
+						if (rateLimitBackoff) {
+							this.groupRepo.setRateLimit(group.id, rateLimitBackoff);
+							log.info(
+								`Rate limit detected in ${role} message for group ${group.id}. ` +
+									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
+							);
+							this.groupRepo.appendMessage({
+								groupId: group.id,
+								role: 'system',
+								messageType: 'status',
+								content: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+							});
+						}
+					}
 
 					// Read current iteration from DB to stay accurate across feedback cycles
 					const currentGroup = this.groupRepo.getGroup(group.id);
@@ -1551,6 +1610,33 @@ export class RoomRuntime {
 		if (this.state !== 'running') return;
 		// Use queueMicrotask for non-blocking tick scheduling
 		queueMicrotask(() => this.tick());
+	}
+
+	/**
+	 * Schedule a tick after rate limit reset time.
+	 * Used to resume work after API rate limit backoff period expires.
+	 */
+	private scheduleTickAfterRateLimitReset(groupId: string): void {
+		const remainingMs = this.groupRepo.getRateLimitRemainingMs(groupId);
+		if (remainingMs <= 0) {
+			// Rate limit already expired, schedule immediate tick
+			this.scheduleTick();
+			return;
+		}
+
+		// Add a small buffer (5 seconds) to ensure rate limit has fully reset
+		const delayMs = remainingMs + 5000;
+
+		log.info(
+			`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
+				`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
+		);
+
+		setTimeout(() => {
+			// Clear the rate limit backoff since it should be expired now
+			this.groupRepo.clearRateLimit(groupId);
+			this.scheduleTick();
+		}, delayMs);
 	}
 
 	/**
