@@ -271,16 +271,23 @@ export class TaskManager {
 	}
 
 	/**
-	 * Update task priority
+	 * Update task fields (title, description, priority) without changing status.
+	 * Works for tasks in any status — used by the room agent.
 	 */
-	async updateTaskPriority(taskId: string, priority: TaskPriority): Promise<NeoTask> {
+	async updateTaskFields(
+		taskId: string,
+		updates: {
+			title?: string;
+			description?: string;
+			priority?: TaskPriority;
+		}
+	): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
 		}
 
-		const updatedTask = this.taskRepo.updateTask(taskId, { priority });
-
+		const updatedTask = this.taskRepo.updateTask(taskId, updates);
 		if (!updatedTask) {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}
