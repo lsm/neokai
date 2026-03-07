@@ -258,10 +258,7 @@ export class RoomRuntime {
 	 * Resolve model for a room agent role.
 	 * Priority: room.config.agentModels[role] > room.defaultModel > global default.
 	 */
-	private resolveAgentModel(
-		room: Room,
-		role: 'leader' | 'planner' | 'coder' | 'general'
-	): string {
+	private resolveAgentModel(room: Room, role: 'leader' | 'planner' | 'coder' | 'general'): string {
 		const config = (room.config ?? {}) as Record<string, unknown>;
 		const agentModels = config.agentModels as Record<string, string> | undefined;
 		const roleModel = agentModels?.[role];

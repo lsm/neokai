@@ -498,7 +498,7 @@ export class TaskGroupManager {
 	 * Unlike submitForReview (triggered by leader's submit_for_review tool call),
 	 * this escalation has no PR URL — it is a runtime-enforced lifecycle boundary.
 	 */
-	async escalateToHumanReview(groupId: string, reason: string): Promise<SessionGroup | null> {
+	async escalateToHumanReview(groupId: string, _reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 

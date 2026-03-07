@@ -105,9 +105,7 @@ describe('RoomRuntime flow', () => {
 			await createGoalAndTask(ctx, { assignedAgent: 'general' });
 			ctx.runtime.start();
 			await ctx.runtime.tick();
-			createCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession'
-			);
+			createCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'createAndStartSession');
 			expect(createCalls[0].args[1]).toBe('general');
 			expect((createCalls[0].args[0] as { model?: string }).model).toBe('general-model');
 		});

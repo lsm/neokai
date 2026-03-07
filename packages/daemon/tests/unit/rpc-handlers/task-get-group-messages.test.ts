@@ -74,8 +74,17 @@ function makeGroupRow(): Record<string, unknown> {
 
 function makeDb(opts?: {
 	groupRow?: Record<string, unknown> | null;
-	sdkBySession?: Record<string, Array<{ sdk_message: string; timestamp: string; send_status: string | null }>>;
-	events?: Array<{ id: number; group_id: string; kind: string; payload_json: string | null; created_at: number }>;
+	sdkBySession?: Record<
+		string,
+		Array<{ sdk_message: string; timestamp: string; send_status: string | null }>
+	>;
+	events?: Array<{
+		id: number;
+		group_id: string;
+		kind: string;
+		payload_json: string | null;
+		created_at: number;
+	}>;
 }): Database {
 	const groupRow = opts?.groupRow ?? makeGroupRow();
 	const sdkBySession = opts?.sdkBySession ?? {};
@@ -125,12 +134,7 @@ const mockRoomManager = { getRoomOverview: mock(() => null) } as unknown as Room
 describe('task.getGroupMessages RPC handler', () => {
 	it('returns empty result when group does not exist', async () => {
 		const { hub, handlers } = createMockMessageHub();
-		setupTaskHandlers(
-			hub,
-			mockRoomManager,
-			createMockDaemonHub(),
-			makeDb({ groupRow: null })
-		);
+		setupTaskHandlers(hub, mockRoomManager, createMockDaemonHub(), makeDb({ groupRow: null }));
 
 		const handler = handlers.get('task.getGroupMessages');
 		expect(handler).toBeDefined();
