@@ -6,6 +6,26 @@
 
 Replace the current internal mock SDK approach with Microsoft Dev Proxy for all online tests that don't require real AI API calls. This will improve test stability, reduce costs, and provide a more realistic simulation of API behavior while maintaining test effectiveness.
 
+### Scope Clarification
+
+**Tests to convert (~11 files):** Only tests currently using `NEOKAI_AGENT_SDK_MOCK=1` will be converted to use Dev Proxy:
+- `rewind-feature.test.ts`
+- `selective-rewind.test.ts`
+- `session-resume.test.ts`
+- `message-persistence.test.ts`
+- `message-delivery-mode-queue.test.ts`
+- `agent-session-sdk.test.ts`
+- `agent-pipeline.test.ts`
+- `room-chat-constraints.test.ts`
+- `multiturn-conversation.test.ts`
+- `sdk-streaming-failures.test.ts`
+- `rpc-message-handlers.test.ts`
+
+**Tests NOT in scope (will continue using real API):**
+- Provider-specific tests: `providers/anthropic-provider.test.ts`, `providers/openai-provider.test.ts`, `providers/github-copilot-provider.test.ts`
+- GLM tests: `glm/glm-provider.test.ts`, `glm/glm-sdk-minimal.test.ts`, `glm/model-switching.test.ts`
+- Multi-agent room tests that require real AI behavior: `room-multi-agent-flow.test.ts`, `room-planner-two-phase.test.ts`, `room-reviewer-flow.test.ts`
+
 ## Background
 
 ### Current Approach
@@ -74,7 +94,6 @@ Reference the [Anthropic simulation sample](https://github.com/pnp/proxy-samples
 **Acceptance Criteria:**
 - Dev Proxy starts successfully with `bun run test:proxy:start`
 - Dev Proxy mocks a basic Anthropic API request successfully
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ### Task 3: Create mock response files for common scenarios
 
@@ -82,17 +101,18 @@ Reference the [Anthropic simulation sample](https://github.com/pnp/proxy-samples
 
 Create comprehensive mock response files based on the existing mock-sdk.ts scenarios:
 
-1. Basic text responses (simple replies, multi-turn)
-2. Tool use responses (tool calls, tool results)
-3. Error scenarios (rate limiting, API errors, timeouts)
-4. Room-specific responses (planner, coder, reviewer, leader flows)
-5. Streaming responses (if supported by Dev Proxy)
+**Scenarios to cover (from mock-sdk.ts):**
+1. **Basic text responses**: `simpleTextResponse()`, `sdkAssistantText()`, multi-turn conversations
+2. **Tool use responses**: `toolUseResponse()`, `sdkToolUse()`, `sdkToolResult()`, tool execution flows
+3. **Error scenarios**: API rate limiting (429), server errors (500), timeouts, malformed responses
+4. **Room-specific responses**: `plannerFull`, `coder`, `leader`, `chat` agent scripts
+5. **Streaming responses**: SSE-style chunked responses (if supported by Dev Proxy)
 
-Files to create in `.devproxy/`:
-- `mocks-basic.json` - Simple text responses
-- `mocks-tool-use.json` - Tool call scenarios
-- `mocks-errors.json` - Error responses
-- `mocks-room.json` - Room multi-agent scenarios
+**Files to create in `.devproxy/`:**
+- `mocks-basic.json` - Simple text responses, multi-turn conversations
+- `mocks-tool-use.json` - Tool call scenarios, tool execution flows
+- `mocks-errors.json` - Error responses (rate limiting, server errors, timeouts)
+- `mocks-room.json` - Room multi-agent scenarios (planner, coder, reviewer, leader)
 
 **Deliverables:**
 - Set of mock JSON files covering common test scenarios
@@ -100,8 +120,7 @@ Files to create in `.devproxy/`:
 
 **Acceptance Criteria:**
 - Mock files follow Dev Proxy schema
-- Coverage of at least 80% of current mock-sdk.ts scenarios
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+- Coverage of at least 80% of scenarios listed above (basic text, tool use, errors, room flows)
 
 ### Task 4: Create test helper for Dev Proxy integration
 
@@ -124,7 +143,6 @@ Create a test helper module that manages Dev Proxy lifecycle and configuration:
 **Acceptance Criteria:**
 - Helper starts/stops Dev Proxy reliably
 - Process cleanup works correctly on test failure
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ### Task 5: Convert daemon tests to use Dev Proxy
 
@@ -138,9 +156,19 @@ Update the daemon test infrastructure to use Dev Proxy:
    - Start Dev Proxy before tests
    - Set `HTTP_PROXY` and `HTTPS_PROXY` environment variables
    - Configure mock SDK flag appropriately
-3. Update test files that currently use `NEOKAI_AGENT_SDK_MOCK`:
-   - Keep both options working during transition
-   - Tests should work with either mock approach
+3. Update the following ~11 test files that currently use `NEOKAI_AGENT_SDK_MOCK`:
+   - `tests/online/rewind/rewind-feature.test.ts`
+   - `tests/online/rewind/selective-rewind.test.ts`
+   - `tests/online/lifecycle/session-resume.test.ts`
+   - `tests/online/features/message-persistence.test.ts`
+   - `tests/online/features/message-delivery-mode-queue.test.ts`
+   - `tests/online/agent/agent-session-sdk.test.ts`
+   - `tests/online/agent/agent-pipeline.test.ts`
+   - `tests/online/room/room-chat-constraints.test.ts`
+   - `tests/online/convo/multiturn-conversation.test.ts`
+   - `tests/online/sdk/sdk-streaming-failures.test.ts`
+   - `tests/online/rpc/rpc-message-handlers.test.ts`
+4. Keep both mock options working during transition (tests work with either approach)
 
 **Deliverables:**
 - Updated CI configuration with Dev Proxy setup
@@ -148,9 +176,8 @@ Update the daemon test infrastructure to use Dev Proxy:
 - Updated test files
 
 **Acceptance Criteria:**
-- Tests pass with `NEOKAI_USE_DEV_PROXY=1`
-- Tests still pass with `NEOKAI_AGENT_SDK_MOCK=1` (backwards compatibility)
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+- All 11 test files listed above pass with `NEOKAI_USE_DEV_PROXY=1`
+- All 11 test files still pass with `NEOKAI_AGENT_SDK_MOCK=1` (backwards compatibility)
 
 ### Task 6: Validate and measure improvements
 
@@ -160,7 +187,10 @@ Run comprehensive validation and measure the impact:
 
 1. Run all converted tests with Dev Proxy
 2. Compare execution times with current mock approach
-3. Verify API call counts (should be zero)
+3. Verify API call counts (should be zero):
+   - Check Dev Proxy logs for passthrough requests (requests that weren't mocked)
+   - Confirm no real API calls via proxy log analysis
+   - Optionally: monitor network traffic or use `--no-mocks` to verify
 4. Document any test failures and resolution
 5. Measure CI execution time improvement
 
@@ -171,7 +201,7 @@ Run comprehensive validation and measure the impact:
 
 **Acceptance Criteria:**
 - All converted tests pass
-- API call count is zero during test runs
+- API call count is zero during test runs (verified via Dev Proxy logs showing no passthrough requests)
 - Documentation of any limitations or caveats
 
 ## Dependencies
@@ -184,7 +214,7 @@ Run comprehensive validation and measure the impact:
 
 ## Execution Notes
 
-- Tasks 2-5 should each create separate PRs for easier review
+- **PR Strategy**: Tasks 2-5 should each create separate PRs for easier review. All code changes must be on feature branches with PRs created via `gh pr create`.
 - Keep the existing `NEOKAI_AGENT_SDK_MOCK` approach working during transition
 - Consider a feature flag approach to switch between mock implementations
 - Dev Proxy must be installed on CI runners (GitHub Actions supports apt installation)
@@ -214,7 +244,9 @@ NODE_TLS_REJECT_UNAUTHORIZED=0  # If using self-signed certs
 ### Potential Challenges
 1. **SDK Proxy Support**: The Claude Agent SDK may not respect standard proxy environment variables. May need to use `ANTHROPIC_BASE_URL` to redirect to proxy.
 2. **HTTPS/TLS**: Dev Proxy may need certificate trust configuration for HTTPS interception.
-3. **Streaming**: Dev Proxy's support for streaming responses needs verification.
+3. **Streaming Support**: Dev Proxy v2.1.0+ supports streaming responses. The current mock SDK intercepts at the query runner level and simulates streaming by yielding messages. Dev Proxy mocks can return static JSON responses; for streaming scenarios, we may need to either:
+   - Use Dev Proxy's streaming support if the SDK uses SSE/chunked responses
+   - Fall back to internal mock for streaming-specific tests
 4. **CI Installation**: Dev Proxy needs to be installed on GitHub Actions runners.
 
 ### Fallback Strategy
