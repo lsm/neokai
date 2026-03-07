@@ -516,3 +516,404 @@ export async function waitForIdle(
 
 /** @deprecated Use `waitForIdle` instead */
 export const waitForMockIdle = waitForIdle;
+
+// ============================================================================
+// Script-Based Mock System
+// ============================================================================
+
+/**
+ * Script-based mock system for more declarative response scripting.
+ *
+ * ## Script Format
+ *
+ * Each line in the script can be:
+ *
+ * - `500ms` - Pause for 500ms before the next message
+ * - `builtin:system:init` - Generate a system init message
+ * - `builtin:result` - Generate a success result message
+ * - `builtin:result:tokens:100:50` - Success with custom tokens (input:output)
+ * - `builtin:error` - Generate an error result
+ * - `builtin:error:rate_limit` - Generate a rate_limit error result
+ * - `ENV_VAR_NAME` - Look up env var and use its value as JSON message
+ * - `{"type": "assistant", ...}` - Raw JSON object (returned as-is)
+ *
+ * ## Example
+ *
+ * ```ts
+ * process.env.NEOKAI_MOCK_SCRIPT = `
+ *   builtin:system:init
+ *   100ms
+ *   {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Hello!"}]}}
+ *   builtin:result
+ * `;
+ *
+ * installScriptAutoMock(ctx);
+ * ```
+ *
+ * ## Multi-turn Support
+ *
+ * Use `---` to separate turns. Each turn consumes one user message:
+ *
+ * ```
+ * builtin:system:init
+ * builtin:result
+ * ---
+ * builtin:system:init
+ * builtin:error
+ * ```
+ */
+
+/**
+ * Built-in message generators
+ */
+const BUILTIN_MESSAGES: Record<string, () => SDKMessage> = {
+	'system:init': () => sdkSystemInit(),
+	result: () => sdkResultSuccess({ inputTokens: 1, outputTokens: 1 }),
+	error: () => sdkResultError('error_during_execution', 'Mock error'),
+	'error:rate_limit': () =>
+		({
+			type: 'result',
+			subtype: 'error_during_execution',
+			uuid: randomUUID() as UUID,
+			session_id: '',
+			error: 'rate_limit_error',
+			usage: {
+				input_tokens: 0,
+				output_tokens: 0,
+				cache_read_input_tokens: 0,
+				cache_creation_input_tokens: 0,
+			},
+			total_cost_usd: 0,
+		}) as unknown as SDKMessage,
+};
+
+/**
+ * Parse a single line of the script and return either a delay or a message.
+ */
+function parseScriptLine(line: string): { delay?: number; message?: SDKMessage } {
+	const trimmed = line.trim();
+
+	// Empty line - skip
+	if (!trimmed) {
+		return {};
+	}
+
+	// Delay: "500ms" or "100ms"
+	const delayMatch = trimmed.match(/^(\d+)ms$/);
+	if (delayMatch) {
+		return { delay: parseInt(delayMatch[1], 10) };
+	}
+
+	// Built-in message: "builtin:system:init", "builtin:result", "builtin:error:rate_limit"
+	if (trimmed.startsWith('builtin:')) {
+		const builtinKey = trimmed.slice(8); // Remove "builtin:" prefix
+		const generator = BUILTIN_MESSAGES[builtinKey];
+		if (generator) {
+			return { message: generator() };
+		}
+
+		// Handle "builtin:result:tokens:100:50" format
+		if (builtinKey.startsWith('result:tokens:')) {
+			const parts = builtinKey.split(':');
+			if (parts.length === 4) {
+				const inputTokens = parseInt(parts[2], 10);
+				const outputTokens = parseInt(parts[3], 10);
+				return { message: sdkResultSuccess({ inputTokens, outputTokens }) };
+			}
+		}
+
+		// Unknown builtin - treat as error
+		return { message: sdkResultError('error_during_execution', `Unknown builtin: ${builtinKey}`) };
+	}
+
+	// JSON object - parse and return
+	if (trimmed.startsWith('{')) {
+		try {
+			const parsed = JSON.parse(trimmed);
+			// Add required fields if missing
+			if (!parsed.uuid) parsed.uuid = randomUUID();
+			if (!parsed.session_id) parsed.session_id = '';
+			return { message: parsed as SDKMessage };
+		} catch (e) {
+			return { message: sdkResultError('error_during_execution', `Invalid JSON: ${trimmed}`) };
+		}
+	}
+
+	// Environment variable reference - look up and parse as JSON
+	const envValue = process.env[trimmed];
+	if (envValue !== undefined) {
+		try {
+			const parsed = JSON.parse(envValue);
+			if (!parsed.uuid) parsed.uuid = randomUUID();
+			if (!parsed.session_id) parsed.session_id = '';
+			return { message: parsed as SDKMessage };
+		} catch {
+			// If not valid JSON, treat as plain text assistant message
+			return { message: sdkAssistantText(envValue) };
+		}
+	}
+
+	// Unknown format - treat as error
+	return { message: sdkResultError('error_during_execution', `Unknown script line: ${trimmed}`) };
+}
+
+/**
+ * Parse a full script into turns (array of arrays of message generators).
+ *
+ * @param script - The script string
+ * @returns Array of turns, each turn is array of { delay?, message }
+ */
+export function parseMockScript(
+	script: string
+): Array<Array<{ delay?: number; message?: SDKMessage }>> {
+	const turns: Array<Array<{ delay?: number; message?: SDKMessage }>> = [];
+	let currentTurn: Array<{ delay?: number; message?: SDKMessage }> = [];
+
+	for (const line of script.split('\n')) {
+		const trimmed = line.trim();
+
+		// Turn separator
+		if (trimmed === '---') {
+			if (currentTurn.length > 0) {
+				turns.push(currentTurn);
+				currentTurn = [];
+			}
+			continue;
+		}
+
+		// Skip empty lines and comments
+		if (!trimmed || trimmed.startsWith('#')) {
+			continue;
+		}
+
+		const parsed = parseScriptLine(trimmed);
+		if (parsed.delay !== undefined || parsed.message !== undefined) {
+			currentTurn.push(parsed);
+		}
+	}
+
+	if (currentTurn.length > 0) {
+		turns.push(currentTurn);
+	}
+
+	return turns;
+}
+
+/**
+ * Create a response factory from a script.
+ *
+ * @param script - The script string
+ * @returns MockResponseFactory compatible with existing mock system
+ */
+export function scriptToResponseFactory(script: string): MockResponseFactory {
+	return () => {
+		const turns = parseMockScript(script);
+		// Convert to SDKMessage[][] format for the existing mock system
+		return turns.map((turn) => {
+			const messages: SDKMessage[] = [];
+			for (const item of turn) {
+				if (item.message) {
+					messages.push(item.message);
+				}
+			}
+			return messages;
+		});
+	};
+}
+
+/**
+ * Create a script-based mock with timing support.
+ *
+ * Unlike scriptToResponseFactory, this actually applies the delays between messages.
+ * Use this when you need to test timing-sensitive behavior.
+ *
+ * @param sessionManager - The SessionManager instance
+ * @param sessionId - The session ID to mock
+ * @param script - The script string
+ */
+export function mockAgentSessionWithScript(
+	sessionManager: SessionManager,
+	sessionId: string,
+	script: string
+): ReturnType<typeof sessionManager.getSession> | null {
+	const agentSession = sessionManager.getSession(sessionId);
+	if (!agentSession) return null;
+
+	// biome-ignore lint/suspicious/noExplicitAny: accessing private fields for test mock
+	const ctx = agentSession as any;
+	const turns = parseMockScript(script);
+
+	// Replace queryRunner.start() with mock implementation that respects timing
+	ctx.queryRunner.start = async () => {
+		const { messageQueue, messageHandler, stateManager } = ctx;
+
+		if (messageQueue.isRunning()) return;
+
+		messageQueue.start();
+		ctx._queryGeneration++;
+		ctx.firstMessageReceived = false;
+
+		const currentGen = ctx._queryGeneration;
+
+		ctx.queryPromise = (async () => {
+			const gen = messageQueue.messageGenerator(sessionId);
+
+			try {
+				// Process each turn by consuming one user message per turn
+				for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
+					const next = await gen.next();
+					if (!next.value || next.done) break;
+
+					const { message, onSent } = next.value;
+					const isInternal = (message as Record<string, unknown>).internal || false;
+					if (!isInternal) {
+						await stateManager.setProcessing(message.uuid ?? 'unknown', 'initializing');
+					}
+					onSent();
+
+					ctx.firstMessageReceived = true;
+
+					// Feed scripted SDK messages for this turn with timing
+					const turnItems = turns[turnIndex];
+
+					for (const item of turnItems) {
+						// Apply delay if specified
+						if (item.delay) {
+							await Bun.sleep(item.delay);
+						}
+						// Send message if specified
+						if (item.message) {
+							await messageHandler.handleMessage(item.message);
+						}
+					}
+				}
+			} catch (error) {
+				ctx.logger?.error?.('[MockSDK] Error processing messages:', error);
+			} finally {
+				if (ctx._queryGeneration === currentGen) {
+					messageQueue.clear();
+					messageQueue.stop();
+					ctx.queryPromise = null;
+
+					try {
+						await gen.return();
+					} catch {
+						// Ignore generator cleanup errors
+					}
+
+					if (!ctx._isCleaningUp) {
+						await stateManager.setIdle();
+					}
+				}
+			}
+		})();
+	};
+
+	return agentSession;
+}
+
+/**
+ * Install auto-mocking from NEOKAI_MOCK_SCRIPT environment variable.
+ *
+ * This is the simplest way to use the script-based mock system:
+ *
+ * ```ts
+ * // In test file or setup
+ * process.env.NEOKAI_MOCK_SCRIPT = `
+ *   builtin:system:init
+ *   100ms
+ *   {"type": "assistant", ...}
+ *   builtin:result
+ * `;
+ *
+ * // In beforeEach
+ * installScriptAutoMock(ctx);
+ *
+ * // Test code is identical to online tests
+ * const sessionId = await createSession();
+ * await sendMessage(sessionId, 'Hi');
+ * await waitForIdle(ctx.sessionManager, sessionId);
+ * ```
+ *
+ * @param ctx - Context with sessionManager and eventBus
+ * @returns Controls object to change the script
+ */
+export function installScriptAutoMock(ctx: MockableContext): {
+	setScript: (script: string) => void;
+} {
+	let currentScript = process.env.NEOKAI_MOCK_SCRIPT || '';
+
+	// Listen for session.created and auto-apply script-based mock
+	ctx.eventBus.on('session.created', async (data: { sessionId: string }) => {
+		const { sessionId } = data;
+		if (currentScript) {
+			mockAgentSessionWithScript(ctx.sessionManager, sessionId, currentScript);
+		} else {
+			// Fallback to simple text response if no script
+			mockAgentSessionWithResponses(
+				ctx.sessionManager,
+				sessionId,
+				simpleTextResponse('Mock response')
+			);
+		}
+	});
+
+	return {
+		setScript: (script: string) => {
+			currentScript = script;
+		},
+	};
+}
+
+/**
+ * Helper to create common script patterns.
+ */
+export const MockScripts = {
+	/**
+	 * Simple text response with optional delay
+	 */
+	simpleText: (text: string, delayMs = 0) => {
+		const delayLine = delayMs > 0 ? `${delayMs}ms\n` : '';
+		return `${delayLine}builtin:system:init\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"${text}"}]}}\nbuiltin:result`;
+	},
+
+	/**
+	 * Multi-turn conversation
+	 */
+	multiTurn: (responses: string[], delayMs = 100) => {
+		return responses
+			.map(
+				(text) =>
+					`builtin:system:init\n${delayMs}ms\n{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"${text}"}]}}\nbuiltin:result`
+			)
+			.join('\n---\n');
+	},
+
+	/**
+	 * Error response
+	 */
+	error: (message = 'Mock error') => {
+		return `builtin:system:init\nbuiltin:error`;
+	},
+
+	/**
+	 * Rate limit error
+	 */
+	rateLimit: () => {
+		return `builtin:system:init\nbuiltin:error:rate_limit`;
+	},
+
+	/**
+	 * Tool use and result flow
+	 */
+	toolUse: (toolName: string, input: Record<string, unknown>, result: string) => {
+		const toolUseId = `toolu_${randomUUID().replace(/-/g, '').slice(0, 24)}`;
+		return [
+			'builtin:system:init',
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"${toolUseId}","name":"${toolName}","input":${JSON.stringify(input)}}]}}`,
+			`{"type":"assistant","parent_tool_use_id":"${toolUseId}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"${toolUseId}","content":"${result}"}]}}`,
+			`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]}}`,
+			'builtin:result',
+		].join('\n');
+	},
+};
