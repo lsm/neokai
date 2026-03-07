@@ -202,6 +202,135 @@ export async function checkPrSynced(
 }
 
 /**
+ * Check that the PR was actually merged (for post-approval coder tasks in worker exit gate).
+ * Verifies the worker successfully ran `gh pr merge` before exiting.
+ */
+export async function checkWorkerPrMerged(
+	ctx: WorkerExitHookContext,
+	opts?: HookOptions
+): Promise<HookResult> {
+	const run = getRunner(opts);
+
+	const { stdout: branch, exitCode: branchExit } = await run(
+		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+		ctx.workspacePath
+	);
+	if (branchExit !== 0) {
+		log.debug(`checkWorkerPrMerged: git command failed, skipping check`);
+		return { pass: true };
+	}
+
+	const { stdout: state, exitCode: ghExit } = await run(
+		['gh', 'pr', 'view', branch, '--json', 'state', '--jq', '.state'],
+		ctx.workspacePath
+	);
+	if (ghExit !== 0) {
+		log.debug(`checkWorkerPrMerged: gh command failed, skipping check`);
+		return { pass: true };
+	}
+
+	const prState = state.trim();
+	if (prState === 'MERGED') {
+		return { pass: true };
+	}
+	// Empty/unexpected state is indeterminate — fail open rather than block with confusing message
+	if (!prState) {
+		log.debug(`checkWorkerPrMerged: gh returned empty state, skipping check`);
+		return { pass: true };
+	}
+
+	if (prState === 'CLOSED') {
+		return {
+			pass: false,
+			reason: `PR on branch "${branch}" is CLOSED (closed without merging). Cannot merge a closed PR directly.`,
+			bounceMessage:
+				`The PR for branch "${branch}" is CLOSED — it was closed without merging.\n\n` +
+				`A closed PR cannot be merged directly. To fix this:\n` +
+				`1. Reopen the PR: \`gh pr reopen ${branch}\`\n` +
+				`2. Then merge: \`gh pr merge ${branch} --merge\`\n` +
+				`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
+				`4. Then finish your response.`,
+		};
+	}
+
+	return {
+		pass: false,
+		reason: `PR on branch "${branch}" is not merged (state: ${prState}). Worker must merge before exiting.`,
+		bounceMessage:
+			`The PR for branch "${branch}" is not merged yet (state: ${prState}).\n\n` +
+			`You were asked to merge the PR. Please complete this step:\n` +
+			`1. Run: \`gh pr merge ${branch} --merge\`\n` +
+			`2. If that fails, try: \`gh pr merge ${branch} --squash\`\n` +
+			`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
+			`4. Then finish your response.`,
+	};
+}
+
+/**
+ * Check that the PR was actually merged (for post-approval coding tasks in leader complete gate).
+ * Prevents the leader from marking a task complete when the PR merge didn't succeed.
+ */
+export async function checkLeaderPrMerged(
+	ctx: LeaderCompleteHookContext,
+	opts?: HookOptions
+): Promise<HookResult> {
+	const run = getRunner(opts);
+
+	const { stdout: branch, exitCode: branchExit } = await run(
+		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+		ctx.workspacePath
+	);
+	if (branchExit !== 0) {
+		log.debug(`checkLeaderPrMerged: git command failed, skipping check`);
+		return { pass: true };
+	}
+
+	const { stdout: state, exitCode: ghExit } = await run(
+		['gh', 'pr', 'view', branch, '--json', 'state', '--jq', '.state'],
+		ctx.workspacePath
+	);
+	if (ghExit !== 0) {
+		log.debug(`checkLeaderPrMerged: gh command failed, skipping check`);
+		return { pass: true };
+	}
+
+	const prState = state.trim();
+	if (prState === 'MERGED') {
+		return { pass: true };
+	}
+	// Empty/unexpected state is indeterminate — fail open rather than block with confusing message
+	if (!prState) {
+		log.debug(`checkLeaderPrMerged: gh returned empty state, skipping check`);
+		return { pass: true };
+	}
+
+	if (prState === 'CLOSED') {
+		return {
+			pass: false,
+			reason: `PR on branch "${branch}" is CLOSED (closed without merging). Task cannot be completed.`,
+			bounceMessage:
+				`The PR for this task is CLOSED — it was closed without merging.\n\n` +
+				'A closed PR cannot be merged directly. To fix this:\n' +
+				'1. Use `send_to_worker` with: "The PR was closed without merging. ' +
+				`Reopen it with \`gh pr reopen ${branch}\`, then merge with \`gh pr merge ${branch} --merge\`, ` +
+				`and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
+				'2. After the worker confirms the merge (state: MERGED), call `complete_task` again.',
+		};
+	}
+
+	return {
+		pass: false,
+		reason: `PR on branch "${branch}" is not merged (state: ${prState}). Task cannot be completed until the PR is merged.`,
+		bounceMessage:
+			`The PR for this task is not merged (state: ${prState}). You cannot mark the task complete until the PR is actually merged.\n\n` +
+			'To fix this:\n' +
+			'1. Use `send_to_worker` to ask the worker: "The PR merge did not complete. ' +
+			`Please run \`gh pr merge ${branch} --merge\` and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
+			'2. After the worker confirms the merge (state: MERGED), call `complete_task` again.',
+	};
+}
+
+/**
  * Check that at least one draft task was created (for planner tasks).
  */
 export async function checkDraftTasksCreated(
@@ -344,7 +473,11 @@ export async function runWorkerExitGate(
 				const result = await checkDraftTasksCreated(ctx, opts);
 				if (!result.pass) return result;
 			}
-			// Coder: worker merged the PR, skip all checks
+			if (ctx.workerRole === 'coder') {
+				// Phase 2: verify the worker actually merged the PR before exiting
+				const result = await checkWorkerPrMerged(ctx, opts);
+				if (!result.pass) return result;
+			}
 			return { pass: true };
 		}
 
@@ -390,11 +523,15 @@ export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	// Human-approved tasks: PR was already merged, skip PR/review checks.
-	// For planning: still verify that draft tasks were created.
+	// Human-approved tasks: skip PR/review checks but verify merge for coding tasks.
+	// For planning: verify draft tasks were created.
+	// For coding: verify PR was actually merged (worker may have failed the merge).
 	if (ctx.approved) {
 		if (ctx.taskType === 'planning') {
 			return checkLeaderDraftsExist(ctx, opts);
+		}
+		if (ctx.workerRole === 'coder') {
+			return checkLeaderPrMerged(ctx, opts);
 		}
 		return { pass: true };
 	}
