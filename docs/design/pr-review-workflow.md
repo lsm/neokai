@@ -227,7 +227,7 @@ Room agent configuration lives in the existing `Room.config` JSON field:
   "reviewers": [
     { "model": "claude-opus-4-6", "provider": "anthropic" },
     { "model": "glm-5", "provider": "glm" },
-    { "model": "codex", "type": "cli", "driver_model": "sonnet" }
+    { "model": "codex", "type": "cli" }
   ],
   "maxReviewRounds": 5
 }
