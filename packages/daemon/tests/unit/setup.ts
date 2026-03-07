@@ -6,9 +6,14 @@
  */
 
 import { configureLogger, LogLevel } from '@neokai/shared';
+import { resetProviderRegistry } from '../../src/lib/providers/registry';
 
 // Set NODE_ENV to test
 process.env.NODE_ENV = 'test';
+
+// Reset provider registry to ensure clean state for each test run
+// This prevents cross-test pollution from provider registrations
+resetProviderRegistry();
 
 // Explicitly configure logger to SILENT to suppress all console output during tests
 // This prevents test error logs from cluttering the output

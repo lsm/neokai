@@ -609,7 +609,7 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 		cleanup();
 	});
 
-	it('passes bottomClass="bottom-4" to ScrollToBottomButton', async () => {
+	it('passes bottomClass="bottom-0" to ScrollToBottomButton', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -622,7 +622,7 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 			expect(getByTestId('scroll-to-bottom')).toBeTruthy();
 		});
 
-		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-4');
+		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-0');
 	});
 });
 

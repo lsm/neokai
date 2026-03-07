@@ -1,4 +1,4 @@
-.PHONY: dev dev-random serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup
 
 # Default workspace for development
 WORKSPACE ?= tmp/workspace
@@ -72,9 +72,6 @@ build:
 	@cd packages/web && bun run build
 
 test: test-daemon test-web
-
-test-1:
-	@bun test --preload=./packages/daemon/tests/unit/setup.ts --dots packages/daemon/tests/unit packages/shared/tests --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage
 
 test-daemon:
 	@echo "Running daemon tests..."
