@@ -607,10 +607,11 @@ export class SessionLifecycle {
 		}
 
 		try {
-			// Step 1: Generate title from user message using Haiku model
+			// Step 1: Generate title from user message using session's model
 			const { title, isFallback } = await this.generateTitleFromMessage(
 				userMessageText,
-				session.workspacePath
+				session.workspacePath,
+				session.config.model
 			);
 
 			// Step 2: Rename branch if we have a worktree
@@ -699,11 +700,13 @@ export class SessionLifecycle {
 	 * Generate title from first user message using direct API call
 	 * This bypasses the SDK subprocess and calls the Anthropic-like API directly
 	 *
+	 * @param sessionModel - The model to use for title generation (from session config)
 	 * @returns Object with title and isFallback flag
 	 */
 	private async generateTitleFromMessage(
 		messageText: string,
-		_sessionWorkspacePath: string
+		_sessionWorkspacePath: string,
+		sessionModel?: string
 	): Promise<{ title: string; isFallback: boolean }> {
 		// Get provider service to detect provider and get API configuration
 		const providerService = getProviderService();
@@ -720,8 +723,14 @@ export class SessionLifecycle {
 			};
 		}
 
-		// Get title generation configuration from provider service
-		const { modelId } = await providerService.getTitleGenerationConfig(provider);
+		// Use session model if provided, otherwise fall back to title generation config
+		let modelId: string;
+		if (sessionModel) {
+			modelId = sessionModel;
+		} else {
+			const config = await providerService.getTitleGenerationConfig(provider);
+			modelId = config.modelId;
+		}
 
 		try {
 			const title = await this.generateTitleWithSdk(provider, modelId, messageText);
