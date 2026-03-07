@@ -73,7 +73,7 @@ describe('CopyButton', () => {
 			});
 		});
 
-		it('should show success toast on successful copy', async () => {
+		it('should show success state on successful copy', async () => {
 			(copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
 			render(<CopyButton text="test text" />);
@@ -81,32 +81,33 @@ describe('CopyButton', () => {
 			button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
 			await waitFor(() => {
-				expect(toast.success).toHaveBeenCalledWith('Copied to clipboard');
+				// On success, button shows checkmark and title changes to "Copied!"
+				expect(button?.getAttribute('title')).toBe('Copied!');
 			});
 		});
 
-		it('should show custom success message', async () => {
+		it('should show custom label', async () => {
 			(copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
-			render(<CopyButton text="test text" successMessage="SDK ID copied!" />);
+			render(<CopyButton text="test text" label="Copy SDK ID" />);
 			const button = document.body.querySelector('button');
 			button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
 			await waitFor(() => {
-				expect(toast.success).toHaveBeenCalledWith('SDK ID copied!');
+				// On success, title changes from custom label to "Copied!"
+				expect(button?.getAttribute('title')).toBe('Copied!');
 			});
 		});
 
-		it('should show error toast on failed copy', async () => {
+		it('should not change state on failed copy', async () => {
 			(copyToClipboard as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
 			render(<CopyButton text="test text" />);
 			const button = document.body.querySelector('button');
 			button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-			await waitFor(() => {
-				expect(toast.error).toHaveBeenCalledWith('Failed to copy');
-			});
+			// On failure, title should remain as default label
+			expect(button?.getAttribute('title')).toBe('Copy to clipboard');
 		});
 
 		it('should show checkmark icon after successful copy', async () => {
@@ -117,9 +118,9 @@ describe('CopyButton', () => {
 			button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
 			await waitFor(() => {
-				const svg = document.body.querySelector('svg');
-				// Check for green color class indicating checkmark
-				expect(svg?.classList.contains('text-green-400')).toBe(true);
+				const button = document.body.querySelector('button');
+				// Check for green color class indicating checkmark (class is on button, not svg)
+				expect(button?.classList.contains('text-green-400')).toBe(true);
 			});
 		});
 
@@ -136,16 +137,16 @@ describe('CopyButton', () => {
 			// Flush microtask queue for state update
 			await vi.advanceTimersByTimeAsync(0);
 
-			// Initially should show checkmark (green)
-			let svg = document.body.querySelector('svg');
-			expect(svg?.classList.contains('text-green-400')).toBe(true);
+			// Initially should show checkmark (green - class is on button, not svg)
+			let btn = document.body.querySelector('button');
+			expect(btn?.classList.contains('text-green-400')).toBe(true);
 
 			// Advance time by 2 seconds
 			await vi.advanceTimersByTimeAsync(2000);
 
 			// Should revert to clipboard icon (no green class)
-			svg = document.body.querySelector('svg');
-			expect(svg?.classList.contains('text-green-400')).toBe(false);
+			btn = document.body.querySelector('button');
+			expect(btn?.classList.contains('text-green-400')).toBe(false);
 
 			vi.useRealTimers();
 		});
