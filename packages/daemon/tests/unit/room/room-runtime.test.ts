@@ -208,6 +208,65 @@ describe('RoomRuntime', () => {
 		});
 	});
 
+	describe('config clamping', () => {
+		it('should clamp maxReviewRounds above 20 to 20 via updateRoom', async () => {
+			ctx.runtime.updateRoom(makeRoom({ config: { maxReviewRounds: 25 } }));
+			const { group } = await spawnAndRouteToLeader(ctx);
+			// Saturate to 20 by incrementing feedbackIteration 19 more times (already at 1)
+			let g = ctx.groupRepo.getGroup(group.id)!;
+			for (let i = 0; i < 19; i++) {
+				g = ctx.groupRepo.incrementFeedbackIteration(g.id, g.version)!;
+			}
+			// feedbackIteration == 20 == clamped maxFeedbackIterations → must fail
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'over the limit',
+			});
+			const parsed = JSON.parse(result.content[0].text) as { success: boolean; error?: string };
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Max feedback iterations');
+		});
+
+		it('should fall back to default (1) when maxConcurrentGroups is 0 or negative', async () => {
+			// 0 is below the >= 1 guard, so default applies
+			const ctx2 = createRuntimeTestContext({ maxConcurrentGroups: undefined });
+			ctx2.runtime.updateRoom(makeRoom({ config: { maxConcurrentGroups: 0 } }));
+			const goal = await ctx2.goalManager.createGoal({ title: 'g', description: 'd' });
+			const task1 = await ctx2.taskManager.createTask({
+				title: 'T1',
+				description: 'd',
+				assignedAgent: 'general',
+			});
+			const task2 = await ctx2.taskManager.createTask({
+				title: 'T2',
+				description: 'd',
+				assignedAgent: 'general',
+			});
+			await ctx2.goalManager.linkTaskToGoal(goal.id, task1.id);
+			await ctx2.goalManager.linkTaskToGoal(goal.id, task2.id);
+			ctx2.runtime.start();
+			await ctx2.runtime.tick();
+			// Default is 1 → only 1 group spawned despite 2 pending tasks
+			const workers = ctx2.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
+			);
+			expect(workers).toHaveLength(1);
+			ctx2.runtime.stop();
+			ctx2.db.close();
+		});
+
+		it('should floor fractional maxReviewRounds to an integer via updateRoom', async () => {
+			ctx.runtime.updateRoom(makeRoom({ config: { maxReviewRounds: 1.7 } }));
+			const { group } = await spawnAndRouteToLeader(ctx);
+			// feedbackIteration starts at 1 after routeWorkerToLeader; floored cap is 1 → must fail
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'fractional',
+			});
+			const parsed = JSON.parse(result.content[0].text) as { success: boolean; error?: string };
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Max feedback iterations');
+		});
+	});
+
 	describe('config defaults', () => {
 		it('should use maxFeedbackIterations default of 3 when not configured', async () => {
 			// The helper no longer applies a ?? 5 fallback, so the runtime uses its own default (3).

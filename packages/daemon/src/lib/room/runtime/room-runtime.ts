@@ -61,9 +61,10 @@ import {
 const log = new Logger('room-runtime');
 
 const MAX_PLANNING_ATTEMPTS = 3;
-const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
-const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
-const MAX_REVIEW_ROUNDS_LIMIT = 20;
+export const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
+export const MAX_CONCURRENT_GROUPS_LIMIT = 10;
+export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
+export const MAX_REVIEW_ROUNDS_LIMIT = 20;
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -248,7 +249,7 @@ export class RoomRuntime {
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
 			typeof rawGroups === 'number' && rawGroups >= 1
-				? Math.min(Math.floor(rawGroups), 10)
+				? Math.min(Math.floor(rawGroups), MAX_CONCURRENT_GROUPS_LIMIT)
 				: DEFAULT_MAX_CONCURRENT_GROUPS;
 		const rawRounds = config.maxReviewRounds;
 		this.maxFeedbackIterations =

@@ -17,7 +17,7 @@ import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SessionManager } from '../../session-manager';
 import type { SessionFactory } from './task-group-manager';
-import { RoomRuntime } from './room-runtime';
+import { RoomRuntime, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from './room-runtime';
 import { SessionObserver } from '../state/session-observer';
 import { SessionGroupRepository } from '../state/session-group-repository';
 import { TaskManager } from '../managers/task-manager';
@@ -250,12 +250,12 @@ export class RoomRuntimeService {
 		const rawRounds = roomConfig.maxReviewRounds;
 		const maxReviewRounds =
 			typeof rawRounds === 'number' && rawRounds >= 1
-				? Math.min(Math.floor(rawRounds), 20)
+				? Math.min(Math.floor(rawRounds), MAX_REVIEW_ROUNDS_LIMIT)
 				: undefined;
 		const rawGroups = roomConfig.maxConcurrentGroups;
 		const maxConcurrentGroups =
 			typeof rawGroups === 'number' && rawGroups >= 1
-				? Math.min(Math.floor(rawGroups), 10)
+				? Math.min(Math.floor(rawGroups), MAX_CONCURRENT_GROUPS_LIMIT)
 				: undefined;
 
 		const runtime = new RoomRuntime({
