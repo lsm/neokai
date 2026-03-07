@@ -9,7 +9,7 @@
  */
 
 import type { Room, McpServerConfig, RuntimeState } from '@neokai/shared';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from '@neokai/shared';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import type { Database } from '../../../storage/database';
@@ -17,7 +17,7 @@ import type { MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../../daemon-hub';
 import type { SessionManager } from '../../session-manager';
 import type { SessionFactory } from './task-group-manager';
-import { RoomRuntime, MAX_CONCURRENT_GROUPS_LIMIT, MAX_REVIEW_ROUNDS_LIMIT } from './room-runtime';
+import { RoomRuntime } from './room-runtime';
 import { SessionObserver } from '../state/session-observer';
 import { SessionGroupRepository } from '../state/session-group-repository';
 import { TaskManager } from '../managers/task-manager';

@@ -735,9 +735,12 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 						max={MAX_REVIEW_ROUNDS_LIMIT}
 						value={maxReviewRounds.value}
 						onInput={(e) => {
-							const val = parseInt((e.target as HTMLInputElement).value, 10);
+							const input = e.target as HTMLInputElement;
+							const val = parseInt(input.value, 10);
 							if (!isNaN(val) && val >= 1 && val <= MAX_REVIEW_ROUNDS_LIMIT) {
 								maxReviewRounds.value = val;
+							} else {
+								input.value = String(maxReviewRounds.value);
 							}
 						}}
 						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
@@ -758,9 +761,12 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 						max={MAX_CONCURRENT_GROUPS_LIMIT}
 						value={maxConcurrentGroups.value}
 						onInput={(e) => {
-							const val = parseInt((e.target as HTMLInputElement).value, 10);
+							const input = e.target as HTMLInputElement;
+							const val = parseInt(input.value, 10);
 							if (!isNaN(val) && val >= 1 && val <= MAX_CONCURRENT_GROUPS_LIMIT) {
 								maxConcurrentGroups.value = val;
+							} else {
+								input.value = String(maxConcurrentGroups.value);
 							}
 						}}
 						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
