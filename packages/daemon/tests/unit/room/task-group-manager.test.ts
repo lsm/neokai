@@ -557,7 +557,7 @@ describe('TaskGroupManager', () => {
 			expect(taskResult!.status).toBe('review');
 		});
 
-		it('should keep sessions observed (not unobserve) so human can resume later', async () => {
+		it('should keep both sessions observed so human can resume later', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -571,10 +571,14 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
+			// Trigger first review round so leader session is created and observed
+			await manager.routeWorkerToLeader(group.id, 'Worker output');
+
 			await manager.escalateToHumanReview(group.id, 'Max iterations');
 
-			// Worker session must remain observed for resumeWorkerFromHuman to work
+			// Both sessions must remain observed for resumeWorkerFromHuman to work
 			expect(observer.isObserving(group.workerSessionId)).toBe(true);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
 		});
 
 		it('should return null for unknown group', async () => {

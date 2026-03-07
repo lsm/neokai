@@ -428,9 +428,15 @@ export class TaskGroupManager {
 		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
 		if (!updated) return false;
 
-		// Reset state for the new review round
+		// Reset state for the new review round.
+		// feedbackIteration is reset to 0 so the resumed task gets a fresh iteration budget —
+		// without this the task would immediately re-escalate on the very next leader cycle.
 		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
 		this.groupRepo.setSubmittedForReview(groupId, false);
+		const afterReset = this.groupRepo.getGroup(groupId);
+		if (afterReset) {
+			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
+		}
 
 		// Persist approval message in group timeline
 		this.groupRepo.appendMessage({
@@ -480,7 +486,7 @@ export class TaskGroupManager {
 	 * Unlike submitForReview (triggered by leader's submit_for_review tool call),
 	 * this escalation has no PR URL — it is a runtime-enforced lifecycle boundary.
 	 */
-	async escalateToHumanReview(groupId: string, _reason: string): Promise<SessionGroup | null> {
+	async escalateToHumanReview(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
@@ -490,6 +496,14 @@ export class TaskGroupManager {
 
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);
+
+		// Append escalation reason to group timeline for diagnosability
+		this.groupRepo.appendMessage({
+			groupId,
+			role: 'system',
+			messageType: 'status',
+			content: `Escalated for human review: ${reason}`,
+		});
 
 		return updated;
 	}

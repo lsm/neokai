@@ -319,6 +319,15 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Reset feedback iteration counter to 0.
+	 * Called when a human resumes a task after escalation so the resumed task
+	 * gets a fresh iteration budget and doesn't immediately re-escalate.
+	 */
+	resetFeedbackIteration(groupId: string, expectedVersion: number): SessionGroup | null {
+		return this.updateMetadata(groupId, expectedVersion, { feedbackIteration: 0 });
+	}
+
+	/**
 	 * Set leaderCalledTool flag without version check.
 	 * This is a soft signal — safe to race with state transitions.
 	 */
