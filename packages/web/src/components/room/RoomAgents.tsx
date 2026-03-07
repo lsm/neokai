@@ -40,6 +40,7 @@ const MODEL_FAMILY_ICONS: Record<string, string> = {
 	sonnet: '💎',
 	haiku: '⚡',
 	glm: '🌐',
+	minimax: '🔥',
 	__default__: '💎',
 };
 
@@ -47,6 +48,7 @@ function detectFamily(id: string): string {
 	if (id.includes('opus')) return 'opus';
 	if (id.includes('haiku')) return 'haiku';
 	if (id.toLowerCase().startsWith('glm-')) return 'glm';
+	if (id.toLowerCase().startsWith('minimax-')) return 'minimax';
 	return 'sonnet';
 }
 

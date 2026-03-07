@@ -45,6 +45,7 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	sonnet: '💎',
 	haiku: '⚡',
 	glm: '🌐',
+	minimax: '🔥',
 	gpt: '🔮',
 	gemini: '✨',
 	// Default icon for unknown families
@@ -64,14 +65,16 @@ const FAMILY_ORDER: Record<string, number> = {
 	sonnet: 1,
 	haiku: 2,
 	glm: 3,
-	gpt: 4,
-	gemini: 5,
+	minimax: 4,
+	gpt: 5,
+	gemini: 6,
 };
 
 /** Provider display labels for UI */
 export const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	glm: 'GLM',
+	minimax: 'MiniMax',
 	openai: 'OpenAI',
 	'github-copilot': 'Copilot',
 	google: 'Google',
@@ -136,6 +139,8 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					family = 'haiku';
 				} else if (modelId.startsWith('glm-')) {
 					family = 'glm';
+				} else if (modelId.startsWith('minimax-')) {
+					family = 'minimax';
 				} else if (modelId.startsWith('gpt-')) {
 					family = 'gpt';
 				} else if (modelId.startsWith('gemini-')) {

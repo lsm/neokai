@@ -57,8 +57,8 @@ describe('MinimaxProvider', () => {
 
 			const models = await provider.getModels();
 
-			expect(models).toHaveLength(1);
-			expect(models.map((m) => m.id)).toEqual(['MiniMax-M2.5']);
+			expect(models).toHaveLength(2);
+			expect(models.map((m) => m.id)).toEqual(['MiniMax-M2.5', 'MiniMax-M2.5-highspeed']);
 		});
 
 		it('should return empty array when API key is not available', async () => {
@@ -82,6 +82,7 @@ describe('MinimaxProvider', () => {
 	describe('ownsModel', () => {
 		it('should own minimax- prefixed models', () => {
 			expect(provider.ownsModel('MiniMax-M2.5')).toBe(true);
+			expect(provider.ownsModel('MiniMax-M2.5-highspeed')).toBe(true);
 			expect(provider.ownsModel('minimax-m2.5')).toBe(true);
 		});
 
@@ -162,8 +163,11 @@ describe('MinimaxProvider', () => {
 
 	describe('static models', () => {
 		it('should have static models defined', () => {
-			expect(MinimaxProvider.MODELS).toHaveLength(1);
-			expect(MinimaxProvider.MODELS.map((m) => m.id)).toEqual(['MiniMax-M2.5']);
+			expect(MinimaxProvider.MODELS).toHaveLength(2);
+			expect(MinimaxProvider.MODELS.map((m) => m.id)).toEqual([
+				'MiniMax-M2.5',
+				'MiniMax-M2.5-highspeed',
+			]);
 		});
 
 		it('should have correct base URL', () => {
