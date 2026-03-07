@@ -265,9 +265,10 @@ export class RoomRuntime {
 		// Update leader model: agentModels.leader > room.defaultModel > global default
 		// Filter out empty strings as they're not valid model identifiers
 		const agentModels = config.agentModels as Record<string, string> | undefined;
-		const leaderModel =
-			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
-			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+		const leaderModel = (agentModels?.leader && agentModels.leader.trim() !== ''
+			? agentModels.leader.trim()
+			: undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel.trim() : undefined) ??
 			this.defaultModel;
 		this.taskGroupManager.updateModel(leaderModel);
 

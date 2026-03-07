@@ -164,6 +164,10 @@ export class TaskGroupManager {
 
 	/** Update the model for new leader sessions (e.g., when room settings change) */
 	updateModel(model: string | undefined): void {
+		// Clear pending leader inits so they will be recreated with the new model
+		// when routeWorkerToLeader is called. This ensures model changes take effect
+		// for tasks that haven't started their first review round yet.
+		this.pendingLeaderInits.clear();
 		this._model = model;
 	}
 
