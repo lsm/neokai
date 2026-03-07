@@ -41,6 +41,16 @@ export function RoomDashboard() {
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
 	const [showApproveConfirm, setShowApproveConfirm] = useState<string | null>(null);
 	const [approvalLoading, setApprovalLoading] = useState(false);
+	const [showArchived, setShowArchived] = useState(false);
+	const [archiveLoading, setArchiveLoading] = useState<string | null>(null);
+
+	// Filter tasks based on showArchived state
+	const filteredTasks = showArchived
+		? tasks
+		: tasks.filter((t) => !t.isArchived);
+
+	// Check if there are any archived tasks
+	const hasArchivedTasks = tasks.some((t) => t.isArchived);
 
 	const handlePause = async () => {
 		setActionLoading(true);
@@ -102,6 +112,40 @@ export function RoomDashboard() {
 		}
 	};
 
+	const handleToggleShowArchived = async () => {
+		if (!showArchived && !hasArchivedTasks) {
+			// First time showing archived - need to fetch them
+			try {
+				await roomStore.loadAllTasks();
+			} catch {
+				// Error handled by store
+			}
+		}
+		setShowArchived(!showArchived);
+	};
+
+	const handleArchive = async (taskId: string) => {
+		setArchiveLoading(taskId);
+		try {
+			await roomStore.archiveTask(taskId);
+		} catch {
+			// Error handled by store
+		} finally {
+			setArchiveLoading(null);
+		}
+	};
+
+	const handleUnarchive = async (taskId: string) => {
+		setArchiveLoading(taskId);
+		try {
+			await roomStore.unarchiveTask(taskId);
+		} catch {
+			// Error handled by store
+		} finally {
+			setArchiveLoading(null);
+		}
+	};
+
 	return (
 		<div class="p-4 space-y-6">
 			{/* Runtime state + controls */}
@@ -155,12 +199,39 @@ export function RoomDashboard() {
 
 			{/* Tasks list */}
 			<div class="space-y-2">
-				<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
+				<div class="flex items-center justify-between">
+					<h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wide">Tasks</h2>
+					{hasArchivedTasks && (
+						<button
+							type="button"
+							onClick={handleToggleShowArchived}
+							class="text-xs text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1"
+						>
+							<svg
+								class={`w-3 h-3 transition-transform ${showArchived ? 'rotate-90' : ''}`}
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M9 5l7 7-7 7"
+								/>
+							</svg>
+							<span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
+						</button>
+					)}
+				</div>
 				<RoomTasks
-					tasks={tasks}
+					tasks={filteredTasks}
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onApprove={roomId ? (taskId) => setShowApproveConfirm(taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+					onArchive={roomId ? handleArchive : undefined}
+					onUnarchive={roomId ? handleUnarchive : undefined}
+					archiveLoading={archiveLoading}
 				/>
 			</div>
 

@@ -354,4 +354,53 @@ export class TaskManager {
 
 		return true;
 	}
+
+	/**
+	 * Archive a task
+	 */
+	async archiveTask(taskId: string): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		const archivedTask = this.taskRepo.archiveTask(taskId);
+		if (!archivedTask) {
+			throw new Error(`Failed to archive task: ${taskId}`);
+		}
+
+		return archivedTask;
+	}
+
+	/**
+	 * Unarchive a task
+	 */
+	async unarchiveTask(taskId: string): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		const unarchivedTask = this.taskRepo.unarchiveTask(taskId);
+		if (!unarchivedTask) {
+			throw new Error(`Failed to unarchive task: ${taskId}`);
+		}
+
+		return unarchivedTask;
+	}
+
+	/**
+	 * Check if a task is archived
+	 */
+	async isArchived(taskId: string): Promise<boolean> {
+		return this.taskRepo.isTaskArchived(taskId);
+	}
+
+	/**
+	 * Count archived tasks for a room
+	 */
+	async countArchivedTasks(): Promise<number> {
+		const allTasks = this.taskRepo.listTasks(this.roomId, { includeArchived: true });
+		return allTasks.filter((t) => t.isArchived).length;
+	}
 }

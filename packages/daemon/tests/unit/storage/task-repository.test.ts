@@ -40,7 +40,8 @@ describe('TaskRepository', () => {
 				depends_on TEXT NOT NULL DEFAULT '[]',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
-				completed_at INTEGER
+				completed_at INTEGER,
+				is_archived INTEGER DEFAULT 0
 			);
 
 			CREATE INDEX idx_tasks_room ON tasks(room_id);
@@ -405,6 +406,88 @@ describe('TaskRepository', () => {
 
 		it('should not throw when deleting for non-existent room', () => {
 			expect(() => repository.deleteTasksForRoom('non-existent')).not.toThrow();
+		});
+	});
+
+	describe('archiveTask', () => {
+		it('should archive a task', () => {
+			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
+			expect(task.isArchived).toBe(false);
+
+			const archived = repository.archiveTask(task.id);
+			expect(archived).not.toBeNull();
+			expect(archived!.isArchived).toBe(true);
+		});
+
+		it('should return null for non-existent task', () => {
+			const result = repository.archiveTask('non-existent');
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('unarchiveTask', () => {
+		it('should unarchive a task', () => {
+			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
+			repository.archiveTask(task.id);
+
+			const unarchived = repository.unarchiveTask(task.id);
+			expect(unarchived).not.toBeNull();
+			expect(unarchived!.isArchived).toBe(false);
+		});
+
+		it('should return null for non-existent task', () => {
+			const result = repository.unarchiveTask('non-existent');
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('isTaskArchived', () => {
+		it('should return false for non-archived task', () => {
+			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
+			expect(repository.isTaskArchived(task.id)).toBe(false);
+		});
+
+		it('should return true for archived task', () => {
+			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
+			repository.archiveTask(task.id);
+			expect(repository.isTaskArchived(task.id)).toBe(true);
+		});
+
+		it('should return false for non-existent task', () => {
+			expect(repository.isTaskArchived('non-existent')).toBe(false);
+		});
+	});
+
+	describe('listTasks with archived filter', () => {
+		it('should exclude archived tasks by default', () => {
+			const task1 = repository.createTask({ roomId: 'room-1', title: 'Task 1', description: 'Desc' });
+			const task2 = repository.createTask({ roomId: 'room-1', title: 'Task 2', description: 'Desc' });
+			repository.archiveTask(task1.id);
+
+			const tasks = repository.listTasks('room-1');
+			expect(tasks.length).toBe(1);
+			expect(tasks[0].id).toBe(task2.id);
+		});
+
+		it('should include archived tasks when includeArchived is true', () => {
+			const task1 = repository.createTask({ roomId: 'room-1', title: 'Task 1', description: 'Desc' });
+			const task2 = repository.createTask({ roomId: 'room-1', title: 'Task 2', description: 'Desc' });
+			repository.archiveTask(task1.id);
+
+			const tasks = repository.listTasks('room-1', { includeArchived: true });
+			expect(tasks.length).toBe(2);
+			expect(tasks.map((t) => t.id)).toContain(task1.id);
+			expect(tasks.map((t) => t.id)).toContain(task2.id);
+		});
+
+		it('should exclude archived tasks when includeArchived is false', () => {
+			const task1 = repository.createTask({ roomId: 'room-1', title: 'Task 1', description: 'Desc' });
+			const task2 = repository.createTask({ roomId: 'room-1', title: 'Task 2', description: 'Desc' });
+			repository.archiveTask(task1.id);
+
+			const tasks = repository.listTasks('room-1', { includeArchived: false });
+			expect(tasks.length).toBe(1);
+			expect(tasks[0].id).toBe(task2.id);
 		});
 	});
 

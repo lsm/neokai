@@ -9,6 +9,7 @@
  * - Completed
  * - Failed
  * - Cancelled
+ * - Archived (when showing archived)
  */
 
 import type { TaskSummary } from '@neokai/shared';
@@ -18,9 +19,20 @@ interface RoomTasksProps {
 	onTaskClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onArchive?: (taskId: string) => void;
+	onUnarchive?: (taskId: string) => void;
+	archiveLoading?: string | null;
 }
 
-export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksProps) {
+export function RoomTasks({
+	tasks,
+	onTaskClick,
+	onApprove,
+	onView,
+	onArchive,
+	onUnarchive,
+	archiveLoading,
+}: RoomTasksProps) {
 	if (tasks.length === 0) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
@@ -38,6 +50,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 	const completed = tasks.filter((t) => t.status === 'completed');
 	const failed = tasks.filter((t) => t.status === 'failed');
 	const cancelled = tasks.filter((t) => t.status === 'cancelled');
+	const archived = tasks.filter((t) => t.isArchived);
 
 	return (
 		<div class="space-y-4">
@@ -62,7 +75,15 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{failed.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
 						))}
 					</div>
 				</div>
@@ -76,7 +97,15 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{inProgress.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
 						))}
 					</div>
 				</div>
@@ -97,6 +126,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 								onClick={onTaskClick}
 								onApprove={onApprove}
 								onView={onView}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
 							/>
 						))}
 					</div>
@@ -111,7 +143,15 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{pending.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
 						))}
 					</div>
 				</div>
@@ -125,7 +165,15 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{draft.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
 						))}
 					</div>
 				</div>
@@ -139,7 +187,15 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
 						))}
 					</div>
 				</div>
@@ -153,7 +209,37 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{cancelled.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
+						))}
+					</div>
+				</div>
+			)}
+
+			{/* Archived */}
+			{archived.length > 0 && (
+				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
+					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
+						<h3 class="font-semibold text-gray-500">Archived ({archived.length})</h3>
+					</div>
+					<div class="divide-y divide-dark-700">
+						{archived.map((task) => (
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onArchive={onArchive}
+								onUnarchive={onUnarchive}
+								archiveLoading={archiveLoading}
+							/>
 						))}
 					</div>
 				</div>
@@ -176,18 +262,27 @@ function TaskItem({
 	onClick,
 	onApprove,
 	onView,
+	onArchive,
+	onUnarchive,
+	archiveLoading,
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
 	onClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onArchive?: (taskId: string) => void;
+	onUnarchive?: (taskId: string) => void;
+	archiveLoading?: string | null;
 }) {
 	const isClickable = !!onClick;
 	const showApprove = task.status === 'review' && !!onApprove;
 	const showView = task.status === 'review' && !!onView;
+	const showArchive = !task.isArchived && !!onArchive;
+	const showUnarchive = task.isArchived && !!onUnarchive;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
+	const isArchiving = archiveLoading === task.id;
 
 	return (
 		<div
@@ -201,6 +296,11 @@ function TaskItem({
 						{blocked && (
 							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
 								Blocked
+							</span>
+						)}
+						{task.isArchived && (
+							<span class="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 flex-shrink-0">
+								Archived
 							</span>
 						)}
 					</div>
@@ -229,6 +329,30 @@ function TaskItem({
 							class="px-2 py-1 text-xs font-medium text-blue-400 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-700/50 rounded transition-colors"
 						>
 							View
+						</button>
+					)}
+					{showArchive && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onArchive(task.id);
+							}}
+							disabled={isArchiving}
+							class="px-2 py-1 text-xs font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors disabled:opacity-50"
+						>
+							{isArchiving ? 'Archiving...' : 'Archive'}
+						</button>
+					)}
+					{showUnarchive && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onUnarchive(task.id);
+							}}
+							disabled={isArchiving}
+							class="px-2 py-1 text-xs font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors disabled:opacity-50"
+						>
+							{isArchiving ? 'Unarchiving...' : 'Unarchive'}
 						</button>
 					)}
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}

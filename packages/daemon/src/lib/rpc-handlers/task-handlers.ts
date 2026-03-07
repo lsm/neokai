@@ -119,6 +119,7 @@ export function setupTaskHandlers(
 			roomId: string;
 			status?: TaskStatus;
 			priority?: TaskPriority;
+			includeArchived?: boolean;
 		};
 
 		if (!params.roomId) {
@@ -129,6 +130,7 @@ export function setupTaskHandlers(
 		const tasks = await taskManager.listTasks({
 			status: params.status,
 			priority: params.priority,
+			includeArchived: params.includeArchived,
 		});
 
 		return { tasks };
@@ -392,5 +394,45 @@ export function setupTaskHandlers(
 		}
 
 		return { success: true };
+	});
+
+	// task.archive - Archive a task
+	messageHub.onRequest('task.archive', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.archiveTask(params.taskId);
+
+		emitTaskUpdate(params.roomId, task);
+		emitRoomOverview(params.roomId);
+
+		return { task };
+	});
+
+	// task.unarchive - Unarchive a task
+	messageHub.onRequest('task.unarchive', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.unarchiveTask(params.taskId);
+
+		emitTaskUpdate(params.roomId, task);
+		emitRoomOverview(params.roomId);
+
+		return { task };
 	});
 }

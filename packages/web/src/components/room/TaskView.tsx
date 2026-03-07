@@ -296,6 +296,35 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		isInitialLoad: isFirstLoad,
 	});
 
+	// Archive state and handlers
+	const [archiving, setArchiving] = useState(false);
+
+	const handleArchive = async () => {
+		if (archiving || !task) return;
+		setArchiving(true);
+		try {
+			await request('task.archive', { roomId, taskId: task.id });
+			// Task update will come via room.task.update event
+		} catch {
+			// Error handled by store
+		} finally {
+			setArchiving(false);
+		}
+	};
+
+	const handleUnarchive = async () => {
+		if (archiving || !task) return;
+		setArchiving(true);
+		try {
+			await request('task.unarchive', { roomId, taskId: task.id });
+			// Task update will come via room.task.update event
+		} catch {
+			// Error handled by store
+		} finally {
+			setArchiving(false);
+		}
+	};
+
 	// Reset conversation scroll state whenever the rendered conversation changes.
 	// This covers two cases:
 	//   1. conversationKey bumps (manual reload after approve/feedback)
@@ -480,6 +509,24 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						</div>
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					</div>
+				)}
+				{/* Archive/Unarchive button */}
+				{task.isArchived ? (
+					<button
+						onClick={handleUnarchive}
+						disabled={archiving}
+						class="px-2 py-1 text-xs font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors disabled:opacity-50"
+					>
+						{archiving ? 'Unarchiving...' : 'Unarchive'}
+					</button>
+				) : (
+					<button
+						onClick={handleArchive}
+						disabled={archiving}
+						class="px-2 py-1 text-xs font-medium text-gray-400 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded transition-colors disabled:opacity-50"
+					>
+						{archiving ? 'Archiving...' : 'Archive'}
+					</button>
 				)}
 				{/* Info toggle button */}
 				<button
