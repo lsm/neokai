@@ -8,7 +8,7 @@
  * - auth.logout - Logout from a provider
  */
 
-import { describe, expect, it, beforeAll, beforeEach, mock, afterEach } from 'bun:test';
+import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
 import { MessageHub } from '@neokai/shared';
 import { setupAuthHandlers } from '../../../src/lib/rpc-handlers/auth-handlers';
 import type { AuthManager } from '../../../src/lib/auth-manager';
@@ -91,12 +91,6 @@ function createMockMessageHub(): {
 describe('Auth RPC Handlers', () => {
 	let messageHubData: ReturnType<typeof createMockMessageHub>;
 	let registry: ReturnType<typeof getProviderRegistry>;
-
-	beforeAll(() => {
-		// Ensure clean registry state before any tests run
-		// This is needed because other test files may have registered providers
-		resetProviderRegistry();
-	});
 
 	beforeEach(() => {
 		messageHubData = createMockMessageHub();
