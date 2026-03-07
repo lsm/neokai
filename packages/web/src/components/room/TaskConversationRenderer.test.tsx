@@ -35,10 +35,13 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 	}),
 }));
 
-// SDKMessageRenderer minimal mock
+// SDKMessageRenderer minimal mock — captures uuid and timestamp for assertions
 vi.mock('../sdk/SDKMessageRenderer.tsx', () => ({
-	SDKMessageRenderer: ({ message }: { message: { uuid?: string } }) => (
-		<div data-testid={`msg-${message.uuid ?? 'unknown'}`} />
+	SDKMessageRenderer: ({ message }: { message: { uuid?: string; timestamp?: number } }) => (
+		<div
+			data-testid={`msg-${message.uuid ?? 'unknown'}`}
+			data-timestamp={message.timestamp ?? ''}
+		/>
 	),
 }));
 
@@ -350,6 +353,36 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		});
 		await act(async () => {}); // flush pending async effects
 		expect(onCountChange).not.toHaveBeenCalledWith(2);
+	});
+
+	it('injects createdAt from GroupMessage as timestamp on parsed SDKMessage', async () => {
+		// Use a fixed, non-current timestamp to prove it comes from the DB row, not Date.now()
+		const pastTimestamp = 1_700_000_000_000; // 2023-11-14 in ms
+		const msgWithPastCreatedAt = {
+			id: 1,
+			groupId: 'group-1',
+			sessionId: 'sess-1',
+			role: 'assistant',
+			messageType: 'assistant',
+			content: JSON.stringify({ type: 'assistant', uuid: 'uuid-ts', message: { content: [] } }),
+			createdAt: pastTimestamp,
+		};
+		mockRequest.mockImplementation(async () => ({
+			messages: [msgWithPastCreatedAt],
+			hasMore: false,
+		}));
+
+		const { container } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		await waitFor(() => {
+			const el = container.querySelector('[data-testid="msg-uuid-ts"]');
+			expect(el).not.toBeNull();
+		});
+
+		const el = container.querySelector('[data-testid="msg-uuid-ts"]') as HTMLElement;
+		expect(el.getAttribute('data-timestamp')).toBe(String(pastTimestamp));
 	});
 
 	it('preserves buffered deltas when the initial fetch fails', async () => {

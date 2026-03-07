@@ -58,6 +58,7 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 		return {
 			type: 'status',
 			text: msg.content,
+			timestamp: msg.createdAt,
 			_taskMeta: {
 				authorRole: 'system',
 				authorSessionId: '',
@@ -67,7 +68,10 @@ function parseGroupMessage(msg: GroupMessage): SDKMessage | null {
 		} as unknown as SDKMessage;
 	}
 	try {
-		return JSON.parse(msg.content) as SDKMessage;
+		const parsed = JSON.parse(msg.content) as SDKMessage;
+		// Inject createdAt as timestamp so SDKMessageRenderer can display the correct time.
+		// Without this, SDKAssistantMessage/SDKUserMessage fall back to new Date() (current time).
+		return { ...parsed, timestamp: msg.createdAt } as SDKMessage;
 	} catch {
 		return null;
 	}
