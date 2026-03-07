@@ -175,6 +175,9 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(
 				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval`
 			);
+			sections.push(
+				`- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).`
+			);
 			sections.push(`- **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\``);
 			sections.push(
 				`\nDo NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are created.`
@@ -257,6 +260,9 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
 			);
 			sections.push(`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`);
+			sections.push(
+				`- **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).`
+			);
 			sections.push(`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``);
 		} else {
 			sections.push(`\n## Code Review Guidelines\n`);
@@ -410,10 +416,12 @@ interface SubagentConfig {
 	provider?: string;
 	/** For CLI-only models: use a driver model that calls the CLI via Bash */
 	type?: 'cli';
-	/** Model to use as driver when type is 'cli' */
+	/** Model to use as driver when type is 'cli'. Defaults to leader's model. */
 	driver_model?: string;
 	/** Full model ID when different from the short name in 'model' */
 	modelId?: string;
+	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
+	cliModel?: string;
 }
 
 /**
@@ -433,12 +441,15 @@ function getLeaderSubagents(roomConfig: Record<string, unknown>): SubagentConfig
  * e.g., 'claude-sonnet-4-5-20250929' → 'sonnet'
  *       'claude-haiku-4-5-20251001' → 'haiku'
  *       'gpt-5.3-codex' → 'codex'
+ *       'codex-review' → 'codex-review'
  */
 export function toShortModelName(modelId: string): string {
 	const lower = modelId.toLowerCase();
 	if (lower.includes('opus')) return 'opus';
 	if (lower.includes('haiku')) return 'haiku';
 	if (lower.includes('sonnet')) return 'sonnet';
+	// 'codex-review' must be checked before 'codex' to avoid matching the shorter name
+	if (lower === 'codex-review') return 'codex-review';
 	if (lower.includes('codex')) return 'codex';
 	if (lower.includes('copilot')) return 'copilot';
 	// Fallback: take the first meaningful segment
@@ -570,8 +581,24 @@ ${REVIEWER_OUTPUT_FORMAT}`;
 /**
  * Return specific CLI invocation instructions based on the tool name.
  */
-function getCliInstructions(cliTool: string): string {
+function getCliInstructions(cliTool: string, cliModel?: string): string {
 	const tool = cliTool.toLowerCase();
+	const modelFlag = cliModel ? ` --model ${cliModel}` : '';
+
+	// 'codex-review' must be checked before 'codex' to avoid matching the shorter name
+	if (tool === 'codex-review') {
+		return `### Codex Review (OpenAI)
+
+Use the dedicated \`codex review\` subcommand which is purpose-built for code review:
+
+\`\`\`bash
+codex review${modelFlag} --base <BASE_BRANCH> "<YOUR REVIEW INSTRUCTIONS HERE>" 2>&1
+\`\`\`
+
+- \`--base <BASE_BRANCH>\` reviews changes against the specified base branch (e.g., \`main\`, \`dev\`).${cliModel ? '' : '\n- Do NOT pass `--model` — Codex uses its default model.'}
+- This uses the Codex review quota (separate from the exec/agent quota).
+- Capture stdout — the review output is printed there.`;
+	}
 
 	if (tool.includes('codex')) {
 		return `### Codex CLI (OpenAI)
@@ -579,34 +606,34 @@ function getCliInstructions(cliTool: string): string {
 Run Codex in non-interactive mode to review the code:
 
 \`\`\`bash
-codex exec --sandbox read-only "<YOUR REVIEW PROMPT HERE>" 2>&1
+codex exec${modelFlag} --sandbox read-only "<YOUR REVIEW PROMPT HERE>" 2>&1
 \`\`\`
 
-- Do NOT pass \`--model\` — Codex uses its default model (gpt-5.3-codex).
-- Do NOT pass \`--ask-for-approval\` — that flag does not exist.
-- The \`--sandbox read-only\` flag ensures Codex can read files but not modify them.
-- Capture stdout — the final review output is printed there.
-- If you need to run in background, use the Bash tool's background mode.`;
+- The \`--sandbox read-only\` flag ensures Codex can read files but not modify them.${cliModel ? '' : '\n- Do NOT pass `--model` — Codex uses its default model.'}
+- This uses the Codex agent/exec quota.
+- Capture stdout — the review output is printed there.`;
 	}
 
 	if (tool.includes('copilot')) {
 		return `### GitHub Copilot CLI
 
-Run Copilot CLI in autopilot mode to review the code:
+Run Copilot CLI in non-interactive mode to review the code:
 
 \`\`\`bash
-copilot --autopilot --yolo --max-autopilot-continues 10 \\
+copilot -s --autopilot --yolo --no-ask-user --max-autopilot-continues 10${modelFlag} \\
   -p "<YOUR REVIEW PROMPT HERE>" \\
   2>/dev/null
 \`\`\`
 
-Capture the output from stdout.`;
+- The \`-s\` (silent) flag outputs only the agent response with no stats — ideal for capturing output.
+- The \`--no-ask-user\` flag ensures the agent works autonomously.${cliModel ? '' : '\n- Do NOT pass `--model` — Copilot uses its default model.'}
+- Capture stdout — the final review output is printed there.`;
 	}
 
 	// Generic fallback for unknown CLI tools
 	return `### ${cliTool} CLI
 
-Run the ${cliTool} CLI tool to review the code. Consult the tool's documentation for the correct non-interactive invocation syntax. Pass the changed files as input and capture the review output.`;
+Run the ${cliTool} CLI tool to review the code.${cliModel ? ` Use model: ${cliModel}.` : ''} Consult the tool's documentation for the correct non-interactive invocation syntax. Pass the changed files as input and capture the review output.`;
 }
 
 /**
@@ -614,10 +641,15 @@ Run the ${cliTool} CLI tool to review the code. Consult the tool's documentation
  * The driver model MUST act as a strict relay — only orchestrate the CLI tool,
  * parse its output, and post. Do NOT do independent code review.
  */
-function buildCliReviewerPrompt(cliTool: string, provider?: string, modelId?: string): string {
-	const cliInstructions = getCliInstructions(cliTool);
+function buildCliReviewerPrompt(
+	cliTool: string,
+	provider?: string,
+	modelId?: string,
+	cliModel?: string
+): string {
+	const cliInstructions = getCliInstructions(cliTool, cliModel);
 	const displayProvider = provider ?? 'unknown';
-	const displayModel = modelId ?? cliTool;
+	const displayModel = cliModel ?? modelId ?? cliTool;
 
 	return `You are a RELAY agent that orchestrates the ${cliTool} CLI tool to perform code review. You MUST NOT review the code yourself — your ONLY job is to run the CLI tool, parse its output, and post the results.
 
@@ -634,14 +666,17 @@ You MUST include this identity block at the top of every PR comment you post.
 2. Do NOT add your own findings or analysis. Only relay what the CLI tool reports.
 3. If the CLI tool exits with an error, report the error — do not fall back to reviewing yourself.
 4. Your only tools interaction should be: extracting PR info, running the CLI tool, and posting the review.
+5. **ALWAYS run the CLI tool synchronously** — set \`timeout: 600000\` (10 minutes) on the Bash call. Do NOT use \`run_in_background\`. The output will be returned when the command completes. Do NOT poll, sleep, or check for output in separate steps.
+6. If the CLI tool times out or errors, do NOT retry. Do NOT post a GitHub review. Instead, output the structured block with \`recommendation: TIMEOUT\` (or \`ERROR\`), \`url: none\`, and a summary describing what happened. The leader will decide how to proceed.
 
 ## Review Process
 
 1. Read the task prompt carefully — extract the PR number and task description
-2. Run the CLI tool:
+2. Run the CLI tool synchronously (with \`timeout: 600000\`):
 
 ${cliInstructions}
 
+   The command will complete and return the full output in one response. Do NOT run it in background or poll for output.
 3. Parse the CLI tool's output and map findings to severity levels (P0/P1/P2/P3)
 4. Post findings as a proper PR review via the REST API (returns the review URL directly):
    \`\`\`bash
@@ -721,13 +756,17 @@ function resolveModelId(reviewer: SubagentConfig): string {
 	if (m === 'opus') return 'claude-opus-4-6';
 	if (m === 'sonnet') return 'claude-sonnet-4-6';
 	if (m === 'haiku') return 'claude-haiku-4-5';
-	if (m === 'codex') return 'gpt-5.3-codex';
+	if (m === 'codex' || m === 'codex-review') return 'gpt-5.3-codex';
 	return reviewer.model;
 }
 
-export function buildReviewerAgents(reviewers: SubagentConfig[]): Record<string, AgentDefinition> {
+export function buildReviewerAgents(
+	reviewers: SubagentConfig[],
+	leaderModel?: string
+): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
 	const usedNames = new Set<string>();
+	const defaultDriverModel = leaderModel ?? 'sonnet';
 
 	for (const reviewer of reviewers) {
 		const name = toReviewerName(reviewer, usedNames);
@@ -735,12 +774,13 @@ export function buildReviewerAgents(reviewers: SubagentConfig[]): Record<string,
 		const modelId = resolveModelId(reviewer);
 
 		if (reviewer.type === 'cli') {
+			const driverModel = reviewer.driver_model ?? defaultDriverModel;
 			// CLI-based reviewer: a driver model calls the external tool via Bash
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${reviewer.driver_model ?? 'sonnet'}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
+				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${driverModel}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
 				tools: REVIEWER_TOOLS,
-				model: toAgentModel(reviewer.driver_model ?? 'sonnet'),
-				prompt: buildCliReviewerPrompt(reviewer.model, provider, modelId),
+				model: toAgentModel(driverModel),
+				prompt: buildCliReviewerPrompt(reviewer.model, provider, modelId, reviewer.cliModel),
 			};
 		} else {
 			// Direct SDK reviewer: uses the specified model natively
@@ -787,9 +827,10 @@ export function createLeaderAgentInit(
 	// Build reviewer agents from room config (if any)
 	const roomConfig = config.room.config ?? {};
 	const reviewerConfigs = getLeaderSubagents(roomConfig);
+	const leaderModel = config.model ?? DEFAULT_LEADER_MODEL;
 	const reviewerAgents =
 		reviewerConfigs && reviewerConfigs.length > 0
-			? buildReviewerAgents(reviewerConfigs)
+			? buildReviewerAgents(reviewerConfigs, leaderModel)
 			: undefined;
 
 	// Only define the Leader agent definition and use agent/agents pattern

@@ -33,6 +33,7 @@ interface CliAgentInfo {
 	installed: boolean;
 	authenticated: boolean;
 	version?: string;
+	models?: string[];
 }
 
 const MODEL_FAMILY_ICONS: Record<string, string> = {
@@ -70,6 +71,7 @@ interface SubagentConfig {
 	provider?: string;
 	type?: 'cli';
 	driver_model?: string;
+	cliModel?: string;
 }
 
 interface AgentModels {
@@ -300,32 +302,39 @@ function ModelTagsInput({
 	);
 }
 
-/** Tags-style input for selecting CLI sub-agents */
+/** Tags-style input for selecting CLI sub-agents with per-agent model picker */
 function CliTagsInput({
 	agents,
-	selectedIds,
+	selectedConfigs,
 	disabled,
 	onToggle,
+	onChangeModel,
 }: {
 	agents: CliAgentInfo[];
-	selectedIds: string[];
+	selectedConfigs: SubagentConfig[];
 	disabled: boolean;
 	onToggle: (agent: CliAgentInfo) => void;
+	onChangeModel: (agentId: string, cliModel: string) => void;
 }) {
 	const isOpen = useSignal(false);
+	const modelOpenFor = useSignal<string | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
 
+	const selectedIds = selectedConfigs.map((s) => s.model);
 	const installableAgents = agents.filter((a) => a.installed);
 	const availableToAdd = installableAgents.filter((a) => !selectedIds.includes(a.id));
 
 	useEffect(() => {
-		if (!isOpen.value) return;
+		if (!isOpen.value && !modelOpenFor.value) return;
 		const handler = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) isOpen.value = false;
+			if (ref.current && !ref.current.contains(e.target as Node)) {
+				isOpen.value = false;
+				modelOpenFor.value = null;
+			}
 		};
 		document.addEventListener('mousedown', handler);
 		return () => document.removeEventListener('mousedown', handler);
-	}, [isOpen.value]);
+	}, [isOpen.value, modelOpenFor.value]);
 
 	return (
 		<div class="relative" ref={ref}>
@@ -335,16 +344,29 @@ function CliTagsInput({
 					if (!disabled && availableToAdd.length > 0) isOpen.value = !isOpen.value;
 				}}
 			>
-				{selectedIds.map((id) => {
-					const info = agents.find((a) => a.id === id);
+				{selectedConfigs.map((config) => {
+					const info = agents.find((a) => a.id === config.model);
 					if (!info) return null;
+					const hasModels = info.models && info.models.length > 0;
 					return (
 						<span
-							key={id}
-							class="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-200"
+							key={config.model}
+							class="inline-flex items-center gap-1 px-2 py-0.5 bg-dark-600 rounded text-xs text-gray-200 relative"
 						>
 							{info.name}
-							<span class="text-[10px] text-gray-500">{info.provider}</span>
+							{hasModels && (
+								<button
+									class="text-[10px] text-blue-400 hover:text-blue-300 px-1 rounded hover:bg-dark-500"
+									onClick={(e) => {
+										e.stopPropagation();
+										modelOpenFor.value = modelOpenFor.value === config.model ? null : config.model;
+									}}
+									title="Select model"
+								>
+									{config.cliModel ?? 'default'}
+								</button>
+							)}
+							{!hasModels && <span class="text-[10px] text-gray-500">{info.provider}</span>}
 							{!disabled && (
 								<button
 									class="ml-0.5 text-red-400 hover:text-red-300 leading-none"
@@ -355,6 +377,37 @@ function CliTagsInput({
 								>
 									&times;
 								</button>
+							)}
+							{modelOpenFor.value === config.model && hasModels && (
+								<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-44 py-1 z-50 animate-slideIn">
+									<button
+										class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs ${
+											!config.cliModel ? 'text-blue-400' : 'text-gray-200'
+										}`}
+										onClick={(e) => {
+											e.stopPropagation();
+											onChangeModel(config.model, '');
+											modelOpenFor.value = null;
+										}}
+									>
+										default
+									</button>
+									{info.models!.map((m) => (
+										<button
+											key={m}
+											class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs ${
+												config.cliModel === m ? 'text-blue-400' : 'text-gray-200'
+											}`}
+											onClick={(e) => {
+												e.stopPropagation();
+												onChangeModel(config.model, m);
+												modelOpenFor.value = null;
+											}}
+										>
+											{m}
+										</button>
+									))}
+								</div>
 							)}
 						</span>
 					);
@@ -522,7 +575,24 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		const current = getSubagentsForRole(role);
 		const updated = isCliAgentEnabledFor(role, agent.id)
 			? current.filter((r) => !(r.type === 'cli' && r.model === agent.id))
-			: [...current, { model: agent.id, type: 'cli' as const, driver_model: 'sonnet' }];
+			: [...current, { model: agent.id, type: 'cli' as const }];
+		agentSubagents.value = { ...agentSubagents.value, [role]: updated };
+	};
+
+	const changeCliModelFor = (role: string, agentId: string, cliModel: string) => {
+		const current = getSubagentsForRole(role);
+		const updated = current.map((r) => {
+			if (r.type === 'cli' && r.model === agentId) {
+				const next = { ...r };
+				if (cliModel) {
+					next.cliModel = cliModel;
+				} else {
+					delete next.cliModel;
+				}
+				return next;
+			}
+			return r;
+		});
 		agentSubagents.value = { ...agentSubagents.value, [role]: updated };
 	};
 
@@ -692,11 +762,14 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 											<div class="text-xs text-gray-500 mb-2">Sub Agent CLIs</div>
 											<CliTagsInput
 												agents={cliAgents.value}
-												selectedIds={getSubagentsForRole(agent.key)
-													.filter((s) => s.type === 'cli')
-													.map((s) => s.model)}
+												selectedConfigs={getSubagentsForRole(agent.key).filter(
+													(s) => s.type === 'cli'
+												)}
 												disabled={disabled}
 												onToggle={(cliAgent) => toggleCliAgentFor(agent.key, cliAgent)}
+												onChangeModel={(agentId, cliModel) =>
+													changeCliModelFor(agent.key, agentId, cliModel)
+												}
 											/>
 										</div>
 
