@@ -1,5 +1,7 @@
 # Plan: Use Script-Based Mock SDK for Online Tests
 
+**Created:** March 2025
+
 ## Goal
 
 Extend the use of the existing script-based mock SDK for online tests, particularly for time-consuming room feature tests. Where possible, convert API-dependent tests to use mock mode to improve test stability, reduce execution time, and lower API costs. For tests that require real API calls (e.g., multi-agent room flows), keep them as API-dependent but explore enhancements to the mock SDK that could support them in the future.
