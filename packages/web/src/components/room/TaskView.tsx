@@ -20,6 +20,7 @@ import type { NeoTask, SessionInfo } from '@neokai/shared';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { parsePrUrl } from '../../lib/utils';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { InputTextarea } from '../InputTextarea';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
@@ -425,6 +426,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	}
 
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
+	const pr = task.currentStep ? parsePrUrl(task.currentStep) : null;
 
 	// Show input area when group is active and in an interactive state
 	const showInput =
@@ -454,6 +456,17 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							<span class="text-xs text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">
 								{task.taskType}
 							</span>
+						)}
+						{pr && (
+							<a
+								href={pr.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="text-xs px-1.5 py-0.5 rounded bg-blue-900/20 text-blue-400 hover:text-blue-300 hover:bg-blue-900/40 border border-blue-700/40 transition-colors"
+								title={pr.url}
+							>
+								PR #{pr.number}
+							</a>
 						)}
 					</div>
 					{group && (
