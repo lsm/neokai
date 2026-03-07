@@ -536,18 +536,21 @@ export class RoomRuntime {
 
 		switch (toolName) {
 			case 'send_to_worker': {
-				// Enforce max feedback iterations
+				// Enforce max feedback iterations — runtime escalates to human review.
+				// Like submit_for_review, this transitions to awaiting_human so we deliberately
+				// do NOT call cleanupMirroring (keeps mirroring running, consistent behaviour).
+				// The reason is persisted in the group timeline by escalateToHumanReview().
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
-					await this.taskGroupManager.fail(
+					await this.taskGroupManager.escalateToHumanReview(
 						groupId,
 						`Max feedback iterations (${this.maxFeedbackIterations}) reached`
 					);
-					this.cleanupMirroring(groupId, 'Max feedback iterations reached — task failed.');
 					await this.emitTaskUpdateById(group.taskId);
+					await this.emitGoalProgressForTask(group.taskId);
 					this.scheduleTick();
 					return jsonResult({
 						success: false,
-						error: `Max feedback iterations reached. Task failed.`,
+						error: `Max feedback iterations reached. Task escalated for human review.`,
 					});
 				}
 				const message = params.message ?? '';
@@ -787,6 +790,7 @@ export class RoomRuntime {
 		}
 
 		await this.emitTaskUpdateById(group.taskId);
+		await this.emitGoalProgressForTask(group.taskId);
 		this.scheduleTick();
 		return true;
 	}

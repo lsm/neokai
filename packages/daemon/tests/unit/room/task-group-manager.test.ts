@@ -534,6 +534,59 @@ describe('TaskGroupManager', () => {
 		});
 	});
 
+	describe('escalateToHumanReview', () => {
+		it('should set group to awaiting_human and task to review', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			const updated = await manager.escalateToHumanReview(group.id, 'Max iterations reached');
+
+			expect(updated!.state).toBe('awaiting_human');
+
+			const taskResult = await taskManager.getTask(task.id);
+			expect(taskResult!.status).toBe('review');
+		});
+
+		it('should keep both sessions observed so human can resume later', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Trigger first review round so leader session is created and observed
+			await manager.routeWorkerToLeader(group.id, 'Worker output');
+
+			await manager.escalateToHumanReview(group.id, 'Max iterations');
+
+			// Both sessions must remain observed for resumeWorkerFromHuman to work
+			expect(observer.isObserving(group.workerSessionId)).toBe(true);
+			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
+		});
+
+		it('should return null for unknown group', async () => {
+			const result = await manager.escalateToHumanReview('nonexistent-group', 'reason');
+			expect(result).toBeNull();
+		});
+	});
+
 	describe('cancel', () => {
 		it('should fail the group with cancel reason', async () => {
 			const task = await createTask();

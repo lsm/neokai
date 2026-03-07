@@ -153,6 +153,139 @@ describe('RoomRuntime flow', () => {
 			expect(finalTask!.result).toBe('Error handling added');
 		});
 
+		it('should escalate task to human review (not fail) when max feedback iterations reached', async () => {
+			// maxFeedbackIterations = 5 (set in test helpers).
+			// feedbackIteration is incremented by routeWorkerToLeader (1-based).
+			// The check fires when feedbackIteration >= maxFeedbackIterations,
+			// i.e., on the 5th review round when the leader tries send_to_worker.
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Complete 4 full feedback rounds (feedbackIteration reaches 4 after round 4)
+			for (let i = 0; i < 4; i++) {
+				await ctx.runtime.onWorkerTerminalState(group.id, {
+					sessionId: group.workerSessionId,
+					kind: 'idle',
+				});
+				// send_to_worker succeeds: feedbackIteration i+1 < 5
+				const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+					message: `Feedback round ${i + 1}`,
+				});
+				expect(JSON.parse(r.content[0].text).success).toBe(true);
+				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
+			}
+
+			// 5th review round: routeWorkerToLeader increments feedbackIteration to 5
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(5);
+
+			// Leader tries send_to_worker: 5 >= 5 → runtime escalates
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'One more round',
+			});
+
+			// Runtime should reject and escalate — NOT fail the task
+			expect(JSON.parse(result.content[0].text).success).toBe(false);
+			expect(JSON.parse(result.content[0].text).error).toContain('human review');
+
+			// Group state: awaiting_human (not failed/completed)
+			const finalGroup = ctx.groupRepo.getGroup(group.id);
+			expect(finalGroup!.state).toBe('awaiting_human');
+
+			// Task status: review (not failed)
+			const finalTask = await ctx.taskManager.getTask(task.id);
+			expect(finalTask!.status).toBe('review');
+		});
+
+		it('should keep goal active when task is escalated for human review at max iterations', async () => {
+			const { task, goal } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// 4 full rounds + trigger escalation on the 5th
+			for (let i = 0; i < 4; i++) {
+				await ctx.runtime.onWorkerTerminalState(group.id, {
+					sessionId: group.workerSessionId,
+					kind: 'idle',
+				});
+				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+					message: `Feedback ${i + 1}`,
+				});
+			}
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Extra' });
+
+			// Task in review, not failed
+			const finalTask = await ctx.taskManager.getTask(task.id);
+			expect(finalTask!.status).toBe('review');
+
+			// Goal is NOT failed — only task-level escalation
+			const goalState = await ctx.goalManager.getGoal(goal.id);
+			expect(goalState!.status).toBe('active');
+		});
+
+		it('should reset feedbackIteration after human resumes an escalated task, preventing immediate re-escalation', async () => {
+			// This tests the P1 fix: without resetting feedbackIteration in resumeWorkerFromHuman,
+			// the leader's first send_to_worker after resume would immediately re-escalate.
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Exhaust all 5 rounds (feedbackIteration reaches 5, escalation fires)
+			for (let i = 0; i < 4; i++) {
+				await ctx.runtime.onWorkerTerminalState(group.id, {
+					sessionId: group.workerSessionId,
+					kind: 'idle',
+				});
+				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+					message: `Round ${i + 1}`,
+				});
+			}
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Trigger' });
+
+			// Task is in review, group awaiting_human
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('review');
+
+			// Human resumes the task
+			await ctx.runtime.resumeWorkerFromHuman(task.id, 'Please try again with this approach');
+
+			// feedbackIteration must be reset to 0
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(0);
+			// Group should be back in awaiting_worker
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			// Task back in in_progress
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
+
+			// Worker finishes again → routeWorkerToLeader increments to 1 (not 6!)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(1);
+
+			// Leader can now send feedback without triggering re-escalation (1 < 5)
+			const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Good, keep going',
+			});
+			expect(JSON.parse(r.content[0].text).success).toBe(true);
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+		});
+
 		it('should complete a three-iteration cycle and track feedback iterations accurately', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
