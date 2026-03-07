@@ -248,13 +248,11 @@ export function createTables(db: BunDatabase): void {
     `);
 
 	db.exec(`
-      CREATE TABLE IF NOT EXISTS session_group_messages (
+      CREATE TABLE IF NOT EXISTS task_group_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-        session_id TEXT,
-        role TEXT NOT NULL,
-        message_type TEXT NOT NULL,
-        content TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        payload_json TEXT,
         created_at INTEGER NOT NULL
       )
     `);
@@ -311,7 +309,7 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgmsg_group ON session_group_messages(group_id, id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
 	// Job queue indexes
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_job_queue_dequeue ON job_queue(queue, status, priority DESC, run_at ASC)`

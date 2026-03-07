@@ -331,11 +331,12 @@ export class RoomRuntime {
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
 			if (dirty) {
 				log.info(`Worktree dirty for group ${groupId} — sending worker back to clean up.`);
-				this.groupRepo.appendMessage({
+				this.groupRepo.appendEvent({
 					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: 'Worktree has uncommitted changes. Sending worker back to clean up.',
+					kind: 'status',
+					payloadJson: JSON.stringify({
+						text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
+					}),
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -366,11 +367,10 @@ export class RoomRuntime {
 			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			if (!gateResult.pass) {
 				log.info(`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`);
-				this.groupRepo.appendMessage({
+				this.groupRepo.appendEvent({
 					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Worker exit gate: ${gateResult.reason}`,
+					kind: 'status',
+					payloadJson: JSON.stringify({ text: `Worker exit gate: ${gateResult.reason}` }),
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -403,11 +403,14 @@ export class RoomRuntime {
 					`Rate limit detected in worker output for group ${groupId}. ` +
 						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 				);
-				this.groupRepo.appendMessage({
+				this.groupRepo.appendEvent({
 					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+					kind: 'rate_limited',
+					payloadJson: JSON.stringify({
+						text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: rateLimitBackoff.resetsAt,
+						sessionRole: 'worker',
+					}),
 				});
 				this.scheduleTickAfterRateLimitReset(groupId);
 				return;
@@ -451,12 +454,13 @@ export class RoomRuntime {
 			this.groupRepo.updateLastForwardedMessageId(groupId, lastMessage.id, group.version);
 		}
 
-		// Insert status message into group timeline
-		this.groupRepo.appendMessage({
+		// Insert status event into group timeline
+		this.groupRepo.appendEvent({
 			groupId,
-			role: 'system',
-			messageType: 'status',
-			content: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
+			kind: 'status',
+			payloadJson: JSON.stringify({
+				text: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
+			}),
 		});
 
 		// Route to Leader (room fetched from DB via getRoom)
@@ -576,12 +580,13 @@ export class RoomRuntime {
 				// Clear any rate limit backoff since we're starting a new iteration
 				this.groupRepo.clearRateLimit(groupId);
 
-				// Insert status message into group timeline
-				this.groupRepo.appendMessage({
+				// Insert status event into group timeline
+				this.groupRepo.appendEvent({
 					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
+					kind: 'status',
+					payloadJson: JSON.stringify({
+						text: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
+					}),
 				});
 
 				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
@@ -637,11 +642,10 @@ export class RoomRuntime {
 						const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendMessage({
+							this.groupRepo.appendEvent({
 								groupId,
-								role: 'system',
-								messageType: 'status',
-								content: `Leader complete gate: ${gateResult.reason}`,
+								kind: 'status',
+								payloadJson: JSON.stringify({ text: `Leader complete gate: ${gateResult.reason}` }),
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -702,11 +706,10 @@ export class RoomRuntime {
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendMessage({
+							this.groupRepo.appendEvent({
 								groupId,
-								role: 'system',
-								messageType: 'status',
-								content: `Leader submit gate: ${gateResult.reason}`,
+								kind: 'status',
+								payloadJson: JSON.stringify({ text: `Leader submit gate: ${gateResult.reason}` }),
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -818,9 +821,8 @@ export class RoomRuntime {
 	 * Used when the group is awaiting_leader and a human wants to provide
 	 * guidance or additional context to the leader agent.
 	 *
-	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only
-	 * (not to session_group_messages). Callers that want the message to appear in
-	 * the group timeline must call groupRepo.appendMessage() separately.
+	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only.
+	 * Task timelines are reconstructed from SDK messages + task_group_events.
 	 *
 	 * Returns true on success, false if the group is not in awaiting_leader state
 	 * or if the injection fails.
@@ -926,15 +928,14 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Set up message mirroring for a group's worker/leader sessions.
-	 * Subscribes to DaemonHub sdk.message events and appends enriched messages
-	 * into the group's session_group_messages timeline.
+	 * Set up live message forwarding for a group's worker/leader sessions.
 	 *
-	 * Messages are enriched with _taskMeta (authorRole, turnId, iteration) so
-	 * the frontend can render them with turn-based grouping and color-coding.
+	 * Subscribes to DaemonHub sdk.message events and broadcasts enriched deltas
+	 * on state.groupMessages.delta for TaskConversationRenderer.
 	 *
-	 * turnId is computed deterministically: `turn_{groupId}_{iteration}_{shortSessionId}`
-	 * This avoids in-memory state and survives daemon restarts.
+	 * IMPORTANT: We intentionally do NOT mirror worker/leader SDK messages into
+	 * any group message table anymore. Task view history is reconstructed from each
+	 * session's sdk_messages stream via task.getGroupMessages.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -964,11 +965,14 @@ export class RoomRuntime {
 								`Rate limit detected in ${role} message for group ${group.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.groupRepo.appendMessage({
+							this.groupRepo.appendEvent({
 								groupId: group.id,
-								role: 'system',
-								messageType: 'status',
-								content: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+								kind: 'rate_limited',
+								payloadJson: JSON.stringify({
+									text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+									resetsAt: rateLimitBackoff.resetsAt,
+									sessionRole,
+								}),
 							});
 						}
 					}
@@ -978,30 +982,20 @@ export class RoomRuntime {
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
 					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-					const enrichedContent = JSON.stringify({
-						...event.message,
-						_taskMeta: {
-							authorRole: role,
-							authorSessionId: sessionId,
-							turnId,
-							iteration,
-						},
-					});
-
-					this.groupRepo.appendMessage({
-						groupId: group.id,
-						sessionId,
-						role,
-						messageType: event.message.type as string,
-						content: enrichedContent,
-					});
-
-					// Broadcast delta to subscribed frontends
+					// Broadcast enriched delta to subscribed frontends.
 					if (this.messageHub) {
-						const parsed = JSON.parse(enrichedContent);
+						const enrichedMessage = {
+							...event.message,
+							_taskMeta: {
+								authorRole: role,
+								authorSessionId: sessionId,
+								turnId,
+								iteration,
+							},
+						};
 						this.messageHub.event(
 							'state.groupMessages.delta',
-							{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+							{ added: [{ ...enrichedMessage, timestamp: Date.now() }], timestamp: Date.now() },
 							{ channel: `group:${group.id}` }
 						);
 					}
@@ -1032,11 +1026,10 @@ export class RoomRuntime {
 		}
 
 		if (statusText) {
-			this.groupRepo.appendMessage({
+			this.groupRepo.appendEvent({
 				groupId,
-				role: 'system',
-				messageType: 'status',
-				content: statusText,
+				kind: 'status',
+				payloadJson: JSON.stringify({ text: statusText }),
 			});
 		}
 	}
