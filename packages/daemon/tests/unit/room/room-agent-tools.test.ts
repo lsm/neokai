@@ -341,6 +341,19 @@ describe('Room Agent Tools', () => {
 			expect(task.id).toBe(taskId);
 			expect(task.title).toBe('New title');
 		});
+
+		it('should succeed and return task unchanged when no fields are provided (no-op)', async () => {
+			const created = parseResult(
+				await handlers.create_task({ title: 'Original', description: 'desc' })
+			);
+			const taskId = created.taskId as string;
+
+			const result = parseResult(await handlers.update_task({ task_id: taskId }));
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; title: string };
+			expect(task.id).toBe(taskId);
+			expect(task.title).toBe('Original');
+		});
 	});
 
 	describe('cancel_task', () => {

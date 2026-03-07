@@ -148,12 +148,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (args.title !== undefined) updates.title = args.title;
 			if (args.description !== undefined) updates.description = args.description;
 			if (args.priority !== undefined) updates.priority = args.priority;
-			if (Object.keys(updates).length > 0) {
-				await taskManager.updateTaskFields(args.task_id, updates);
-			}
-			const updated = await taskManager.getTask(args.task_id);
+			// Apply updates if any fields were provided; otherwise return existing task unchanged
+			const updated =
+				Object.keys(updates).length > 0
+					? await taskManager.updateTaskFields(args.task_id, updates)
+					: task;
 			// Notify UI of the update
-			if (daemonHub && updated) {
+			if (daemonHub) {
 				void daemonHub.emit('room.task.update', {
 					sessionId: `room:${roomId}`,
 					roomId,
@@ -383,11 +384,11 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'update_task',
-			'Update an existing task (title, description, and/or priority)',
+			'Update an existing task (title, description, and/or priority). Only provided fields are changed; omitted fields keep their current values.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
-				title: z.string().optional().describe('New title for the task'),
-				description: z.string().optional().describe('New description for the task'),
+				title: z.string().trim().min(1).optional().describe('New title for the task'),
+				description: z.string().trim().min(1).optional().describe('New description for the task'),
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
 			},
 			(args) => handlers.update_task(args)
