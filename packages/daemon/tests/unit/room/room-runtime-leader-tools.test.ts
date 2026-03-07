@@ -376,7 +376,7 @@ describe('RoomRuntime leader tools', () => {
 			});
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('Max planning attempts');
+			expect(parsed.error).toContain('Max planning retries');
 
 			// Task should still be failed
 			const updatedTask = await ctx.taskManager.getTask(task1.id);

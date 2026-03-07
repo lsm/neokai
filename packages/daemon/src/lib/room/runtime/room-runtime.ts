@@ -1519,7 +1519,7 @@ export class RoomRuntime {
 			this.scheduleTick();
 			return jsonResult({
 				success: false,
-				error: `Max planning attempts (${this.maxPlanningAttempts}) reached. Goal escalated to human.`,
+				error: `Max planning retries (${this.maxPlanningAttempts - 1}) reached. Goal escalated to human.`,
 			});
 		}
 
