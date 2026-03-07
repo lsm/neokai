@@ -61,6 +61,7 @@ import {
 const log = new Logger('room-runtime');
 
 const MAX_PLANNING_ATTEMPTS = 3;
+const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -178,7 +179,7 @@ export class RoomRuntime {
 		this.goalManager = config.goalManager;
 		this.sessionFactory = config.sessionFactory;
 		this.maxConcurrentGroups = config.maxConcurrentGroups ?? 1;
-		this.maxFeedbackIterations = config.maxFeedbackIterations ?? 3;
+		this.maxFeedbackIterations = config.maxFeedbackIterations ?? DEFAULT_MAX_FEEDBACK_ITERATIONS;
 		this.tickInterval = config.tickInterval ?? 30_000;
 		this.getWorkerMessages = config.getWorkerMessages;
 		this.daemonHub = config.daemonHub;
@@ -247,7 +248,9 @@ export class RoomRuntime {
 			typeof rawGroups === 'number' && rawGroups >= 1 ? Math.min(Math.floor(rawGroups), 10) : 1;
 		const rawRounds = config.maxReviewRounds;
 		this.maxFeedbackIterations =
-			typeof rawRounds === 'number' && rawRounds >= 1 ? Math.floor(rawRounds) : 3;
+			typeof rawRounds === 'number' && rawRounds >= 1
+				? Math.floor(rawRounds)
+				: DEFAULT_MAX_FEEDBACK_ITERATIONS;
 	}
 
 	// =========================================================================

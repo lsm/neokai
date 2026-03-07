@@ -736,7 +736,7 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 						value={maxReviewRounds.value}
 						onInput={(e) => {
 							const val = parseInt((e.target as HTMLInputElement).value, 10);
-							if (!isNaN(val) && val >= 1) {
+							if (!isNaN(val) && val >= 1 && val <= 20) {
 								maxReviewRounds.value = val;
 							}
 						}}
