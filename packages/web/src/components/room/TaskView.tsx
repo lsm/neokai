@@ -15,15 +15,15 @@
  * appears when the user has scrolled up.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { NeoTask, SessionInfo } from '@neokai/shared';
-import { useMessageHub } from '../../hooks/useMessageHub';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
+import { useMessageHub } from '../../hooks/useMessageHub';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
-import { ScrollToBottomButton } from '../ScrollToBottomButton';
-import { InputTextarea } from '../InputTextarea';
-import { TaskConversationRenderer } from './TaskConversationRenderer';
 import { copyToClipboard } from '../../lib/utils';
+import { InputTextarea } from '../InputTextarea';
+import { ScrollToBottomButton } from '../ScrollToBottomButton';
+import { TaskConversationRenderer } from './TaskConversationRenderer';
 
 interface CopyButtonProps {
 	text: string;
@@ -109,6 +109,85 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	cancelled: 'text-gray-500',
 };
 
+interface HeaderReviewBarProps {
+	roomId: string;
+	taskId: string;
+	/** Called after approval to refresh the conversation */
+	onApproved: () => void;
+}
+
+function HeaderReviewBar({ roomId, taskId, onApproved }: HeaderReviewBarProps) {
+	const { request } = useMessageHub();
+	const [approving, setApproving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const approveTask = async () => {
+		if (approving) return;
+		setApproving(true);
+		setError(null);
+		try {
+			await request('goal.approveTask', { roomId, taskId });
+			// Approval changes group state; re-fetch conversation to pick up the approval message
+			onApproved();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to approve task');
+		} finally {
+			setApproving(false);
+		}
+	};
+
+	return (
+		<div class="border-b border-amber-700/30 bg-amber-900/20 px-4 py-2 flex items-center gap-3 flex-shrink-0">
+			{/* Review prompt */}
+			<div class="flex-1 flex items-center gap-2">
+				<span class="text-amber-400 text-sm font-medium">
+					Review the PR and approve or provide feedback below
+				</span>
+			</div>
+			{/* Approve button */}
+			<button
+				class="py-1.5 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+				onClick={approveTask}
+				disabled={approving}
+			>
+				{approving ? (
+					<>
+						<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+							<circle
+								class="opacity-25"
+								cx="12"
+								cy="12"
+								r="10"
+								stroke="currentColor"
+								stroke-width="4"
+							/>
+							<path
+								class="opacity-75"
+								fill="currentColor"
+								d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+							/>
+						</svg>
+						<span>Approving…</span>
+					</>
+				) : (
+					<>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M5 13l4 4L19 7"
+							/>
+						</svg>
+						<span>Approve</span>
+					</>
+				)}
+			</button>
+			{error && <span class="text-xs text-red-400">{error}</span>}
+		</div>
+	);
+}
+
 interface HumanInputAreaProps {
 	groupState: string;
 	roomId: string;
@@ -126,29 +205,12 @@ function HumanInputArea({
 	const { request } = useMessageHub();
 	const [feedbackText, setFeedbackText] = useState('');
 	const [leaderText, setLeaderText] = useState('');
-	// Separate loading states so Approve button doesn't show "Approving…" during feedback send
-	const [approving, setApproving] = useState(false);
 	const [sendingFeedback, setSendingFeedback] = useState(false);
 	const [sendingLeader, setSendingLeader] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
 
-	const approveTask = async () => {
-		if (approving || sendingFeedback) return;
-		setApproving(true);
-		setInputError(null);
-		try {
-			await request('goal.approveTask', { roomId, taskId });
-			// Approval changes group state; re-fetch conversation to pick up the approval message
-			onMessageSentWithReload();
-		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to approve task');
-		} finally {
-			setApproving(false);
-		}
-	};
-
 	const sendFeedback = async () => {
-		if (sendingFeedback || approving || !feedbackText.trim()) return;
+		if (sendingFeedback || !feedbackText.trim()) return;
 		setSendingFeedback(true);
 		setInputError(null);
 		try {
@@ -180,41 +242,24 @@ function HumanInputArea({
 
 	if (groupState === 'awaiting_human') {
 		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0">
-				{/* Prominent banner */}
-				<div class="px-4 py-2 bg-amber-900/20 border-b border-amber-800/30 flex items-center gap-2">
-					<span class="text-amber-400 text-sm font-medium">⏳ Awaiting your review</span>
-					<span class="text-xs text-amber-500/70 ml-auto">
-						Review the PR and approve or provide feedback
-					</span>
-				</div>
-				<div class="px-4 py-3 space-y-2">
-					{/* Approve button */}
-					<button
-						class="w-full py-2 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
-						onClick={approveTask}
-						disabled={approving || sendingFeedback}
-					>
-						{approving ? 'Approving…' : '✓ Approve'}
-					</button>
-					{/* Feedback input using shared InputTextarea.
-					    Large maxChars so users can paste diffs/logs freely. */}
-					<InputTextarea
-						content={feedbackText}
-						onContentChange={setFeedbackText}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-								e.preventDefault();
-								void sendFeedback();
-							}
-						}}
-						onSubmit={() => void sendFeedback()}
-						disabled={sendingFeedback || approving}
-						placeholder="Or send feedback to request changes… (⌘↵ to send)"
-						maxChars={50000}
-					/>
-					{inputError && <p class="text-xs text-red-400">{inputError}</p>}
-				</div>
+			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
+				{/* Feedback input using shared InputTextarea.
+				    Large maxChars so users can paste diffs/logs freely. */}
+				<InputTextarea
+					content={feedbackText}
+					onContentChange={setFeedbackText}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+							e.preventDefault();
+							void sendFeedback();
+						}
+					}}
+					onSubmit={() => void sendFeedback()}
+					disabled={sendingFeedback}
+					placeholder="Send feedback to request changes… (⌘↵ to send)"
+					maxChars={50000}
+				/>
+				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 			</div>
 		);
 	}
@@ -502,6 +547,15 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</button>
 			</div>
 
+			{/* Header Review Bar - shown when awaiting human approval */}
+			{group?.state === 'awaiting_human' && (
+				<HeaderReviewBar
+					roomId={roomId}
+					taskId={taskId}
+					onApproved={() => setConversationKey((k) => k + 1)}
+				/>
+			)}
+
 			{/* Info panel */}
 			{showInfoPanel && (
 				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-3 flex-shrink-0">
@@ -650,9 +704,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			</div>
 
 			{/* Human input area */}
-			{showInput && (
+			{showInput && group && (
 				<HumanInputArea
-					groupState={group!.state}
+					groupState={group.state}
 					roomId={roomId}
 					taskId={taskId}
 					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
