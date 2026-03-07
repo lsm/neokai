@@ -9,6 +9,7 @@
 
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
+import { MinimaxProvider } from './minimax-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
@@ -40,6 +41,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GLM provider (will be available if API key is set)
 	registry.register(new GlmProvider());
+
+	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
+	registry.register(new MinimaxProvider());
 
 	// Register OpenAI provider (will be available if OPENAI_API_KEY is set)
 	registry.register(new OpenAiProvider());
