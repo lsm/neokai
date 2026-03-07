@@ -709,6 +709,7 @@ class RoomStore {
 		defaultPath?: string;
 		defaultModel?: string;
 		allowedModels?: string[];
+		config?: Record<string, unknown>;
 	}): Promise<void> {
 		const roomId = this.roomId.value;
 		if (!roomId) {

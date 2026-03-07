@@ -37,6 +37,8 @@ interface GroupMessage {
 
 interface TaskConversationRendererProps {
 	groupId: string;
+	/** Called whenever the message list length changes, so the parent can drive autoscroll */
+	onMessageCountChange?: (count: number) => void;
 }
 
 const ROLE_COLORS: Record<string, { border: string; label: string; labelColor: string }> = {
@@ -76,19 +78,70 @@ function getTaskMeta(msg: SDKMessage): TaskMeta | null {
 	return meta ?? null;
 }
 
-export function TaskConversationRenderer({ groupId }: TaskConversationRendererProps) {
+/**
+ * Returns a stable deduplication key for a message.
+ * Agent messages use their uuid; status messages use _taskMeta.turnId as a fallback.
+ * Returns null for messages with no identifiable key (they pass through unfiltered).
+ */
+function getMessageId(msg: SDKMessage): string | null {
+	const uuid = (msg as SDKMessage & { uuid?: string }).uuid;
+	if (uuid) return uuid;
+	return getTaskMeta(msg)?.turnId ?? null;
+}
+
+export function TaskConversationRenderer({
+	groupId,
+	onMessageCountChange,
+}: TaskConversationRendererProps) {
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
-	const scrollRef = useRef<HTMLDivElement>(null);
+	// Tracks every message ID (uuid or turnId) added to state, enabling deduplication
+	// across: the initial fetch, buffered pre-fetch deltas, and live post-fetch deltas
+	// (e.g. replays on WebSocket reconnect).
+	const seenIdsRef = useRef<Set<string>>(new Set());
+	// Guards the fetch/delta race: deltas received while the fetch is in-flight are
+	// buffered here and merged (with dedup) once the fetch resolves.
+	const fetchingRef = useRef(true);
+	const pendingDeltasRef = useRef<SDKMessage[]>([]);
 
 	useEffect(() => {
 		const channel = `group:${groupId}`;
 		joinRoom(channel);
+		seenIdsRef.current.clear();
+		fetchingRef.current = true;
+		pendingDeltasRef.current = [];
+		let cancelled = false;
+
+		// Subscribe first so no live messages can slip through before the fetch starts.
+		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
+			'state.groupMessages.delta',
+			(event) => {
+				if (event.added && event.added.length > 0) {
+					if (fetchingRef.current) {
+						// Buffer deltas that arrive while the initial fetch is in-flight.
+						pendingDeltasRef.current = [...pendingDeltasRef.current, ...event.added];
+					} else {
+						// Deduplicate against seenIds — handles replays on reconnect and
+						// the same event firing twice within the buffer.
+						const newMessages = event.added.filter((m) => {
+							const id = getMessageId(m);
+							if (id && seenIdsRef.current.has(id)) return false;
+							if (id) seenIdsRef.current.add(id);
+							return true;
+						});
+						if (newMessages.length > 0) {
+							setMessages((prev) => [...prev, ...newMessages]);
+						}
+					}
+				}
+			}
+		);
 
 		const fetchAllMessages = async () => {
+			// Declared outside the try so partial pages are committed even if a later page errors.
+			const allGroupMessages: GroupMessage[] = [];
 			try {
-				const allGroupMessages: GroupMessage[] = [];
 				let afterId = 0;
 				let hasMore = true;
 
@@ -106,40 +159,55 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 						break;
 					}
 				}
-
-				const parsed = allGroupMessages
-					.map(parseGroupMessage)
-					.filter((m): m is SDKMessage => m !== null);
-				setMessages(parsed);
 			} catch {
-				// Non-fatal: group may not have messages yet
+				// Non-fatal: partial results in allGroupMessages are still committed below
 			} finally {
-				setLoading(false);
+				if (!cancelled) {
+					// Merge fetched pages (may be partial on error) with buffered deltas.
+					const parsed = allGroupMessages
+						.map(parseGroupMessage)
+						.filter((m): m is SDKMessage => m !== null);
+
+					const uniqueParsed = parsed.filter((m) => {
+						const id = getMessageId(m);
+						if (id && seenIdsRef.current.has(id)) return false;
+						if (id) seenIdsRef.current.add(id);
+						return true;
+					});
+
+					// Merge buffered deltas, deduplicating against seenIds.
+					// This handles: pre-fetch duplicates in the buffer itself, and
+					// messages already present in the fetch response (uuid or turnId match).
+					const newDeltas = pendingDeltasRef.current.filter((m) => {
+						const id = getMessageId(m);
+						if (id && seenIdsRef.current.has(id)) return false;
+						if (id) seenIdsRef.current.add(id);
+						return true;
+					});
+
+					if (uniqueParsed.length > 0 || newDeltas.length > 0) {
+						setMessages([...uniqueParsed, ...newDeltas]);
+					}
+					fetchingRef.current = false;
+					pendingDeltasRef.current = [];
+					setLoading(false);
+				}
 			}
 		};
 
 		fetchAllMessages();
 
-		const unsub = onEvent<{ added: SDKMessage[]; timestamp: number }>(
-			'state.groupMessages.delta',
-			(event) => {
-				if (event.added && event.added.length > 0) {
-					setMessages((prev) => [...prev, ...event.added]);
-					requestAnimationFrame(() => {
-						scrollRef.current?.scrollTo({
-							top: scrollRef.current.scrollHeight,
-							behavior: 'smooth',
-						});
-					});
-				}
-			}
-		);
-
 		return () => {
+			cancelled = true;
 			unsub();
 			leaveRoom(channel);
 		};
 	}, [groupId]);
+
+	// Notify parent when message count changes so it can drive autoscroll
+	useEffect(() => {
+		onMessageCountChange?.(messages.length);
+	}, [messages.length, onMessageCountChange]);
 
 	const maps = useMessageMaps(messages, groupId);
 
@@ -175,7 +243,7 @@ export function TaskConversationRenderer({ groupId }: TaskConversationRendererPr
 	}
 
 	return (
-		<div ref={scrollRef} class="flex-1 overflow-y-auto px-4 py-3 space-y-0.5">
+		<div class="px-4 py-3 space-y-0.5">
 			{messages.map((msg, i) => {
 				const meta = getTaskMeta(msg);
 				const role = meta?.authorRole ?? 'system';

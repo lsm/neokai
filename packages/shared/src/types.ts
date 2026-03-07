@@ -181,8 +181,9 @@ export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'e
  * Supported AI providers
  * - 'anthropic': Default Claude API provider
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
+ * - 'minimax': MiniMax via Anthropic-compatible API
  */
-export type Provider = 'anthropic' | 'glm';
+export type Provider = 'anthropic' | 'glm' | 'minimax';
 
 /**
  * Provider-specific configuration

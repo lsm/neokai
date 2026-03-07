@@ -50,6 +50,7 @@ import {
 	formatLeaderContractNudge,
 	sortTasksByPriority,
 } from './message-routing';
+import { isRateLimitError, createRateLimitBackoff } from './rate-limit-utils';
 import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
@@ -62,9 +63,10 @@ import {
 
 const log = new Logger('room-runtime');
 
-const MAX_PLANNING_ATTEMPTS = 3;
 export const DEFAULT_MAX_CONCURRENT_GROUPS = 1;
 export const DEFAULT_MAX_FEEDBACK_ITERATIONS = 3;
+/** Default when room config does not specify maxPlanningRetries (no auto-retry) */
+const DEFAULT_MAX_PLANNING_RETRIES = 0;
 
 export type { RuntimeState } from '@neokai/shared';
 
@@ -258,6 +260,21 @@ export class RoomRuntime {
 				: DEFAULT_MAX_FEEDBACK_ITERATIONS;
 	}
 
+	/**
+	 * Maximum planning attempts for this room.
+	 * Reads from room.config.maxPlanningRetries (default: 0 = no auto-retry).
+	 */
+	private get maxPlanningAttempts(): number {
+		const cfg = this.room.config ?? {};
+		const value = (cfg as Record<string, unknown>)['maxPlanningRetries'];
+		if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
+			// maxPlanningRetries is "how many retries after first failure":
+			// 0 = only 1 attempt (no retries), N = N+1 total attempts
+			return value + 1;
+		}
+		return DEFAULT_MAX_PLANNING_RETRIES + 1;
+	}
+
 	// =========================================================================
 	// Event Handlers (trigger tick)
 	// =========================================================================
@@ -286,6 +303,13 @@ export class RoomRuntime {
 
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
+
+		// Check rate limit backoff
+		if (this.groupRepo.isRateLimited(groupId)) {
+			log.info(`Worker reached terminal state while rate limited - pausing routing to Leader`);
+			this.scheduleTickAfterRateLimitReset(groupId);
+			return;
+		}
 
 		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
 		// Applies to all workers — planners create plan files under docs/plans/ and commit to branches.
@@ -357,6 +381,26 @@ export class RoomRuntime {
 						.join('\n\n')
 				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
 
+		// Check for rate limit errors in worker output
+		if (isRateLimitError(workerOutputText)) {
+			const rateLimitBackoff = createRateLimitBackoff(workerOutputText, 'worker');
+			if (rateLimitBackoff) {
+				this.groupRepo.setRateLimit(groupId, rateLimitBackoff);
+				log.info(
+					`Rate limit detected in worker output for group ${groupId}. ` +
+						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
+				);
+				this.groupRepo.appendMessage({
+					groupId,
+					role: 'system',
+					messageType: 'status',
+					content: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+				});
+				this.scheduleTickAfterRateLimitReset(groupId);
+				return;
+			}
+		}
+
 		// Collect tool call summaries across all messages
 		const toolCallNames = workerMessages.flatMap((m) => m.toolCallNames);
 
@@ -423,6 +467,13 @@ export class RoomRuntime {
 	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group || group.state !== 'awaiting_leader') return;
+
+		// Check rate limit backoff
+		if (this.groupRepo.isRateLimited(groupId)) {
+			log.info(`Leader reached terminal state while rate limited - pausing nudge`);
+			this.scheduleTickAfterRateLimitReset(groupId);
+			return;
+		}
 
 		// Check if Leader called a tool (persisted in DB metadata)
 		const calledTool = group.leaderCalledTool;
@@ -503,6 +554,9 @@ export class RoomRuntime {
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
+
+				// Clear any rate limit backoff since we're starting a new iteration
+				this.groupRepo.clearRateLimit(groupId);
 
 				// Insert status message into group timeline
 				this.groupRepo.appendMessage({
@@ -875,6 +929,27 @@ export class RoomRuntime {
 					if (uuid && mirroredUuids.has(uuid)) return;
 					if (uuid) mirroredUuids.add(uuid);
 
+					// Check for rate limit errors in the message content
+					// This detects rate limits in real-time for both Worker and Leader sessions
+					const messageContent = JSON.stringify(event.message);
+					if (isRateLimitError(messageContent)) {
+						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
+						const rateLimitBackoff = createRateLimitBackoff(messageContent, sessionRole);
+						if (rateLimitBackoff) {
+							this.groupRepo.setRateLimit(group.id, rateLimitBackoff);
+							log.info(
+								`Rate limit detected in ${role} message for group ${group.id}. ` +
+									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
+							);
+							this.groupRepo.appendMessage({
+								groupId: group.id,
+								role: 'system',
+								messageType: 'status',
+								content: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+							});
+						}
+					}
+
 					// Read current iteration from DB to stay accurate across feedback cycles
 					const currentGroup = this.groupRepo.getGroup(group.id);
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
@@ -1139,9 +1214,9 @@ export class RoomRuntime {
 	 * - status is 'active'
 	 * - has no linked tasks at all, OR all linked tasks are 'failed'
 	 * - has no pending/in_progress/draft/escalated tasks
-	 * - planning_attempts < MAX_PLANNING_ATTEMPTS
+	 * - planning_attempts < this.maxPlanningAttempts
 	 *
-	 * Goals that exceed MAX_PLANNING_ATTEMPTS are transitioned to 'needs_human'.
+	 * Goals that exceed maxPlanningAttempts are transitioned to 'needs_human'.
 	 */
 	private async getNextGoalForPlanning(): Promise<RoomGoal | null> {
 		const activeGoals = await this.goalManager.listGoals('active');
@@ -1186,7 +1261,7 @@ export class RoomRuntime {
 
 			const attempts = goal.planning_attempts ?? 0;
 
-			if (attempts >= MAX_PLANNING_ATTEMPTS) {
+			if (attempts >= this.maxPlanningAttempts) {
 				// Too many failed planning attempts: escalate to human
 				log.warn(
 					`Goal ${goal.id} (${goal.title}) exceeded max planning attempts, marking needs_human`
@@ -1478,7 +1553,7 @@ export class RoomRuntime {
 	 * Guards:
 	 * - Task must be an execution task (not planning)
 	 * - Goal must be active with remaining pending tasks
-	 * - planning_attempts < MAX_PLANNING_ATTEMPTS
+	 * - planning_attempts < this.maxPlanningAttempts
 	 */
 	private async handleReplanGoal(
 		taskId: string,
@@ -1511,7 +1586,7 @@ export class RoomRuntime {
 		}
 
 		const attempts = goal.planning_attempts ?? 0;
-		if (attempts >= MAX_PLANNING_ATTEMPTS) {
+		if (attempts >= this.maxPlanningAttempts) {
 			// Fail the task and escalate instead of replanning
 			await this.taskGroupManager.fail(groupId, reason);
 			this.cleanupMirroring(groupId, `Task failed: ${reason}`);
@@ -1520,7 +1595,7 @@ export class RoomRuntime {
 			this.scheduleTick();
 			return jsonResult({
 				success: false,
-				error: `Max planning attempts (${MAX_PLANNING_ATTEMPTS}) reached. Goal escalated to human.`,
+				error: `Max planning retries (${this.maxPlanningAttempts - 1}) reached. Goal escalated to human.`,
 			});
 		}
 
@@ -1568,6 +1643,33 @@ export class RoomRuntime {
 		if (this.state !== 'running') return;
 		// Use queueMicrotask for non-blocking tick scheduling
 		queueMicrotask(() => this.tick());
+	}
+
+	/**
+	 * Schedule a tick after rate limit reset time.
+	 * Used to resume work after API rate limit backoff period expires.
+	 */
+	private scheduleTickAfterRateLimitReset(groupId: string): void {
+		const remainingMs = this.groupRepo.getRateLimitRemainingMs(groupId);
+		if (remainingMs <= 0) {
+			// Rate limit already expired, schedule immediate tick
+			this.scheduleTick();
+			return;
+		}
+
+		// Add a small buffer (5 seconds) to ensure rate limit has fully reset
+		const delayMs = remainingMs + 5000;
+
+		log.info(
+			`Scheduling tick in ${Math.round(delayMs / 1000)}s for group ${groupId} ` +
+				`(rate limit resets at ${new Date(Date.now() + remainingMs).toLocaleTimeString()})`
+		);
+
+		setTimeout(() => {
+			// Clear the rate limit backoff since it should be expired now
+			this.groupRepo.clearRateLimit(groupId);
+			this.scheduleTick();
+		}, delayMs);
 	}
 
 	/**

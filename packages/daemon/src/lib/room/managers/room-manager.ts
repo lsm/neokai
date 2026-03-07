@@ -131,6 +131,7 @@ export class RoomManager {
 			priority: task.priority,
 			progress: task.progress,
 			dependsOn: task.dependsOn,
+			error: task.error,
 		});
 		const nonTerminal = tasks.filter((t) => t.status !== 'completed' && t.status !== 'failed');
 		const taskSummaries = nonTerminal.map(toSummary);

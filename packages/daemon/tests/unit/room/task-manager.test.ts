@@ -408,7 +408,7 @@ describe('TaskManager', () => {
 		});
 	});
 
-	describe('updateTaskPriority', () => {
+	describe('updateTaskFields', () => {
 		it('should update task priority', async () => {
 			const task = await taskManager.createTask({
 				title: 'Test Task',
@@ -416,15 +416,71 @@ describe('TaskManager', () => {
 				priority: 'normal',
 			});
 
-			const updated = await taskManager.updateTaskPriority(task.id, 'urgent');
+			const updated = await taskManager.updateTaskFields(task.id, { priority: 'urgent' });
 
 			expect(updated.priority).toBe('urgent');
 		});
 
+		it('should update task title', async () => {
+			const task = await taskManager.createTask({ title: 'Old title', description: 'desc' });
+
+			const updated = await taskManager.updateTaskFields(task.id, { title: 'New title' });
+
+			expect(updated.title).toBe('New title');
+			expect(updated.description).toBe('desc'); // unchanged
+		});
+
+		it('should update task description', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'Old desc' });
+
+			const updated = await taskManager.updateTaskFields(task.id, { description: 'New desc' });
+
+			expect(updated.description).toBe('New desc');
+			expect(updated.title).toBe('T'); // unchanged
+		});
+
+		it('should update all fields together', async () => {
+			const task = await taskManager.createTask({
+				title: 'Old',
+				description: 'Old desc',
+				priority: 'low',
+			});
+
+			const updated = await taskManager.updateTaskFields(task.id, {
+				title: 'New',
+				description: 'New desc',
+				priority: 'urgent',
+			});
+
+			expect(updated.title).toBe('New');
+			expect(updated.description).toBe('New desc');
+			expect(updated.priority).toBe('urgent');
+		});
+
+		it('should work for tasks with any status (status-agnostic)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'd' });
+			await taskManager.startTask(task.id);
+
+			const updated = await taskManager.updateTaskFields(task.id, { title: 'Updated' });
+
+			expect(updated.title).toBe('Updated');
+			expect(updated.status).toBe('in_progress');
+		});
+
+		it('should work on completed tasks', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: 'd' });
+			await taskManager.completeTask(task.id, 'done');
+
+			const updated = await taskManager.updateTaskFields(task.id, { title: 'Fixed title' });
+
+			expect(updated.title).toBe('Fixed title');
+			expect(updated.status).toBe('completed');
+		});
+
 		it('should throw error for non-existent task', async () => {
-			await expect(taskManager.updateTaskPriority('non-existent', 'high')).rejects.toThrow(
-				'Task not found: non-existent'
-			);
+			await expect(
+				taskManager.updateTaskFields('non-existent', { priority: 'high' })
+			).rejects.toThrow('Task not found: non-existent');
 		});
 	});
 

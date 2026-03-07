@@ -298,4 +298,106 @@ describe('SessionGroupRepository', () => {
 			}
 		});
 	});
+
+	describe('rate limit backoff', () => {
+		it('should start with null rate limit', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(group.rateLimit).toBeNull();
+		});
+
+		it('should set rate limit backoff', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const backoff = {
+				detectedAt: Date.now(),
+				resetsAt: Date.now() + 3600000, // 1 hour from now
+				sessionRole: 'worker' as const,
+			};
+
+			repo.setRateLimit(group.id, backoff);
+			const updated = repo.getGroup(group.id);
+
+			expect(updated!.rateLimit).not.toBeNull();
+			expect(updated!.rateLimit!.detectedAt).toBe(backoff.detectedAt);
+			expect(updated!.rateLimit!.resetsAt).toBe(backoff.resetsAt);
+			expect(updated!.rateLimit!.sessionRole).toBe('worker');
+		});
+
+		it('should clear rate limit', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const backoff = {
+				detectedAt: Date.now(),
+				resetsAt: Date.now() + 3600000,
+				sessionRole: 'worker' as const,
+			};
+
+			repo.setRateLimit(group.id, backoff);
+			repo.clearRateLimit(group.id);
+			const updated = repo.getGroup(group.id);
+
+			expect(updated!.rateLimit).toBeNull();
+		});
+
+		it('should detect active rate limit', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const backoff = {
+				detectedAt: Date.now(),
+				resetsAt: Date.now() + 3600000, // 1 hour from now
+				sessionRole: 'worker' as const,
+			};
+
+			repo.setRateLimit(group.id, backoff);
+			expect(repo.isRateLimited(group.id)).toBe(true);
+		});
+
+		it('should not detect rate limit when not set', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(repo.isRateLimited(group.id)).toBe(false);
+		});
+
+		it('should not detect rate limit when expired', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const backoff = {
+				detectedAt: Date.now() - 7200000, // 2 hours ago
+				resetsAt: Date.now() - 3600000, // 1 hour ago (expired)
+				sessionRole: 'worker' as const,
+			};
+
+			repo.setRateLimit(group.id, backoff);
+			expect(repo.isRateLimited(group.id)).toBe(false);
+		});
+
+		it('should get remaining time for active rate limit', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const resetTime = Date.now() + 1800000; // 30 minutes from now
+			const backoff = {
+				detectedAt: Date.now(),
+				resetsAt: resetTime,
+				sessionRole: 'leader' as const,
+			};
+
+			repo.setRateLimit(group.id, backoff);
+			const remaining = repo.getRateLimitRemainingMs(group.id);
+
+			// Should be approximately 30 minutes (allow 1 second tolerance)
+			expect(remaining).toBeGreaterThan(1799000);
+			expect(remaining).toBeLessThanOrEqual(1800000);
+		});
+
+		it('should return 0 remaining time when not rate limited', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(repo.getRateLimitRemainingMs(group.id)).toBe(0);
+		});
+
+		it('should return 0 remaining time when rate limit expired', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const backoff = {
+				detectedAt: Date.now() - 7200000,
+				resetsAt: Date.now() - 3600000, // Expired 1 hour ago
+				sessionRole: 'worker' as const,
+			};
+
+			repo.setRateLimit(group.id, backoff);
+			expect(repo.getRateLimitRemainingMs(group.id)).toBe(0);
+		});
+	});
 });

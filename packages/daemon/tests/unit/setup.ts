@@ -38,3 +38,4 @@ process.env.ANTHROPIC_API_KEY = '';
 process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
 process.env.GLM_API_KEY = '';
 process.env.ZHIPU_API_KEY = '';
+process.env.MINIMAX_API_KEY = '';

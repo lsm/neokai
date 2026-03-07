@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import {
 	createRuntimeTestContext,
 	createGoalAndTask,
+	makeRoom,
 	spawnAndRouteToLeader,
 	type RuntimeTestContext,
 } from './room-runtime-test-helpers';
@@ -247,6 +248,11 @@ describe('RoomRuntime leader tools', () => {
 	});
 
 	describe('replan_goal', () => {
+		beforeEach(() => {
+			// Enable retries so replan_goal tests can trigger replanning
+			ctx.runtime.updateRoom({ ...makeRoom(), config: { maxPlanningRetries: 2 } });
+		});
+
 		async function setupGoalWithMultipleTasks() {
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build auth system',
@@ -370,7 +376,7 @@ describe('RoomRuntime leader tools', () => {
 			});
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('Max planning attempts');
+			expect(parsed.error).toContain('Max planning retries');
 
 			// Task should still be failed
 			const updatedTask = await ctx.taskManager.getTask(task1.id);
