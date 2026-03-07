@@ -11,7 +11,7 @@ describe('RoomRuntime flow', () => {
 	let ctx: RuntimeTestContext;
 
 	beforeEach(() => {
-		ctx = createRuntimeTestContext();
+		ctx = createRuntimeTestContext({ maxFeedbackIterations: 5 });
 	});
 
 	afterEach(() => {
