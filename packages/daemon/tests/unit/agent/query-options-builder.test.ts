@@ -13,41 +13,6 @@ import type { Session } from '@neokai/shared';
 import type { SettingsManager } from '../../../src/lib/settings-manager';
 import { generateUUID } from '@neokai/shared';
 import { homedir } from 'os';
-import { resetProviderRegistry } from '../../../src/lib/providers/registry';
-
-// Mock the provider registry - but re-export resetProviderRegistry from real module
-// This allows global test setup to reset the registry between test files
-const mockProviders: unknown[] = [];
-mock.module('../../../src/lib/providers/registry', () => ({
-	getProviderRegistry: () => ({
-		getAll: () => mockProviders,
-		get: (id: string) => mockProviders.find((p: unknown) => (p as { id: string }).id === id),
-		has: (id: string) => mockProviders.some((p: unknown) => (p as { id: string }).id === id),
-		size: mockProviders.length,
-		register: () => {},
-		unregister: () => {},
-	}),
-	resetProviderRegistry, // Re-export the real function
-}));
-
-mock.module('../../../src/lib/providers/factory', () => ({
-	getProviderContextManager: () => ({
-		createContext: (session: { config: { model?: string } }) => ({
-			getSdkModelId: () => session.config.model || 'default',
-			getProvider: () => null,
-		}),
-	}),
-	getProviderRegistry: () => ({
-		getAll: () => mockProviders,
-		get: (id: string) => mockProviders.find((p: unknown) => (p as { id: string }).id === id),
-		has: (id: string) => mockProviders.some((p: unknown) => (p as { id: string }).id === id),
-		size: mockProviders.length,
-		register: () => {},
-		unregister: () => {},
-	}),
-	initializeProviders: () => ({}),
-	resetProviderFactory: () => {},
-}));
 
 describe('QueryOptionsBuilder', () => {
 	let builder: QueryOptionsBuilder;
