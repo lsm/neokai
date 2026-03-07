@@ -499,13 +499,6 @@ export class TaskGroupManager {
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);
 
-		// Append escalation reason as a structured event for diagnosability
-		this.groupRepo.appendEvent({
-			groupId,
-			kind: 'status',
-			payloadJson: JSON.stringify({ text: `Escalated for human review: ${reason}` }),
-		});
-
 		return updated;
 	}
 

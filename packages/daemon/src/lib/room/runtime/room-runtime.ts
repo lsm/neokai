@@ -331,12 +331,8 @@ export class RoomRuntime {
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
 			if (dirty) {
 				log.info(`Worktree dirty for group ${groupId} — sending worker back to clean up.`);
-				this.groupRepo.appendEvent({
-					groupId,
-					kind: 'status',
-					payloadJson: JSON.stringify({
-						text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
-					}),
+				this.appendGroupEvent(groupId, 'status', {
+					text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -367,10 +363,8 @@ export class RoomRuntime {
 			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			if (!gateResult.pass) {
 				log.info(`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`);
-				this.groupRepo.appendEvent({
-					groupId,
-					kind: 'status',
-					payloadJson: JSON.stringify({ text: `Worker exit gate: ${gateResult.reason}` }),
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Worker exit gate: ${gateResult.reason}`,
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -403,14 +397,10 @@ export class RoomRuntime {
 					`Rate limit detected in worker output for group ${groupId}. ` +
 						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 				);
-				this.groupRepo.appendEvent({
-					groupId,
-					kind: 'rate_limited',
-					payloadJson: JSON.stringify({
-						text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
-						resetsAt: rateLimitBackoff.resetsAt,
-						sessionRole: 'worker',
-					}),
+				this.appendGroupEvent(groupId, 'rate_limited', {
+					text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+					resetsAt: rateLimitBackoff.resetsAt,
+					sessionRole: 'worker',
 				});
 				this.scheduleTickAfterRateLimitReset(groupId);
 				return;
@@ -455,12 +445,8 @@ export class RoomRuntime {
 		}
 
 		// Insert status event into group timeline
-		this.groupRepo.appendEvent({
-			groupId,
-			kind: 'status',
-			payloadJson: JSON.stringify({
-				text: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
-			}),
+		this.appendGroupEvent(groupId, 'status', {
+			text: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
 		});
 
 		// Route to Leader (room fetched from DB via getRoom)
@@ -560,10 +546,11 @@ export class RoomRuntime {
 				// do NOT call cleanupMirroring (keeps mirroring running, consistent behaviour).
 				// The reason is persisted in the group timeline by escalateToHumanReview().
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
-					await this.taskGroupManager.escalateToHumanReview(
-						groupId,
-						`Max feedback iterations (${this.maxFeedbackIterations}) reached`
-					);
+					const reason = `Max feedback iterations (${this.maxFeedbackIterations}) reached`;
+					await this.taskGroupManager.escalateToHumanReview(groupId, reason);
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Escalated for human review: ${reason}`,
+					});
 					await this.emitTaskUpdateById(group.taskId);
 					await this.emitGoalProgressForTask(group.taskId);
 					this.scheduleTick();
@@ -581,12 +568,8 @@ export class RoomRuntime {
 				this.groupRepo.clearRateLimit(groupId);
 
 				// Insert status event into group timeline
-				this.groupRepo.appendEvent({
-					groupId,
-					kind: 'status',
-					payloadJson: JSON.stringify({
-						text: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
-					}),
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
 				});
 
 				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
@@ -642,10 +625,8 @@ export class RoomRuntime {
 						const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendEvent({
-								groupId,
-								kind: 'status',
-								payloadJson: JSON.stringify({ text: `Leader complete gate: ${gateResult.reason}` }),
+							this.appendGroupEvent(groupId, 'status', {
+								text: `Leader complete gate: ${gateResult.reason}`,
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -706,10 +687,8 @@ export class RoomRuntime {
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendEvent({
-								groupId,
-								kind: 'status',
-								payloadJson: JSON.stringify({ text: `Leader submit gate: ${gateResult.reason}` }),
+							this.appendGroupEvent(groupId, 'status', {
+								text: `Leader submit gate: ${gateResult.reason}`,
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -965,14 +944,10 @@ export class RoomRuntime {
 								`Rate limit detected in ${role} message for group ${group.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.groupRepo.appendEvent({
-								groupId: group.id,
-								kind: 'rate_limited',
-								payloadJson: JSON.stringify({
-									text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
-									resetsAt: rateLimitBackoff.resetsAt,
-									sessionRole,
-								}),
+							this.appendGroupEvent(group.id, 'rate_limited', {
+								text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+								resetsAt: rateLimitBackoff.resetsAt,
+								sessionRole,
 							});
 						}
 					}
@@ -1018,6 +993,29 @@ export class RoomRuntime {
 	 * Clean up mirroring subscriptions for a group.
 	 * Optionally inserts a final status message into the group timeline.
 	 */
+	private appendGroupEvent(
+		groupId: string,
+		kind: string,
+		payload?: { text?: string; [key: string]: unknown }
+	): void {
+		this.groupRepo.appendEvent({
+			groupId,
+			kind,
+			payloadJson: payload ? JSON.stringify(payload) : undefined,
+		});
+		if (this.messageHub) {
+			const now = Date.now();
+			this.messageHub.event(
+				'state.groupMessages.delta',
+				{
+					added: [{ type: 'status', text: payload?.text ?? kind, timestamp: now }],
+					timestamp: now,
+				},
+				{ channel: `group:${groupId}` }
+			);
+		}
+	}
+
 	private cleanupMirroring(groupId: string, statusText?: string): void {
 		const cleanup = this.mirroringCleanups.get(groupId);
 		if (cleanup) {
@@ -1026,11 +1024,7 @@ export class RoomRuntime {
 		}
 
 		if (statusText) {
-			this.groupRepo.appendEvent({
-				groupId,
-				kind: 'status',
-				payloadJson: JSON.stringify({ text: statusText }),
-			});
+			this.appendGroupEvent(groupId, 'status', { text: statusText });
 		}
 	}
 

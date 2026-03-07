@@ -223,8 +223,23 @@ export function setupTaskHandlers(
 		}
 
 		const sdkRepo = new SDKMessageRepository(db.getDatabase());
-		const workerMessages = sdkRepo.getSDKMessages(group.workerSessionId, 10000).messages;
-		const leaderMessages = sdkRepo.getSDKMessages(group.leaderSessionId, 10000).messages;
+		const fetchAllSessionMessages = (sessionId: string): unknown[] => {
+			const pageSize = 500;
+			let before: number | undefined;
+			const all: unknown[] = [];
+			while (true) {
+				const page = sdkRepo.getSDKMessages(sessionId, pageSize, before);
+				if (page.messages.length === 0) break;
+				all.unshift(...page.messages);
+				if (!page.hasMore) break;
+				const oldest = page.messages[0] as { timestamp?: number };
+				if (typeof oldest.timestamp !== 'number') break;
+				before = oldest.timestamp;
+			}
+			return all;
+		};
+		const workerMessages = fetchAllSessionMessages(group.workerSessionId);
+		const leaderMessages = fetchAllSessionMessages(group.leaderSessionId);
 
 		const toEnrichedTimeline = (messages: unknown[], sessionId: string, role: string) => {
 			const shortSessionId = sessionId.slice(0, 8);
@@ -255,7 +270,19 @@ export function setupTaskHandlers(
 			});
 		};
 
-		const groupEvents = groupRepo.getEvents(group.id, { limit: 10000 }).events;
+		const fetchAllGroupEvents = (groupId: string) => {
+			const pageSize = 500;
+			let afterId = 0;
+			const all = [] as ReturnType<SessionGroupRepository['getEvents']>['events'];
+			while (true) {
+				const page = groupRepo.getEvents(groupId, { limit: pageSize, afterId });
+				all.push(...page.events);
+				if (!page.hasMore || page.events.length === 0) break;
+				afterId = page.events[page.events.length - 1].id;
+			}
+			return all;
+		};
+		const groupEvents = fetchAllGroupEvents(group.id);
 
 		const merged = [
 			...toEnrichedTimeline(workerMessages as unknown[], group.workerSessionId, group.workerRole),
