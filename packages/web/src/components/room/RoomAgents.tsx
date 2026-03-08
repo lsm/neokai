@@ -19,82 +19,24 @@ import { roomStore } from '../../lib/room-store';
 import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { toast } from '../../lib/toast';
-
-interface ModelInfo {
-	id: string;
-	name: string;
-	family: string;
-}
-
-interface CliAgentInfo {
-	id: string;
-	name: string;
-	command: string;
-	provider: string;
-	installed: boolean;
-	authenticated: boolean;
-	version?: string;
-	models?: string[];
-}
-
-const MODEL_FAMILY_ICONS: Record<string, string> = {
-	opus: '🧠',
-	sonnet: '💎',
-	haiku: '⚡',
-	glm: '🌐',
-	minimax: '🔥',
-	__default__: '💎',
-};
-
-function detectFamily(id: string): string {
-	if (id.includes('opus')) return 'opus';
-	if (id.includes('haiku')) return 'haiku';
-	if (id.toLowerCase().startsWith('glm-')) return 'glm';
-	if (id.toLowerCase().startsWith('minimax-')) return 'minimax';
-	return 'sonnet';
-}
-
-interface AgentRole {
-	key: string;
-	label: string;
-	description: string;
-}
-
-const BUILTIN_AGENTS: AgentRole[] = [
-	{ key: 'planner', label: 'Planner', description: 'Breaks goals into tasks' },
-	{ key: 'coder', label: 'Coder', description: 'Implements code changes' },
-	{ key: 'general', label: 'General', description: 'Non-coding tasks' },
-	{ key: 'leader', label: 'Leader', description: 'Reviews and routes' },
-];
-
-interface SubagentConfig {
-	model: string;
-	provider?: string;
-	type?: 'cli';
-	driver_model?: string;
-	cliModel?: string;
-}
-
-interface AgentModels {
-	planner?: string;
-	coder?: string;
-	general?: string;
-	leader?: string;
-}
-
-interface AgentSubagents {
-	planner?: SubagentConfig[];
-	coder?: SubagentConfig[];
-	general?: SubagentConfig[];
-	leader?: SubagentConfig[];
-}
+import { t } from '../../lib/i18n';
+import {
+	type ModelInfo,
+	type CliAgentInfo,
+	type SubagentConfig,
+	type AgentModels,
+	type AgentSubagents,
+	BUILTIN_AGENTS,
+	MODEL_FAMILY_ICONS,
+	detectFamily,
+} from './agent-shared';
 
 export interface RoomAgentsProps {
 	room: Room;
 }
 
 /** Compact model picker button + dropdown */
-function ModelPicker({
+export function ModelPicker({
 	value,
 	models,
 	loading,
@@ -210,7 +152,7 @@ function ModelPicker({
 }
 
 /** Tags-style input for selecting sub-agent models */
-function ModelTagsInput({
+export function ModelTagsInput({
 	models,
 	selected,
 	loading,
@@ -304,7 +246,7 @@ function ModelTagsInput({
 }
 
 /** Tags-style input for selecting CLI sub-agents with per-agent model picker */
-function CliTagsInput({
+export function CliTagsInput({
 	agents,
 	selectedConfigs,
 	disabled,
@@ -667,9 +609,9 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				maxReviewRounds: maxReviewRounds.value,
 				maxConcurrentGroups: maxConcurrentGroups.value,
 			});
-			toast.success('Agent configuration saved');
+			toast.success(t('toast.agentConfigSaved'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to save');
+			toast.error(err instanceof Error ? err.message : t('toast.saveFailed'));
 		} finally {
 			isSaving.value = false;
 		}

@@ -2,6 +2,7 @@ import type { Room } from '@neokai/shared';
 import { lobbyStore } from '../lib/lobby-store.ts';
 import { roomStore } from '../lib/room-store.ts';
 import { navigateToRoom } from '../lib/router.ts';
+import { t } from '../lib/i18n.ts';
 
 interface RoomListProps {
 	/** Called when a room is selected (for mobile drawer close) */
@@ -20,14 +21,6 @@ export function RoomList({ onRoomSelect }: RoomListProps) {
 
 	return (
 		<div class="flex-1 overflow-y-auto">
-			{rooms.length === 0 && (
-				<div class="p-6 text-center">
-					<div class="text-4xl mb-3">🏢</div>
-					<p class="text-sm text-gray-400">No rooms yet.</p>
-					<p class="text-xs text-gray-500 mt-1">Create a room to organize your work!</p>
-				</div>
-			)}
-
 			{rooms.map((room) => (
 				<RoomListItem
 					key={room.id}
@@ -64,11 +57,13 @@ function RoomListItem({ room, onClick, reviewCount }: RoomListItemProps) {
 				<div class="flex items-center gap-1.5 flex-shrink-0">
 					{hasReview && (
 						<span class="text-xs bg-purple-800/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium">
-							{reviewCount} review{reviewCount !== 1 ? 's' : ''}
+							{reviewCount !== 1
+							? t('common.reviewOther', { count: reviewCount ?? 0 })
+							: t('common.reviewOne', { count: reviewCount ?? 0 })}
 						</span>
 					)}
 					{isArchived && (
-						<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">Archived</span>
+						<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">{t('common.archived')}</span>
 					)}
 				</div>
 			</div>
@@ -79,7 +74,9 @@ function RoomListItem({ room, onClick, reviewCount }: RoomListItemProps) {
 						class={`w-1.5 h-1.5 rounded-full ${sessionCount > 0 ? 'bg-green-500' : 'bg-gray-500'}`}
 					/>
 					<span>
-						{sessionCount} session{sessionCount !== 1 ? 's' : ''}
+						{sessionCount !== 1
+						? t('common.sessionOther', { count: sessionCount })
+						: t('common.sessionOne', { count: sessionCount })}
 					</span>
 				</div>
 			</div>

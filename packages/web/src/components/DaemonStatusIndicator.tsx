@@ -1,5 +1,6 @@
 import { connectionState } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
+import { t } from '../lib/i18n';
 
 /**
  * Daemon Status Indicator
@@ -23,28 +24,28 @@ export function DaemonStatusIndicator() {
 	switch (state) {
 		case 'connected':
 			dotColor = 'bg-green-500';
-			statusLabel = 'Daemon: Connected';
+			statusLabel = t('daemon.connected');
 			showPulse = true;
 			break;
 		case 'connecting':
 			dotColor = 'bg-yellow-500';
-			statusLabel = 'Daemon: Connecting...';
+			statusLabel = t('daemon.connecting');
 			showPulse = true;
 			break;
 		case 'reconnecting':
 			dotColor = 'bg-yellow-500';
-			statusLabel = 'Daemon: Reconnecting...';
+			statusLabel = t('daemon.reconnecting');
 			showPulse = true;
 			break;
 		case 'disconnected':
 			dotColor = 'bg-gray-500';
-			statusLabel = 'Daemon: Offline';
+			statusLabel = t('daemon.offline');
 			break;
 		case 'error':
 		case 'failed':
 		default:
 			dotColor = 'bg-red-500';
-			statusLabel = 'Daemon: Error';
+			statusLabel = t('daemon.error');
 			break;
 	}
 

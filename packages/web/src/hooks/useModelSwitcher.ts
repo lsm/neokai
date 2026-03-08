@@ -21,6 +21,7 @@ import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
 import { connectionManager } from '../lib/connection-manager';
 import { toast } from '../lib/toast';
+import { t } from '../lib/i18n';
 
 export interface UseModelSwitcherResult {
 	/** Current model ID */
@@ -180,7 +181,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 	const switchModel = useCallback(
 		async (newModelId: string) => {
 			if (newModelId === currentModel) {
-				toast.info(`Already using ${currentModelInfo?.name || currentModel}`);
+				toast.info(t('toast.modelAlreadyUsing', { name: currentModelInfo?.name || currentModel }));
 				return;
 			}
 
@@ -188,7 +189,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 				setSwitching(true);
 				const hub = connectionManager.getHubIfConnected();
 				if (!hub) {
-					toast.error('Not connected to server');
+					toast.error(t('chat.notConnected'));
 					return;
 				}
 
@@ -205,12 +206,12 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					setCurrentModel(result.model);
 					const newModelInfo = availableModels.find((m) => m.id === result.model);
 					setCurrentModelInfo(newModelInfo || null);
-					toast.success(`Switched to ${newModelInfo?.name || result.model}`);
+					toast.success(t('toast.modelSwitched', { name: newModelInfo?.name || result.model }));
 				} else {
-					toast.error(result.error || 'Failed to switch model');
+					toast.error(result.error || t('toast.modelSwitchFailed'));
 				}
 			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : 'Failed to switch model';
+				const errorMessage = error instanceof Error ? error.message : t('toast.modelSwitchFailed');
 				toast.error(errorMessage);
 			} finally {
 				setSwitching(false);

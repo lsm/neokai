@@ -15,7 +15,6 @@ import {
 	navigateToSession,
 	navigateToSessions,
 	navigateToSettings,
-	navigateToHome,
 	navigateToRooms,
 } from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
@@ -29,18 +28,19 @@ import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { t } from '../lib/i18n.ts';
 
 // Settings section configuration
 const SETTINGS_SECTIONS: Array<{
 	id: SettingsSection;
-	label: string;
+	labelKey: string;
 	icon: string;
 }> = [
-	{ id: 'general', label: 'General', icon: 'settings' },
-	{ id: 'providers', label: 'Providers', icon: 'cloud' },
-	{ id: 'mcp-servers', label: 'MCP Servers', icon: 'server' },
-	{ id: 'usage', label: 'Usage', icon: 'chart' },
-	{ id: 'about', label: 'About', icon: 'info' },
+	{ id: 'general', labelKey: 'settings.general', icon: 'settings' },
+	{ id: 'providers', labelKey: 'settings.providers', icon: 'cloud' },
+	{ id: 'mcp-servers', labelKey: 'settings.mcpServers', icon: 'server' },
+	{ id: 'usage', labelKey: 'settings.usage', icon: 'chart' },
+	{ id: 'about', labelKey: 'settings.about', icon: 'info' },
 ];
 
 // Helper component for section icons
@@ -125,40 +125,17 @@ export function ContextPanel() {
 
 	// Section config
 	const sectionConfig = {
-		home: {
-			title: 'Rooms',
-			emptyIcon: '🏢',
-			emptyTitle: 'No rooms yet',
-			emptyDesc: 'Create a room to organize work',
-			actionLabel: 'Create Room',
-		},
 		chats: {
-			title: 'Sessions',
-			emptyIcon: '💬',
-			emptyTitle: 'No sessions yet',
-			emptyDesc: 'Start a new session to begin',
-			actionLabel: 'New Session',
+			title: t('sessions.title'),
+			actionLabel: t('sessions.newSession'),
 		},
 		rooms: {
-			title: 'Rooms',
-			emptyIcon: '🏢',
-			emptyTitle: 'No rooms yet',
-			emptyDesc: 'Create a room to organize work',
-			actionLabel: 'Create Room',
-		},
-		projects: {
-			title: 'Projects',
-			emptyIcon: '📁',
-			emptyTitle: 'Coming Soon',
-			emptyDesc: 'Projects will help organize rooms',
-			actionLabel: 'New Project',
+			title: t('rooms.title'),
+			actionLabel: t('rooms.createRoom'),
 		},
 		settings: {
-			title: 'Settings',
-			emptyIcon: '⚙️',
-			emptyTitle: 'Settings',
-			emptyDesc: 'Configure your preferences',
-			actionLabel: 'Open Settings',
+			title: t('nav.settings'),
+			actionLabel: '',
 		},
 	};
 
@@ -167,7 +144,7 @@ export function ContextPanel() {
 
 	const handleCreateSession = async () => {
 		if (connectionState.value !== 'connected') {
-			toast.error('Not connected to server. Please wait...');
+			toast.error(t('chat.notConnected'));
 			return;
 		}
 
@@ -179,15 +156,15 @@ export function ContextPanel() {
 			});
 
 			if (!response?.sessionId) {
-				toast.error('No sessionId in response');
+				toast.error(t('toast.noSessionId'));
 				return;
 			}
 
 			navigateToSession(response.sessionId);
-			toast.success('Session created successfully');
+			toast.success(t('chat.sessionCreated'));
 		} catch (_err) {
 			if (_err instanceof ConnectionNotReadyError) {
-				toast.error('Connection lost. Please try again.');
+				toast.error(t('chat.connectionLost'));
 			} else {
 				const message = _err instanceof Error ? _err.message : 'Failed to create session';
 				toast.error(message);
@@ -199,7 +176,6 @@ export function ContextPanel() {
 
 	const handleAction = () => {
 		switch (navSection) {
-			case 'home':
 			case 'rooms':
 				createRoomModalSignal.value = true;
 				break;
@@ -217,10 +193,6 @@ export function ContextPanel() {
 
 	const handleMobileNavClick = (section: NavSection) => {
 		switch (section) {
-			case 'home':
-				navSectionSignal.value = 'home';
-				navigateToHome();
-				break;
 			case 'chats':
 				navigateToSessions();
 				break;
@@ -236,7 +208,6 @@ export function ContextPanel() {
 	const isActionDisabled =
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
-		navSection === 'projects' ||
 		navSection === 'settings';
 
 	const isActionLoading = creatingSession;
@@ -269,7 +240,7 @@ export function ContextPanel() {
 							key={item.id}
 							active={navSection === item.id}
 							onClick={() => handleMobileNavClick(item.id)}
-							label={item.label}
+							label={t(item.label)}
 						>
 							{item.icon}
 						</NavIconButton>
@@ -279,7 +250,7 @@ export function ContextPanel() {
 						<NavIconButton
 							active={navSection === SETTINGS_NAV_ITEM.id}
 							onClick={() => handleMobileNavClick(SETTINGS_NAV_ITEM.id)}
-							label={SETTINGS_NAV_ITEM.label}
+							label={t(SETTINGS_NAV_ITEM.label)}
 						>
 							{SETTINGS_NAV_ITEM.icon}
 						</NavIconButton>
@@ -288,7 +259,7 @@ export function ContextPanel() {
 
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
-					<div class="flex items-center justify-between mb-3">
+					<div class={`flex items-center justify-between ${isRoomDetail ? '' : 'mb-3'}`}>
 						<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
 						{/* Close button for mobile */}
 						<button
@@ -307,8 +278,7 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'home' ||
-						navSection === 'chats' ||
+					{(navSection === 'chats' ||
 						(navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
@@ -332,9 +302,6 @@ export function ContextPanel() {
 				</div>
 
 				{/* Content - switches based on section */}
-				{navSection === 'home' && (
-					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
-				)}
 				{navSection === 'chats' && (
 					<SessionList onSessionSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}
@@ -346,15 +313,6 @@ export function ContextPanel() {
 				)}
 				{navSection === 'rooms' && !isRoomDetail && (
 					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
-				)}
-				{navSection === 'projects' && (
-					<div class="flex-1 flex items-center justify-center p-6">
-						<div class="text-center">
-							<div class="text-4xl mb-3">📁</div>
-							<p class="text-sm text-gray-400">Projects coming soon</p>
-							<p class="text-xs text-gray-500 mt-1">Organize rooms into projects</p>
-						</div>
-					</div>
 				)}
 				{navSection === 'settings' && (
 					<div class="flex-1 flex flex-col overflow-hidden">
@@ -376,7 +334,7 @@ export function ContextPanel() {
 											)}
 										>
 											<SectionIcon type={section.icon} />
-											<span class="truncate">{section.label}</span>
+											<span class="truncate">{t(section.labelKey)}</span>
 											{isActive && (
 												<svg
 													class="w-4 h-4 ml-auto text-blue-400"

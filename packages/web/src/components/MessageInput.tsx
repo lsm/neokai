@@ -15,6 +15,7 @@ import { AttachmentPreview } from './AttachmentPreview.tsx';
 import { InputActionsMenu } from './InputActionsMenu.tsx';
 import { InputTextarea } from './InputTextarea.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
+import { t } from '../lib/i18n.ts';
 import {
 	useInputDraft,
 	useModelSwitcher,
@@ -27,10 +28,10 @@ import {
 function getPlaceholderForSessionType(sessionType?: SessionType): string {
 	switch (sessionType) {
 		case 'room_chat':
-			return 'Chat with the room coordinator...';
+			return t('input.chatWithCoordinator');
 		case 'worker':
 		default:
-			return 'Ask or make anything...';
+			return t('input.askOrMake');
 	}
 }
 
@@ -320,8 +321,8 @@ export default function MessageInput({
 									d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
 								/>
 							</svg>
-							<p class="text-lg font-medium text-white">Drop images here</p>
-							<p class="text-sm text-gray-400 mt-1">PNG, JPG, GIF, or WebP</p>
+							<p class="text-lg font-medium text-white">{t('input.dropImagesHere')}</p>
+							<p class="text-sm text-gray-400 mt-1">{t('input.supportedFormats')}</p>
 						</div>
 					</div>
 				)}
@@ -349,7 +350,7 @@ export default function MessageInput({
 								>
 									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
 									<span class="truncate">
-										{index === 0 && <span class="mr-1 text-amber-300">Now</span>}
+										{index === 0 && <span class="mr-1 text-amber-300">{t('input.queueNow')}</span>}
 										{queued.text}
 									</span>
 								</div>
@@ -362,19 +363,19 @@ export default function MessageInput({
 								>
 									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
 									<span class="truncate">
-										{index === 0 && <span class="mr-1 text-blue-300">Next</span>}
+										{index === 0 && <span class="mr-1 text-blue-300">{t('input.queueNext')}</span>}
 										{queued.text}
 									</span>
 								</div>
 							))}
 							{queuedForCurrentTurn.length > 3 && (
 								<p class="pointer-events-none text-xs text-amber-200/80">
-									+{queuedForCurrentTurn.length - 3} more pending
+									{t('input.morePending', { count: queuedForCurrentTurn.length - 3 })}
 								</p>
 							)}
 							{queuedForNextTurn.length > 3 && (
 								<p class="pointer-events-none text-xs text-blue-200/80">
-									+{queuedForNextTurn.length - 3} more queued
+									{t('input.moreQueued', { count: queuedForNextTurn.length - 3 })}
 								</p>
 							)}
 						</div>

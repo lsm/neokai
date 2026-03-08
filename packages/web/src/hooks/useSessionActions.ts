@@ -12,6 +12,9 @@ import { deleteSession, listSessions, archiveSession } from '../lib/api-helpers'
 import { toast } from '../lib/toast';
 import { currentSessionIdSignal, sessionsSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
+import { roomStore } from '../lib/room-store';
+import { navigateToRoom } from '../lib/router';
+import { t } from '../lib/i18n';
 
 export interface ArchiveConfirmState {
 	show: boolean;
@@ -62,16 +65,27 @@ export function useSessionActions({
 	const handleDeleteSession = useCallback(async () => {
 		try {
 			setDeleting(true);
+			const roomId = roomStore.roomId.value;
 			await deleteSession(sessionId);
 			onDeleteModalClose();
-			const response = await listSessions();
-			sessionsSignal.value = response.sessions;
-			setTimeout(() => {
-				currentSessionIdSignal.value = null;
-			}, 0);
-			toast.success('Session deleted');
+
+			if (roomId) {
+				// In room context: remove from room sessions and navigate to room dashboard
+				roomStore.sessions.value = roomStore.sessions.value.filter(
+					(s) => s.id !== sessionId
+				);
+				navigateToRoom(roomId);
+			} else {
+				// Global context: refresh session list and clear current session
+				const response = await listSessions();
+				sessionsSignal.value = response.sessions;
+				setTimeout(() => {
+					currentSessionIdSignal.value = null;
+				}, 0);
+			}
+			toast.success(t('toast.sessionDeleted'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to delete session');
+			toast.error(err instanceof Error ? err.message : t('toast.sessionDeleteFailed'));
 		} finally {
 			setDeleting(false);
 		}
@@ -87,7 +101,7 @@ export function useSessionActions({
 					commitStatus: result.commitStatus,
 				});
 			} else if (result.success) {
-				toast.success('Session archived successfully');
+				toast.success(t('toast.sessionArchived'));
 				const response = await listSessions();
 				sessionsSignal.value = response.sessions;
 			}
@@ -103,7 +117,7 @@ export function useSessionActions({
 			setArchiving(true);
 			const result = await archiveSession(sessionId, true);
 			if (result.success) {
-				toast.success(`Session archived (${result.commitsRemoved} commits removed)`);
+				toast.success(t('toast.sessionArchived'));
 				setArchiveConfirmDialog(null);
 				const response = await listSessions();
 				sessionsSignal.value = response.sessions;
@@ -121,7 +135,7 @@ export function useSessionActions({
 
 	const handleResetAgent = useCallback(async () => {
 		if (!isConnected) {
-			toast.error('Not connected to server');
+			toast.error(t('toast.notConnected'));
 			return;
 		}
 
@@ -129,7 +143,7 @@ export function useSessionActions({
 			setResettingAgent(true);
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				toast.error('Not connected to server');
+				toast.error(t('toast.notConnected'));
 				return;
 			}
 
@@ -139,7 +153,7 @@ export function useSessionActions({
 			});
 
 			if (result.success) {
-				toast.success('Agent reset successfully.');
+				toast.success(t('toast.agentReset'));
 				onStateReset();
 			} else {
 				toast.error(result.error || 'Failed to reset agent');
@@ -153,13 +167,13 @@ export function useSessionActions({
 
 	const handleExportChat = useCallback(async () => {
 		if (!isConnected) {
-			toast.error('Not connected to server');
+			toast.error(t('toast.notConnected'));
 			return;
 		}
 		try {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				toast.error('Not connected to server');
+				toast.error(t('toast.notConnected'));
 				return;
 			}
 			const result = await hub.request<{ markdown: string }>('session.export', {
@@ -175,9 +189,9 @@ export function useSessionActions({
 			a.click();
 			document.body.removeChild(a);
 			URL.revokeObjectURL(url);
-			toast.success('Chat exported!');
+			toast.success(t('toast.chatExported'));
 		} catch {
-			toast.error('Failed to export chat');
+			toast.error(t('toast.exportFailed'));
 		}
 	}, [sessionId, session?.title, isConnected]);
 

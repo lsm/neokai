@@ -17,6 +17,7 @@ import { useSignal, useComputed } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
+import { t } from '../lib/i18n.ts';
 import { Modal } from './ui/Modal.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 import type { Session, ToolsConfig, GlobalToolsConfig, SettingSource } from '@neokai/shared';
@@ -176,7 +177,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 			// Ensure at least one source is enabled
 			const newSources = settingSources.value.filter((s) => s !== source);
 			if (newSources.length === 0) {
-				toast.error('At least one setting source must be enabled');
+				toast.error(t('toast.toolsMinSource'));
 				return;
 			}
 			settingSources.value = newSources;
@@ -216,13 +217,13 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 
 			if (result.success) {
 				hasChanges.value = false;
-				toast.success('Tools configuration saved');
+				toast.success(t('toast.toolsConfigSaved'));
 				onClose();
 			} else {
-				toast.error(result.error || 'Failed to save tools configuration');
+				toast.error(result.error || t('toast.toolsConfigFailed'));
 			}
 		} catch {
-			toast.error('Failed to save tools configuration');
+			toast.error(t('toast.toolsConfigFailed'));
 		} finally {
 			saving.value = false;
 		}
@@ -236,7 +237,7 @@ export function ToolsModal({ isOpen, onClose, session }: ToolsModalProps) {
 	if (!session) return null;
 
 	return (
-		<Modal isOpen={isOpen} onClose={handleCancel} title="Tools" size="md">
+		<Modal isOpen={isOpen} onClose={handleCancel} title={t('tools.title')} size="md">
 			<div class="space-y-5">
 				{/* System Prompt Section */}
 				<div>

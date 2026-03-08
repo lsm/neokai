@@ -18,6 +18,7 @@ import type { PendingUserQuestion, QuestionDraftResponse } from '@neokai/shared'
 import { useMessageHub } from '../hooks/useMessageHub.ts';
 import { Button } from './ui/Button.tsx';
 import { cn } from '../lib/utils.ts';
+import { t } from '../lib/i18n.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 
 // Rose/pink color scheme to differentiate from ThinkingBlock's amber
@@ -532,7 +533,7 @@ export function QuestionPrompt({
 						{/* Custom text input when "Other" is selected - multi-line textarea */}
 						{showOther.has(qIndex) && (
 							<textarea
-								placeholder="Enter your response..."
+								placeholder={t('question.responsePlaceholder')}
 								value={customInputs.get(qIndex) || ''}
 								onInput={(e) => handleCustomInput(qIndex, (e.target as HTMLTextAreaElement).value)}
 								disabled={isResolved}

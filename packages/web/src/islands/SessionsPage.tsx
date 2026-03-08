@@ -9,9 +9,11 @@ import { toast } from '../lib/toast.ts';
 import { formatRelativeTime, formatTokens } from '../lib/utils.ts';
 import { allSessionStatuses, getProcessingPhaseColor } from '../lib/session-status.ts';
 import { GitBranchIcon } from '../components/icons/GitBranchIcon.tsx';
+import { ChatIcon } from '../components/icons/index.tsx';
 import { Button } from '../components/ui/Button.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
+import { t } from '../lib/i18n.ts';
 
 function StatusDot({ sessionId }: { sessionId: string }) {
 	const status = allSessionStatuses.value.get(sessionId);
@@ -119,23 +121,23 @@ export function SessionsPage() {
 
 	const handleNewSession = async () => {
 		if (!canCreate) {
-			toast.error('Not connected to server. Please wait...');
+			toast.error(t('chat.notConnected'));
 			return;
 		}
 		setCreating(true);
 		try {
 			const response = await createSession({ workspacePath: undefined });
 			if (!response?.sessionId) {
-				toast.error('No sessionId in response');
+				toast.error(t('toast.noSessionId'));
 				return;
 			}
 			navigateToSession(response.sessionId);
-			toast.success('Session created successfully');
+			toast.success(t('chat.sessionCreated'));
 		} catch (err) {
 			if (err instanceof ConnectionNotReadyError) {
-				toast.error('Connection lost. Please try again.');
+				toast.error(t('chat.connectionLost'));
 			} else {
-				toast.error(err instanceof Error ? err.message : 'Failed to create session');
+				toast.error(err instanceof Error ? err.message : t('chat.createFailed'));
 			}
 		} finally {
 			setCreating(false);
@@ -148,9 +150,11 @@ export function SessionsPage() {
 			<div class="px-6 py-4 border-b border-dark-700 flex items-center justify-between gap-3">
 				<MobileMenuButton />
 				<div class="flex-1 min-w-0">
-					<h2 class="text-lg font-semibold text-gray-100">Sessions</h2>
+					<h2 class="text-lg font-semibold text-gray-100">{t('sessions.title')}</h2>
 					<p class="text-sm text-gray-400">
-						{sessionsList.length} session{sessionsList.length !== 1 ? 's' : ''}
+						{sessionsList.length !== 1
+							? t('sessions.countOther', { count: sessionsList.length })
+							: t('sessions.countOne', { count: sessionsList.length })}
 					</p>
 				</div>
 				<Button
@@ -168,7 +172,7 @@ export function SessionsPage() {
 						</svg>
 					}
 				>
-					New Session
+					{t('sessions.newSession')}
 				</Button>
 			</div>
 
@@ -176,11 +180,11 @@ export function SessionsPage() {
 			<div class="flex-1 overflow-y-auto p-6">
 				{sessionsList.length === 0 ? (
 					<div class="flex flex-col items-center justify-center h-full text-center">
-						<div class="text-5xl mb-4">💬</div>
-						<h3 class="text-lg font-semibold text-gray-100 mb-2">No sessions yet</h3>
-						<p class="text-sm text-gray-400 mb-6">Sessions created outside of Rooms appear here</p>
+						<ChatIcon className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+						<h3 class="text-lg font-semibold text-gray-100 mb-2">{t('sessions.empty.title')}</h3>
+						<p class="text-sm text-gray-400 mb-6">{t('sessions.empty.desc')}</p>
 						<Button onClick={handleNewSession} loading={creating} disabled={!canCreate}>
-							New Session
+							{t('sessions.newSession')}
 						</Button>
 					</div>
 				) : (

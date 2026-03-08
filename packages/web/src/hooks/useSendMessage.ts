@@ -10,6 +10,7 @@ import type { Session, MessageDeliveryMode, MessageImage } from '@neokai/shared'
 import { connectionManager } from '../lib/connection-manager';
 import { connectionState } from '../lib/state';
 import { toast } from '../lib/toast';
+import { t } from '../lib/i18n';
 
 export interface UseSendMessageOptions {
 	sessionId: string;
@@ -62,13 +63,13 @@ export function useSendMessage({
 			if (!content.trim() || (isSending && !allowQueueWhileProcessing)) return;
 
 			if (session?.status === 'archived') {
-				toast.error('Cannot send messages to archived sessions');
+				toast.error(t('toast.sendArchived'));
 				return;
 			}
 
 			const isConnected = connectionState.value === 'connected';
 			if (!isConnected) {
-				toast.error('Connection lost. Please refresh the page.');
+				toast.error(t('toast.sendRefresh'));
 				return;
 			}
 
@@ -78,12 +79,12 @@ export function useSendMessage({
 				sendTimeoutRef.current = setTimeout(() => {
 					onSendComplete();
 					onError('Message send timed out.');
-					toast.error('Message send timed out.');
+					toast.error(t('toast.sendTimeout'));
 				}, SEND_TIMEOUT_MS);
 
 				const hub = connectionManager.getHubIfConnected();
 				if (!hub) {
-					toast.error('Connection lost.');
+					toast.error(t('toast.sendConnectionLost'));
 					onSendComplete();
 					clearSendTimeout();
 					return;

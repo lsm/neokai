@@ -372,17 +372,6 @@ describe('ContextPanel', () => {
 			expect(mockCreateRoomModalSignal.value).toBe(true);
 		});
 
-		it('should open create room modal from home section', async () => {
-			mockNavSectionSignal.value = 'home';
-
-			render(<ContextPanel />);
-
-			const button = screen.getByRole('button', { name: /Create Room/i });
-			fireEvent.click(button);
-
-			// The button should open the modal by setting the signal to true
-			expect(mockCreateRoomModalSignal.value).toBe(true);
-		});
 	});
 
 	describe('Mobile Drawer Behavior', () => {

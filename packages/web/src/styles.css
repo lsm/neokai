@@ -22,6 +22,15 @@
  * - borderColors.tool.* for tool category colors
  */
 
+/* Ensure all interactive elements show pointer cursor */
+button,
+[role="button"],
+a,
+select,
+summary {
+	cursor: pointer;
+}
+
 html,
 body {
 	background-color: var(--color-dark-950);

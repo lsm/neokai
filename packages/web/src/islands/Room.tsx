@@ -9,17 +9,19 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
-import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/router';
-import { RoomDashboard } from '../components/room/RoomDashboard';
+import { navigateToHome, navigateToRooms, navigateToRoom } from '../lib/router';
+import { Breadcrumb } from '../components/ui/Breadcrumb';
+import { RoomOverview } from '../components/room/RoomOverview';
 import ChatContainer from './ChatContainer';
-import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
+import { RoomContext, RoomSettings, RoomAgentAvatars } from '../components/room';
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
 import { toast } from '../lib/toast';
+import { t } from '../lib/i18n';
 
-type RoomTab = 'overview' | 'context' | 'agents' | 'goals' | 'settings';
+type RoomTab = 'overview' | 'settings';
 
 interface RoomProps {
 	roomId: string;
@@ -65,9 +67,9 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
-					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load room</h3>
+					<h3 class="text-lg font-semibold text-gray-100 mb-2">{t('room.failedToLoad')}</h3>
 					<p class="text-gray-400 mb-4">{error}</p>
-					<Button onClick={() => roomStore.select(roomId)}>Retry</Button>
+					<Button onClick={() => roomStore.select(roomId)}>{t('common.retry')}</Button>
 				</div>
 			</div>
 		);
@@ -77,8 +79,8 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
-					<h3 class="text-lg font-semibold text-gray-100 mb-2">Room not found</h3>
-					<Button onClick={() => navigateToHome()}>Go Home</Button>
+					<h3 class="text-lg font-semibold text-gray-100 mb-2">{t('room.notFound')}</h3>
+					<Button onClick={() => navigateToHome()}>{t('common.goHome')}</Button>
 				</div>
 			</div>
 		);
@@ -111,13 +113,13 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 
 	const handleArchiveRoom = async () => {
 		await roomStore.archiveRoom();
-		toast.success('Room archived successfully');
+		toast.success(t('room.archivedSuccess'));
 		navigateToHome();
 	};
 
 	const handleDeleteRoom = async () => {
 		await roomStore.deleteRoom();
-		toast.success('Room deleted permanently');
+		toast.success(t('room.deletedSuccess'));
 		navigateToHome();
 	};
 
@@ -134,10 +136,20 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 				) : (
 					<>
 						{/* Header */}
-						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 p-4">
+						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-4 py-5">
 							<div class="flex items-center gap-3">
 								<MobileMenuButton />
-								<h2 class="text-xl font-bold text-gray-100">{room.name}</h2>
+								<Breadcrumb
+									items={[
+										{ label: 'Rooms', onClick: () => navigateToRooms() },
+										{ label: room.name },
+									]}
+								/>
+								<div class="flex-1" />
+								<RoomAgentAvatars
+									room={room}
+									onClickAdd={() => setActiveTab('settings')}
+								/>
 							</div>
 						</div>
 
@@ -151,37 +163,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								}`}
 								onClick={() => handleTabChange('overview')}
 							>
-								Overview
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'context'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('context')}
-							>
-								Context
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'agents'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('agents')}
-							>
-								Agents
-							</button>
-							<button
-								class={`px-4 py-2 text-sm font-medium transition-colors ${
-									activeTab === 'goals'
-										? 'text-blue-400 border-b-2 border-blue-400'
-										: 'text-gray-400 hover:text-gray-200'
-								}`}
-								onClick={() => handleTabChange('goals')}
-							>
-								Goals
+								{t('room.overview')}
 							</button>
 							<button
 								class={`px-4 py-2 text-sm font-medium transition-colors ${
@@ -191,51 +173,40 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								}`}
 								onClick={() => handleTabChange('settings')}
 							>
-								Settings
+								{t('room.settings')}
 							</button>
 						</div>
 
 						{/* Tab content */}
 						<div class="flex-1 overflow-hidden">
 							{activeTab === 'overview' && (
-								<div class="h-full overflow-y-auto">
-									<RoomDashboard />
-								</div>
-							)}
-							{activeTab === 'context' && (
-								<div class="h-full overflow-y-auto p-4">
-									<RoomContext room={room} />
-								</div>
-							)}
-							{activeTab === 'agents' && (
-								<div class="h-full overflow-y-auto p-4">
-									<RoomAgents room={room} />
-								</div>
-							)}
-							{activeTab === 'goals' && (
-								<div class="h-full overflow-y-auto p-4">
-									<GoalsEditor
-										roomId={roomId}
-										goals={roomStore.goals.value}
-										tasks={roomStore.tasks.value}
-										onTaskClick={(taskId) => navigateToRoomTask(roomId, taskId)}
-										onCreateGoal={handleCreateGoal}
-										onUpdateGoal={handleUpdateGoal}
-										onDeleteGoal={handleDeleteGoal}
-										onLinkTask={handleLinkTaskToGoal}
-										isLoading={roomStore.goalsLoading.value}
-									/>
-								</div>
+								<RoomOverview
+									roomId={roomId}
+									onCreateGoal={handleCreateGoal}
+									onUpdateGoal={handleUpdateGoal}
+									onDeleteGoal={handleDeleteGoal}
+									onLinkTask={handleLinkTaskToGoal}
+								/>
 							)}
 							{activeTab === 'settings' && (
 								<div class="h-full overflow-y-auto p-4">
-									<RoomSettings
-										room={room}
-										onSave={(params) => roomStore.updateSettings(params)}
-										onArchive={handleArchiveRoom}
-										onDelete={handleDeleteRoom}
-										isLoading={roomStore.loading.value}
-									/>
+									<div class="space-y-8">
+										<section>
+											<h3 class="text-lg font-semibold text-gray-100 mb-4">{t('roomSettings.context')}</h3>
+											<RoomContext room={room} />
+										</section>
+										<div class="border-t border-dark-700" />
+										<section>
+											<h3 class="text-lg font-semibold text-gray-100 mb-4">{t('roomSettings.roomSettings')}</h3>
+											<RoomSettings
+												room={room}
+												onSave={(params) => roomStore.updateSettings(params)}
+												onArchive={handleArchiveRoom}
+												onDelete={handleDeleteRoom}
+												isLoading={roomStore.loading.value}
+											/>
+										</section>
+									</div>
 								</div>
 							)}
 						</div>

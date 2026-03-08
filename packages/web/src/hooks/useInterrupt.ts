@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
+import { t } from '../lib/i18n.ts';
 
 export interface UseInterruptOptions {
 	sessionId: string;
@@ -36,12 +37,12 @@ export function useInterrupt({ sessionId }: UseInterruptOptions): UseInterruptRe
 			setInterrupting(true);
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				toast.error('Not connected to server');
+				toast.error(t('toast.notConnected'));
 				return;
 			}
 			await hub.request('client.interrupt', { sessionId });
 		} catch {
-			toast.error('Failed to stop generation');
+			toast.error(t('toast.stopFailed'));
 		} finally {
 			setTimeout(() => setInterrupting(false), 500);
 		}

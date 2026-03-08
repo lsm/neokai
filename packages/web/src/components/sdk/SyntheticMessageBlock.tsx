@@ -16,6 +16,7 @@ import { messageSpacing, borderRadius } from '../../lib/design-tokens.ts';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
 import { toast } from '../../lib/toast.ts';
+import { t } from '../../lib/i18n.ts';
 
 interface Props {
 	/** Content to display - can be a simple string or array of content blocks */
@@ -78,9 +79,9 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 	const handleCopy = async () => {
 		const success = await copyToClipboard(getTextContent());
 		if (success) {
-			toast.success('Message copied to clipboard');
+			toast.success(t('toast.copied'));
 		} else {
-			toast.error('Failed to copy message');
+			toast.error(t('toast.copyFailed'));
 		}
 	};
 

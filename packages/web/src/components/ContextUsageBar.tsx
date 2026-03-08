@@ -10,6 +10,7 @@ import { useState, useRef, useEffect, useCallback } from 'preact/hooks';
 import type { ContextInfo } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens.ts';
 import { formatTokens } from '../lib/utils.ts';
+import { t } from '../lib/i18n';
 
 interface ContextUsageBarProps {
 	contextUsage?: ContextInfo;
@@ -204,7 +205,7 @@ export default function ContextUsageBar({
 						setShowContextDetails(!showContextDetails);
 					}
 				}}
-				title={hasContextData ? 'Click for context details' : 'Context data loading...'}
+				title={hasContextData ? t('context.clickForDetails') : t('context.dataLoading')}
 			>
 				{/* Circle indicator */}
 				<svg width="32" height="32" viewBox="0 0 36 36" class="relative">
@@ -263,7 +264,7 @@ export default function ContextUsageBar({
 								class={`bg-dark-800 border ${borderColors.ui.secondary} rounded-lg p-4 w-72 shadow-xl`}
 							>
 								<div class="flex items-center justify-between mb-3">
-									<h3 class="text-sm font-semibold text-gray-200">Context Usage</h3>
+									<h3 class="text-sm font-semibold text-gray-200">{t('context.usage')}</h3>
 									<button
 										class="text-gray-400 hover:text-gray-200 transition-colors"
 										onClick={closeDropdown}
@@ -288,7 +289,7 @@ export default function ContextUsageBar({
 									{/* Total Usage */}
 									<div class="bg-dark-700 rounded-lg p-2.5">
 										<div class="flex justify-between items-center mb-1.5">
-											<span class="text-xs text-gray-400">Context Window</span>
+											<span class="text-xs text-gray-400">{t('context.contextWindow')}</span>
 											<span class={`text-xs font-semibold ${getContextColor()}`}>
 												{contextPercentage.toFixed(1)}%
 											</span>
@@ -309,7 +310,7 @@ export default function ContextUsageBar({
 									{/* Token Breakdown with colored squares */}
 									{contextUsage?.breakdown && (
 										<div class="space-y-2">
-											<h4 class="text-xs font-medium text-gray-300">Breakdown</h4>
+											<h4 class="text-xs font-medium text-gray-300">{t('context.breakdown')}</h4>
 											<div class="space-y-1.5">
 												{Object.entries(contextUsage.breakdown)
 													.sort(
@@ -357,7 +358,7 @@ export default function ContextUsageBar({
 														d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
 													/>
 												</svg>
-												<span class="text-gray-400">Model:</span>
+												<span class="text-gray-400">{t('context.model')}</span>
 												<span class="text-gray-200 font-mono">{contextUsage.model}</span>
 											</div>
 										</div>

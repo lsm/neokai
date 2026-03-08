@@ -6,7 +6,9 @@
  */
 
 import type { SessionSummary } from '@neokai/shared';
+import { ChatIcon } from '../icons/index.tsx';
 import { navigateToSession } from '../../lib/router';
+import { t } from '../../lib/i18n';
 
 interface RoomSessionsProps {
 	sessions: SessionSummary[];
@@ -15,9 +17,12 @@ interface RoomSessionsProps {
 export function RoomSessions({ sessions }: RoomSessionsProps) {
 	if (sessions.length === 0) {
 		return (
-			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
-				<p class="text-gray-400">No sessions in this room</p>
-				<p class="text-sm text-gray-500 mt-1">Ask Neo to create one</p>
+			<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
+				<ChatIcon className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+				<p class="text-gray-400 font-medium">{t('roomSessions.empty')}</p>
+				<p class="text-sm text-gray-500 mt-1">
+					{t('roomSessions.emptyDesc')}
+				</p>
 			</div>
 		);
 	}
@@ -25,7 +30,7 @@ export function RoomSessions({ sessions }: RoomSessionsProps) {
 	return (
 		<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 			<div class="px-4 py-3 border-b border-dark-700">
-				<h3 class="font-semibold text-gray-100">Sessions</h3>
+				<h3 class="font-semibold text-gray-100">{t('common.sessions')}</h3>
 			</div>
 			<div class="divide-y divide-dark-700">
 				{sessions.map((session) => (
@@ -40,7 +45,7 @@ export function RoomSessions({ sessions }: RoomSessionsProps) {
 							<span class="text-gray-100 truncate">{session.title || session.id.slice(0, 8)}</span>
 						</div>
 						<span class="text-xs text-gray-500">
-							{session.lastActiveAt ? formatRelativeTime(session.lastActiveAt) : 'Unknown'}
+							{session.lastActiveAt ? formatRelativeTime(session.lastActiveAt) : t('common.unknown')}
 						</span>
 					</button>
 				))}

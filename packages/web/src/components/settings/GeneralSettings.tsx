@@ -9,6 +9,7 @@ import {
 	SettingsSelect,
 	SettingsToggle,
 } from './SettingsSection.tsx';
+import { t, locale, setLocale, type Locale } from '../../lib/i18n.ts';
 
 const MODEL_OPTIONS = [
 	{ value: 'sonnet', label: 'Claude Sonnet 4' },
@@ -60,7 +61,7 @@ export function GeneralSettings() {
 		try {
 			await updateGlobalSettings({ model: value });
 		} catch {
-			toast.error('Failed to update model setting');
+			toast.error(t('toast.settingUpdateFailed'));
 			// Revert on error
 			setLocalModel(settings?.model ?? 'sonnet');
 		} finally {
@@ -75,7 +76,7 @@ export function GeneralSettings() {
 		try {
 			await updateGlobalSettings({ permissionMode: mode });
 		} catch {
-			toast.error('Failed to update permission mode');
+			toast.error(t('toast.settingUpdateFailed'));
 			// Revert on error
 			setLocalPermissionMode(settings?.permissionMode ?? 'default');
 		} finally {
@@ -89,7 +90,7 @@ export function GeneralSettings() {
 		try {
 			await updateGlobalSettings({ autoScroll: value });
 		} catch {
-			toast.error('Failed to update auto-scroll setting');
+			toast.error(t('toast.settingUpdateFailed'));
 			// Revert on error
 			setLocalAutoScroll(settings?.autoScroll ?? true);
 		} finally {
@@ -104,7 +105,7 @@ export function GeneralSettings() {
 		try {
 			await updateGlobalSettings({ thinkingLevel: level });
 		} catch {
-			toast.error('Failed to update thinking level');
+			toast.error(t('toast.settingUpdateFailed'));
 			setLocalThinkingLevel(settings?.thinkingLevel ?? 'auto');
 		} finally {
 			setIsUpdating(false);
@@ -117,16 +118,31 @@ export function GeneralSettings() {
 		try {
 			await updateGlobalSettings({ showArchived: value });
 		} catch {
-			toast.error('Failed to update archived sessions setting');
+			toast.error(t('toast.settingUpdateFailed'));
 			setLocalShowArchived(settings?.showArchived ?? false);
 		} finally {
 			setIsUpdating(false);
 		}
 	};
 
+	const handleLocaleChange = (value: string) => {
+		setLocale(value as Locale);
+	};
+
 	return (
-		<SettingsSection title="General">
-			<SettingsRow label="Default Model" description="Model for new sessions">
+		<SettingsSection title={t('settings.general')}>
+			<SettingsRow label={t('settings.language')} description={t('settings.languageDesc')}>
+				<SettingsSelect
+					value={locale.value}
+					onChange={handleLocaleChange}
+					options={[
+						{ value: 'en', label: 'English' },
+						{ value: 'zh', label: '中文' },
+					]}
+				/>
+			</SettingsRow>
+
+			<SettingsRow label={t('settings.defaultModel')} description={t('settings.defaultModelDesc')}>
 				<SettingsSelect
 					value={localModel}
 					onChange={handleModelChange}
@@ -135,7 +151,7 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label="Permission Mode" description="How Claude asks for permissions">
+			<SettingsRow label={t('settings.permissionMode')} description={t('settings.permissionModeDesc')}>
 				<SettingsSelect
 					value={localPermissionMode}
 					onChange={handlePermissionModeChange}
@@ -144,7 +160,7 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label="Default Thinking Level" description="Thinking budget for new sessions">
+			<SettingsRow label={t('settings.thinkingLevel')} description={t('settings.thinkingLevelDesc')}>
 				<SettingsSelect
 					value={localThinkingLevel}
 					onChange={handleThinkingLevelChange}
@@ -153,7 +169,7 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label="Auto-scroll" description="Auto-scroll to new messages">
+			<SettingsRow label={t('settings.autoScroll')} description={t('settings.autoScrollDesc')}>
 				<SettingsToggle
 					checked={localAutoScroll}
 					onChange={handleAutoScrollChange}
@@ -161,7 +177,7 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label="Show Archived Sessions" description="Display archived sessions in lists">
+			<SettingsRow label={t('settings.showArchived')} description={t('settings.showArchivedDesc')}>
 				<SettingsToggle
 					checked={localShowArchived}
 					onChange={handleShowArchivedChange}

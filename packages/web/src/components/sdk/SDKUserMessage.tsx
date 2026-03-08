@@ -7,6 +7,7 @@
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { toast } from '../../lib/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
@@ -150,9 +151,9 @@ export function SDKUserMessage({
 	const handleCopy = async () => {
 		const success = await copyToClipboard(textContent);
 		if (success) {
-			toast.success('Message copied to clipboard');
+			toast.success(t('toast.copied'));
 		} else {
-			toast.error('Failed to copy message');
+			toast.error(t('toast.copyFailed'));
 		}
 	};
 

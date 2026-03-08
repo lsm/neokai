@@ -1,10 +1,22 @@
 import { useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { Modal } from './ui/Modal.tsx';
 import { Collapsible } from './ui/Collapsible.tsx';
 import { Button } from './ui/Button.tsx';
+import {
+	WarningIcon,
+	ChatIcon,
+	NeoKaiLogo,
+	GearIcon,
+	ClockIcon,
+	PauseIcon,
+	CheckIcon,
+	LightningIcon,
+} from './icons/index.tsx';
 import type { StructuredError, ErrorCategory } from '../types/error.ts';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
+import { t } from '../lib/i18n';
 
 export interface ErrorDialogProps {
 	isOpen: boolean;
@@ -26,17 +38,19 @@ const ERROR_CATEGORY_COLORS: Record<ErrorCategory, string> = {
 	rate_limit: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
 };
 
-const ERROR_CATEGORY_ICONS: Record<ErrorCategory, string> = {
-	authentication: '🔐',
-	connection: '🔌',
-	session: '📋',
-	message: '💬',
-	model: '🤖',
-	system: '⚙️',
-	validation: '✓',
-	timeout: '⏱️',
-	permission: '🔒',
-	rate_limit: '⏸️',
+const iconClass = 'w-6 h-6';
+
+const ERROR_CATEGORY_ICONS: Record<ErrorCategory, ComponentChildren> = {
+	authentication: <LightningIcon className={`${iconClass} text-red-400`} />,
+	connection: <WarningIcon className={`${iconClass} text-orange-400`} />,
+	session: <ChatIcon className={`${iconClass} text-yellow-400`} />,
+	message: <ChatIcon className={`${iconClass} text-blue-400`} />,
+	model: <NeoKaiLogo className={`${iconClass} text-purple-400`} />,
+	system: <GearIcon className={`${iconClass} text-gray-400`} />,
+	validation: <CheckIcon className={`${iconClass} text-pink-400`} />,
+	timeout: <ClockIcon className={`${iconClass} text-amber-400`} />,
+	permission: <LightningIcon className={`${iconClass} text-red-400`} />,
+	rate_limit: <PauseIcon className={`${iconClass} text-orange-400`} />,
 };
 
 export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: ErrorDialogProps) {
@@ -58,14 +72,14 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 	const categoryColor =
 		ERROR_CATEGORY_COLORS[error.category as ErrorCategory] || ERROR_CATEGORY_COLORS.system;
 	const categoryIcon =
-		ERROR_CATEGORY_ICONS[error.category as ErrorCategory] || ERROR_CATEGORY_ICONS.system;
+		ERROR_CATEGORY_ICONS[error.category as ErrorCategory] ?? ERROR_CATEGORY_ICONS.system;
 
 	return (
-		<Modal isOpen={isOpen} onClose={onClose} title="Error Details" size="lg">
+		<Modal isOpen={isOpen} onClose={onClose} title={t('error.details')} size="lg">
 			<div class="space-y-4">
 				{/* Error Category Badge */}
 				<div class="flex items-center gap-3">
-					<span class="text-2xl">{categoryIcon}</span>
+					<span class="flex-shrink-0">{categoryIcon}</span>
 					<div class="flex-1">
 						<div
 							class={cn(
@@ -92,7 +106,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 				{/* Recovery Suggestions */}
 				{error.recoverySuggestions && error.recoverySuggestions.length > 0 && (
 					<div class={`p-4 rounded-lg bg-blue-500/5 border border-blue-500/20`}>
-						<h3 class="text-sm font-semibold text-blue-400 mb-2">💡 What you can try:</h3>
+						<h3 class="text-sm font-semibold text-blue-400 mb-2">{t('error.whatToTry')}</h3>
 						<ul class="space-y-1.5">
 							{error.recoverySuggestions.map((suggestion, idx) => (
 								<li key={idx} class="text-sm text-gray-300 flex items-start gap-2">
@@ -108,7 +122,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 				<Collapsible
 					trigger={
 						<div class="flex items-center gap-2 py-2 text-gray-400 hover:text-gray-300">
-							<span class="text-sm font-medium">Technical Details</span>
+							<span class="text-sm font-medium">{t('error.technicalDetails')}</span>
 						</div>
 					}
 					class={`border ${borderColors.ui.default} rounded-lg px-4`}
@@ -198,7 +212,7 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 										d="M5 13l4 4L19 7"
 									/>
 								</svg>
-								Copied!
+								{t('error.copied')}
 							</>
 						) : (
 							<>
@@ -210,13 +224,13 @@ export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: E
 										d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
 									/>
 								</svg>
-								Copy Error Report
+								{t('error.copyReport')}
 							</>
 						)}
 					</Button>
 
 					<Button variant="primary" size="sm" onClick={onClose}>
-						Close
+						{t('common.close')}
 					</Button>
 				</div>
 			</div>

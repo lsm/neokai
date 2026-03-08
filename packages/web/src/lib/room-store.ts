@@ -50,6 +50,7 @@ interface GoalEventPayload {
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { toast } from './toast';
+import { t } from './i18n';
 
 const logger = new Logger('kai:web:roomstore');
 
@@ -233,7 +234,7 @@ class RoomStore {
 						if (task.status === 'review' && idx >= 0) {
 							const prevTask = this.tasks.value[idx];
 							if (prevTask.status !== 'review') {
-								toast.info(`Task ready for review: ${task.title}`);
+								toast.info(t('toast.taskReviewReady', { title: task.title }));
 							}
 						}
 
@@ -313,7 +314,7 @@ class RoomStore {
 			await this.fetchInitialState(hub, roomId);
 		} catch (err) {
 			logger.error('Failed to start room subscriptions:', err);
-			toast.error('Failed to connect to room');
+			toast.error(t('toast.daemonConnectFailed'));
 			throw err;
 		}
 	}
@@ -471,6 +472,20 @@ class RoomStore {
 			title,
 			workspacePath: room.defaultPath ?? room.allowedPaths[0]?.path,
 		});
+
+		// Optimistic update: immediately add to sidebar so it appears instantly
+		const alreadyExists = this.sessions.value.some((s) => s.id === sessionId);
+		if (!alreadyExists) {
+			this.sessions.value = [
+				...this.sessions.value,
+				{
+					id: sessionId,
+					title: title || 'New Session',
+					status: 'active',
+					lastActiveAt: Date.now(),
+				},
+			];
+		}
 
 		return sessionId;
 	}

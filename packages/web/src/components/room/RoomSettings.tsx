@@ -9,12 +9,18 @@
 
 import { useSignal } from '@preact/signals';
 import { useEffect, useState } from 'preact/hooks';
-import type { Room, WorkspacePath } from '@neokai/shared';
+import {
+	type Room,
+	type WorkspacePath,
+	MAX_CONCURRENT_GROUPS_LIMIT,
+	MAX_REVIEW_ROUNDS_LIMIT,
+} from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
 import { Button } from '../ui/Button';
 import { Spinner } from '../ui/Spinner';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { toast } from '../../lib/toast';
+import { t } from '../../lib/i18n';
 
 export interface RoomSettingsProps {
 	room: Room;
@@ -54,6 +60,16 @@ export function RoomSettings({
 		typeof (room.config as Record<string, unknown> | undefined)?.['maxPlanningRetries'] === 'number'
 			? ((room.config as Record<string, unknown>)['maxPlanningRetries'] as number)
 			: 0
+	);
+	const maxReviewRounds = useSignal<number>(
+		typeof (room.config as Record<string, unknown> | undefined)?.['maxReviewRounds'] === 'number'
+			? ((room.config as Record<string, unknown>)['maxReviewRounds'] as number)
+			: 3
+	);
+	const maxConcurrentGroups = useSignal<number>(
+		typeof (room.config as Record<string, unknown> | undefined)?.['maxConcurrentGroups'] === 'number'
+			? ((room.config as Record<string, unknown>)['maxConcurrentGroups'] as number)
+			: 1
 	);
 	const isSaving = useSignal(false);
 	const [showArchiveModal, setShowArchiveModal] = useState(false);
@@ -95,6 +111,10 @@ export function RoomSettings({
 		const cfg = (room.config as Record<string, unknown> | undefined) ?? {};
 		maxPlanningRetries.value =
 			typeof cfg['maxPlanningRetries'] === 'number' ? (cfg['maxPlanningRetries'] as number) : 0;
+		maxReviewRounds.value =
+			typeof cfg['maxReviewRounds'] === 'number' ? (cfg['maxReviewRounds'] as number) : 3;
+		maxConcurrentGroups.value =
+			typeof cfg['maxConcurrentGroups'] === 'number' ? (cfg['maxConcurrentGroups'] as number) : 1;
 	}, [room]);
 
 	// Models visible in the default model dropdown (only allowed ones, or all if no restriction)
@@ -140,11 +160,15 @@ export function RoomSettings({
 		const modelsChanged =
 			JSON.stringify(origAllowed?.slice().sort()) !== JSON.stringify(currAllowed?.slice().sort());
 
+		const cfg = (room.config as Record<string, unknown> | undefined) ?? {};
 		const origMaxRetries =
-			typeof ((room.config as Record<string, unknown> | undefined) ?? {})['maxPlanningRetries'] ===
-			'number'
-				? ((room.config as Record<string, unknown>)['maxPlanningRetries'] as number)
-				: 0;
+			typeof cfg['maxPlanningRetries'] === 'number' ? (cfg['maxPlanningRetries'] as number) : 0;
+		const origMaxReview =
+			typeof cfg['maxReviewRounds'] === 'number' ? (cfg['maxReviewRounds'] as number) : 3;
+		const origMaxConcurrent =
+			typeof cfg['maxConcurrentGroups'] === 'number'
+				? (cfg['maxConcurrentGroups'] as number)
+				: 1;
 
 		return (
 			name.value !== room.name ||
@@ -152,7 +176,9 @@ export function RoomSettings({
 			JSON.stringify(allowedPaths.value) !== JSON.stringify(room.allowedPaths) ||
 			defaultPath.value !== (room.defaultPath || '') ||
 			modelsChanged ||
-			maxPlanningRetries.value !== origMaxRetries
+			maxPlanningRetries.value !== origMaxRetries ||
+			maxReviewRounds.value !== origMaxReview ||
+			maxConcurrentGroups.value !== origMaxConcurrent
 		);
 	};
 
@@ -171,11 +197,13 @@ export function RoomSettings({
 				config: {
 					...(room.config as Record<string, unknown> | undefined),
 					maxPlanningRetries: maxPlanningRetries.value,
+					maxReviewRounds: maxReviewRounds.value,
+					maxConcurrentGroups: maxConcurrentGroups.value,
 				},
 			});
-			toast.success('Settings saved');
+			toast.success(t('roomSettings.saved'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to save settings');
+			toast.error(err instanceof Error ? err.message : t('roomSettings.saveFailed'));
 		} finally {
 			isSaving.value = false;
 		}
@@ -218,7 +246,7 @@ export function RoomSettings({
 				newPath.value = response.path;
 			}
 		} catch {
-			toast.error('Failed to open folder picker');
+			toast.error(t('roomSettings.folderPickerFailed'));
 		}
 	};
 
@@ -228,7 +256,7 @@ export function RoomSettings({
 		<div class="flex flex-col h-full">
 			{/* Header */}
 			<div class="flex items-center justify-between pb-4 border-b border-dark-700">
-				<h2 class="text-lg font-semibold text-gray-100">Room Settings</h2>
+				<h2 class="text-lg font-semibold text-gray-100">{t('roomSettings.roomSettings')}</h2>
 			</div>
 
 			{/* Content */}
@@ -236,7 +264,7 @@ export function RoomSettings({
 				{/* Room Name */}
 				<div>
 					<label for="room-name" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Room Name
+						{t('roomSettings.roomName')}
 					</label>
 					<input
 						id="room-name"
@@ -252,11 +280,10 @@ export function RoomSettings({
 				{/* Max Planning Retries */}
 				<div>
 					<label for="max-planning-retries" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Max Planning Retries
+						{t('roomSettings.maxPlanningRetries')}
 					</label>
 					<p class="text-xs text-gray-500 mb-2">
-						How many times the room will retry planning a goal after failure before escalating to
-						human review. 0 means no automatic retries.
+						{t('roomSettings.maxPlanningRetriesDesc')}
 					</p>
 					<input
 						id="max-planning-retries"
@@ -274,10 +301,60 @@ export function RoomSettings({
 					/>
 				</div>
 
+				{/* Max Review Rounds */}
+				<div>
+					<label for="max-review-rounds" class="block text-sm font-medium text-gray-300 mb-1.5">
+						{t('roomSettings.maxReviewRounds')}
+					</label>
+					<p class="text-xs text-gray-500 mb-2">
+						{t('roomSettings.maxReviewRoundsDesc')}
+					</p>
+					<input
+						id="max-review-rounds"
+						type="number"
+						min={1}
+						max={MAX_REVIEW_ROUNDS_LIMIT}
+						value={maxReviewRounds.value}
+						onInput={(e) => {
+							const v = parseInt((e.target as HTMLInputElement).value, 10);
+							if (!isNaN(v) && v >= 1 && v <= MAX_REVIEW_ROUNDS_LIMIT)
+								maxReviewRounds.value = v;
+						}}
+						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
+              focus:outline-none focus:border-blue-500"
+						disabled={disabled}
+					/>
+				</div>
+
+				{/* Max Concurrent Tasks */}
+				<div>
+					<label for="max-concurrent-groups" class="block text-sm font-medium text-gray-300 mb-1.5">
+						{t('roomSettings.maxConcurrentTasks')}
+					</label>
+					<p class="text-xs text-gray-500 mb-2">
+						{t('roomSettings.maxConcurrentTasksDesc')}
+					</p>
+					<input
+						id="max-concurrent-groups"
+						type="number"
+						min={1}
+						max={MAX_CONCURRENT_GROUPS_LIMIT}
+						value={maxConcurrentGroups.value}
+						onInput={(e) => {
+							const v = parseInt((e.target as HTMLInputElement).value, 10);
+							if (!isNaN(v) && v >= 1 && v <= MAX_CONCURRENT_GROUPS_LIMIT)
+								maxConcurrentGroups.value = v;
+						}}
+						class="w-24 bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100
+              focus:outline-none focus:border-blue-500"
+						disabled={disabled}
+					/>
+				</div>
+
 				{/* Allowed Models */}
 				<div>
 					<div class="flex items-center justify-between mb-1.5">
-						<label class="block text-sm font-medium text-gray-300">Allowed Models</label>
+						<label class="block text-sm font-medium text-gray-300">{t('roomSettings.allowedModels')}</label>
 						{!isLoadingModels.value && availableModels.value.length > 0 && (
 							<div class="flex gap-2">
 								<button
@@ -286,7 +363,7 @@ export function RoomSettings({
 									class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
 									disabled={disabled || allowedModels.value === null}
 								>
-									All
+									{t('roomSettings.selectAll')}
 								</button>
 								<span class="text-xs text-gray-600">·</span>
 								<button
@@ -295,18 +372,18 @@ export function RoomSettings({
 									class="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-40"
 									disabled={disabled}
 								>
-									None
+									{t('roomSettings.selectNone')}
 								</button>
 							</div>
 						)}
 					</div>
 					<p class="text-xs text-gray-500 mb-2">
-						Enable the models available in this room. The default model is restricted to this list.
+						{t('roomSettings.allowedModelsDesc')}
 					</p>
 					{isLoadingModels.value ? (
-						<p class="text-xs text-gray-500">Loading models...</p>
+						<p class="text-xs text-gray-500">{t('roomSettings.loadingModels')}</p>
 					) : availableModels.value.length === 0 ? (
-						<p class="text-xs text-gray-500 italic">No models available</p>
+						<p class="text-xs text-gray-500 italic">{t('roomSettings.noModels')}</p>
 					) : (
 						<div class="space-y-1.5">
 							{availableModels.value.map((model) => (
@@ -323,7 +400,7 @@ export function RoomSettings({
 										{model.name}
 									</span>
 									{model.id === defaultModel.value && (
-										<span class="text-xs text-blue-400 ml-auto">default</span>
+										<span class="text-xs text-blue-400 ml-auto">{t('roomSettings.default')}</span>
 									)}
 								</label>
 							))}
@@ -334,10 +411,10 @@ export function RoomSettings({
 				{/* Default Model */}
 				<div>
 					<label for="default-model" class="block text-sm font-medium text-gray-300 mb-1.5">
-						Default Model
+						{t('roomSettings.defaultModel')}
 					</label>
 					<p class="text-xs text-gray-500 mb-2">
-						Default model for new sessions in this room. Leave empty to use the system default.
+						{t('roomSettings.defaultModelDesc')}
 					</p>
 					<select
 						id="default-model"
@@ -347,7 +424,7 @@ export function RoomSettings({
               focus:outline-none focus:border-blue-500 appearance-none cursor-pointer"
 						disabled={disabled || isLoadingModels.value}
 					>
-						<option value="">Use system default</option>
+						<option value="">{t('roomSettings.useSystemDefault')}</option>
 						{selectableModels().map((model) => (
 							<option key={model.id} value={model.id}>
 								{model.name}
@@ -358,10 +435,9 @@ export function RoomSettings({
 
 				{/* Workspace Paths */}
 				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1.5">Workspace Paths</label>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">{t('roomSettings.workspacePaths')}</label>
 					<p class="text-xs text-gray-500 mb-2">
-						Allowed workspace paths for this room. The room agent can work on files in these
-						directories.
+						{t('roomSettings.workspacePathsDesc')}
 					</p>
 
 					{/* Path list */}
@@ -380,7 +456,7 @@ export function RoomSettings({
 										}`}
 										title="Set as default path"
 									>
-										{defaultPath.value === wp.path ? 'Default' : 'Set Default'}
+										{defaultPath.value === wp.path ? t('roomSettings.default') : t('roomSettings.setDefault')}
 									</button>
 									<button
 										type="button"
@@ -404,7 +480,7 @@ export function RoomSettings({
 									onInput={(e) =>
 										handleUpdatePathDescription(wp.path, (e.target as HTMLInputElement).value)
 									}
-									placeholder="Add description (optional)"
+									placeholder={t('roomSettings.addDescriptionPlaceholder')}
 									class="w-full mt-2 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs
                       text-gray-400 placeholder-gray-600 focus:outline-none focus:border-gray-500"
 									disabled={disabled}
@@ -412,7 +488,7 @@ export function RoomSettings({
 							</div>
 						))}
 						{allowedPaths.value.length === 0 && (
-							<p class="text-sm text-gray-500 italic">No workspace paths configured</p>
+							<p class="text-sm text-gray-500 italic">{t('roomSettings.noWorkspacePaths')}</p>
 						)}
 					</div>
 
@@ -423,7 +499,7 @@ export function RoomSettings({
 								type="text"
 								value={newPath.value}
 								onInput={(e) => (newPath.value = (e.target as HTMLInputElement).value)}
-								placeholder="/path/to/workspace"
+								placeholder={t('roomSettings.pathPlaceholder')}
 								class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
                     placeholder-gray-500 focus:outline-none focus:border-blue-500 font-mono"
 								disabled={disabled}
@@ -455,7 +531,7 @@ export function RoomSettings({
 							type="text"
 							value={newDescription.value}
 							onInput={(e) => (newDescription.value = (e.target as HTMLInputElement).value)}
-							placeholder="Description for this path (optional)"
+							placeholder={t('roomSettings.descriptionPlaceholder')}
 							class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
                   placeholder-gray-500 focus:outline-none focus:border-blue-500"
 							disabled={disabled}
@@ -472,7 +548,7 @@ export function RoomSettings({
 							onClick={handleAddPath}
 							disabled={!newPath.value.trim() || disabled}
 						>
-							Add Path
+							{t('roomSettings.addPath')}
 						</Button>
 					</div>
 				</div>
@@ -481,15 +557,15 @@ export function RoomSettings({
 				{(onArchive ?? onDelete) && (
 					<div class="border border-red-900/50 rounded-lg overflow-hidden">
 						<div class="px-4 py-2.5 bg-red-950/30">
-							<h3 class="text-sm font-semibold text-red-400">Danger Zone</h3>
+							<h3 class="text-sm font-semibold text-red-400">{t('roomSettings.dangerZone')}</h3>
 						</div>
 						<div class="divide-y divide-red-900/30">
 							{onArchive && (
 								<div class="px-4 py-3 flex items-center justify-between gap-4">
 									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-200">Archive room</p>
+										<p class="text-sm font-medium text-gray-200">{t('roomSettings.archiveRoomLabel')}</p>
 										<p class="text-xs text-gray-500 mt-0.5">
-											Hide from the active list. All data is preserved and can be restored later.
+											{t('roomSettings.archiveDesc')}
 										</p>
 									</div>
 									<button
@@ -498,17 +574,16 @@ export function RoomSettings({
 										disabled={disabled}
 										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-yellow-700/60 text-yellow-400 hover:bg-yellow-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
 									>
-										Archive
+										{t('roomSettings.archive')}
 									</button>
 								</div>
 							)}
 							{onDelete && (
 								<div class="px-4 py-3 flex items-center justify-between gap-4">
 									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-200">Delete this room</p>
+										<p class="text-sm font-medium text-gray-200">{t('roomSettings.deleteRoom')}</p>
 										<p class="text-xs text-gray-500 mt-0.5">
-											Permanently remove this room and all sessions, tasks, goals, and messages.
-											Cannot be undone.
+											{t('roomSettings.deleteDesc')}
 										</p>
 									</div>
 									<button
@@ -517,7 +592,7 @@ export function RoomSettings({
 										disabled={disabled}
 										class="flex-shrink-0 px-3 py-1.5 text-xs font-medium border border-red-700/60 text-red-400 hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
 									>
-										Delete
+										{t('common.delete')}
 									</button>
 								</div>
 							)}
@@ -531,11 +606,11 @@ export function RoomSettings({
 				{isSaving.value && (
 					<span class="text-sm text-gray-400 flex items-center gap-2">
 						<Spinner size="sm" />
-						Saving...
+						{t('roomSettings.saving')}
 					</span>
 				)}
 				<Button onClick={handleSave} disabled={!hasChanges() || disabled} loading={isSaving.value}>
-					Save Changes
+					{t('roomSettings.saveChanges')}
 				</Button>
 			</div>
 
@@ -552,9 +627,9 @@ export function RoomSettings({
 						setShowArchiveModal(false);
 					}
 				}}
-				title="Archive Room"
-				message={`Are you sure you want to archive "${room.name}"? The room will be hidden from the active list but all data will be preserved. You can restore it later.`}
-				confirmText="Archive Room"
+				title={t('roomSettings.archiveTitle')}
+				message={t('roomSettings.archiveConfirm')}
+				confirmText={t('roomSettings.archiveRoom')}
 				confirmButtonVariant="primary"
 				isLoading={isArchiving}
 			/>
@@ -570,9 +645,9 @@ export function RoomSettings({
 						setShowDeleteModal(false);
 					}
 				}}
-				title="Delete Room Permanently"
-				message={`Are you sure you want to PERMANENTLY DELETE "${room.name}"? This action CANNOT be undone. All sessions, tasks, messages, and data will be permanently removed.`}
-				confirmText="Delete Permanently"
+				title={t('roomSettings.deleteTitle')}
+				message={t('roomSettings.deleteConfirm')}
+				confirmText={t('roomSettings.deletePermanently')}
 				confirmButtonVariant="danger"
 				isLoading={isDeleting}
 			/>

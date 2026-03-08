@@ -8,6 +8,8 @@
  * - Processing: Pulsing dot + dynamic action (e.g., "Reading files...", "Thinking...")
  */
 
+import { t } from '../lib/i18n';
+
 interface ConnectionStatusProps {
 	connectionState:
 		| 'connecting'
@@ -74,7 +76,7 @@ export default function ConnectionStatus({
 		if (connectionState === 'connecting') {
 			return {
 				dotClass: 'bg-yellow-500 animate-pulse',
-				text: 'Connecting...',
+				text: t('connection.connecting'),
 				textClass: 'text-yellow-400',
 			};
 		}
@@ -82,7 +84,7 @@ export default function ConnectionStatus({
 		if (connectionState === 'reconnecting') {
 			return {
 				dotClass: 'bg-yellow-500 animate-pulse',
-				text: 'Reconnecting...',
+				text: t('connection.reconnecting'),
 				textClass: 'text-yellow-400',
 			};
 		}
@@ -90,7 +92,7 @@ export default function ConnectionStatus({
 		if (connectionState === 'failed' || connectionState === 'error') {
 			return {
 				dotClass: 'bg-red-500',
-				text: 'Connection Failed',
+				text: t('connection.failed'),
 				textClass: 'text-red-400',
 			};
 		}
@@ -98,7 +100,7 @@ export default function ConnectionStatus({
 		// disconnected
 		return {
 			dotClass: 'bg-gray-500',
-			text: 'Offline',
+			text: t('connection.offline'),
 			textClass: 'text-gray-500',
 		};
 	};

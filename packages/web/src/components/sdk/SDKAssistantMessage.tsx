@@ -19,6 +19,7 @@ import {
 } from '@neokai/shared/sdk/type-guards';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { toast } from '../../lib/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
 import { QuestionPrompt } from '../QuestionPrompt.tsx';
@@ -83,9 +84,9 @@ export function SDKAssistantMessage({
 		const textContent = getTextContent();
 		const success = await copyToClipboard(textContent);
 		if (success) {
-			toast.success('Message copied to clipboard');
+			toast.success(t('toast.copied'));
 		} else {
-			toast.error('Failed to copy message');
+			toast.error(t('toast.copyFailed'));
 		}
 	};
 

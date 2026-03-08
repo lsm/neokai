@@ -68,6 +68,22 @@ export function setupSessionHandlers(
 		// Add session to room if roomId is provided
 		if (req.roomId) {
 			roomManager.assignSession(req.roomId, sessionId);
+
+			// Emit room.overview so sidebar session list updates in real-time
+			const overview = roomManager.getRoomOverview(req.roomId);
+			if (overview) {
+				daemonHub
+					.emit('room.overview', {
+						sessionId: `room:${req.roomId}`,
+						room: overview.room,
+						sessions: overview.sessions,
+						activeTasks: overview.activeTasks,
+						allTasks: overview.allTasks,
+					})
+					.catch((error) => {
+						log.warn(`Failed to emit room.overview for room ${req.roomId}:`, error);
+					});
+			}
 		}
 
 		// Return the full session object so client can optimistically update
@@ -176,6 +192,10 @@ export function setupSessionHandlers(
 
 	messageHub.onRequest('session.delete', async (data, _ctx) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
+
+		// Remove session from its room before deleting
+		const roomId = roomManager.removeSession(targetSessionId);
+
 		await sessionManager.deleteSession(targetSessionId);
 
 		// Broadcast deletion event to all clients
@@ -186,6 +206,24 @@ export function setupSessionHandlers(
 				channel: 'global',
 			}
 		);
+
+		// Emit updated room overview so sidebar reflects the removal
+		if (roomId) {
+			const overview = roomManager.getRoomOverview(roomId);
+			if (overview) {
+				daemonHub
+					.emit('room.overview', {
+						sessionId: `room:${roomId}`,
+						room: overview.room,
+						sessions: overview.sessions,
+						activeTasks: overview.activeTasks,
+						allTasks: overview.allTasks,
+					})
+					.catch((error) => {
+						log.warn(`Failed to emit room.overview after session delete:`, error);
+					});
+			}
+		}
 
 		return { success: true };
 	});

@@ -33,6 +33,7 @@ import { toast } from '../lib/toast';
 import { createRoomModalSignal } from '../lib/signals';
 import { isUserSession } from '../lib/session-utils';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton';
+import { t } from '../lib/i18n.ts';
 
 export default function Lobby() {
 	const [initialLoad, setInitialLoad] = useState(true);
@@ -96,7 +97,7 @@ export default function Lobby() {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
-					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load lobby</h3>
+					<h3 class="text-lg font-semibold text-gray-100 mb-2">{t('lobby.failedToLoad')}</h3>
 					<p class="text-gray-400 mb-4">{error}</p>
 					<Button onClick={() => lobbyStore.refresh()}>Retry</Button>
 				</div>
@@ -143,7 +144,7 @@ export default function Lobby() {
 								newSessionModal.open();
 							}}
 							class="p-1.5 rounded-md bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-100 transition-colors"
-							title="New Session"
+							title={t('lobby.newSession')}
 						>
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
@@ -160,7 +161,7 @@ export default function Lobby() {
 								createRoomModalSignal.value = true;
 							}}
 							class="p-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-							title="Create Room"
+							title={t('lobby.createRoom')}
 						>
 							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
@@ -185,7 +186,7 @@ export default function Lobby() {
 					{recentSessions.length > 0 && (
 						<div class="mb-8">
 							<div class="flex items-center justify-between mb-4">
-								<h3 class="text-lg font-semibold text-gray-100">Recent Sessions</h3>
+								<h3 class="text-lg font-semibold text-gray-100">{t('lobby.recentSessions')}</h3>
 							</div>
 							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 								{recentSessions.map((session) => {
@@ -236,7 +237,7 @@ export default function Lobby() {
 					{/* Room Grid */}
 					<div>
 						<div class="flex items-center justify-between mb-4">
-							<h3 class="text-lg font-semibold text-gray-100">Rooms</h3>
+							<h3 class="text-lg font-semibold text-gray-100">{t('common.rooms')}</h3>
 						</div>
 						<RoomGrid
 							rooms={rooms}

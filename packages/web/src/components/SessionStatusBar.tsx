@@ -24,6 +24,7 @@ import { useModal, getModelFamilyIcon, getProviderLabel, useMessageHub } from '.
 import { Spinner } from './ui/Spinner.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+import { t } from '../lib/i18n';
 
 /**
  * Thinking level display labels
@@ -283,7 +284,7 @@ export default function SessionStatusBar({
 				{/* Coordinator Mode Toggle - only show if feature is enabled */}
 				{features.coordinator && (
 					<Tooltip
-						content={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+						content={coordinatorMode ? t('status.coordinatorEnabled') : t('status.coordinatorDisabled')}
 						position="top"
 						delay={300}
 					>
@@ -293,7 +294,7 @@ export default function SessionStatusBar({
 							}`}
 							onClick={handleCoordinatorModeToggle}
 							disabled={coordinatorSwitching || modelSwitching}
-							title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+							title={coordinatorMode ? t('status.coordinatorEnabled') : t('status.coordinatorDisabled')}
 						>
 							{coordinatorSwitching ? (
 								<Spinner size="sm" />
@@ -319,7 +320,7 @@ export default function SessionStatusBar({
 				{/* Sandbox Mode Toggle - only show if feature is enabled */}
 				{features.worktree && (
 					<Tooltip
-						content={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+						content={sandboxEnabled ? t('status.sandboxEnabled') : t('status.sandboxDisabled')}
 						position="top"
 						delay={300}
 					>
@@ -329,7 +330,7 @@ export default function SessionStatusBar({
 							}`}
 							onClick={handleSandboxModeToggle}
 							disabled={sandboxSwitching || modelSwitching}
-							title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+							title={sandboxEnabled ? t('status.sandboxEnabled') : t('status.sandboxDisabled')}
 						>
 							{sandboxSwitching ? (
 								<Spinner size="sm" />
@@ -355,7 +356,7 @@ export default function SessionStatusBar({
 				{/* Model Switcher */}
 				<div class="relative">
 					<Tooltip
-						content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
+						content={currentModelInfo ? t('status.modelName', { name: currentModelInfo.name }) : t('status.switchModel')}
 						position="top"
 						delay={300}
 					>
@@ -363,7 +364,7 @@ export default function SessionStatusBar({
 							class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
 							onClick={toggleModelDropdown}
 							disabled={modelLoading || modelSwitching || coordinatorSwitching}
-							title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+							title={currentModelInfo ? t('status.switchModelName', { name: currentModelInfo.name }) : t('status.switchModel')}
 						>
 							{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
 						</button>
@@ -374,7 +375,7 @@ export default function SessionStatusBar({
 						<div
 							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn`}
 						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
+							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">{t('status.selectModel')}</div>
 							{availableModels.map((model) => (
 								<button
 									key={model.id}
@@ -392,7 +393,7 @@ export default function SessionStatusBar({
 										</span>
 									)}
 									{model.id === currentModelInfo?.id && (
-										<span class="text-blue-400 text-[10px]">(current)</span>
+										<span class="text-blue-400 text-[10px]">{t('status.current')}</span>
 									)}
 								</button>
 							))}
@@ -403,7 +404,7 @@ export default function SessionStatusBar({
 				{/* Thinking Level */}
 				<div class="relative">
 					<Tooltip
-						content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+						content={t('status.thinking', { level: THINKING_LEVEL_LABELS[thinkingLevel] })}
 						position="top"
 						delay={300}
 					>
@@ -412,7 +413,7 @@ export default function SessionStatusBar({
 								thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
 							}`}
 							onClick={toggleThinkingDropdown}
-							title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+							title={t('status.thinking', { level: THINKING_LEVEL_LABELS[thinkingLevel] })}
 						>
 							<ThinkingBorderRing level={thinkingLevel} />
 							<ThinkingLevelIcon level={thinkingLevel} />
@@ -424,7 +425,7 @@ export default function SessionStatusBar({
 						<div
 							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
 						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Thinking Level</div>
+							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">{t('status.thinkingLevel')}</div>
 							{(['auto', 'think8k', 'think16k', 'think32k'] as const).map((level) => (
 								<button
 									key={level}
@@ -435,7 +436,7 @@ export default function SessionStatusBar({
 								>
 									<ThinkingLevelIcon level={level} />
 									{THINKING_LEVEL_LABELS[level]}
-									{level === thinkingLevel && ' (current)'}
+									{level === thinkingLevel && ` ${t('status.current')}`}
 								</button>
 							))}
 						</div>
@@ -444,7 +445,7 @@ export default function SessionStatusBar({
 
 				{/* Auto-scroll Toggle - Highlighted border and icon when active */}
 				<Tooltip
-					content={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
+					content={autoScroll ? t('status.autoScrollEnabled') : t('status.autoScrollDisabled')}
 					position="top"
 					delay={300}
 				>
@@ -453,7 +454,7 @@ export default function SessionStatusBar({
 							autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
 						}`}
 						onClick={handleAutoScrollToggle}
-						title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
+						title={autoScroll ? t('status.autoScrollEnabled') : t('status.autoScrollDisabled')}
 					>
 						<svg
 							class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}

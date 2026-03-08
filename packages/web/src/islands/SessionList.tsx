@@ -4,7 +4,9 @@ import { sessions, hasArchivedSessions, globalSettings } from '../lib/state.ts';
 import { updateGlobalSettings } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import { isUserSession } from '../lib/session-utils.ts';
+import { ChatIcon } from '../components/icons/index.tsx';
 import SessionListItem from '../components/SessionListItem.tsx';
+import { t } from '../lib/i18n.ts';
 
 const SESSIONS_PER_PAGE = 20;
 
@@ -42,7 +44,7 @@ export function SessionList({ onSessionSelect }: SessionListProps) {
 		try {
 			await updateGlobalSettings({ showArchived: !showArchived });
 		} catch {
-			toast.error('Failed to toggle archived sessions visibility');
+			toast.error(t('toast.archivedToggleFailed'));
 		}
 	};
 
@@ -69,7 +71,7 @@ export function SessionList({ onSessionSelect }: SessionListProps) {
 								d="M9 5l7 7-7 7"
 							/>
 						</svg>
-						<span>{showArchived ? 'Hide archived' : 'Show archived'}</span>
+						<span>{showArchived ? t('sessions.hideArchived') : t('sessions.showArchived')}</span>
 					</button>
 				</div>
 			)}
@@ -78,9 +80,9 @@ export function SessionList({ onSessionSelect }: SessionListProps) {
 			<div class="flex-1 overflow-y-auto">
 				{sessionsList.length === 0 && (
 					<div class="p-6 text-center">
-						<div class="text-4xl mb-3">💬</div>
-						<p class="text-sm text-gray-400">No sessions yet.</p>
-						<p class="text-xs text-gray-500 mt-1">Sessions created outside of Rooms appear here.</p>
+						<ChatIcon className="w-10 h-10 text-gray-500 mx-auto mb-3" />
+						<p class="text-sm text-gray-400">{t('sessions.empty.title')}</p>
+						<p class="text-xs text-gray-500 mt-1">{t('sessions.empty.desc')}</p>
 					</div>
 				)}
 
@@ -96,7 +98,7 @@ export function SessionList({ onSessionSelect }: SessionListProps) {
 							onClick={handleLoadMore}
 							class="w-full py-2 px-4 text-sm text-gray-400 hover:text-gray-200 hover:bg-dark-800 rounded-lg transition-colors border border-dark-700 hover:border-dark-600"
 						>
-							Load More ({sessionsList.length - visibleCount} remaining)
+							{t('common.loadMore')} ({sessionsList.length - visibleCount})
 						</button>
 					</div>
 				)}

@@ -12,6 +12,7 @@ import type { ModelInfo } from '@neokai/shared';
 import { cn } from '../lib/utils';
 import { borderColors } from '../lib/design-tokens';
 import { useClickOutside } from '../hooks/useClickOutside';
+import { t } from '../lib/i18n.ts';
 
 export interface InputActionsMenuProps {
 	/** Whether the menu is open */
@@ -117,7 +118,7 @@ export function InputActionsMenu({
 						? 'opacity-50 cursor-not-allowed text-gray-500'
 						: 'text-gray-300 hover:bg-dark-600 hover:text-white active:scale-95'
 				)}
-				title={disabled ? 'Not connected' : 'More options'}
+				title={disabled ? t('input.notConnected') : t('input.moreOptions')}
 			>
 				<svg
 					class={cn('w-5 h-5 transition-transform duration-200', isOpen && 'rotate-45')}
@@ -156,7 +157,7 @@ export function InputActionsMenu({
 									d="M19 14l-7 7m0 0l-7-7m7 7V3"
 								/>
 							</svg>
-							<span class="text-sm">Auto-scroll</span>
+							<span class="text-sm">{t('input.autoScroll')}</span>
 						</span>
 						{autoScroll && (
 							<svg
@@ -200,7 +201,7 @@ export function InputActionsMenu({
 								d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
 							/>
 						</svg>
-						<span class="text-sm">Tools</span>
+						<span class="text-sm">{t('chat.tools')}</span>
 					</button>
 
 					<div class="h-px bg-dark-600" />
@@ -225,7 +226,7 @@ export function InputActionsMenu({
 									d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
 								/>
 							</svg>
-							<span class="text-sm">{rewindMode ? 'Exit Rewind Mode' : 'Rewind Mode'}</span>
+							<span class="text-sm">{rewindMode ? t('input.exitRewindMode') : t('input.rewindMode')}</span>
 						</span>
 						{rewindMode && (
 							<svg
@@ -269,7 +270,7 @@ export function InputActionsMenu({
 								d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
 							/>
 						</svg>
-						<span class="text-sm">Attach image</span>
+						<span class="text-sm">{t('input.attachImage')}</span>
 					</button>
 				</div>
 			)}

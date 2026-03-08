@@ -9,14 +9,15 @@ import {
 import { sessions } from '../lib/state.ts';
 import ChatContainer from './ChatContainer.tsx';
 import Room from './Room.tsx';
-import Lobby from './Lobby.tsx';
 import { SessionsPage } from './SessionsPage.tsx';
+import { RoomsPage } from './RoomsPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
 import { ProvidersSettings } from '../components/settings/ProvidersSettings.tsx';
 import { McpServersSettings } from '../components/settings/McpServersSettings.tsx';
 import { UsageAnalytics } from '../components/settings/UsageAnalytics.tsx';
 import { AboutSection } from '../components/settings/AboutSection.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import { t } from '../lib/i18n.ts';
 
 export default function MainContent() {
 	// IMPORTANT: Access .value directly in component body to enable Preact Signals auto-tracking
@@ -50,6 +51,11 @@ export default function MainContent() {
 		return <SessionsPage />;
 	}
 
+	// Rooms section: show rooms grid
+	if (navSection === 'rooms') {
+		return <RoomsPage />;
+	}
+
 	// If Settings is selected in NavRail, show the selected settings section content
 	if (navSection === 'settings') {
 		return (
@@ -58,8 +64,8 @@ export default function MainContent() {
 				<div class="px-6 py-4 border-b border-dark-700 flex items-center gap-3">
 					<MobileMenuButton />
 					<div>
-						<h2 class="text-lg font-semibold text-gray-100">Global Settings</h2>
-						<p class="text-sm text-gray-400">Default configurations for new sessions</p>
+						<h2 class="text-lg font-semibold text-gray-100">{t('settings.title')}</h2>
+						<p class="text-sm text-gray-400">{t('settings.subtitle')}</p>
 					</div>
 				</div>
 				{/* Settings Content */}
@@ -74,6 +80,6 @@ export default function MainContent() {
 		);
 	}
 
-	// Default: Show Lobby (home page)
-	return <Lobby />;
+	// Default: Show Rooms page
+	return <RoomsPage />;
 }

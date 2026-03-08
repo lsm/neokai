@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import type { ProviderAuthStatus, ProviderAuthResponse } from '@neokai/shared/provider';
 import { listProviderAuthStatus, loginProvider, logoutProvider } from '../../lib/api-helpers.ts';
 import { SettingsSection } from './SettingsSection.tsx';
@@ -26,7 +27,7 @@ export function ProvidersSettings() {
 			const response = await listProviderAuthStatus();
 			setProviders(response.providers);
 		} catch {
-			toast.error('Failed to load provider statuses');
+			toast.error(t('toast.providerLoadFailed'));
 			// Failed to load providers
 		} finally {
 			setLoading(false);
@@ -50,7 +51,7 @@ export function ProvidersSettings() {
 					// Auth completed successfully
 					setOauthFlow(null);
 					setProviders(response.providers);
-					toast.success(`${oauthFlow.providerName} authenticated successfully`);
+					toast.success(t('toast.providerAuthSuccess', { name: oauthFlow.providerName }));
 				}
 			} catch {
 				// Polling error - will retry
@@ -67,7 +68,7 @@ export function ProvidersSettings() {
 			const response: ProviderAuthResponse = await loginProvider(providerId);
 
 			if (!response.success) {
-				toast.error(response.error || 'Failed to start OAuth flow');
+				toast.error(response.error || t('toast.providerAuthFailed'));
 				return;
 			}
 
@@ -85,7 +86,7 @@ export function ProvidersSettings() {
 				verificationUri: response.verificationUri,
 			});
 		} catch (error) {
-			toast.error(error instanceof Error ? error.message : 'Failed to start login');
+			toast.error(error instanceof Error ? error.message : t('toast.loginFailed'));
 		} finally {
 			setPendingProvider(null);
 		}
@@ -94,11 +95,11 @@ export function ProvidersSettings() {
 	const handleLogout = async (providerId: string, providerName: string) => {
 		try {
 			await logoutProvider(providerId);
-			toast.success(`Logged out from ${providerName}`);
+			toast.success(t('toast.logoutSuccess', { name: providerName }));
 			// Refresh provider list
 			await loadProviders();
 		} catch (error) {
-			toast.error(error instanceof Error ? error.message : 'Failed to logout');
+			toast.error(error instanceof Error ? error.message : t('toast.logoutFailed'));
 		}
 	};
 

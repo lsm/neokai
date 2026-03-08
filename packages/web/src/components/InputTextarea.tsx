@@ -28,6 +28,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
 import CommandAutocomplete from './CommandAutocomplete.tsx';
+import { t } from '../lib/i18n.ts';
 
 export interface InputTextareaProps {
 	content: string;
@@ -196,8 +197,8 @@ export function InputTextarea({
 						type="button"
 						onClick={onStop}
 						disabled={disabled}
-						title="Stop generation (Esc)"
-						aria-label="Stop generation"
+						title={t('input.stopGeneration')}
+						aria-label={t('input.stopGenerationLabel')}
 						data-testid="stop-button"
 						class={cn(
 							'absolute right-1.5',
@@ -224,7 +225,7 @@ export function InputTextarea({
 									? 'Send message now (Tab queues next turn)'
 									: 'Send message (Enter or Cmd+Enter)'
 						}
-						aria-label="Send message"
+						aria-label={t('input.sendMessage')}
 						data-testid="send-button"
 						class={cn(
 							'absolute right-1.5',

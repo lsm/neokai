@@ -13,6 +13,7 @@ import { useMemo } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
 import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
+import { t } from '../lib/i18n';
 import { cn } from '../lib/utils';
 
 function formatRelativeTime(timestamp: number): string {
@@ -90,7 +91,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							d="M15 19l-7-7 7-7"
 						/>
 					</svg>
-					All Rooms
+					{t('roomPanel.allRooms')}
 				</button>
 			</div>
 
@@ -98,6 +99,17 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			<div class="px-3 py-2">
 				<button
 					onClick={async () => {
+						// Reuse existing empty session instead of creating duplicates
+						const emptySession = sessions.find(
+							(s) =>
+								(!s.title || s.title === 'New Session') &&
+								s.status !== 'archived'
+						);
+						if (emptySession) {
+							navigateToRoomSession(roomId, emptySession.id);
+							onNavigate?.();
+							return;
+						}
 						const sessionId = await roomStore.createSession();
 						navigateToRoomSession(roomId, sessionId);
 						onNavigate?.();
@@ -112,7 +124,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							d="M12 4v16m8-8H4"
 						/>
 					</svg>
-					New Session
+					{t('roomPanel.newSession')}
 				</button>
 			</div>
 
@@ -120,16 +132,16 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 			<div class="px-3 py-2">
 				{hasTasks ? (
 					<span class="text-xs text-gray-500">
-						{pendingCount > 0 && <span class="text-yellow-500/80">{pendingCount} pending</span>}
+						{pendingCount > 0 && <span class="text-yellow-500/80">{t('roomPanel.pending', { count: pendingCount })}</span>}
 						{pendingCount > 0 && activeCount > 0 && <span class="text-gray-600"> · </span>}
-						{activeCount > 0 && <span class="text-green-500/80">{activeCount} active</span>}
+						{activeCount > 0 && <span class="text-green-500/80">{t('roomPanel.active', { count: activeCount })}</span>}
 						{(pendingCount > 0 || activeCount > 0) && doneCount > 0 && (
 							<span class="text-gray-600"> · </span>
 						)}
-						{doneCount > 0 && <span>{doneCount} done</span>}
+						{doneCount > 0 && <span>{t('roomPanel.done', { count: doneCount })}</span>}
 					</span>
 				) : (
-					<span class="text-xs text-gray-600">No tasks</span>
+					<span class="text-xs text-gray-600">{t('roomPanel.noTasks')}</span>
 				)}
 			</div>
 
@@ -161,7 +173,7 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							/>
 						</svg>
 					</div>
-					<span class="flex-1 text-sm text-gray-200 text-left truncate">Room Dashboard</span>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">{t('roomPanel.roomDashboard')}</span>
 				</button>
 
 				{/* Room Agent */}
@@ -187,13 +199,13 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							/>
 						</svg>
 					</div>
-					<span class="flex-1 text-sm text-gray-200 text-left truncate">Room Agent</span>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">{t('roomPanel.roomAgent')}</span>
 				</button>
 
 				{/* Sessions */}
 				{sessions.length === 0 ? (
 					<div class="px-4 py-5 text-center">
-						<p class="text-xs text-gray-500">No sessions yet</p>
+						<p class="text-xs text-gray-500">{t('roomPanel.noSessions')}</p>
 					</div>
 				) : (
 					sessions.map((session) => (

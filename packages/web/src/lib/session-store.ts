@@ -26,6 +26,7 @@ import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { slashCommandsSignal } from './signals';
 import { toast } from './toast';
+import { t } from './i18n';
 import type { StructuredError } from '../types/error';
 
 const logger = new Logger('kai:web:sessionstore');
@@ -275,7 +276,7 @@ class SessionStore {
 			await this.fetchInitialState(hub, sessionId);
 		} catch (err) {
 			logger.error('Failed to start subscriptions:', err);
-			toast.error('Failed to connect to daemon');
+			toast.error(t('toast.daemonConnectFailed'));
 		}
 	}
 

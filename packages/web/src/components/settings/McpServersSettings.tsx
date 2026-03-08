@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { globalSettings } from '../../lib/state.ts';
 import { updateGlobalSettings, listMcpServersFromSources } from '../../lib/api-helpers.ts';
 import { toast } from '../../lib/toast.ts';
+import { t } from '../../lib/i18n.ts';
 import type { SettingSource } from '@neokai/shared';
 import { SettingsSection, SettingsToggle } from './SettingsSection.tsx';
 import { cn } from '../../lib/utils.ts';
@@ -31,7 +32,7 @@ export function McpServersSettings() {
 				const response = await listMcpServersFromSources();
 				setServers(response.servers);
 			} catch {
-				toast.error('Failed to load MCP servers');
+				toast.error(t('toast.mcpLoadFailed'));
 			} finally {
 				setIsLoading(false);
 			}
@@ -65,7 +66,7 @@ export function McpServersSettings() {
 
 			await updateGlobalSettings({ disabledMcpServers: updatedDisabled });
 		} catch {
-			toast.error(`Failed to ${enabled ? 'enable' : 'disable'} server`);
+			toast.error(t('toast.mcpToggleFailed', { action: enabled ? t('mcp.enableAction') : t('mcp.disableAction') }));
 		} finally {
 			setUpdatingServers((prev) => {
 				const next = new Set(prev);
@@ -81,7 +82,7 @@ export function McpServersSettings() {
 	if (isLoading) {
 		return (
 			<SettingsSection title="MCP Servers">
-				<div class="text-sm text-gray-500 py-2">Loading servers...</div>
+				<div class="text-sm text-gray-500 py-2">{t('mcp.loadingServers')}</div>
 			</SettingsSection>
 		);
 	}

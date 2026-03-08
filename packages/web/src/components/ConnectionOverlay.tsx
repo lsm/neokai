@@ -21,6 +21,7 @@ import { connectionState } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager.ts';
 import { Button } from './ui/Button.tsx';
 import { useState } from 'preact/hooks';
+import { t } from '../lib/i18n';
 
 /**
  * Helper to check if connection state requires overlay
@@ -58,36 +59,27 @@ export function ConnectionOverlay() {
 		window.location.reload();
 	};
 
-	// FIX: Simplified since we only show for 'failed' state now
-	const getMessage = () => {
-		return {
-			title: 'Connection Failed',
-			description: 'Unable to establish connection after multiple attempts.',
-			icon: '🔌',
-		};
-	};
-
-	const { title, description, icon } = getMessage();
+	const title = t('connection.failedTitle');
+	const description = t('connection.failedDesc');
 
 	return (
 		<div class="fixed inset-0 z-[10000] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
 			<div class="bg-dark-800 border border-dark-600 p-6 rounded-xl text-center max-w-md w-full shadow-2xl animate-slideIn">
-				<div class="text-5xl mb-4">{icon}</div>
 				<h2 class="text-xl font-bold text-white mb-2">{title}</h2>
 				<p class="text-gray-400 mb-6">{description}</p>
 
 				<div class="flex gap-3 justify-center">
 					<Button onClick={handleReconnect} loading={reconnecting} disabled={reconnecting}>
-						{reconnecting ? 'Reconnecting...' : 'Reconnect'}
+						{reconnecting ? t('connection.reconnectingLabel') : t('connection.reconnect')}
 					</Button>
 					<Button variant="secondary" onClick={handleRefresh} disabled={reconnecting}>
-						Refresh Page
+						{t('connection.refreshPage')}
 					</Button>
 				</div>
 
 				{/* FIX: Always show hint since we only display for 'failed' state now */}
 				<p class="text-xs text-gray-500 mt-4">
-					If the problem persists, check your network connection or try restarting the server.
+					{t('connection.persistHint')}
 				</p>
 			</div>
 		</div>

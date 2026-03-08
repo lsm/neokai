@@ -19,6 +19,7 @@ import {
 import { cn } from '../../../lib/utils.ts';
 import { connectionManager } from '../../../lib/connection-manager.ts';
 import { toast } from '../../../lib/toast.ts';
+import { t } from '../../../lib/i18n.ts';
 import { ConfirmModal } from '../../ui/ConfirmModal.tsx';
 
 /**
@@ -67,7 +68,7 @@ export function ToolResultCard({
 
 	const handleDeleteClick = () => {
 		if (!messageUuid || !sessionId) {
-			toast.error('Cannot delete: missing message or session ID');
+			toast.error(t('toast.cannotDelete'));
 			return;
 		}
 		setShowConfirmModal(true);
@@ -81,7 +82,7 @@ export function ToolResultCard({
 				sessionId,
 				messageUuid,
 			});
-			toast.success('Tool output removed. Reloading session...');
+			toast.success(t('toast.toolOutputRemoved'));
 			setShowConfirmModal(false);
 
 			// Reload the page to refresh messages

@@ -187,6 +187,7 @@ export function navigateToHome(replace = false): void {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 		return;
 	}
 
@@ -200,6 +201,7 @@ export function navigateToHome(replace = false): void {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		navSectionSignal.value = 'rooms';
 	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
@@ -390,11 +392,12 @@ export function navigateToSessions(replace = false): void {
  * Sets nav section to 'chats' and navigates home if needed
  */
 export function navigateToChats(): void {
-	navSectionSignal.value = 'chats';
-	// If we're on a room route, navigate home to show session list
+	// If we're on a room route, navigate home first (which clears signals)
 	if (currentRoomIdSignal.value) {
 		navigateToHome();
 	}
+	// Set nav section after navigateToHome so it doesn't get overwritten
+	navSectionSignal.value = 'chats';
 }
 
 /**
@@ -403,8 +406,28 @@ export function navigateToChats(): void {
  */
 export function navigateToRooms(): void {
 	navSectionSignal.value = 'rooms';
-	// Always navigate home when switching to rooms section
-	navigateToHome();
+	// Navigate to root and clear signals
+	if (getCurrentPath() !== '/') {
+		if (!routerState.isNavigating) {
+			routerState.isNavigating = true;
+			try {
+				window.history.pushState({ sessionId: null, roomId: null, path: '/' }, '', '/');
+				currentSessionIdSignal.value = null;
+				currentRoomIdSignal.value = null;
+				currentRoomSessionIdSignal.value = null;
+				currentRoomTaskIdSignal.value = null;
+			} finally {
+				setTimeout(() => {
+					routerState.isNavigating = false;
+				}, 0);
+			}
+		}
+	} else {
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+	}
 }
 
 /**
@@ -412,8 +435,9 @@ export function navigateToRooms(): void {
  * Sets nav section to 'settings' and navigates home
  */
 export function navigateToSettings(): void {
-	navSectionSignal.value = 'settings';
 	navigateToHome();
+	// Set nav section after navigateToHome so it doesn't get overwritten
+	navSectionSignal.value = 'settings';
 }
 
 /**
@@ -467,7 +491,7 @@ function handlePopState(_event: PopStateEvent): void {
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = sessionId;
 		if (!sessionId) {
-			navSectionSignal.value = 'home';
+			navSectionSignal.value = 'rooms';
 		}
 	}
 }
@@ -524,6 +548,8 @@ export function initializeRouter(): string | null {
 		currentSessionIdSignal.value = initialSessionId;
 		if (initialSessionId) {
 			navSectionSignal.value = 'chats';
+		} else {
+			navSectionSignal.value = 'rooms';
 		}
 	}
 

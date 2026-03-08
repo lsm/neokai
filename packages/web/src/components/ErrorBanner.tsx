@@ -6,6 +6,7 @@
  */
 
 import { borderColors } from '../lib/design-tokens';
+import { t } from '../lib/i18n';
 
 export interface ErrorBannerProps {
 	error: string;
@@ -33,13 +34,13 @@ export function ErrorBanner({
 							onClick={onViewDetails}
 							class="text-xs px-3 py-1 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 transition-colors border border-red-500/30"
 						>
-							View Details
+							{t('error.viewDetails')}
 						</button>
 					)}
 					<button
 						onClick={onDismiss}
 						class="text-red-400 hover:text-red-300 transition-colors"
-						aria-label="Dismiss error"
+						aria-label={t('error.dismiss')}
 					>
 						<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
 							<path

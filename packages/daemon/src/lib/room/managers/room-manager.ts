@@ -117,6 +117,21 @@ export class RoomManager {
 	}
 
 	/**
+	 * Remove a session from its room (finds the room automatically)
+	 * Returns the roomId if found and removed, null otherwise
+	 */
+	removeSession(sessionId: string): string | null {
+		const rooms = this.roomRepo.listRooms(true);
+		for (const room of rooms) {
+			if (room.sessionIds.includes(sessionId)) {
+				this.roomRepo.removeSessionFromRoom(room.id, sessionId);
+				return room.id;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Get room overview with related data
 	 */
 	getRoomOverview(roomId: string): RoomOverview | null {

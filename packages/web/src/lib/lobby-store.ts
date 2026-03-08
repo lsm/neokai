@@ -18,6 +18,7 @@ import type { Room, GlobalStatus, CreateRoomParams } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { toast } from './toast';
+import { t } from './i18n';
 
 const logger = new Logger('kai:web:lobbystore');
 
@@ -214,7 +215,7 @@ class LobbyStore {
 		try {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				toast.error('Not connected to server');
+				toast.error(t('toast.notConnected'));
 				return null;
 			}
 

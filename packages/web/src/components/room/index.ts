@@ -12,6 +12,11 @@ export type { RoomContextProps } from './RoomContext';
 // @public - Library export
 export { RoomSettings } from './RoomSettings';
 export type { RoomSettingsProps } from './RoomSettings';
+// Sub-components re-exported for AgentSettingsPopover
+export { ModelPicker, ModelTagsInput, CliTagsInput } from './RoomAgents';
 // @public - Library export
-export { RoomAgents } from './RoomAgents';
-export type { RoomAgentsProps } from './RoomAgents';
+export { RoomAgentAvatars } from './RoomAgentAvatars';
+export type { RoomAgentAvatarsProps } from './RoomAgentAvatars';
+// @public - Library export
+export { AgentSettingsPopover } from './AgentSettingsPopover';
+export type { AgentSettingsPopoverProps } from './AgentSettingsPopover';

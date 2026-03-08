@@ -17,13 +17,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { NeoTask, SessionInfo } from '@neokai/shared';
+import { HourglassIcon } from '../icons/index.tsx';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
-import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { navigateToRoom, navigateToRooms, navigateToRoomTask } from '../../lib/router';
+import { roomStore } from '../../lib/room-store';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { InputTextarea } from '../InputTextarea';
+import { Breadcrumb } from '../ui/Breadcrumb';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
 import { copyToClipboard } from '../../lib/utils';
+import { t } from '../../lib/i18n';
 
 interface CopyButtonProps {
 	text: string;
@@ -46,7 +50,7 @@ function CopyButton({ text }: CopyButtonProps) {
 				copied ? 'text-green-400' : 'text-gray-500 hover:text-gray-300'
 			}`}
 			onClick={handleCopy}
-			title={copied ? 'Copied!' : 'Copy to clipboard'}
+			title={copied ? t('task.copiedToClipboard') : t('task.copyToClipboard')}
 		>
 			{copied ? (
 				<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -88,16 +92,21 @@ interface TaskViewProps {
 	taskId: string;
 }
 
-const GROUP_STATE_LABELS: Record<string, string> = {
-	awaiting_worker: 'Worker active…',
-	awaiting_leader: 'Leader reviewing…',
-	awaiting_human: 'Needs human review',
-	completed: 'Completed',
-	failed: 'Failed',
+const GROUP_STATE_LABEL_KEYS: Record<string, string> = {
+	awaiting_worker: 'task.state.awaitingWorker',
+	awaiting_leader: 'task.state.awaitingLeader',
+	awaiting_human: 'task.state.awaitingHuman',
+	completed: 'task.state.completed',
+	failed: 'task.state.failed',
 	// Backward compat
-	awaiting_craft: 'Worker active…',
-	awaiting_lead: 'Leader reviewing…',
+	awaiting_craft: 'task.state.awaitingWorker',
+	awaiting_lead: 'task.state.awaitingLeader',
 };
+
+function getGroupStateLabel(state: string): string {
+	const key = GROUP_STATE_LABEL_KEYS[state];
+	return key ? t(key) : state;
+}
 
 const TASK_STATUS_COLORS: Record<string, string> = {
 	pending: 'text-gray-400',
@@ -141,7 +150,7 @@ function HumanInputArea({
 			// Approval changes group state; re-fetch conversation to pick up the approval message
 			onMessageSentWithReload();
 		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to approve task');
+			setInputError(err instanceof Error ? err.message : t('task.failedToApprove'));
 		} finally {
 			setApproving(false);
 		}
@@ -157,7 +166,7 @@ function HumanInputArea({
 			// Rejection feedback changes group state; re-fetch conversation to pick up the human message
 			onMessageSentWithReload();
 		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to send feedback');
+			setInputError(err instanceof Error ? err.message : t('task.failedToSendFeedback'));
 		} finally {
 			setSendingFeedback(false);
 		}
@@ -172,7 +181,7 @@ function HumanInputArea({
 			setLeaderText('');
 			// state.groupMessages.delta handles the live update — no reload needed
 		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to send message');
+			setInputError(err instanceof Error ? err.message : t('task.failedToSendMessage'));
 		} finally {
 			setSendingLeader(false);
 		}
@@ -183,9 +192,12 @@ function HumanInputArea({
 			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0">
 				{/* Prominent banner */}
 				<div class="px-4 py-2 bg-amber-900/20 border-b border-amber-800/30 flex items-center gap-2">
-					<span class="text-amber-400 text-sm font-medium">⏳ Awaiting your review</span>
+					<span class="text-amber-400 text-sm font-medium flex items-center gap-1.5">
+						<HourglassIcon className="w-4 h-4" />
+						{t('task.awaitingReview')}
+					</span>
 					<span class="text-xs text-amber-500/70 ml-auto">
-						Review the PR and approve or provide feedback
+						{t('task.reviewHint')}
 					</span>
 				</div>
 				<div class="px-4 py-3 space-y-2">
@@ -195,7 +207,7 @@ function HumanInputArea({
 						onClick={approveTask}
 						disabled={approving || sendingFeedback}
 					>
-						{approving ? 'Approving…' : '✓ Approve'}
+						{approving ? t('task.approving') : t('task.approve')}
 					</button>
 					{/* Feedback input using shared InputTextarea.
 					    Large maxChars so users can paste diffs/logs freely. */}
@@ -210,7 +222,7 @@ function HumanInputArea({
 						}}
 						onSubmit={() => void sendFeedback()}
 						disabled={sendingFeedback || approving}
-						placeholder="Or send feedback to request changes… (⌘↵ to send)"
+						placeholder={t('task.feedbackPlaceholder')}
 						maxChars={50000}
 					/>
 					{inputError && <p class="text-xs text-red-400">{inputError}</p>}
@@ -235,7 +247,7 @@ function HumanInputArea({
 					}}
 					onSubmit={() => void sendToLeader()}
 					disabled={sendingLeader}
-					placeholder="Send a message to the leader… (⌘↵ to send)"
+					placeholder={t('task.leaderPlaceholder')}
 					maxChars={50000}
 				/>
 				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
@@ -246,10 +258,10 @@ function HumanInputArea({
 	if (groupState === 'awaiting_worker') {
 		return (
 			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3">
-				<div title="Worker is running — wait for leader review">
+				<div title={t('task.workerRunning')}>
 					<textarea
 						class="w-full bg-dark-800 border border-dark-600/50 rounded px-3 py-2 text-sm text-gray-600 placeholder-gray-600 resize-none cursor-not-allowed"
-						placeholder="Worker is running — wait for leader review"
+						placeholder={t('task.workerRunning')}
 						rows={2}
 						disabled
 					/>
@@ -403,7 +415,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	if (loading) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
-				<p class="text-gray-400">Loading task…</p>
+				<p class="text-gray-400">{t('task.loadingTask')}</p>
 			</div>
 		);
 	}
@@ -412,12 +424,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
-					<p class="text-red-400 mb-3">{error ?? 'Task not found'}</p>
+					<p class="text-red-400 mb-3">{error ?? t('task.notFound')}</p>
 					<button
 						class="text-sm text-blue-400 hover:text-blue-300"
 						onClick={() => navigateToRoom(roomId)}
 					>
-						← Back to room
+						{t('task.backToRoom')}
 					</button>
 				</div>
 			</div>
@@ -437,16 +449,18 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
 			<div class="border-b border-dark-700 bg-dark-850 px-4 py-3 flex items-center gap-3 flex-shrink-0">
-				<button
-					class="text-gray-400 hover:text-gray-200 transition-colors text-sm"
-					onClick={() => navigateToRoom(roomId)}
-					title="Back to room"
-				>
-					←
-				</button>
 				<div class="flex-1 min-w-0">
-					<div class="flex items-center gap-2 flex-wrap">
-						<h2 class="text-base font-semibold text-gray-100 truncate">{task.title}</h2>
+					<Breadcrumb
+						items={[
+							{ label: t('common.rooms'), onClick: () => navigateToRooms() },
+							{
+								label: roomStore.room.value?.name ?? t('task.room'),
+								onClick: () => navigateToRoom(roomId),
+							},
+							{ label: t('task.taskPrefix', { title: task.title }) },
+						]}
+					/>
+					<div class="flex items-center gap-2 flex-wrap mt-1">
 						<span class={`text-xs font-medium ${statusColor}`}>
 							{task.status.replace('_', ' ')}
 						</span>
@@ -459,12 +473,12 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					{group && (
 						<div class="flex items-center gap-2 mt-0.5">
 							<p class="text-xs text-gray-500">
-								{GROUP_STATE_LABELS[group.state] ?? group.state}
-								{group.feedbackIteration > 0 && ` · iteration ${group.feedbackIteration}`}
+								{getGroupStateLabel(group.state)}
+								{group.feedbackIteration > 0 && ` · ${t('task.iteration', { count: group.feedbackIteration })}`}
 							</p>
 							{group.state === 'awaiting_human' && (
 								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
-									Awaiting your review
+									{t('task.awaitingReview')}
 								</span>
 							)}
 						</div>
@@ -489,7 +503,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
 					}`}
 					onClick={() => setShowInfoPanel(!showInfoPanel)}
-					title="Task info"
+					title={t('task.taskInfo')}
 				>
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path
@@ -507,26 +521,26 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-3 flex-shrink-0">
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
 						<div>
-							<span class="text-gray-500">Task ID:</span>
+							<span class="text-gray-500">{t('task.taskId')}</span>
 							<span class="text-gray-300 ml-2 font-mono">{task.id}</span>
 							<CopyButton text={task.id} />
 						</div>
 						{group && (
 							<>
 								<div>
-									<span class="text-gray-500">Group ID:</span>
+									<span class="text-gray-500">{t('task.groupId')}</span>
 									<span class="text-gray-300 ml-2 font-mono">{group.id}</span>
 									<CopyButton text={group.id} />
 								</div>
 								<div>
-									<span class="text-gray-500">Worker:</span>
+									<span class="text-gray-500">{t('task.worker')}</span>
 									<span class="text-gray-300 ml-2 font-mono">
 										{group.workerSessionId.slice(0, 8)}...
 									</span>
 									<CopyButton text={group.workerSessionId} />
 								</div>
 								<div>
-									<span class="text-gray-500">Leader:</span>
+									<span class="text-gray-500">{t('task.leader')}</span>
 									<span class="text-gray-300 ml-2 font-mono">
 										{group.leaderSessionId.slice(0, 8)}...
 									</span>
@@ -536,7 +550,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						)}
 						{workerSession && (
 							<div class="md:col-span-2">
-								<span class="text-gray-500">Worker worktree:</span>
+								<span class="text-gray-500">{t('task.workerWorktree')}</span>
 								<span class="text-gray-300 ml-2 font-mono break-all">
 									{workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
 								</span>
@@ -544,13 +558,13 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									text={workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
 								/>
 								{workerSession.config.model && (
-									<span class="text-gray-500 ml-2">(model: {workerSession.config.model})</span>
+									<span class="text-gray-500 ml-2">({t('task.modelLabel', { model: workerSession.config.model })})</span>
 								)}
 							</div>
 						)}
 						{leaderSession && (
 							<div class="md:col-span-2">
-								<span class="text-gray-500">Leader worktree:</span>
+								<span class="text-gray-500">{t('task.leaderWorktree')}</span>
 								<span class="text-gray-300 ml-2 font-mono break-all">
 									{leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
 								</span>
@@ -558,7 +572,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									text={leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
 								/>
 								{leaderSession.config.model && (
-									<span class="text-gray-500 ml-2">(model: {leaderSession.config.model})</span>
+									<span class="text-gray-500 ml-2">({t('task.modelLabel', { model: leaderSession.config.model })})</span>
 								)}
 							</div>
 						)}
@@ -569,7 +583,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			{/* Dependencies */}
 			{task.dependsOn && task.dependsOn.length > 0 && (
 				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-2 flex items-center gap-2 flex-shrink-0 flex-wrap">
-					<span class="text-xs text-gray-500">Depends on:</span>
+					<span class="text-xs text-gray-500">{t('task.dependsOn')}</span>
 					{task.dependsOn.map((depId) => (
 						<button
 							key={depId}
@@ -595,21 +609,21 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					) : (
 						<div class="flex-1 flex items-center justify-center text-center p-8">
 							<div>
-								<p class="text-gray-400 mb-1">No active agent group</p>
+								<p class="text-gray-400 mb-1">{t('task.noActiveGroup')}</p>
 								<p class="text-sm text-gray-500">
 									{task.status === 'pending'
-										? 'Waiting for the runtime to pick up this task.'
+										? t('task.waitingForRuntime')
 										: task.status === 'completed'
-											? 'This task has been completed.'
+											? t('task.taskCompleted')
 											: task.status === 'failed'
-												? 'This task has failed.'
+												? t('task.taskFailed')
 												: task.status === 'review'
-													? 'This task is awaiting human review.'
+													? t('task.taskReview')
 													: task.status === 'draft'
-														? 'This task is a draft and has not been scheduled yet.'
+														? t('task.taskDraft')
 														: task.status === 'cancelled'
-															? 'This task was cancelled.'
-															: 'No agent group has been spawned yet.'}
+															? t('task.taskCancelled')
+															: t('task.noGroupSpawned')}
 								</p>
 							</div>
 						</div>
@@ -629,7 +643,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 								: 'bg-dark-700 text-gray-400 hover:text-gray-200 hover:bg-dark-600'
 						}`}
 						onClick={() => setAutoScrollEnabled(!autoScrollEnabled)}
-						title={autoScrollEnabled ? 'Disable auto-scroll' : 'Enable auto-scroll'}
+						title={autoScrollEnabled ? t('task.disableAutoScroll') : t('task.enableAutoScroll')}
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path

@@ -12,6 +12,8 @@
  */
 
 import type { TaskSummary } from '@neokai/shared';
+import { CheckIcon } from '../icons/index.tsx';
+import { t } from '../../lib/i18n';
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
@@ -23,9 +25,12 @@ interface RoomTasksProps {
 export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksProps) {
 	if (tasks.length === 0) {
 		return (
-			<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
-				<p class="text-gray-400">No tasks yet</p>
-				<p class="text-sm text-gray-500 mt-1">Create a task to get started</p>
+			<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
+				<CheckIcon className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+				<p class="text-gray-400 font-medium">{t('tasks.empty.title')}</p>
+				<p class="text-sm text-gray-500 mt-1">
+					{t('tasks.empty.desc')}
+				</p>
 			</div>
 		);
 	}
@@ -58,7 +63,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 								d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
 							/>
 						</svg>
-						<h3 class="font-semibold text-red-400">Failed ({failed.length})</h3>
+						<h3 class="font-semibold text-red-400">{t('tasks.status.failed')} ({failed.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{failed.map((task) => (
@@ -72,7 +77,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{inProgress.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-yellow-900/20">
-						<h3 class="font-semibold text-yellow-400">In Progress ({inProgress.length})</h3>
+						<h3 class="font-semibold text-yellow-400">{t('tasks.status.inProgress')} ({inProgress.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{inProgress.map((task) => (
@@ -86,7 +91,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{review.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-purple-900/20">
-						<h3 class="font-semibold text-purple-400">Review ({review.length})</h3>
+						<h3 class="font-semibold text-purple-400">{t('tasks.status.review')} ({review.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{review.map((task) => (
@@ -107,7 +112,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{pending.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700">
-						<h3 class="font-semibold text-gray-100">Pending ({pending.length})</h3>
+						<h3 class="font-semibold text-gray-100">{t('tasks.status.pending')} ({pending.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{pending.map((task) => (
@@ -121,7 +126,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{draft.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
-						<h3 class="font-semibold text-gray-400">Draft ({draft.length})</h3>
+						<h3 class="font-semibold text-gray-400">{t('tasks.status.draft')} ({draft.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{draft.map((task) => (
@@ -135,7 +140,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{completed.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-green-900/20">
-						<h3 class="font-semibold text-green-400">Completed ({completed.length})</h3>
+						<h3 class="font-semibold text-green-400">{t('tasks.status.completed')} ({completed.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
@@ -149,7 +154,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{cancelled.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
-						<h3 class="font-semibold text-gray-500">Cancelled ({cancelled.length})</h3>
+						<h3 class="font-semibold text-gray-500">{t('tasks.status.cancelled')} ({cancelled.length})</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{cancelled.map((task) => (
@@ -200,7 +205,7 @@ function TaskItem({
 						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
 						{blocked && (
 							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
-								Blocked
+								{t('tasks.blocked')}
 							</span>
 						)}
 					</div>
@@ -217,7 +222,7 @@ function TaskItem({
 							}}
 							class="px-2 py-1 text-xs font-medium text-green-400 bg-green-900/20 hover:bg-green-900/40 border border-green-700/50 rounded transition-colors"
 						>
-							Approve
+							{t('tasks.approve')}
 						</button>
 					)}
 					{showView && (
@@ -228,7 +233,7 @@ function TaskItem({
 							}}
 							class="px-2 py-1 text-xs font-medium text-blue-400 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-700/50 rounded transition-colors"
 						>
-							View
+							{t('tasks.view')}
 						</button>
 					)}
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
@@ -241,7 +246,7 @@ function TaskItem({
 			)}
 			{hasDeps && (
 				<div class="flex items-center gap-1 mt-1.5 flex-wrap">
-					<span class="text-xs text-gray-500">Deps:</span>
+					<span class="text-xs text-gray-500">{t('tasks.deps')}</span>
 					{task.dependsOn.map((depId) => {
 						const depTask = allTasks.find((t) => t.id === depId);
 						const depCompleted = depTask?.status === 'completed';

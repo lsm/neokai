@@ -42,6 +42,7 @@ import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { Modal } from '../components/ui/Modal.tsx';
 import { Skeleton, SkeletonMessage } from '../components/ui/Skeleton.tsx';
 import { Spinner } from '../components/ui/Spinner.tsx';
+import { WarningIcon, ChatIcon } from '../components/icons/index.tsx';
 import { WorktreeChoiceInline } from '../components/WorktreeChoiceInline.tsx';
 import { useAutoScroll } from '../hooks/useAutoScroll.ts';
 import { useMessageMaps } from '../hooks/useMessageMaps.ts';
@@ -53,6 +54,7 @@ import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
+import { t } from '../lib/i18n';
 import {
 	getMessagesBottomPaddingPx,
 	MIN_MESSAGES_BOTTOM_PADDING_PX,
@@ -167,17 +169,19 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 			if (result.success) {
 				toast.success(
-					`Rewound successfully: ${result.messagesDeleted || 0} messages removed, ${
-						result.filesChanged?.length || 0
-					} files restored`
+					t('toast.rewindSuccess', {
+						details: `${result.messagesDeleted || 0} messages removed, ${
+							result.filesChanged?.length || 0
+						} files restored`,
+					})
 				);
 				// Refresh session state to ensure data consistency
 				await sessionStore.refresh();
 			} else {
-				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+				toast.error(t('toast.rewindFailed', { error: result.error || 'Unknown error' }));
 			}
 		} catch (err) {
-			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+			toast.error(t('toast.rewindFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
 		} finally {
 			setIsRewinding(false);
 			setRewindTargetUuid(null);
@@ -248,15 +252,15 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				if (result.messagesDeleted) parts.push(`${result.messagesDeleted} messages removed`);
 				if (result.filesReverted?.length)
 					parts.push(`${result.filesReverted.length} files restored`);
-				toast.success(`Rewound successfully: ${parts.join(', ')}`);
+				toast.success(t('toast.rewindSuccess', { details: parts.join(', ') }));
 				// Refresh session state to ensure data consistency
 				await sessionStore.refresh();
 				handleExitRewindMode();
 			} else {
-				toast.error(`Rewind failed: ${result.error || 'Unknown error'}`);
+				toast.error(t('toast.rewindFailed', { error: result.error || 'Unknown error' }));
 			}
 		} catch (err) {
-			toast.error(`Rewind failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+			toast.error(t('toast.rewindFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
 		} finally {
 			setIsRewinding(false);
 			selectiveRewindModal.close();
@@ -465,7 +469,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			sessionStore.prependMessages(olderMessages);
 			setHasMoreMessages(hasMore);
 		} catch {
-			toast.error('Failed to load older messages');
+			toast.error(t('toast.loadOlderFailed'));
 		} finally {
 			setLoadingOlder(false);
 		}
@@ -635,7 +639,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				try {
 					const hub = connectionManager.getHubIfConnected();
 					if (!hub) {
-						toast.error('Connection lost.');
+						toast.error(t('toast.connectionLost'));
 						return;
 					}
 					await hub.request('session.setWorktreeMode', {
@@ -644,7 +648,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 					});
 					// UI will auto-hide via session status update
 				} catch {
-					toast.error('Failed to set workspace mode');
+					toast.error(t('toast.workspaceModeFailed'));
 					return; // Don't send message if worktree setup failed
 				}
 			}
@@ -663,7 +667,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				});
 			} catch {
 				setAutoScroll(!newAutoScroll);
-				toast.error('Failed to save auto-scroll setting');
+				toast.error(t('toast.autoScrollFailed'));
 			}
 		},
 		[sessionId]
@@ -683,7 +687,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				await switchCoordinatorMode(sessionId, newMode);
 			} catch {
 				setCoordinatorMode(!newMode);
-				toast.error('Failed to toggle coordinator mode');
+				toast.error(t('toast.coordinatorFailed'));
 			} finally {
 				setCoordinatorSwitching(false);
 			}
@@ -705,7 +709,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				await switchSandboxMode(sessionId, newMode);
 			} catch {
 				setSandboxEnabled(!newMode);
-				toast.error('Failed to toggle sandbox mode');
+				toast.error(t('toast.sandboxFailed'));
 			} finally {
 				setSandboxSwitching(false);
 			}
@@ -796,8 +800,8 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 		return (
 			<div class="flex-1 flex items-center justify-center bg-dark-900">
 				<div class="text-center">
-					<div class="text-5xl mb-4">⚠️</div>
-					<h3 class="text-lg font-semibold text-gray-100 mb-2">Failed to load session</h3>
+					<WarningIcon className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
+					<h3 class="text-lg font-semibold text-gray-100 mb-2">{t('chat.failedToLoad')}</h3>
 					<p class="text-sm text-gray-400 mb-4">{error}</p>
 					<Button onClick={() => sessionStore.select(sessionId)}>Retry</Button>
 				</div>
@@ -907,18 +911,18 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 						<div class="absolute inset-0 z-50 bg-dark-900/80 backdrop-blur-sm flex items-center justify-center">
 							<div class="bg-dark-800 border border-amber-500/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-2xl">
 								<Spinner size="lg" color="border-amber-500" />
-								<div class="text-amber-200 text-sm font-medium">Rewinding conversation...</div>
-								<div class="text-gray-400 text-xs">This may take a moment</div>
+								<div class="text-amber-200 text-sm font-medium">{t('chat.rewindingTitle')}</div>
+								<div class="text-gray-400 text-xs">{t('chat.rewindingDesc')}</div>
 							</div>
 						</div>
 					)}
 					{messages.length === 0 ? (
 						<div class="min-h-[calc(100%+1px)] flex items-center justify-center px-6">
 							<div class="text-center">
-								<div class="text-5xl mb-4">💬</div>
-								<p class="text-lg text-gray-300 mb-2">No messages yet</p>
+								<ChatIcon className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+								<p class="text-lg text-gray-300 mb-2">{t('chat.noMessages')}</p>
 								<p class="text-sm text-gray-500">
-									Start a conversation with Claude to see the magic happen
+									{t('chat.noMessagesDesc')}
 								</p>
 							</div>
 						</div>
@@ -947,7 +951,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 							{!hasMoreMessages && messages.length > 0 && (
 								<div class="flex items-center justify-center py-4">
-									<div class="text-xs text-gray-500">Beginning of conversation</div>
+									<div class="text-xs text-gray-500">{t('chat.beginningOfConversation')}</div>
 								</div>
 							)}
 
@@ -1094,10 +1098,10 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			</div>
 
 			{/* Delete Modal */}
-			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title="Delete Chat" size="sm">
+			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title={t('chat.deleteTitle')} size="sm">
 				<div class="space-y-4">
 					<p class="text-gray-300 text-sm">
-						Are you sure you want to delete this chat session? This action cannot be undone.
+						{t('chat.deleteConfirm')}
 					</p>
 					<div class="flex gap-3 justify-end">
 						<Button
@@ -1105,7 +1109,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 							onClick={deleteModal.close}
 							disabled={sessionActions.deleting}
 						>
-							Cancel
+							{t('common.cancel')}
 						</Button>
 						<Button
 							variant="danger"
@@ -1113,7 +1117,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 							loading={sessionActions.deleting}
 							data-testid="confirm-delete-session"
 						>
-							Delete Chat
+							{t('chat.deleteTitle')}
 						</Button>
 					</div>
 				</div>
@@ -1148,12 +1152,12 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			<Modal
 				isOpen={rewindConfirmModal.isOpen}
 				onClose={handleRewindCancel}
-				title="Rewind Conversation"
+				title={t('chat.rewindTitle')}
 				size="sm"
 			>
 				<div class="space-y-4">
 					<p class="text-gray-300 text-sm">
-						This will rewind the conversation to before this message. Choose what to restore:
+						{t('chat.rewindBeforeMessage')}
 					</p>
 					<div class="space-y-2">
 						<label class="flex items-center gap-2 cursor-pointer">
@@ -1165,7 +1169,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 								onChange={() => setRewindModeChoice('both')}
 								class="text-amber-500 focus:ring-amber-500"
 							/>
-							<span class="text-sm text-gray-200">Files & Conversation</span>
+							<span class="text-sm text-gray-200">{t('chat.rewindFilesAndConversation')}</span>
 						</label>
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -1176,7 +1180,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 								onChange={() => setRewindModeChoice('files')}
 								class="text-amber-500 focus:ring-amber-500"
 							/>
-							<span class="text-sm text-gray-200">Files only</span>
+							<span class="text-sm text-gray-200">{t('chat.rewindFilesOnly')}</span>
 						</label>
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -1187,16 +1191,16 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 								onChange={() => setRewindModeChoice('conversation')}
 								class="text-amber-500 focus:ring-amber-500"
 							/>
-							<span class="text-sm text-gray-200">Conversation only</span>
+							<span class="text-sm text-gray-200">{t('chat.rewindConversationOnly')}</span>
 						</label>
 					</div>
-					<p class="text-amber-400 text-xs">This action cannot be undone.</p>
+					<p class="text-amber-400 text-xs">{t('chat.rewindCannotUndo')}</p>
 					<div class="flex gap-3 justify-end">
 						<Button variant="secondary" onClick={handleRewindCancel} disabled={isRewinding}>
-							Cancel
+							{t('common.cancel')}
 						</Button>
 						<Button variant="danger" onClick={handleRewindConfirm} loading={isRewinding}>
-							{isRewinding ? 'Rewinding...' : 'Rewind'}
+							{isRewinding ? t('chat.rewinding') : t('chat.rewind')}
 						</Button>
 					</div>
 				</div>
@@ -1208,12 +1212,12 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				onClose={() => {
 					if (!isRewinding) selectiveRewindModal.close();
 				}}
-				title="Rewind Conversation"
+				title={t('chat.rewindTitle')}
 				size="sm"
 			>
 				<div class="space-y-4">
 					<p class="text-gray-300 text-sm">
-						This will rewind the conversation to the selected point. Choose what to restore:
+						{t('chat.rewindToPoint')}
 					</p>
 					<div class="space-y-2">
 						<label class="flex items-center gap-2 cursor-pointer">
@@ -1225,7 +1229,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 								onChange={() => setRewindModeChoice('both')}
 								class="text-amber-500 focus:ring-amber-500"
 							/>
-							<span class="text-sm text-gray-200">Files & Conversation</span>
+							<span class="text-sm text-gray-200">{t('chat.rewindFilesAndConversation')}</span>
 						</label>
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -1236,7 +1240,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 								onChange={() => setRewindModeChoice('files')}
 								class="text-amber-500 focus:ring-amber-500"
 							/>
-							<span class="text-sm text-gray-200">Files only</span>
+							<span class="text-sm text-gray-200">{t('chat.rewindFilesOnly')}</span>
 						</label>
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -1247,20 +1251,20 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 								onChange={() => setRewindModeChoice('conversation')}
 								class="text-amber-500 focus:ring-amber-500"
 							/>
-							<span class="text-sm text-gray-200">Conversation only</span>
+							<span class="text-sm text-gray-200">{t('chat.rewindConversationOnly')}</span>
 						</label>
 					</div>
-					<p class="text-amber-400 text-xs">This action cannot be undone.</p>
+					<p class="text-amber-400 text-xs">{t('chat.rewindCannotUndo')}</p>
 					<div class="flex gap-3 justify-end">
 						<Button
 							variant="secondary"
 							onClick={() => selectiveRewindModal.close()}
 							disabled={isRewinding}
 						>
-							Cancel
+							{t('common.cancel')}
 						</Button>
 						<Button variant="danger" onClick={handleSelectiveRewindConfirm} loading={isRewinding}>
-							{isRewinding ? 'Rewinding...' : 'Rewind'}
+							{isRewinding ? t('chat.rewinding') : t('chat.rewind')}
 						</Button>
 					</div>
 				</div>

@@ -15,11 +15,11 @@ import { navSectionSignal } from '../../lib/signals.ts';
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSessions: vi.fn(),
 	navigateToSettings: vi.fn(),
-	navigateToHome: vi.fn(),
+	navigateToRooms: vi.fn(),
 }));
 
 // Import mocked functions for assertions
-import { navigateToSessions, navigateToSettings, navigateToHome } from '../../lib/router.ts';
+import { navigateToSessions, navigateToSettings, navigateToRooms } from '../../lib/router.ts';
 
 describe('NavRail', () => {
 	beforeEach(() => {
@@ -83,12 +83,12 @@ describe('NavRail', () => {
 			expect(chatsButton.getAttribute('aria-pressed')).toBe('false');
 		});
 
-		it('should highlight Home button when navSection is home', () => {
-			navSectionSignal.value = 'home';
+		it('should highlight Rooms button when navSection is rooms', () => {
+			navSectionSignal.value = 'rooms';
 			render(<NavRail />);
 
-			const homeButton = screen.getByRole('button', { name: 'Home' });
-			expect(homeButton.getAttribute('aria-pressed')).toBe('true');
+			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
+			expect(roomsButton.getAttribute('aria-pressed')).toBe('true');
 		});
 	});
 
@@ -111,13 +111,13 @@ describe('NavRail', () => {
 			expect(navigateToSettings).toHaveBeenCalledTimes(1);
 		});
 
-		it('should call navigateToHome when Home button is clicked', () => {
+		it('should call navigateToRooms when Rooms button is clicked', () => {
 			render(<NavRail />);
 
-			const homeButton = screen.getByRole('button', { name: 'Home' });
-			fireEvent.click(homeButton);
+			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
+			fireEvent.click(roomsButton);
 
-			expect(navigateToHome).toHaveBeenCalledTimes(1);
+			expect(navigateToRooms).toHaveBeenCalledTimes(1);
 		});
 	});
 

@@ -4,6 +4,7 @@
 
 import type { MessageImage } from '@neokai/shared/types';
 import { formatFileSize } from '../lib/file-utils.ts';
+import { t } from '../lib/i18n.ts';
 
 interface AttachmentPreviewProps {
 	attachments: Array<MessageImage & { name: string; size: number }>;
@@ -38,8 +39,8 @@ export function AttachmentPreview({ attachments, onRemove }: AttachmentPreviewPr
 						type="button"
 						onClick={() => onRemove(index)}
 						class="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-600 hover:bg-red-700 text-white flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
-						aria-label="Remove attachment"
-						title="Remove attachment"
+						aria-label={t('input.removeAttachment')}
+						title={t('input.removeAttachment')}
 					>
 						<svg
 							class="w-3 h-3"
