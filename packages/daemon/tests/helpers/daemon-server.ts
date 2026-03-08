@@ -9,10 +9,13 @@
  *
  * When NEOKAI_USE_DEV_PROXY=1 is set, the helper will:
  * 1. Start Dev Proxy before creating the daemon server
- * 2. Set proxy environment variables (HTTPS_PROXY, NODE_USE_ENV_PROXY, etc.)
- * 3. Stop Dev Proxy when the daemon server is cleaned up
+ * 2. Set ANTHROPIC_BASE_URL to point to Dev Proxy (e.g., http://127.0.0.1:8000)
+ * 3. Stop Dev Proxy and restore ANTHROPIC_BASE_URL when the daemon server is cleaned up
  *
  * This allows tests to run without making real API calls to Anthropic.
+ *
+ * The ANTHROPIC_BASE_URL approach is more reliable than proxy environment variables
+ * because SDK subprocesses properly inherit it.
  */
 
 import { spawn } from 'child_process';
@@ -26,11 +29,6 @@ import {
 	type DevProxyController,
 	type DevProxyOptions,
 } from './dev-proxy';
-import {
-	createMockApiServer,
-	type MockApiServer,
-	type MockApiServerOptions,
-} from './mock-api-server';
 
 export interface DaemonServerOptions {
 	/**
@@ -100,14 +98,8 @@ export interface DaemonServerContext {
 	mockControls: MockControls | null;
 
 	/**
-	 * Mock API server (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
-	 * This is a simpler alternative to Dev Proxy that uses ANTHROPIC_BASE_URL.
-	 */
-	mockApiServer: MockApiServer | null;
-
-	/**
-	 * Dev Proxy controller (legacy, kept for compatibility).
-	 * Use mockApiServer instead - it's simpler and more reliable.
+	 * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
+	 * Sets ANTHROPIC_BASE_URL to point to Dev Proxy for API mocking.
 	 */
 	devProxy: DevProxyController | null;
 }
@@ -127,12 +119,13 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	} = options;
 
 	// Start Dev Proxy if requested
+	// Use ANTHROPIC_BASE_URL to redirect SDK to Dev Proxy instead of proxy env vars
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 	if (shouldUseDevProxy) {
 		devProxy = createDevProxyController({
-			setEnvVars: true,
+			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
 			...devProxyOptions,
 		});
 		await devProxy.start();
@@ -150,14 +143,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		...customEnv,
 	};
 
-	// Include Dev Proxy env vars if proxy is running
+	// Set ANTHROPIC_BASE_URL to point to Dev Proxy if it's running
+	// This is more reliable than proxy env vars for subprocess inheritance
 	if (devProxy?.isRunning()) {
-		daemonEnv.HTTPS_PROXY = devProxy.proxyUrl;
-		daemonEnv.HTTP_PROXY = devProxy.proxyUrl;
-		daemonEnv.NODE_USE_ENV_PROXY = '1';
-		if (process.env.NODE_EXTRA_CA_CERTS) {
-			daemonEnv.NODE_EXTRA_CA_CERTS = process.env.NODE_EXTRA_CA_CERTS;
-		}
+		daemonEnv.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
 	}
 
 	// Spawn the daemon server
@@ -241,7 +230,6 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		mockControls: null, // Mock not available in spawned process mode
-		mockApiServer: null, // Not used in spawned process mode
 		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
@@ -254,14 +242,9 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 				}
 				daemonProcess.once('exit', () => resolve());
 			});
-			// Stop mock API server or Dev Proxy if they were started
-			if (mockApiServer) {
-				await mockApiServer.stop();
-				mockApiServer.restoreEnv();
-			}
+			// Stop Dev Proxy (no need to restore env in spawned mode)
 			if (devProxy) {
 				await devProxy.stop();
-				devProxy.restoreEnv();
 			}
 		},
 		trackSession: (sessionId: string) => {
@@ -292,34 +275,25 @@ async function createInProcessDaemonServer(
 		useDevProxy = false,
 	} = options;
 
-	// Start mock API server if requested
-	// This is simpler and more reliable than Dev Proxy - we just set ANTHROPIC_BASE_URL
-	let mockApiServer: MockApiServer | null = null;
+	// Track original ANTHROPIC_BASE_URL for restoration
+	let originalAnthropicBaseUrl: string | undefined;
+
+	// Start Dev Proxy if requested
+	// Use ANTHROPIC_BASE_URL to redirect SDK to Dev Proxy instead of proxy env vars
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 	if (shouldUseDevProxy) {
-		try {
-			mockApiServer = await createMockApiServer({
-				port: devProxyOptions?.port || 8000,
-				logLevel: 'warning',
-			});
-			await mockApiServer.start();
-		} catch (error) {
-			// If mock API server fails (e.g., not running on Bun), fall back to Dev Proxy
-			if (error instanceof Error && error.message.includes('Bun')) {
-				console.warn('Mock API server requires Bun, falling back to Dev Proxy');
-			} else {
-				console.warn('Failed to start mock API server, falling back to Dev Proxy:', error);
-			}
-			// Try Dev Proxy fallback
-			const devProxyController = createDevProxyController({
-				setEnvVars: true,
-				...devProxyOptions,
-			});
-			await devProxyController.start();
-			devProxy = devProxyController;
-		}
+		devProxy = createDevProxyController({
+			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
+			...devProxyOptions,
+		});
+		await devProxy.start();
+
+		// Set ANTHROPIC_BASE_URL to point to Dev Proxy
+		// This is more reliable than proxy env vars since SDK subprocess inherits it
+		originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
+		process.env.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
 	}
 
 	// Apply custom env vars
@@ -402,7 +376,6 @@ async function createInProcessDaemonServer(
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		daemonContext, // Expose for advanced usage
 		mockControls,
-		mockApiServer,
 		devProxy,
 		kill: () => {
 			// For in-process, cleanup happens in waitForExit - just return true
@@ -437,14 +410,15 @@ async function createInProcessDaemonServer(
 				await Bun.$`rm -rf ${workspace}`.quiet();
 			}
 
-			// Stop mock API server or Dev Proxy if they were started
-			if (mockApiServer) {
-				await mockApiServer.stop();
-				mockApiServer.restoreEnv();
-			}
+			// Stop Dev Proxy and restore ANTHROPIC_BASE_URL if Dev Proxy was started
 			if (devProxy) {
 				await devProxy.stop();
-				devProxy.restoreEnv();
+				// Restore original ANTHROPIC_BASE_URL
+				if (originalAnthropicBaseUrl !== undefined) {
+					process.env.ANTHROPIC_BASE_URL = originalAnthropicBaseUrl;
+				} else {
+					delete process.env.ANTHROPIC_BASE_URL;
+				}
 			}
 		},
 		trackSession: (sessionId: string) => {
