@@ -118,7 +118,7 @@ export function ModelPicker({
 			</button>
 
 			{isOpen.value && (
-				<div class="absolute top-full mt-1 right-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
+				<div class="absolute top-full mt-1 right-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-[9999] animate-slideIn max-h-[50vh] overflow-y-auto">
 					<button
 						class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
 							!value ? 'text-blue-400' : 'text-gray-200'
@@ -223,7 +223,7 @@ export function ModelTagsInput({
 			</div>
 
 			{isOpen.value && (
-				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn">
+				<div class="absolute top-full mt-1 left-0 right-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl py-1 z-[9999] animate-slideIn max-h-[50vh] overflow-y-auto">
 					{availableToAdd.map((model) => (
 						<button
 							key={model.id}
@@ -322,7 +322,7 @@ export function CliTagsInput({
 								</button>
 							)}
 							{modelOpenFor.value === config.model && hasModels && (
-								<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-44 py-1 z-50 animate-slideIn">
+								<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-44 py-1 z-[9999] animate-slideIn">
 									<button
 										class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs ${
 											!config.cliModel ? 'text-blue-400' : 'text-gray-200'
@@ -366,7 +366,7 @@ export function CliTagsInput({
 			</div>
 
 			{isOpen.value && (
-				<div class="absolute top-full mt-1 left-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl w-56 py-1 z-50 animate-slideIn">
+				<div class="absolute top-full mt-1 left-0 right-0 bg-dark-800 border border-dark-600 rounded-lg shadow-xl py-1 z-[9999] animate-slideIn">
 					{availableToAdd.map((agent) => (
 						<button
 							key={agent.id}

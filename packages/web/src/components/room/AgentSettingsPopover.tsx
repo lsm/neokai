@@ -289,7 +289,7 @@ export function AgentSettingsPopover({
 			</div>
 
 			{/* Body */}
-			<div class="px-4 py-3 space-y-4 max-h-[400px] overflow-y-auto">
+			<div class="px-4 py-3 space-y-4">
 				{/* Model selector */}
 				<div>
 					<div class="flex items-center justify-between gap-2">
