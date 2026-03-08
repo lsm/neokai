@@ -287,6 +287,38 @@ export class RoomRuntimeService {
 					agentSessions.delete(sessionId);
 				}
 			},
+			removeWorktree: async (workspacePath: string): Promise<boolean> => {
+				try {
+					// Find the git root for this workspace path
+					const gitRoot = await worktreeManager.findGitRoot(workspacePath);
+					if (!gitRoot) {
+						log.warn(`removeWorktree: no git root found for ${workspacePath}`);
+						return false;
+					}
+
+					// Get the current branch from the worktree
+					const branch = await worktreeManager.getCurrentBranch(workspacePath);
+					if (!branch) {
+						log.warn(`removeWorktree: no branch found for ${workspacePath}`);
+						return false;
+					}
+
+					// Construct WorktreeMetadata and remove
+					await worktreeManager.removeWorktree(
+						{
+							isWorktree: true,
+							worktreePath: workspacePath,
+							mainRepoPath: gitRoot,
+							branch,
+						},
+						true // Delete branch as well
+					);
+					return true;
+				} catch (error) {
+					log.warn(`Failed to remove worktree ${workspacePath}:`, error);
+					return false;
+				}
+			},
 		};
 	}
 

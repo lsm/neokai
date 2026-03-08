@@ -87,6 +87,11 @@ export interface SessionFactory {
 	 * Used for urgent cancellation paths where the group should terminate now.
 	 */
 	stopSession?(sessionId: string): Promise<void>;
+	/**
+	 * Remove a worktree when a task group completes/fails/cancels.
+	 * Returns true if worktree was removed, false if it didn't exist or was main repo.
+	 */
+	removeWorktree(workspacePath: string): Promise<boolean>;
 }
 
 /**
@@ -422,6 +427,9 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
+
 		return updated;
 	}
 
@@ -444,6 +452,9 @@ export class TaskGroupManager {
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
+
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
 
 		return updated;
 	}
@@ -572,6 +583,8 @@ export class TaskGroupManager {
 		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
+			// Already terminal - cleanup worktree if not done
+			await this.cleanupWorktree(group);
 			return group;
 		}
 
@@ -580,6 +593,9 @@ export class TaskGroupManager {
 
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
+
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
 
 		return updated;
 	}
@@ -596,5 +612,29 @@ export class TaskGroupManager {
 		await this.taskManager.cancelTask(terminated.taskId);
 
 		return terminated;
+	}
+
+	/**
+	 * Cleanup worktree for a completed/failed/cancelled group.
+	 *
+	 * Worktrees are created for task isolation and should be removed when
+	 * the task reaches a terminal state to prevent disk space accumulation.
+	 *
+	 * Best-effort: logs errors but does not throw.
+	 */
+	private async cleanupWorktree(group: SessionGroup): Promise<void> {
+		// Skip if no workspace path or if it's the main repo (not a worktree)
+		if (!group.workspacePath || group.workspacePath === this.workspacePath) {
+			return;
+		}
+
+		try {
+			await this.sessionFactory.removeWorktree(group.workspacePath);
+		} catch (error) {
+			// Best-effort cleanup - don't fail the operation
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			// eslint-disable-next-line no-console
+			console.error(`[TaskGroupManager] Worktree cleanup failed for ${group.id}: ${errorMsg}`);
+		}
 	}
 }
