@@ -55,14 +55,14 @@ function EditableLabel({
 				onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
 				onBlur={save}
 				onKeyDown={handleKeyDown}
-				class="text-sm text-gray-200 font-medium bg-transparent border-b border-blue-500 outline-none max-w-[200px]"
+				class="text-lg text-gray-200 font-semibold bg-transparent border-b border-blue-500 outline-none max-w-[200px]"
 			/>
 		);
 	}
 
 	return (
 		<span
-			class="text-sm text-gray-200 font-medium truncate max-w-[200px] cursor-text hover:text-white transition-colors"
+			class="text-lg text-gray-200 font-semibold truncate max-w-[200px] cursor-text hover:text-white transition-colors"
 			onClick={startEdit}
 		>
 			{label}
@@ -78,19 +78,19 @@ export function Breadcrumb({ items }: BreadcrumbProps) {
 				return (
 					<Fragment key={index}>
 						{index > 0 && (
-							<ChevronRightIcon className="w-3 h-3 text-gray-500 flex-shrink-0" />
+							<ChevronRightIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />
 						)}
 						{isLast ? (
 							item.onEdit ? (
 								<EditableLabel label={item.label} onEdit={item.onEdit} />
 							) : (
-								<span class="text-sm text-gray-200 font-medium truncate max-w-[200px]">
+								<span class="text-lg text-gray-200 font-semibold truncate max-w-[200px]">
 									{item.label}
 								</span>
 							)
 						) : (
 							<button
-								class="text-sm text-gray-400 hover:text-gray-200 cursor-pointer transition-colors truncate max-w-[200px]"
+								class="text-lg text-gray-400 hover:text-gray-200 cursor-pointer transition-colors truncate max-w-[200px]"
 								onClick={item.onClick}
 							>
 								{item.label}

@@ -313,8 +313,8 @@ export function ContextPanel() {
 				</div>
 
 				{/* Header */}
-				<div class={`p-4 border-b ${borderColors.ui.default}`}>
-					<div class={`flex items-center justify-between ${isRoomDetail ? '' : 'mb-3'}`}>
+				<div class={`px-4 border-b ${borderColors.ui.default} ${isRoomDetail ? 'flex items-center h-[61px]' : 'py-4'}`}>
+					<div class={`flex items-center justify-between ${isRoomDetail ? 'flex-1' : 'mb-3'}`}>
 						{isRoomDetail ? (
 							<EditableRoomName
 								name={headerTitle}

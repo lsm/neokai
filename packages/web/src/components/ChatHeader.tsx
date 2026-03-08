@@ -195,7 +195,7 @@ export function ChatHeader({
 
 	return (
 		<div
-			class={`flex-shrink-0 bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} px-4 py-2.5 relative z-10`}
+			class={`flex-shrink-0 bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} px-4 relative z-10 flex items-center h-[61px]`}
 		>
 			<div class="flex items-center gap-3 w-full">
 				<MobileMenuButton />
