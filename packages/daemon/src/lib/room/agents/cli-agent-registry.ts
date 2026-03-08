@@ -48,6 +48,14 @@ interface CliAgentDefinition {
 	modelsCommand?: string;
 }
 
+const COPILOT_REVIEW_MODELS = [
+	'claude-opus-4.6',
+	'claude-sonnet-4.6',
+	'gemini-3.1-pro-preview',
+	'gpt-5.3-codex',
+	'gpt-5.4',
+] as const;
+
 const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
 	{
 		id: 'codex',
@@ -83,13 +91,14 @@ const KNOWN_CLI_AGENTS: CliAgentDefinition[] = [
 		provider: 'GitHub',
 		versionCommand: 'gh copilot --help',
 		authCheckCommand: 'gh auth status',
-		knownModels: [
-			'claude-opus-4.6',
-			'claude-sonnet-4.6',
-			'gemini-3.1-pro-preview',
-			'gpt-5.3-codex',
-			'gpt-5.4',
-		],
+		knownModels: [...COPILOT_REVIEW_MODELS],
+	},
+	{
+		id: 'pi',
+		name: 'Pi CLI (Copilot Provider)',
+		command: 'pi',
+		provider: 'GitHub',
+		knownModels: [...COPILOT_REVIEW_MODELS],
 	},
 ];
 

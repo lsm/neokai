@@ -628,6 +628,23 @@ copilot -s --autopilot --yolo --no-ask-user --max-autopilot-continues 10${modelF
 - Capture stdout — the final review output is printed there.`;
 	}
 
+	if (tool === 'pi') {
+		return `### Pi CLI (GitHub Copilot Provider)
+
+Run Pi in one-shot mode to review the code via the GitHub Copilot provider:
+
+\`\`\`bash
+pi -p --no-session --provider github-copilot${modelFlag} \\
+  --tools read,bash,grep,find,ls \\
+  "<YOUR REVIEW PROMPT HERE>" 2>&1
+\`\`\`
+
+- \`-p\` runs one-shot and exits; \`--no-session\` keeps it ephemeral.
+- \`--provider github-copilot\` ensures parity with native Copilot CLI model routing.
+- \`--tools read,bash,grep,find,ls\` keeps the review read-only.${cliModel ? '' : '\n- Do NOT pass `--model` — Pi uses the provider default model.'}
+- Capture stdout — the final review output is printed there.`;
+	}
+
 	// Generic fallback for unknown CLI tools
 	return `### ${cliTool} CLI
 
@@ -739,7 +756,7 @@ function resolveProvider(reviewer: SubagentConfig): string {
 	if (m.includes('claude') || m.includes('opus') || m.includes('sonnet') || m.includes('haiku'))
 		return 'Anthropic';
 	if (m.includes('gemini') || m.includes('google')) return 'Google';
-	if (m.includes('copilot')) return 'GitHub';
+	if (m.includes('copilot') || m === 'pi') return 'GitHub';
 	return 'unknown';
 }
 
@@ -755,6 +772,7 @@ function resolveModelId(reviewer: SubagentConfig): string {
 	if (m === 'sonnet') return 'claude-sonnet-4-6';
 	if (m === 'haiku') return 'claude-haiku-4-5';
 	if (m === 'codex' || m === 'codex-review') return 'gpt-5.3-codex';
+	if (m === 'pi') return 'github-copilot';
 	return reviewer.model;
 }
 
