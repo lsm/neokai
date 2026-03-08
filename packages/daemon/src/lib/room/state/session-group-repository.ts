@@ -256,6 +256,48 @@ export class SessionGroupRepository {
 		return this.getGroup(groupId);
 	}
 
+	/**
+	 * Delete a group and its members.
+	 * The database schema uses ON DELETE CASCADE, so members and events are
+	 * automatically deleted when the group is deleted.
+	 */
+	deleteGroup(groupId: string): boolean {
+		const result = this.db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(groupId);
+		return result.changes > 0;
+	}
+
+	/**
+	 * Reset a failed/completed group for task restart.
+	 * Sets state back to 'awaiting_worker', clears completed_at, and resets
+	 * metadata fields to allow the task to be picked up fresh by the runtime.
+	 */
+	resetGroupForRestart(groupId: string): SessionGroup | null {
+		const current = this.getGroup(groupId);
+		if (!current) return null;
+
+		// Reset metadata to fresh state
+		const resetMetadata: TaskGroupMetadata = {
+			...defaultMetadata(),
+			workerRole: current.workerRole,
+			workspacePath: current.workspacePath,
+			deferredLeader: current.deferredLeader,
+		};
+
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET state = 'awaiting_worker',
+				     completed_at = NULL,
+				     metadata = ?,
+				     version = version + 1
+				 WHERE id = ?`
+			)
+			.run(JSON.stringify(resetMetadata), groupId);
+
+		if (result.changes === 0) return null;
+		return this.getGroup(groupId);
+	}
+
 	// ===== Metadata update helpers (partial merge pattern) =====
 
 	private updateMetadata(

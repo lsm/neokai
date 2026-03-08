@@ -293,6 +293,22 @@ export function setupTaskHandlers(
 			}
 		}
 
+		// Handle restart: reset failed/cancelled group so runtime picks it up fresh
+		if (task.status === 'failed' || task.status === 'cancelled') {
+			if (params.status === 'pending' || params.status === 'in_progress') {
+				const groupRepo = new SessionGroupRepository(db.getDatabase());
+				const group = groupRepo.getGroupByTaskId(params.taskId);
+				if (group) {
+					const reset = groupRepo.resetGroupForRestart(group.id);
+					if (!reset) {
+						throw new Error(
+							`Failed to reset group for task ${params.taskId} — group may have been modified concurrently`
+						);
+					}
+				}
+			}
+		}
+
 		// Apply status change
 		const updatedTask = await taskManager.setTaskStatus(params.taskId, params.status, {
 			result: params.result,

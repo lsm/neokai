@@ -539,7 +539,11 @@ describe('TaskGroupManager', () => {
 				getGoal: (goalId) => goalManager.getGoal(goalId),
 			});
 
-			const result = await coldManager.routeWorkerToLeader(group.id, 'output', (_groupId) => callbacks);
+			const result = await coldManager.routeWorkerToLeader(
+				group.id,
+				'output',
+				(_groupId) => callbacks
+			);
 			expect(result).toBeNull();
 
 			const failedTask = await taskManager.getTask(task.id);
