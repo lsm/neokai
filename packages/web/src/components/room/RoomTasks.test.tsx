@@ -1,15 +1,14 @@
 /**
  * Tests for RoomTasks Component
  *
- * Tests task grouping by status, empty state,
- * click handling, and section rendering for all statuses
- * including completed and failed.
+ * Tests task filter tabs, tab switching, task grouping by status,
+ * empty states, click handling, and section rendering for all tabs.
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/preact';
 import type { TaskSummary } from '@neokai/shared';
-import { RoomTasks } from './RoomTasks';
+import { RoomTasks, selectedTabSignal } from './RoomTasks';
 
 describe('RoomTasks', () => {
 	afterEach(() => {
@@ -30,6 +29,18 @@ describe('RoomTasks', () => {
 		...overrides,
 	});
 
+	/** Helper to click a tab by label */
+	function clickTab(container: Element, label: string) {
+		const tabs = container.querySelectorAll('button');
+		for (const tab of Array.from(tabs)) {
+			if (tab.textContent?.includes(label)) {
+				fireEvent.click(tab);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	describe('Empty State', () => {
 		it('should show empty state when no tasks', () => {
 			const { container } = render(<RoomTasks tasks={[]} />);
@@ -45,7 +56,50 @@ describe('RoomTasks', () => {
 		});
 	});
 
-	describe('In Progress Section', () => {
+	describe('Tab Bar', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
+		it('should show all four tabs with counts', () => {
+			const tasks = [
+				createTask('t1', 'in_progress'),
+				createTask('t2', 'review'),
+				createTask('t3', 'completed'),
+				createTask('t4', 'failed'),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Active');
+			expect(container.textContent).toContain('Review');
+			expect(container.textContent).toContain('Done');
+			expect(container.textContent).toContain('Failed');
+		});
+
+		it('should show correct counts on tabs', () => {
+			const tasks = [
+				createTask('t1', 'in_progress'),
+				createTask('t2', 'pending'),
+				createTask('t3', 'review'),
+				createTask('t4', 'completed'),
+				createTask('t5', 'failed'),
+				createTask('t6', 'cancelled'),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Active: 2 (in_progress + pending)
+			expect(container.textContent).toContain('Active');
+			expect(container.textContent).toContain('2');
+		});
+	});
+
+	describe('Active Tab', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
 		it('should render in progress section with yellow header', () => {
 			const tasks = [createTask('t1', 'in_progress')];
 
@@ -63,9 +117,30 @@ describe('RoomTasks', () => {
 
 			expect(container.textContent).toContain('Build feature');
 		});
+
+		it('should render pending section', () => {
+			const tasks = [createTask('t1', 'pending'), createTask('t2', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Pending (2)');
+		});
+
+		it('should show empty state for active tab when no active tasks', () => {
+			const tasks = [createTask('t1', 'completed')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('No active tasks');
+			expect(container.textContent).toContain('Active tasks will appear here');
+		});
 	});
 
-	describe('Review Section', () => {
+	describe('Review Tab', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'review';
+		});
+
 		it('should render review section with purple header', () => {
 			const tasks = [createTask('t1', 'review')];
 
@@ -186,31 +261,21 @@ describe('RoomTasks', () => {
 			expect(onView).toHaveBeenCalledWith('task-42');
 			expect(onTaskClick).not.toHaveBeenCalled();
 		});
-	});
 
-	describe('Pending Section', () => {
-		it('should render pending section', () => {
-			const tasks = [createTask('t1', 'pending'), createTask('t2', 'pending')];
+		it('should show empty state when no review tasks', () => {
+			const tasks = [createTask('t1', 'pending')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			expect(container.textContent).toContain('Pending (2)');
+			expect(container.textContent).toContain('No tasks to review');
 		});
 	});
 
-	describe('Draft Section', () => {
-		it('should render draft section with gray header', () => {
-			const tasks = [createTask('t1', 'draft')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const header = container.querySelector('.text-gray-400');
-			expect(header).toBeTruthy();
-			expect(header?.textContent).toContain('Draft');
+	describe('Done Tab', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'done';
 		});
-	});
 
-	describe('Completed Section', () => {
 		it('should render completed section with green header', () => {
 			const tasks = [
 				createTask('t1', 'completed', { title: 'Finished task' }),
@@ -219,7 +284,8 @@ describe('RoomTasks', () => {
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const header = container.querySelector('.text-green-400');
+			// Query for h3 specifically to avoid matching the tab button
+			const header = container.querySelector('h3.text-green-400');
 			expect(header).toBeTruthy();
 			expect(header?.textContent).toContain('Completed (2)');
 		});
@@ -240,9 +306,21 @@ describe('RoomTasks', () => {
 			const greenHeader = container.querySelector('.bg-green-900\\/20');
 			expect(greenHeader).toBeTruthy();
 		});
+
+		it('should show empty state when no completed tasks', () => {
+			const tasks = [createTask('t1', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('No completed tasks');
+		});
 	});
 
-	describe('Failed Section', () => {
+	describe('Failed Tab', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'failed';
+		});
+
 		it('should render failed section with red header', () => {
 			const tasks = [createTask('t1', 'failed', { title: 'Broken task' })];
 
@@ -293,24 +371,6 @@ describe('RoomTasks', () => {
 			}
 		});
 
-		it('should appear before in-progress tasks in the DOM', () => {
-			const tasks = [createTask('t1', 'in_progress'), createTask('t2', 'failed')];
-
-			const { container } = render(<RoomTasks tasks={tasks} />);
-
-			const headers = container.querySelectorAll('h3');
-			const headerTexts = Array.from(headers).map((h) => h.textContent ?? '');
-
-			const failedIdx = headerTexts.findIndex((t) => t.includes('Failed'));
-			const inProgressIdx = headerTexts.findIndex((t) => t.includes('In Progress'));
-
-			expect(failedIdx).toBeGreaterThanOrEqual(0);
-			expect(inProgressIdx).toBeGreaterThanOrEqual(0);
-			expect(failedIdx).toBeLessThan(inProgressIdx);
-		});
-	});
-
-	describe('Cancelled Section', () => {
 		it('should render cancelled section with muted gray header', () => {
 			const tasks = [createTask('t1', 'cancelled', { title: 'Stopped task' })];
 
@@ -355,45 +415,77 @@ describe('RoomTasks', () => {
 			expect(headerTexts).toContain('Failed (1)');
 			expect(headerTexts).toContain('Cancelled (1)');
 		});
+
+		it('should show empty state when no failed or cancelled tasks', () => {
+			const tasks = [createTask('t1', 'pending')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('No failed tasks');
+		});
 	});
 
-	describe('Multiple Status Groups', () => {
-		it('should render all status groups when tasks exist in each', () => {
+	describe('Tab Switching', () => {
+		it('should switch to review tab when clicked', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
-				createTask('t2', 'review'),
-				createTask('t3', 'pending'),
-				createTask('t4', 'draft'),
-				createTask('t5', 'completed'),
-				createTask('t6', 'failed'),
-				createTask('t7', 'cancelled'),
+				createTask('t2', 'review', { title: 'Review task' }),
 			];
 
+			// Set to active BEFORE render so initial state is correct
+			selectedTabSignal.value = 'active';
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const headers = container.querySelectorAll('h3');
-			const headerTexts = Array.from(headers).map((h) => h.textContent);
+			// Initially on active tab, should see in_progress task
+			expect(container.textContent).toContain('In Progress');
 
-			expect(headerTexts).toContain('In Progress (1)');
-			expect(headerTexts).toContain('Review (1)');
-			expect(headerTexts).toContain('Pending (1)');
-			expect(headerTexts).toContain('Draft (1)');
-			expect(headerTexts).toContain('Completed (1)');
-			expect(headerTexts).toContain('Failed (1)');
-			expect(headerTexts).toContain('Cancelled (1)');
+			// Click review tab
+			clickTab(container, 'Review');
+
+			// Now should see review task
+			expect(container.textContent).toContain('Awaiting Review');
 		});
 
-		it('should only render sections for statuses that have tasks', () => {
-			const tasks = [createTask('t1', 'pending'), createTask('t2', 'completed')];
+		it('should switch to done tab when clicked', () => {
+			const tasks = [
+				createTask('t1', 'in_progress'),
+				createTask('t2', 'completed', { title: 'Done task' }),
+			];
 
+			// Set to active BEFORE render
+			selectedTabSignal.value = 'active';
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			const headers = container.querySelectorAll('h3');
-			expect(headers.length).toBe(2);
+			// Click done tab
+			clickTab(container, 'Done');
+
+			// Should see completed section
+			expect(container.textContent).toContain('Completed (1)');
+		});
+
+		it('should switch to failed tab when clicked', () => {
+			const tasks = [
+				createTask('t1', 'in_progress'),
+				createTask('t2', 'failed', { title: 'Failed task' }),
+			];
+
+			// Set to active BEFORE render
+			selectedTabSignal.value = 'active';
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			// Click failed tab
+			clickTab(container, 'Failed');
+
+			// Should see failed section
+			expect(container.textContent).toContain('Failed (1)');
 		});
 	});
 
 	describe('Click Handling', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
 		it('should call onTaskClick with task id when task is clicked', () => {
 			const onTaskClick = vi.fn();
 			const tasks = [createTask('task-123', 'pending', { title: 'Click me' })];
@@ -434,6 +526,10 @@ describe('RoomTasks', () => {
 	});
 
 	describe('Task Progress', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'active';
+		});
+
 		it('should show progress percentage when defined', () => {
 			const tasks = [createTask('t1', 'in_progress', { progress: 75 })];
 
