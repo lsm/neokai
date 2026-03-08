@@ -4,6 +4,15 @@
  * Provides two modes:
  * 1. In-process (default): Runs daemon in same process for coverage collection
  * 2. Spawned process: Runs daemon as separate process for true isolation
+ *
+ * ## Dev Proxy Integration
+ *
+ * When NEOKAI_USE_DEV_PROXY=1 is set, the helper will:
+ * 1. Start Dev Proxy before creating the daemon server
+ * 2. Set proxy environment variables (HTTPS_PROXY, NODE_USE_ENV_PROXY, etc.)
+ * 3. Stop Dev Proxy when the daemon server is cleaned up
+ *
+ * This allows tests to run without making real API calls to Anthropic.
  */
 
 import { spawn } from 'child_process';
@@ -12,6 +21,11 @@ import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
 import { installAutoMock, simpleTextResponse, type MockControls } from './mock-sdk';
+import {
+	createDevProxyController,
+	type DevProxyController,
+	type DevProxyOptions,
+} from './dev-proxy';
 
 export interface DaemonServerOptions {
 	/**
@@ -24,6 +38,18 @@ export interface DaemonServerOptions {
 	 * Environment variables to pass to the daemon process
 	 */
 	env?: Record<string, string>;
+
+	/**
+	 * Dev Proxy options for mocking HTTP requests
+	 * Only used when NEOKAI_USE_DEV_PROXY=1 is set
+	 */
+	devProxy?: DevProxyOptions;
+
+	/**
+	 * Force enable Dev Proxy even without NEOKAI_USE_DEV_PROXY=1
+	 * Default: false
+	 */
+	useDevProxy?: boolean;
 }
 
 export interface DaemonServerContext {
@@ -67,6 +93,12 @@ export interface DaemonServerContext {
 	 * Use to override responses per-session or change defaults.
 	 */
 	mockControls: MockControls | null;
+
+	/**
+	 * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
+	 * Use to switch mock files or check proxy status.
+	 */
+	devProxy: DevProxyController | null;
 }
 
 /**
@@ -76,21 +108,50 @@ export interface DaemonServerContext {
  * allowing true process isolation and proper WebSocket testing.
  */
 async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<DaemonServerContext> {
-	const { port: userPort = 19400 + Math.floor(Math.random() * 1000), env: customEnv = {} } =
-		options;
+	const {
+		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		env: customEnv = {},
+		devProxy: devProxyOptions,
+		useDevProxy = false,
+	} = options;
+
+	// Start Dev Proxy if requested
+	let devProxy: DevProxyController | null = null;
+	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+
+	if (shouldUseDevProxy) {
+		devProxy = createDevProxyController({
+			setEnvVars: true,
+			...devProxyOptions,
+		});
+		await devProxy.start();
+	}
 
 	// Create a standalone daemon server entry point
 	const serverPath = path.join(__dirname, 'standalone-server.ts');
 
+	// Build environment for daemon process
+	const daemonEnv: Record<string, string> = {
+		...process.env,
+		PORT: userPort.toString(),
+		NODE_ENV: 'test',
+		NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
+		...customEnv,
+	};
+
+	// Include Dev Proxy env vars if proxy is running
+	if (devProxy?.isRunning()) {
+		daemonEnv.HTTPS_PROXY = devProxy.proxyUrl;
+		daemonEnv.HTTP_PROXY = devProxy.proxyUrl;
+		daemonEnv.NODE_USE_ENV_PROXY = '1';
+		if (process.env.NODE_EXTRA_CA_CERTS) {
+			daemonEnv.NODE_EXTRA_CA_CERTS = process.env.NODE_EXTRA_CA_CERTS;
+		}
+	}
+
 	// Spawn the daemon server
 	const daemonProcess = spawn('bun', ['run', serverPath], {
-		env: {
-			...process.env,
-			PORT: userPort.toString(),
-			NODE_ENV: 'test',
-			NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
-			...customEnv,
-		},
+		env: daemonEnv,
 		stdio: 'pipe',
 		// Don't use detached: true - we want to be able to track and kill the process
 		detached: false,
@@ -169,6 +230,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		mockControls: null, // Mock not available in spawned process mode
+		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
 			// Cleanup tracked sessions before exiting
@@ -180,6 +242,11 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 				}
 				daemonProcess.once('exit', () => resolve());
 			});
+			// Stop Dev Proxy if it was started
+			if (devProxy) {
+				await devProxy.stop();
+				devProxy.restoreEnv();
+			}
 		},
 		trackSession: (sessionId: string) => {
 			trackedSessions.push(sessionId);
@@ -202,8 +269,24 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 async function createInProcessDaemonServer(
 	options: DaemonServerOptions = {}
 ): Promise<DaemonServerContext & { daemonContext: DaemonAppContext }> {
-	const { port: userPort = 19400 + Math.floor(Math.random() * 1000), env: customEnv = {} } =
-		options;
+	const {
+		port: userPort = 19400 + Math.floor(Math.random() * 1000),
+		env: customEnv = {},
+		devProxy: devProxyOptions,
+		useDevProxy = false,
+	} = options;
+
+	// Start Dev Proxy if requested
+	let devProxy: DevProxyController | null = null;
+	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+
+	if (shouldUseDevProxy) {
+		devProxy = createDevProxyController({
+			setEnvVars: true,
+			...devProxyOptions,
+		});
+		await devProxy.start();
+	}
 
 	// Apply custom env vars
 	for (const [key, value] of Object.entries(customEnv)) {
@@ -285,6 +368,7 @@ async function createInProcessDaemonServer(
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		daemonContext, // Expose for advanced usage
 		mockControls,
+		devProxy,
 		kill: () => {
 			// For in-process, cleanup happens in waitForExit - just return true
 			return true;
@@ -316,6 +400,12 @@ async function createInProcessDaemonServer(
 			} catch {
 				// Timeout or error - force cleanup workspace anyway
 				await Bun.$`rm -rf ${workspace}`.quiet();
+			}
+
+			// Stop Dev Proxy if it was started
+			if (devProxy) {
+				await devProxy.stop();
+				devProxy.restoreEnv();
 			}
 		},
 		trackSession: (sessionId: string) => {
