@@ -2,8 +2,10 @@
  * TaskConversationRenderer
  *
  * Renders a flat chronological conversation timeline for a task group.
- * Messages are fetched via task.getGroupMessages RPC
- * with pagination to fetch ALL messages (not just the first 100).
+ * Uses pagination to load messages efficiently:
+ * - Initial load: fetches the newest N messages (default 50)
+ * - "Load older" button at the top to load more history
+ * - Real-time updates via state.groupMessages.delta events
  *
  * Each message is rendered inline with a thin colored left border indicating
  * which agent produced it. Role transitions show a small divider label.
@@ -12,7 +14,7 @@
  * real-time updates.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
@@ -89,6 +91,8 @@ function getMessageId(msg: SDKMessage): string | null {
 	return getTaskMeta(msg)?.turnId ?? null;
 }
 
+const PAGE_SIZE = 50;
+
 export function TaskConversationRenderer({
 	groupId,
 	onMessageCountChange,
@@ -96,6 +100,10 @@ export function TaskConversationRenderer({
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [loadingOlder, setLoadingOlder] = useState(false);
+	const [hasOlder, setHasOlder] = useState(false);
+	// Track the oldest cursor for loading older messages
+	const oldestCursorRef = useRef<string | null>(null);
 	// Tracks every message ID (uuid or turnId) added to state, enabling deduplication
 	// across: the initial fetch, buffered pre-fetch deltas, and live post-fetch deltas
 	// (e.g. replays on WebSocket reconnect).
@@ -111,6 +119,7 @@ export function TaskConversationRenderer({
 		seenIdsRef.current.clear();
 		fetchingRef.current = true;
 		pendingDeltasRef.current = [];
+		oldestCursorRef.current = null;
 		let cancelled = false;
 
 		// Subscribe first so no live messages can slip through before the fetch starts.
@@ -138,38 +147,22 @@ export function TaskConversationRenderer({
 			}
 		);
 
-		const fetchAllMessages = async () => {
-			// Declared outside the try so partial pages are committed even if a later page errors.
-			const allGroupMessages: GroupMessage[] = [];
+		const fetchInitialMessages = async () => {
 			try {
-				let cursor: string | null = null;
-				let hasMore = true;
+				const res: {
+					messages: GroupMessage[];
+					hasMore: boolean;
+					nextCursor: string | null;
+					hasOlder: boolean;
+					oldestCursor: string | null;
+				} = await request('task.getGroupMessages', {
+					groupId,
+					limit: PAGE_SIZE,
+				});
 
-				// Paginate through all messages
-				while (hasMore) {
-					const res: {
-						messages: GroupMessage[];
-						hasMore: boolean;
-						nextCursor?: string | null;
-					} = await request('task.getGroupMessages', {
-						groupId,
-						cursor: cursor ?? undefined,
-						limit: 500,
-					});
-					allGroupMessages.push(...res.messages);
-					hasMore = res.hasMore;
-					if (res.messages.length > 0) {
-						cursor = res.nextCursor ?? null;
-					} else {
-						break;
-					}
-				}
-			} catch {
-				// Non-fatal: partial results in allGroupMessages are still committed below
-			} finally {
 				if (!cancelled) {
-					// Merge fetched pages (may be partial on error) with buffered deltas.
-					const parsed = allGroupMessages
+					// Merge fetched messages with buffered deltas.
+					const parsed = res.messages
 						.map(parseGroupMessage)
 						.filter((m): m is SDKMessage => m !== null);
 
@@ -181,8 +174,6 @@ export function TaskConversationRenderer({
 					});
 
 					// Merge buffered deltas, deduplicating against seenIds.
-					// This handles: pre-fetch duplicates in the buffer itself, and
-					// messages already present in the fetch response (uuid or turnId match).
 					const newDeltas = pendingDeltasRef.current.filter((m) => {
 						const id = getMessageId(m);
 						if (id && seenIdsRef.current.has(id)) return false;
@@ -193,6 +184,24 @@ export function TaskConversationRenderer({
 					if (uniqueParsed.length > 0 || newDeltas.length > 0) {
 						setMessages([...uniqueParsed, ...newDeltas]);
 					}
+					setHasOlder(res.hasOlder);
+					oldestCursorRef.current = res.oldestCursor;
+					fetchingRef.current = false;
+					pendingDeltasRef.current = [];
+					setLoading(false);
+				}
+			} catch {
+				if (!cancelled) {
+					// On fetch failure, still surface any buffered deltas
+					const newDeltas = pendingDeltasRef.current.filter((m) => {
+						const id = getMessageId(m);
+						if (id && seenIdsRef.current.has(id)) return false;
+						if (id) seenIdsRef.current.add(id);
+						return true;
+					});
+					if (newDeltas.length > 0) {
+						setMessages([...newDeltas]);
+					}
 					fetchingRef.current = false;
 					pendingDeltasRef.current = [];
 					setLoading(false);
@@ -200,7 +209,7 @@ export function TaskConversationRenderer({
 			}
 		};
 
-		fetchAllMessages();
+		fetchInitialMessages();
 
 		return () => {
 			cancelled = true;
@@ -208,6 +217,45 @@ export function TaskConversationRenderer({
 			leaveRoom(channel);
 		};
 	}, [groupId]);
+
+	const loadOlderMessages = useCallback(async () => {
+		if (loadingOlder || !hasOlder || !oldestCursorRef.current) return;
+
+		setLoadingOlder(true);
+		try {
+			const res: {
+				messages: GroupMessage[];
+				hasMore: boolean;
+				nextCursor: string | null;
+				hasOlder: boolean;
+				oldestCursor: string | null;
+			} = await request('task.getGroupMessages', {
+				groupId,
+				before: oldestCursorRef.current,
+				limit: PAGE_SIZE,
+			});
+
+			const parsed = res.messages.map(parseGroupMessage).filter((m): m is SDKMessage => m !== null);
+
+			// Deduplicate and prepend to existing messages
+			const uniqueParsed = parsed.filter((m) => {
+				const id = getMessageId(m);
+				if (id && seenIdsRef.current.has(id)) return false;
+				if (id) seenIdsRef.current.add(id);
+				return true;
+			});
+
+			if (uniqueParsed.length > 0) {
+				setMessages((prev) => [...uniqueParsed, ...prev]);
+			}
+			setHasOlder(res.hasOlder);
+			oldestCursorRef.current = res.oldestCursor;
+		} catch {
+			// Non-fatal: just don't load more
+		} finally {
+			setLoadingOlder(false);
+		}
+	}, [groupId, loadingOlder, hasOlder, request]);
 
 	// Notify parent when message count changes so it can drive autoscroll
 	useEffect(() => {
@@ -249,6 +297,18 @@ export function TaskConversationRenderer({
 
 	return (
 		<div class="px-4 py-3 space-y-0.5">
+			{/* Load older messages button */}
+			{hasOlder && (
+				<div class="flex justify-center py-2">
+					<button
+						class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
+						onClick={loadOlderMessages}
+						disabled={loadingOlder}
+					>
+						{loadingOlder ? 'Loading…' : 'Load older messages'}
+					</button>
+				</div>
+			)}
 			{messages.map((msg, i) => {
 				const meta = getTaskMeta(msg);
 				const role = meta?.authorRole ?? 'system';
