@@ -352,21 +352,35 @@ export function setupTaskHandlers(
 
 		const sdkRepo = new SDKMessageRepository(db.getDatabase());
 
-		// Fetch messages with pagination support
+		// Validate and normalize limit parameter
+		const limit = Math.max(1, Math.min(params.limit ?? 50, 200));
+
+		// Parse 'before' cursor to extract timestamp for DB-level filtering
+		// Cursor format: `${timestamp_padded}|${sourceKey}`
+		let beforeTimestamp: number | undefined;
+		if (params.before) {
+			const timestampPart = params.before.split('|')[0];
+			const parsed = parseInt(timestampPart, 10);
+			if (!Number.isNaN(parsed)) {
+				beforeTimestamp = parsed;
+			}
+		}
+
+		// Fetch messages with pagination support at DB level
 		// For 'before' cursor, we need messages older than a timestamp
 		// For initial load, we want the newest messages
 		const fetchSessionMessages = (
 			sessionId: string,
-			options?: { beforeTimestamp?: number; limit?: number }
+			options?: { beforeTimestamp?: number; fetchLimit?: number }
 		): unknown[] => {
-			const limit = options?.limit ?? 500;
+			const fetchLimit = options?.fetchLimit ?? limit;
 			const before = options?.beforeTimestamp;
-			const page = sdkRepo.getSDKMessages(sessionId, limit, before);
+			const page = sdkRepo.getSDKMessages(sessionId, fetchLimit, before);
 			return page.messages;
 		};
 
-		const workerMessages = fetchSessionMessages(group.workerSessionId);
-		const leaderMessages = fetchSessionMessages(group.leaderSessionId);
+		const workerMessages = fetchSessionMessages(group.workerSessionId, { beforeTimestamp });
+		const leaderMessages = fetchSessionMessages(group.leaderSessionId, { beforeTimestamp });
 
 		const toEnrichedTimeline = (messages: unknown[], sessionId: string, role: string) => {
 			const shortSessionId = sessionId.slice(0, 8);
@@ -440,7 +454,6 @@ export function setupTaskHandlers(
 				...msg,
 			}));
 
-		const limit = params.limit ?? 50;
 		const beforeCursor = params.before;
 		const afterCursor = params.cursor;
 

@@ -102,8 +102,12 @@ export function TaskConversationRenderer({
 	const [loading, setLoading] = useState(true);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [hasOlder, setHasOlder] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 	// Track the oldest cursor for loading older messages
 	const oldestCursorRef = useRef<string | null>(null);
+	// Refs for useCallback guards (avoids recreating callback on state changes)
+	const loadingOlderRef = useRef(false);
+	const hasOlderRef = useRef(false);
 	// Tracks every message ID (uuid or turnId) added to state, enabling deduplication
 	// across: the initial fetch, buffered pre-fetch deltas, and live post-fetch deltas
 	// (e.g. replays on WebSocket reconnect).
@@ -120,6 +124,9 @@ export function TaskConversationRenderer({
 		fetchingRef.current = true;
 		pendingDeltasRef.current = [];
 		oldestCursorRef.current = null;
+		loadingOlderRef.current = false;
+		hasOlderRef.current = false;
+		setError(null);
 		let cancelled = false;
 
 		// Subscribe first so no live messages can slip through before the fetch starts.
@@ -185,12 +192,13 @@ export function TaskConversationRenderer({
 						setMessages([...uniqueParsed, ...newDeltas]);
 					}
 					setHasOlder(res.hasOlder);
+					hasOlderRef.current = res.hasOlder;
 					oldestCursorRef.current = res.oldestCursor;
 					fetchingRef.current = false;
 					pendingDeltasRef.current = [];
 					setLoading(false);
 				}
-			} catch {
+			} catch (err) {
 				if (!cancelled) {
 					// On fetch failure, still surface any buffered deltas
 					const newDeltas = pendingDeltasRef.current.filter((m) => {
@@ -205,6 +213,7 @@ export function TaskConversationRenderer({
 					fetchingRef.current = false;
 					pendingDeltasRef.current = [];
 					setLoading(false);
+					setError(err instanceof Error ? err.message : 'Failed to load messages');
 				}
 			}
 		};
@@ -219,9 +228,12 @@ export function TaskConversationRenderer({
 	}, [groupId]);
 
 	const loadOlderMessages = useCallback(async () => {
-		if (loadingOlder || !hasOlder || !oldestCursorRef.current) return;
+		// Use refs for guards to avoid recreating callback on state changes
+		if (loadingOlderRef.current || !hasOlderRef.current || !oldestCursorRef.current) return;
 
+		loadingOlderRef.current = true;
 		setLoadingOlder(true);
+		setError(null); // Clear previous errors on retry
 		try {
 			const res: {
 				messages: GroupMessage[];
@@ -249,13 +261,16 @@ export function TaskConversationRenderer({
 				setMessages((prev) => [...uniqueParsed, ...prev]);
 			}
 			setHasOlder(res.hasOlder);
+			hasOlderRef.current = res.hasOlder;
 			oldestCursorRef.current = res.oldestCursor;
-		} catch {
-			// Non-fatal: just don't load more
+		} catch (err) {
+			// Show error feedback to user
+			setError(err instanceof Error ? err.message : 'Failed to load older messages');
 		} finally {
+			loadingOlderRef.current = false;
 			setLoadingOlder(false);
 		}
-	}, [groupId, loadingOlder, hasOlder, request]);
+	}, [groupId, request]);
 
 	// Notify parent when message count changes so it can drive autoscroll
 	useEffect(() => {
@@ -287,6 +302,20 @@ export function TaskConversationRenderer({
 		);
 	}
 
+	if (messages.length === 0 && error) {
+		return (
+			<div class="flex-1 flex flex-col items-center justify-center gap-2">
+				<p class="text-red-400 text-sm">{error}</p>
+				<button
+					class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
+					onClick={() => window.location.reload()}
+				>
+					Retry
+				</button>
+			</div>
+		);
+	}
+
 	if (messages.length === 0) {
 		return (
 			<div class="flex-1 flex items-center justify-center">
@@ -299,7 +328,8 @@ export function TaskConversationRenderer({
 		<div class="px-4 py-3 space-y-0.5">
 			{/* Load older messages button */}
 			{hasOlder && (
-				<div class="flex justify-center py-2">
+				<div class="flex flex-col items-center gap-2 py-2">
+					{error && <p class="text-xs text-red-400">{error}</p>}
 					<button
 						class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-50 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
 						onClick={loadOlderMessages}

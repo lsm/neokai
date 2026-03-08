@@ -12,6 +12,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, act, fireEvent } from '@testing-library/preact';
 
+import { TaskConversationRenderer } from './TaskConversationRenderer';
+
 // -------------------------------------------------------
 // Mocks
 // -------------------------------------------------------
@@ -90,8 +92,6 @@ function makeApiResponse(
 // -------------------------------------------------------
 // Tests
 // -------------------------------------------------------
-
-import { TaskConversationRenderer } from './TaskConversationRenderer';
 
 describe('TaskConversationRenderer — onMessageCountChange', () => {
 	beforeEach(() => {
@@ -531,5 +531,58 @@ describe('TaskConversationRenderer — pagination', () => {
 		await waitFor(() => {
 			expect(queryByText('Loading…')).toBeNull();
 		});
+	});
+
+	it('shows error message when initial fetch fails with no buffered messages', async () => {
+		mockRequest.mockRejectedValue(new Error('Network error'));
+
+		const { getByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		await waitFor(() => {
+			expect(getByText('Network error')).toBeDefined();
+		});
+
+		// Should show retry button
+		expect(getByText('Retry')).toBeDefined();
+	});
+
+	it('shows error message when loading older messages fails', async () => {
+		const initialMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		let olderCallCount = 0;
+
+		mockRequest.mockImplementation(async (method: string, params: { before?: string }) => {
+			if (method === 'task.getGroupMessages') {
+				if (params.before) {
+					olderCallCount++;
+					throw new Error('Failed to load older');
+				}
+				return makeApiResponse(initialMessages, { hasOlder: true, oldestCursor: 'cursor-older' });
+			}
+			return {};
+		});
+
+		const { getByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		// Wait for initial load
+		await waitFor(() => {
+			expect(getByText('Load older messages')).toBeDefined();
+		});
+
+		// Click "Load older messages"
+		await act(async () => {
+			fireEvent.click(getByText('Load older messages'));
+		});
+
+		// Should show error message
+		await waitFor(() => {
+			expect(getByText('Failed to load older')).toBeDefined();
+		});
+
+		// Button should still be visible for retry
+		expect(getByText('Load older messages')).toBeDefined();
 	});
 });
