@@ -251,6 +251,71 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
+	describe('resetGroupForRestart', () => {
+		it('should reset failed group to awaiting_worker state', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			// Set to failed state
+			repo.failGroup(group.id, group.version);
+
+			// Reset for restart
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset).not.toBeNull();
+			expect(reset!.state).toBe('awaiting_worker');
+			expect(reset!.completedAt).toBeNull();
+		});
+
+		it('should reset completed group to awaiting_worker state', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			// Set to completed state
+			repo.completeGroup(group.id, group.version);
+
+			// Reset for restart
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset).not.toBeNull();
+			expect(reset!.state).toBe('awaiting_worker');
+			expect(reset!.completedAt).toBeNull();
+		});
+
+		it('should preserve workerRole and workspacePath', () => {
+			const group = repo.createGroup(
+				taskId,
+				workerSessionId,
+				leaderSessionId,
+				'planner',
+				'/workspace'
+			);
+			repo.failGroup(group.id, group.version);
+
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset!.workerRole).toBe('planner');
+			expect(reset!.workspacePath).toBe('/workspace');
+		});
+
+		it('should reset metadata fields to defaults', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset!.feedbackIteration).toBe(0);
+			expect(reset!.tokensUsed).toBe(0);
+			expect(reset!.submittedForReview).toBe(false);
+			expect(reset!.approved).toBe(false);
+		});
+
+		it('should return null for non-existent group', () => {
+			const result = repo.resetGroupForRestart('non-existent');
+			expect(result).toBeNull();
+		});
+
+		it('should increment version', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset!.version).toBe(group.version + 2); // +1 for failGroup, +1 for reset
+		});
+	});
+
 	describe('updateLeaderContractViolations', () => {
 		it('should update violations and turn ID', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);

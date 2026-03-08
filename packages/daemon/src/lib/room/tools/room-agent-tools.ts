@@ -276,12 +276,18 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
-			// Handle restart: clean up old failed/cancelled group so runtime creates a fresh one
+			// Handle restart: reset failed/cancelled group so runtime picks it up fresh
 			if (task.status === 'failed' || task.status === 'cancelled') {
 				if (args.status === 'pending' || args.status === 'in_progress') {
 					const group = groupRepo.getGroupByTaskId(args.task_id);
 					if (group) {
-						groupRepo.deleteGroup(group.id);
+						const reset = groupRepo.resetGroupForRestart(group.id);
+						if (!reset) {
+							return jsonResult({
+								success: false,
+								error: `Failed to reset group for task ${args.task_id} — group may have been modified concurrently`,
+							});
+						}
 					}
 				}
 			}

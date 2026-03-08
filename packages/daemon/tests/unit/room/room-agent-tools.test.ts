@@ -981,7 +981,7 @@ describe('Room Agent Tools', () => {
 			expect(result.task.status).toBe('in_progress');
 		});
 
-		it('should delete old failed group when restarting task', async () => {
+		it('should reset old failed group when restarting task', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
@@ -992,8 +992,10 @@ describe('Room Agent Tools', () => {
 			// Then fail the task
 			await taskManager.failTask(taskId, 'Something went wrong');
 
-			// Verify the group exists
-			expect(groupRepo.getGroup(groupId)).not.toBeNull();
+			// Verify the group exists in failed state
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.state).toBe('failed');
 
 			// Restart the task
 			const result = parseResult(
@@ -1002,21 +1004,27 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('pending');
 
-			// The old failed group should be deleted
-			expect(groupRepo.getGroup(groupId)).toBeNull();
+			// The old failed group should be reset to awaiting_worker
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.state).toBe('awaiting_worker');
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
-		it('should delete old cancelled group when restarting task', async () => {
+		it('should reset old cancelled group when restarting task', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Create a failed group
+			// Create a group (will be in failed state after task cancellation)
 			const groupId = insertGroup(taskId, 'failed');
 			// Cancel the task
 			await taskManager.cancelTask(taskId);
 
 			// Verify the group exists
-			expect(groupRepo.getGroup(groupId)).not.toBeNull();
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.state).toBe('failed');
 
 			// Restart the task
 			const result = parseResult(
@@ -1025,11 +1033,35 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('in_progress');
 
-			// The old failed group should be deleted
-			expect(groupRepo.getGroup(groupId)).toBeNull();
+			// The old failed group should be reset to awaiting_worker
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.state).toBe('awaiting_worker');
 		});
 
-		it('should not delete group when transitioning to non-restart status', async () => {
+		it('should succeed when group is already gone', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+			// Create a failed group
+			const groupId = insertGroup(taskId, 'failed');
+			// Then fail the task
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Delete the group directly to simulate concurrent deletion
+			groupRepo.deleteGroup(groupId);
+
+			// Restart the task - should succeed since there's no group to reset
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'pending' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('pending');
+		});
+
+		it('should not reset group when transitioning to non-restart status', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
