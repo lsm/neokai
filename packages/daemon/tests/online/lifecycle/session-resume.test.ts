@@ -9,12 +9,8 @@
  * The session resume feature ensures that when a session is reloaded,
  * the SDK session ID is preserved to allow continuous conversation.
  *
- * MODES:
- * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Mock SDK: Set NEOKAI_AGENT_SDK_MOCK=1 for offline testing
- *
- * Run with mock:
- *   NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/lifecycle/session-resume.test.ts
+ * Requires real API credentials (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY).
+ * For offline testing, use Dev Proxy (NEOKAI_USE_DEV_PROXY=1).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -24,12 +20,10 @@ import { getSession, sendMessage, waitForIdle } from '../../helpers/daemon-actio
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Detect mock mode for faster timeouts
-const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
-const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
-const IDLE_TIMEOUT = IS_MOCK ? 5000 : 45000;
-const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
-const TEST_TIMEOUT = IS_MOCK ? 15000 : 90000;
+const MODEL = 'haiku-4.5';
+const IDLE_TIMEOUT = 45000;
+const SETUP_TIMEOUT = 30000;
+const TEST_TIMEOUT = 90000;
 
 describe('Session Resume', () => {
 	let daemon: DaemonServerContext;
