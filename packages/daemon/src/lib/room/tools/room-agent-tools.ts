@@ -263,7 +263,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 								args.status === 'failed' ||
 								args.status === 'cancelled'
 							) {
-								await runtime.taskGroupManager.cancel(group.id);
+								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
+								if (!cancelledGroup) {
+									return jsonResult({
+										success: false,
+										error: `Failed to cancel active group for task ${args.task_id} — group may have been modified concurrently`,
+									});
+								}
 							}
 						}
 					}
