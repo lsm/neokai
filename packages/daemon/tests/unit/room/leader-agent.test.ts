@@ -192,7 +192,7 @@ describe('Leader Agent', () => {
 		it('recommends submit_for_review in simple review path', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('submit_for_review');
-			expect(prompt).toContain('non-coding tasks');
+			expect(prompt).toContain('If no PR exists yet');
 		});
 	});
 

@@ -202,7 +202,7 @@ export async function checkPrSynced(
 }
 
 /**
- * Check that the PR was actually merged (for post-approval coder tasks in worker exit gate).
+ * Check that the PR was actually merged (for post-approval PR-based tasks in worker exit gate).
  * Verifies the worker successfully ran `gh pr merge` before exiting.
  */
 export async function checkWorkerPrMerged(
@@ -267,7 +267,7 @@ export async function checkWorkerPrMerged(
 }
 
 /**
- * Check that the PR was actually merged (for post-approval coding tasks in leader complete gate).
+ * Check that the PR was actually merged (for post-approval PR-based tasks in leader complete gate).
  * Prevents the leader from marking a task complete when the PR merge didn't succeed.
  */
 export async function checkLeaderPrMerged(
@@ -350,7 +350,7 @@ export async function checkDraftTasksCreated(
 }
 
 /**
- * Check that a PR exists before the leader can complete a coding task.
+ * Check that a PR exists before the leader can complete a PR-based task.
  */
 export async function checkLeaderPrExists(
 	ctx: LeaderCompleteHookContext,
@@ -464,16 +464,18 @@ export async function runWorkerExitGate(
 	ctx: WorkerExitHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
+	const isPlannerRole = ctx.workerRole === 'planner';
+	const isPrBasedRole = ctx.workerRole === 'coder' || ctx.workerRole === 'general';
+	if (isPlannerRole || isPrBasedRole) {
 		const isApproved = ctx.approved;
 		if (isApproved) {
 			// Post-approval: role-based verification
-			if (ctx.workerRole === 'planner') {
+			if (isPlannerRole) {
 				// Phase 2: planner must have created draft tasks from the approved plan
 				const result = await checkDraftTasksCreated(ctx, opts);
 				if (!result.pass) return result;
 			}
-			if (ctx.workerRole === 'coder') {
+			if (isPrBasedRole) {
 				// Phase 2: verify the worker actually merged the PR before exiting
 				const result = await checkWorkerPrMerged(ctx, opts);
 				if (!result.pass) return result;
@@ -494,7 +496,7 @@ export async function runWorkerExitGate(
 
 /**
  * Run the leader submit-for-review gate.
- * For coder and planner tasks: PR must exist before submitting for review.
+ * For PR-based and planning tasks: PR must exist before submitting for review.
  * When reviewers are configured: reviews must be posted on the PR before submitting.
  * For other task types: pass through.
  */
@@ -502,7 +504,7 @@ export async function runLeaderSubmitGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
+	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
 		if (!prResult.pass) return prResult;
 
@@ -523,20 +525,20 @@ export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	// Human-approved tasks: skip PR/review checks but verify merge for coding tasks.
+	// Human-approved tasks: skip PR/review checks but verify merge for PR-based tasks.
 	// For planning: verify draft tasks were created.
-	// For coding: verify PR was actually merged (worker may have failed the merge).
+	// For coder/general: verify PR was actually merged (worker may have failed the merge).
 	if (ctx.approved) {
 		if (ctx.taskType === 'planning') {
 			return checkLeaderDraftsExist(ctx, opts);
 		}
-		if (ctx.workerRole === 'coder') {
+		if (ctx.workerRole === 'coder' || ctx.workerRole === 'general') {
 			return checkLeaderPrMerged(ctx, opts);
 		}
 		return { pass: true };
 	}
 
-	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner') {
+	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
 		if (!prResult.pass) {
 			return prResult;

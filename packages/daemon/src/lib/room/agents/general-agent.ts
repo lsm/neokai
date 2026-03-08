@@ -44,8 +44,56 @@ export function buildGeneralSystemPrompt(): string {
 
 	sections.push(`You are a General Agent working on a task within a larger goal.`);
 	sections.push(`Your job is to complete the task described below to the best of your ability.`);
+	sections.push(`Work carefully and produce concrete deliverables, then finish your response.`);
+
+	// Mandatory Git workflow
+	sections.push(`\n## Git Workflow (MANDATORY)\n`);
 	sections.push(
-		`Use whatever tools are appropriate for the task. When you are done, simply finish your response.`
+		`You are working in an isolated git worktree on a feature branch. ` +
+			`The branch has already been created for you. Follow this workflow:`
+	);
+	sections.push(
+		`1. **Sync with the default branch first** — run all three lines as a **single bash invocation** (variables persist within one call):\n` +
+			`   \`\`\`bash\n` +
+			`   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
+			`   [ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
+			`   git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
+			`   \`\`\`\n` +
+			`   **If the rebase fails with conflicts, stop immediately and report the error** — do NOT continue on a stale base`
+	);
+	sections.push(
+		`2. Complete the task and create durable artifacts in the repo (docs, reports, scripts, or other files appropriate to the task)`
+	);
+	sections.push(`3. Commit your changes with a clear message`);
+	sections.push(`4. Push your branch: \`git push -u origin HEAD\``);
+	sections.push(
+		`5. Create a pull request — detect the default branch inside the subshell (no persistent variable needed):\n` +
+			`   \`\`\`bash\n` +
+			`   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
+			`   \`\`\``
+	);
+	sections.push(`6. Finish your response`);
+	sections.push(``);
+	sections.push(
+		`**IMPORTANT**: Do NOT commit directly to the main/dev/master branch. ` +
+			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
+	);
+
+	// Review feedback handling
+	sections.push(`\n## Addressing Review Feedback\n`);
+	sections.push(
+		`When you receive feedback containing GitHub review URLs, fetch each review by its ID:`
+	);
+	sections.push(
+		`1. Extract the review ID from the URL (e.g. \`#pullrequestreview-3900806436\` → ID is \`3900806436\`)`
+	);
+	sections.push(
+		`2. Fetch each review: \`GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id} --jq '.body'\``
+	);
+	sections.push(`3. Read the review body and address the requested changes`);
+	sections.push(`4. Push your updates: \`git push\``);
+	sections.push(
+		`5. Finish your response — the leader will continue the review workflow for the next round`
 	);
 
 	return sections.join('\n');

@@ -376,7 +376,7 @@ export class RoomRuntime {
 		}
 
 		// Lifecycle hooks: Worker Exit Gate
-		// Validates preconditions before routing to leader (branch/PR for coders, tasks for planners)
+		// Validates preconditions before routing to leader (branch/PR for coder/general, tasks for planners)
 		{
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
 			const hookCtx: WorkerExitHookContext = {
@@ -613,11 +613,13 @@ export class RoomRuntime {
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
-				// State machine enforcement: coding and planning tasks must go through submit_for_review first.
-				// Both follow a two-phase flow: work → review → human approval → merge/create tasks → complete.
+				// State machine enforcement: PR/planning tasks must go through submit_for_review first.
+				// They follow a two-phase flow: work → review → human approval → merge/create tasks → complete.
 				// Exception: approved=true means human already approved (PR or plan).
 				if (
-					(group.workerRole === 'coder' || group.workerRole === 'planner') &&
+					(group.workerRole === 'coder' ||
+						group.workerRole === 'general' ||
+						group.workerRole === 'planner') &&
 					!group.submittedForReview &&
 					!group.approved
 				) {
@@ -698,10 +700,15 @@ export class RoomRuntime {
 			case 'submit_for_review': {
 				const prUrl = params.pr_url ?? '';
 
-				// Lifecycle gate: validate PR exists for coding/planning tasks (and reviews if reviewers configured)
+				// Lifecycle gate: validate PR exists for PR/planning tasks (and reviews if reviewers configured)
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
-					if (hookTask && (group.workerRole === 'coder' || group.workerRole === 'planner')) {
+					if (
+						hookTask &&
+						(group.workerRole === 'coder' ||
+							group.workerRole === 'general' ||
+							group.workerRole === 'planner')
+					) {
 						const currentRoom = this.getRoomById(this.roomId);
 						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;

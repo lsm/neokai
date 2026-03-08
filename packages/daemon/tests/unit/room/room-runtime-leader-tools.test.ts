@@ -20,8 +20,9 @@ describe('RoomRuntime leader tools', () => {
 	});
 
 	describe('handleLeaderTool', () => {
-		it('should handle complete_task', async () => {
-			const { task, group } = await spawnAndRouteToLeader(ctx);
+		it('should handle complete_task after submit_for_review gate is satisfied', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Health endpoint added',

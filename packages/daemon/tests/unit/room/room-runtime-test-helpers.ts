@@ -168,7 +168,11 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
 		tickInterval: 60_000,
-		hookOptions: opts?.hookOptions,
+		hookOptions:
+			opts?.hookOptions ??
+			({
+				runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
+			} as const),
 		// Fetch from managers (reads from DB) instead of caching objects
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),
@@ -189,8 +193,7 @@ export async function createGoalAndTask(
 	const task = await ctx.taskManager.createTask({
 		title: 'Add GET /health',
 		description: 'Returns 200 OK',
-		// Default to 'general' for most unit tests so they don't hit the
-		// submit_for_review state machine gate (which is coder-specific).
+		// Default to 'general' for most unit tests.
 		assignedAgent: opts?.assignedAgent ?? 'general',
 	});
 	await ctx.goalManager.linkTaskToGoal(goal.id, task.id);

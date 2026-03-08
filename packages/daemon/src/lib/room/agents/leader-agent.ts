@@ -272,10 +272,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`3. If issues are found, use \`send_to_worker\` with specific actionable feedback`
 			);
 			sections.push(
-				`4. If the work is complete, correct, and a PR was created, use \`submit_for_review\` with the PR URL`
+				`4. If the work is complete and correct, require a PR and use \`submit_for_review\` with the PR URL`
 			);
 			sections.push(
-				`5. If no PR is needed (non-coding tasks), use \`complete_task\` with a summary`
+				`5. If no PR exists yet, use \`send_to_worker\` to request one before approval`
 			);
 		}
 
