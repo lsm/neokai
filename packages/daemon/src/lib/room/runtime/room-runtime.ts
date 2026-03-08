@@ -159,19 +159,37 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Recalculate progress for all goals linked to a task and emit goal.progressUpdated events.
-	 * Called after task status or progress changes.
+	 * Emit a goal.updated event with the full goal object.
+	 * Used after linking tasks to goals so the frontend receives updated linkedTaskIds.
+	 */
+	private async emitGoalUpdated(goalId: string): Promise<void> {
+		if (!this.daemonHub) return;
+		const goal = await this.goalManager.getGoal(goalId);
+		if (goal) {
+			void this.daemonHub.emit('goal.updated', {
+				sessionId: `room:${this.room.id}`,
+				roomId: this.room.id,
+				goalId: goal.id,
+				goal,
+			});
+		}
+	}
+
+	/**
+	 * Recalculate progress for all goals linked to a task and emit goal.updated events.
+	 * Sends the full goal object so the frontend receives updated linkedTaskIds, status,
+	 * and progress in a single event — not just the progress number.
 	 */
 	private async emitGoalProgressForTask(taskId: string): Promise<void> {
 		await this.goalManager.updateGoalsForTask(taskId);
 		if (!this.daemonHub) return;
 		const goals = await this.goalManager.getGoalsForTask(taskId);
 		for (const goal of goals) {
-			void this.daemonHub.emit('goal.progressUpdated', {
+			void this.daemonHub.emit('goal.updated', {
 				sessionId: `room:${this.room.id}`,
 				roomId: this.room.id,
 				goalId: goal.id,
-				progress: goal.progress,
+				goal,
 			});
 		}
 	}
@@ -853,6 +871,8 @@ export class RoomRuntime {
 					});
 					if (goal) {
 						await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+						this.emitTaskUpdate(newTask);
+						await this.emitGoalUpdated(goal.id);
 					}
 					log.info(`Planning (restored) created draft task: ${newTask.id} (${newTask.title})`);
 					return { id: newTask.id, title: newTask.title };
@@ -1170,44 +1190,62 @@ export class RoomRuntime {
 			await this.recoverZombieGroups(zombies);
 		}
 
-		// Check capacity — awaiting_human groups are paused and don't consume slots
+		// Separate active groups into planning and execution.
+		// Planning runs on its own track (max 1 concurrent) and does NOT consume execution slots.
+		// This prevents a new goal's planning from blocking ready tasks of other goals.
 		const activeGroups = this.groupRepo
 			.getActiveGroups(this.room.id)
 			.filter((g) => g.state !== 'awaiting_human');
-		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
+		const activePlanningGroups = activeGroups.filter((g) => g.workerRole === 'planner');
+		const activeExecutionGroups = activeGroups.filter((g) => g.workerRole !== 'planner');
 
-		if (availableSlots <= 0) return;
+		const hasPlanningSlot = activePlanningGroups.length === 0;
+		const executionSlots = this.maxConcurrentGroups - activeExecutionGroups.length;
 
-		// Planning takes priority over execution.
-		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning group first.
-		const goalForPlanning = await this.getNextGoalForPlanning();
-		if (goalForPlanning) {
-			await this.spawnPlanningGroup(goalForPlanning);
-			return; // Don't start execution groups in the same tick
-		}
+		// Fast path: nothing to schedule — return without any async work so that
+		// re-tick microtasks complete synchronously (important for tick mutex draining).
+		if (!hasPlanningSlot && executionSlots <= 0) return;
 
-		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
-		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
-		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
-		if (executableTasks.length === 0) return;
+		// --- Execution track (first: sync-fast when slots are full) ---
+		if (executionSlots > 0) {
+			const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
+			const executableTasks = pendingTasks.filter(
+				(t) => (t.taskType ?? 'coding') !== 'planning'
+			);
 
-		// Filter to tasks whose dependencies are all completed
-		const readyTasks: NeoTask[] = [];
-		for (const task of executableTasks) {
-			if (await this.taskManager.areDependenciesMet(task)) {
-				readyTasks.push(task);
+			if (executableTasks.length > 0) {
+				const readyTasks: NeoTask[] = [];
+				for (const task of executableTasks) {
+					if (await this.taskManager.areDependenciesMet(task)) {
+						readyTasks.push(task);
+					}
+				}
+
+				if (readyTasks.length > 0) {
+					const sorted = sortTasksByPriority(readyTasks);
+					const toSpawn = sorted.slice(0, executionSlots);
+					for (const task of toSpawn) {
+						await this.spawnGroupForTask(task);
+					}
+				}
 			}
 		}
-		if (readyTasks.length === 0) return;
 
-		// Sort by priority
-		const sorted = sortTasksByPriority(readyTasks);
-
-		// Spawn groups for available slots
-		const toSpawn = sorted.slice(0, availableSlots);
-
-		for (const task of toSpawn) {
-			await this.spawnGroupForTask(task);
+		// --- Planning track (after execution: may suspend, doesn't block execution dispatch) ---
+		// Re-check state since execution dispatch above may have yielded, and the
+		// runtime could have been stopped in the meantime. The try-catch guards against
+		// the race where stop() + db.close() happen while an async planning check is
+		// in-flight (the tick entered while state was still 'running').
+		if (hasPlanningSlot && this.state === 'running') {
+			try {
+				const goalForPlanning = await this.getNextGoalForPlanning();
+				if (goalForPlanning && this.state === 'running') {
+					await this.spawnPlanningGroup(goalForPlanning);
+				}
+			} catch (error) {
+				if (this.state !== 'running') return; // swallow errors after shutdown
+				throw error;
+			}
 		}
 	}
 
@@ -1297,8 +1335,9 @@ export class RoomRuntime {
 			status: 'pending',
 		});
 
-		// Link planning task to the goal
+		// Link planning task to the goal and notify frontend
 		await this.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+		await this.emitGoalUpdated(goal.id);
 
 		// Increment planning attempts BEFORE spawning (counts attempts, not outcomes)
 		await this.goalManager.incrementPlanningAttempts(goal.id);
@@ -1319,6 +1358,8 @@ export class RoomRuntime {
 			});
 			// Link the draft task to the goal so it appears in the room
 			await this.goalManager.linkTaskToGoal(goal.id, task.id);
+			this.emitTaskUpdate(task);
+			await this.emitGoalUpdated(goal.id);
 			log.info(`Planning created draft task: ${task.id} (${task.title})`);
 			return { id: task.id, title: task.title };
 		};
@@ -1526,11 +1567,16 @@ export class RoomRuntime {
 		if (goal) {
 			const drafts = await this.taskManager.getDraftTasksByCreator(taskId);
 			const linked = new Set(goal.linkedTaskIds ?? []);
+			let linkedNew = false;
 			for (const draft of drafts) {
 				if (!linked.has(draft.id)) {
 					await this.goalManager.linkTaskToGoal(goal.id, draft.id);
 					log.info(`Linked draft task ${draft.id} to goal ${goal.id} (safety net)`);
+					linkedNew = true;
 				}
+			}
+			if (linkedNew) {
+				await this.emitGoalUpdated(goal.id);
 			}
 		}
 

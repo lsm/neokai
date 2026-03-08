@@ -361,9 +361,9 @@ describe('RoomRuntime', () => {
 			expect(workerCallsAfterTick1).toHaveLength(1);
 
 			// Drain the microtask queued by tick1's finally block (queueMicrotask re-tick).
-			// Without this, Bun schedules the test continuation before that microtask,
-			// so the re-tick fires mid-tick2 rather than before it.
-			await Promise.resolve();
+			// The re-tick includes async planning checks, so a single Promise.resolve()
+			// is not enough — use setTimeout(0) to wait for a macrotask boundary.
+			await new Promise((r) => setTimeout(r, 0));
 
 			// Update room config to allow 2 concurrent groups
 			ctx.runtime.updateRoom(makeRoom({ config: { maxConcurrentGroups: 2 } }));

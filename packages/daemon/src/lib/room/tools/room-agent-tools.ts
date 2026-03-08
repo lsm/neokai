@@ -114,6 +114,18 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					roomId,
 					task,
 				});
+				// Emit goal.updated so frontend receives updated linkedTaskIds
+				if (args.goal_id) {
+					const goal = await goalManager.getGoal(args.goal_id);
+					if (goal) {
+						void daemonHub.emit('goal.updated', {
+							sessionId: `room:${roomId}`,
+							roomId,
+							goalId: goal.id,
+							goal,
+						});
+					}
+				}
 			}
 			return jsonResult({ success: true, taskId: task.id, task });
 		},
