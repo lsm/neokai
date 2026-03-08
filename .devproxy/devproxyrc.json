@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/rc.schema.json",
+	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/rc.schema.json",
 	"plugins": [
 		{
 			"name": "MockResponsePlugin",
@@ -10,7 +10,7 @@
 	],
 	"urlsToWatch": ["https://api.anthropic.com/*"],
 	"mockResponsePlugin": {
-		"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/mockresponseplugin.schema.json",
+		"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.schema.json",
 		"mocksFile": "mocks.json"
 	},
 	"logLevel": "information",

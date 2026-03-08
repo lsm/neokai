@@ -216,15 +216,31 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 
 	// Helper to check if proxy is responding
 	const checkProxyReady = async (): Promise<boolean> => {
-		try {
-			const response = await fetch(`http://127.0.0.1:${port}/`, {
-				method: 'GET',
+		// Try to connect to the proxy port using a TCP connection check
+		// This is more reliable than fetch() for HTTPS proxies
+		return new Promise((resolve) => {
+			const net = require('net');
+			const socket = new net.Socket();
+
+			socket.setTimeout(1000);
+
+			socket.on('connect', () => {
+				socket.destroy();
+				resolve(true);
 			});
-			// Dev Proxy may return 502 for requests it doesn't intercept, but that means it's running
-			return response.status !== 0;
-		} catch {
-			return false;
-		}
+
+			socket.on('timeout', () => {
+				socket.destroy();
+				resolve(false);
+			});
+
+			socket.on('error', () => {
+				socket.destroy();
+				resolve(false);
+			});
+
+			socket.connect(port, '127.0.0.1');
+		});
 	};
 
 	// Store original env var

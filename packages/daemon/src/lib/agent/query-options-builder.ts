@@ -641,6 +641,24 @@ CRITICAL RULES:
 			}
 		}
 
+		// 3. Explicitly include proxy environment variables for Dev Proxy support
+		// These are set by the dev-proxy test helper and need to be passed to the SDK subprocess
+		// See: https://github.com/dotnet/dev-proxy/issues/169
+		const proxyEnvVars = [
+			'HTTPS_PROXY',
+			'HTTP_PROXY',
+			'NODE_USE_ENV_PROXY',
+			'NODE_EXTRA_CA_CERTS',
+		] as const;
+		for (const key of proxyEnvVars) {
+			const value = process.env[key];
+			if (value !== undefined) {
+				mergedEnv[key] = value;
+			}
+		}
+
+		// Always return mergedEnv (not undefined) when proxy vars are present
+		// This ensures SDK subprocess receives proxy environment variables
 		return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
 	}
 
