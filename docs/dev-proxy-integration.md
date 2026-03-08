@@ -68,13 +68,63 @@ Per [GitHub Issue #169](https://github.com/anthropics/claude-agent-sdk-typescrip
 ### Directory Structure
 
 ```
-tests/dev-proxy/
+.devproxy/
 ├── devproxyrc.json    # Main configuration
 ├── mocks.json         # Mock response definitions
-└── certs/             # Dev Proxy certificates (auto-generated)
+├── .devproxy.pid      # PID file (generated at runtime)
+└── devproxy.log       # Log file (generated at runtime)
+```
+
+## Quick Start
+
+### 1. Install Dev Proxy
+
+**macOS (Homebrew):**
+```bash
+brew tap dotnet/dev-proxy
+brew install dev-proxy
+```
+
+**Linux:**
+```bash
+curl -sL https://aka.ms/install-dev-proxy | bash
+```
+
+**Windows:**
+```powershell
+winget install Microsoft.DevProxy
+```
+
+### 2. Start Dev Proxy
+
+Using npm scripts:
+```bash
+bun run test:proxy:start
+# or
+make test-proxy-start
+```
+
+### 3. Configure Environment
+
+Set these environment variables before running tests:
+```bash
+export HTTPS_PROXY=http://127.0.0.1:8000
+export HTTP_PROXY=http://127.0.0.1:8000
+export NODE_USE_ENV_PROXY=1
+export NODE_EXTRA_CA_CERTS=~/.proxy/rootCA.pem
+```
+
+### 4. Stop Dev Proxy
+
+```bash
+bun run test:proxy:stop
+# or
+make test-proxy-stop
 ```
 
 ### devproxyrc.json
+
+Located at `.devproxy/devproxyrc.json`:
 
 ```json
 {
@@ -84,23 +134,25 @@ tests/dev-proxy/
       "name": "MockResponsePlugin",
       "enabled": true,
       "pluginPath": "~appFolder/plugins/DevProxy.Plugins.dll",
-      "configSection": "anthropicMocks"
+      "configSection": "mockResponsePlugin"
     }
   ],
-  "urlsToWatch": [
-    "https://api.anthropic.com/*"
-  ],
-  "anthropicMocks": {
+  "urlsToWatch": ["https://api.anthropic.com/*"],
+  "mockResponsePlugin": {
     "$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/mockresponseplugin.schema.json",
     "mocksFile": "mocks.json"
   },
   "logLevel": "information",
-  "port": 8000
+  "port": 8000,
+  "labelMode": "text"
 }
 ```
 
 ### mocks.json
 
+Located at `.devproxy/mocks.json`. See the actual file for the current mock definitions.
+
+Example structure:
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/mockresponseplugin.mocksfile.schema.json",
@@ -113,30 +165,15 @@ tests/dev-proxy/
       "response": {
         "statusCode": 200,
         "headers": [
-          { "name": "content-type", "value": "application/json" },
-          { "name": "anthropic-ratelimit-requests-limit", "value": "50" },
-          { "name": "anthropic-ratelimit-requests-remaining", "value": "49" }
+          { "name": "content-type", "value": "application/json" }
         ],
         "body": {
-          "id": "msg_test123",
+          "id": "msg_mock123",
           "type": "message",
           "role": "assistant",
-          "content": [
-            {
-              "type": "text",
-              "text": "This is a mock response from Dev Proxy."
-            }
-          ],
+          "content": [{ "type": "text", "text": "Mocked response" }],
           "model": "claude-sonnet-4-20250514",
-          "stop_reason": "end_turn",
-          "stop_sequence": null,
-          "usage": {
-            "input_tokens": 12,
-            "output_tokens": 48,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
-            "service_tier": "standard"
-          }
+          "stop_reason": "end_turn"
         }
       }
     }
@@ -144,26 +181,20 @@ tests/dev-proxy/
 }
 ```
 
-## Installation
-
-### macOS (Homebrew)
-
-```bash
-brew tap dotnet/dev-proxy
-brew install dev-proxy
-```
-
-### Other Platforms
-
-See [Dev Proxy Setup Guide](https://learn.microsoft.com/en-us/microsoft-cloud/dev/dev-proxy/get-started/set-up)
-
 ## Running Dev Proxy
 
 ### Start Dev Proxy
 
+Using npm scripts (recommended):
 ```bash
-cd tests/dev-proxy
-devproxy
+bun run test:proxy:start
+# or
+make test-proxy-start
+```
+
+Manual start:
+```bash
+cd .devproxy && devproxy
 ```
 
 ### Verify Proxy is Working
@@ -174,6 +205,32 @@ curl -ikx http://127.0.0.1:8000 https://api.anthropic.com/v1/messages \
   -H "content-type: application/json" \
   -H "x-api-key: test-key" \
   -H "anthropic-version: 2023-06-01"
+```
+
+### Status and Management
+
+```bash
+# Check if Dev Proxy is running
+bun run test:proxy:status
+# or
+make test-proxy-status
+
+# Stop Dev Proxy
+bun run test:proxy:stop
+# or
+make test-proxy-stop
+
+# Restart Dev Proxy
+bun run test:proxy:restart
+# or
+make test-proxy-restart
+```
+
+### Port Configuration
+
+The default port is 8000. To use a different port:
+```bash
+DEV_PROXY_PORT=9000 bun run test:proxy:start
 ```
 
 ## Integration with Tests
