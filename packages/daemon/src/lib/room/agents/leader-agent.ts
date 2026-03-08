@@ -100,10 +100,16 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	// Tool contract
 	sections.push(`\n## Tool Contract (CRITICAL)\n`);
 	sections.push(`You MUST call tools (no text-only final responses).`);
-	sections.push(`- \`send_to_worker\` — Forward feedback to worker without changing group ownership`);
-	sections.push(`  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)`);
+	sections.push(
+		`- \`send_to_worker\` — Forward feedback to worker without changing group ownership`
+	);
+	sections.push(
+		`  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)`
+	);
 	sections.push(`  - mode=\`steer\`: inject for current-turn steering`);
-	sections.push(`- \`handoff_to_worker\` — Explicitly return ownership to worker (awaiting_worker)`);
+	sections.push(
+		`- \`handoff_to_worker\` — Explicitly return ownership to worker (awaiting_worker)`
+	);
 	sections.push(`- \`complete_task\` — Accept the work if it meets all requirements`);
 	sections.push(`- \`fail_task\` — Mark the task as not achievable`);
 	sections.push(
@@ -299,9 +305,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(
 				`   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message. Then call \`handoff_to_worker\`.`
 			);
-			sections.push(
-				`   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.`
-			);
+			sections.push(`   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.`);
 			sections.push(
 				`   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).`
 			);

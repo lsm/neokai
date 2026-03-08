@@ -141,9 +141,9 @@ jobs:
           - sdk
           - websocket
         include:
-          # mock_sdk: true → uses NEOKAI_AGENT_SDK_MOCK instead of real API calls.
-          # These modules test infrastructure/plumbing and don't need real AI responses.
-          # To run with real API locally, just omit the env var.
+          # NOTE: Mock SDK (NEOKAI_AGENT_SDK_MOCK) has been removed.
+          # Tests that previously used mock SDK now require real API credentials
+          # (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY) or Dev Proxy (NEOKAI_USE_DEV_PROXY=1).
           #
           # Modules with directory-level test_path auto-discover new test files.
           # Split modules (rpc-*, room-*, features-*) use explicit file lists.
@@ -152,7 +152,6 @@ jobs:
             test_path: tests/online/agent
           - module: components
             test_path: tests/online/components
-            mock_sdk: true
           # GLM online tests disabled due to flakiness
           # - module: glm
           #   test_path: tests/online/glm
@@ -161,25 +160,19 @@ jobs:
           - module: coordinator
             test_path: tests/online/coordinator
             timeout: 10
-            mock_sdk: true
           - module: features-1
             test_path: >-
               tests/online/features/auto-title.test.ts
               tests/online/features/message-delivery-mode-queue.test.ts
-            mock_sdk: true
           - module: features-2
             test_path: tests/online/features/message-persistence.test.ts
-            mock_sdk: true
           - module: git
             test_path: tests/online/git
             timeout: 10
-            mock_sdk: true
           - module: lifecycle
             test_path: tests/online/lifecycle
-            mock_sdk: true
           - module: mcp
             test_path: tests/online/mcp
-            mock_sdk: true
           - module: providers-anthropic
             test_path: >-
               tests/online/providers/anthropic-provider.test.ts
@@ -216,16 +209,13 @@ jobs:
               tests/online/rpc/rpc-file-handlers.test.ts
               tests/online/rpc/rpc-interrupt-handlers.test.ts
               tests/online/rpc/rpc-mcp-toggle.test.ts
-            mock_sdk: true
           - module: rpc-2
             test_path: >-
-              tests/online/rpc/rpc-message-handlers.test.ts
               tests/online/rpc/rpc-model-handlers.test.ts
               tests/online/rpc/rpc-model-switching.test.ts
               tests/online/rpc/rpc-remove-output.test.ts
               tests/online/rpc/rpc-rewind-handlers.test.ts
               tests/online/rpc/rpc-session-filtering.test.ts
-            mock_sdk: true
           - module: rpc-3
             test_path: >-
               tests/online/rpc/rpc-session-handlers-extended.test.ts
@@ -233,13 +223,10 @@ jobs:
               tests/online/rpc/rpc-settings-handlers.test.ts
               tests/online/rpc/rpc-state-sync.test.ts
               tests/online/rpc/session-handlers.test.ts
-            mock_sdk: true
           - module: sdk
             test_path: tests/online/sdk
-            mock_sdk: true
           - module: websocket
             test_path: tests/online/websocket
-            mock_sdk: true
 
     steps:
       - uses: actions/checkout@v4
@@ -262,16 +249,15 @@ jobs:
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
-          NEOKAI_AGENT_SDK_MOCK: ${{ matrix.mock_sdk == true && 'true' || '' }}
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+          ANTHROPIC_API_KEY: ${{ (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
-          GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
-          MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
+          GLM_API_KEY: ${{ secrets.GLM_API_KEY || '' }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.
-          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm')) || '' }}
+          DEFAULT_PROVIDER: ${{ matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm') }}
           # Prefer MiniMax highspeed as the default model when using MiniMax.
-          DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.5-highspeed' || '' }}
+          DEFAULT_MODEL: ${{ secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.5-highspeed' || '' }}
 
       - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon

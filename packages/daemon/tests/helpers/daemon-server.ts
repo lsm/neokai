@@ -20,7 +20,6 @@ import path from 'path';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
-import { installAutoMock, simpleTextResponse, type MockControls } from './mock-sdk';
 import {
 	createDevProxyController,
 	type DevProxyController,
@@ -87,12 +86,6 @@ export interface DaemonServerContext {
 	 * Cleanup all tracked sessions using session.delete RPC
 	 */
 	cleanup: () => Promise<void>;
-
-	/**
-	 * Mock controls (only available when NEOKAI_AGENT_SDK_MOCK is set).
-	 * Use to override responses per-session or change defaults.
-	 */
-	mockControls: MockControls | null;
 
 	/**
 	 * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
@@ -229,7 +222,6 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		pid: daemonProcess.pid!,
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
-		mockControls: null, // Mock not available in spawned process mode
 		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
@@ -321,12 +313,6 @@ async function createInProcessDaemonServer(
 		standalone: false,
 	});
 
-	// Install SDK mock when NEOKAI_AGENT_SDK_MOCK is set
-	let mockControls: MockControls | null = null;
-	if (process.env.NEOKAI_AGENT_SDK_MOCK) {
-		mockControls = installAutoMock(daemonContext, simpleTextResponse('mock response'));
-	}
-
 	// Connect to the daemon's WebSocket server (just like a real client)
 	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
 	const transport = new WebSocketClientTransport({
@@ -367,7 +353,6 @@ async function createInProcessDaemonServer(
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		daemonContext, // Expose for advanced usage
-		mockControls,
 		devProxy,
 		kill: () => {
 			// For in-process, cleanup happens in waitForExit - just return true
