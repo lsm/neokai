@@ -6,6 +6,8 @@
  * - task.list - List tasks in room
  * - task.get - Get task details
  * - task.fail - Fail a task (used by tests to simulate failure)
+ * - task.cancel - Cancel a task (human-initiated cancellation)
+ * - task.reject - Reject a task review (human-initiated rejection with feedback)
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
  * - task.sendHumanMessage - Send a human message to the active agent in a task group
@@ -26,7 +28,7 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask'
+	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -173,6 +175,105 @@ export function setupTaskHandlers(
 		emitRoomOverview(params.roomId);
 
 		return { task };
+	});
+
+	// task.cancel - Cancel a task (human-initiated)
+	messageHub.onRequest('task.cancel', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Only allow cancelling pending, in_progress, or review tasks
+		if (task.status !== 'pending' && task.status !== 'in_progress' && task.status !== 'review') {
+			throw new Error(`Task cannot be cancelled (current status: ${task.status})`);
+		}
+
+		// If there's an active group with runtime, cancel the running agents first
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				const groupRepo = new SessionGroupRepository(db.getDatabase());
+				const group = groupRepo.getGroupByTaskId(params.taskId);
+				if (group && group.state !== 'completed' && group.state !== 'failed') {
+					// Cancel the task group (stops agents and marks task as cancelled)
+					await runtime.taskGroupManager.cancel(group.id);
+					// Reload task to get updated status
+					const updatedTask = await taskManager.getTask(params.taskId);
+					if (updatedTask) {
+						emitTaskUpdate(params.roomId, updatedTask);
+						emitRoomOverview(params.roomId);
+						return { task: updatedTask };
+					}
+				}
+			}
+		}
+
+		// No active group - just mark the task as cancelled
+		const cancelledTask = await taskManager.cancelTask(params.taskId);
+		emitTaskUpdate(params.roomId, cancelledTask);
+		emitRoomOverview(params.roomId);
+
+		return { task: cancelledTask };
+	});
+
+	// task.reject - Reject a task review with feedback
+	messageHub.onRequest('task.reject', async (data) => {
+		const params = data as { roomId: string; taskId: string; feedback: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!params.feedback || !params.feedback.trim()) {
+			throw new Error('Feedback is required for rejection');
+		}
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for task.reject');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (task.status !== 'review') {
+			throw new Error(`Task is not in review status (current: ${task.status})`);
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const groupRepo = new SessionGroupRepository(db.getDatabase());
+		const group = groupRepo.getGroupByTaskId(params.taskId);
+		if (!group || group.state !== 'awaiting_human') {
+			throw new Error('Task is not awaiting human review');
+		}
+
+		// Resume worker with rejection feedback
+		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, params.feedback.trim(), {
+			approved: false,
+		});
+		if (!resumed) {
+			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
+		}
+
+		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);
+		return { success: true };
 	});
 
 	// task.getGroup - Get the active session group (Craft + Lead sessions) for a task

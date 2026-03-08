@@ -77,11 +77,13 @@ const mockTask: NeoTask = {
 
 /** Build a minimal TaskManagerFactory that returns a controlled task. */
 function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
+	const cancelledTask = task ? { ...task, status: 'cancelled' as const } : null;
 	const manager = {
 		createTask: mock(async () => task!),
 		getTask: mock(async () => task),
 		listTasks: mock(async () => []),
 		failTask: mock(async () => task!),
+		cancelTask: mock(async () => cancelledTask!),
 	};
 	return mock(() => manager);
 }
@@ -148,7 +150,9 @@ function makeNullRuntimeService(): RoomRuntimeService {
 	return { getRuntime: mock(() => null) } as unknown as RoomRuntimeService;
 }
 
-const mockRoomManager = {} as unknown as RoomManager;
+const mockRoomManager = {
+	getRoomOverview: mock(() => null),
+} as unknown as RoomManager;
 
 // ─── Test suite ───
 
@@ -297,6 +301,265 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
 			).rejects.toThrow('No active session group');
+		});
+	});
+});
+
+// ─── task.cancel Tests ───
+
+describe('task.cancel RPC Handler', () => {
+	let hub: MessageHub;
+	let handlers: Map<string, RequestHandler>;
+
+	function setup(opts: {
+		task?: NeoTask | null;
+		groupState?: string;
+		runtimeService?: RoomRuntimeService;
+	}) {
+		const { task = mockTask, groupState = 'awaiting_human', runtimeService } = opts;
+
+		const mh = createMockMessageHub();
+		hub = mh.hub;
+		handlers = mh.handlers;
+
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb(makeGroupRow(groupState)),
+			makeTaskManagerFactory(task),
+			runtimeService
+		);
+	}
+
+	function getHandler(): RequestHandler {
+		const h = handlers.get('task.cancel');
+		expect(h).toBeDefined();
+		return h!;
+	}
+
+	describe('parameter validation', () => {
+		beforeEach(() => {
+			setup({ runtimeService: makeNullRuntimeService() });
+		});
+
+		it('throws when roomId is missing', async () => {
+			await expect(getHandler()({ taskId: 'task-1' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when taskId is missing', async () => {
+			await expect(getHandler()({ roomId: 'room-1' }, {})).rejects.toThrow('Task ID is required');
+		});
+	});
+
+	describe('task status validation', () => {
+		it('throws when task is not found', async () => {
+			setup({ task: null, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task not found'
+			);
+		});
+
+		it('throws when task status is completed', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task cannot be cancelled'
+			);
+		});
+
+		it('throws when task status is failed', async () => {
+			const failedTask = { ...mockTask, status: 'failed' as const };
+			setup({ task: failedTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task cannot be cancelled'
+			);
+		});
+
+		it('throws when task status is cancelled', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			setup({ task: cancelledTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task cannot be cancelled'
+			);
+		});
+	});
+
+	describe('happy paths', () => {
+		it('cancels a pending task without active group', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			expect(result).toEqual({ task: { ...pendingTask, status: 'cancelled' } });
+		});
+
+		it('cancels an in_progress task without active group', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			expect(result).toEqual({ task: { ...inProgressTask, status: 'cancelled' } });
+		});
+
+		it('cancels a review task without active group', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			expect(result).toEqual({ task: { ...reviewTask, status: 'cancelled' } });
+		});
+	});
+});
+
+// ─── task.reject Tests ───
+
+describe('task.reject RPC Handler', () => {
+	let hub: MessageHub;
+	let handlers: Map<string, RequestHandler>;
+
+	function setup(opts: {
+		task?: NeoTask | null;
+		groupState?: string;
+		runtimeService?: RoomRuntimeService;
+	}) {
+		const { task = mockTask, groupState = 'awaiting_human', runtimeService } = opts;
+
+		const mh = createMockMessageHub();
+		hub = mh.hub;
+		handlers = mh.handlers;
+
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb(makeGroupRow(groupState)),
+			makeTaskManagerFactory(task),
+			runtimeService
+		);
+	}
+
+	function getHandler(): RequestHandler {
+		const h = handlers.get('task.reject');
+		expect(h).toBeDefined();
+		return h!;
+	}
+
+	describe('parameter validation', () => {
+		beforeEach(() => {
+			const { service } = makeRuntimeService();
+			setup({ runtimeService: service });
+		});
+
+		it('throws when roomId is missing', async () => {
+			await expect(getHandler()({ taskId: 'task-1', feedback: 'not good' }, {})).rejects.toThrow(
+				'Room ID is required'
+			);
+		});
+
+		it('throws when taskId is missing', async () => {
+			await expect(getHandler()({ roomId: 'room-1', feedback: 'not good' }, {})).rejects.toThrow(
+				'Task ID is required'
+			);
+		});
+
+		it('throws when feedback is missing', async () => {
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Feedback is required for rejection'
+			);
+		});
+
+		it('throws when feedback is empty string', async () => {
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: '' }, {})
+			).rejects.toThrow('Feedback is required for rejection');
+		});
+
+		it('throws when feedback is whitespace only', async () => {
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: '   ' }, {})
+			).rejects.toThrow('Feedback is required for rejection');
+		});
+	});
+
+	describe('runtime validation', () => {
+		it('throws when runtimeService is not provided', async () => {
+			setup({ runtimeService: undefined });
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+			).rejects.toThrow('Runtime service is required');
+		});
+
+		it('throws when runtime is not found for the room', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+			).rejects.toThrow('No runtime found for room');
+		});
+	});
+
+	describe('task status validation', () => {
+		it('throws when task is not found', async () => {
+			const { service } = makeRuntimeService();
+			setup({ task: null, runtimeService: service });
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+			).rejects.toThrow('Task not found');
+		});
+
+		it('throws when task is not in review status', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			const { service } = makeRuntimeService();
+			setup({ task: inProgressTask, runtimeService: service });
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+			).rejects.toThrow('Task is not in review status');
+		});
+	});
+
+	describe('group state validation', () => {
+		it('throws when group is not in awaiting_human state', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const { service } = makeRuntimeService();
+			setup({ task: reviewTask, groupState: 'awaiting_worker', runtimeService: service });
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+			).rejects.toThrow('Task is not awaiting human review');
+		});
+
+		it('throws when no active group exists', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const { service } = makeRuntimeService();
+
+			// Setup with no group
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(null), // no group row
+				makeTaskManagerFactory(reviewTask),
+				service
+			);
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
+			).rejects.toThrow('Task is not awaiting human review');
+		});
+	});
+
+	describe('happy path', () => {
+		it('rejects a task in review with awaiting_human group state', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const { service } = makeRuntimeService(true);
+			setup({ task: reviewTask, groupState: 'awaiting_human', runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', feedback: 'please fix the bug' },
+				{}
+			);
+			expect(result).toEqual({ success: true });
 		});
 	});
 });

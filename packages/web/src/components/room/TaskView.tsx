@@ -19,8 +19,11 @@ import type { NeoTask, SessionInfo } from '@neokai/shared';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useMessageHub } from '../../hooks/useMessageHub';
+import { useModal } from '../../hooks/useModal';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { copyToClipboard } from '../../lib/utils';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
@@ -114,12 +117,16 @@ interface HeaderReviewBarProps {
 	taskId: string;
 	/** Called after approval to refresh the conversation */
 	onApproved: () => void;
+	/** Called after rejection to refresh the conversation */
+	onRejected: () => void;
 }
 
-function HeaderReviewBar({ roomId, taskId, onApproved }: HeaderReviewBarProps) {
+function HeaderReviewBar({ roomId, taskId, onApproved, onRejected }: HeaderReviewBarProps) {
 	const { request } = useMessageHub();
 	const [approving, setApproving] = useState(false);
+	const [rejecting, setRejecting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const rejectModal = useModal();
 
 	const approveTask = async () => {
 		if (approving) return;
@@ -136,55 +143,101 @@ function HeaderReviewBar({ roomId, taskId, onApproved }: HeaderReviewBarProps) {
 		}
 	};
 
+	const rejectTask = async (feedback: string) => {
+		if (rejecting) return;
+		setRejecting(true);
+		setError(null);
+		try {
+			await request('task.reject', { roomId, taskId, feedback });
+			// Rejection changes group state; re-fetch conversation to pick up the rejection message
+			rejectModal.close();
+			onRejected();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to reject task');
+		} finally {
+			setRejecting(false);
+		}
+	};
+
 	return (
-		<div class="border-b border-amber-700/30 bg-amber-900/20 px-4 py-2 flex items-center gap-3 flex-shrink-0">
-			{/* Review prompt */}
-			<div class="flex-1 flex items-center gap-2">
-				<span class="text-amber-400 text-sm font-medium">
-					Review the PR and approve or provide feedback below
-				</span>
-			</div>
-			{/* Approve button */}
-			<button
-				class="py-1.5 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
-				onClick={approveTask}
-				disabled={approving}
-			>
-				{approving ? (
-					<>
-						<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-							<circle
-								class="opacity-25"
-								cx="12"
-								cy="12"
-								r="10"
-								stroke="currentColor"
-								stroke-width="4"
-							/>
-							<path
-								class="opacity-75"
-								fill="currentColor"
-								d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-							/>
-						</svg>
-						<span>Approving…</span>
-					</>
-				) : (
-					<>
+		<>
+			<div class="border-b border-amber-700/30 bg-amber-900/20 px-4 py-2 flex items-center gap-3 flex-shrink-0">
+				{/* Review prompt */}
+				<div class="flex-1 flex items-center gap-2">
+					<span class="text-amber-400 text-sm font-medium">
+						Review the PR and approve or provide feedback below
+					</span>
+				</div>
+				{/* Action buttons */}
+				<div class="flex items-center gap-2">
+					{/* Reject button */}
+					<button
+						class="py-1.5 px-4 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+						onClick={rejectModal.open}
+						disabled={rejecting || approving}
+					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
 								stroke-width="2"
-								d="M5 13l4 4L19 7"
+								d="M6 18L18 6M6 6l12 12"
 							/>
 						</svg>
-						<span>Approve</span>
-					</>
-				)}
-			</button>
-			{error && <span class="text-xs text-red-400">{error}</span>}
-		</div>
+						<span>Reject</span>
+					</button>
+					{/* Approve button */}
+					<button
+						class="py-1.5 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+						onClick={approveTask}
+						disabled={approving || rejecting}
+					>
+						{approving ? (
+							<>
+								<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+									<circle
+										class="opacity-25"
+										cx="12"
+										cy="12"
+										r="10"
+										stroke="currentColor"
+										stroke-width="4"
+									/>
+									<path
+										class="opacity-75"
+										fill="currentColor"
+										d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+									/>
+								</svg>
+								<span>Approving…</span>
+							</>
+						) : (
+							<>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M5 13l4 4L19 7"
+									/>
+								</svg>
+								<span>Approve</span>
+							</>
+						)}
+					</button>
+				</div>
+				{error && <span class="text-xs text-red-400">{error}</span>}
+			</div>
+			{/* Reject modal */}
+			<RejectModal
+				isOpen={rejectModal.isOpen}
+				onClose={rejectModal.close}
+				onConfirm={rejectTask}
+				title="Reject Task"
+				message="Please provide feedback explaining why this task is being rejected. The worker will receive this feedback and can address the issues."
+				isLoading={rejecting}
+			/>
+		</>
 	);
 }
 
@@ -322,6 +375,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// UI state for info panel and autoscroll toggle
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+
+	// Cancel task modal state
+	const cancelModal = useModal();
+	const [cancelling, setCancelling] = useState(false);
 
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
@@ -478,6 +535,26 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			group.state === 'awaiting_leader' ||
 			group.state === 'awaiting_worker');
 
+	// Determine if cancel button should be shown (pending, in_progress, or review status)
+	const canCancel =
+		task.status === 'pending' || task.status === 'in_progress' || task.status === 'review';
+
+	// Cancel task handler
+	const cancelTask = async () => {
+		if (cancelling) return;
+		setCancelling(true);
+		try {
+			await request('task.cancel', { roomId, taskId });
+			cancelModal.close();
+			// Navigate back to room since task is now cancelled
+			navigateToRoom(roomId);
+		} catch {
+			// Error is silently handled - modal stays open for retry
+		} finally {
+			setCancelling(false);
+		}
+	};
+
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
@@ -526,6 +603,24 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					</div>
 				)}
+				{/* Cancel button - shown for pending, in_progress, or review tasks */}
+				{canCancel && (
+					<button
+						class="p-1.5 rounded text-red-400 hover:text-red-300 hover:bg-dark-700 transition-colors"
+						onClick={cancelModal.open}
+						title="Cancel task"
+						disabled={cancelling}
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+				)}
 				{/* Info toggle button */}
 				<button
 					class={`p-1.5 rounded transition-colors ${
@@ -553,6 +648,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					roomId={roomId}
 					taskId={taskId}
 					onApproved={() => setConversationKey((k) => k + 1)}
+					onRejected={() => setConversationKey((k) => k + 1)}
 				/>
 			)}
 
@@ -712,6 +808,18 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
 				/>
 			)}
+
+			{/* Cancel confirmation modal */}
+			<ConfirmModal
+				isOpen={cancelModal.isOpen}
+				onClose={cancelModal.close}
+				onConfirm={cancelTask}
+				title="Cancel Task"
+				message="Are you sure you want to cancel this task? This action cannot be undone."
+				confirmText="Cancel Task"
+				confirmButtonVariant="danger"
+				isLoading={cancelling}
+			/>
 		</div>
 	);
 }
