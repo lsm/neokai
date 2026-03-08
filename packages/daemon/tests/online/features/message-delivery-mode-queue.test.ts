@@ -8,10 +8,10 @@
  *
  * MODES:
  * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Mock SDK: Set NEOKAI_AGENT_SDK_MOCK=1 for offline testing
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
- * Run with mock:
- *   NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/features/message-delivery-mode-queue.test.ts
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/features/message-delivery-mode-queue.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -26,8 +26,8 @@ import {
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Detect mock mode for faster timeouts (either in-process mock or Dev Proxy)
-const IS_MOCK = !!(process.env.NEOKAI_AGENT_SDK_MOCK || process.env.NEOKAI_USE_DEV_PROXY);
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 10000 : 90000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;

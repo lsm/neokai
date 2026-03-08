@@ -141,7 +141,7 @@ jobs:
           - sdk
           - websocket
         include:
-          # mock_sdk: true → uses NEOKAI_AGENT_SDK_MOCK instead of real API calls.
+          # mock_sdk: true → uses Dev Proxy (NEOKAI_USE_DEV_PROXY) for mocking instead of real API calls.
           # These modules test infrastructure/plumbing and don't need real AI responses.
           # To run with real API locally, just omit the env var.
           #
