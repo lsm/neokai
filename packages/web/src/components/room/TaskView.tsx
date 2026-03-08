@@ -379,6 +379,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// Cancel task modal state
 	const cancelModal = useModal();
 	const [cancelling, setCancelling] = useState(false);
+	const [cancelError, setCancelError] = useState<string | null>(null);
 
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
@@ -543,13 +544,14 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const cancelTask = async () => {
 		if (cancelling) return;
 		setCancelling(true);
+		setCancelError(null);
 		try {
 			await request('task.cancel', { roomId, taskId });
 			cancelModal.close();
 			// Navigate back to room since task is now cancelled
 			navigateToRoom(roomId);
-		} catch {
-			// Error is silently handled - modal stays open for retry
+		} catch (err) {
+			setCancelError(err instanceof Error ? err.message : 'Failed to cancel task');
 		} finally {
 			setCancelling(false);
 		}
@@ -819,6 +821,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				confirmText="Cancel Task"
 				confirmButtonVariant="danger"
 				isLoading={cancelling}
+				error={cancelError}
 			/>
 		</div>
 	);

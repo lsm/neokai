@@ -207,7 +207,13 @@ export function setupTaskHandlers(
 				const group = groupRepo.getGroupByTaskId(params.taskId);
 				if (group && group.state !== 'completed' && group.state !== 'failed') {
 					// Cancel the task group (stops agents and marks task as cancelled)
-					await runtime.taskGroupManager.cancel(group.id);
+					// cancel() returns null if the group doesn't exist or version conflict occurred
+					const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
+					if (!cancelledGroup) {
+						throw new Error(
+							`Failed to cancel task ${params.taskId} — group may have been modified concurrently`
+						);
+					}
 					// Reload task to get updated status
 					const updatedTask = await taskManager.getTask(params.taskId);
 					if (updatedTask) {
@@ -239,6 +245,9 @@ export function setupTaskHandlers(
 		}
 		if (!params.feedback || !params.feedback.trim()) {
 			throw new Error('Feedback is required for rejection');
+		}
+		if (params.feedback.length > 10_000) {
+			throw new Error('Feedback is too long (max 10,000 characters)');
 		}
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.reject');
