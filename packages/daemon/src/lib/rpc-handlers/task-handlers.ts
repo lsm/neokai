@@ -282,7 +282,12 @@ export function setupTaskHandlers(
 						params.status === 'failed' ||
 						params.status === 'cancelled'
 					) {
-						await runtime.taskGroupManager.cancel(group.id);
+						const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
+						if (!cancelledGroup) {
+							throw new Error(
+								`Failed to cancel task group for task ${params.taskId} — group may have been modified concurrently`
+							);
+						}
 					}
 				}
 			}
