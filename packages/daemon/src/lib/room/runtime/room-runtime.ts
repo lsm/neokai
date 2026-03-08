@@ -833,6 +833,52 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Cancel a task and terminate its active session group (if any).
+	 *
+	 * This is used by the Room Agent `cancel_task` tool. It ensures cancellation
+	 * is not just a task-status change: active groups are transitioned to terminal
+	 * state and their sessions are stopped so concurrency slots are freed.
+	 *
+	 * Returns all cancelled task IDs (root task + cascade-cancelled dependents).
+	 */
+	async cancelTask(taskId: string): Promise<{ success: boolean; cancelledTaskIds: string[] }> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) {
+			return { success: false, cancelledTaskIds: [] };
+		}
+
+		const cancelledTaskIds = new Set<string>();
+
+		// 1) Ensure task status is cancelled (idempotent) and cascade to pending dependents.
+		const cancelledTasks = await this.taskManager.cancelTaskCascade(taskId);
+		for (const cancelledTask of cancelledTasks) {
+			cancelledTaskIds.add(cancelledTask.id);
+		}
+
+		// 2) Clean up session group resources if a group exists.
+		// State transition (-> failed) is only needed for active groups, but session/
+		// mirroring cleanup is safe and idempotent for any group state.
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		const isActiveGroup = !!group && group.state !== 'completed' && group.state !== 'failed';
+		if (group) {
+			if (isActiveGroup) {
+				await this.taskGroupManager.terminateGroup(group.id);
+			}
+			await this.terminateGroupSessions(group);
+			this.cleanupMirroring(group.id, isActiveGroup ? 'Task cancelled by user.' : undefined);
+			cancelledTaskIds.add(group.taskId);
+		}
+
+		for (const cancelledTaskId of cancelledTaskIds) {
+			await this.emitTaskUpdateById(cancelledTaskId);
+			await this.emitGoalProgressForTask(cancelledTaskId);
+		}
+
+		this.scheduleTick();
+		return { success: true, cancelledTaskIds: [...cancelledTaskIds] };
+	}
+
+	/**
 	 * Inject a human message directly into the worker session.
 	 *
 	 * Used when a human wants to provide additional context directly to the worker.
@@ -1089,6 +1135,24 @@ export class RoomRuntime {
 
 		if (statusText) {
 			this.appendGroupEvent(groupId, 'status', { text: statusText });
+		}
+	}
+
+	/**
+	 * Stop and cleanup sessions for a group, if the session factory supports it.
+	 * Used on explicit task cancellation to immediately terminate agent activity.
+	 */
+	private async terminateGroupSessions(group: SessionGroup): Promise<void> {
+		if (!this.sessionFactory.stopSession) {
+			return;
+		}
+
+		for (const sessionId of [group.workerSessionId, group.leaderSessionId]) {
+			try {
+				await this.sessionFactory.stopSession(sessionId);
+			} catch (error) {
+				log.warn(`Failed to stop session ${sessionId} for group ${group.id}:`, error);
+			}
 		}
 	}
 

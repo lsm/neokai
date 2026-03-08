@@ -68,6 +68,11 @@ export interface SessionFactory {
 	 * MCP servers are non-serializable and lost on restart — must be re-created.
 	 */
 	setSessionMcpServers(sessionId: string, mcpServers: Record<string, unknown>): boolean;
+	/**
+	 * Optional: stop and cleanup a session immediately.
+	 * Used for urgent cancellation paths where the group should terminate now.
+	 */
+	stopSession?(sessionId: string): Promise<void>;
 }
 
 /**
@@ -526,23 +531,42 @@ export class TaskGroupManager {
 	}
 
 	/**
-	 * Cancel a group - urgent control from human.
-	 * Marks the group as failed (terminal group state) and the task as cancelled.
+	 * Terminate a group without mutating task status.
+	 * Used by runtime cancellation to clean up orphaned/active groups even when
+	 * task status is already cancelled.
 	 */
-	async cancel(groupId: string): Promise<SessionGroup | null> {
+	async terminateGroup(groupId: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
+		if (group.state === 'completed' || group.state === 'failed') {
+			this.observer.unobserve(group.workerSessionId);
+			this.observer.unobserve(group.leaderSessionId);
+			this.pendingLeaderConfigs.delete(groupId);
+			return group;
+		}
+
 		const updated = this.groupRepo.failGroup(groupId, group.version);
 		if (!updated) return null;
-
-		// Mark task as cancelled (distinct from failed — intentionally stopped by user)
-		await this.taskManager.cancelTask(group.taskId);
 
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 		this.pendingLeaderConfigs.delete(groupId);
 
 		return updated;
+	}
+
+	/**
+	 * Cancel a group - urgent control from human.
+	 * Marks the group as failed (terminal group state) and the task as cancelled.
+	 */
+	async cancel(groupId: string): Promise<SessionGroup | null> {
+		const terminated = await this.terminateGroup(groupId);
+		if (!terminated) return null;
+
+		// Mark task as cancelled (distinct from failed — intentionally stopped by user)
+		await this.taskManager.cancelTask(terminated.taskId);
+
+		return terminated;
 	}
 }

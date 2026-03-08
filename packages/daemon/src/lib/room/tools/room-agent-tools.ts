@@ -169,16 +169,40 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			// cancelTaskCascade returns root + all cascade-cancelled dependents
-			const cancelledTasks = await taskManager.cancelTaskCascade(args.task_id);
-			// Notify UI of status change for every affected task
-			if (daemonHub) {
-				for (const cancelledTask of cancelledTasks) {
-					void daemonHub.emit('room.task.update', {
-						sessionId: `room:${roomId}`,
-						roomId,
-						task: cancelledTask,
-					});
+
+			let cancelledTaskIds: string[] = [];
+			let usedRuntimeCancellation = false;
+			if (runtimeService) {
+				const runtime = runtimeService.getRuntime(roomId);
+				if (runtime) {
+					const result = await runtime.cancelTask(args.task_id);
+					if (!result.success) {
+						return jsonResult({
+							success: false,
+							error: `Failed to cancel task: ${args.task_id}`,
+						});
+					}
+					cancelledTaskIds = result.cancelledTaskIds;
+					usedRuntimeCancellation = true;
+				}
+			}
+
+			// Fallback when runtime service is unavailable: status-only cancellation.
+			if (!usedRuntimeCancellation) {
+				const cancelledTasks = await taskManager.cancelTaskCascade(args.task_id);
+				cancelledTaskIds = cancelledTasks.map((cancelledTask) => cancelledTask.id);
+
+				// Notify UI of status change for every affected task in fallback mode.
+				if (daemonHub) {
+					for (const cancelledTaskId of cancelledTaskIds) {
+						const cancelledTask = await taskManager.getTask(cancelledTaskId);
+						if (!cancelledTask) continue;
+						void daemonHub.emit('room.task.update', {
+							sessionId: `room:${roomId}`,
+							roomId,
+							task: cancelledTask,
+						});
+					}
 				}
 			}
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });

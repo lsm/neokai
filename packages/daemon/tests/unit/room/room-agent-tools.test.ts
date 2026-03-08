@@ -368,6 +368,30 @@ describe('Room Agent Tools', () => {
 			expect((failedTasks.tasks as unknown[]).length).toBe(0);
 		});
 
+		it('should use runtime cancellation when runtime service is available', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const calls: Array<string> = [];
+			const mockRuntime = {
+				cancelTask: async (taskId: string) => {
+					calls.push(taskId);
+					return { success: true, cancelledTaskIds: [taskId] };
+				},
+			};
+			const runtimeHandlers = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			const result = parseResult(
+				await runtimeHandlers.cancel_task({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(true);
+			expect(calls).toEqual([created.taskId]);
+		});
+
 		it('should return error when task not found', async () => {
 			const result = parseResult(await handlers.cancel_task({ task_id: 'no-such-task' }));
 			expect(result.success).toBe(false);

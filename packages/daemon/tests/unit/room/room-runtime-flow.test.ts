@@ -156,6 +156,83 @@ describe('RoomRuntime flow', () => {
 		});
 	});
 
+	describe('cancelTask', () => {
+		it('should terminate active group and free slot for pending tasks', async () => {
+			const goal = await ctx.goalManager.createGoal({ title: 'G', description: '' });
+			const task1 = await ctx.taskManager.createTask({
+				title: 'Task 1',
+				description: 'desc',
+				priority: 'high',
+			});
+			const task2 = await ctx.taskManager.createTask({
+				title: 'Task 2',
+				description: 'desc',
+				priority: 'normal',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task1.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, task2.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const firstGroup = ctx.groupRepo.getGroupByTaskId(task1.id);
+			expect(firstGroup).toBeDefined();
+			expect(firstGroup!.state).toBe('awaiting_worker');
+
+			const cancelResult = await ctx.runtime.cancelTask(task1.id);
+			expect(cancelResult.success).toBe(true);
+
+			const cancelledTask = await ctx.taskManager.getTask(task1.id);
+			expect(cancelledTask!.status).toBe('cancelled');
+
+			const cancelledGroup = ctx.groupRepo.getGroup(firstGroup!.id);
+			expect(cancelledGroup!.state).toBe('failed');
+
+			const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
+			expect(stopCalls).toHaveLength(2);
+			expect(stopCalls.map((c) => c.args[0])).toEqual(
+				expect.arrayContaining([firstGroup!.workerSessionId, firstGroup!.leaderSessionId])
+			);
+
+			// cancelTask() schedules a follow-up tick asynchronously.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const secondGroup = ctx.groupRepo.getGroupByTaskId(task2.id);
+			expect(secondGroup).toBeDefined();
+			expect(secondGroup!.state).toBe('awaiting_worker');
+		});
+
+		it('should terminate orphaned active group even if task is already cancelled', async () => {
+			const goal = await ctx.goalManager.createGoal({ title: 'G', description: '' });
+			const task = await ctx.taskManager.createTask({
+				title: 'Task 1',
+				description: 'desc',
+				priority: 'high',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.state).toBe('awaiting_worker');
+
+			// Simulate prior bug: task cancelled but group left active.
+			await ctx.taskManager.cancelTask(task.id);
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('cancelled');
+			expect(ctx.groupRepo.getGroup(group!.id)!.state).toBe('awaiting_worker');
+
+			const cancelResult = await ctx.runtime.cancelTask(task.id);
+			expect(cancelResult.success).toBe(true);
+			expect(ctx.groupRepo.getGroup(group!.id)!.state).toBe('failed');
+
+			const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
+			expect(stopCalls.map((c) => c.args[0])).toEqual(
+				expect.arrayContaining([group!.workerSessionId, group!.leaderSessionId])
+			);
+		});
+	});
+
 	describe('autonomous flow integration', () => {
 		it('should complete the full single-iteration cycle: spawn → worker done → leader completes', async () => {
 			const { task } = await createGoalAndTask(ctx);
