@@ -1,5 +1,5 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/mockresponseplugin.mocksfile.schema.json",
+	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
 	"mocks": [
 		{
 			"request": {
@@ -27,21 +27,21 @@
 					}
 				],
 				"body": {
-					"id": "msg_mock123",
+					"id": "msg_mock_default",
 					"type": "message",
 					"role": "assistant",
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED BY DEV PROXY] Hello! This is a mocked response from Dev Proxy for testing purposes."
+							"text": "Done"
 						}
 					],
 					"model": "claude-sonnet-4-20250514",
 					"stop_reason": "end_turn",
 					"stop_sequence": null,
 					"usage": {
-						"input_tokens": 12,
-						"output_tokens": 48,
+						"input_tokens": 10,
+						"output_tokens": 4,
 						"cache_creation_input_tokens": 0,
 						"cache_read_input_tokens": 0,
 						"service_tier": "standard"
