@@ -34,6 +34,14 @@ export interface RateLimitBackoff {
 	sessionRole: 'worker' | 'leader';
 }
 
+/** Persisted bootstrap context for lazily creating Leader sessions */
+export interface DeferredLeaderConfig {
+	roomId: string;
+	goalId: string;
+	reviewContext?: 'plan_review' | 'code_review';
+	leaderTaskContext?: string;
+}
+
 /** Type-specific metadata for task groups */
 interface TaskGroupMetadata {
 	feedbackIteration: number;
@@ -56,6 +64,8 @@ interface TaskGroupMetadata {
 	approved?: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit?: RateLimitBackoff | null;
+	/** Persisted bootstrap config for deferred Leader creation */
+	deferredLeader?: DeferredLeaderConfig | null;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -69,6 +79,7 @@ function defaultMetadata(): TaskGroupMetadata {
 		activeWorkElapsed: 0,
 		hibernatedAt: null,
 		tokensUsed: 0,
+		deferredLeader: null,
 	};
 }
 
@@ -104,6 +115,8 @@ export interface SessionGroup {
 	approved: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit: RateLimitBackoff | null;
+	/** Persisted bootstrap config for deferred Leader creation */
+	deferredLeader: DeferredLeaderConfig | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -379,6 +392,24 @@ export class SessionGroupRepository {
 			.run(JSON.stringify(merged), groupId);
 	}
 
+	/**
+	 * Persist deferred Leader bootstrap configuration.
+	 * Stored in metadata so runtime restart can still lazy-create the leader session.
+	 */
+	setDeferredLeader(groupId: string, deferredLeader: DeferredLeaderConfig | null): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, deferredLeader };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
 	// ===== Rate Limit Backoff =====
 
 	/**
@@ -538,6 +569,7 @@ export class SessionGroupRepository {
 			submittedForReview: meta.submittedForReview ?? false,
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
+			deferredLeader: meta.deferredLeader ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
