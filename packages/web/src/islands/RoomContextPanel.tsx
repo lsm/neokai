@@ -3,15 +3,12 @@
  *
  * Context panel content shown when viewing a specific room.
  * Replaces the generic RoomList with room-specific information:
- * - Back navigation to rooms list
- * - Task stats strip
  * - Room Dashboard pinned at top
  * - Sessions list below
  */
 
-import { useMemo } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
-import { navigateToRooms, navigateToRoom, navigateToRoomSession } from '../lib/router';
+import { navigateToRoom, navigateToRoomSession } from '../lib/router';
 import { currentRoomSessionIdSignal } from '../lib/signals';
 import { t } from '../lib/i18n';
 import { cn } from '../lib/utils';
@@ -43,14 +40,6 @@ interface RoomContextPanelProps {
 
 export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) {
 	const sessions = roomStore.sessions.value;
-	const tasks = roomStore.tasks.value;
-
-	const pendingCount = useMemo(() => tasks.filter((t) => t.status === 'pending').length, [tasks]);
-	const activeCount = useMemo(
-		() => tasks.filter((t) => t.status === 'in_progress').length,
-		[tasks]
-	);
-	const doneCount = useMemo(() => tasks.filter((t) => t.status === 'completed').length, [tasks]);
 
 	const roomAgentSessionId = `room:chat:${roomId}`;
 
@@ -69,32 +58,12 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 		onNavigate?.();
 	};
 
-	const hasTasks = pendingCount > 0 || activeCount > 0 || doneCount > 0;
-
 	const selectedSessionId = currentRoomSessionIdSignal.value;
 	const isDashboardSelected = selectedSessionId === null;
 	const isRoomAgentSelected = selectedSessionId === roomAgentSessionId;
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden">
-			{/* Back button */}
-			<div class="px-3 pt-2 pb-1">
-				<button
-					onClick={() => navigateToRooms()}
-					class="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors"
-				>
-					<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M15 19l-7-7 7-7"
-						/>
-					</svg>
-					{t('roomPanel.allRooms')}
-				</button>
-			</div>
-
 			{/* Create Session button */}
 			<div class="px-3 py-2">
 				<button
@@ -126,23 +95,6 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 					</svg>
 					{t('roomPanel.newSession')}
 				</button>
-			</div>
-
-			{/* Task stats */}
-			<div class="px-3 py-2">
-				{hasTasks ? (
-					<span class="text-xs text-gray-500">
-						{pendingCount > 0 && <span class="text-yellow-500/80">{t('roomPanel.pending', { count: pendingCount })}</span>}
-						{pendingCount > 0 && activeCount > 0 && <span class="text-gray-600"> · </span>}
-						{activeCount > 0 && <span class="text-green-500/80">{t('roomPanel.active', { count: activeCount })}</span>}
-						{(pendingCount > 0 || activeCount > 0) && doneCount > 0 && (
-							<span class="text-gray-600"> · </span>
-						)}
-						{doneCount > 0 && <span>{t('roomPanel.done', { count: doneCount })}</span>}
-					</span>
-				) : (
-					<span class="text-xs text-gray-600">{t('roomPanel.noTasks')}</span>
-				)}
 			</div>
 
 			{/* Divider */}

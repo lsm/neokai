@@ -136,7 +136,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 				) : (
 					<>
 						{/* Header */}
-						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-4 py-5">
+						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-4 py-4">
 							<div class="flex items-center gap-3">
 								<MobileMenuButton />
 								<Breadcrumb

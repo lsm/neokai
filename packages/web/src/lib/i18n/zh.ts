@@ -88,7 +88,7 @@ export const zh: Record<string, string> = {
 	'goals.status.archived': '已归档',
 	'goals.complete': '完成',
 	'goals.reactivate': '重新激活',
-	'goals.addDescription': '添加描述...',
+	'goals.addDescription': '补充想法...',
 	'goals.clickToEdit': '点击编辑',
 	'goals.clickToChangePriority': '点击切换优先级',
 	'goals.inlineCreateHint': '回车创建，Esc 取消',
