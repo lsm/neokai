@@ -772,11 +772,22 @@ export function toReviewerName(reviewer: SubagentConfig, existingNames: Set<stri
  * Auto-resolve provider name from known CLI agent names and model IDs.
  */
 function resolveProvider(reviewer: SubagentConfig): string {
-	if (reviewer.provider) return reviewer.provider;
+	if (reviewer.provider) {
+		const provider = reviewer.provider.toLowerCase();
+		if (provider === 'anthropic') return 'Anthropic';
+		if (provider === 'glm') return 'GLM';
+		if (provider === 'minimax') return 'MiniMax';
+		if (provider === 'openai') return 'OpenAI';
+		if (provider === 'github-copilot' || provider === 'github') return 'GitHub';
+		if (provider === 'google') return 'Google';
+		return reviewer.provider;
+	}
 	const m = reviewer.model.toLowerCase();
 	if (m.includes('codex') || m.includes('gpt') || m.includes('openai')) return 'OpenAI';
 	if (m.includes('claude') || m.includes('opus') || m.includes('sonnet') || m.includes('haiku'))
 		return 'Anthropic';
+	if (m.includes('glm')) return 'GLM';
+	if (m.includes('minimax')) return 'MiniMax';
 	if (m.includes('gemini') || m.includes('google')) return 'Google';
 	if (m.includes('copilot') || m === 'pi') return 'GitHub';
 	return 'unknown';
@@ -821,12 +832,13 @@ export function buildReviewerAgents(
 				prompt: buildCliReviewerPrompt(reviewer.model, provider, modelId, reviewer.cliModel),
 			};
 		} else {
-			// SDK reviewers also inherit Leader runtime model by default.
-			// The configured reviewer model is still used for identity/prompting.
+			// SDK reviewers use the closest SDK tier for the configured model.
+			// This allows Anthropic-compatible providers (e.g. GLM/MiniMax) to
+			// route reviewer tiers via ANTHROPIC_DEFAULT_*_MODEL env mapping.
 			agents[name] = {
 				description: `Code reviewer using ${modelId} (${provider}). Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
-				model: 'inherit',
+				model: toAgentModel(modelId),
 				prompt: buildSdkReviewerPrompt(modelId, provider),
 			};
 		}

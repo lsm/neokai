@@ -506,11 +506,18 @@ describe('Leader Agent', () => {
 			expect(agent.tools).not.toContain('Write');
 		});
 
-		it('should set SDK-native reviewer runtime model to inherit', () => {
+		it('should detect GLM provider label for SDK reviewers', () => {
+			const agents = buildReviewerAgents([{ model: 'glm-5' }]);
+			const agent = agents['reviewer-glm-5'];
+			expect(agent).toBeDefined();
+			expect(agent.prompt).toContain('- **Provider:** GLM');
+		});
+
+		it('should set SDK-native reviewer runtime model to mapped SDK tier', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6-20250929' }]);
 			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
-			expect(agent.model).toBe('inherit');
+			expect(agent.model).toBe('opus');
 		});
 
 		it('should set CLI reviewer runtime model to inherit', () => {
@@ -542,6 +549,14 @@ describe('Leader Agent', () => {
 
 		it('should default unknown model to sonnet', () => {
 			expect(toAgentModel('some-unknown-model-xyz')).toBe('sonnet');
+		});
+
+		it('should map GLM model IDs to sonnet tier fallback', () => {
+			expect(toAgentModel('glm-5')).toBe('sonnet');
+		});
+
+		it('should map MiniMax model IDs to sonnet tier fallback', () => {
+			expect(toAgentModel('MiniMax-M2.5')).toBe('sonnet');
 		});
 
 		it('should map short name opus to opus', () => {
