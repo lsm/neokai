@@ -122,7 +122,7 @@ export const zh: Record<string, string> = {
 	'createRoom.nameLabel': '工作室名称',
 	'createRoom.namePlaceholder': '例如：网站开发、问题修复',
 	'createRoom.nameRequired': '工作室名称不能为空',
-	'createRoom.backgroundLabel': '背景（可选）',
+	'createRoom.backgroundLabel': '背景',
 	'createRoom.backgroundHelp':
 		'描述项目、目标以及 AI 代理需要了解的重要背景信息。',
 	'createRoom.backgroundPlaceholder': '这个工作室专注于...',
@@ -181,6 +181,10 @@ export const zh: Record<string, string> = {
 	'roomSettings.folderPickerFailed': '打开文件夹选择器失败',
 	'roomSettings.archiveRoom': '归档工作室',
 	'roomSettings.archiveRoomLabel': '归档工作室',
+	'roomSettings.sectionBasic': '基本信息',
+	'roomSettings.sectionAI': 'AI 配置',
+	'roomSettings.sectionContext': '上下文',
+	'roomSettings.sectionExecution': '执行',
 
 	// Room toast messages
 	'room.archivedSuccess': '工作室已归档',

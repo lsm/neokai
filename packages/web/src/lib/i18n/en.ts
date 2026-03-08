@@ -122,7 +122,7 @@ export const en: Record<string, string> = {
 	'createRoom.nameLabel': 'Room Name',
 	'createRoom.namePlaceholder': 'e.g., Website Development, Bug Fixes',
 	'createRoom.nameRequired': 'Room name is required',
-	'createRoom.backgroundLabel': 'Background (optional)',
+	'createRoom.backgroundLabel': 'Background',
 	'createRoom.backgroundHelp':
 		'Describe the project, its goals, and any important context for the AI agent.',
 	'createRoom.backgroundPlaceholder': 'This room is focused on...',
@@ -183,6 +183,10 @@ export const en: Record<string, string> = {
 	'roomSettings.folderPickerFailed': 'Failed to open folder picker',
 	'roomSettings.archiveRoom': 'Archive Room',
 	'roomSettings.archiveRoomLabel': 'Archive room',
+	'roomSettings.sectionBasic': 'Basic Info',
+	'roomSettings.sectionAI': 'AI Configuration',
+	'roomSettings.sectionContext': 'Context',
+	'roomSettings.sectionExecution': 'Execution',
 
 	// Room toast messages
 	'room.archivedSuccess': 'Room archived successfully',

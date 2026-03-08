@@ -627,7 +627,8 @@ class RoomStore {
 		if (!roomId) throw new Error('No room selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
-		await hub.request('room.runtime.pause', { roomId });
+		const res = await hub.request<{ state: RuntimeState }>('room.runtime.pause', { roomId });
+		this.runtimeState.value = res.state;
 	}
 
 	async resumeRuntime(): Promise<void> {
@@ -635,7 +636,8 @@ class RoomStore {
 		if (!roomId) throw new Error('No room selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
-		await hub.request('room.runtime.resume', { roomId });
+		const res = await hub.request<{ state: RuntimeState }>('room.runtime.resume', { roomId });
+		this.runtimeState.value = res.state;
 	}
 
 	async stopRuntime(): Promise<void> {
@@ -643,7 +645,8 @@ class RoomStore {
 		if (!roomId) throw new Error('No room selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
-		await hub.request('room.runtime.stop', { roomId });
+		const res = await hub.request<{ state: RuntimeState }>('room.runtime.stop', { roomId });
+		this.runtimeState.value = res.state;
 	}
 
 	async startRuntime(): Promise<void> {
@@ -651,7 +654,8 @@ class RoomStore {
 		if (!roomId) throw new Error('No room selected');
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
-		await hub.request('room.runtime.start', { roomId });
+		const res = await hub.request<{ state: RuntimeState }>('room.runtime.start', { roomId });
+		this.runtimeState.value = res.state;
 	}
 
 	// ========================================

@@ -13,7 +13,7 @@ import { navigateToHome, navigateToRooms, navigateToRoom } from '../lib/router';
 import { Breadcrumb } from '../components/ui/Breadcrumb';
 import { RoomOverview } from '../components/room/RoomOverview';
 import ChatContainer from './ChatContainer';
-import { RoomContext, RoomSettings, RoomAgentAvatars } from '../components/room';
+import { RoomSettings, RoomAgentAvatars } from '../components/room';
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
@@ -142,7 +142,16 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								<Breadcrumb
 									items={[
 										{ label: 'Rooms', onClick: () => navigateToRooms() },
-										{ label: room.name },
+										{
+											label: room.name,
+											onEdit: async (newName) => {
+												try {
+													await roomStore.updateSettings({ name: newName });
+												} catch {
+													toast.error(t('toast.saveFailed'));
+												}
+											},
+										},
 									]}
 								/>
 								<div class="flex-1" />
@@ -182,6 +191,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 							{activeTab === 'overview' && (
 								<RoomOverview
 									roomId={roomId}
+									room={room}
 									onCreateGoal={handleCreateGoal}
 									onUpdateGoal={handleUpdateGoal}
 									onDeleteGoal={handleDeleteGoal}
@@ -189,25 +199,13 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 								/>
 							)}
 							{activeTab === 'settings' && (
-								<div class="h-full overflow-y-auto p-4">
-									<div class="space-y-8">
-										<section>
-											<h3 class="text-lg font-semibold text-gray-100 mb-4">{t('roomSettings.context')}</h3>
-											<RoomContext room={room} />
-										</section>
-										<div class="border-t border-dark-700" />
-										<section>
-											<h3 class="text-lg font-semibold text-gray-100 mb-4">{t('roomSettings.roomSettings')}</h3>
-											<RoomSettings
-												room={room}
-												onSave={(params) => roomStore.updateSettings(params)}
-												onArchive={handleArchiveRoom}
-												onDelete={handleDeleteRoom}
-												isLoading={roomStore.loading.value}
-											/>
-										</section>
-									</div>
-								</div>
+								<RoomSettings
+									room={room}
+									onSave={(params) => roomStore.updateSettings(params)}
+									onArchive={handleArchiveRoom}
+									onDelete={handleDeleteRoom}
+									isLoading={roomStore.loading.value}
+								/>
 							)}
 						</div>
 					</>

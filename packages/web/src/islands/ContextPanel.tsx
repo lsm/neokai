@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import {
 	navSectionSignal,
 	contextPanelOpenSignal,
@@ -110,6 +110,61 @@ function SectionIcon({ type }: { type: string }) {
 		default:
 			return null;
 	}
+}
+
+function EditableRoomName({ name, className }: { name: string; className?: string }) {
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(name);
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	const startEdit = () => {
+		setDraft(name);
+		setEditing(true);
+		requestAnimationFrame(() => inputRef.current?.select());
+	};
+
+	const save = async () => {
+		setEditing(false);
+		const trimmed = draft.trim();
+		if (!trimmed || trimmed === name) return;
+		try {
+			await roomStore.updateSettings({ name: trimmed });
+		} catch {
+			toast.error(t('toast.saveFailed'));
+		}
+	};
+
+	const handleKeyDown = (e: KeyboardEvent) => {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			save();
+		} else if (e.key === 'Escape') {
+			setEditing(false);
+		}
+	};
+
+	if (editing) {
+		return (
+			<input
+				ref={inputRef}
+				type="text"
+				value={draft}
+				onInput={(e) => setDraft((e.target as HTMLInputElement).value)}
+				onBlur={save}
+				onKeyDown={handleKeyDown}
+				class={cn(className, 'bg-transparent border-b border-blue-500 outline-none w-full')}
+			/>
+		);
+	}
+
+	return (
+		<h2
+			class={cn(className, 'cursor-text hover:text-white transition-colors')}
+			onClick={startEdit}
+		>
+			{name}
+		</h2>
+	);
 }
 
 export function ContextPanel() {
@@ -260,7 +315,14 @@ export function ContextPanel() {
 				{/* Header */}
 				<div class={`p-4 border-b ${borderColors.ui.default}`}>
 					<div class={`flex items-center justify-between ${isRoomDetail ? '' : 'mb-3'}`}>
-						<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
+						{isRoomDetail ? (
+							<EditableRoomName
+								name={headerTitle}
+								className="text-lg font-semibold text-gray-100 truncate mr-2"
+							/>
+						) : (
+							<h2 class="text-lg font-semibold text-gray-100 truncate mr-2">{headerTitle}</h2>
+						)}
 						{/* Close button for mobile */}
 						<button
 							onClick={handlePanelClose}

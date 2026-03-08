@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
+	Room,
 	RoomGoal,
 	GoalPriority,
 	GoalStatus,
@@ -25,15 +26,116 @@ import { ConfirmModal } from '../ui/ConfirmModal';
 import { Skeleton } from '../ui/Skeleton';
 import { cn } from '../../lib/utils';
 import { t } from '../../lib/i18n';
+import { toast } from '../../lib/toast';
 import { PlusIcon, CheckIcon, ChevronRightIcon } from '../icons/index';
 
 // ─── Priority cycle helper ────────────────────────────────────────────────────
 
 const PRIORITY_ORDER: GoalPriority[] = ['low', 'normal', 'high', 'urgent'];
 
-function nextPriority(current: GoalPriority): GoalPriority {
-	const idx = PRIORITY_ORDER.indexOf(current);
-	return PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length];
+// ─── Room Context Block (inline-editable) ────────────────────────────────────
+
+function RoomContextBlock({ room }: { room: Room }) {
+	const [editingField, setEditingField] = useState<'background' | 'instructions' | null>(null);
+	const [draft, setDraft] = useState('');
+	const [saving, setSaving] = useState(false);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+	useEffect(() => {
+		if (editingField && textareaRef.current) {
+			textareaRef.current.focus();
+			// Move cursor to end
+			const len = textareaRef.current.value.length;
+			textareaRef.current.setSelectionRange(len, len);
+		}
+	}, [editingField]);
+
+	const startEdit = (field: 'background' | 'instructions') => {
+		setEditingField(field);
+		setDraft(field === 'background' ? (room.background || '') : (room.instructions || ''));
+	};
+
+	const saveEdit = async () => {
+		if (!editingField) return;
+		const field = editingField;
+		const trimmed = draft.trim();
+		const original = field === 'background' ? (room.background || '') : (room.instructions || '');
+
+		setEditingField(null);
+		if (trimmed === original) return;
+
+		setSaving(true);
+		try {
+			if (field === 'background') {
+				await roomStore.updateContext(trimmed || undefined, room.instructions || undefined);
+			} else {
+				await roomStore.updateContext(room.background || undefined, trimmed || undefined);
+			}
+			toast.success(t('toast.contextSaved'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : t('toast.saveFailed'));
+		} finally {
+			setSaving(false);
+		}
+	};
+
+	const cancelEdit = () => {
+		setEditingField(null);
+	};
+
+	const handleKeyDown = (e: KeyboardEvent) => {
+		if (e.key === 'Escape') {
+			cancelEdit();
+		}
+	};
+
+	const bg = room.background || '';
+	const instr = room.instructions || '';
+
+	const renderField = (
+		field: 'background' | 'instructions',
+		label: string,
+		value: string,
+		placeholder: string,
+		rows: number,
+	) => (
+		<div>
+			<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-2">{label}</h2>
+			{editingField === field ? (
+				<textarea
+					ref={textareaRef}
+					value={draft}
+					onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
+					onBlur={saveEdit}
+					onKeyDown={handleKeyDown}
+					class="w-full bg-dark-800 border border-blue-500/50 rounded-lg px-3 py-2 text-sm text-gray-200
+						placeholder-gray-600 focus:outline-none resize-y font-mono"
+					rows={rows}
+					placeholder={placeholder}
+				/>
+			) : (
+				<button
+					onClick={() => startEdit(field)}
+					class={cn(
+						'w-full text-left px-3 py-2 rounded-lg transition-colors text-sm',
+						value
+							? 'text-gray-300 hover:bg-dark-800/50 line-clamp-3 font-mono'
+							: 'text-gray-600 italic hover:bg-dark-800/50 hover:text-gray-500'
+					)}
+					disabled={saving}
+				>
+					{value || placeholder}
+				</button>
+			)}
+		</div>
+	);
+
+	return (
+		<div class="space-y-4">
+			{renderField('background', t('createRoom.backgroundLabel'), bg, t('roomContext.contextPlaceholder'), 4)}
+			{renderField('instructions', t('roomContext.instructions'), instr, t('roomContext.instructionsPlaceholder'), 3)}
+		</div>
+	);
 }
 
 // ─── Runtime Status Bar ───────────────────────────────────────────────────────
@@ -283,9 +385,13 @@ function GoalCard({
 		}
 	};
 
-	const handlePriorityClick = (e: MouseEvent) => {
-		e.stopPropagation();
-		onUpdate({ priority: nextPriority(goal.priority) });
+	const [showPriorityMenu, setShowPriorityMenu] = useState(false);
+
+	const handlePrioritySelect = (p: GoalPriority) => {
+		setShowPriorityMenu(false);
+		if (p !== goal.priority) {
+			onUpdate({ priority: p });
+		}
 	};
 
 	const linkedTasks = goal.linkedTaskIds
@@ -364,18 +470,49 @@ function GoalCard({
 						<span class={cn('text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0', style.badge)}>
 							{style.badgeText}
 						</span>
-						{/* Clickable priority badge */}
+						{/* Priority dropdown */}
 						{priority && (
-							<button
-								onClick={handlePriorityClick}
-								class={cn(
-									'text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0 transition-colors cursor-pointer',
-									priority.class
+							<div class="relative flex-shrink-0 flex items-center">
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										setShowPriorityMenu(!showPriorityMenu);
+									}}
+									class={cn(
+										'text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors cursor-pointer',
+										priority.class
+									)}
+								>
+									{priority.text}
+								</button>
+								{showPriorityMenu && (
+									<>
+										<div class="fixed inset-0 z-10" onClick={() => setShowPriorityMenu(false)} />
+										<div class="absolute left-0 top-full mt-1 z-20 bg-dark-900 border border-dark-700 rounded-lg shadow-2xl py-1 min-w-[80px]">
+											{PRIORITY_ORDER.map((p) => {
+												const cfg = priorityConfig[p];
+												if (!cfg) return null;
+												return (
+													<button
+														key={p}
+														class={cn(
+															'w-full px-3 py-1.5 text-xs text-left transition-colors hover:bg-dark-800',
+															p === goal.priority ? 'font-semibold' : '',
+															cfg.class.split(' ').find((c) => c.startsWith('text-')) ?? 'text-gray-300'
+														)}
+														onClick={(e) => {
+															e.stopPropagation();
+															handlePrioritySelect(p);
+														}}
+													>
+														{cfg.text}
+													</button>
+												);
+											})}
+										</div>
+									</>
 								)}
-								title={t('goals.clickToChangePriority')}
-							>
-								{priority.text}
-							</button>
+							</div>
 						)}
 					</div>
 					<div class="relative flex-shrink-0">
@@ -576,12 +713,14 @@ function InlineCreateGoal({
 
 export function RoomOverview({
 	roomId,
+	room,
 	onCreateGoal,
 	onUpdateGoal,
 	onDeleteGoal,
 	onLinkTask: _onLinkTask,
 }: {
 	roomId: string;
+	room: Room;
 	onCreateGoal: (goal: { title: string; description?: string; priority?: GoalPriority }) => Promise<void>;
 	onUpdateGoal: (goalId: string, updates: Partial<RoomGoal>) => Promise<void>;
 	onDeleteGoal: (goalId: string) => Promise<void>;
@@ -638,7 +777,10 @@ export function RoomOverview({
 
 	return (
 		<div class="h-full overflow-y-auto">
-			<div class="max-w-3xl mx-auto px-4 py-5 space-y-4">
+			<div class="max-w-3xl mx-auto px-4 py-5 space-y-6">
+				{/* Room context (background + instructions) */}
+				<RoomContextBlock room={room} />
+
 				{/* Runtime status bar */}
 				<RuntimeBar
 					state={runtimeState}
@@ -655,9 +797,9 @@ export function RoomOverview({
 						<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">{t('goals.title')}</h2>
 						<button
 							onClick={() => setShowInlineCreate(true)}
-							class="flex items-center gap-1 text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors"
+							class="flex items-center gap-1.5 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors px-2.5 py-1 rounded-md hover:bg-blue-900/20"
 						>
-							<PlusIcon className="w-3.5 h-3.5" />
+							<PlusIcon className="w-4 h-4" />
 							{t('goals.addGoal')}
 						</button>
 					</div>
