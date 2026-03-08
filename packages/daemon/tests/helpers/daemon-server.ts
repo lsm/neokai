@@ -23,7 +23,6 @@ import path from 'path';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
-import { installAutoMock, simpleTextResponse, type MockControls } from './mock-sdk';
 import {
 	createDevProxyController,
 	type DevProxyController,
@@ -92,12 +91,6 @@ export interface DaemonServerContext {
 	cleanup: () => Promise<void>;
 
 	/**
-	 * Mock controls (only available when NEOKAI_AGENT_SDK_MOCK is set).
-	 * Use to override responses per-session or change defaults.
-	 */
-	mockControls: MockControls | null;
-
-	/**
 	 * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
 	 * Sets ANTHROPIC_BASE_URL to point to Dev Proxy for API mocking.
 	 */
@@ -128,7 +121,17 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
 			...devProxyOptions,
 		});
-		await devProxy.start();
+		try {
+			await devProxy.start();
+		} catch (error) {
+			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
+			// Tests will use real API calls if credentials are available
+			console.warn(
+				'Warning: Could not start Dev Proxy, continuing without mocking. Error: ' +
+					(error instanceof Error ? error.message : String(error))
+			);
+			devProxy = null;
+		}
 	}
 
 	// Create a standalone daemon server entry point
@@ -229,7 +232,6 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		pid: daemonProcess.pid!,
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
-		mockControls: null, // Mock not available in spawned process mode
 		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
@@ -288,12 +290,21 @@ async function createInProcessDaemonServer(
 			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
 			...devProxyOptions,
 		});
-		await devProxy.start();
-
-		// Set ANTHROPIC_BASE_URL to point to Dev Proxy
-		// This is more reliable than proxy env vars since SDK subprocess inherits it
-		originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
-		process.env.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
+		try {
+			await devProxy.start();
+			// Set ANTHROPIC_BASE_URL to point to Dev Proxy
+			// This is more reliable than proxy env vars since SDK subprocess inherits it
+			originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
+			process.env.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
+		} catch (error) {
+			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
+			// Tests will use real API calls if credentials are available
+			console.warn(
+				'Warning: Could not start Dev Proxy, continuing without mocking. Error: ' +
+					(error instanceof Error ? error.message : String(error))
+			);
+			devProxy = null;
+		}
 	}
 
 	// Apply custom env vars
@@ -328,12 +339,6 @@ async function createInProcessDaemonServer(
 		verbose: false,
 		standalone: false,
 	});
-
-	// Install SDK mock when NEOKAI_AGENT_SDK_MOCK is set
-	let mockControls: MockControls | null = null;
-	if (process.env.NEOKAI_AGENT_SDK_MOCK) {
-		mockControls = installAutoMock(daemonContext, simpleTextResponse('mock response'));
-	}
 
 	// Connect to the daemon's WebSocket server (just like a real client)
 	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
@@ -375,7 +380,6 @@ async function createInProcessDaemonServer(
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		daemonContext, // Expose for advanced usage
-		mockControls,
 		devProxy,
 		kill: () => {
 			// For in-process, cleanup happens in waitForExit - just return true

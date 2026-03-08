@@ -141,7 +141,7 @@ jobs:
           - sdk
           - websocket
         include:
-          # mock_sdk: true → uses NEOKAI_AGENT_SDK_MOCK instead of real API calls.
+          # mock_sdk: true → uses Dev Proxy (NEOKAI_USE_DEV_PROXY) for mocking instead of real API calls.
           # These modules test infrastructure/plumbing and don't need real AI responses.
           # To run with real API locally, just omit the env var.
           #
@@ -258,15 +258,15 @@ jobs:
       - name: Install Dev Proxy (Linux)
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/install.sh)"
-          # Add devproxy to PATH for subsequent steps
-          echo "$HOME/.devproxy" >> $GITHUB_PATH
+          curl -sL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash
+          # The setup script installs devproxy to ./devproxy in the current directory
+          # Add it to PATH for subsequent steps
+          echo "$PWD/devproxy" >> $GITHUB_PATH
 
       - name: Start Dev Proxy
         if: matrix.mock_sdk == true
         run: |
-          cd .devproxy
-          devproxy --port 8000 &
+          devproxy --port 8000 --config-file .devproxy/devproxyrc.json &
           DEVPROXY_PID=$!
           echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
           # Wait for proxy to be ready

@@ -8,20 +8,19 @@
  *
  * MODES:
  * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Mock SDK: Set NEOKAI_AGENT_SDK_MOCK=1 for offline testing
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
- * Run with mock:
- *   NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/room/room-chat-constraints.test.ts
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/room/room-chat-constraints.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
-import { simpleTextResponse } from '../../helpers/mock-sdk';
 
-// Detect mock mode for faster timeouts (either in-process mock or Dev Proxy)
-const IS_MOCK = !!(process.env.NEOKAI_AGENT_SDK_MOCK || process.env.NEOKAI_USE_DEV_PROXY);
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEARDOWN_TIMEOUT = IS_MOCK ? 10000 : 20000;
 const IDLE_TIMEOUT = IS_MOCK ? 5000 : 120000;
@@ -63,11 +62,6 @@ describe('Room Chat Constraints', () => {
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-
-		// Update mock response if in mock mode
-		if (IS_MOCK && daemon.mockControls) {
-			daemon.mockControls.setDefaultResponses(simpleTextResponse('room ok'));
-		}
 	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
