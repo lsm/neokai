@@ -49,29 +49,71 @@ We were trying to build tool execution infrastructure, but `pi-coding-agent` alr
 
 ## Task Breakdown
 
-### Task 1: Add pi-coding-agent Dependency and Research API
+### Task 1: Add pi-coding-agent Dependency and Research API with Proof-of-Concept
 **Agent:** coder
 
 **Description:**
-Add `@mariozechner/pi-coding-agent` to dependencies and research its API to understand the integration points.
+Add `@mariozechner/pi-coding-agent` to dependencies, research its API, and create a proof-of-concept to verify the integration works before full migration.
 
 **Implementation Steps:**
-1. Add dependency: `bun add @mariozechner/pi-coding-agent` in `packages/daemon/`
-2. Explore the package exports:
-   - `createAgentSession` - main entry point
-   - `SessionManager` - session lifecycle
-   - `AuthStorage` - credential management
-   - `ModelRegistry` - model configuration
-   - Built-in tools availability
-3. Document the API patterns and how they map to NeoKai's architecture
+
+**Step 1: Add Dependency**
+```bash
+cd packages/daemon && bun add @mariozechner/pi-coding-agent
+```
+
+**Step 2: Create Proof-of-Concept**
+Create a minimal test file that verifies:
+- `createAgentSession` can be called successfully
+- Messages can be iterated via async generator
+- Built-in tools are available and work
+- Message format can be translated to `SDKMessage`
+
+```typescript
+// packages/daemon/tests/unit/providers/pi-coding-agent-poc.test.ts
+import { createAgentSession } from '@mariozechner/pi-coding-agent';
+
+describe('pi-coding-agent PoC', () => {
+    it('should create session and iterate messages', async () => {
+        // Mock the HTTP layer to avoid real API calls
+        const session = await createAgentSession({
+            provider: 'github-copilot',
+            model: 'gpt-4',
+            cwd: '/tmp/test',
+            systemPrompt: 'You are a helpful assistant.',
+            // Verify correct config option name for tools
+        });
+
+        const messages = [];
+        for await (const msg of session.messages()) {
+            messages.push(msg);
+            if (messages.length >= 3) break; // Just verify first few
+        }
+
+        expect(messages.length).toBeGreaterThan(0);
+    });
+});
+```
+
+**Step 3: Document API Findings**
+Update this plan or add code comments with answers to:
+1. Does `pi-coding-agent` export an async generator or event emitter for messages?
+2. What is the exact message format from `pi-coding-agent`?
+3. How does `pi-coding-agent` handle streaming text deltas?
+4. What configuration options does `createAgentSession` accept? (Verify if `tools: 'builtin'` is correct)
+5. How do we map NeoKai's session ID to `pi-coding-agent`'s session system?
+6. How does `pi-coding-agent` handle MCP server tools? (Can they be passed through?)
+7. Does `pi-coding-agent` have its own permission system, or can we integrate ours?
 
 **Files to modify:**
 - `packages/daemon/package.json` - add dependency
+- `packages/daemon/tests/unit/providers/pi-coding-agent-poc.test.ts` (NEW) - proof-of-concept
 
 **Acceptance Criteria:**
 - `@mariozechner/pi-coding-agent` added to dependencies
-- API exploration documented in code comments or this plan
-- Understand how `createAgentSession` yields messages compatible with NeoKai's `SDKMessage` format
+- Proof-of-concept test passes (with mocked HTTP)
+- API exploration documented
+- All 7 open questions answered
 
 ---
 
@@ -81,6 +123,19 @@ Add `@mariozechner/pi-coding-agent` to dependencies and research its API to unde
 
 **Description:**
 Replace the low-level `pi-agent-core` Agent with `pi-coding-agent`'s `createAgentSession`.
+
+**Migration Strategy: Complete Rewrite**
+
+The existing `pimono-adapter.ts` is ~800 lines with significant complexity. Given the architectural change, we will:
+
+1. **Create a new adapter file** (`pimono-adapter-v2.ts`) using `pi-coding-agent`
+2. **Keep the old file** temporarily for reference (rename to `pimono-adapter.deprecated.ts`)
+3. **Delete old file** after Task 3 proves the new adapter works
+
+This approach:
+- Allows easy rollback if issues arise
+- Provides reference during migration
+- Results in cleaner code (not a gradual refactor of fundamentally wrong architecture)
 
 **Implementation Approach:**
 
@@ -96,22 +151,24 @@ const agent = new Agent({
 await agent.prompt(messages);
 ```
 
-New code (conceptual):
+New code (exact config TBD in Task 1):
 ```typescript
 import { createAgentSession } from '@mariozechner/pi-coding-agent';
 
 const session = await createAgentSession({
-    provider: 'github-copilot',  // or 'openai'
+    provider: provider,  // 'github-copilot' or 'openai'
     model: modelId,
     cwd: options.cwd,
     systemPrompt: options.systemPrompt,
-    tools: 'builtin',  // Use built-in coding tools
-    // ... other config
+    // tools config TBD based on Task 1 findings
+    // (may be 'builtin', or an array, or a different option)
+    sessionId: context.sessionId,  // Map NeoKai session ID
 });
 
 // Iterate over session messages
 for await (const message of session.messages()) {
-    // Convert to SDKMessage format and yield
+    const sdkMessage = translateToSDKMessage(message, context.sessionId);
+    yield sdkMessage;
 }
 ```
 
@@ -122,13 +179,14 @@ for await (const message of session.messages()) {
 4. Error handling: Map errors to NeoKai's error system
 
 **Files to modify:**
-- `packages/daemon/src/lib/providers/pimono-adapter.ts` - major refactor
-- Possibly delete or simplify significantly
+- `packages/daemon/src/lib/providers/pimono-adapter.ts` → rename to `pimono-adapter.deprecated.ts`
+- `packages/daemon/src/lib/providers/pimono-adapter.ts` (NEW) - fresh implementation
 
 **Acceptance Criteria:**
 - `pi-coding-agent`'s `createAgentSession` is used instead of `pi-agent-core`'s `Agent`
 - Built-in tools work automatically (no manual tool executor needed)
 - Message format is correctly translated to `SDKMessage`
+- Old adapter preserved as `.deprecated.ts` for reference
 
 ---
 
@@ -141,17 +199,51 @@ Update the provider implementations to use the refactored `pimono-adapter`.
 
 Since the adapter will now use `pi-coding-agent`, the provider code should be simpler:
 - Remove `undefined` tool executor parameter
-- Let `pi-coding-agent` handle authentication via its `AuthStorage`
+- Let `pi-coding-agent` handle authentication via its `AuthStorage` OR keep NeoKai's auth (see below)
 - Simplify the call signature
+
+**NeoKai Tool Integration Questions (Answered in Task 1, Implemented Here):**
+
+**MCP Server Tools:**
+- If `pi-coding-agent` supports custom tools: Pass MCP tools through
+- If not: MCP tools will only work with Anthropic SDK path (document this limitation)
+
+**Permission System (`canUseTool`):**
+- If `pi-coding-agent` has its own permission callback: Use it
+- If not: We'll need to wrap the tool execution to add our permission layer
+
+**Current assessment (to verify in Task 1):**
+Most likely, `pi-coding-agent` handles tool execution internally without exposing a permission hook. In that case, we have two options:
+1. **Accept pi-coding-agent's built-in behavior** - simpler, but loses NeoKai's permission UI
+2. **Configure pi-coding-agent with `autoApprove: false`** (if supported) and handle permissions
+
+**Session Management:**
+NeoKai's session management (`AgentSession`, `SessionManager`) wraps the provider layer. We will:
+- Keep NeoKai's session management as the outer layer
+- Pass NeoKai's `sessionId` to `pi-coding-agent` for correlation
+- `pi-coding-agent`'s internal session management is an implementation detail
+
+Architecture:
+```
+NeoKai Session (outer layer - our management)
+    ↓
+pi-coding-agent session (inner layer - for tool execution)
+```
+
+We do NOT need to use `pi-coding-agent`'s `SessionManager` - NeoKai already has one.
 
 **Files to modify:**
 - `packages/daemon/src/lib/providers/openai-provider.ts`
 - `packages/daemon/src/lib/providers/github-copilot-provider.ts`
+- `packages/daemon/src/lib/providers/pimono-adapter.deprecated.ts` - DELETE after providers work
 
 **Acceptance Criteria:**
 - Providers use the refactored `pimono-adapter`
 - No more `undefined` tool executor passed
 - Authentication flows still work correctly
+- MCP tools work OR limitation is documented
+- Permission system works OR acceptable alternative documented
+- Old deprecated adapter deleted
 
 ---
 
@@ -183,6 +275,7 @@ vi.mock('@mariozechner/pi-coding-agent', () => ({
 - Message format translation to SDKMessage
 - Tool execution (verify it's handled by pi-coding-agent)
 - Error handling
+- Abort signal handling
 
 **Files to create:**
 - `packages/daemon/tests/unit/providers/pimono-adapter.test.ts`
@@ -211,6 +304,7 @@ Create integration tests that verify end-to-end tool execution with pi-mono prov
 2. Send message that triggers tool use
 3. Verify tool is executed and results returned
 4. Verify multi-turn conversation works
+5. Verify permission system works (if applicable)
 
 **Files to create:**
 - `packages/daemon/tests/online/pimono-tool-execution.test.ts`
@@ -248,11 +342,11 @@ Add Playwright E2E tests to verify the full user flow works with pi-mono provide
 ## Dependency Graph
 
 ```
-Task 1 (Add Dependency & Research)
+Task 1 (Add Dependency & PoC)
     │
-    └──→ Task 2 (Refactor Adapter)
+    └──→ Task 2 (Refactor Adapter - Complete Rewrite)
               │
-              └──→ Task 3 (Update Providers)
+              └──→ Task 3 (Update Providers + Delete Old Code)
                         │
                         └──→ Task 4 (Unit Tests)
                                   │
@@ -265,9 +359,9 @@ Tasks are sequential because each depends on the previous one being complete.
 
 ## Implementation Order
 
-1. **Task 1** - Add dependency and research API
-2. **Task 2** - Core refactor to use `pi-coding-agent`
-3. **Task 3** - Update provider implementations
+1. **Task 1** - Add dependency, create PoC, document API findings
+2. **Task 2** - Core refactor to use `pi-coding-agent` (complete rewrite, keep old as `.deprecated.ts`)
+3. **Task 3** - Update providers, verify MCP tools and permissions, delete deprecated code
 4. **Task 4** - Unit tests
 5. **Task 5** - Integration tests
 6. **Task 6** - E2E tests
@@ -293,6 +387,8 @@ ToolExecutionCallback → undefined (BROKEN!)
 ### Architecture After (Correct)
 
 ```
+NeoKai Session (NeoKai's session management - OUTER LAYER)
+    ↓
 NeoKai AgentSession
     ↓
 QueryRunner
@@ -301,10 +397,14 @@ Provider.createQuery (OpenAI/Copilot)
     ↓
 piMonoQueryGenerator (refactored)
     ↓
-pi-coding-agent createAgentSession (high-level)
+pi-coding-agent createAgentSession (INNER session for tools)
     ↓
 Built-in tools work automatically!
 ```
+
+**Session Layers:**
+- NeoKai's session management is the outer layer (we keep this)
+- pi-coding-agent's session is an implementation detail (inner layer)
 
 ### Key Differences
 
@@ -312,31 +412,27 @@ Built-in tools work automatically!
 |--------|-------------------------|--------------------------|
 | Level | Low-level framework | High-level coding SDK |
 | Tools | Manual via callback | Built-in (read, bash, edit, etc.) |
-| Session | Manual state management | SessionManager built-in |
-| Auth | Manual | AuthStorage built-in |
+| Session | Manual state management | SessionManager built-in (but we use our own) |
+| Auth | Manual | AuthStorage built-in (we may use ours instead) |
 | Complexity | High (we build everything) | Low (SDK handles it) |
+| MCP Tools | Would need manual integration | TBD (verify in Task 1) |
+| Permissions | Would need manual callback | TBD (verify in Task 1) |
 
-### Message Format Translation
+### Migration Strategy
 
-The `pi-coding-agent` likely has its own message format. We need to translate to NeoKai's `SDKMessage`:
+| Phase | Action |
+|-------|--------|
+| Task 1 | Add new dependency, create PoC, answer questions |
+| Task 2 | Create new adapter (keep old as `.deprecated.ts`) |
+| Task 3 | Update providers, verify everything works, delete deprecated |
+| Task 4-6 | Testing |
 
-```typescript
-// Conceptual translation
-function piCodingMessageToSdk(msg: PiCodingMessage): SDKMessage {
-    switch (msg.type) {
-        case 'text':
-            return { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: msg.content }] }, ... };
-        case 'tool_use':
-            return { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: msg.id, name: msg.name, input: msg.input }] }, ... };
-        // ... etc
-    }
-}
-```
-
-### Open Questions for Task 1
+### Open Questions (Answered in Task 1)
 
 1. Does `pi-coding-agent` export an async generator or event emitter for messages?
 2. What is the exact message format from `pi-coding-agent`?
 3. How does `pi-coding-agent` handle streaming text deltas?
-4. What configuration options does `createAgentSession` accept?
+4. What configuration options does `createAgentSession` accept? **(Verify if `tools: 'builtin'` is correct or if it's an array/object)**
 5. How do we map NeoKai's session ID to `pi-coding-agent`'s session system?
+6. **How does `pi-coding-agent` handle MCP server tools? Can they be passed through?**
+7. **Does `pi-coding-agent` have its own permission system, or can we integrate our `canUseTool` callback?**
