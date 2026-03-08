@@ -121,7 +121,17 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
 			...devProxyOptions,
 		});
-		await devProxy.start();
+		try {
+			await devProxy.start();
+		} catch (error) {
+			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
+			// Tests will use real API calls if credentials are available
+			console.warn(
+				'Warning: Could not start Dev Proxy, continuing without mocking. Error: ' +
+					(error instanceof Error ? error.message : String(error))
+			);
+			devProxy = null;
+		}
 	}
 
 	// Create a standalone daemon server entry point
@@ -280,12 +290,21 @@ async function createInProcessDaemonServer(
 			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
 			...devProxyOptions,
 		});
-		await devProxy.start();
-
-		// Set ANTHROPIC_BASE_URL to point to Dev Proxy
-		// This is more reliable than proxy env vars since SDK subprocess inherits it
-		originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
-		process.env.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
+		try {
+			await devProxy.start();
+			// Set ANTHROPIC_BASE_URL to point to Dev Proxy
+			// This is more reliable than proxy env vars since SDK subprocess inherits it
+			originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
+			process.env.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
+		} catch (error) {
+			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
+			// Tests will use real API calls if credentials are available
+			console.warn(
+				'Warning: Could not start Dev Proxy, continuing without mocking. Error: ' +
+					(error instanceof Error ? error.message : String(error))
+			);
+			devProxy = null;
+		}
 	}
 
 	// Apply custom env vars

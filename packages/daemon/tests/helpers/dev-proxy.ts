@@ -176,22 +176,13 @@ function getCaCertPath(): string {
 }
 
 /**
- * Check if devproxy is running on the expected port
- * This is more reliable than checking if the binary is in PATH,
- * especially in CI where the proxy may have been started in a different step
+ * Check if devproxy command is available
  */
-async function isDevProxyInstalled(port: number = 8000): Promise<boolean> {
+async function isDevProxyInstalled(): Promise<boolean> {
 	return new Promise((resolve) => {
-		const http = require('http');
-		const req = http.get(`http://127.0.0.1:${port}/`, (res) => {
-			res.resume();
-			resolve(true);
-		});
-		req.on('error', () => resolve(false));
-		req.setTimeout(1000, () => {
-			req.destroy();
-			resolve(false);
-		});
+		const proc = spawn('which', ['devproxy'], { stdio: 'ignore' });
+		proc.on('close', (code) => resolve(code === 0));
+		proc.on('error', () => resolve(false));
 	});
 }
 
@@ -393,9 +384,11 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 				throw new Error('Dev Proxy is already running');
 			}
 
-			// Check if devproxy is running on the expected port
-			if (!(await isDevProxyInstalled(port))) {
-				throw new Error('devproxy is not running. Please start devproxy on port ' + port);
+			// Check if devproxy is installed
+			if (!(await isDevProxyInstalled())) {
+				throw new Error(
+					'devproxy is not installed. Install with: brew tap dotnet/dev-proxy && brew install dev-proxy'
+				);
 			}
 
 			// Ensure log directory exists
