@@ -20,8 +20,8 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 import { simpleTextResponse } from '../../helpers/mock-sdk';
 
-// Detect mock mode for faster timeouts
-const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
+// Detect mock mode for faster timeouts (either in-process mock or Dev Proxy)
+const IS_MOCK = !!(process.env.NEOKAI_AGENT_SDK_MOCK || process.env.NEOKAI_USE_DEV_PROXY);
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 const TEARDOWN_TIMEOUT = IS_MOCK ? 10000 : 20000;
 const IDLE_TIMEOUT = IS_MOCK ? 5000 : 120000;

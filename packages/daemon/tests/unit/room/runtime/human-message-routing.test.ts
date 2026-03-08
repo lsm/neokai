@@ -150,13 +150,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, injectMessageToWorker } = makeRuntime();
 			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_worker'));
 
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskId,
-				message,
-				'worker'
-			);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message, 'worker');
 
 			expect(result.success).toBe(true);
 			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
@@ -166,13 +160,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, injectMessageToLeader } = makeRuntime();
 			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_worker'));
 
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskId,
-				message,
-				'leader'
-			);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message, 'leader');
 
 			expect(result.success).toBe(true);
 			expect(injectMessageToLeader).toHaveBeenCalledWith(taskId, message);

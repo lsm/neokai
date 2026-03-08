@@ -252,6 +252,45 @@ export NODE_EXTRA_CA_CERTS=~/.proxy/rootCA.pem
 NEOKAI_TEST_ONLINE=true bun test packages/daemon/tests/online/
 ```
 
+### Using NEOKAI_USE_DEV_PROXY Environment Variable
+
+The `NEOKAI_USE_DEV_PROXY=1` environment variable enables Dev Proxy integration with the test helper:
+
+When set, the `createDaemonServer()` helper in `packages/daemon/tests/helpers/daemon-server.ts` will:
+
+1. Start Dev Proxy before creating the daemon server
+2. Set proxy environment variables automatically
+3. Stop Dev Proxy when the daemon server is cleaned up
+
+To use it:
+
+```bash
+# Run tests with Dev Proxy (the helper starts/stops proxy automatically)
+NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/agent/agent-session-sdk.test.ts
+```
+
+This approach is cleaner than manually setting `HTTP_PROXY` and `HTTPS_PROXY`.
+
+### Mock Mode Detection
+
+Test files detect mock mode using either `NEOKAI_AGENT_SDK_MOCK` or `NEOKAI_USE_DEV_PROXY`:
+
+```typescript
+// Detect mock mode for faster timeouts (either in-process mock or Dev Proxy)
+const IS_MOCK = !!(process.env.NEOKAI_AGENT_SDK_MOCK || process.env.NEOKAI_USE_DEV_PROXY);
+```
+
+Both modes use shorter timeouts for faster test execution.
+
+### Backwards Compatibility
+
+The existing `NEOKAI_AGENT_SDK_MOCK=1` mode continues to work for backwards compatibility:
+
+```bash
+# Old approach (still works)
+NEOKAI_AGENT_SDK_MOCK=1 bun test packages/daemon/tests/online/agent/agent-session-sdk.test.ts
+```
+
 ### Integration with NeoKai Codebase
 
 The NeoKai daemon applies provider environment variables to `process.env` before SDK query creation via `providerService.applyEnvVarsToProcess()`. The SDK subprocess inherits these variables.
