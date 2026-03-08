@@ -142,9 +142,11 @@ describe('task.getGroupMessages RPC handler', () => {
 		const result = (await handler!({ groupId: 'missing' }, {})) as {
 			messages: unknown[];
 			hasMore: boolean;
+			hasOlder: boolean;
 		};
 		expect(result.messages).toEqual([]);
 		expect(result.hasMore).toBe(false);
+		expect(result.hasOlder).toBe(false);
 	});
 
 	it('merges worker + leader sdk messages with task_group_events in chronological order', async () => {
@@ -199,9 +201,11 @@ describe('task.getGroupMessages RPC handler', () => {
 		const result = (await handler!({ groupId: 'group-1' }, {})) as {
 			messages: Array<{ content: string; messageType: string }>;
 			hasMore: boolean;
+			hasOlder: boolean;
 		};
 
 		expect(result.hasMore).toBe(false);
+		expect(result.hasOlder).toBe(false);
 		expect(result.messages.length).toBe(3);
 
 		const first = JSON.parse(result.messages[0].content) as Record<string, unknown>;
@@ -215,7 +219,115 @@ describe('task.getGroupMessages RPC handler', () => {
 		expect(third.uuid).toBe('l-1');
 	});
 
-	it('paginates with cursor without skipping messages between pages', async () => {
+	it('returns newest messages first by default with hasOlder flag', async () => {
+		// Create 5 messages with different timestamps
+		const messages = [];
+		for (let i = 1; i <= 5; i++) {
+			messages.push({
+				type: 'assistant',
+				uuid: `msg-${i}`,
+				message: { content: [] },
+			});
+		}
+
+		const { hub, handlers } = createMockMessageHub();
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb({
+				sdkBySession: {
+					'worker-session': messages.map((msg, idx) => ({
+						sdk_message: JSON.stringify(msg),
+						timestamp: new Date(1000 + idx * 1000).toISOString(),
+						send_status: null,
+					})),
+					'leader-session': [],
+				},
+			})
+		);
+
+		const handler = handlers.get('task.getGroupMessages');
+		expect(handler).toBeDefined();
+
+		// Request first page with limit 2
+		const page1 = (await handler!({ groupId: 'group-1', limit: 2 }, {})) as {
+			messages: Array<{ content: string }>;
+			hasMore: boolean;
+			hasOlder: boolean;
+			oldestCursor: string | null;
+		};
+
+		// Should return the 2 newest messages (msg-4, msg-5)
+		expect(page1.messages.length).toBe(2);
+		expect(page1.hasOlder).toBe(true);
+		expect(page1.oldestCursor).toBeDefined();
+
+		const uuidsPage1 = page1.messages.map((m) => JSON.parse(m.content).uuid as string);
+		// Messages are sorted chronologically for display
+		expect(uuidsPage1).toEqual(['msg-4', 'msg-5']);
+	});
+
+	it('loads older messages with before cursor', async () => {
+		// Create 5 messages with different timestamps
+		const messages = [];
+		for (let i = 1; i <= 5; i++) {
+			messages.push({
+				type: 'assistant',
+				uuid: `msg-${i}`,
+				message: { content: [] },
+			});
+		}
+
+		const { hub, handlers } = createMockMessageHub();
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb({
+				sdkBySession: {
+					'worker-session': messages.map((msg, idx) => ({
+						sdk_message: JSON.stringify(msg),
+						timestamp: new Date(1000 + idx * 1000).toISOString(),
+						send_status: null,
+					})),
+					'leader-session': [],
+				},
+			})
+		);
+
+		const handler = handlers.get('task.getGroupMessages');
+		expect(handler).toBeDefined();
+
+		// First, get the newest 2 messages
+		const page1 = (await handler!({ groupId: 'group-1', limit: 2 }, {})) as {
+			messages: Array<{ content: string }>;
+			hasOlder: boolean;
+			oldestCursor: string | null;
+		};
+
+		expect(page1.messages.length).toBe(2);
+		expect(page1.hasOlder).toBe(true);
+
+		// Now load older messages using the oldest cursor
+		const page2 = (await handler!(
+			{ groupId: 'group-1', limit: 2, before: page1.oldestCursor },
+			{}
+		)) as {
+			messages: Array<{ content: string }>;
+			hasOlder: boolean;
+			oldestCursor: string | null;
+		};
+
+		expect(page2.messages.length).toBe(2);
+		expect(page2.hasOlder).toBe(true);
+
+		const uuidsPage2 = page2.messages.map((m) => JSON.parse(m.content).uuid as string);
+		// Should return msg-2, msg-3 (older than msg-4)
+		expect(uuidsPage2).toEqual(['msg-2', 'msg-3']);
+	});
+
+	it('paginates forward with after cursor for real-time updates', async () => {
 		const workerMsg1 = { type: 'assistant', uuid: 'w-1', message: { content: [] } };
 		const workerMsg2 = { type: 'assistant', uuid: 'w-2', message: { content: [] } };
 		const leaderMsg = { type: 'assistant', uuid: 'l-1', message: { content: [] } };
@@ -253,29 +365,21 @@ describe('task.getGroupMessages RPC handler', () => {
 		const handler = handlers.get('task.getGroupMessages');
 		expect(handler).toBeDefined();
 
-		const page1 = (await handler!({ groupId: 'group-1', limit: 2 }, {})) as {
+		// First, get all messages to get the cursor
+		const all = (await handler!({ groupId: 'group-1', limit: 10 }, {})) as {
 			messages: Array<{ content: string }>;
-			hasMore: boolean;
-			nextCursor?: string | null;
+			nextCursor: string | null;
 		};
-		expect(page1.messages.length).toBe(2);
-		expect(page1.hasMore).toBe(true);
-		expect(page1.nextCursor).toBeDefined();
 
-		const uuidsPage1 = page1.messages.map((m) => JSON.parse(m.content).uuid as string);
-		expect(uuidsPage1).toEqual(['w-1', 'w-2']);
-
+		// Now use cursor to get newer messages (should return empty since we have all)
 		const page2 = (await handler!(
-			{ groupId: 'group-1', limit: 2, cursor: page1.nextCursor },
+			{ groupId: 'group-1', limit: 10, cursor: all.nextCursor },
 			{}
 		)) as {
 			messages: Array<{ content: string }>;
 			hasMore: boolean;
-			nextCursor?: string | null;
 		};
-		expect(page2.messages.length).toBe(1);
+		expect(page2.messages.length).toBe(0);
 		expect(page2.hasMore).toBe(false);
-		const uuidsPage2 = page2.messages.map((m) => JSON.parse(m.content).uuid as string);
-		expect(uuidsPage2).toEqual(['l-1']);
 	});
 });

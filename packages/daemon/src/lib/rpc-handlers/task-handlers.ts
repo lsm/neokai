@@ -391,8 +391,20 @@ export function setupTaskHandlers(
 	});
 
 	// task.getGroupMessages - Get a unified timeline for a session group
+	//
+	// Pagination modes:
+	//  1. Initial load (no cursor): Returns the NEWEST `limit` messages
+	//  2. Load older (before cursor): Returns messages older than the cursor
+	//  3. Load newer (after cursor): Returns messages newer than the cursor (for real-time updates)
+	//
+	// The cursor format is: `${timestamp_padded}|${sourceKey}`
 	messageHub.onRequest('task.getGroupMessages', async (data) => {
-		const params = data as { groupId: string; afterId?: number; cursor?: string; limit?: number };
+		const params = data as {
+			groupId: string;
+			cursor?: string;
+			before?: string; // Cursor to load older messages (messages with cursor < before)
+			limit?: number;
+		};
 
 		if (!params.groupId) {
 			throw new Error('Group ID is required');
@@ -401,27 +413,46 @@ export function setupTaskHandlers(
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
 		const group = groupRepo.getGroup(params.groupId);
 		if (!group) {
-			return { messages: [], hasMore: false };
+			return {
+				messages: [],
+				hasMore: false,
+				nextCursor: null,
+				hasOlder: false,
+				oldestCursor: null,
+			};
 		}
 
 		const sdkRepo = new SDKMessageRepository(db.getDatabase());
-		const fetchAllSessionMessages = (sessionId: string): unknown[] => {
-			const pageSize = 500;
-			let before: number | undefined;
-			const all: unknown[] = [];
-			while (true) {
-				const page = sdkRepo.getSDKMessages(sessionId, pageSize, before);
-				if (page.messages.length === 0) break;
-				all.unshift(...page.messages);
-				if (!page.hasMore) break;
-				const oldest = page.messages[0] as { timestamp?: number };
-				if (typeof oldest.timestamp !== 'number') break;
-				before = oldest.timestamp;
+
+		// Validate and normalize limit parameter
+		const limit = Math.max(1, Math.min(params.limit ?? 50, 200));
+
+		// Parse 'before' cursor to extract timestamp for DB-level filtering
+		// Cursor format: `${timestamp_padded}|${sourceKey}`
+		let beforeTimestamp: number | undefined;
+		if (params.before) {
+			const timestampPart = params.before.split('|')[0];
+			const parsed = parseInt(timestampPart, 10);
+			if (!Number.isNaN(parsed)) {
+				beforeTimestamp = parsed;
 			}
-			return all;
+		}
+
+		// Fetch messages with pagination support at DB level
+		// For 'before' cursor, we need messages older than a timestamp
+		// For initial load, we want the newest messages
+		const fetchSessionMessages = (
+			sessionId: string,
+			options?: { beforeTimestamp?: number; fetchLimit?: number }
+		): unknown[] => {
+			const fetchLimit = options?.fetchLimit ?? limit;
+			const before = options?.beforeTimestamp;
+			const page = sdkRepo.getSDKMessages(sessionId, fetchLimit, before);
+			return page.messages;
 		};
-		const workerMessages = fetchAllSessionMessages(group.workerSessionId);
-		const leaderMessages = fetchAllSessionMessages(group.leaderSessionId);
+
+		const workerMessages = fetchSessionMessages(group.workerSessionId, { beforeTimestamp });
+		const leaderMessages = fetchSessionMessages(group.leaderSessionId, { beforeTimestamp });
 
 		const toEnrichedTimeline = (messages: unknown[], sessionId: string, role: string) => {
 			const shortSessionId = sessionId.slice(0, 8);
@@ -454,19 +485,13 @@ export function setupTaskHandlers(
 			});
 		};
 
-		const fetchAllGroupEvents = (groupId: string) => {
-			const pageSize = 500;
-			let afterId = 0;
-			const all = [] as ReturnType<SessionGroupRepository['getEvents']>['events'];
-			while (true) {
-				const page = groupRepo.getEvents(groupId, { limit: pageSize, afterId });
-				all.push(...page.events);
-				if (!page.hasMore || page.events.length === 0) break;
-				afterId = page.events[page.events.length - 1].id;
-			}
-			return all;
+		// Fetch group events with pagination
+		const fetchGroupEvents = (groupId: string, options?: { limit?: number }) => {
+			const limit = options?.limit ?? 500;
+			const page = groupRepo.getEvents(groupId, { limit });
+			return page.events;
 		};
-		const groupEvents = fetchAllGroupEvents(group.id);
+		const groupEvents = fetchGroupEvents(group.id);
 
 		const merged = [
 			...toEnrichedTimeline(workerMessages as unknown[], group.workerSessionId, group.workerRole),
@@ -501,15 +526,60 @@ export function setupTaskHandlers(
 				...msg,
 			}));
 
-		const limit = params.limit ?? 100;
-		const cursor = params.cursor;
-		const filtered = cursor
-			? merged.filter((m) => m.cursor > cursor)
-			: params.afterId != null
-				? merged.slice(params.afterId)
-				: merged;
+		const beforeCursor = params.before;
+		const afterCursor = params.cursor;
+
+		let filtered = merged;
+		let hasOlder = false;
+
+		if (beforeCursor) {
+			// Load older messages: return messages with cursor < beforeCursor
+			filtered = merged.filter((m) => m.cursor < beforeCursor);
+			// Sort in descending order to get the newest of the older messages
+			filtered.sort((a, b) => b.cursor.localeCompare(a.cursor));
+			const page = filtered.slice(0, limit + 1);
+			hasOlder = page.length > limit;
+			const messages = page.slice(0, limit).map((msg, idx) => ({
+				id: idx + 1,
+				groupId: msg.groupId,
+				sessionId: msg.sessionId,
+				role: msg.role,
+				messageType: msg.messageType,
+				content: msg.content,
+				createdAt: msg.createdAt,
+				cursor: msg.cursor,
+			}));
+			// Re-sort messages in chronological order for display
+			messages.sort((a, b) => a.createdAt - b.createdAt);
+			// After re-sorting, messages[0] is the oldest
+			const oldestCursor = messages.length > 0 ? messages[0].cursor : null;
+			return { messages, hasMore: false, nextCursor: null, hasOlder, oldestCursor };
+		}
+
+		if (afterCursor) {
+			// Load newer messages: return messages with cursor > afterCursor
+			filtered = merged.filter((m) => m.cursor > afterCursor);
+			const page = filtered.slice(0, limit + 1);
+			const hasMore = page.length > limit;
+			const messages = page.slice(0, limit).map((msg, idx) => ({
+				id: idx + 1,
+				groupId: msg.groupId,
+				sessionId: msg.sessionId,
+				role: msg.role,
+				messageType: msg.messageType,
+				content: msg.content,
+				createdAt: msg.createdAt,
+				cursor: msg.cursor,
+			}));
+			const nextCursor = messages.length > 0 ? messages[messages.length - 1].cursor : null;
+			return { messages, hasMore, nextCursor, hasOlder: false, oldestCursor: null };
+		}
+
+		// Initial load: return the newest `limit` messages
+		// Sort in descending order to get newest first
+		filtered.sort((a, b) => b.cursor.localeCompare(a.cursor));
 		const page = filtered.slice(0, limit + 1);
-		const hasMore = page.length > limit;
+		hasOlder = page.length > limit;
 		const messages = page.slice(0, limit).map((msg, idx) => ({
 			id: idx + 1,
 			groupId: msg.groupId,
@@ -518,10 +588,15 @@ export function setupTaskHandlers(
 			messageType: msg.messageType,
 			content: msg.content,
 			createdAt: msg.createdAt,
+			cursor: msg.cursor,
 		}));
-		const nextCursor = messages.length > 0 ? page[messages.length - 1].cursor : null;
+		// Re-sort messages in chronological order for display
+		messages.sort((a, b) => a.createdAt - b.createdAt);
+		// After re-sorting, messages[0] is the oldest, messages[length-1] is the newest
+		const oldestCursor = messages.length > 0 ? messages[0].cursor : null;
+		const nextCursor = messages.length > 0 ? messages[messages.length - 1].cursor : null;
 
-		return { messages, hasMore, nextCursor };
+		return { messages, hasMore: false, nextCursor, hasOlder, oldestCursor };
 	});
 
 	// task.sendHumanMessage - Send a human message to the active agent in a task group
