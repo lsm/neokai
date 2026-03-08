@@ -196,13 +196,13 @@ export interface NeoTask {
 	/** ID of the planning task that created this task (for draft→pending promotion) */
 	createdByTaskId?: string;
 	/** Progress percentage (0-100) */
-	progress?: number;
+	progress?: number | null;
 	/** Description of current step */
-	currentStep?: string;
+	currentStep?: string | null;
 	/** Result of completed task */
-	result?: string;
+	result?: string | null;
 	/** Error message for failed task */
-	error?: string;
+	error?: string | null;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
 	/** Creation timestamp (milliseconds since epoch) */
@@ -248,10 +248,10 @@ export interface UpdateTaskParams {
 	description?: string;
 	status?: TaskStatus;
 	priority?: TaskPriority;
-	progress?: number;
-	currentStep?: string;
-	result?: string;
-	error?: string;
+	progress?: number | null;
+	currentStep?: string | null;
+	result?: string | null;
+	error?: string | null;
 	dependsOn?: string[];
 }
 
@@ -286,11 +286,11 @@ export interface TaskSummary {
 	title: string;
 	status: TaskStatus;
 	priority: TaskPriority;
-	progress?: number;
+	progress?: number | null;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
 	/** Error message for failed tasks */
-	error?: string;
+	error?: string | null;
 }
 
 /**

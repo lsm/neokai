@@ -7,6 +7,7 @@
  * - task.get - Get task details
  * - task.fail - Fail a task (used by tests to simulate failure)
  * - task.cancel - Cancel a task (human-initiated cancellation)
+ * - task.setStatus - Set task status with validation (human-initiated status change)
  * - task.reject - Reject a task review (human-initiated rejection with feedback)
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
@@ -18,7 +19,7 @@ import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
-import { TaskManager } from '../room/managers/task-manager';
+import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -28,7 +29,7 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask'
+	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -231,6 +232,72 @@ export function setupTaskHandlers(
 		emitRoomOverview(params.roomId);
 
 		return { task: cancelledTask };
+	});
+
+	// task.setStatus - Set task status with validation (human-initiated)
+	messageHub.onRequest('task.setStatus', async (data) => {
+		const params = data as {
+			roomId: string;
+			taskId: string;
+			status: TaskStatus;
+			result?: string;
+			error?: string;
+		};
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!params.status) {
+			throw new Error('Status is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Validate status transition
+		const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
+		if (!allowedTransitions.includes(params.status)) {
+			throw new Error(
+				`Invalid status transition from '${task.status}' to '${params.status}'. ` +
+					`Allowed: ${allowedTransitions.join(', ') || 'none'}`
+			);
+		}
+
+		// If there's an active group with runtime, cancel it when moving to terminal state
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				const groupRepo = new SessionGroupRepository(db.getDatabase());
+				const group = groupRepo.getGroupByTaskId(params.taskId);
+				if (group && group.state !== 'completed' && group.state !== 'failed') {
+					// Cancel active group if moving to terminal state
+					if (
+						params.status === 'completed' ||
+						params.status === 'failed' ||
+						params.status === 'cancelled'
+					) {
+						await runtime.taskGroupManager.cancel(group.id);
+					}
+				}
+			}
+		}
+
+		// Apply status change
+		const updatedTask = await taskManager.setTaskStatus(params.taskId, params.status, {
+			result: params.result,
+			error: params.error,
+		});
+
+		emitTaskUpdate(params.roomId, updatedTask);
+		emitRoomOverview(params.roomId);
+
+		return { task: updatedTask };
 	});
 
 	// task.reject - Reject a task review with feedback

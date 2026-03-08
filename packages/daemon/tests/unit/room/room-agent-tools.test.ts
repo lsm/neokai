@@ -914,4 +914,154 @@ describe('Room Agent Tools', () => {
 			expect(group.awaitingHumanReview).toBe(false);
 		});
 	});
+
+	describe('set_task_status', () => {
+		it('should return error when task not found', async () => {
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: 'no-such-task', status: 'completed' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error for invalid status transition', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Try invalid transition: pending -> completed (not allowed)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'completed' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid status transition');
+		});
+
+		it('should allow valid transition: pending -> in_progress', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+		});
+
+		it('should allow restart from failed to pending', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+			// Then fail it
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Now restart it
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'pending' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('pending');
+			// Error should be cleared
+			expect(result.task.error).toBeUndefined();
+		});
+
+		it('should allow restart from cancelled to in_progress', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Cancel the task
+			await taskManager.cancelTask(taskId);
+
+			// Now restart it
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+		});
+
+		it('should allow transition: in_progress -> review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+		});
+
+		it('should allow transition: in_progress -> completed with result', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({
+					task_id: taskId,
+					status: 'completed',
+					result: 'Successfully implemented the feature',
+				})
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('completed');
+			expect(result.task.result).toBe('Successfully implemented the feature');
+			expect(result.task.progress).toBe(100);
+		});
+
+		it('should allow transition: in_progress -> failed with error', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({
+					task_id: taskId,
+					status: 'failed',
+					error: 'Tests failed',
+				})
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('failed');
+			expect(result.task.error).toBe('Tests failed');
+		});
+
+		it('should allow transition: review -> in_progress', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress and then to review
+			await taskManager.startTask(taskId);
+			await taskManager.reviewTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+		});
+
+		it('should deny transition: completed -> pending (terminal state)', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress and then to completed
+			await taskManager.startTask(taskId);
+			await taskManager.completeTask(taskId, 'Done');
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'pending' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid status transition');
+		});
+	});
 });
