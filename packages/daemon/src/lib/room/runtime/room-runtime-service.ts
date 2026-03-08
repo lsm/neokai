@@ -255,6 +255,24 @@ export class RoomRuntimeService {
 					return null;
 				}
 			},
+			stopSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return;
+
+				try {
+					await session.handleInterrupt();
+				} catch (error) {
+					log.warn(`Failed to interrupt session ${sessionId}:`, error);
+				}
+
+				try {
+					await session.cleanup();
+				} catch (error) {
+					log.warn(`Failed to cleanup session ${sessionId}:`, error);
+				} finally {
+					agentSessions.delete(sessionId);
+				}
+			},
 		};
 	}
 

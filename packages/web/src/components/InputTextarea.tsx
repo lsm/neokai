@@ -24,6 +24,7 @@
  * so we skip the DOM write and cursor position is preserved.
  */
 
+import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -47,6 +48,10 @@ export interface InputTextareaProps {
 	isAgentWorking?: boolean;
 	onStop?: () => void;
 	onPaste?: (e: ClipboardEvent) => void;
+	/** Optional control rendered inside the input, on the left side */
+	leadingElement?: ComponentChildren;
+	/** Left padding class used when leadingElement is present */
+	leadingPaddingClass?: string;
 }
 
 /**
@@ -68,6 +73,8 @@ export function InputTextarea({
 	isAgentWorking = false,
 	onStop,
 	onPaste,
+	leadingElement,
+	leadingPaddingClass,
 }: InputTextareaProps) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const [isMultiline, setIsMultiline] = useState(false);
@@ -131,6 +138,7 @@ export function InputTextarea({
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
 	const showStop = isAgentWorking && !hasContent && !!onStop;
+	const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
 
 	return (
 		<div class="relative flex-1">
@@ -153,6 +161,16 @@ export function InputTextarea({
 						: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>
+				{leadingElement && (
+					<div
+						class={cn(
+							'absolute left-1.5 z-10',
+							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2'
+						)}
+					>
+						{leadingElement}
+					</div>
+				)}
 				{/* Textarea - Uncontrolled with sync pattern
 				    We DON'T use value={content} here because controlled inputs cause
 				    cursor position reset on every re-render. Instead, we sync content
@@ -168,7 +186,7 @@ export function InputTextarea({
 					maxLength={maxChars}
 					rows={1}
 					class={cn(
-						'block w-full pl-5 pr-14 py-2.5 text-gray-100 resize-none bg-transparent',
+						`block w-full ${textareaLeftPadding} pr-14 py-2.5 text-gray-100 resize-none bg-transparent`,
 						'placeholder:text-gray-500 text-base leading-normal',
 						'focus:outline-none'
 					)}

@@ -1,4 +1,4 @@
-.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup
+.PHONY: dev serve-random self self-test run run-e2e build test test-daemon test-web test-shared e2e e2e-ui lint lint-fix format typecheck check compile compile-all package-npm release sync-sdk-types setup-hooks setup test-proxy-start test-proxy-stop test-proxy-status test-proxy-restart
 
 # Default workspace for development
 WORKSPACE ?= tmp/workspace
@@ -170,3 +170,17 @@ setup-hooks:
 # Full development environment setup
 setup: setup-hooks
 	@echo "✅ Development environment ready"
+
+# Dev Proxy management for tests
+# Usage: make test-proxy-start, make test-proxy-stop, etc.
+test-proxy-start:
+	@./scripts/dev-proxy.sh start
+
+test-proxy-stop:
+	@./scripts/dev-proxy.sh stop
+
+test-proxy-status:
+	@./scripts/dev-proxy.sh status
+
+test-proxy-restart:
+	@./scripts/dev-proxy.sh restart

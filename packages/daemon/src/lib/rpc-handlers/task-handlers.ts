@@ -454,7 +454,12 @@ export function setupTaskHandlers(
 
 	// task.sendHumanMessage - Send a human message to the active agent in a task group
 	messageHub.onRequest('task.sendHumanMessage', async (data) => {
-		const params = data as { roomId: string; taskId: string; message: string };
+		const params = data as {
+			roomId: string;
+			taskId: string;
+			message: string;
+			target?: 'auto' | 'worker' | 'leader';
+		};
 
 		if (!params.roomId) {
 			throw new Error('Room ID is required');
@@ -470,6 +475,10 @@ export function setupTaskHandlers(
 		}
 		if (params.message.length > 10_000) {
 			throw new Error('Message is too long (max 10,000 characters)');
+		}
+		const target = params.target ?? 'auto';
+		if (target !== 'auto' && target !== 'worker' && target !== 'leader') {
+			throw new Error(`Invalid target: ${target}`);
 		}
 		if (!runtimeService) {
 			throw new Error('Runtime service is required for task.sendHumanMessage');
@@ -494,6 +503,7 @@ export function setupTaskHandlers(
 			groupRepo,
 			params.taskId,
 			params.message.trim(),
+			target,
 			messageHub
 		);
 

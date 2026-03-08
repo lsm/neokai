@@ -479,6 +479,22 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
 		});
 
+		it('should include deterministic own-PR event check in SDK reviewer prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const agent = agents['reviewer-opus'];
+			expect(agent.prompt).toContain('ME="$(gh api user --jq .login)"');
+			expect(agent.prompt).toContain('PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"');
+			expect(agent.prompt).toContain('EVENT="COMMENT"');
+		});
+
+		it('should include deterministic own-PR event check in CLI reviewer prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent.prompt).toContain('ME="$(gh api user --jq .login)"');
+			expect(agent.prompt).toContain('PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"');
+			expect(agent.prompt).toContain('EVENT="COMMENT"');
+		});
+
 		it('should include read-only tools for reviewers', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
 			const agent = agents['reviewer-opus'];

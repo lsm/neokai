@@ -169,17 +169,25 @@ function createMockDatabase(): Database {
 function createMockRuntimeService(methodResult = true): {
 	runtimeService: RoomRuntimeService;
 	injectMessageToLeader: ReturnType<typeof mock>;
+	injectMessageToWorker: ReturnType<typeof mock>;
 	resumeWorkerFromHuman: ReturnType<typeof mock>;
 	getRuntime: ReturnType<typeof mock>;
 } {
 	const injectMessageToLeader = mock(async () => methodResult);
+	const injectMessageToWorker = mock(async () => methodResult);
 	const resumeWorkerFromHuman = mock(async () => methodResult);
-	const mockRuntime = { injectMessageToLeader, resumeWorkerFromHuman };
+	const mockRuntime = { injectMessageToLeader, injectMessageToWorker, resumeWorkerFromHuman };
 	const getRuntime = mock(() => mockRuntime);
 	const runtimeService = {
 		getRuntime,
 	} as unknown as RoomRuntimeService;
-	return { runtimeService, injectMessageToLeader, resumeWorkerFromHuman, getRuntime };
+	return {
+		runtimeService,
+		injectMessageToLeader,
+		injectMessageToWorker,
+		resumeWorkerFromHuman,
+		getRuntime,
+	};
 }
 
 // Helper to create a mock Database that returns a group with the given state
@@ -606,7 +614,7 @@ describe('task.sendHumanMessage handler', () => {
 		).rejects.toThrow('No runtime found for room: room-999');
 	});
 
-	it('throws error when group is in awaiting_worker state (cannot accept messages)', async () => {
+	it('throws error when group is in awaiting_worker state in auto mode', async () => {
 		const { runtimeService } = createMockRuntimeService(true);
 		const db = createMockDatabaseWithGroup('awaiting_worker');
 
@@ -623,6 +631,29 @@ describe('task.sendHumanMessage handler', () => {
 		await expect(
 			handler!({ roomId: 'room-123', taskId: 'task-123', message: 'hello' }, {})
 		).rejects.toThrow('Worker is running');
+	});
+
+	it('routes to worker when target=worker in awaiting_worker state', async () => {
+		const { runtimeService, injectMessageToWorker } = createMockRuntimeService(true);
+		const db = createMockDatabaseWithGroup('awaiting_worker');
+
+		setupTaskHandlers(
+			messageHubData.hub,
+			roomManagerData.roomManager,
+			daemonHubData.daemonHub,
+			db,
+			createMockTaskManager,
+			runtimeService
+		);
+
+		const handler = messageHubData.handlers.get('task.sendHumanMessage')!;
+		const result = (await handler!(
+			{ roomId: 'room-123', taskId: 'task-123', message: 'hello', target: 'worker' },
+			{}
+		)) as { success: boolean };
+
+		expect(injectMessageToWorker).toHaveBeenCalledWith('task-123', 'hello');
+		expect(result.success).toBe(true);
 	});
 
 	it('throws error when message exceeds 10,000 characters', async () => {

@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, act } from '@testing-library/preact';
+import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
 // Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
@@ -100,6 +101,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 		disabled,
 		placeholder,
 		maxChars,
+		leadingElement,
 	}: {
 		content: string;
 		onContentChange: (v: string) => void;
@@ -107,8 +109,10 @@ vi.mock('../InputTextarea.tsx', () => ({
 		disabled?: boolean;
 		placeholder?: string;
 		maxChars?: number;
+		leadingElement?: ComponentChildren;
 	}) => (
 		<div data-testid="input-textarea">
+			{leadingElement}
 			<textarea
 				data-testid="input-textarea-field"
 				value={content}
@@ -351,7 +355,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		});
 	});
 
-	it('does NOT render InputTextarea in awaiting_worker state (disabled raw textarea)', async () => {
+	it('renders InputTextarea in awaiting_worker state', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -364,10 +368,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// awaiting_worker uses a raw disabled textarea, not InputTextarea
-		expect(queryByTestId('input-textarea')).toBeNull();
-		const rawTextarea = container.querySelector('textarea[disabled]');
-		expect(rawTextarea).not.toBeNull();
+		expect(queryByTestId('input-textarea')).not.toBeNull();
+		expect(queryByTestId('task-target-button')).not.toBeNull();
 	});
 
 	it('sends feedback via task.sendHumanMessage in awaiting_human state', async () => {
@@ -394,6 +396,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				message: 'Nice work!',
+				target: 'worker',
 			});
 		});
 	});
@@ -474,8 +477,57 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				message: 'Please focus on auth first',
+				target: 'leader',
 			});
 		});
+	});
+
+	it('sends message to worker in awaiting_worker state', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Add benchmarks too' } });
+		fireEvent.click(getByTestId('input-textarea-send'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Add benchmarks too',
+				target: 'worker',
+			});
+		});
+	});
+
+	it('shows target dropdown with both options always available', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('task-target-button')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('task-target-button'));
+		const workerOption = getByTestId('task-target-option-worker') as HTMLButtonElement;
+		const leaderOption = getByTestId('task-target-option-leader') as HTMLButtonElement;
+		expect(workerOption.disabled).toBe(false);
+		expect(leaderOption.disabled).toBe(false);
 	});
 });
 
