@@ -529,8 +529,9 @@ export class TaskGroupManager {
 	/**
 	 * Resume a group from awaiting_human by injecting a message into the existing leader.
 	 *
-	 * Used for coding/general task approval: leader merges PR and calls complete_task.
-	 * This keeps the leader in control of the final merge-and-complete steps.
+	 * Used for ALL human resumptions (both approval and rejection):
+	 * - Approval: leader merges PR and calls complete_task
+	 * - Rejection: leader forwards feedback to worker via send_to_worker + handoff_to_worker
 	 *
 	 * No new sessions are created. The existing observer will fire
 	 * onLeaderTerminalState again when the leader finishes.
@@ -548,14 +549,17 @@ export class TaskGroupManager {
 		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
 		if (!updated) return false;
 
-		// Reset leader contract state for the completion cycle
+		// Reset state for the new cycle (same as resumeWorkerFromHuman).
+		// feedbackIteration is reset to 0 so the worker gets a fresh iteration budget.
+		// submittedForReview is reset so the worker must re-submit for review after addressing feedback.
+		// For approval path, these resets are harmless since leader will complete the task.
+		// For rejection path, these resets are essential for the worker to have a fresh start.
 		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
-
-		// NOTE: submittedForReview is intentionally NOT reset here (unlike resumeWorkerFromHuman).
-		// For coder/general approval, the leader will call complete_task directly, which is gated
-		// by the `approved` flag (not submittedForReview). The worker path resets submittedForReview
-		// because it needs to re-submit for review after addressing feedback, but the leader path
-		// bypasses that gate via approved=true.
+		this.groupRepo.setSubmittedForReview(groupId, false);
+		const afterReset = this.groupRepo.getGroup(groupId);
+		if (afterReset) {
+			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
+		}
 
 		// Inject approval message into existing leader session.
 		// If injection fails, rollback the group state so the task stays in review for retry.

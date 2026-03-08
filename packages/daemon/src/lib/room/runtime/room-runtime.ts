@@ -861,9 +861,8 @@ export class RoomRuntime {
 	 * Resume a group from awaiting_human by injecting a message into the appropriate session.
 	 *
 	 * Routing logic:
-	 * - Planning approval → worker (merges plan PR + creates tasks)
-	 * - Coder/General approval → leader (merges PR + calls complete_task)
-	 * - Rejection (any type) → worker (addresses feedback)
+	 * - ALL approvals (planner, coder, general) → leader (merges PR + calls complete_task)
+	 * - ALL rejections (planner, coder, general) → leader (forwards feedback to worker)
 	 *
 	 * Reuses the same worker and leader sessions — no new sessions are created.
 	 */
@@ -883,11 +882,6 @@ export class RoomRuntime {
 		const isApproval =
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
 
-		// For coder/general tasks with approval: leader handles merge and complete
-		// For planner tasks or rejections: worker handles the response
-		const shouldResumeLeader =
-			isApproval && (group.workerRole === 'coder' || group.workerRole === 'general');
-
 		if (isApproval) {
 			this.groupRepo.setApproved(group.id, true);
 		}
@@ -895,16 +889,11 @@ export class RoomRuntime {
 		// Move task back to in_progress
 		await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
 
-		// Delegate to TaskGroupManager with appropriate routing
+		// Route ALL messages (approval and rejection) to leader
+		// Leader handles: approval → merge + complete_task
+		// Leader handles: rejection → send_to_worker + handoff_to_worker
 		try {
-			let updated: boolean;
-			if (shouldResumeLeader) {
-				// Leader handles post-approval merge and complete
-				updated = await this.taskGroupManager.resumeLeaderFromHuman(group.id, message);
-			} else {
-				// Worker handles rejection or planner approval
-				updated = await this.taskGroupManager.resumeWorkerFromHuman(group.id, message);
-			}
+			const updated = await this.taskGroupManager.resumeLeaderFromHuman(group.id, message);
 			if (!updated) return false;
 		} catch (error) {
 			await this.taskManager.reviewTask(group.taskId);
