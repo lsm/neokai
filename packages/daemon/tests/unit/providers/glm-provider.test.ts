@@ -72,8 +72,8 @@ describe('GlmProvider', () => {
 
 			const models = await provider.getModels();
 
-			expect(models).toHaveLength(1);
-			expect(models.map((m) => m.id)).toEqual(['glm-5']);
+			expect(models).toHaveLength(2);
+			expect(models.map((m) => m.id)).toEqual(['glm-5', 'glm-4.7']);
 		});
 
 		it('should return empty array when API key is not available', async () => {
@@ -98,6 +98,7 @@ describe('GlmProvider', () => {
 	describe('ownsModel', () => {
 		it('should own glm- prefixed models', () => {
 			expect(provider.ownsModel('glm-5')).toBe(true);
+			expect(provider.ownsModel('glm-4.7')).toBe(true);
 			expect(provider.ownsModel('GLM-4')).toBe(true); // case insensitive
 		});
 
@@ -133,6 +134,16 @@ describe('GlmProvider', () => {
 				ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5',
 			});
 			expect(config.isAnthropicCompatible).toBe(true);
+		});
+
+		it('should route sdk tiers with opus pinned to glm-5', () => {
+			process.env.GLM_API_KEY = 'test-key';
+
+			const config = provider.buildSdkConfig('glm-4.7');
+
+			expect(config.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7');
+			expect(config.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-4.7');
+			expect(config.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
 		});
 
 		it('should use session config API key override', () => {
@@ -181,8 +192,8 @@ describe('GlmProvider', () => {
 
 	describe('static models', () => {
 		it('should have static models defined', () => {
-			expect(GlmProvider.MODELS).toHaveLength(1);
-			expect(GlmProvider.MODELS.map((m) => m.id)).toEqual(['glm-5']);
+			expect(GlmProvider.MODELS).toHaveLength(2);
+			expect(GlmProvider.MODELS.map((m) => m.id)).toEqual(['glm-5', 'glm-4.7']);
 		});
 
 		it('should have correct base URL', () => {
