@@ -40,6 +40,8 @@ export const zh: Record<string, string> = {
 	'sessions.newSession': '新建会话',
 	'sessions.empty.title': '暂无会话',
 	'sessions.empty.desc': '在工作室之外创建的会话会显示在这里',
+	'sessions.welcome.title': '开始对话',
+	'sessions.welcome.desc': '创建新会话开始，或从侧栏选择已有会话。',
 	'sessions.showArchived': '显示已归档',
 	'sessions.hideArchived': '隐藏已归档',
 

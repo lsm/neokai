@@ -40,6 +40,8 @@ export const en: Record<string, string> = {
 	'sessions.newSession': 'New Session',
 	'sessions.empty.title': 'No sessions yet',
 	'sessions.empty.desc': 'Sessions created outside of Rooms appear here',
+	'sessions.welcome.title': 'Start a conversation',
+	'sessions.welcome.desc': 'Create a new session to begin, or select one from the sidebar.',
 	'sessions.showArchived': 'Show archived',
 	'sessions.hideArchived': 'Hide archived',
 
