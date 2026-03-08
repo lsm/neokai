@@ -277,15 +277,29 @@ async function createInProcessDaemonServer(
 	} = options;
 
 	// Start Dev Proxy if requested
+	// Note: In CI, Dev Proxy may already be running (DEVPROXY_PID is set)
+	// In that case, we skip starting it and just use the existing proxy
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
+	const devProxyAlreadyRunning = process.env.DEVPROXY_PID !== undefined;
 
-	if (shouldUseDevProxy) {
+	if (shouldUseDevProxy && !devProxyAlreadyRunning) {
 		devProxy = createDevProxyController({
 			setEnvVars: true,
 			...devProxyOptions,
 		});
 		await devProxy.start();
+	} else if (shouldUseDevProxy && devProxyAlreadyRunning) {
+		// Dev Proxy is already running from CI - env vars should already be set
+		// Create a no-op controller for consistent API
+		devProxy = {
+			isRunning: () => true,
+			start: async () => {},
+			stop: async () => {}, // Don't stop CI's proxy
+			loadMockFile: async () => {},
+			waitForReady: async () => {},
+			restoreEnv: () => {},
+		} as DevProxyController;
 	}
 
 	// Apply custom env vars
