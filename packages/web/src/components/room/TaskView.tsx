@@ -20,7 +20,7 @@ import type { NeoTask, SessionInfo } from '@neokai/shared';
 import { HourglassIcon } from '../icons/index.tsx';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
-import { navigateToRoom, navigateToRooms, navigateToRoomTask } from '../../lib/router';
+import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { roomStore } from '../../lib/room-store';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { InputTextarea } from '../InputTextarea';
@@ -448,72 +448,72 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
-			<div class="border-b border-dark-700 bg-dark-850 px-4 py-3 flex items-center gap-3 flex-shrink-0">
-				<div class="flex-1 min-w-0">
+			<div class="border-b border-dark-700 bg-dark-850 px-4 py-2.5 flex items-center gap-3 flex-shrink-0">
+				<div class="min-w-0 flex-shrink">
 					<Breadcrumb
 						items={[
-							{ label: t('common.rooms'), onClick: () => navigateToRooms() },
 							{
 								label: roomStore.room.value?.name ?? t('task.room'),
 								onClick: () => navigateToRoom(roomId),
 							},
-							{ label: t('task.taskPrefix', { title: task.title }) },
+							{ label: task.title },
 						]}
 					/>
-					<div class="flex items-center gap-2 flex-wrap mt-1">
-						<span class={`text-xs font-medium ${statusColor}`}>
+				</div>
+				<div class="flex items-center gap-2 ml-auto flex-shrink-0">
+					{/* Status + type + iteration */}
+					<div class="hidden sm:flex items-center gap-2 text-xs">
+						<span class={`font-medium ${statusColor}`}>
 							{task.status.replace('_', ' ')}
 						</span>
 						{task.taskType && (
-							<span class="text-xs text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">
+							<span class="text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">
 								{task.taskType}
 							</span>
 						)}
-					</div>
-					{group && (
-						<div class="flex items-center gap-2 mt-0.5">
-							<p class="text-xs text-gray-500">
+						{group && (
+							<span class="text-gray-500">
 								{getGroupStateLabel(group.state)}
 								{group.feedbackIteration > 0 && ` · ${t('task.iteration', { count: group.feedbackIteration })}`}
-							</p>
-							{group.state === 'awaiting_human' && (
-								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
-									{t('task.awaitingReview')}
-								</span>
-							)}
+							</span>
+						)}
+						{group?.state === 'awaiting_human' && (
+							<span class="inline-flex items-center gap-1 font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
+								{t('task.awaitingReview')}
+							</span>
+						)}
+					</div>
+					{task.progress != null && task.progress > 0 && (
+						<div class="flex items-center gap-2">
+							<div class="w-24 h-1.5 bg-dark-700 rounded-full overflow-hidden">
+								<div
+									class="h-full bg-blue-500 transition-all duration-300"
+									style={{ width: `${task.progress}%` }}
+								/>
+							</div>
+							<span class="text-xs text-gray-400">{task.progress}%</span>
 						</div>
 					)}
-				</div>
-				{task.progress != null && task.progress > 0 && (
-					<div class="flex items-center gap-2 flex-shrink-0">
-						<div class="w-24 h-1.5 bg-dark-700 rounded-full overflow-hidden">
-							<div
-								class="h-full bg-blue-500 transition-all duration-300"
-								style={{ width: `${task.progress}%` }}
+					{/* Info toggle button */}
+						<button
+						class={`p-1.5 rounded transition-colors ${
+							showInfoPanel
+								? 'bg-blue-600 text-white'
+								: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
+						}`}
+						onClick={() => setShowInfoPanel(!showInfoPanel)}
+						title={t('task.taskInfo')}
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
 							/>
-						</div>
-						<span class="text-xs text-gray-400">{task.progress}%</span>
-					</div>
-				)}
-				{/* Info toggle button */}
-				<button
-					class={`p-1.5 rounded transition-colors ${
-						showInfoPanel
-							? 'bg-blue-600 text-white'
-							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
-					}`}
-					onClick={() => setShowInfoPanel(!showInfoPanel)}
-					title={t('task.taskInfo')}
-				>
-					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-						/>
-					</svg>
-				</button>
+						</svg>
+					</button>
+				</div>
 			</div>
 
 			{/* Info panel */}

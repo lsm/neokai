@@ -136,12 +136,12 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 				) : (
 					<>
 						{/* Header */}
-						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-4 py-4">
+						<div class="bg-dark-850/50 backdrop-blur-sm border-b border-dark-700 px-4 py-2.5">
 							<div class="flex items-center gap-3">
 								<MobileMenuButton />
 								<Breadcrumb
 									items={[
-										{ label: 'Rooms', onClick: () => navigateToRooms() },
+										{ label: t('nav.rooms'), onClick: () => navigateToRooms() },
 										{
 											label: room.name,
 											onEdit: async (newName) => {

@@ -69,9 +69,10 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 				<button
 					onClick={async () => {
 						// Reuse existing empty session instead of creating duplicates
+						const newSessionTitle = t('chat.newSessionTitle');
 						const emptySession = sessions.find(
 							(s) =>
-								(!s.title || s.title === 'New Session') &&
+								(!s.title || s.title === 'New Session' || s.title === newSessionTitle) &&
 								s.status !== 'archived'
 						);
 						if (emptySession) {

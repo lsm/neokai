@@ -104,7 +104,7 @@ export async function startDevServer(config: Config) {
 			strictPort: false, // Allow Vite to find another port if needed
 			hmr: {
 				protocol: 'ws',
-				host: config.host,
+				host: 'localhost',
 				port: vitePort,
 			},
 		},

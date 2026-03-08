@@ -1,3 +1,4 @@
+import { Fragment } from 'preact';
 import { useRef, useState } from 'preact/hooks';
 import { ChevronRightIcon } from '../icons/index';
 
@@ -75,7 +76,7 @@ export function Breadcrumb({ items }: BreadcrumbProps) {
 			{items.map((item, index) => {
 				const isLast = index === items.length - 1;
 				return (
-					<>
+					<Fragment key={index}>
 						{index > 0 && (
 							<ChevronRightIcon className="w-3 h-3 text-gray-500 flex-shrink-0" />
 						)}
@@ -95,7 +96,7 @@ export function Breadcrumb({ items }: BreadcrumbProps) {
 								{item.label}
 							</button>
 						)}
-					</>
+					</Fragment>
 				);
 			})}
 		</nav>
