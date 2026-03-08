@@ -1,9 +1,15 @@
-# NeoKai
+<p align="center">
+  <img src="docs/logo.svg" alt="NeoKai Logo" width="120" height="120">
+</p>
 
-[![CI](https://github.com/lsm/neokai/actions/workflows/main.yml/badge.svg?branch=dev)](https://github.com/lsm/neokai/actions/workflows/main.yml)
-[![Coverage Status](https://coveralls.io/repos/github/lsm/neokai/badge.svg?branch=dev)](https://coveralls.io/github/lsm/neokai?branch=dev)
+<h1 align="center">NeoKai</h1>
 
-Claude Code web UI for coding, life, and anything in between.
+<p align="center">
+  <a href="https://github.com/lsm/neokai/actions/workflows/main.yml"><img src="https://github.com/lsm/neokai/actions/workflows/main.yml/badge.svg?branch=dev" alt="CI"></a>
+  <a href="https://coveralls.io/github/lsm/neokai?branch=dev"><img src="https://coveralls.io/repos/github/lsm/neokai/badge.svg?branch=dev" alt="Coverage Status"></a>
+</p>
+
+<p align="center">Claude Code web UI for coding, life, and anything in between.</p>
 
 ## Screenshots
 
