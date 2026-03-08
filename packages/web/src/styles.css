@@ -455,6 +455,34 @@ a:focus-visible {
 	outline-offset: 2px;
 }
 
+/* Agent avatar working indicator — GPU-accelerated ring pulse via pseudo-element */
+@keyframes agent-ring {
+	0%,
+	100% {
+		transform: scale(1);
+		opacity: 0.6;
+	}
+	50% {
+		transform: scale(1.25);
+		opacity: 0;
+	}
+}
+
+.animate-agent-pulse {
+	position: relative;
+}
+
+.animate-agent-pulse::after {
+	content: '';
+	position: absolute;
+	inset: -1px;
+	border-radius: 9999px;
+	border: 2px solid currentColor;
+	animation: agent-ring 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+	will-change: transform, opacity;
+	pointer-events: none;
+}
+
 /* Loading spinner */
 @keyframes spin {
 	to {

@@ -21,13 +21,12 @@ import type {
 } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
 import { navigateToRoomTask } from '../../lib/router';
-import { Button } from '../ui/Button';
 import { ConfirmModal } from '../ui/ConfirmModal';
 import { Skeleton } from '../ui/Skeleton';
 import { cn } from '../../lib/utils';
 import { t } from '../../lib/i18n';
 import { toast } from '../../lib/toast';
-import { PlusIcon, CheckIcon, ChevronRightIcon } from '../icons/index';
+import { CheckIcon, ChevronRightIcon } from '../icons/index';
 
 // ─── Priority cycle helper ────────────────────────────────────────────────────
 
@@ -649,20 +648,13 @@ function GoalCard({
 
 // ─── Inline Create Goal Card ──────────────────────────────────────────────────
 
-function InlineCreateGoal({
+function FloatingGoalInput({
 	onSubmit,
-	onCancel,
 }: {
 	onSubmit: (data: { title: string; description?: string; priority?: GoalPriority }) => Promise<void>;
-	onCancel: () => void;
 }) {
 	const [title, setTitle] = useState('');
 	const [submitting, setSubmitting] = useState(false);
-	const inputRef = useRef<HTMLInputElement>(null);
-
-	useEffect(() => {
-		inputRef.current?.focus();
-	}, []);
 
 	const handleSubmit = async () => {
 		const trimmed = title.trim();
@@ -670,11 +662,11 @@ function InlineCreateGoal({
 		setSubmitting(true);
 		try {
 			await onSubmit({ title: trimmed });
+			setTitle('');
 		} catch {
 			// handled upstream
 		} finally {
 			setSubmitting(false);
-			onCancel();
 		}
 	};
 
@@ -682,29 +674,29 @@ function InlineCreateGoal({
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			handleSubmit();
-		} else if (e.key === 'Escape') {
-			onCancel();
 		}
 	};
 
 	return (
-		<div class="bg-dark-850 border border-blue-800/40 rounded-xl px-4 py-3">
-			<input
-				ref={inputRef}
-				type="text"
-				value={title}
-				onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
-				onKeyDown={handleKeyDown}
-				onBlur={() => {
-					if (!title.trim()) onCancel();
-				}}
-				placeholder={t('goals.form.titlePlaceholder')}
-				disabled={submitting}
-				class="w-full text-base font-semibold text-gray-100 bg-transparent outline-none placeholder:text-gray-600"
-			/>
-			<p class="text-xs text-gray-600 mt-1.5">
-				{t('goals.inlineCreateHint')}
-			</p>
+		<div class="border-t border-dark-700 bg-dark-900/80 backdrop-blur-sm px-4 py-3 flex-shrink-0">
+			<div class="max-w-3xl mx-auto flex items-center gap-3">
+				<input
+					type="text"
+					value={title}
+					onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
+					onKeyDown={handleKeyDown}
+					placeholder={t('goals.form.titlePlaceholder')}
+					disabled={submitting}
+					class="flex-1 text-sm text-gray-100 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 outline-none placeholder:text-gray-600 focus:border-blue-600 transition-colors"
+				/>
+				<button
+					onClick={handleSubmit}
+					disabled={!title.trim() || submitting}
+					class="px-3 py-2 text-sm font-medium text-blue-400 hover:text-blue-300 bg-blue-900/20 hover:bg-blue-900/30 border border-blue-700/50 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+				>
+					{t('goals.addGoal')}
+				</button>
+			</div>
 		</div>
 	);
 }
@@ -727,7 +719,6 @@ export function RoomOverview({
 	onLinkTask: (goalId: string, taskId: string) => Promise<void>;
 }) {
 	const [actionLoading, setActionLoading] = useState(false);
-	const [showInlineCreate, setShowInlineCreate] = useState(false);
 	const [showPauseConfirm, setShowPauseConfirm] = useState(false);
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
 	const [showApproveConfirm, setShowApproveConfirm] = useState<string | null>(null);
@@ -776,7 +767,8 @@ export function RoomOverview({
 	};
 
 	return (
-		<div class="h-full overflow-y-auto">
+		<div class="h-full flex flex-col overflow-hidden">
+			<div class="flex-1 overflow-y-auto">
 			<div class="max-w-3xl mx-auto px-4 py-5 space-y-6">
 				{/* Room context (background + instructions) */}
 				<RoomContextBlock room={room} />
@@ -793,16 +785,7 @@ export function RoomOverview({
 
 				{/* Goals section */}
 				<div>
-					<div class="flex items-center justify-between mb-3">
-						<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide">{t('goals.title')}</h2>
-						<button
-							onClick={() => setShowInlineCreate(true)}
-							class="flex items-center gap-1.5 text-sm font-medium text-blue-400 hover:text-blue-300 transition-colors px-2.5 py-1 rounded-md hover:bg-blue-900/20"
-						>
-							<PlusIcon className="w-4 h-4" />
-							{t('goals.addGoal')}
-						</button>
-					</div>
+					<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">{t('goals.title')}</h2>
 
 					{goalsLoading ? (
 						<div class="space-y-3">
@@ -813,16 +796,13 @@ export function RoomOverview({
 								</div>
 							))}
 						</div>
-					) : sortedGoals.length === 0 && !showInlineCreate ? (
+					) : sortedGoals.length === 0 ? (
 						<div class="bg-dark-850 border border-dark-700 border-dashed rounded-xl p-8 text-center">
 							<CheckIcon className="w-10 h-10 text-gray-700 mx-auto mb-3" />
 							<p class="text-sm font-medium text-gray-300 mb-1">{t('goals.empty.title')}</p>
-							<p class="text-xs text-gray-500 mb-4">
+							<p class="text-xs text-gray-500">
 								{t('goals.empty.desc')}
 							</p>
-							<Button size="sm" onClick={() => setShowInlineCreate(true)}>
-								{t('goals.createFirst')}
-							</Button>
 						</div>
 					) : (
 						<div class="space-y-3">
@@ -838,12 +818,6 @@ export function RoomOverview({
 									onDelete={() => onDeleteGoal(goal.id)}
 								/>
 							))}
-							{showInlineCreate && (
-								<InlineCreateGoal
-									onSubmit={onCreateGoal}
-									onCancel={() => setShowInlineCreate(false)}
-								/>
-							)}
 						</div>
 					)}
 				</div>
@@ -869,6 +843,10 @@ export function RoomOverview({
 				)}
 
 			</div>
+			</div>
+
+			{/* Floating goal input */}
+			<FloatingGoalInput onSubmit={onCreateGoal} />
 
 			{/* Pause Confirmation */}
 			<ConfirmModal

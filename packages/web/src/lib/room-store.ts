@@ -221,12 +221,19 @@ class RoomStore {
 			this.cleanupFunctions.push(unsubRoomOverview);
 
 			// 2. Task updates
+			let goalRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+			const debouncedGoalRefresh = () => {
+				if (goalRefreshTimer) clearTimeout(goalRefreshTimer);
+				goalRefreshTimer = setTimeout(() => void this.fetchGoals(), 500);
+			};
+
 			const unsubTaskUpdate = hub.onEvent<{ roomId: string; task: NeoTask }>(
 				'room.task.update',
 				(event) => {
 					if (event.roomId === roomId) {
 						const task = event.task;
 						const idx = this.tasks.value.findIndex((t) => t.id === task.id);
+						const prevStatus = idx >= 0 ? this.tasks.value[idx].status : null;
 
 						// Show toast when a known task transitions into review status.
 						// Skip when prevTask is null (task not yet in local state) to avoid
@@ -247,10 +254,19 @@ class RoomStore {
 						} else {
 							this.tasks.value = [...this.tasks.value, task];
 						}
+
+						// Refresh goals when task status changes (goal progress/status
+						// is updated server-side but not broadcast via events)
+						if (prevStatus !== task.status) {
+							debouncedGoalRefresh();
+						}
 					}
 				}
 			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
+			this.cleanupFunctions.push(() => {
+				if (goalRefreshTimer) clearTimeout(goalRefreshTimer);
+			});
 
 			// 3. Goal events (daemon emits goal.created, goal.updated, goal.completed)
 			const unsubGoalCreated = hub.onEvent<GoalEventPayload>('goal.created', (event) => {
@@ -298,6 +314,25 @@ class RoomStore {
 				}
 			});
 			this.cleanupFunctions.push(unsubGoalCompleted);
+
+			// 3b. Goal progress updates (emitted when task status changes affect goal progress)
+			const unsubGoalProgress = hub.onEvent<{
+				roomId: string;
+				goalId: string;
+				progress: number;
+			}>('goal.progressUpdated', (event) => {
+				if (event.roomId === roomId) {
+					const idx = this.goals.value.findIndex((g) => g.id === event.goalId);
+					if (idx >= 0) {
+						this.goals.value = [
+							...this.goals.value.slice(0, idx),
+							{ ...this.goals.value[idx], progress: event.progress },
+							...this.goals.value.slice(idx + 1),
+						];
+					}
+				}
+			});
+			this.cleanupFunctions.push(unsubGoalProgress);
 
 			// 4. Runtime state changes
 			const unsubRuntimeState = hub.onEvent<{ roomId: string; state: RuntimeState }>(

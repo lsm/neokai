@@ -550,6 +550,7 @@ export const en: Record<string, string> = {
 	'roomAgentAvatars.defaultModel': 'Default model',
 	'roomAgentAvatars.manage': 'Manage agents',
 	'roomAgentAvatars.add': 'Add agent',
+	'roomAgentAvatars.working': 'Working',
 
 	// Agent settings popover
 	'roomAgentPopover.model': 'Model',

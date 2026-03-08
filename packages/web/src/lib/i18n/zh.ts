@@ -544,6 +544,7 @@ export const zh: Record<string, string> = {
 	'roomAgentAvatars.defaultModel': '默认模型',
 	'roomAgentAvatars.manage': '管理代理',
 	'roomAgentAvatars.add': '添加代理',
+	'roomAgentAvatars.working': '工作中',
 
 	// Agent settings popover
 	'roomAgentPopover.model': '模型',
