@@ -479,6 +479,28 @@ class RoomStore {
 		// Task state updates arrive via room.task.update events
 	}
 
+	/**
+	 * Retry a failed task (resets to pending for re-dispatch).
+	 */
+	async retryTask(taskId: string): Promise<void> {
+		const roomId = this.roomId.value;
+		if (!roomId) {
+			throw new Error('No room selected');
+		}
+
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) {
+			throw new Error('Not connected');
+		}
+
+		await hub.request<{ task: unknown }>('task.retry', {
+			roomId,
+			taskId,
+		});
+
+		// Task state updates arrive via room.task.update events
+	}
+
 	// ========================================
 	// Session Methods
 	// ========================================

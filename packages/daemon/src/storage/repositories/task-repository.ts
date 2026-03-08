@@ -108,7 +108,11 @@ export class TaskRepository {
 			values.push(params.status);
 
 			// Update timestamps based on status
-			if (params.status === 'in_progress') {
+			if (params.status === 'pending') {
+				// Reset timestamps when retrying (failed → pending)
+				fields.push('started_at = ?', 'completed_at = ?');
+				values.push(null, null);
+			} else if (params.status === 'in_progress') {
 				fields.push('started_at = ?');
 				values.push(Date.now());
 			} else if (

@@ -161,6 +161,7 @@ export function RoomDashboard() {
 					onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
 					onApprove={roomId ? (taskId) => setShowApproveConfirm(taskId) : undefined}
 					onView={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+					onRetry={roomId ? (taskId) => void roomStore.retryTask(taskId) : undefined}
 				/>
 			</div>
 

@@ -295,6 +295,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 	const [isFirstLoad, setIsFirstLoad] = useState(true);
+	const [retrying, setRetrying] = useState(false);
 
 	// Refs for scroll container
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -652,6 +653,25 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					taskId={taskId}
 					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
 				/>
+			)}
+
+			{/* Retry bar for failed tasks */}
+			{task.status === 'failed' && (
+				<div class="border-t border-dark-700 bg-dark-850 px-4 py-3 flex items-center justify-between">
+					<span class="text-sm text-red-400">{t('task.taskFailed')}</span>
+					<button
+						disabled={retrying}
+						onClick={() => {
+							setRetrying(true);
+							roomStore.retryTask(taskId).catch(() => {
+								setRetrying(false);
+							});
+						}}
+						class="px-3 py-1.5 text-sm font-medium text-amber-400 bg-amber-900/20 hover:bg-amber-900/40 border border-amber-700/50 rounded transition-colors disabled:opacity-50"
+					>
+						{retrying ? t('task.retrying') : t('tasks.retry')}
+					</button>
+				</div>
 			)}
 		</div>
 	);

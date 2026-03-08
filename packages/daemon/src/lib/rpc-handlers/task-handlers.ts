@@ -6,6 +6,7 @@
  * - task.list - List tasks in room
  * - task.get - Get task details
  * - task.fail - Fail a task (used by tests to simulate failure)
+ * - task.retry - Retry a failed task (resets to pending)
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
  * - task.sendHumanMessage - Send a human message to the active agent in a task group
@@ -25,7 +26,7 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask'
+	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'retryTask'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -170,6 +171,34 @@ export function setupTaskHandlers(
 
 		emitTaskUpdate(params.roomId, task);
 		emitRoomOverview(params.roomId);
+
+		return { task };
+	});
+
+	// task.retry - Retry a failed task (resets to pending for re-dispatch)
+	messageHub.onRequest('task.retry', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.retryTask(params.taskId);
+
+		emitTaskUpdate(params.roomId, task);
+		emitRoomOverview(params.roomId);
+
+		// Trigger runtime tick so the retried task gets picked up
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				runtime.onTaskStatusChanged(task.id);
+			}
+		}
 
 		return { task };
 	});

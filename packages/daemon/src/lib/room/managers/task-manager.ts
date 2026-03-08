@@ -153,6 +153,29 @@ export class TaskManager {
 	}
 
 	/**
+	 * Retry a failed task by resetting it to pending.
+	 * Clears error, progress, result, and currentStep so it can be re-dispatched.
+	 */
+	async retryTask(taskId: string): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+		if (task.status !== 'failed') {
+			throw new Error(`Can only retry failed tasks (current status: '${task.status}')`);
+		}
+		// Use null (not undefined) to actually clear DB fields;
+		// undefined would be skipped by the repository's !== undefined check.
+		const cleared = null as unknown as undefined;
+		return this.updateTaskStatus(taskId, 'pending', {
+			error: cleared,
+			progress: 0,
+			result: cleared,
+			currentStep: cleared,
+		});
+	}
+
+	/**
 	 * Cancel task (intentionally stopped, distinct from failure).
 	 * Cascades cancellation to any pending tasks that depend on this task,
 	 * since they can never be satisfied once their dependency is cancelled.

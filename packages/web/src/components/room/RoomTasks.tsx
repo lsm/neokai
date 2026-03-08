@@ -20,9 +20,10 @@ interface RoomTasksProps {
 	onTaskClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onRetry?: (taskId: string) => void;
 }
 
-export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksProps) {
+export function RoomTasks({ tasks, onTaskClick, onApprove, onView, onRetry }: RoomTasksProps) {
 	if (tasks.length === 0) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
@@ -67,7 +68,13 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					</div>
 					<div class="divide-y divide-dark-700">
 						{failed.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
+							<TaskItem
+								key={task.id}
+								task={task}
+								allTasks={tasks}
+								onClick={onTaskClick}
+								onRetry={onRetry}
+							/>
 						))}
 					</div>
 				</div>
@@ -193,16 +200,19 @@ function TaskItem({
 	onClick,
 	onApprove,
 	onView,
+	onRetry,
 }: {
 	task: TaskSummary;
 	allTasks: TaskSummary[];
 	onClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
 	onView?: (taskId: string) => void;
+	onRetry?: (taskId: string) => void;
 }) {
 	const isClickable = !!onClick;
 	const showApprove = task.status === 'review' && !!onApprove;
 	const showView = task.status === 'review' && !!onView;
+	const showRetry = task.status === 'failed' && !!onRetry;
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 
@@ -246,6 +256,17 @@ function TaskItem({
 							class="px-2 py-1 text-xs font-medium text-blue-400 bg-blue-900/20 hover:bg-blue-900/40 border border-blue-700/50 rounded transition-colors"
 						>
 							{t('tasks.view')}
+						</button>
+					)}
+					{showRetry && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								onRetry(task.id);
+							}}
+							class="px-2 py-1 text-xs font-medium text-amber-400 bg-amber-900/20 hover:bg-amber-900/40 border border-amber-700/50 rounded transition-colors"
+						>
+							{t('tasks.retry')}
 						</button>
 					)}
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
