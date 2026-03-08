@@ -49,21 +49,37 @@ describe('RoomRuntime leader tools', () => {
 			expect(updatedTask!.status).toBe('failed');
 		});
 
-		it('should handle send_to_worker', async () => {
+		it('should handle send_to_worker without changing group state', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Fix the tests',
+				mode: 'queue',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(true);
 
-			// Should inject feedback into worker session
+			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
+			expect(updatedGroup.state).toBe('awaiting_leader');
+
+			// Should inject feedback into worker session using queue mode
 			const injectCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && (c.args[1] as string).includes('LEADER FEEDBACK')
 			);
 			expect(injectCalls.length).toBeGreaterThan(0);
+			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
+		});
+
+		it('should handoff_to_worker explicitly', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
+			expect(updatedGroup.state).toBe('awaiting_worker');
 		});
 
 		it('should reject if group not in awaiting_leader state', async () => {

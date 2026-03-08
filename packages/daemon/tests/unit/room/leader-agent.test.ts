@@ -74,8 +74,12 @@ function makeCallbacks(): LeaderToolCallbacks & {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	return {
 		calls,
-		async sendToWorker(groupId: string, message: string) {
-			calls.push({ method: 'sendToWorker', args: [groupId, message] });
+		async sendToWorker(groupId: string, message: string, mode?: 'steer' | 'queue') {
+			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
+			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
+		},
+		async handoffToWorker(groupId: string) {
+			calls.push({ method: 'handoffToWorker', args: [groupId] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 		async completeTask(groupId: string, summary: string) {
@@ -101,8 +105,9 @@ describe('Leader Agent', () => {
 	describe('buildLeaderSystemPrompt', () => {
 		it('should include tool contract instructions', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('MUST call exactly one tool per turn');
+			expect(prompt).toContain('Tool Contract (CRITICAL)');
 			expect(prompt).toContain('send_to_worker');
+			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
@@ -238,7 +243,29 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling', undefined]);
+		});
+
+		it('should route send_to_worker mode to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.send_to_worker({ message: 'Queue this', mode: 'queue' });
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('sendToWorker');
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
+		});
+
+		it('should route handoff_to_worker to callback with groupId', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.handoff_to_worker();
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('handoffToWorker');
+			expect(callbacks.calls[0].args).toEqual(['group-1']);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {

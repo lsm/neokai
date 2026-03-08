@@ -12,7 +12,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { Room, RoomGoal, NeoTask } from '@neokai/shared';
+import type { Room, RoomGoal, NeoTask, MessageDeliveryMode } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
 import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
 import type { SessionObserver, TerminalState } from '../state/session-observer';
@@ -45,8 +45,18 @@ function taskTitleToBranchName(title: string): string | undefined {
  */
 export interface SessionFactory {
 	createAndStartSession(init: AgentSessionInit, role: string): Promise<void>;
-	injectMessage(sessionId: string, message: string): Promise<void>;
+	injectMessage(
+		sessionId: string,
+		message: string,
+		opts?: { deliveryMode?: MessageDeliveryMode }
+	): Promise<void>;
 	hasSession(sessionId: string): boolean;
+	/**
+	 * Get the current processing state for a session (best-effort).
+	 */
+	getProcessingState?(
+		sessionId: string
+	): 'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input' | undefined;
 	/**
 	 * Answer a pending AskUserQuestion on the session.
 	 * Returns true if a question was pending and answered, false otherwise.
@@ -368,13 +378,20 @@ export class TaskGroupManager {
 	}
 
 	/**
-	 * Route Leader feedback to worker for another iteration.
+	 * Route Leader feedback to worker.
 	 *
 	 * Called when Leader calls send_to_worker(message).
 	 * feedbackIteration is NOT incremented here — it's incremented in routeWorkerToLeader
 	 * when the next review round starts.
 	 */
-	async routeLeaderToWorker(groupId: string, message: string): Promise<SessionGroup | null> {
+	async routeLeaderToWorker(
+		groupId: string,
+		message: string,
+		opts?: {
+			deliveryMode?: MessageDeliveryMode;
+			transitionState?: boolean;
+		}
+	): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
@@ -382,11 +399,15 @@ export class TaskGroupManager {
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
 		if (!answered) {
-			await this.sessionFactory.injectMessage(group.workerSessionId, message);
+			await this.sessionFactory.injectMessage(group.workerSessionId, message, {
+				deliveryMode: opts?.deliveryMode,
+			});
 		}
 
-		// Update group state back to awaiting_worker
-		this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
+		// Optional transition: keep leader in control when using queue/steer forwarding.
+		if (opts?.transitionState !== false) {
+			this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
+		}
 
 		return this.groupRepo.getGroup(groupId);
 	}

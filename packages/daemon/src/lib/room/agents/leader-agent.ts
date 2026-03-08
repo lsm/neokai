@@ -1,8 +1,9 @@
 /**
  * Leader Agent Factory - Creates AgentSessionInit for Leader (reviewer) sessions
  *
- * The Leader agent reviews worker output and must call exactly one terminal tool per turn:
- * - send_to_worker(message) - Send feedback for another iteration
+ * The Leader agent reviews worker output and routes outcomes via MCP tools:
+ * - send_to_worker(message, mode) - Forward feedback to worker (steer/queue)
+ * - handoff_to_worker() - Explicitly return control to worker
  * - complete_task(summary) - Accept work, mark task done
  * - fail_task(reason) - Task is not achievable
  * - replan_goal(reason) - Fail task and trigger replanning with context
@@ -46,7 +47,12 @@ export interface LeaderToolResult {
  * The RoomRuntime implements this to handle tool calls.
  */
 export interface LeaderToolCallbacks {
-	sendToWorker(groupId: string, message: string): Promise<LeaderToolResult>;
+	sendToWorker(
+		groupId: string,
+		message: string,
+		mode?: 'steer' | 'queue'
+	): Promise<LeaderToolResult>;
+	handoffToWorker(groupId: string): Promise<LeaderToolResult>;
 	completeTask(groupId: string, summary: string): Promise<LeaderToolResult>;
 	failTask(groupId: string, reason: string): Promise<LeaderToolResult>;
 	replanGoal(groupId: string, reason: string): Promise<LeaderToolResult>;
@@ -93,8 +99,11 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 
 	// Tool contract
 	sections.push(`\n## Tool Contract (CRITICAL)\n`);
-	sections.push(`You MUST call exactly one tool per turn:`);
-	sections.push(`- \`send_to_worker\` — Send feedback if the work needs changes`);
+	sections.push(`You MUST call tools (no text-only final responses).`);
+	sections.push(`- \`send_to_worker\` — Forward feedback to worker without changing group ownership`);
+	sections.push(`  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)`);
+	sections.push(`  - mode=\`steer\`: inject for current-turn steering`);
+	sections.push(`- \`handoff_to_worker\` — Explicitly return ownership to worker (awaiting_worker)`);
 	sections.push(`- \`complete_task\` — Accept the work if it meets all requirements`);
 	sections.push(`- \`fail_task\` — Mark the task as not achievable`);
 	sections.push(
@@ -103,7 +112,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	sections.push(
 		`- \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval\n`
 	);
-	sections.push(`Do NOT respond with only text. You MUST call one of the above tools.`);
+	sections.push(`Do NOT respond with only text.`);
 
 	// Handling worker questions
 	sections.push(`\n## Handling Worker Questions\n`);
@@ -111,7 +120,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		`If the worker output shows \`Terminal state: waiting_for_input\`, the worker is asking a question.`
 	);
 	sections.push(
-		`- If you can answer the question from the goal/task context, use \`send_to_worker\` with the answer`
+		`- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "steer") with the answer, then call \`handoff_to_worker\``
 	);
 	sections.push(
 		`- If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`
@@ -151,7 +160,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`Extract the PR number (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
 			);
 			sections.push(
-				`If no PR was created, use \`send_to_worker\` asking the planner to create one before review can proceed.\n`
+				`If no PR was created, call \`send_to_worker\` (mode: "queue") asking the planner to create one before review can proceed, then call \`handoff_to_worker\`.\n`
 			);
 
 			sections.push(`### Step 2: Dispatch Reviewer Sub-agents`);
@@ -170,7 +179,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			sections.push(`### Step 4: Route\n`);
 			sections.push(
-				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+				`- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+			);
+			sections.push(
+				`  - You may call \`send_to_worker\` multiple times as reviewer results arrive. When done forwarding for this cycle, call \`handoff_to_worker\`.`
 			);
 			sections.push(
 				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval`
@@ -192,7 +204,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`5. Verify appropriate agent types are assigned (coder for implementation, general for non-coding)`
 			);
 			sections.push(
-				`6. If the plan needs changes, use \`send_to_worker\` with specific feedback on what to add, remove, or modify`
+				`6. If the plan needs changes, use \`send_to_worker\` (mode: "queue") with specific feedback on what to add, remove, or modify, then call \`handoff_to_worker\``
 			);
 			sections.push(
 				`7. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
@@ -238,7 +250,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
 			);
 			sections.push(
-				`If no PR was created, use \`send_to_worker\` asking the worker to create one before review can proceed.\n`
+				`If no PR was created, call \`send_to_worker\` (mode: "queue") asking the worker to create one before review can proceed, then call \`handoff_to_worker\`.\n`
 			);
 
 			sections.push(`### Step 2: Dispatch Reviewer Sub-agents`);
@@ -257,7 +269,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			sections.push(`### Step 4: Route\n`);
 			sections.push(
-				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+				`- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+			);
+			sections.push(
+				`  - You may call \`send_to_worker\` multiple times as reviewer results arrive. When done forwarding for this cycle, call \`handoff_to_worker\`.`
 			);
 			sections.push(`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`);
 			sections.push(
@@ -269,13 +284,13 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(`1. Check that the implementation matches the task description`);
 			sections.push(`2. Verify correctness and completeness`);
 			sections.push(
-				`3. If issues are found, use \`send_to_worker\` with specific actionable feedback`
+				`3. If issues are found, use \`send_to_worker\` (mode: "queue") with specific actionable feedback, then call \`handoff_to_worker\``
 			);
 			sections.push(
 				`4. If the work is complete and correct, require a PR and use \`submit_for_review\` with the PR URL`
 			);
 			sections.push(
-				`5. If no PR exists yet, use \`send_to_worker\` to request one before approval`
+				`5. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one before approval, then call \`handoff_to_worker\``
 			);
 		}
 
@@ -331,8 +346,14 @@ export function buildLeaderTaskContext(config: LeaderAgentConfig): string {
  */
 export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolCallbacks) {
 	return {
-		async send_to_worker(args: { message: string }): Promise<LeaderToolResult> {
-			return callbacks.sendToWorker(groupId, args.message);
+		async send_to_worker(args: {
+			message: string;
+			mode?: 'steer' | 'queue';
+		}): Promise<LeaderToolResult> {
+			return callbacks.sendToWorker(groupId, args.message, args.mode);
+		},
+		async handoff_to_worker(): Promise<LeaderToolResult> {
+			return callbacks.handoffToWorker(groupId);
 		},
 		async complete_task(args: { summary: string }): Promise<LeaderToolResult> {
 			return callbacks.completeTask(groupId, args.summary);
@@ -359,11 +380,21 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 	const tools = [
 		tool(
 			'send_to_worker',
-			'Send feedback to the worker agent for another iteration of work',
+			'Send feedback to the worker agent. mode=queue (default) enqueues for next turn; mode=steer injects current-turn guidance.',
 			{
 				message: z.string().describe('Specific, actionable feedback for the worker agent'),
+				mode: z
+					.enum(['steer', 'queue'])
+					.optional()
+					.describe('Delivery mode: queue (default) or steer (immediate)'),
 			},
 			(args) => handlers.send_to_worker(args)
+		),
+		tool(
+			'handoff_to_worker',
+			'Explicitly return ownership to the worker after forwarding feedback',
+			{},
+			() => handlers.handoff_to_worker()
 		),
 		tool(
 			'complete_task',

@@ -553,7 +553,13 @@ export class RoomRuntime {
 	async handleLeaderTool(
 		groupId: string,
 		toolName: string,
-		params: { message?: string; summary?: string; reason?: string; pr_url?: string }
+		params: {
+			message?: string;
+			mode?: 'steer' | 'queue';
+			summary?: string;
+			reason?: string;
+			pr_url?: string;
+		}
 	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
@@ -591,6 +597,8 @@ export class RoomRuntime {
 					});
 				}
 				const message = params.message ?? '';
+				const mode = params.mode ?? 'queue';
+				const deliveryMode = mode === 'queue' ? 'next_turn' : 'current_turn';
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
@@ -600,13 +608,51 @@ export class RoomRuntime {
 
 				// Insert status event into group timeline
 				this.appendGroupEvent(groupId, 'status', {
-					text: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
+					text: `Leader forwarded feedback to Worker (iteration ${currentIteration}, mode: ${mode}).`,
 				});
 
-				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
+				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback, {
+					deliveryMode,
+					transitionState: false,
+				});
 				return jsonResult({
 					success: true,
-					message: 'Feedback sent to Worker. Waiting for next iteration.',
+					message:
+						mode === 'queue'
+							? 'Feedback queued for worker. Leader still owns the turn — call handoff_to_worker when ready.'
+							: 'Feedback steered to worker. Leader still owns the turn — call handoff_to_worker when ready.',
+				});
+			}
+
+			case 'handoff_to_worker': {
+				const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
+				if (!updated) {
+					return jsonResult({
+						success: false,
+						error: 'Failed to hand off to worker due to concurrent state update.',
+					});
+				}
+
+				this.appendGroupEvent(groupId, 'status', {
+					text: 'Leader handed off control to Worker.',
+				});
+
+				const workerState = this.sessionFactory.getProcessingState?.(updated.workerSessionId);
+				if (workerState === 'idle' || workerState === 'interrupted') {
+					const unforwarded = this.getWorkerMessages
+						? this.getWorkerMessages(updated.workerSessionId, updated.lastForwardedMessageId)
+						: [];
+					if (unforwarded.length > 0) {
+						await this.onWorkerTerminalState(groupId, {
+							sessionId: updated.workerSessionId,
+							kind: 'idle',
+						});
+					}
+				}
+
+				return jsonResult({
+					success: true,
+					message: 'Ownership returned to Worker.',
 				});
 			}
 
@@ -763,8 +809,11 @@ export class RoomRuntime {
 	 */
 	createLeaderCallbacks(groupId: string): LeaderToolCallbacks {
 		return {
-			sendToWorker: async (_groupId: string, message: string) => {
-				return this.handleLeaderTool(groupId, 'send_to_worker', { message });
+			sendToWorker: async (_groupId: string, message: string, mode?: 'steer' | 'queue') => {
+				return this.handleLeaderTool(groupId, 'send_to_worker', { message, mode });
+			},
+			handoffToWorker: async (_groupId: string) => {
+				return this.handleLeaderTool(groupId, 'handoff_to_worker', {});
 			},
 			completeTask: async (_groupId: string, summary: string) => {
 				return this.handleLeaderTool(groupId, 'complete_task', { summary });

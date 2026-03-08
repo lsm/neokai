@@ -50,8 +50,12 @@ function createMockSessionFactory() {
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
-		async injectMessage(sessionId: string, message: string) {
-			calls.push({ method: 'injectMessage', args: [sessionId, message] });
+		async injectMessage(
+			sessionId: string,
+			message: string,
+			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+		) {
+			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
 		hasSession(_sessionId: string) {
 			return true;
@@ -71,6 +75,9 @@ function createMockLeaderCallbacks(): LeaderToolCallbacks {
 		async sendToWorker() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
+		async handoffToWorker() {
+			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
+		},
 		async completeTask() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
@@ -78,6 +85,9 @@ function createMockLeaderCallbacks(): LeaderToolCallbacks {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
 		async replanGoal() {
+			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
+		},
+		async submitForReview() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
 	};
