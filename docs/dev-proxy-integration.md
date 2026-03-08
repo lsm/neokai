@@ -351,21 +351,101 @@ Add the `LatencyPlugin` to simulate slow responses:
 }
 ```
 
-### Multiple Mock Scenarios
+## Mock Response Files
 
-Create different mock files for different test scenarios:
+The `.devproxy/` directory contains multiple mock files for different test scenarios:
 
+### Available Mock Files
+
+| File | Purpose | Scenarios Covered |
+|------|---------|------------------|
+| `mocks.json` | Default mock responses | Basic text response (default) |
+| `mocks-basic.json` | Simple text responses | Multi-turn conversations, math, greetings |
+| `mocks-tool-use.json` | Tool call scenarios | Read, Write, Glob, Grep, Bash, MCP tools |
+| `mocks-errors.json` | Error responses | Rate limiting (429), server errors (500), auth errors |
+| `mocks-room.json` | Multi-agent scenarios | Planner, Coder, Leader, Reviewer agents |
+
+### Switching Mock Files
+
+Update `devproxyrc.json` to use a different mock file:
+
+```json
+{
+  "mockResponsePlugin": {
+    "mocksFile": "mocks-tool-use.json"
+  }
+}
 ```
-tests/dev-proxy/
-├── mocks/
-│   ├── basic-response.json
-│   ├── tool-use-response.json
-│   ├── error-response.json
-│   └── streaming-response.json
-└── devproxyrc.json
+
+Or set the environment variable when starting Dev Proxy:
+
+```bash
+DEV_PROXY_MOCKS=mocks-tool-use.json bun run test:proxy:start
 ```
 
-Switch mocks by updating `mocksFile` in configuration or using presets.
+### Mock File Scenarios
+
+#### mocks-basic.json
+
+- Default text response
+- Math questions (2+2, 1+1, 3+3)
+- Greetings and jokes
+- Room chat responses
+
+#### mocks-tool-use.json
+
+- `Read` tool - Read file contents
+- `Write` tool - Write file contents
+- `Glob` tool - List files
+- `Grep` tool - Search file contents
+- `Bash` tool - Execute commands
+- `mcp_tool_call` - MCP server tool calls
+
+#### mocks-errors.json
+
+- `429` - Rate limit exceeded
+- `500` - Internal server error
+- `529` - Overloaded error
+- `400` - Invalid request
+- `401` - Authentication error
+- `403` - Permission error
+- `404` - Not found error
+- Context length exceeded error
+
+#### mocks-room.json
+
+- **Chat agent** - Simple text responses for room chat
+- **Planner Phase 1** - Creates plan file with Write tool
+- **Planner Phase 2** - Creates tasks with MCP tool calls
+- **Coder agent** - Implements task with Write tool
+- **Leader agent** - Submits for review and completes tasks
+- **Reviewer agent** - Reviews PRs with Bash/gh commands
+
+### Request Matching
+
+Dev Proxy matches requests by URL, method, and optional body fragments. More specific matches take precedence:
+
+1. Exact URL + method + body fragment match
+2. Exact URL + method match
+3. Wildcard URL match
+
+Example body fragment matching:
+
+```json
+{
+  "request": {
+    "url": "https://api.anthropic.com/v1/messages",
+    "method": "POST",
+    "bodyFragment": {
+      "messages": [
+        {
+          "content": "What is 2+2? Answer with just the number."
+        }
+      ]
+    }
+  }
+}
+```
 
 ## References
 
