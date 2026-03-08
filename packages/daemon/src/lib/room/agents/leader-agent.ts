@@ -204,17 +204,23 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`5. Verify appropriate agent types are assigned (coder for implementation, general for non-coding)`
 			);
 			sections.push(
-				`6. If the plan needs changes, use \`send_to_worker\` (mode: "queue") with specific feedback on what to add, remove, or modify, then call \`handoff_to_worker\``
+				`6. Require a PR for the plan review. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\``
 			);
 			sections.push(
-				`7. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
+				`7. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\``
 			);
 			sections.push(
-				`8. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
+				`8. If the plan needs changes, use \`send_to_worker\` (mode: "queue") with specific feedback on what to add, remove, or modify, then call \`handoff_to_worker\``
 			);
-			sections.push(`9. Use \`fail_task\` only if the goal is fundamentally not plannable`);
 			sections.push(
-				`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
+				`9. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
+			);
+			sections.push(
+				`10. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
+			);
+			sections.push(`11. Use \`fail_task\` only if the goal is fundamentally not plannable`);
+			sections.push(
+				`12. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
 			);
 		}
 	} else {
@@ -284,13 +290,16 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(`1. Check that the implementation matches the task description`);
 			sections.push(`2. Verify correctness and completeness`);
 			sections.push(
-				`3. If issues are found, use \`send_to_worker\` (mode: "queue") with specific actionable feedback, then call \`handoff_to_worker\``
+				`3. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\``
 			);
 			sections.push(
-				`4. If the work is complete and correct, require a PR and use \`submit_for_review\` with the PR URL`
+				`4. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\``
 			);
 			sections.push(
-				`5. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one before approval, then call \`handoff_to_worker\``
+				`5. If issues are found, use \`send_to_worker\` (mode: "queue") with specific actionable feedback, then call \`handoff_to_worker\``
+			);
+			sections.push(
+				`6. If the work is complete and correct, use \`submit_for_review\` with the PR URL`
 			);
 		}
 

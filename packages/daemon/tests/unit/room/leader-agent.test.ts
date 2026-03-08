@@ -135,6 +135,18 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('Review Guidelines');
 		});
 
+		it('should require leader to post direct PR feedback in simple code review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('honest, critical, and actionable feedback');
+			expect(prompt).toContain('gh pr review');
+		});
+
+		it('should require leader to post direct PR feedback in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('honest, critical, and actionable feedback');
+			expect(prompt).toContain('gh pr review');
+		});
+
 		it('should include plan review guidelines when reviewContext is plan_review', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			expect(prompt).toContain('Plan Review Guidelines');
