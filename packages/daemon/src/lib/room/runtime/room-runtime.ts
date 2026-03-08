@@ -130,6 +130,7 @@ export class RoomRuntime {
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
 
 	private readonly roomId: string;
+	private room: Room;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
 	private readonly taskManager: TaskManager;
@@ -191,6 +192,7 @@ export class RoomRuntime {
 
 	constructor(config: RoomRuntimeConfig) {
 		this.roomId = config.room.id;
+		this.room = config.room;
 		this.groupRepo = config.groupRepo;
 		this.observer = config.sessionObserver;
 		this.taskManager = config.taskManager;
@@ -219,6 +221,12 @@ export class RoomRuntime {
 			getTask: config.getTask,
 			getGoal: config.getGoal,
 		});
+
+		// Keep test and direct-runtime usage predictable: when no explicit leader model
+		// is provided, derive it from the initial room config.
+		if (!config.model || config.model.trim() === '') {
+			this.taskGroupManager.updateModel(this.resolveAgentModel(config.room, 'leader'));
+		}
 	}
 
 	// =========================================================================
@@ -276,15 +284,34 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Return the freshest room snapshot available to the runtime.
+	 * Prefer newer snapshots by updatedAt so updateRoom() calls can take effect
+	 * immediately even if an external room provider still returns stale data.
+	 */
+	private getCurrentRoom(): Room | null {
+		const liveRoom = this.getRoomById(this.roomId);
+		if (!liveRoom) return this.room;
+
+		const liveUpdatedAt = liveRoom.updatedAt ?? 0;
+		const snapshotUpdatedAt = this.room.updatedAt ?? 0;
+		return liveUpdatedAt > snapshotUpdatedAt ? liveRoom : this.room;
+	}
+
+	/**
 	 * Update runtime config from the latest room state.
 	 * Called when room config changes so lifecycle hooks see current values.
 	 */
-	updateRoom(_room: Room): void {
-		const currentRoom = this.getRoomById(this.roomId);
+	updateRoom(room: Room): void {
+		if (room.id === this.roomId) {
+			this.room = room;
+		}
+
+		const currentRoom = this.getCurrentRoom();
 		if (!currentRoom) {
 			log.warn(`Cannot refresh room runtime config: room not found (${this.roomId})`);
 			return;
 		}
+		this.room = currentRoom;
 		const config = (currentRoom.config ?? {}) as Record<string, unknown>;
 
 		// Keep TaskGroupManager model aligned to the current Leader model.
@@ -308,7 +335,7 @@ export class RoomRuntime {
 	 * Fetches fresh room from DB to get current config.
 	 */
 	private get maxPlanningAttempts(): number {
-		const currentRoom = this.getRoomById(this.roomId);
+		const currentRoom = this.getCurrentRoom();
 		const cfg = currentRoom?.config ?? {};
 		const value = (cfg as Record<string, unknown>)['maxPlanningRetries'];
 		if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
@@ -683,7 +710,7 @@ export class RoomRuntime {
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask) {
-						const currentRoom = this.getRoomById(this.roomId);
+						const currentRoom = this.getCurrentRoom();
 						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
@@ -755,7 +782,7 @@ export class RoomRuntime {
 							group.workerRole === 'general' ||
 							group.workerRole === 'planner')
 					) {
-						const currentRoom = this.getRoomById(this.roomId);
+						const currentRoom = this.getCurrentRoom();
 						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
@@ -1026,8 +1053,8 @@ export class RoomRuntime {
 					return this.taskManager.removeDraftTask(taskId);
 				};
 
-				// Fetch fresh room from DB for MCP server init (config may have changed)
-				const currentRoom = this.getRoomById(this.roomId);
+				// Fetch fresh room for MCP server init (config may have changed)
+				const currentRoom = this.getCurrentRoom();
 				if (!currentRoom) {
 					throw new Error(`Room not found while restoring planner MCP server: ${this.roomId}`);
 				}
@@ -1523,8 +1550,8 @@ export class RoomRuntime {
 			return this.taskManager.removeDraftTask(taskId);
 		};
 
-		// Fetch fresh room from DB for worker/leader init (config may have changed)
-		const currentRoom = this.getRoomById(this.roomId);
+		// Fetch fresh room for worker/leader init (config may have changed)
+		const currentRoom = this.getCurrentRoom();
 		if (!currentRoom) {
 			await this.taskManager.failTask(planningTask.id, `Room not found: ${this.roomId}`);
 			await this.emitTaskUpdateById(planningTask.id);
@@ -1622,8 +1649,8 @@ export class RoomRuntime {
 			.filter((t) => goalLinkedIds.has(t.id) && t.id !== task.id)
 			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);
 
-		// Fetch fresh room from DB for worker/leader init (config may have changed)
-		const currentRoom = this.getRoomById(this.roomId);
+		// Fetch fresh room for worker/leader init (config may have changed)
+		const currentRoom = this.getCurrentRoom();
 		if (!currentRoom) {
 			await this.taskManager.failTask(task.id, `Room not found: ${this.roomId}`);
 			await this.emitTaskUpdateById(task.id);
