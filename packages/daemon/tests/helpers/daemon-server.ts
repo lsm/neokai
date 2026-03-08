@@ -112,17 +112,18 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	} = options;
 
 	// Start Dev Proxy if requested
-	// Use ANTHROPIC_BASE_URL to redirect SDK to Dev Proxy instead of proxy env vars
+	// Use proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY) for SDK to route through Dev Proxy
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 	if (shouldUseDevProxy) {
 		devProxy = createDevProxyController({
-			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
+			setEnvVars: true, // Set proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY)
 			...devProxyOptions,
 		});
 		try {
 			await devProxy.start();
+			// Proxy env vars are set by DevProxyController when setEnvVars: true
 		} catch (error) {
 			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
 			// Tests will use real API calls if credentials are available
@@ -146,11 +147,8 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		...customEnv,
 	};
 
-	// Set ANTHROPIC_BASE_URL to point to Dev Proxy if it's running
-	// This is more reliable than proxy env vars for subprocess inheritance
-	if (devProxy?.isRunning()) {
-		daemonEnv.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
-	}
+	// Note: Proxy env vars are inherited from parent process via ...process.env
+	// Dev Proxy will intercept requests to api.anthropic.com
 
 	// Spawn the daemon server
 	const daemonProcess = spawn('bun', ['run', serverPath], {
@@ -277,25 +275,19 @@ async function createInProcessDaemonServer(
 		useDevProxy = false,
 	} = options;
 
-	// Track original ANTHROPIC_BASE_URL for restoration
-	let originalAnthropicBaseUrl: string | undefined;
-
 	// Start Dev Proxy if requested
-	// Use ANTHROPIC_BASE_URL to redirect SDK to Dev Proxy instead of proxy env vars
+	// Use proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY) for SDK to route through Dev Proxy
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 	if (shouldUseDevProxy) {
 		devProxy = createDevProxyController({
-			setEnvVars: false, // Don't set proxy env vars - use ANTHROPIC_BASE_URL instead
+			setEnvVars: true, // Set proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY)
 			...devProxyOptions,
 		});
 		try {
 			await devProxy.start();
-			// Set ANTHROPIC_BASE_URL to point to Dev Proxy
-			// This is more reliable than proxy env vars since SDK subprocess inherits it
-			originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
-			process.env.ANTHROPIC_BASE_URL = devProxy.proxyUrl;
+			// Proxy env vars are set by DevProxyController when setEnvVars: true
 		} catch (error) {
 			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
 			// Tests will use real API calls if credentials are available
@@ -414,15 +406,10 @@ async function createInProcessDaemonServer(
 				await Bun.$`rm -rf ${workspace}`.quiet();
 			}
 
-			// Stop Dev Proxy and restore ANTHROPIC_BASE_URL if Dev Proxy was started
+			// Stop Dev Proxy and restore environment variables if Dev Proxy was started
 			if (devProxy) {
 				await devProxy.stop();
-				// Restore original ANTHROPIC_BASE_URL
-				if (originalAnthropicBaseUrl !== undefined) {
-					process.env.ANTHROPIC_BASE_URL = originalAnthropicBaseUrl;
-				} else {
-					delete process.env.ANTHROPIC_BASE_URL;
-				}
+				devProxy.restoreEnv();
 			}
 		},
 		trackSession: (sessionId: string) => {

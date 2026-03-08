@@ -351,19 +351,19 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 		saveEnvVar('HTTP_PROXY');
 		saveEnvVar('NODE_USE_ENV_PROXY');
 		saveEnvVar('NODE_EXTRA_CA_CERTS');
+		saveEnvVar('NODE_TLS_REJECT_UNAUTHORIZED');
 		saveEnvVar('NO_PROXY');
 
 		globalThis.process.env.HTTPS_PROXY = proxyUrl;
 		globalThis.process.env.HTTP_PROXY = proxyUrl;
 		globalThis.process.env.NODE_USE_ENV_PROXY = '1';
+		globalThis.process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // Required for Dev Proxy HTTPS interception
+		globalThis.process.env.NO_PROXY = 'localhost,127.0.0.1';
 
-		// Set CA cert path if it exists
+		// Set CA cert path if it exists (optional, fallback to TLS reject disabled)
 		if (fs.existsSync(caCertPath)) {
 			globalThis.process.env.NODE_EXTRA_CA_CERTS = caCertPath;
 		}
-
-		// Don't proxy localhost
-		globalThis.process.env.NO_PROXY = 'localhost,127.0.0.1';
 	};
 
 	const controller: DevProxyController = {
