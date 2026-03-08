@@ -12,7 +12,7 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { TaskStatus } from '@neokai/shared';
+import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
@@ -98,12 +98,24 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			description: string;
 			goal_id?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			depends_on?: string[];
+			task_type?: TaskType;
+			assigned_agent?: AgentType;
 		}): Promise<ToolResult> {
-			const task = await taskManager.createTask({
-				title: args.title,
-				description: args.description,
-				priority: args.priority,
-			});
+			let task;
+			try {
+				task = await taskManager.createTask({
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					dependsOn: args.depends_on,
+					taskType: args.task_type,
+					assignedAgent: args.assigned_agent,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return jsonResult({ success: false, error: message });
+			}
 			if (args.goal_id) {
 				await goalManager.linkTaskToGoal(args.goal_id, task.id);
 			}
@@ -135,6 +147,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			title?: string;
 			description?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			depends_on?: string[];
 		}): Promise<ToolResult> {
 			const task = await taskManager.getTask(args.task_id);
 			if (!task) {
@@ -144,15 +157,23 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				title?: string;
 				description?: string;
 				priority?: 'low' | 'normal' | 'high' | 'urgent';
+				dependsOn?: string[];
 			} = {};
 			if (args.title !== undefined) updates.title = args.title;
 			if (args.description !== undefined) updates.description = args.description;
 			if (args.priority !== undefined) updates.priority = args.priority;
+			if (args.depends_on !== undefined) updates.dependsOn = args.depends_on;
 			// Apply updates if any fields were provided; otherwise return existing task unchanged
-			const updated =
-				Object.keys(updates).length > 0
-					? await taskManager.updateTaskFields(args.task_id, updates)
-					: task;
+			let updated;
+			try {
+				updated =
+					Object.keys(updates).length > 0
+						? await taskManager.updateTaskFields(args.task_id, updates)
+						: task;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return jsonResult({ success: false, error: message });
+			}
 			// Notify UI of the update
 			if (daemonHub) {
 				void daemonHub.emit('room.task.update', {
@@ -395,6 +416,18 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.default('normal')
 					.describe('Task priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('IDs of tasks this task depends on (must complete first)'),
+				task_type: z
+					.enum(['planning', 'coding', 'research', 'design', 'goal_review'])
+					.optional()
+					.describe('Task type - determines agent preset (default: coding)'),
+				assigned_agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.describe('Agent type to execute this task (default: coder)'),
 			},
 			(args) => handlers.create_task(args)
 		),
@@ -412,12 +445,16 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'update_task',
-			'Update an existing task (title, description, and/or priority). Only provided fields are changed; omitted fields keep their current values.',
+			'Update an existing task (title, description, priority, and/or dependencies). Only provided fields are changed; omitted fields keep their current values.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
 				title: z.string().trim().min(1).optional().describe('New title for the task'),
 				description: z.string().trim().min(1).optional().describe('New description for the task'),
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('New list of task IDs this task depends on (replaces existing)'),
 			},
 			(args) => handlers.update_task(args)
 		),

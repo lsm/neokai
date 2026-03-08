@@ -196,6 +196,97 @@ describe('Room Agent Tools', () => {
 			);
 			expect(updatedGoal!.linkedTaskIds.length).toBe(1);
 		});
+
+		it('should create a task with depends_on', async () => {
+			// Create prerequisite task first
+			const prerequisite = parseResult(
+				await handlers.create_task({
+					title: 'Prerequisite task',
+					description: 'This must complete first',
+				})
+			);
+			const prerequisiteId = prerequisite.taskId as string;
+
+			// Create dependent task
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Dependent task',
+					description: 'Depends on prerequisite',
+					depends_on: [prerequisiteId],
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; dependsOn: string[] };
+			expect(task.dependsOn).toEqual([prerequisiteId]);
+		});
+
+		it('should create a task with task_type', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Research task',
+					description: 'Investigate options',
+					task_type: 'research',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; taskType: string };
+			expect(task.taskType).toBe('research');
+		});
+
+		it('should create a task with assigned_agent', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'General task',
+					description: 'Any agent can do this',
+					assigned_agent: 'general',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { id: string; assignedAgent: string };
+			expect(task.assignedAgent).toBe('general');
+		});
+
+		it('should create a task with all new fields', async () => {
+			const prerequisite = parseResult(
+				await handlers.create_task({
+					title: 'First task',
+					description: 'Start here',
+				})
+			);
+			const prerequisiteId = prerequisite.taskId as string;
+
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Full featured task',
+					description: 'All options',
+					depends_on: [prerequisiteId],
+					task_type: 'coding',
+					assigned_agent: 'coder',
+				})
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as {
+				id: string;
+				dependsOn: string[];
+				taskType: string;
+				assignedAgent: string;
+			};
+			expect(task.dependsOn).toEqual([prerequisiteId]);
+			expect(task.taskType).toBe('coding');
+			expect(task.assignedAgent).toBe('coder');
+		});
+
+		it('should return error when depends_on references non-existent task', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Task with bad dependency',
+					description: 'References non-existent task',
+					depends_on: ['non-existent-task-id'],
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Dependency task not found');
+		});
 	});
 
 	describe('list_tasks', () => {
@@ -351,6 +442,71 @@ describe('Room Agent Tools', () => {
 			const task = result.task as { id: string; title: string };
 			expect(task.id).toBe(taskId);
 			expect(task.title).toBe('Original');
+		});
+
+		it('should update task depends_on', async () => {
+			// Create two prerequisite tasks
+			const prereq1 = parseResult(
+				await handlers.create_task({ title: 'Prereq 1', description: 'First' })
+			);
+			const prereq1Id = prereq1.taskId as string;
+			const prereq2 = parseResult(
+				await handlers.create_task({ title: 'Prereq 2', description: 'Second' })
+			);
+			const prereq2Id = prereq2.taskId as string;
+
+			// Create dependent task
+			const created = parseResult(
+				await handlers.create_task({
+					title: 'Dependent',
+					description: 'Depends on others',
+					depends_on: [prereq1Id],
+				})
+			);
+			const taskId = created.taskId as string;
+
+			// Update to depend on both tasks
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, depends_on: [prereq1Id, prereq2Id] })
+			);
+			expect(result.success).toBe(true);
+			const task = result.task as { dependsOn: string[] };
+			expect(task.dependsOn).toEqual([prereq1Id, prereq2Id]);
+		});
+
+		it('should clear depends_on when set to empty array', async () => {
+			// Create prerequisite task
+			const prereq = parseResult(
+				await handlers.create_task({ title: 'Prereq', description: 'First' })
+			);
+			const prereqId = prereq.taskId as string;
+
+			// Create dependent task
+			const created = parseResult(
+				await handlers.create_task({
+					title: 'Dependent',
+					description: 'Depends on other',
+					depends_on: [prereqId],
+				})
+			);
+			const taskId = created.taskId as string;
+
+			// Clear dependencies
+			const result = parseResult(await handlers.update_task({ task_id: taskId, depends_on: [] }));
+			expect(result.success).toBe(true);
+			const task = result.task as { dependsOn: string[] };
+			expect(task.dependsOn).toEqual([]);
+		});
+
+		it('should return error when updating depends_on with non-existent task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'Task', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.update_task({ task_id: taskId, depends_on: ['non-existent-task-id'] })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Dependency task not found');
 		});
 	});
 
