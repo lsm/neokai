@@ -28,6 +28,7 @@ import type {
 	ProviderQueryContext,
 } from '@neokai/shared/provider/query-types';
 import { piMonoQueryGenerator } from './pimono-adapter.js';
+import { refreshGitHubCopilotToken } from '@mariozechner/pi-ai/oauth';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -124,70 +125,6 @@ interface DeviceFlowResponse {
 	verification_uri: string;
 	expires_in: number;
 	interval: number;
-}
-
-interface CopilotTokenExchangeResponse {
-	token?: string;
-	access?: string;
-	access_token?: string;
-	expires_at?: number | string;
-	expires_in?: number;
-}
-
-/**
- * Exchange GitHub OAuth token for Copilot session token.
- *
- * Note: This used to come from @mariozechner/pi-ai as refreshGitHubCopilotToken,
- * but that export is no longer present in newer pi-ai versions.
- */
-async function refreshGitHubCopilotToken(
-	githubOAuthToken: string,
-	enterpriseDomain?: string
-): Promise<StoredCopilotCredentials> {
-	const apiBase = enterpriseDomain
-		? `https://${enterpriseDomain}/api/v3`
-		: 'https://api.github.com';
-
-	const response = await fetch(`${apiBase}/copilot_internal/v2/token`, {
-		method: 'GET',
-		headers: {
-			Authorization: `Bearer ${githubOAuthToken}`,
-			Accept: 'application/json',
-			'User-Agent': 'GitHubCopilotChat/0.35.0',
-		},
-	});
-
-	if (!response.ok) {
-		const errorText = await response.text().catch(() => response.statusText);
-		throw new Error(`Copilot token exchange failed: ${response.status} ${errorText}`);
-	}
-
-	const data = (await response.json()) as CopilotTokenExchangeResponse;
-	const access = data.token ?? data.access ?? data.access_token;
-	if (!access) {
-		throw new Error('Copilot token exchange response missing access token');
-	}
-
-	let expires = Date.now() + 25 * 60 * 1000; // conservative default ~25m
-	if (typeof data.expires_at === 'number' || typeof data.expires_at === 'string') {
-		const raw = Number(data.expires_at);
-		if (Number.isFinite(raw)) {
-			// Copilot typically returns epoch seconds; support both sec/ms defensively
-			expires = raw > 1_000_000_000_000 ? raw : raw * 1000;
-		}
-	} else if (typeof data.expires_in === 'number' && Number.isFinite(data.expires_in)) {
-		expires = Date.now() + data.expires_in * 1000;
-	}
-
-	// Keep a buffer to avoid racing expiry at request time
-	expires -= 5 * 60 * 1000;
-
-	return {
-		refresh: githubOAuthToken,
-		access,
-		expires,
-		enterpriseUrl: enterpriseDomain,
-	};
 }
 
 /**
