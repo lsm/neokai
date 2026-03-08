@@ -258,9 +258,9 @@ jobs:
       - name: Install Dev Proxy (Linux)
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/install.sh)"
-          # Add devproxy to PATH for subsequent steps
-          echo "$HOME/.devproxy" >> $GITHUB_PATH
+          curl -sL https://aka.ms/install-dev-proxy | bash
+          # Add .dotnet tools to PATH (where devproxy is installed)
+          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
 
       - name: Start Dev Proxy
         if: matrix.mock_sdk == true
