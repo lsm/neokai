@@ -74,8 +74,12 @@ function makeCallbacks(): LeaderToolCallbacks & {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	return {
 		calls,
-		async sendToWorker(groupId: string, message: string) {
-			calls.push({ method: 'sendToWorker', args: [groupId, message] });
+		async sendToWorker(groupId: string, message: string, mode?: 'steer' | 'queue') {
+			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
+			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
+		},
+		async handoffToWorker(groupId: string) {
+			calls.push({ method: 'handoffToWorker', args: [groupId] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 		async completeTask(groupId: string, summary: string) {
@@ -101,8 +105,9 @@ describe('Leader Agent', () => {
 	describe('buildLeaderSystemPrompt', () => {
 		it('should include tool contract instructions', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('MUST call exactly one tool per turn');
+			expect(prompt).toContain('Tool Contract (CRITICAL)');
 			expect(prompt).toContain('send_to_worker');
+			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
@@ -128,6 +133,32 @@ describe('Leader Agent', () => {
 		it('should include code review guidelines by default', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Review Guidelines');
+		});
+
+		it('should require leader to post direct PR feedback in simple code review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('honest, critical, and actionable feedback');
+			expect(prompt).toContain('gh pr review');
+		});
+
+		it('should use severity + review-url routing in simple code review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('ONLY your review URL(s)');
+			expect(prompt).toContain('Every iteration follows the same workflow');
+		});
+
+		it('should require leader to post direct PR feedback in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('honest, critical, and actionable feedback');
+			expect(prompt).toContain('gh pr review');
+		});
+
+		it('should use severity + review-url routing in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('ONLY your review URL(s)');
+			expect(prompt).toContain('Every iteration follows the same workflow');
 		});
 
 		it('should include plan review guidelines when reviewContext is plan_review', () => {
@@ -238,7 +269,29 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling', undefined]);
+		});
+
+		it('should route send_to_worker mode to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.send_to_worker({ message: 'Queue this', mode: 'queue' });
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('sendToWorker');
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
+		});
+
+		it('should route handoff_to_worker to callback with groupId', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.handoff_to_worker();
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('handoffToWorker');
+			expect(callbacks.calls[0].args).toEqual(['group-1']);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {
@@ -506,11 +559,18 @@ describe('Leader Agent', () => {
 			expect(agent.tools).not.toContain('Write');
 		});
 
-		it('should set SDK-native reviewer runtime model to inherit', () => {
+		it('should detect GLM provider label for SDK reviewers', () => {
+			const agents = buildReviewerAgents([{ model: 'glm-5' }]);
+			const agent = agents['reviewer-glm-5'];
+			expect(agent).toBeDefined();
+			expect(agent.prompt).toContain('- **Provider:** GLM');
+		});
+
+		it('should set SDK-native reviewer runtime model to mapped SDK tier', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6-20250929' }]);
 			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
-			expect(agent.model).toBe('inherit');
+			expect(agent.model).toBe('opus');
 		});
 
 		it('should set CLI reviewer runtime model to inherit', () => {
@@ -542,6 +602,14 @@ describe('Leader Agent', () => {
 
 		it('should default unknown model to sonnet', () => {
 			expect(toAgentModel('some-unknown-model-xyz')).toBe('sonnet');
+		});
+
+		it('should map GLM model IDs to sonnet tier fallback', () => {
+			expect(toAgentModel('glm-5')).toBe('sonnet');
+		});
+
+		it('should map MiniMax model IDs to sonnet tier fallback', () => {
+			expect(toAgentModel('MiniMax-M2.5')).toBe('sonnet');
 		});
 
 		it('should map short name opus to opus', () => {

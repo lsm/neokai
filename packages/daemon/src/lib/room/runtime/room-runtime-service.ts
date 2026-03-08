@@ -169,19 +169,16 @@ export class RoomRuntimeService {
 				agentSessions.set(init.sessionId, session);
 				await session.startStreamingQuery();
 			},
-			injectMessage: async (sessionId, message) => {
+			injectMessage: async (sessionId, message, opts) => {
 				const session = agentSessions.get(sessionId);
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
-				// Ensure the SDK query is running before enqueuing. After daemon
-				// restart, restored sessions are in cache but haven't started
-				// their query yet (lazy start to avoid startup timeout).
-				await session.ensureQueryStarted();
-				// Pre-persist to DB with 'queued' status before enqueuing,
-				// exactly like the normal UI send flow. This ensures
-				// acknowledgePersistedUserMessage() finds the message by UUID
-				// and treats it as a normal user message (not synthetic).
+
+				const deliveryMode = opts?.deliveryMode ?? 'current_turn';
+				const state = session.getProcessingState();
+				const isBusy = state.status === 'processing' || state.status === 'queued';
+
 				const messageId = generateUUID();
 				const sdkUserMessage: SDKUserMessage = {
 					type: 'user' as const,
@@ -193,11 +190,28 @@ export class RoomRuntimeService {
 						content: [{ type: 'text' as const, text: message }],
 					},
 				};
+
+				// Queue-mode semantics:
+				// - next_turn + busy => persist as 'saved' (replayed after current turn)
+				// - otherwise => enqueue now ('queued') so worker can start ASAP when idle
+				if (deliveryMode === 'next_turn' && isBusy) {
+					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
+					return;
+				}
+
+				// Ensure the SDK query is running before enqueuing. After daemon
+				// restart, restored sessions are in cache but haven't started
+				// their query yet (lazy start to avoid startup timeout).
+				await session.ensureQueryStarted();
 				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
 				await session.messageQueue.enqueueWithId(messageId, message);
 			},
 			hasSession: (sessionId) => {
 				return agentSessions.has(sessionId);
+			},
+			getProcessingState: (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				return session?.getProcessingState().status;
 			},
 			answerQuestion: async (sessionId, answer) => {
 				const session = agentSessions.get(sessionId);

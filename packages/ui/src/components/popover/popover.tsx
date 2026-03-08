@@ -460,6 +460,7 @@ function PopoverBackdropFn({
 }
 
 PopoverBackdropFn.displayName = 'PopoverBackdrop';
+/** @public */
 export const PopoverBackdrop = PopoverBackdropFn;
 
 // --- PopoverPanel ---
@@ -728,4 +729,5 @@ function PopoverGroupFn({ as: Tag = 'div', children, ...rest }: PopoverGroupProp
 }
 
 PopoverGroupFn.displayName = 'PopoverGroup';
+/** @public */
 export const PopoverGroup = PopoverGroupFn;

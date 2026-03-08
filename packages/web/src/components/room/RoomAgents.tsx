@@ -47,6 +47,8 @@ const MODEL_FAMILY_ICONS: Record<string, string> = {
 	__default__: '💎',
 };
 
+const ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS = new Set(['anthropic', 'glm', 'minimax']);
+
 function detectFamily(id: string, provider?: string): string {
 	if (id.includes('opus')) return 'opus';
 	if (id.includes('haiku')) return 'haiku';
@@ -560,11 +562,10 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		return m ? `Default (${m.name})` : `Default (${selectedDefaultModel.value})`;
 	});
 
-	// SDK subagents currently run inside the parent SDK/provider context.
-	// Restrict subagent model selection to Anthropic models to avoid
-	// implying independent provider routing (e.g. glm/minimax per subagent).
+	// SDK subagents run through Claude Agent SDK, so keep this list limited
+	// to Anthropic-compatible providers.
 	const sdkSubagentModels = useComputed(() =>
-		availableModels.value.filter((m) => m.provider === 'anthropic')
+		availableModels.value.filter((m) => ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS.has(m.provider))
 	);
 
 	const updateAgentModel = useCallback(
@@ -623,7 +624,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		const current = getSubagentsForRole(role);
 		// Avoid duplicates
 		if (current.some((r) => r.type !== 'cli' && r.model === model)) return;
-		agentSubagents.value = { ...agentSubagents.value, [role]: [...current, { model }] };
+		const modelInfo = availableModels.value.find((m) => m.id === model);
+		agentSubagents.value = {
+			...agentSubagents.value,
+			[role]: [...current, { model, provider: modelInfo?.provider }],
+		};
 	};
 
 	const removeSdkSubagentFor = (role: string, model: string) => {
@@ -793,7 +798,9 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 										</div>
 
 										{/* Sub Agent Models */}
-										<div class="text-xs text-gray-500 mb-2">Sub Agent Models (Anthropic)</div>
+										<div class="text-xs text-gray-500 mb-2">
+											Sub Agent Models (Anthropic-compatible)
+										</div>
 										<ModelTagsInput
 											models={sdkSubagentModels.value}
 											selected={getSdkSubagentsFor(agent.key)
