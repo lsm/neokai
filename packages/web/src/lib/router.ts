@@ -12,6 +12,7 @@
  * - Clean URLs: Uses History API for clean URLs without hash
  */
 
+import { batch } from '@preact/signals';
 import {
 	currentSessionIdSignal,
 	currentRoomIdSignal,
@@ -162,9 +163,11 @@ export function navigateToSession(sessionId: string, replace = false): void {
 			targetPath
 		);
 
-		// Update the signal
-		currentSessionIdSignal.value = sessionId;
-		navSectionSignal.value = 'chats';
+		// Batch signal updates to prevent intermediate render states
+		batch(() => {
+			currentSessionIdSignal.value = sessionId;
+			navSectionSignal.value = 'chats';
+		});
 	} finally {
 		// Use setTimeout to break the synchronous cycle
 		setTimeout(() => {
@@ -183,11 +186,13 @@ export function navigateToHome(replace = false): void {
 
 	const currentPath = getCurrentPath();
 	if (currentPath === '/') {
-		currentSessionIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentSessionIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 		return;
 	}
 
@@ -197,11 +202,13 @@ export function navigateToHome(replace = false): void {
 		const historyMethod = replace ? 'replaceState' : 'pushState';
 		window.history[historyMethod]({ sessionId: null, roomId: null, path: '/' }, '', '/');
 
-		currentSessionIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentSessionIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
@@ -227,10 +234,12 @@ export function navigateToRoom(roomId: string, replace = false): void {
 	// Only navigate if the path is different
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
-		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+		});
 		return;
 	}
 
@@ -246,11 +255,13 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		);
 
 		// Update the signals - room takes priority, clear session, room session, and task
-		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 	} finally {
 		// Use setTimeout to break the synchronous cycle
 		setTimeout(() => {
@@ -278,10 +289,12 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 	// Only navigate if the path is different
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
-		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = sessionId;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomSessionIdSignal.value = sessionId;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+		});
 		return;
 	}
 
@@ -297,11 +310,13 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		);
 
 		// Update the signals
-		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = sessionId;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomSessionIdSignal.value = sessionId;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 	} finally {
 		// Use setTimeout to break the synchronous cycle
 		setTimeout(() => {
@@ -327,10 +342,12 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 	const currentPath = getCurrentPath();
 
 	if (currentPath === targetPath) {
-		currentRoomIdSignal.value = roomId;
-		currentRoomTaskIdSignal.value = taskId;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomTaskIdSignal.value = taskId;
+			currentRoomSessionIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+		});
 		return;
 	}
 
@@ -340,11 +357,13 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		const historyMethod = replace ? 'replaceState' : 'pushState';
 		window.history[historyMethod]({ roomId, taskId, path: targetPath }, '', targetPath);
 
-		currentRoomIdSignal.value = roomId;
-		currentRoomTaskIdSignal.value = taskId;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomTaskIdSignal.value = taskId;
+			currentRoomSessionIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
@@ -363,10 +382,13 @@ export function navigateToSessions(replace = false): void {
 
 	const currentPath = getCurrentPath();
 	if (currentPath === '/sessions') {
-		navSectionSignal.value = 'chats';
-		currentSessionIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
+		batch(() => {
+			navSectionSignal.value = 'chats';
+			currentSessionIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+		});
 		return;
 	}
 
@@ -376,10 +398,13 @@ export function navigateToSessions(replace = false): void {
 		const historyMethod = replace ? 'replaceState' : 'pushState';
 		window.history[historyMethod]({ path: '/sessions' }, '', '/sessions');
 
-		currentSessionIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		navSectionSignal.value = 'chats';
+		batch(() => {
+			currentSessionIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			navSectionSignal.value = 'chats';
+		});
 	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
@@ -405,17 +430,19 @@ export function navigateToChats(): void {
  * Sets nav section to 'rooms' and navigates home
  */
 export function navigateToRooms(): void {
-	navSectionSignal.value = 'rooms';
 	// Navigate to root and clear signals
 	if (getCurrentPath() !== '/') {
 		if (!routerState.isNavigating) {
 			routerState.isNavigating = true;
 			try {
 				window.history.pushState({ sessionId: null, roomId: null, path: '/' }, '', '/');
-				currentSessionIdSignal.value = null;
-				currentRoomIdSignal.value = null;
-				currentRoomSessionIdSignal.value = null;
-				currentRoomTaskIdSignal.value = null;
+				batch(() => {
+					navSectionSignal.value = 'rooms';
+					currentSessionIdSignal.value = null;
+					currentRoomIdSignal.value = null;
+					currentRoomSessionIdSignal.value = null;
+					currentRoomTaskIdSignal.value = null;
+				});
 			} finally {
 				setTimeout(() => {
 					routerState.isNavigating = false;
@@ -423,10 +450,13 @@ export function navigateToRooms(): void {
 			}
 		}
 	} else {
-		currentSessionIdSignal.value = null;
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
+		batch(() => {
+			navSectionSignal.value = 'rooms';
+			currentSessionIdSignal.value = null;
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+		});
 	}
 }
 
@@ -456,43 +486,54 @@ function handlePopState(_event: PopStateEvent): void {
 
 	// Update the signals to match the URL
 	// Task takes priority among room sub-routes, then session, then room, then /sessions
+	// Use batch() to prevent intermediate render states that cause UI flashes
 	if (roomTask) {
-		currentRoomIdSignal.value = roomTask.roomId;
-		currentRoomTaskIdSignal.value = roomTask.taskId;
-		currentRoomSessionIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentRoomIdSignal.value = roomTask.roomId;
+			currentRoomTaskIdSignal.value = roomTask.taskId;
+			currentRoomSessionIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 	} else if (roomSession) {
-		currentRoomIdSignal.value = roomSession.roomId;
-		currentRoomSessionIdSignal.value = roomSession.sessionId;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentRoomIdSignal.value = roomSession.roomId;
+			currentRoomSessionIdSignal.value = roomSession.sessionId;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 	} else if (roomId) {
-		currentRoomIdSignal.value = roomId;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'rooms';
+		batch(() => {
+			currentRoomIdSignal.value = roomId;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'rooms';
+		});
 		// Normalize legacy /room/:id/chat URL → /room/:id so the address bar stays clean
 		if (ROOM_CHAT_COMPAT_PATTERN.test(path)) {
 			const canonicalPath = createRoomPath(roomId);
 			window.history.replaceState({ roomId, path: canonicalPath }, '', canonicalPath);
 		}
 	} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = null;
-		navSectionSignal.value = 'chats';
+		batch(() => {
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = null;
+			navSectionSignal.value = 'chats';
+		});
 	} else {
-		currentRoomIdSignal.value = null;
-		currentRoomSessionIdSignal.value = null;
-		currentRoomTaskIdSignal.value = null;
-		currentSessionIdSignal.value = sessionId;
-		if (!sessionId) {
-			navSectionSignal.value = 'rooms';
-		}
+		batch(() => {
+			currentRoomIdSignal.value = null;
+			currentRoomSessionIdSignal.value = null;
+			currentRoomTaskIdSignal.value = null;
+			currentSessionIdSignal.value = sessionId;
+			if (!sessionId) {
+				navSectionSignal.value = 'rooms';
+			}
+		});
 	}
 }
 

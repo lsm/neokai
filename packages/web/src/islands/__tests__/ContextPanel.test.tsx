@@ -15,6 +15,7 @@ import type { AuthStatus } from '@neokai/shared';
 const {
 	mockCreateSession,
 	mockNavigateToSession,
+	mockNavigateToSessions,
 	mockNavigateToRoom,
 	mockCreateRoom,
 	mockToastError,
@@ -22,6 +23,7 @@ const {
 } = vi.hoisted(() => ({
 	mockCreateSession: vi.fn(),
 	mockNavigateToSession: vi.fn(),
+	mockNavigateToSessions: vi.fn(),
 	mockNavigateToRoom: vi.fn(),
 	mockCreateRoom: vi.fn().mockResolvedValue({ id: 'room-1', name: 'Test Room' }),
 	mockToastError: vi.fn(),
@@ -98,6 +100,7 @@ vi.mock('../../lib/toast.ts', () => ({
 // Mock the router module
 vi.mock('../../lib/router.ts', () => ({
 	navigateToSession: mockNavigateToSession,
+	navigateToSessions: mockNavigateToSessions,
 	navigateToRoom: mockNavigateToRoom,
 }));
 
@@ -312,45 +315,30 @@ describe('ContextPanel', () => {
 		});
 	});
 
-	describe('Create Session Action', () => {
-		it('should call createSession when New Session clicked', async () => {
+	describe('New Session Action', () => {
+		it('should navigate to sessions page when New Session clicked', () => {
 			mockNavSectionSignal.value = 'chats';
-			mockCreateSession.mockResolvedValue({ sessionId: 'session-1' });
 
 			render(<ContextPanel />);
 
 			const button = screen.getByRole('button', { name: /New Session/i });
 			fireEvent.click(button);
 
-			expect(mockCreateSession).toHaveBeenCalledWith({ workspacePath: undefined });
+			// Should navigate to sessions page instead of creating a session
+			expect(mockNavigateToSessions).toHaveBeenCalled();
+			expect(mockCreateSession).not.toHaveBeenCalled();
 		});
 
-		it('should show error toast when createSession fails', async () => {
-			mockNavSectionSignal.value = 'chats';
-			mockCreateSession.mockRejectedValue(new Error('Network error'));
-
-			render(<ContextPanel />);
-
-			const button = screen.getByRole('button', { name: /New Session/i });
-			fireEvent.click(button);
-
-			await vi.waitFor(() => {
-				expect(mockToastError).toHaveBeenCalledWith('Network error');
-			});
-		});
-
-		it('should not call createSession when not connected (button disabled)', async () => {
+		it('should not navigate when not connected (button disabled)', () => {
 			mockNavSectionSignal.value = 'chats';
 			mockConnectionStateSignal.value = 'disconnected';
 
 			render(<ContextPanel />);
 
 			const button = screen.getByRole('button', { name: /New Session/i });
-			// Button is disabled, click should not trigger the handler
 			fireEvent.click(button);
 
-			// createSession should not be called since button is disabled
-			expect(mockCreateSession).not.toHaveBeenCalled();
+			expect(mockNavigateToSessions).not.toHaveBeenCalled();
 		});
 	});
 

@@ -9,10 +9,8 @@ import {
 	type SettingsSection,
 } from '../lib/signals.ts';
 import { authStatus, connectionState } from '../lib/state.ts';
-import { createSession } from '../lib/api-helpers.ts';
 import { toast } from '../lib/toast.ts';
 import {
-	navigateToSession,
 	navigateToSessions,
 	navigateToSettings,
 	navigateToRooms,
@@ -27,7 +25,6 @@ import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
-import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 
 // Settings section configuration
@@ -165,8 +162,6 @@ function EditableRoomName({ name, className }: { name: string; className?: strin
 }
 
 export function ContextPanel() {
-	const [creatingSession, setCreatingSession] = useState(false);
-
 	const navSection = navSectionSignal.value;
 	const isPanelOpen = contextPanelOpenSignal.value;
 	const activeSettingsSection = settingsSectionSignal.value;
@@ -194,45 +189,15 @@ export function ContextPanel() {
 	const config = sectionConfig[navSection];
 	const headerTitle = isRoomDetail ? (roomStore.room.value?.name ?? 'Room') : config.title;
 
-	const handleCreateSession = async () => {
-		if (connectionState.value !== 'connected') {
-			toast.error(t('chat.notConnected'));
-			return;
-		}
-
-		setCreatingSession(true);
-
-		try {
-			const response = await createSession({
-				workspacePath: undefined,
-			});
-
-			if (!response?.sessionId) {
-				toast.error(t('toast.noSessionId'));
-				return;
-			}
-
-			navigateToSession(response.sessionId);
-			toast.success(t('chat.sessionCreated'));
-		} catch (_err) {
-			if (_err instanceof ConnectionNotReadyError) {
-				toast.error(t('chat.connectionLost'));
-			} else {
-				const message = _err instanceof Error ? _err.message : 'Failed to create session';
-				toast.error(message);
-			}
-		} finally {
-			setCreatingSession(false);
-		}
-	};
-
 	const handleAction = () => {
 		switch (navSection) {
 			case 'rooms':
 				createRoomModalSignal.value = true;
 				break;
 			case 'chats':
-				handleCreateSession();
+				// Navigate to sessions page where the inline input lives,
+				// instead of creating an empty session immediately
+				navigateToSessions();
 				break;
 			default:
 				break;
@@ -261,8 +226,6 @@ export function ContextPanel() {
 		connectionState.value !== 'connected' ||
 		!authStatus.value?.isAuthenticated ||
 		navSection === 'settings';
-
-	const isActionLoading = creatingSession;
 
 	return (
 		<>
@@ -342,7 +305,6 @@ export function ContextPanel() {
 					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
-							loading={isActionLoading}
 							disabled={isActionDisabled}
 							fullWidth
 							icon={

@@ -1,33 +1,52 @@
-import { useState } from 'preact/hooks';
+import { useCallback, useState } from 'preact/hooks';
 import { connectionState, authStatus } from '../lib/state.ts';
 import { navigateToSession } from '../lib/router.ts';
 import { createSession } from '../lib/api-helpers.ts';
+import { connectionManager } from '../lib/connection-manager.ts';
 import { toast } from '../lib/toast.ts';
-import { Button } from '../components/ui/Button.tsx';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import { InputTextarea } from '../components/InputTextarea.tsx';
+import { ContentContainer } from '../components/ui/ContentContainer.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 import { t } from '../lib/i18n.ts';
 
 export function SessionsPage() {
-	const [creating, setCreating] = useState(false);
+	const [content, setContent] = useState('');
+	const [sending, setSending] = useState(false);
 
 	const canCreate =
 		connectionState.value === 'connected' && (authStatus.value?.isAuthenticated ?? false);
 
-	const handleNewSession = async () => {
+	const handleSubmit = useCallback(async () => {
+		const message = content.trim();
+		if (!message || sending) return;
+
 		if (!canCreate) {
 			toast.error(t('chat.notConnected'));
 			return;
 		}
-		setCreating(true);
+
+		setSending(true);
 		try {
+			// Lazy creation: create session + send first message atomically
 			const response = await createSession({ workspacePath: undefined });
 			if (!response?.sessionId) {
 				toast.error(t('toast.noSessionId'));
 				return;
 			}
+
+			// Send the first message
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) {
+				throw new ConnectionNotReadyError('Connection lost during session creation');
+			}
+			await hub.request('message.send', {
+				sessionId: response.sessionId,
+				content: message,
+			});
+
+			setContent('');
 			navigateToSession(response.sessionId);
-			toast.success(t('chat.sessionCreated'));
 		} catch (err) {
 			if (err instanceof ConnectionNotReadyError) {
 				toast.error(t('chat.connectionLost'));
@@ -35,9 +54,31 @@ export function SessionsPage() {
 				toast.error(err instanceof Error ? err.message : t('chat.createFailed'));
 			}
 		} finally {
-			setCreating(false);
+			setSending(false);
 		}
-	};
+	}, [content, sending, canCreate]);
+
+	const handleKeyDown = useCallback(
+		(e: KeyboardEvent) => {
+			if (e.key === 'Enter') {
+				if (e.metaKey || e.ctrlKey) {
+					e.preventDefault();
+					void handleSubmit();
+					return;
+				}
+
+				const isTouchDevice =
+					window.matchMedia('(pointer: coarse)').matches ||
+					('ontouchstart' in window && window.innerWidth < 768);
+
+				if (!isTouchDevice && !e.shiftKey) {
+					e.preventDefault();
+					void handleSubmit();
+				}
+			}
+		},
+		[handleSubmit]
+	);
 
 	return (
 		<div class="flex-1 flex flex-col bg-dark-900 overflow-hidden">
@@ -63,26 +104,25 @@ export function SessionsPage() {
 						/>
 					</svg>
 					<h2 class="text-xl font-semibold text-gray-100 mb-2">{t('sessions.welcome.title')}</h2>
-					<p class="text-sm text-gray-400 mb-8">{t('sessions.welcome.desc')}</p>
-					<Button
-						onClick={handleNewSession}
-						loading={creating}
-						disabled={!canCreate}
-						icon={
-							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
-									d="M12 4v16m8-8H4"
-								/>
-							</svg>
-						}
-					>
-						{t('sessions.newSession')}
-					</Button>
+					<p class="text-sm text-gray-400">{t('sessions.welcome.desc')}</p>
 				</div>
 			</div>
+
+			{/* Inline chat input at bottom */}
+			<ContentContainer className="pb-4">
+				<div class="flex items-end gap-3">
+					<InputTextarea
+						content={content}
+						onContentChange={setContent}
+						onKeyDown={handleKeyDown}
+						onSubmit={() => {
+							void handleSubmit();
+						}}
+						disabled={!canCreate || sending}
+						placeholder={t('input.askOrMake')}
+					/>
+				</div>
+			</ContentContainer>
 		</div>
 	);
 }
