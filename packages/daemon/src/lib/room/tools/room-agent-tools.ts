@@ -13,6 +13,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
+import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
@@ -227,6 +228,80 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
+		},
+
+		async set_task_status(args: {
+			task_id: string;
+			status: TaskStatus;
+			result?: string;
+			error?: string;
+		}): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+
+			// Validate status transition
+			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
+			if (!allowedTransitions.includes(args.status)) {
+				return jsonResult({
+					success: false,
+					error: `Invalid status transition from '${task.status}' to '${args.status}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
+				});
+			}
+
+			// Check for active group when transitioning from in_progress or review
+			if (task.status === 'in_progress' || task.status === 'review') {
+				if (runtimeService) {
+					const runtime = runtimeService.getRuntime(roomId);
+					if (runtime) {
+						const group = groupRepo.getGroupByTaskId(args.task_id);
+						if (group && group.state !== 'completed' && group.state !== 'failed') {
+							// There's an active group - cancel it first if moving to terminal state
+							if (
+								args.status === 'completed' ||
+								args.status === 'failed' ||
+								args.status === 'cancelled'
+							) {
+								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
+								if (!cancelledGroup) {
+									return jsonResult({
+										success: false,
+										error: `Failed to cancel active group for task ${args.task_id} — group may have been modified concurrently`,
+									});
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Apply status change
+			let updatedTask: typeof task;
+			try {
+				updatedTask = await taskManager.setTaskStatus(args.task_id, args.status, {
+					result: args.result,
+					error: args.error,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return jsonResult({ success: false, error: message });
+			}
+
+			// Notify UI of the status change
+			if (daemonHub) {
+				void daemonHub.emit('room.task.update', {
+					sessionId: `room:${roomId}`,
+					roomId,
+					task: updatedTask,
+				});
+			}
+
+			return jsonResult({
+				success: true,
+				message: `Task ${args.task_id} status changed from '${task.status}' to '${args.status}'`,
+				task: updatedTask,
+			});
 		},
 
 		async approve_task(args: { task_id: string }): Promise<ToolResult> {
@@ -463,6 +538,19 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Cancel a task (marks as cancelled — distinct from failed — and cleans up agent sessions)',
 			{ task_id: z.string().describe('ID of the task to cancel') },
 			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'set_task_status',
+			'Set task status to any valid status. Use this to complete, fail, restart, or change status of any task. Validates that the status transition is allowed.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				status: z
+					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'])
+					.describe('New status for the task'),
+				result: z.string().optional().describe('Result description (for completed status)'),
+				error: z.string().optional().describe('Error message (for failed status)'),
+			},
+			(args) => handlers.set_task_status(args)
 		),
 		tool(
 			'approve_task',

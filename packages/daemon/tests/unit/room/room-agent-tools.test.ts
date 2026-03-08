@@ -914,4 +914,237 @@ describe('Room Agent Tools', () => {
 			expect(group.awaitingHumanReview).toBe(false);
 		});
 	});
+
+	describe('set_task_status', () => {
+		it('should return error when task not found', async () => {
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: 'no-such-task', status: 'completed' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error for invalid status transition', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Try invalid transition: pending -> completed (not allowed)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'completed' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid status transition');
+		});
+
+		it('should allow valid transition: pending -> in_progress', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+		});
+
+		it('should allow restart from failed to pending', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+			// Then fail it
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Now restart it
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'pending' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('pending');
+			// Error should be cleared
+			expect(result.task.error).toBeUndefined();
+		});
+
+		it('should allow restart from cancelled to in_progress', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Cancel the task
+			await taskManager.cancelTask(taskId);
+
+			// Now restart it
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+		});
+
+		it('should allow transition: in_progress -> review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+		});
+
+		it('should allow transition: in_progress -> completed with result', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({
+					task_id: taskId,
+					status: 'completed',
+					result: 'Successfully implemented the feature',
+				})
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('completed');
+			expect(result.task.result).toBe('Successfully implemented the feature');
+			expect(result.task.progress).toBe(100);
+		});
+
+		it('should allow transition: in_progress -> failed with error', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({
+					task_id: taskId,
+					status: 'failed',
+					error: 'Tests failed',
+				})
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('failed');
+			expect(result.task.error).toBe('Tests failed');
+		});
+
+		it('should allow transition: review -> in_progress', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress and then to review
+			await taskManager.startTask(taskId);
+			await taskManager.reviewTask(taskId);
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+		});
+
+		it('should deny transition: completed -> pending (terminal state)', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress and then to completed
+			await taskManager.startTask(taskId);
+			await taskManager.completeTask(taskId, 'Done');
+
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'pending' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid status transition');
+		});
+
+		it('should return error when group cancellation fails due to version conflict', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+
+			// Create an active group
+			insertGroup(taskId, 'awaiting_human');
+
+			// Create handler with mock runtime that returns null from cancel (simulating version conflict)
+			const mockRuntime = {
+				taskGroupManager: {
+					cancel: async () => null, // Returns null to simulate version conflict
+				},
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			// Try to complete the task - should fail because group cancellation failed
+			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to cancel active group');
+			expect(result.error).toContain('group may have been modified concurrently');
+		});
+
+		it('should succeed when group cancellation succeeds', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+
+			// Create an active group
+			const groupId = insertGroup(taskId, 'awaiting_human');
+
+			// Create handler with mock runtime that successfully cancels
+			const mockRuntime = {
+				taskGroupManager: {
+					cancel: async (gId: string) => {
+						expect(gId).toBe(groupId);
+						return { id: gId, state: 'cancelled' };
+					},
+				},
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			// Complete the task - should succeed because group cancellation succeeded
+			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('completed');
+		});
+
+		it('should allow status change without runtime even if group exists', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+
+			// Create an active group
+			insertGroup(taskId, 'awaiting_human');
+
+			// Handler without runtime service - should still allow transition
+			// (for backwards compatibility or when runtime is not available)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'completed' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('completed');
+		});
+	});
 });
