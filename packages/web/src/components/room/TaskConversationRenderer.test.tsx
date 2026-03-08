@@ -548,6 +548,48 @@ describe('TaskConversationRenderer — pagination', () => {
 		expect(getByText('Retry')).toBeDefined();
 	});
 
+	it('retry button refetches messages instead of reloading page', async () => {
+		let fetchCount = 0;
+
+		mockRequest.mockImplementation(async (method: string) => {
+			if (method === 'task.getGroupMessages') {
+				fetchCount++;
+				if (fetchCount === 1) {
+					throw new Error('Network error');
+				}
+				// Second fetch succeeds
+				return makeApiResponse([makeRawMessage(1, 'assistant', 'uuid-1')]);
+			}
+			return {};
+		});
+
+		const { getByText, queryByText } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+
+		// Wait for initial error
+		await waitFor(() => {
+			expect(getByText('Network error')).toBeDefined();
+		});
+
+		expect(fetchCount).toBe(1);
+
+		// Click retry button
+		await act(async () => {
+			fireEvent.click(getByText('Retry'));
+		});
+
+		// Should have made a second fetch request
+		await waitFor(() => {
+			expect(fetchCount).toBe(2);
+		});
+
+		// Error should be cleared and messages should render
+		await waitFor(() => {
+			expect(queryByText('Network error')).toBeNull();
+		});
+	});
+
 	it('shows error message when loading older messages fails', async () => {
 		const initialMessages = [makeRawMessage(1, 'assistant', 'uuid-1')];
 		let olderCallCount = 0;

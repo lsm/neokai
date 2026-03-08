@@ -103,6 +103,8 @@ export function TaskConversationRenderer({
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [hasOlder, setHasOlder] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Incremented to trigger a retry of the initial fetch
+	const [retryKey, setRetryKey] = useState(0);
 	// Track the oldest cursor for loading older messages
 	const oldestCursorRef = useRef<string | null>(null);
 	// Refs for useCallback guards (avoids recreating callback on state changes)
@@ -225,7 +227,11 @@ export function TaskConversationRenderer({
 			unsub();
 			leaveRoom(channel);
 		};
-	}, [groupId]);
+	}, [groupId, retryKey, joinRoom, leaveRoom, onEvent, request]);
+
+	const retryInitialFetch = useCallback(() => {
+		setRetryKey((k) => k + 1);
+	}, []);
 
 	const loadOlderMessages = useCallback(async () => {
 		// Use refs for guards to avoid recreating callback on state changes
@@ -308,7 +314,7 @@ export function TaskConversationRenderer({
 				<p class="text-red-400 text-sm">{error}</p>
 				<button
 					class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded bg-dark-800 hover:bg-dark-700 transition-colors"
-					onClick={() => window.location.reload()}
+					onClick={retryInitialFetch}
 				>
 					Retry
 				</button>
