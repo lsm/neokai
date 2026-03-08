@@ -26,6 +26,11 @@ import {
 	type DevProxyController,
 	type DevProxyOptions,
 } from './dev-proxy';
+import {
+	createMockApiServer,
+	type MockApiServer,
+	type MockApiServerOptions,
+} from './mock-api-server';
 
 export interface DaemonServerOptions {
 	/**
@@ -95,8 +100,14 @@ export interface DaemonServerContext {
 	mockControls: MockControls | null;
 
 	/**
-	 * Dev Proxy controller (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
-	 * Use to switch mock files or check proxy status.
+	 * Mock API server (only when NEOKAI_USE_DEV_PROXY=1 or useDevProxy=true).
+	 * This is a simpler alternative to Dev Proxy that uses ANTHROPIC_BASE_URL.
+	 */
+	mockApiServer: MockApiServer | null;
+
+	/**
+	 * Dev Proxy controller (legacy, kept for compatibility).
+	 * Use mockApiServer instead - it's simpler and more reliable.
 	 */
 	devProxy: DevProxyController | null;
 }
@@ -230,6 +241,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 		messageHub,
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		mockControls: null, // Mock not available in spawned process mode
+		mockApiServer: null, // Not used in spawned process mode
 		devProxy,
 		kill: (signal: NodeJS.Signals = 'SIGTERM') => daemonProcess.kill(signal),
 		waitForExit: async () => {
@@ -242,7 +254,11 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 				}
 				daemonProcess.once('exit', () => resolve());
 			});
-			// Stop Dev Proxy if it was started
+			// Stop mock API server or Dev Proxy if they were started
+			if (mockApiServer) {
+				await mockApiServer.stop();
+				mockApiServer.restoreEnv();
+			}
 			if (devProxy) {
 				await devProxy.stop();
 				devProxy.restoreEnv();
@@ -276,30 +292,34 @@ async function createInProcessDaemonServer(
 		useDevProxy = false,
 	} = options;
 
-	// Start Dev Proxy if requested
-	// Note: In CI, Dev Proxy may already be running (DEVPROXY_PID is set)
-	// In that case, we skip starting it and just use the existing proxy
+	// Start mock API server if requested
+	// This is simpler and more reliable than Dev Proxy - we just set ANTHROPIC_BASE_URL
+	let mockApiServer: MockApiServer | null = null;
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
-	const devProxyAlreadyRunning = process.env.DEVPROXY_PID !== undefined;
 
-	if (shouldUseDevProxy && !devProxyAlreadyRunning) {
-		devProxy = createDevProxyController({
-			setEnvVars: true,
-			...devProxyOptions,
-		});
-		await devProxy.start();
-	} else if (shouldUseDevProxy && devProxyAlreadyRunning) {
-		// Dev Proxy is already running from CI - env vars should already be set
-		// Create a no-op controller for consistent API
-		devProxy = {
-			isRunning: () => true,
-			start: async () => {},
-			stop: async () => {}, // Don't stop CI's proxy
-			loadMockFile: async () => {},
-			waitForReady: async () => {},
-			restoreEnv: () => {},
-		} as DevProxyController;
+	if (shouldUseDevProxy) {
+		try {
+			mockApiServer = await createMockApiServer({
+				port: devProxyOptions?.port || 8000,
+				logLevel: 'warning',
+			});
+			await mockApiServer.start();
+		} catch (error) {
+			// If mock API server fails (e.g., not running on Bun), fall back to Dev Proxy
+			if (error instanceof Error && error.message.includes('Bun')) {
+				console.warn('Mock API server requires Bun, falling back to Dev Proxy');
+			} else {
+				console.warn('Failed to start mock API server, falling back to Dev Proxy:', error);
+			}
+			// Try Dev Proxy fallback
+			const devProxyController = createDevProxyController({
+				setEnvVars: true,
+				...devProxyOptions,
+			});
+			await devProxyController.start();
+			devProxy = devProxyController;
+		}
 	}
 
 	// Apply custom env vars
@@ -382,6 +402,7 @@ async function createInProcessDaemonServer(
 		baseUrl: `http://127.0.0.1:${userPort}`,
 		daemonContext, // Expose for advanced usage
 		mockControls,
+		mockApiServer,
 		devProxy,
 		kill: () => {
 			// For in-process, cleanup happens in waitForExit - just return true
@@ -416,7 +437,11 @@ async function createInProcessDaemonServer(
 				await Bun.$`rm -rf ${workspace}`.quiet();
 			}
 
-			// Stop Dev Proxy if it was started
+			// Stop mock API server or Dev Proxy if they were started
+			if (mockApiServer) {
+				await mockApiServer.stop();
+				mockApiServer.restoreEnv();
+			}
 			if (devProxy) {
 				await devProxy.stop();
 				devProxy.restoreEnv();
