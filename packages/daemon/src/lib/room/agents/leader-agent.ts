@@ -196,31 +196,29 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 		} else {
 			sections.push(`\n## Plan Review Guidelines\n`);
-			sections.push(`1. Check that the plan covers all aspects of the goal`);
-			sections.push(`2. Verify each task has clear, specific acceptance criteria`);
-			sections.push(`3. Ensure tasks are ordered correctly by dependency`);
-			sections.push(`4. Check that tasks are well-scoped (not too broad or too narrow)`);
 			sections.push(
-				`5. Verify appropriate agent types are assigned (coder for implementation, general for non-coding)`
+				`**Every iteration follows the same workflow** — including after the planner addresses feedback.`
+			);
+			sections.push(`1. Read the planner output and extract the PR number/URL.`);
+			sections.push(
+				`2. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`6. Require a PR for the plan review. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\``
+				`3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.`
+			);
+			sections.push(`4. Route strictly by severity from your posted review:`);
+			sections.push(
+				`   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message. Then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`7. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\``
+				`   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.`
 			);
 			sections.push(
-				`8. If the plan needs changes, use \`send_to_worker\` (mode: "queue") with specific feedback on what to add, remove, or modify, then call \`handoff_to_worker\``
+				`   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).`
 			);
+			sections.push(`5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.`);
 			sections.push(
-				`9. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
-			);
-			sections.push(
-				`10. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
-			);
-			sections.push(`11. Use \`fail_task\` only if the goal is fundamentally not plannable`);
-			sections.push(
-				`12. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
+				`6. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted.`
 			);
 		}
 	} else {
@@ -287,19 +285,25 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``);
 		} else {
 			sections.push(`\n## Code Review Guidelines\n`);
-			sections.push(`1. Check that the implementation matches the task description`);
-			sections.push(`2. Verify correctness and completeness`);
 			sections.push(
-				`3. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\``
+				`**Every iteration follows the same workflow** — including after the worker addresses feedback.`
+			);
+			sections.push(`1. Read the worker output and extract the PR number/URL.`);
+			sections.push(
+				`2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`4. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\``
+				`3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.`
+			);
+			sections.push(`4. Route strictly by severity from your posted review:`);
+			sections.push(
+				`   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message. Then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`5. If issues are found, use \`send_to_worker\` (mode: "queue") with specific actionable feedback, then call \`handoff_to_worker\``
+				`   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.`
 			);
 			sections.push(
-				`6. If the work is complete and correct, use \`submit_for_review\` with the PR URL`
+				`   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).`
 			);
 		}
 

@@ -141,10 +141,24 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('gh pr review');
 		});
 
+		it('should use severity + review-url routing in simple code review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('ONLY your review URL(s)');
+			expect(prompt).toContain('Every iteration follows the same workflow');
+		});
+
 		it('should require leader to post direct PR feedback in simple plan review path', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			expect(prompt).toContain('honest, critical, and actionable feedback');
 			expect(prompt).toContain('gh pr review');
+		});
+
+		it('should use severity + review-url routing in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('ONLY your review URL(s)');
+			expect(prompt).toContain('Every iteration follows the same workflow');
 		});
 
 		it('should include plan review guidelines when reviewContext is plan_review', () => {
