@@ -288,7 +288,9 @@ describe('RoomRuntime flow', () => {
 
 			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Add error handling to the endpoint',
+				mode: 'queue',
 			});
+			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 
 			// Group is back to awaiting_worker with iteration bumped
 			const afterFeedback = ctx.groupRepo.getGroup(group.id)!;
@@ -349,8 +351,10 @@ describe('RoomRuntime flow', () => {
 				// send_to_worker succeeds: feedbackIteration i+1 < 5
 				const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
+					mode: 'queue',
 				});
 				expect(JSON.parse(r.content[0].text).success).toBe(true);
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -393,13 +397,18 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback ${i + 1}`,
+					mode: 'queue',
 				});
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Extra' });
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Extra',
+				mode: 'queue',
+			});
 
 			// Task in review, not failed
 			const finalTask = await ctx.taskManager.getTask(task.id);
@@ -426,13 +435,18 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Round ${i + 1}`,
+					mode: 'queue',
 				});
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Trigger' });
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Trigger',
+				mode: 'queue',
+			});
 
 			// Task is in review, group awaiting_human
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
@@ -458,8 +472,10 @@ describe('RoomRuntime flow', () => {
 			// Leader can now send feedback without triggering re-escalation (1 < 5)
 			const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Good, keep going',
+				mode: 'queue',
 			});
 			expect(JSON.parse(r.content[0].text).success).toBe(true);
+			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
 		});
 
@@ -477,7 +493,9 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
+					mode: 'queue',
 				});
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -510,8 +528,12 @@ describe('RoomRuntime flow', () => {
 			});
 			expect(ctx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(1);
 
-			// Leader sends feedback — group goes back to awaiting_worker
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Redo this' });
+			// Leader sends feedback, then explicitly hands off to worker
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Redo this',
+				mode: 'queue',
+			});
+			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
 
 			// Iteration 2: Worker done → routeWorkerToLeader resets violations to 0
