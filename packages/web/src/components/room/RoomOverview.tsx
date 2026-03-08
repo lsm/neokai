@@ -323,6 +323,7 @@ function GoalCard({
 	allTasks,
 	onTaskClick,
 	onApprove,
+	onRetryTask,
 	onUpdate,
 	onDelete,
 }: {
@@ -331,6 +332,7 @@ function GoalCard({
 	allTasks: TaskSummary[];
 	onTaskClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
+	onRetryTask?: (taskId: string) => void;
 	onUpdate: (updates: Partial<RoomGoal>) => Promise<void>;
 	onDelete: () => Promise<void>;
 }) {
@@ -339,6 +341,7 @@ function GoalCard({
 	const [editingDesc, setEditingDesc] = useState(false);
 	const [titleDraft, setTitleDraft] = useState(goal.title);
 	const [descDraft, setDescDraft] = useState(goal.description ?? '');
+	const [tasksExpanded, setTasksExpanded] = useState(false);
 	const titleRef = useRef<HTMLInputElement>(null);
 	const descRef = useRef<HTMLTextAreaElement>(null);
 
@@ -406,10 +409,16 @@ function GoalCard({
 		.map((id) => tasks.find((t) => t.id === id))
 		.filter((t): t is TaskSummary => t !== undefined);
 
+	// Split tasks into "attention-needed" (always visible) and "rest" (collapsible)
+	const attentionStatuses = new Set<TaskStatus>(['in_progress', 'review', 'failed']);
+	const attentionTasks = linkedTasks.filter((t) => attentionStatuses.has(t.status));
+	const restTasks = linkedTasks.filter((t) => !attentionStatuses.has(t.status));
+
 	const activeTasks = linkedTasks.filter(
 		(t) => t.status === 'in_progress' || t.status === 'review'
 	);
 	const completedTasks = linkedTasks.filter((t) => t.status === 'completed');
+	const failedTasks = linkedTasks.filter((t) => t.status === 'failed');
 
 	const statusStyles: Record<GoalStatus, { border: string; badge: string; badgeText: string }> = {
 		active: {
@@ -484,51 +493,6 @@ function GoalCard({
 						>
 							{style.badgeText}
 						</span>
-						{/* Priority dropdown */}
-						{priority && (
-							<div class="relative flex-shrink-0 flex items-center">
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										setShowPriorityMenu(!showPriorityMenu);
-									}}
-									class={cn(
-										'text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors cursor-pointer',
-										priority.class
-									)}
-								>
-									{priority.text}
-								</button>
-								{showPriorityMenu && (
-									<>
-										<div class="fixed inset-0 z-10" onClick={() => setShowPriorityMenu(false)} />
-										<div class="absolute left-0 top-full mt-1 z-20 bg-dark-900 border border-dark-700 rounded-lg shadow-2xl py-1 min-w-[80px]">
-											{PRIORITY_ORDER.map((p) => {
-												const cfg = priorityConfig[p];
-												if (!cfg) return null;
-												return (
-													<button
-														key={p}
-														class={cn(
-															'w-full px-3 py-1.5 text-xs text-left transition-colors hover:bg-dark-800',
-															p === goal.priority ? 'font-semibold' : '',
-															cfg.class.split(' ').find((c) => c.startsWith('text-')) ??
-																'text-gray-300'
-														)}
-														onClick={(e) => {
-															e.stopPropagation();
-															handlePrioritySelect(p);
-														}}
-													>
-														{cfg.text}
-													</button>
-												);
-											})}
-										</div>
-									</>
-								)}
-							</div>
-						)}
 					</div>
 					<div class="relative flex-shrink-0">
 						<button
@@ -563,6 +527,19 @@ function GoalCard({
 											}}
 										>
 											{t('goals.reactivate')}
+										</button>
+									)}
+									{failedTasks.length > 0 && onRetryTask && (
+										<button
+											class="w-full px-3 py-1.5 text-sm text-left text-amber-400 hover:bg-dark-800 transition-colors"
+											onClick={() => {
+												setShowActions(false);
+												for (const task of failedTasks) {
+													onRetryTask(task.id);
+												}
+											}}
+										>
+											{t('goals.retryFailed', { count: failedTasks.length })}
 										</button>
 									)}
 									<button
@@ -622,38 +599,131 @@ function GoalCard({
 					</div>
 				)}
 
-				{/* Task summary line */}
-				{linkedTasks.length > 0 && (
-					<div class="flex items-center gap-3 text-xs text-gray-500 mt-2">
-						{activeTasks.length > 0 && (
-							<span class="flex items-center gap-1">
-								<span class="w-1.5 h-1.5 rounded-full bg-yellow-500" />
-								{t('tasks.taskSummary.active', { count: activeTasks.length })}
-							</span>
-						)}
-						{completedTasks.length > 0 && (
-							<span class="flex items-center gap-1">
-								<span class="w-1.5 h-1.5 rounded-full bg-green-500" />
-								{t('tasks.taskSummary.done', { count: completedTasks.length })}
-							</span>
-						)}
-						<span>{t('tasks.taskSummary.total', { count: linkedTasks.length })}</span>
-					</div>
-				)}
+				{/* Task summary + priority line */}
+				<div class="flex items-center gap-3 text-xs text-gray-500 mt-2">
+					{linkedTasks.length > 0 && (
+						<>
+							{activeTasks.length > 0 && (
+								<span class="flex items-center gap-1">
+									<span class="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+									{t('tasks.taskSummary.active', { count: activeTasks.length })}
+								</span>
+							)}
+							{completedTasks.length > 0 && (
+								<span class="flex items-center gap-1">
+									<span class="w-1.5 h-1.5 rounded-full bg-green-500" />
+									{t('tasks.taskSummary.done', { count: completedTasks.length })}
+								</span>
+							)}
+							<span>{t('tasks.taskSummary.total', { count: linkedTasks.length })}</span>
+						</>
+					)}
+					{/* Priority dropdown — right-aligned in summary row */}
+					{priority && (
+						<div class="relative flex items-center ml-auto">
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									setShowPriorityMenu(!showPriorityMenu);
+								}}
+								class={cn(
+									'text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors cursor-pointer inline-flex items-center gap-0.5',
+									priority.class
+								)}
+							>
+								{priority.text}
+								<svg class="w-2.5 h-2.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+								</svg>
+							</button>
+							{showPriorityMenu && (
+								<>
+									<div class="fixed inset-0 z-10" onClick={() => setShowPriorityMenu(false)} />
+									<div class="absolute right-0 top-full mt-1 z-20 bg-dark-900 border border-dark-700 rounded-lg shadow-2xl py-1 min-w-[80px]">
+										{PRIORITY_ORDER.map((p) => {
+											const cfg = priorityConfig[p];
+											if (!cfg) return null;
+											return (
+												<button
+													key={p}
+													class={cn(
+														'w-full px-3 py-1.5 text-xs text-left transition-colors hover:bg-dark-800',
+														p === goal.priority ? 'font-semibold' : '',
+														cfg.class.split(' ').find((c) => c.startsWith('text-')) ??
+															'text-gray-300'
+													)}
+													onClick={(e) => {
+														e.stopPropagation();
+														handlePrioritySelect(p);
+													}}
+												>
+													{cfg.text}
+												</button>
+											);
+										})}
+									</div>
+								</>
+							)}
+						</div>
+					)}
+				</div>
 			</div>
 
-			{/* Inline task list */}
+			{/* Task list — attention tasks always visible, rest collapsible */}
 			{linkedTasks.length > 0 && (
-				<div class="border-t border-dark-700/50 px-1 py-1">
-					{linkedTasks.map((task) => (
-						<TaskRow
-							key={task.id}
-							task={task}
-							allTasks={allTasks}
-							onClick={onTaskClick}
-							onApprove={onApprove}
-						/>
-					))}
+				<div class="border-t border-dark-700/50">
+					{/* Attention tasks: in_progress, review, failed — always shown */}
+					{attentionTasks.length > 0 && (
+						<div class="px-1 py-1">
+							{attentionTasks.map((task) => (
+								<TaskRow
+									key={task.id}
+									task={task}
+									allTasks={allTasks}
+									onClick={onTaskClick}
+									onApprove={onApprove}
+								/>
+							))}
+						</div>
+					)}
+
+					{/* Expand/collapse toggle for remaining tasks */}
+					{restTasks.length > 0 && (
+						<>
+							{tasksExpanded && (
+								<div class={cn('px-1 py-1', attentionTasks.length > 0 && 'border-t border-dark-700/30')}>
+									{restTasks.map((task) => (
+										<TaskRow
+											key={task.id}
+											task={task}
+											allTasks={allTasks}
+											onClick={onTaskClick}
+											onApprove={onApprove}
+										/>
+									))}
+								</div>
+							)}
+							<button
+								onClick={() => setTasksExpanded(!tasksExpanded)}
+								class={cn(
+									'w-full px-4 py-2 text-xs text-gray-500 hover:text-gray-300 hover:bg-dark-800/50 transition-colors flex items-center justify-center gap-1.5',
+									(attentionTasks.length > 0 || tasksExpanded) && 'border-t border-dark-700/30'
+								)}
+							>
+								<svg
+									class={cn('w-3 h-3 transition-transform', tasksExpanded && 'rotate-180')}
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+								</svg>
+								{tasksExpanded
+									? t('goals.tasks.hide')
+									: t('goals.tasks.showMore', { count: restTasks.length })}
+							</button>
+						</>
+					)}
 				</div>
 			)}
 		</div>
@@ -878,6 +948,7 @@ export function RoomOverview({
 											roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
 										}
 										onApprove={(taskId) => setShowApproveConfirm(taskId)}
+										onRetryTask={(taskId) => void roomStore.retryTask(taskId)}
 										onUpdate={(updates) => onUpdateGoal(goal.id, updates)}
 										onDelete={() => onDeleteGoal(goal.id)}
 									/>
