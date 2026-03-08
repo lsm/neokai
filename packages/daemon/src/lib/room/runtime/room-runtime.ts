@@ -858,11 +858,11 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the existing worker.
+	 * Resume a group from awaiting_human by injecting a message into the appropriate session.
 	 *
-	 * Used for all task types (planning, coding, general):
-	 * - Approve: sets approved=true → worker merges PR (planner also creates tasks)
-	 * - Reject: no flag set, submittedForReview reset → worker addresses feedback
+	 * Routing logic:
+	 * - ALL approvals (planner, coder, general) → leader (merges PR + calls complete_task)
+	 * - ALL rejections (planner, coder, general) → leader (forwards feedback to worker)
 	 *
 	 * Reuses the same worker and leader sessions — no new sessions are created.
 	 */
@@ -878,27 +878,26 @@ export class RoomRuntime {
 		const task = await this.taskManager.getTask(taskId);
 		if (!task) return false;
 
-		// Set approved when:
-		// - explicitly requested via opts.approved === true, OR
-		// - resuming a planner (always treated as an approval) UNLESS explicitly denied
-		const shouldApprove =
+		// Determine if this is an approval
+		const isApproval =
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
-		if (shouldApprove) {
+
+		if (isApproval) {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
 		// Move task back to in_progress
 		await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
 
-		// Delegate to TaskGroupManager (injects message into existing worker).
-		// If injection fails, TaskGroupManager rolls back group state. We also
-		// revert the task status so the task stays in review for retry.
+		// Route ALL messages (approval and rejection) to leader
+		// Leader handles: approval → merge + complete_task
+		// Leader handles: rejection → send_to_worker + handoff_to_worker
 		try {
-			const updated = await this.taskGroupManager.resumeWorkerFromHuman(group.id, message);
+			const updated = await this.taskGroupManager.resumeLeaderFromHuman(group.id, message);
 			if (!updated) return false;
 		} catch (error) {
 			await this.taskManager.reviewTask(group.taskId);
-			log.error(`Failed to resume worker from human for task ${taskId}:`, error);
+			log.error(`Failed to resume from human for task ${taskId}:`, error);
 			return false;
 		}
 

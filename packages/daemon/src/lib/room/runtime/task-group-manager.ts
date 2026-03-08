@@ -484,10 +484,9 @@ export class TaskGroupManager {
 	/**
 	 * Resume a group from awaiting_human by injecting a message into the existing worker.
 	 *
-	 * Used for all task types after human approval or rejection:
-	 * - Planning approve: worker merges plan PR + creates tasks
-	 * - Coding approve: worker merges code PR
-	 * - Coding reject: worker addresses feedback
+	 * Used for:
+	 * - Rejection: worker addresses feedback
+	 * - Planning approval: worker merges plan PR + creates tasks
 	 *
 	 * No new sessions are created. The existing observer will fire
 	 * onWorkerTerminalState again when the worker finishes.
@@ -519,6 +518,57 @@ export class TaskGroupManager {
 			// Rollback: revert group back to awaiting_human
 			const current = this.groupRepo.getGroup(groupId);
 			if (current && current.state === 'awaiting_worker') {
+				this.groupRepo.updateGroupState(groupId, 'awaiting_human', current.version);
+			}
+			throw error;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Resume a group from awaiting_human by injecting a message into the existing leader.
+	 *
+	 * Used for ALL human resumptions (both approval and rejection):
+	 * - Approval: leader merges PR and calls complete_task
+	 * - Rejection: leader forwards feedback to worker via send_to_worker + handoff_to_worker
+	 *
+	 * No new sessions are created. The existing observer will fire
+	 * onLeaderTerminalState again when the leader finishes.
+	 */
+	async resumeLeaderFromHuman(groupId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group || group.state !== 'awaiting_human') return false;
+
+		// Ensure leader session exists
+		if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
+			return false;
+		}
+
+		// Transition: awaiting_human → awaiting_leader
+		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
+		if (!updated) return false;
+
+		// Reset state for the new cycle (same as resumeWorkerFromHuman).
+		// feedbackIteration is reset to 0 so the worker gets a fresh iteration budget.
+		// submittedForReview is reset so the worker must re-submit for review after addressing feedback.
+		// For approval path, these resets are harmless since leader will complete the task.
+		// For rejection path, these resets are essential for the worker to have a fresh start.
+		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
+		this.groupRepo.setSubmittedForReview(groupId, false);
+		const afterReset = this.groupRepo.getGroup(groupId);
+		if (afterReset) {
+			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
+		}
+
+		// Inject approval message into existing leader session.
+		// If injection fails, rollback the group state so the task stays in review for retry.
+		try {
+			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+		} catch (error) {
+			// Rollback: revert group back to awaiting_human
+			const current = this.groupRepo.getGroup(groupId);
+			if (current && current.state === 'awaiting_leader') {
 				this.groupRepo.updateGroupState(groupId, 'awaiting_human', current.version);
 			}
 			throw error;
