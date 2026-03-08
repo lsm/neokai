@@ -104,8 +104,9 @@ export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
 };
 
 /**
- * Default features for room chat sessions (all disabled)
- * Room chat sessions do NOT use Claude Code system prompt - they are for user interaction
+ * Default features for room chat sessions (all disabled).
+ * Room chat sessions do NOT use Claude Code system prompt - they are for user interaction.
+ * @public
  */
 export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
 	rewind: false,
@@ -116,7 +117,8 @@ export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
 };
 
 /**
- * Default features for lobby sessions (all disabled)
+ * Default features for lobby sessions (all disabled).
+ * @public
  */
 export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
 	rewind: false,
