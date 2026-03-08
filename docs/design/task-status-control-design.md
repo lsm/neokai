@@ -1,51 +1,188 @@
 # Task Status Control Design
 
-This document describes the design for human-in-the-loop task status control for for humans have full manual control over the task lifecycle when needed, bypassing the normal autonomous flow.
+This document describes the design for human-in-the-loop task status control, allowing humans to have full manual control over the task lifecycle when needed, bypassing the normal autonomous flow.
+
+## Status State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: Create (planning)
+    [*] --> pending: Create (direct)
+
+    draft --> pending: Promote (planning complete)
+
+    pending --> in_progress: Worker starts
+    pending --> cancelled: Human cancels
+
+    in_progress --> review: Work done, awaiting review
+    in_progress --> completed: Human marks complete
+    in_progress --> failed: Worker fails / Human marks failed
+    in_progress --> cancelled: Human cancels
+
+    review --> completed: Human approves
+    review --> failed: Human rejects (fatal)
+    review --> in_progress: Human rejects (retry)
+
+    failed --> pending: Restart (human retry)
+    failed --> in_progress: Restart (human retry)
+
+    cancelled --> pending: Restart (human retry)
+    cancelled --> in_progress: Restart (human retry)
+
+    completed --> [*]
+    failed --> [*]
+    cancelled --> [*]
+```
 
 ## Valid Status Transitions
 
-Based on the code review, we room agent
- and room Agent (`set_task_status`) can change task status to Supports restart ( restart: failed/c cancelled tasks.
+| Current Status | Allowed Target Statuses | Notes |
+|----------------|------------------------|-------|
+| `draft` | `pending` | Planning-created tasks, promoted when plan approved |
+| `pending` | `in_progress`, `cancelled` | Worker not started yet |
+| `in_progress` | `review`, `completed`, `failed`, `cancelled` | Worker is actively working |
+| `review` | `completed`, `failed`, `in_progress` | Awaiting human approval |
+| `completed` | _(none)_ | Terminal state - no transitions allowed |
+| `failed` | `pending`, `in_progress` | Restart: human can retry failed task |
+| `cancelled` | `pending`, `in_progress` | Restart: human can retry cancelled task |
 
-### Valid Transitions
+## Transition Behavior
 
-| Current Status | Target Status | Notes |
-|---|---|----------|----------------|--------------------|----------|--------------|------|-------------|--------------|
-----------------|----------------|------------|-------------------|
-| pending | in_progress, cancelled | Worker not started | leader is actively working. Human can cancel without human review flow. |
-| in_progress | review, completed, failed, cancelled | Terminal state - no transitions allowed |
-| failed | pending, in_progress | Restart: human can retry failed task |
-| cancelled | pending, in_progress | Restart: human can retry cancelled task |
+### Validated via `setTaskStatus()`
 
-### Transitions with checked via `setTaskStatus`:
-- Validated via `VALIDStatusTransition()` before applying
-- Clears error/result/progress fields when restarting
-- Sets progress to 100% for- On terminal state,- Clears error/result when moving to terminal state
-- The **task.setStatus** RPC handler throws error if cancellation fails
-- Notifies UI of task.setStatus` event with- Returns updated task object
+All status transitions are validated against `VALID_STATUS_TRANSITIONS` before applying:
+
+- **Validation**: Throws error if transition is not allowed
+- **Restart clearing**: When moving from `failed`/`cancelled` to `pending`/`in_progress`:
+  - Clears `error` field (sets to `null`)
+  - Clears `result` field (sets to `null`)
+  - Clears `progress` field (sets to `null`)
+- **Completion**: When moving to `completed`:
+  - Sets `progress` to `100`
+  - Optionally sets `result` if provided
+- **Failure**: When moving to `failed`:
+  - Optionally sets `error` if provided
+
+### Active Group Cancellation
+
+When a task has an active session group (agents currently running) and transitions to a terminal state (`completed`, `failed`, `cancelled`), the system:
+
+1. Looks up the active group for the task
+2. Calls `taskGroupManager.cancel()` to stop running agents
+3. If cancellation fails (returns `null` due to version conflict or missing group), throws an error
+4. Only then applies the status change to the task
+
+This ensures agents are properly stopped before marking a task as complete/failed/cancelled.
 
 ## API
-### Room Agent MCP Tool
-- `set_task_status` tool - validates and transitions, allows room agent to change task status
-## Types
 
-### UpdateTaskParams
-```ts
-export interface UpdateTaskParams {
-	title?: string;
-	description?: string;
-	status?: TaskStatus;
-	priority?: TaskPriority;
-	progress?: number | null;
-	currentStep?: string | null;
-	result?: string | null;
-	error?: string | null;
-	dependsOn?: string[];
+### Room Agent MCP Tool
+
+**`set_task_status`** - Validates and transitions task status
+
+```typescript
+// Tool definition
+{
+  name: 'set_task_status',
+  description: 'Change task status with validation. Allows room agent to complete, fail, restart, or change status of any task.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'Task ID to update' },
+      status: {
+        type: 'string',
+        enum: ['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'],
+        description: 'New status to set'
+      },
+      result: { type: 'string', description: 'Optional result message (for completed status)' },
+      error: { type: 'string', description: 'Optional error message (for failed status)' }
+    },
+    required: ['task_id', 'status']
+  }
 }
 ```
 
-## Usage
+### RPC Handler
 
-```bash
-bun run format
-git commit -m "docs: add task status control design doc with task status transition diagram"
+**`task.setStatus`** - UI-initiated status change
+
+```typescript
+// Request
+{
+  roomId: string;
+  taskId: string;
+  status: TaskStatus;
+  result?: string;
+  error?: string;
+}
+
+// Response
+{ task: NeoTask }
+```
+
+### Events
+
+**`room.task.update`** - Emitted after status change
+
+```typescript
+{
+  sessionId: `room:${roomId}`,
+  roomId: string,
+  task: NeoTask
+}
+```
+
+## Types
+
+### UpdateTaskParams
+
+```typescript
+export interface UpdateTaskParams {
+  title?: string;
+  description?: string;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  progress?: number | null;  // null clears the field
+  currentStep?: string | null;
+  result?: string | null;
+  error?: string | null;
+  dependsOn?: string[];
+}
+```
+
+## Usage Examples
+
+### Restart a Failed Task
+
+```typescript
+// Via Room Agent MCP tool
+await set_task_status({
+  task_id: 'task-123',
+  status: 'pending'
+});
+// Result: error, result, progress fields cleared, task ready for worker pickup
+```
+
+### Complete a Task with Result
+
+```typescript
+// Via RPC handler
+await hub.request('task.setStatus', {
+  roomId: 'room-abc',
+  taskId: 'task-123',
+  status: 'completed',
+  result: 'Feature implemented and tested'
+});
+// Result: progress=100, result set, task marked complete
+```
+
+### Cancel an In-Progress Task
+
+```typescript
+// Via Room Agent MCP tool
+await set_task_status({
+  task_id: 'task-123',
+  status: 'cancelled'
+});
+// Result: active agents stopped, task marked cancelled
+```

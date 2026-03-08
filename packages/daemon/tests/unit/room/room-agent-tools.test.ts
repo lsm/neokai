@@ -1063,5 +1063,88 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Invalid status transition');
 		});
+
+		it('should return error when group cancellation fails due to version conflict', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+
+			// Create an active group
+			insertGroup(taskId, 'awaiting_human');
+
+			// Create handler with mock runtime that returns null from cancel (simulating version conflict)
+			const mockRuntime = {
+				taskGroupManager: {
+					cancel: async () => null, // Returns null to simulate version conflict
+				},
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			// Try to complete the task - should fail because group cancellation failed
+			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to cancel active group');
+			expect(result.error).toContain('group may have been modified concurrently');
+		});
+
+		it('should succeed when group cancellation succeeds', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+
+			// Create an active group
+			const groupId = insertGroup(taskId, 'awaiting_human');
+
+			// Create handler with mock runtime that successfully cancels
+			const mockRuntime = {
+				taskGroupManager: {
+					cancel: async (gId: string) => {
+						expect(gId).toBe(groupId);
+						return { id: gId, state: 'cancelled' };
+					},
+				},
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			// Complete the task - should succeed because group cancellation succeeded
+			const result = parseResult(await h.set_task_status({ task_id: taskId, status: 'completed' }));
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('completed');
+		});
+
+		it('should allow status change without runtime even if group exists', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+
+			// Create an active group
+			insertGroup(taskId, 'awaiting_human');
+
+			// Handler without runtime service - should still allow transition
+			// (for backwards compatibility or when runtime is not available)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'completed' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('completed');
+		});
 	});
 });
