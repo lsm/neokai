@@ -259,14 +259,14 @@ jobs:
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         run: |
           curl -sL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash
-          # Add .dotnet tools to PATH (where devproxy is installed)
-          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+          # The setup script installs devproxy to ./devproxy in the current directory
+          # Add it to PATH for subsequent steps
+          echo "$PWD/devproxy" >> $GITHUB_PATH
 
       - name: Start Dev Proxy
         if: matrix.mock_sdk == true
         run: |
-          cd .devproxy
-          devproxy --port 8000 &
+          devproxy --port 8000 --config-file .devproxy/devproxyrc.json &
           DEVPROXY_PID=$!
           echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
           # Wait for proxy to be ready
