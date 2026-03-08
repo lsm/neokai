@@ -703,4 +703,393 @@ describe('Goal RPC Handlers', () => {
 			expect(result.success).toBe(false);
 		});
 	});
+
+	// Additional mock setup for task-related handlers
+	const mockTaskManager = {
+		getTask: mock(async () => ({
+			id: 'task-123',
+			roomId: 'room-123',
+			title: 'Test Task',
+			description: 'Test task description',
+			status: 'pending' as const,
+			priority: 'normal' as const,
+			dependsOn: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		})),
+		reviewTask: mock(async () => ({})),
+		updateTaskStatus: mock(async () => ({})),
+		cancelTaskCascade: mock(async () => [
+			{
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test task description',
+				status: 'cancelled' as const,
+				priority: 'normal' as const,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			},
+		]),
+	};
+
+	const mockRuntimeService = {
+		getRuntime: mock(() => ({
+			cancelTask: mock(async () => ({ success: true, cancelledTaskIds: ['task-123'] })),
+			resumeWorkerFromHuman: mock(async () => true),
+		})),
+	};
+
+	const createMockTaskManagerFactory = () => {
+		const factory = mock(() => mockTaskManager);
+		return factory;
+	};
+
+	describe('goal.cancelTask', () => {
+		beforeEach(() => {
+			// Re-setup handlers with task manager factory and runtime service
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager(),
+				createMockTaskManagerFactory(),
+				mockRuntimeService as unknown as any
+			);
+			mockTaskManager.getTask.mockClear();
+			mockTaskManager.cancelTaskCascade.mockClear();
+			(mockRuntimeService.getRuntime as ReturnType<typeof mock>).mockClear();
+		});
+
+		it('cancels a pending task using runtime', async () => {
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			const params = { roomId: 'room-123', taskId: 'task-123' };
+			const result = (await handler!(params, {})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(mockRuntimeService.getRuntime).toHaveBeenCalledWith('room-123');
+		});
+
+		it('cancels a task using task manager fallback when no runtime', async () => {
+			// Need a fresh mock for this test - create new instance
+			const freshTaskManager = {
+				getTask: mock(async () => ({
+					id: 'task-123',
+					roomId: 'room-123',
+					title: 'Test Task',
+					description: 'Test task description',
+					status: 'pending' as const,
+					priority: 'normal' as const,
+					dependsOn: [],
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				})),
+				reviewTask: mock(async () => ({})),
+				updateTaskStatus: mock(async () => ({})),
+				cancelTaskCascade: mock(async () => [
+					{
+						id: 'task-123',
+						roomId: 'room-123',
+						title: 'Test Task',
+						description: 'Test task description',
+						status: 'cancelled' as const,
+						priority: 'normal' as const,
+						dependsOn: [],
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+					},
+				]),
+			};
+			const createFreshTaskManager = () => freshTaskManager;
+
+			// Setup with no runtime service - this should trigger fallback
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager(),
+				createFreshTaskManager,
+				undefined
+			);
+
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			const params = { roomId: 'room-123', taskId: 'task-123' };
+			const result = (await handler!(params, {})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(freshTaskManager.cancelTaskCascade).toHaveBeenCalledWith('task-123');
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ taskId: 'task-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when taskId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task ID is required');
+		});
+
+		it('throws error when task not found', async () => {
+			mockTaskManager.getTask.mockResolvedValueOnce(null);
+
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'non-existent' }, {})).rejects.toThrow(
+				'Task not found: non-existent'
+			);
+		});
+
+		it('throws error when task cannot be cancelled (completed status)', async () => {
+			mockTaskManager.getTask.mockResolvedValueOnce({
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test task description',
+				status: 'completed' as const,
+				priority: 'normal' as const,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'Task cannot be cancelled (current status: completed)'
+			);
+		});
+
+		it('throws error when task manager factory is missing', async () => {
+			// Setup without task manager factory
+			setupGoalHandlers(messageHubData.hub, daemonHubData.daemonHub, createMockGoalManager());
+
+			const handler = messageHubData.handlers.get('goal.cancelTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'Task manager factory is required for goal.cancelTask'
+			);
+		});
+	});
+
+	describe('goal.rejectTask', () => {
+		beforeEach(() => {
+			// Re-setup handlers with task manager factory and runtime service
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager(),
+				createMockTaskManagerFactory(),
+				mockRuntimeService as unknown as any
+			);
+			mockTaskManager.getTask.mockClear();
+			(mockRuntimeService.getRuntime as ReturnType<typeof mock>).mockClear();
+			const runtime = mockRuntimeService.getRuntime('room-123') as any;
+			if (runtime?.resumeWorkerFromHuman) {
+				runtime.resumeWorkerFromHuman.mockClear();
+			}
+		});
+
+		it('rejects a task in review status', async () => {
+			mockTaskManager.getTask.mockResolvedValueOnce({
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test task description',
+				status: 'review' as const,
+				priority: 'normal' as const,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			const params = { roomId: 'room-123', taskId: 'task-123' };
+			const result = (await handler!(params, {})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+			expect(mockRuntimeService.getRuntime).toHaveBeenCalledWith('room-123');
+		});
+
+		it('rejects a task with custom feedback', async () => {
+			mockTaskManager.getTask.mockResolvedValueOnce({
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test task description',
+				status: 'review' as const,
+				priority: 'normal' as const,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			const params = { roomId: 'room-123', taskId: 'task-123', feedback: 'Please fix the tests' };
+			const result = (await handler!(params, {})) as { success: boolean };
+
+			expect(result.success).toBe(true);
+		});
+
+		it('throws error when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ taskId: 'task-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws error when taskId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Task ID is required');
+		});
+
+		it('throws error when task not found', async () => {
+			mockTaskManager.getTask.mockResolvedValueOnce(null);
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'non-existent' }, {})).rejects.toThrow(
+				'Task not found: non-existent'
+			);
+		});
+
+		it('throws error when task is not in review status', async () => {
+			mockTaskManager.getTask.mockResolvedValueOnce({
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Test Task',
+				description: 'Test task description',
+				status: 'pending' as const,
+				priority: 'normal' as const,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'Task is not in review status (current: pending)'
+			);
+		});
+
+		it('throws error when runtime service is missing', async () => {
+			// Setup without runtime service
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager(),
+				createMockTaskManagerFactory(),
+				undefined
+			);
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'Task manager factory and runtime service are required for goal.rejectTask'
+			);
+		});
+
+		it('throws error when runtime returns null', async () => {
+			// Create fresh task manager that returns a review task
+			const freshTaskManager = {
+				getTask: mock(async () => ({
+					id: 'task-123',
+					roomId: 'room-123',
+					title: 'Test Task',
+					description: 'Test task description',
+					status: 'review' as const,
+					priority: 'normal' as const,
+					dependsOn: [],
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				})),
+				reviewTask: mock(async () => ({})),
+				updateTaskStatus: mock(async () => ({})),
+				cancelTaskCascade: mock(async () => []),
+			};
+			const createFreshTaskManager = () => freshTaskManager;
+
+			// Setup with runtime service that returns null
+			const nullRuntimeService = {
+				getRuntime: mock(() => null),
+			};
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager(),
+				createFreshTaskManager,
+				nullRuntimeService as unknown as any
+			);
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'No runtime found for room: room-123'
+			);
+		});
+
+		it('throws error when resumeWorkerFromHuman returns false', async () => {
+			// Create fresh task manager that returns a review task
+			const freshTaskManager = {
+				getTask: mock(async () => ({
+					id: 'task-123',
+					roomId: 'room-123',
+					title: 'Test Task',
+					description: 'Test task description',
+					status: 'review' as const,
+					priority: 'normal' as const,
+					dependsOn: [],
+					createdAt: Date.now(),
+					updatedAt: Date.now(),
+				})),
+				reviewTask: mock(async () => ({})),
+				updateTaskStatus: mock(async () => ({})),
+				cancelTaskCascade: mock(async () => []),
+			};
+			const createFreshTaskManager = () => freshTaskManager;
+
+			const mockRuntime = {
+				cancelTask: mock(async () => ({ success: true, cancelledTaskIds: [] })),
+				resumeWorkerFromHuman: mock(async () => false),
+			};
+			const failRuntimeService = {
+				getRuntime: mock(() => mockRuntime),
+			};
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager(),
+				createFreshTaskManager,
+				failRuntimeService as unknown as any
+			);
+
+			const handler = messageHubData.handlers.get('goal.rejectTask');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'Failed to reject task task-123 — no awaiting_human group found'
+			);
+		});
+	});
 });

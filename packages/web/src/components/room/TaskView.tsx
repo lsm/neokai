@@ -112,29 +112,46 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 interface HeaderReviewBarProps {
 	roomId: string;
 	taskId: string;
-	/** Called after approval to refresh the conversation */
-	onApproved: () => void;
+	/** Called after approval/rejection to refresh the conversation */
+	onActionComplete: () => void;
 }
 
-function HeaderReviewBar({ roomId, taskId, onApproved }: HeaderReviewBarProps) {
+function HeaderReviewBar({ roomId, taskId, onActionComplete }: HeaderReviewBarProps) {
 	const { request } = useMessageHub();
-	const [approving, setApproving] = useState(false);
+	const [action, setAction] = useState<'approve' | 'reject' | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	const approveTask = async () => {
-		if (approving) return;
-		setApproving(true);
+		if (action) return;
+		setAction('approve');
 		setError(null);
 		try {
 			await request('goal.approveTask', { roomId, taskId });
 			// Approval changes group state; re-fetch conversation to pick up the approval message
-			onApproved();
+			onActionComplete();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to approve task');
 		} finally {
-			setApproving(false);
+			setAction(null);
 		}
 	};
+
+	const rejectTask = async () => {
+		if (action) return;
+		setAction('reject');
+		setError(null);
+		try {
+			await request('goal.rejectTask', { roomId, taskId });
+			// Rejection changes group state; re-fetch conversation to pick up the rejection message
+			onActionComplete();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to reject task');
+		} finally {
+			setAction(null);
+		}
+	};
+
+	const isLoading = action !== null;
 
 	return (
 		<div class="border-b border-amber-700/30 bg-amber-900/20 px-4 py-2 flex items-center gap-3 flex-shrink-0">
@@ -144,13 +161,52 @@ function HeaderReviewBar({ roomId, taskId, onApproved }: HeaderReviewBarProps) {
 					Review the PR and approve or provide feedback below
 				</span>
 			</div>
+			{/* Reject button */}
+			<button
+				class="py-1.5 px-4 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+				onClick={rejectTask}
+				disabled={isLoading}
+			>
+				{action === 'reject' ? (
+					<>
+						<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+							<circle
+								class="opacity-25"
+								cx="12"
+								cy="12"
+								r="10"
+								stroke="currentColor"
+								stroke-width="4"
+							/>
+							<path
+								class="opacity-75"
+								fill="currentColor"
+								d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+							/>
+						</svg>
+						<span>Rejecting…</span>
+					</>
+				) : (
+					<>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+						<span>Reject</span>
+					</>
+				)}
+			</button>
 			{/* Approve button */}
 			<button
 				class="py-1.5 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
 				onClick={approveTask}
-				disabled={approving}
+				disabled={isLoading}
 			>
-				{approving ? (
+				{action === 'approve' ? (
 					<>
 						<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
 							<circle
@@ -365,6 +421,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 
+	// UI state for cancel confirmation dialog
+	const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+	const [cancelling, setCancelling] = useState(false);
+
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
 	// and becomes false once the first non-zero messageCount arrives — at which point
@@ -408,6 +468,21 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		scrollToBottom(true);
 		setAutoScrollEnabled(true);
 	}, [scrollToBottom]);
+
+	// Cancel task handler
+	const handleCancelTask = useCallback(async () => {
+		setCancelling(true);
+		try {
+			await request('goal.cancelTask', { roomId, taskId });
+			// Navigate back to room after cancellation
+			navigateToRoom(roomId);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to cancel task');
+		} finally {
+			setCancelling(false);
+			setShowCancelConfirm(false);
+		}
+	}, [roomId, taskId, request]);
 
 	useEffect(() => {
 		const channel = `room:${roomId}`;
@@ -561,6 +636,47 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					</div>
 				)}
+				{/* Cancel button - shown for pending/in_progress/review tasks */}
+				{['pending', 'in_progress', 'review'].includes(task.status) && (
+					<button
+						class="py-1.5 px-3 rounded bg-red-700/80 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5 flex-shrink-0"
+						onClick={() => setShowCancelConfirm(true)}
+						disabled={cancelling}
+					>
+						{cancelling ? (
+							<>
+								<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+									<circle
+										class="opacity-25"
+										cx="12"
+										cy="12"
+										r="10"
+										stroke="currentColor"
+										stroke-width="4"
+									/>
+									<path
+										class="opacity-75"
+										fill="currentColor"
+										d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+									/>
+								</svg>
+								<span>Cancelling…</span>
+							</>
+						) : (
+							<>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M6 18L18 6M6 6l12 12"
+									/>
+								</svg>
+								<span>Cancel</span>
+							</>
+						)}
+					</button>
+				)}
 				{/* Info toggle button */}
 				<button
 					class={`p-1.5 rounded transition-colors ${
@@ -587,8 +703,58 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				<HeaderReviewBar
 					roomId={roomId}
 					taskId={taskId}
-					onApproved={() => setConversationKey((k) => k + 1)}
+					onActionComplete={() => setConversationKey((k) => k + 1)}
 				/>
+			)}
+
+			{/* Cancel confirmation dialog */}
+			{showCancelConfirm && (
+				<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+					<div class="bg-dark-800 border border-dark-600 rounded-lg p-6 max-w-sm w-full mx-4 shadow-xl">
+						<h3 class="text-lg font-semibold text-gray-100 mb-2">Cancel Task?</h3>
+						<p class="text-gray-400 text-sm mb-4">
+							This will stop the task and any associated agent sessions. This action cannot be
+							undone.
+						</p>
+						<div class="flex gap-3 justify-end">
+							<button
+								class="px-4 py-2 rounded bg-dark-700 hover:bg-dark-600 text-gray-200 text-sm font-medium transition-colors"
+								onClick={() => setShowCancelConfirm(false)}
+								disabled={cancelling}
+							>
+								Keep Task
+							</button>
+							<button
+								class="px-4 py-2 rounded bg-red-700 hover:bg-red-600 text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+								onClick={handleCancelTask}
+								disabled={cancelling}
+							>
+								{cancelling ? (
+									<>
+										<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+											<circle
+												class="opacity-25"
+												cx="12"
+												cy="12"
+												r="10"
+												stroke="currentColor"
+												stroke-width="4"
+											/>
+											<path
+												class="opacity-75"
+												fill="currentColor"
+												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+											/>
+										</svg>
+										<span>Cancelling…</span>
+									</>
+								) : (
+									'Cancel Task'
+								)}
+							</button>
+						</div>
+					</div>
+				</div>
 			)}
 
 			{/* Info panel */}

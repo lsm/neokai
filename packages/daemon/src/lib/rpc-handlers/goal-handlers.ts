@@ -39,7 +39,7 @@ export type GoalManagerLike = Pick<
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
 export type TaskManagerFactory = (
 	roomId: string
-) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus'>;
+) => Pick<TaskManager, 'getTask' | 'reviewTask' | 'updateTaskStatus' | 'cancelTaskCascade'>;
 
 export function setupGoalHandlers(
 	messageHub: MessageHub,
@@ -332,6 +332,92 @@ export function setupGoalHandlers(
 		}
 
 		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);
+		return { success: true };
+	});
+
+	// goal.cancelTask - Human cancels a task
+	messageHub.onRequest('goal.cancelTask', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!taskManagerFactory) {
+			throw new Error('Task manager factory is required for goal.cancelTask');
+		}
+
+		const taskManager = taskManagerFactory(params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Allow cancellation for pending, in_progress, or review tasks
+		if (!['pending', 'in_progress', 'review'].includes(task.status)) {
+			throw new Error(`Task cannot be cancelled (current status: ${task.status})`);
+		}
+
+		// Try runtime cancellation first if available
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				const result = await runtime.cancelTask(params.taskId);
+				if (!result.success) {
+					throw new Error(`Failed to cancel task ${params.taskId}`);
+				}
+				log.info(`Task ${params.taskId} cancelled via runtime in room ${params.roomId}`);
+				return { success: true };
+			}
+		}
+
+		// Fallback: direct task manager cancellation when no runtime
+		await taskManager.cancelTaskCascade(params.taskId);
+		log.info(`Task ${params.taskId} cancelled via task manager in room ${params.roomId}`);
+
+		return { success: true };
+	});
+
+	// goal.rejectTask - Human rejects a task in review
+	messageHub.onRequest('goal.rejectTask', async (data) => {
+		const params = data as { roomId: string; taskId: string; feedback?: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+		if (!taskManagerFactory || !runtimeService) {
+			throw new Error('Task manager factory and runtime service are required for goal.rejectTask');
+		}
+
+		const taskManager = taskManagerFactory(params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+		if (task.status !== 'review') {
+			throw new Error(`Task is not in review status (current: ${task.status})`);
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const feedback =
+			params.feedback || 'Human has rejected the PR. Please address the feedback and resubmit.';
+		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, feedback, {
+			approved: false,
+		});
+		if (!resumed) {
+			throw new Error(`Failed to reject task ${params.taskId} — no awaiting_human group found`);
+		}
+
+		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);
 		return { success: true };
 	});
 }
