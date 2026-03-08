@@ -551,6 +551,12 @@ export class TaskGroupManager {
 		// Reset leader contract state for the completion cycle
 		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
 
+		// NOTE: submittedForReview is intentionally NOT reset here (unlike resumeWorkerFromHuman).
+		// For coder/general approval, the leader will call complete_task directly, which is gated
+		// by the `approved` flag (not submittedForReview). The worker path resets submittedForReview
+		// because it needs to re-submit for review after addressing feedback, but the leader path
+		// bypasses that gate via approved=true.
+
 		// Inject approval message into existing leader session.
 		// If injection fails, rollback the group state so the task stays in review for retry.
 		try {

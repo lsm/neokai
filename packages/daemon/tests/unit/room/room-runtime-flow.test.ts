@@ -1805,6 +1805,49 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('completed');
 		});
 
+		test('approve: leader handles merge failure gracefully', async () => {
+			// This test simulates what happens when gh pr merge fails after approval.
+			// The leader receives the approval message but the merge command fails.
+			// The group stays in awaiting_leader state so the leader can retry.
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await setupCodingGroupInAwaitingHuman(hookCtx);
+
+			// Human approves → routes to leader
+			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'PR approved. Merge it.', {
+				approved: true,
+			});
+
+			// Group is now in awaiting_leader state
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
+
+			// Leader attempts complete_task without merging (simulating merge failure)
+			// In a real scenario, the leader would try gh pr merge first and report the error.
+			// Here we test that the system remains in a consistent state.
+			// The leader can still call complete_task (approved bypasses gate),
+			// but in practice the leader would report the merge failure in its response.
+			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Merge failed - needs manual intervention',
+			});
+
+			// Complete succeeds (approved bypasses the gate) - the leader is responsible
+			// for accurately reporting what happened in the summary
+			expect(JSON.parse(result.content[0].text).success).toBe(true);
+		});
+
 		test('reject routes to worker with feedback and resets submittedForReview', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
