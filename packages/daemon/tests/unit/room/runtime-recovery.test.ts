@@ -268,6 +268,28 @@ describe('Runtime Recovery', () => {
 		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
 	});
 
+	it('should observe leader session id in awaiting_worker recovery even before leader exists', async () => {
+		const { group } = createTaskAndGroup('awaiting_worker');
+
+		const checker = createDefaultChecker({
+			sessionExists: (id) => !id.startsWith('leader:'),
+			isLive: (id) => !id.startsWith('leader:'),
+		});
+
+		const result = await recoverRuntime(
+			'room-1',
+			groupRepo,
+			taskManager,
+			observer,
+			checker,
+			runtime
+		);
+
+		expect(result.failedGroups).toBe(0);
+		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
+	});
+
 	it('should reattach observers for active leader sessions', async () => {
 		const { group } = createTaskAndGroup('awaiting_leader');
 

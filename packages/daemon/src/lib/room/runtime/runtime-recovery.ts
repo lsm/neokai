@@ -162,13 +162,16 @@ async function recoverAwaitingWorker(
 		result.reattachedObservers++;
 	}
 
-	// Also restore and observe Leader for when it becomes active
+	// Also observe Leader for when it becomes active.
+	// IMPORTANT: observe even when the leader session row does not exist yet.
+	// Leader is lazily created after worker completion, so pre-observing here ensures
+	// post-restart leader terminal events are not missed.
 	if (sessionChecker.sessionExists(group.leaderSessionId)) {
 		await ensureLive(group.leaderSessionId, sessionChecker, result);
-		observer.observe(group.leaderSessionId, (state: TerminalState) => {
-			runtime.onLeaderTerminalState(group.id, state);
-		});
 	}
+	observer.observe(group.leaderSessionId, (state: TerminalState) => {
+		runtime.onLeaderTerminalState(group.id, state);
+	});
 }
 
 async function recoverAwaitingLeader(
