@@ -276,6 +276,16 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
+			// Handle restart: clean up old failed/cancelled group so runtime creates a fresh one
+			if (task.status === 'failed' || task.status === 'cancelled') {
+				if (args.status === 'pending' || args.status === 'in_progress') {
+					const group = groupRepo.getGroupByTaskId(args.task_id);
+					if (group) {
+						groupRepo.deleteGroup(group.id);
+					}
+				}
+			}
+
 			// Apply status change
 			let updatedTask: typeof task;
 			try {

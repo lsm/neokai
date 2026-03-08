@@ -981,6 +981,73 @@ describe('Room Agent Tools', () => {
 			expect(result.task.status).toBe('in_progress');
 		});
 
+		it('should delete old failed group when restarting task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+			// Create a failed group
+			const groupId = insertGroup(taskId, 'failed');
+			// Then fail the task
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Verify the group exists
+			expect(groupRepo.getGroup(groupId)).not.toBeNull();
+
+			// Restart the task
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'pending' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('pending');
+
+			// The old failed group should be deleted
+			expect(groupRepo.getGroup(groupId)).toBeNull();
+		});
+
+		it('should delete old cancelled group when restarting task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Create a failed group
+			const groupId = insertGroup(taskId, 'failed');
+			// Cancel the task
+			await taskManager.cancelTask(taskId);
+
+			// Verify the group exists
+			expect(groupRepo.getGroup(groupId)).not.toBeNull();
+
+			// Restart the task
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('in_progress');
+
+			// The old failed group should be deleted
+			expect(groupRepo.getGroup(groupId)).toBeNull();
+		});
+
+		it('should not delete group when transitioning to non-restart status', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress
+			await taskManager.startTask(taskId);
+			// Create an active group
+			const groupId = insertGroup(taskId, 'awaiting_human');
+
+			// Transition to review (not a restart)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+
+			// The group should still exist
+			expect(groupRepo.getGroup(groupId)).not.toBeNull();
+		});
+
 		it('should allow transition: in_progress -> review', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;

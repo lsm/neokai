@@ -256,6 +256,18 @@ export class SessionGroupRepository {
 		return this.getGroup(groupId);
 	}
 
+	/**
+	 * Delete a group and its members.
+	 * The database schema uses ON DELETE CASCADE, so members and events are
+	 * automatically deleted when the group is deleted.
+	 * Used when restarting a failed/cancelled task to clear the old group
+	 * so the runtime creates a fresh one.
+	 */
+	deleteGroup(groupId: string): boolean {
+		const result = this.db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(groupId);
+		return result.changes > 0;
+	}
+
 	// ===== Metadata update helpers (partial merge pattern) =====
 
 	private updateMetadata(

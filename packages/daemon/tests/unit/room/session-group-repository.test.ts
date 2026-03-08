@@ -13,6 +13,8 @@ describe('SessionGroupRepository', () => {
 
 	beforeEach(() => {
 		db = new Database(':memory:');
+		// Enable foreign keys for cascade delete to work
+		db.exec('PRAGMA foreign_keys = ON');
 		db.exec(`
 			CREATE TABLE rooms (
 				id TEXT PRIMARY KEY,
@@ -189,6 +191,63 @@ describe('SessionGroupRepository', () => {
 			expect(failed!.state).toBe('failed');
 			expect(failed!.completedAt).toBeDefined();
 			expect(failed!.completedAt).toBeGreaterThan(0);
+		});
+	});
+
+	describe('deleteGroup', () => {
+		it('should delete a group', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(repo.getGroup(group.id)).not.toBeNull();
+
+			const result = repo.deleteGroup(group.id);
+			expect(result).toBe(true);
+			expect(repo.getGroup(group.id)).toBeNull();
+		});
+
+		it('should return false when group does not exist', () => {
+			const result = repo.deleteGroup('non-existent-group');
+			expect(result).toBe(false);
+		});
+
+		it('should cascade delete members', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+
+			// Verify members exist
+			const members = db
+				.prepare('SELECT * FROM session_group_members WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(members).toHaveLength(2);
+
+			// Delete the group
+			repo.deleteGroup(group.id);
+
+			// Members should be deleted too
+			const remainingMembers = db
+				.prepare('SELECT * FROM session_group_members WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(remainingMembers).toHaveLength(0);
+		});
+
+		it('should cascade delete events', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+
+			// Add some events
+			repo.appendEvent({ groupId: group.id, kind: 'status', payloadJson: '{}' });
+			repo.appendEvent({ groupId: group.id, kind: 'log', payloadJson: '{}' });
+
+			const events = db
+				.prepare('SELECT * FROM task_group_events WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(events).toHaveLength(2);
+
+			// Delete the group
+			repo.deleteGroup(group.id);
+
+			// Events should be deleted too
+			const remainingEvents = db
+				.prepare('SELECT * FROM task_group_events WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(remainingEvents).toHaveLength(0);
 		});
 	});
 
