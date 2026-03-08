@@ -13,7 +13,7 @@ import { toast } from '../lib/toast';
 import { currentSessionIdSignal, sessionsSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
 import { roomStore } from '../lib/room-store';
-import { navigateToRoom } from '../lib/router';
+import { navigateToRoom, navigateToSessions } from '../lib/router';
 import { t } from '../lib/i18n';
 
 export interface ArchiveConfirmState {
@@ -74,12 +74,10 @@ export function useSessionActions({
 				roomStore.sessions.value = roomStore.sessions.value.filter((s) => s.id !== sessionId);
 				navigateToRoom(roomId);
 			} else {
-				// Global context: refresh session list and clear current session
+				// Global context: refresh session list and navigate to sessions page
 				const response = await listSessions();
 				sessionsSignal.value = response.sessions;
-				setTimeout(() => {
-					currentSessionIdSignal.value = null;
-				}, 0);
+				navigateToSessions();
 			}
 			toast.success(t('toast.sessionDeleted'));
 		} catch (err) {

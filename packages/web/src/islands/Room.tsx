@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'preact/hooks';
 import { roomStore } from '../lib/room-store';
+import { lobbyStore } from '../lib/lobby-store';
 import { navigateToHome, navigateToRooms, navigateToRoom } from '../lib/router';
 import { Breadcrumb } from '../components/ui/Breadcrumb';
 import { RoomOverview } from '../components/room/RoomOverview';
@@ -118,7 +119,10 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	};
 
 	const handleDeleteRoom = async () => {
+		const deletedRoomId = roomId;
 		await roomStore.deleteRoom();
+		// Immediately remove from lobby list so UI updates without waiting for WebSocket event
+		lobbyStore.rooms.value = lobbyStore.rooms.value.filter((r) => r.id !== deletedRoomId);
 		toast.success(t('room.deletedSuccess'));
 		navigateToHome();
 	};
