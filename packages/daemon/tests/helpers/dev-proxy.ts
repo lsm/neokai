@@ -210,21 +210,129 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 	const mocksPath = userMocksPath || path.join(devProxyDir, 'mocks.json');
 	const logPath = path.join(devProxyDir, 'devproxy.log');
 
+	// Ensure .devproxy directory exists (may not exist in git worktrees)
+	if (!fs.existsSync(devProxyDir)) {
+		fs.mkdirSync(devProxyDir, { recursive: true });
+	}
+
+	// Create default devproxyrc.json if it doesn't exist
+	const defaultConfigPath = path.join(devProxyDir, 'devproxyrc.json');
+	if (!fs.existsSync(defaultConfigPath)) {
+		fs.writeFileSync(
+			defaultConfigPath,
+			JSON.stringify(
+				{
+					$schema:
+						'https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/rc.schema.json',
+					plugins: [
+						{
+							name: 'MockResponsePlugin',
+							enabled: true,
+							pluginPath: 'Microsoft.DevProxy.Plugins.Mocks.MockResponsePlugin',
+							configSection: 'mockResponsePlugin',
+							urlsToWatch: ['https://api.anthropic.com/*'],
+						},
+					],
+					mockResponsePlugin: {
+						mocksFile: 'mocks.json',
+					},
+				},
+				null,
+				2
+			)
+		);
+	}
+
+	// Create default mocks.json if it doesn't exist
+	const defaultMocksPath = path.join(devProxyDir, 'mocks.json');
+	if (!fs.existsSync(defaultMocksPath)) {
+		fs.writeFileSync(
+			defaultMocksPath,
+			JSON.stringify(
+				{
+					$schema:
+						'https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/mockresponseplugin.mocksfile.schema.json',
+					mocks: [
+						{
+							request: {
+								url: 'https://api.anthropic.com/v1/messages',
+								method: 'POST',
+							},
+							response: {
+								statusCode: 200,
+								headers: [
+									{ name: 'content-type', value: 'application/json' },
+									{
+										name: 'anthropic-ratelimit-requests-limit',
+										value: '50',
+									},
+									{
+										name: 'anthropic-ratelimit-requests-remaining',
+										value: '49',
+									},
+								],
+								body: {
+									id: 'msg_mock123',
+									type: 'message',
+									role: 'assistant',
+									content: [
+										{
+											type: 'text',
+											text: '[MOCKED BY DEV PROXY] Hello! This is a mocked response from Dev Proxy for testing purposes.',
+										},
+									],
+									model: 'claude-sonnet-4-20250514',
+									stop_reason: 'end_turn',
+									stop_sequence: null,
+									usage: {
+										input_tokens: 12,
+										output_tokens: 48,
+										cache_creation_input_tokens: 0,
+										cache_read_input_tokens: 0,
+										service_tier: 'standard',
+									},
+								},
+							},
+						},
+					],
+				},
+				null,
+				2
+			)
+		);
+	}
+
 	// State
 	let process: ChildProcess | null = null;
 	let originalEnv: Record<string, string | undefined> = {};
 
 	// Helper to check if proxy is responding
 	const checkProxyReady = async (): Promise<boolean> => {
-		try {
-			const response = await fetch(`http://127.0.0.1:${port}/`, {
-				method: 'GET',
+		// Try to connect to the proxy port using a TCP connection check
+		// This is more reliable than fetch() for HTTPS proxies
+		return new Promise((resolve) => {
+			const net = require('net');
+			const socket = new net.Socket();
+
+			socket.setTimeout(1000);
+
+			socket.on('connect', () => {
+				socket.destroy();
+				resolve(true);
 			});
-			// Dev Proxy may return 502 for requests it doesn't intercept, but that means it's running
-			return response.status !== 0;
-		} catch {
-			return false;
-		}
+
+			socket.on('timeout', () => {
+				socket.destroy();
+				resolve(false);
+			});
+
+			socket.on('error', () => {
+				socket.destroy();
+				resolve(false);
+			});
+
+			socket.connect(port, '127.0.0.1');
+		});
 	};
 
 	// Store original env var
