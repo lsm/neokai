@@ -188,122 +188,164 @@ function HeaderReviewBar({ roomId, taskId, onApproved }: HeaderReviewBarProps) {
 	);
 }
 
+type HumanMessageTarget = 'worker' | 'leader';
+
 interface HumanInputAreaProps {
-	groupState: string;
+	groupState: string | null;
+	hasGroup: boolean;
 	roomId: string;
 	taskId: string;
 	/** Called after a successful action that requires a full conversation re-fetch */
 	onMessageSentWithReload: () => void;
 }
 
+const TARGET_LABELS: Record<HumanMessageTarget, string> = {
+	worker: 'Worker',
+	leader: 'Leader',
+};
+
+function defaultTargetForState(state: string | null): HumanMessageTarget {
+	return state === 'awaiting_leader' ? 'leader' : 'worker';
+}
+
 function HumanInputArea({
 	groupState,
+	hasGroup,
 	roomId,
 	taskId,
 	onMessageSentWithReload,
 }: HumanInputAreaProps) {
 	const { request } = useMessageHub();
-	const [feedbackText, setFeedbackText] = useState('');
-	const [leaderText, setLeaderText] = useState('');
-	const [sendingFeedback, setSendingFeedback] = useState(false);
-	const [sendingLeader, setSendingLeader] = useState(false);
+	const [messageText, setMessageText] = useState('');
+	const [sending, setSending] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
+	const [target, setTarget] = useState<HumanMessageTarget>(() => defaultTargetForState(groupState));
+	const [menuOpen, setMenuOpen] = useState(false);
+	const menuRef = useRef<HTMLDivElement>(null);
 
-	const sendFeedback = async () => {
-		if (sendingFeedback || !feedbackText.trim()) return;
-		setSendingFeedback(true);
+	useEffect(() => {
+		setTarget(defaultTargetForState(groupState));
+	}, [groupState]);
+
+	useEffect(() => {
+		if (!menuOpen) return;
+		const onDocMouseDown = (event: MouseEvent) => {
+			const targetNode = event.target as Node;
+			if (menuRef.current && !menuRef.current.contains(targetNode)) {
+				setMenuOpen(false);
+			}
+		};
+		document.addEventListener('mousedown', onDocMouseDown);
+		return () => document.removeEventListener('mousedown', onDocMouseDown);
+	}, [menuOpen]);
+
+	const canSend = hasGroup;
+
+	const sendMessage = async () => {
+		if (sending || !messageText.trim() || !canSend) return;
+		setSending(true);
 		setInputError(null);
 		try {
-			await request('task.sendHumanMessage', { roomId, taskId, message: feedbackText.trim() });
-			setFeedbackText('');
+			await request('task.sendHumanMessage', {
+				roomId,
+				taskId,
+				message: messageText.trim(),
+				target,
+			});
+			setMessageText('');
 			// Rejection feedback changes group state; re-fetch conversation to pick up the human message
-			onMessageSentWithReload();
-		} catch (err) {
-			setInputError(err instanceof Error ? err.message : 'Failed to send feedback');
-		} finally {
-			setSendingFeedback(false);
-		}
-	};
-
-	const sendToLeader = async () => {
-		if (sendingLeader || !leaderText.trim()) return;
-		setSendingLeader(true);
-		setInputError(null);
-		try {
-			await request('task.sendHumanMessage', { roomId, taskId, message: leaderText.trim() });
-			setLeaderText('');
-			// state.groupMessages.delta handles the live update — no reload needed
+			if (groupState === 'awaiting_human' && target === 'worker') {
+				onMessageSentWithReload();
+			}
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
 		} finally {
-			setSendingLeader(false);
+			setSending(false);
 		}
 	};
 
-	if (groupState === 'awaiting_human') {
-		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-				{/* Feedback input using shared InputTextarea.
-				    Large maxChars so users can paste diffs/logs freely. */}
-				<InputTextarea
-					content={feedbackText}
-					onContentChange={setFeedbackText}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-							e.preventDefault();
-							void sendFeedback();
-						}
-					}}
-					onSubmit={() => void sendFeedback()}
-					disabled={sendingFeedback}
-					placeholder="Send feedback to request changes… (⌘↵ to send)"
-					maxChars={50000}
-				/>
-				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
-			</div>
-		);
-	}
+	const placeholder = !hasGroup
+		? 'No active agent group yet — input will activate once a group starts.'
+		: target === 'leader'
+			? 'Send a message to the leader… (⌘↵ to send)'
+			: 'Send a message to the worker… (⌘↵ to send)';
 
-	if (groupState === 'awaiting_leader') {
-		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-				{/* Message input using shared InputTextarea.
-				    Large maxChars so users can paste context/diffs freely. */}
-				<InputTextarea
-					content={leaderText}
-					onContentChange={setLeaderText}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-							e.preventDefault();
-							void sendToLeader();
-						}
-					}}
-					onSubmit={() => void sendToLeader()}
-					disabled={sendingLeader}
-					placeholder="Send a message to the leader… (⌘↵ to send)"
-					maxChars={50000}
-				/>
-				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
-			</div>
-		);
-	}
+	return (
+		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
+			<InputTextarea
+				content={messageText}
+				onContentChange={setMessageText}
+				onKeyDown={(e) => {
+					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+						e.preventDefault();
+						void sendMessage();
+					}
+				}}
+				onSubmit={() => void sendMessage()}
+				disabled={sending || !canSend}
+				placeholder={placeholder}
+				maxChars={50000}
+				leadingPaddingClass="pl-[5.75rem]"
+				leadingElement={
+					<div class="relative" ref={menuRef}>
+						<button
+							type="button"
+							class="inline-flex h-9 items-center gap-1 rounded-3xl bg-blue-500 px-3 text-xs font-medium text-white hover:bg-blue-600 active:scale-95 transition-all"
+							onClick={(e) => {
+								e.stopPropagation();
+								setMenuOpen((open) => !open);
+							}}
+							data-testid="task-target-button"
+							title="Select target agent"
+						>
+							<span>{TARGET_LABELS[target]}</span>
+							<svg
+								class="w-3 h-3 text-white/90"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M19 9l-7 7-7-7"
+								/>
+							</svg>
+						</button>
 
-	if (groupState === 'awaiting_worker') {
-		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3">
-				<div title="Worker is running — wait for leader review">
-					<textarea
-						class="w-full bg-dark-800 border border-dark-600/50 rounded px-3 py-2 text-sm text-gray-600 placeholder-gray-600 resize-none cursor-not-allowed"
-						placeholder="Worker is running — wait for leader review"
-						rows={2}
-						disabled
-					/>
-				</div>
-			</div>
-		);
-	}
-
-	return null;
+						{menuOpen && (
+							<div class="absolute bottom-full mb-2 left-0 z-20 min-w-[140px] rounded-lg border border-dark-600 bg-dark-800 py-1 shadow-xl">
+								{(['worker', 'leader'] as const).map((option) => {
+									const selected = target === option;
+									return (
+										<button
+											key={option}
+											type="button"
+											onClick={() => {
+												setTarget(option);
+												setMenuOpen(false);
+											}}
+											data-testid={`task-target-option-${option}`}
+											class={`block w-full px-3 py-1.5 text-left text-xs transition-colors ${
+												selected
+													? 'text-blue-400 bg-dark-700/70'
+													: 'text-gray-200 hover:bg-dark-700'
+											}`}
+										>
+											{TARGET_LABELS[option]}
+										</button>
+									);
+								})}
+							</div>
+						)}
+					</div>
+				}
+			/>
+			{!canSend && <p class="text-xs text-gray-500">No active group to receive messages yet.</p>}
+			{inputError && <p class="text-xs text-red-400">{inputError}</p>}
+		</div>
+	);
 }
 
 export function TaskView({ roomId, taskId }: TaskViewProps) {
@@ -470,13 +512,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	}
 
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
-
-	// Show input area when group is active and in an interactive state
-	const showInput =
-		group !== null &&
-		(group.state === 'awaiting_human' ||
-			group.state === 'awaiting_leader' ||
-			group.state === 'awaiting_worker');
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
@@ -703,15 +738,14 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 			</div>
 
-			{/* Human input area */}
-			{showInput && group && (
-				<HumanInputArea
-					groupState={group.state}
-					roomId={roomId}
-					taskId={taskId}
-					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
-				/>
-			)}
+			{/* Human input area (always visible) */}
+			<HumanInputArea
+				groupState={group?.state ?? null}
+				hasGroup={group !== null}
+				roomId={roomId}
+				taskId={taskId}
+				onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
+			/>
 		</div>
 	);
 }

@@ -833,20 +833,43 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Inject a human message directly into the worker session.
+	 *
+	 * Used when a human wants to provide additional context directly to the worker.
+	 *
+	 * Returns true on success, false if no group exists, the worker session is not
+	 * currently available, or the injection fails.
+	 */
+	async injectMessageToWorker(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group) return false;
+		if (!this.sessionFactory.hasSession(group.workerSessionId)) return false;
+
+		const formattedMessage = `[Human intervention]\n\n${message}`;
+		try {
+			await this.sessionFactory.injectMessage(group.workerSessionId, formattedMessage);
+		} catch (error) {
+			log.error(`Failed to inject message into worker session ${group.workerSessionId}:`, error);
+			return false;
+		}
+		return true;
+	}
+
+	/**
 	 * Inject a human message directly into the leader session.
 	 *
-	 * Used when the group is awaiting_leader and a human wants to provide
-	 * guidance or additional context to the leader agent.
+	 * Used when a human wants to provide guidance directly to the leader agent.
 	 *
 	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only.
 	 * Task timelines are reconstructed from SDK messages + task_group_events.
 	 *
-	 * Returns true on success, false if the group is not in awaiting_leader state
-	 * or if the injection fails.
+	 * Returns true on success, false if no group exists, the leader session is not
+	 * currently available, or the injection fails.
 	 */
 	async injectMessageToLeader(taskId: string, message: string): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group || group.state !== 'awaiting_leader') return false;
+		if (!group) return false;
+		if (!this.sessionFactory.hasSession(group.leaderSessionId)) return false;
 
 		const formattedMessage = `[Human intervention]\n\n${message}`;
 		try {

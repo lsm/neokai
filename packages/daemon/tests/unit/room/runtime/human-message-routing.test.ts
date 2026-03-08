@@ -4,7 +4,7 @@
  * Covers all session group state branches:
  * - awaiting_human  → calls resumeWorkerFromHuman
  * - awaiting_leader → calls injectMessageToLeader
- * - awaiting_worker → returns error
+ * - awaiting_worker → auto mode returns error; explicit target routes directly
  * - completed       → returns error
  * - failed          → returns error
  * - no group        → returns error
@@ -52,16 +52,19 @@ function makeRuntime(
 	runtime: RoomRuntime;
 	resumeWorkerFromHuman: ReturnType<typeof mock>;
 	injectMessageToLeader: ReturnType<typeof mock>;
+	injectMessageToWorker: ReturnType<typeof mock>;
 } {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
+	const injectMessageToWorker = mock(async () => injectResult);
 
 	const runtime = {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
+		injectMessageToWorker,
 	} as unknown as RoomRuntime;
 
-	return { runtime, resumeWorkerFromHuman, injectMessageToLeader };
+	return { runtime, resumeWorkerFromHuman, injectMessageToLeader, injectMessageToWorker };
 }
 
 function makeGroupRepo(group: SessionGroup | null): {
@@ -133,7 +136,7 @@ describe('routeHumanMessageToGroup', () => {
 	});
 
 	describe('awaiting_worker state', () => {
-		it('returns failure with descriptive error', async () => {
+		it('returns failure with descriptive error in auto mode', async () => {
 			const { runtime } = makeRuntime();
 			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_worker'));
 
@@ -141,6 +144,38 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Worker is running');
+		});
+
+		it('injects directly to worker when target=worker', async () => {
+			const { runtime, injectMessageToWorker } = makeRuntime();
+			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_worker'));
+
+			const result = await routeHumanMessageToGroup(
+				runtime,
+				groupRepo,
+				taskId,
+				message,
+				'worker'
+			);
+
+			expect(result.success).toBe(true);
+			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
+		});
+
+		it('injects to leader when target=leader', async () => {
+			const { runtime, injectMessageToLeader } = makeRuntime();
+			const { groupRepo } = makeGroupRepo(makeGroup('awaiting_worker'));
+
+			const result = await routeHumanMessageToGroup(
+				runtime,
+				groupRepo,
+				taskId,
+				message,
+				'leader'
+			);
+
+			expect(result.success).toBe(true);
+			expect(injectMessageToLeader).toHaveBeenCalledWith(taskId, message);
 		});
 	});
 
