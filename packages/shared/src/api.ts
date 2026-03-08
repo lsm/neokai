@@ -35,6 +35,8 @@ export interface CreateSessionRequest {
 	title?: string; // Optional title - if provided, skips auto-title generation
 	roomId?: string; // Optional room ID to assign session to
 	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
+	templateId?: string; // Optional template to apply
+	templateVariables?: Record<string, string>; // Variable values for template
 }
 
 export interface CreateSessionResponse {

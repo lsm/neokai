@@ -78,6 +78,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 18: Add 'cancelled' to tasks status CHECK constraint
 	runMigration18(db);
+
+	// Migration 19: Add retry columns to tasks table (retry_count, max_retries, retry_policy, next_retry_at)
+	runMigration19(db);
 }
 
 /**
@@ -909,6 +912,29 @@ function runMigration18(db: BunDatabase): void {
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 19: Add retry columns to tasks table.
+ * Uses ALTER TABLE ADD COLUMN (safe, no table rebuild needed).
+ */
+function runMigration19(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) return;
+
+	if (!tableHasColumn(db, 'tasks', 'retry_count')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
+	}
+	if (!tableHasColumn(db, 'tasks', 'max_retries')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 3`);
+	}
+	if (!tableHasColumn(db, 'tasks', 'retry_policy')) {
+		db.exec(
+			`ALTER TABLE tasks ADD COLUMN retry_policy TEXT NOT NULL DEFAULT 'auto' CHECK(retry_policy IN ('auto', 'manual', 'none'))`
+		);
+	}
+	if (!tableHasColumn(db, 'tasks', 'next_retry_at')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN next_retry_at INTEGER`);
 	}
 }
 

@@ -267,7 +267,7 @@ export function setupGoalHandlers(
 		return { goal };
 	});
 
-	// goal.delete - Delete a goal
+	// goal.delete - Delete a goal and its linked tasks
 	messageHub.onRequest('goal.delete', async (data) => {
 		const params = data as { roomId: string; goalId: string };
 
@@ -279,12 +279,27 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const success = await goalManager.deleteGoal(params.goalId);
+		const result = await goalManager.deleteGoal(params.goalId);
 
 		// Emit goal.updated event with undefined goal to signal deletion
 		emitGoalUpdated(params.roomId, params.goalId);
 
-		return { success };
+		// Emit task deleted events so UI removes them
+		for (const taskId of result.deletedTaskIds) {
+			daemonHub
+				.emit('room.task.deleted', {
+					sessionId: `room:${params.roomId}`,
+					roomId: params.roomId,
+					taskId,
+				})
+				.catch(() => {});
+		}
+
+		// Note: result.cancelledTaskIds contains cross-goal tasks that were
+		// cascade-cancelled but not deleted. The debounced goal/task refresh
+		// triggered by goal deletion will pick up their updated status.
+
+		return { success: result.deleted };
 	});
 
 	// goal.approveTask - Human approves the PR; resume leader to call complete_task

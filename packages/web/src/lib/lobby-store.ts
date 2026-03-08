@@ -14,7 +14,7 @@
  */
 
 import { signal, computed } from '@preact/signals';
-import type { Room, GlobalStatus, CreateRoomParams } from '@neokai/shared';
+import type { Room, GlobalStatus, CreateRoomParams, SessionTemplate } from '@neokai/shared';
 import { Logger } from '@neokai/shared';
 import { connectionManager } from './connection-manager';
 import { toast } from './toast';
@@ -29,6 +29,9 @@ class LobbyStore {
 
 	/** List of rooms */
 	readonly rooms = signal<Room[]>([]);
+
+	/** Available templates for session/room creation */
+	readonly templates = signal<SessionTemplate[]>([]);
 
 	/** Global Neo status across all rooms */
 	readonly globalStatus = signal<GlobalStatus | null>(null);
@@ -55,6 +58,14 @@ class LobbyStore {
 	readonly archivedRoomCount = computed(
 		() => this.rooms.value.filter((r) => r.status === 'archived').length
 	);
+
+	/** Session templates only */
+	readonly sessionTemplates = computed(() =>
+		this.templates.value.filter((t) => t.scope === 'session')
+	);
+
+	/** Room templates only */
+	readonly roomTemplates = computed(() => this.templates.value.filter((t) => t.scope === 'room'));
 
 	/** Total sessions across all rooms */
 	readonly totalSessionCount = computed(() =>
@@ -103,7 +114,7 @@ class LobbyStore {
 		}
 
 		try {
-			await this.fetchRooms();
+			await Promise.all([this.fetchRooms(), this.fetchTemplates()]);
 			await this.startSubscriptions();
 			this.initialized = true;
 		} catch (err) {
@@ -133,6 +144,22 @@ class LobbyStore {
 			this.error.value = err instanceof Error ? err.message : 'Failed to load';
 		} finally {
 			this.loading.value = false;
+		}
+	}
+
+	/**
+	 * Fetch available templates
+	 */
+	async fetchTemplates(): Promise<void> {
+		try {
+			const hub = await connectionManager.getHub();
+			const { templates } = await hub.request<{ templates: SessionTemplate[] }>(
+				'template.list',
+				{}
+			);
+			this.templates.value = templates;
+		} catch (err) {
+			logger.error('Failed to fetch templates:', err);
 		}
 	}
 
@@ -211,7 +238,12 @@ class LobbyStore {
 	/**
 	 * Create a new room
 	 */
-	async createRoom(params: CreateRoomParams): Promise<Room | null> {
+	async createRoom(
+		params: CreateRoomParams & {
+			templateId?: string;
+			templateVariables?: Record<string, string>;
+		}
+	): Promise<Room | null> {
 		try {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
@@ -247,6 +279,7 @@ class LobbyStore {
 		this.stopSubscriptions();
 		this.initialized = false;
 		this.rooms.value = [];
+		this.templates.value = [];
 		this.globalStatus.value = null;
 		this.error.value = null;
 	}

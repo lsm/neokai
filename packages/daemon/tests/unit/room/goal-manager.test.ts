@@ -33,26 +33,7 @@ describe('GoalManager', () => {
 		db = new Database(':memory:');
 		createTables(db);
 
-		// Create goals table (migration 17 - not included in createTables)
-		db.exec(`
-			CREATE TABLE IF NOT EXISTS goals (
-				id TEXT PRIMARY KEY,
-				room_id TEXT NOT NULL,
-				title TEXT NOT NULL,
-				description TEXT NOT NULL DEFAULT '',
-				status TEXT NOT NULL DEFAULT 'active'
-					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
-				priority TEXT NOT NULL DEFAULT 'normal'
-					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
-				progress INTEGER DEFAULT 0,
-				linked_task_ids TEXT DEFAULT '[]',
-				metrics TEXT DEFAULT '{}',
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				completed_at INTEGER,
-				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-			)
-		`);
+		// Goals table is created by createTables() — no need to create separately
 
 		// Create room manager and a room
 		roomManager = new RoomManager(db);
@@ -648,7 +629,7 @@ describe('GoalManager', () => {
 
 			const result = await goalManager.deleteGoal(goal.id);
 
-			expect(result).toBe(true);
+			expect(result.deleted).toBe(true);
 
 			const retrieved = await goalManager.getGoal(goal.id);
 			expect(retrieved).toBeNull();
@@ -657,7 +638,7 @@ describe('GoalManager', () => {
 		it('should return false for non-existent goal', async () => {
 			const result = await goalManager.deleteGoal('non-existent');
 
-			expect(result).toBe(false);
+			expect(result.deleted).toBe(false);
 		});
 
 		it('should not delete goals from other rooms', async () => {
@@ -668,10 +649,80 @@ describe('GoalManager', () => {
 
 			const result = await goalManager2.deleteGoal(goal.id);
 
-			expect(result).toBe(false);
+			expect(result.deleted).toBe(false);
 
 			const retrieved = await goalManager.getGoal(goal.id);
 			expect(retrieved).not.toBeNull();
+		});
+
+		it('should delete linked tasks when goal is deleted', async () => {
+			goalManager.setTaskManager(taskManager);
+			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
+			const task1 = await taskManager.createTask({ title: 'Task 1', description: '' });
+			const task2 = await taskManager.createTask({ title: 'Task 2', description: '' });
+			await goalManager.linkTaskToGoal(goal.id, task1.id);
+			await goalManager.linkTaskToGoal(goal.id, task2.id);
+
+			const result = await goalManager.deleteGoal(goal.id);
+
+			expect(result.deleted).toBe(true);
+			expect(result.deletedTaskIds).toHaveLength(2);
+			expect(result.deletedTaskIds).toContain(task1.id);
+			expect(result.deletedTaskIds).toContain(task2.id);
+
+			// Tasks should be gone from DB
+			expect(await taskManager.getTask(task1.id)).toBeNull();
+			expect(await taskManager.getTask(task2.id)).toBeNull();
+		});
+
+		it('should cancel non-terminal tasks via cascade before deleting', async () => {
+			goalManager.setTaskManager(taskManager);
+			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
+			const task1 = await taskManager.createTask({ title: 'Pending Task', description: '' });
+			// task2 depends on task1
+			const task2 = await taskManager.createTask({
+				title: 'Dependent Task',
+				description: '',
+				dependsOn: [task1.id],
+			});
+			await goalManager.linkTaskToGoal(goal.id, task1.id);
+			// task2 is NOT linked to the goal (cross-goal dependent)
+
+			const result = await goalManager.deleteGoal(goal.id);
+
+			expect(result.deleted).toBe(true);
+			expect(result.deletedTaskIds).toContain(task1.id);
+			expect(result.cancelledTaskIds).toContain(task2.id);
+
+			// task1 should be deleted
+			expect(await taskManager.getTask(task1.id)).toBeNull();
+			// task2 should be cancelled but still exist
+			const task2Updated = await taskManager.getTask(task2.id);
+			expect(task2Updated).not.toBeNull();
+			expect(task2Updated!.status).toBe('cancelled');
+		});
+
+		it('should handle mix of terminal and non-terminal tasks', async () => {
+			goalManager.setTaskManager(taskManager);
+			const goal = await goalManager.createGoal({ title: 'Test Goal', description: '' });
+			const completedTask = await taskManager.createTask({ title: 'Completed', description: '' });
+			await taskManager.completeTask(completedTask.id, 'done');
+			const pendingTask = await taskManager.createTask({ title: 'Pending', description: '' });
+			const failedTask = await taskManager.createTask({ title: 'Failed', description: '' });
+			await taskManager.failTask(failedTask.id, 'error', { autoRetry: false });
+
+			await goalManager.linkTaskToGoal(goal.id, completedTask.id);
+			await goalManager.linkTaskToGoal(goal.id, pendingTask.id);
+			await goalManager.linkTaskToGoal(goal.id, failedTask.id);
+
+			const result = await goalManager.deleteGoal(goal.id);
+
+			expect(result.deleted).toBe(true);
+			expect(result.deletedTaskIds).toHaveLength(3);
+			// All linked tasks should be deleted regardless of status
+			expect(await taskManager.getTask(completedTask.id)).toBeNull();
+			expect(await taskManager.getTask(pendingTask.id)).toBeNull();
+			expect(await taskManager.getTask(failedTask.id)).toBeNull();
 		});
 	});
 

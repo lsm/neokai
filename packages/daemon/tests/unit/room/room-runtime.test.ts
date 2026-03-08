@@ -135,7 +135,7 @@ describe('RoomRuntime', () => {
 				taskType: 'coding',
 			});
 			await ctx.goalManager.linkTaskToGoal(goal.id, execTask1.id);
-			await ctx.taskManager.failTask(execTask1.id, 'Compilation error');
+			await ctx.taskManager.failTask(execTask1.id, 'Compilation error', { autoRetry: false });
 
 			const execTask2 = await ctx.taskManager.createTask({
 				title: 'Add auth',
@@ -143,7 +143,7 @@ describe('RoomRuntime', () => {
 				taskType: 'coding',
 			});
 			await ctx.goalManager.linkTaskToGoal(goal.id, execTask2.id);
-			await ctx.taskManager.failTask(execTask2.id, 'Test failure');
+			await ctx.taskManager.failTask(execTask2.id, 'Test failure', { autoRetry: false });
 
 			// Increment planning_attempts to 1 (initial planning already done)
 			await ctx.goalManager.incrementPlanningAttempts(goal.id);
@@ -183,7 +183,7 @@ describe('RoomRuntime', () => {
 				taskType: 'coding',
 			});
 			await ctx.goalManager.linkTaskToGoal(goal.id, execTask.id);
-			await ctx.taskManager.failTask(execTask.id, 'Compilation error');
+			await ctx.taskManager.failTask(execTask.id, 'Compilation error', { autoRetry: false });
 
 			// planning_attempts = 1 (initial planning done), maxPlanningAttempts = 0+1 = 1
 			// So attempts >= maxPlanningAttempts → escalate immediately
@@ -223,7 +223,7 @@ describe('RoomRuntime', () => {
 				taskType: 'coding',
 			});
 			await ctx.goalManager.linkTaskToGoal(goal.id, execTask1.id);
-			await ctx.taskManager.failTask(execTask1.id, 'Compilation error');
+			await ctx.taskManager.failTask(execTask1.id, 'Compilation error', { autoRetry: false });
 
 			const execTask2 = await ctx.taskManager.createTask({
 				title: 'Add auth',

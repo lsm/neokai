@@ -27,7 +27,7 @@ import type {
 	RewindResult,
 } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Room, NeoTask, TaskSummary } from '@neokai/shared';
+import type { Room, NeoTask, TaskSummary, SessionTemplate } from '@neokai/shared';
 
 /**
  * Compaction trigger type
@@ -205,6 +205,11 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		sessionId: string; // 'room:${roomId}' for channel routing
 		roomId: string;
 		task: NeoTask;
+	};
+	'room.task.deleted': {
+		sessionId: string; // 'room:${roomId}' for channel routing
+		roomId: string;
+		taskId: string;
 	};
 
 	// Legacy task events (kept for backward compatibility)
@@ -391,6 +396,11 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		roomId: string;
 		templateId: string;
 	};
+
+	// Template events
+	'template.created': { sessionId: string; template: SessionTemplate };
+	'template.updated': { sessionId: string; template: SessionTemplate };
+	'template.deleted': { sessionId: string; templateId: string };
 
 	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)
 	'featureFlag.updated': {

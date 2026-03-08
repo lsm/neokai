@@ -62,11 +62,21 @@ export default function Lobby() {
 		absoluteTime: p.usedAt,
 	}));
 
-	async function handleCreateSession(params: { workspacePath: string; roomId?: string }) {
+	const sessionTemplates = lobbyStore.sessionTemplates.value;
+	const roomTemplates = lobbyStore.roomTemplates.value;
+
+	async function handleCreateSession(params: {
+		workspacePath: string;
+		roomId?: string;
+		templateId?: string;
+		templateVariables?: Record<string, string>;
+	}) {
 		try {
 			const { sessionId } = await createSession({
 				workspacePath: params.workspacePath,
 				roomId: params.roomId,
+				templateId: params.templateId,
+				templateVariables: params.templateVariables,
 				createdBy: 'human',
 			});
 
@@ -256,12 +266,18 @@ export default function Lobby() {
 				isOpen={isCreateRoomModalOpen}
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					const room = await lobbyStore.createRoom({
+						name: params.name,
+						background: params.background,
+						templateId: params.templateId,
+						templateVariables: params.templateVariables,
+					});
 					if (room) {
 						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
 					}
 				}}
+				templates={roomTemplates}
 			/>
 
 			{/* New Session Modal */}
@@ -271,6 +287,7 @@ export default function Lobby() {
 				onSubmit={handleCreateSession}
 				recentPaths={recentPaths}
 				rooms={rooms}
+				templates={sessionTemplates}
 				onCreateRoom={async (params) => {
 					const room = await lobbyStore.createRoom(params);
 					return room;

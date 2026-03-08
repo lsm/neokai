@@ -9,7 +9,7 @@
 
 import type { MessageDeliveryMode, MessageHub, MessageImage, Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
-import { generateUUID } from '@neokai/shared';
+import { generateUUID, renderTemplate } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
 import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
@@ -21,6 +21,8 @@ import {
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
 import type { RoomManager } from '../room';
+import type { Database } from '../../storage/database';
+import { TemplateRepository } from '../../storage/repositories/template-repository';
 import { Logger } from '../logger';
 
 const log = new Logger('session-handlers');
@@ -51,14 +53,43 @@ export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
 	daemonHub: DaemonHub,
-	roomManager: RoomManager
+	roomManager: RoomManager,
+	db?: Database
 ): void {
+	const templateRepo = db ? new TemplateRepository(db.getDatabase()) : undefined;
+
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
+
+		// Apply template if provided
+		let config = req.config;
+		if (req.templateId && templateRepo) {
+			const template = templateRepo.getTemplate(req.templateId);
+			if (template && template.scope === 'session') {
+				const vars = req.templateVariables ?? {};
+				const templateConfig = template.config;
+
+				// Merge template config into request config
+				config = {
+					...config,
+					model: config?.model ?? templateConfig.model,
+				};
+
+				// Render system prompt with variables
+				if (templateConfig.systemPrompt) {
+					const rendered = renderTemplate(templateConfig.systemPrompt, vars);
+					config = {
+						...config,
+						systemPrompt: rendered,
+					};
+				}
+			}
+		}
+
 		const sessionId = await sessionManager.createSession({
 			workspacePath: req.workspacePath,
 			initialTools: req.initialTools,
-			config: req.config,
+			config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
 			roomId: req.roomId,

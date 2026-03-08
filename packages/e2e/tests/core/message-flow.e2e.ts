@@ -11,6 +11,7 @@
  */
 
 import { test, expect } from '../../fixtures';
+import { closeWebSocket } from '../helpers/connection-helpers';
 import {
 	createSessionViaUI,
 	waitForElement,
@@ -158,11 +159,8 @@ test.describe('Message Send and Receive', () => {
 			{ timeout: 10000 }
 		);
 
-		// Simulate disconnection using exposed method
-		await page.evaluate(() => {
-			const cm = (window as any).connectionManager;
-			if (cm?.simulateDisconnect) cm.simulateDisconnect();
-		});
+		// Simulate disconnection using the approved helper
+		await closeWebSocket(page);
 
 		// Auto-reconnect should kick in and restore connection
 		// (Server is still running, so reconnect succeeds)

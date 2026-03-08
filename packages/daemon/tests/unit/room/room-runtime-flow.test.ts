@@ -154,22 +154,22 @@ describe('RoomRuntime flow', () => {
 		});
 
 		it('should escalate task to human review (not fail) when max feedback iterations reached', async () => {
-			// maxFeedbackIterations = 5 (set in test helpers).
+			// maxFeedbackIterations = 3 (default, set by runtime).
 			// feedbackIteration is incremented by routeWorkerToLeader (1-based).
 			// The check fires when feedbackIteration >= maxFeedbackIterations,
-			// i.e., on the 5th review round when the leader tries send_to_worker.
+			// i.e., on the 3rd review round when the leader tries send_to_worker.
 			const { task } = await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 
-			// Complete 4 full feedback rounds (feedbackIteration reaches 4 after round 4)
-			for (let i = 0; i < 4; i++) {
+			// Complete 2 full feedback rounds (feedbackIteration reaches 2 after round 2)
+			for (let i = 0; i < 2; i++) {
 				await ctx.runtime.onWorkerTerminalState(group.id, {
 					sessionId: group.workerSessionId,
 					kind: 'idle',
 				});
-				// send_to_worker succeeds: feedbackIteration i+1 < 5
+				// send_to_worker succeeds: feedbackIteration i+1 < 3
 				const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
 				});
@@ -177,14 +177,14 @@ describe('RoomRuntime flow', () => {
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
-			// 5th review round: routeWorkerToLeader increments feedbackIteration to 5
+			// 3rd review round: routeWorkerToLeader increments feedbackIteration to 3
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
-			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(5);
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(3);
 
-			// Leader tries send_to_worker: 5 >= 5 → runtime escalates
+			// Leader tries send_to_worker: 3 >= 3 → runtime escalates
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'One more round',
 			});
@@ -208,8 +208,8 @@ describe('RoomRuntime flow', () => {
 			await ctx.runtime.tick();
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 
-			// 4 full rounds + trigger escalation on the 5th
-			for (let i = 0; i < 4; i++) {
+			// 2 full rounds + trigger escalation on the 3rd (maxFeedbackIterations default = 3)
+			for (let i = 0; i < 2; i++) {
 				await ctx.runtime.onWorkerTerminalState(group.id, {
 					sessionId: group.workerSessionId,
 					kind: 'idle',
@@ -1043,10 +1043,10 @@ describe('RoomRuntime flow', () => {
 			// the runtime catches the error and the task is marked failed
 			await isolCtx.runtime.tick();
 
-			// Task should be failed with a worktree-related error
+			// Worktree failure passes autoRetry: true — task auto-retries to pending
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
-			expect(updatedTask!.error).toContain('worktree');
+			expect(updatedTask!.status).toBe('pending');
+			expect(updatedTask!.retryCount).toBe(1);
 		});
 
 		test('fails task when createWorktree returns null for planner role', async () => {
@@ -1072,10 +1072,10 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// The planning task should have been created by spawnPlanningGroup and then failed
-			const allTasks = await isolCtx.taskManager.listTasks({ status: 'failed' });
-			expect(allTasks.length).toBeGreaterThan(0);
-			expect(allTasks[0].error).toContain('worktree');
+			// Worktree failure passes autoRetry: true — planning task auto-retries to pending
+			const allTasks = await isolCtx.taskManager.listTasks({ status: 'pending' });
+			const retryingTasks = allTasks.filter((t) => t.retryCount > 0);
+			expect(retryingTasks.length).toBeGreaterThan(0);
 		});
 
 		test('fails task when createWorktree returns null for general role', async () => {
@@ -1097,10 +1097,10 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// Task should be failed with a worktree-related error
+			// Worktree failure passes autoRetry: true — task auto-retries to pending
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
-			expect(updatedTask!.error).toContain('worktree');
+			expect(updatedTask!.status).toBe('pending');
+			expect(updatedTask!.retryCount).toBe(1);
 		});
 
 		test('creates worktree with meaningful branch name derived from task title', async () => {

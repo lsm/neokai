@@ -12,7 +12,8 @@
 import { useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import type { Room } from '@neokai/shared';
+import { TemplateSelector } from './TemplateSelector';
+import type { Room, SessionTemplate } from '@neokai/shared';
 
 interface RecentPath {
 	path: string;
@@ -23,9 +24,15 @@ interface RecentPath {
 interface NewSessionModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onSubmit: (params: { workspacePath: string; roomId?: string }) => Promise<void>;
+	onSubmit: (params: {
+		workspacePath: string;
+		roomId?: string;
+		templateId?: string;
+		templateVariables?: Record<string, string>;
+	}) => Promise<void>;
 	recentPaths: RecentPath[];
 	rooms: Room[];
+	templates?: SessionTemplate[];
 	onCreateRoom?: (params: {
 		name: string;
 		background?: string;
@@ -40,10 +47,13 @@ export function NewSessionModal({
 	onSubmit,
 	recentPaths,
 	rooms,
+	templates,
 	onCreateRoom,
 }: NewSessionModalProps) {
 	const [selectedPath, setSelectedPath] = useState<string>('');
 	const [selectedRoomId, setSelectedRoomId] = useState<string | undefined>();
+	const [selectedTemplateId, setSelectedTemplateId] = useState<string | undefined>();
+	const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [showCreateRoom, setShowCreateRoom] = useState(false);
@@ -59,6 +69,20 @@ export function NewSessionModal({
 			return;
 		}
 
+		// Validate required template variables
+		if (selectedTemplateId && templates) {
+			const tmpl = templates.find((t) => t.id === selectedTemplateId);
+			if (tmpl?.variables) {
+				const missing = tmpl.variables
+					.filter((v) => v.required && !templateVariables[v.name]?.trim())
+					.map((v) => v.label);
+				if (missing.length > 0) {
+					setError(`Required template fields: ${missing.join(', ')}`);
+					return;
+				}
+			}
+		}
+
 		try {
 			setSubmitting(true);
 			setError(null);
@@ -66,11 +90,18 @@ export function NewSessionModal({
 			await onSubmit({
 				workspacePath,
 				roomId: selectedRoomId || undefined,
+				templateId: selectedTemplateId,
+				templateVariables:
+					selectedTemplateId && Object.keys(templateVariables).length > 0
+						? templateVariables
+						: undefined,
 			});
 
 			// Reset form on success
 			setSelectedPath('');
 			setSelectedRoomId(undefined);
+			setSelectedTemplateId(undefined);
+			setTemplateVariables({});
 			setShowCreateRoom(false);
 			setNewRoomName('');
 			setNewRoomDescription('');
@@ -119,6 +150,8 @@ export function NewSessionModal({
 	const handleClose = () => {
 		setSelectedPath('');
 		setSelectedRoomId(undefined);
+		setSelectedTemplateId(undefined);
+		setTemplateVariables({});
 		setShowCreateRoom(false);
 		setNewRoomName('');
 		setNewRoomDescription('');
@@ -194,6 +227,30 @@ export function NewSessionModal({
 						Browse for folder...
 					</button>
 				</div>
+
+				{/* Template Section */}
+				{templates && templates.length > 0 && (
+					<TemplateSelector
+						templates={templates}
+						selectedTemplateId={selectedTemplateId}
+						onSelect={(id) => {
+							setSelectedTemplateId(id);
+							// Initialize templateVariables with default values from the template
+							const tmpl = templates.find((t) => t.id === id);
+							const defaults: Record<string, string> = {};
+							if (tmpl?.variables) {
+								for (const v of tmpl.variables) {
+									if (v.default) defaults[v.name] = v.default;
+								}
+							}
+							setTemplateVariables(defaults);
+						}}
+						templateVariables={templateVariables}
+						onVariableChange={(name, value) =>
+							setTemplateVariables((prev) => ({ ...prev, [name]: value }))
+						}
+					/>
+				)}
 
 				{/* Room Assignment Section */}
 				{!showCreateRoom && (

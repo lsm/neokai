@@ -167,7 +167,9 @@ export function setupTaskHandlers(
 		}
 
 		const taskManager = taskManagerFactory(db, params.roomId);
-		const task = await taskManager.failTask(params.taskId, params.error ?? '');
+		const task = await taskManager.failTask(params.taskId, params.error ?? '', {
+			autoRetry: false,
+		});
 
 		emitTaskUpdate(params.roomId, task);
 		emitRoomOverview(params.roomId);

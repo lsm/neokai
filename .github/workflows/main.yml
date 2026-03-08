@@ -93,14 +93,26 @@ jobs:
         run: bun run typecheck
         continue-on-error: true
 
+      - name: Check E2E rules
+        id: e2e_rules
+        run: bash scripts/check-e2e-rules.sh
+        continue-on-error: true
+
+      - name: Check package dependencies
+        id: pkg_deps
+        run: bash scripts/check-package-deps.sh
+        continue-on-error: true
+
       - name: Check for failures
-        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure'
+        if: steps.lint.outcome == 'failure' || steps.format.outcome == 'failure' || steps.knip.outcome == 'failure' || steps.typecheck.outcome == 'failure' || steps.e2e_rules.outcome == 'failure' || steps.pkg_deps.outcome == 'failure'
         run: |
           echo "One or more checks failed:"
           echo "  Lint: ${{ steps.lint.outcome }}"
           echo "  Format: ${{ steps.format.outcome }}"
           echo "  Knip: ${{ steps.knip.outcome }}"
           echo "  Typecheck: ${{ steps.typecheck.outcome }}"
+          echo "  E2E rules: ${{ steps.e2e_rules.outcome }}"
+          echo "  Package deps: ${{ steps.pkg_deps.outcome }}"
           exit 1
 
   # ============================================

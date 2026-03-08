@@ -384,7 +384,9 @@ describe('Task RPC Handlers', () => {
 				{}
 			)) as { task: NeoTask };
 
-			expect(mockTaskManager.failTask).toHaveBeenCalledWith('task-123', 'Something went wrong');
+			expect(mockTaskManager.failTask).toHaveBeenCalledWith('task-123', 'Something went wrong', {
+				autoRetry: false,
+			});
 			expect(result.task).toBeDefined();
 		});
 
@@ -396,7 +398,9 @@ describe('Task RPC Handlers', () => {
 				task: NeoTask;
 			};
 
-			expect(mockTaskManager.failTask).toHaveBeenCalledWith('task-123', '');
+			expect(mockTaskManager.failTask).toHaveBeenCalledWith('task-123', '', {
+				autoRetry: false,
+			});
 			expect(result.task).toBeDefined();
 		});
 

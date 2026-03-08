@@ -147,6 +147,10 @@ export class RoomManager {
 			progress: task.progress,
 			dependsOn: task.dependsOn,
 			error: task.error,
+			retryCount: task.retryCount,
+			maxRetries: task.maxRetries,
+			retryPolicy: task.retryPolicy,
+			nextRetryAt: task.nextRetryAt,
 		});
 		const nonTerminal = tasks.filter(
 			(t) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled'

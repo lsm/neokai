@@ -334,14 +334,37 @@ describe('TaskManager', () => {
 	});
 
 	describe('failTask', () => {
-		it('should fail task with error', async () => {
+		it('should auto-retry task with backoff when retryPolicy is auto (default)', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+
+			const updated = await taskManager.failTask(task.id, 'Something went wrong');
+
+			// Default retryPolicy is 'auto', so first failure triggers auto-retry
+			expect(updated.status).toBe('pending');
+			expect(updated.retryCount).toBe(1);
+			expect(updated.nextRetryAt).toBeDefined();
+			expect(updated.error).toBeUndefined();
+		});
+
+		it('should fail task permanently when retryPolicy is none', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+			await taskManager.updateTaskStatus(task.id, task.status, { retryPolicy: 'none' });
 
 			const updated = await taskManager.failTask(task.id, 'Something went wrong');
 
 			expect(updated.status).toBe('failed');
 			expect(updated.error).toBe('Something went wrong');
 			expect(updated.completedAt).toBeDefined();
+		});
+
+		it('should fail task permanently after max retries exhausted', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+			await taskManager.updateTaskStatus(task.id, task.status, { retryCount: 3, maxRetries: 3 });
+
+			const updated = await taskManager.failTask(task.id, 'Final failure');
+
+			expect(updated.status).toBe('failed');
+			expect(updated.error).toBe('Final failure');
 		});
 
 		it('should throw error for non-existent task', async () => {
@@ -770,6 +793,71 @@ describe('TaskManager', () => {
 
 			const final = await taskManager.getTask(task.id);
 			expect(final?.status).toBe('completed');
+		});
+	});
+
+	describe('isRetryReady', () => {
+		it('should return true when nextRetryAt is not set', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+			expect(taskManager.isRetryReady(task)).toBe(true);
+		});
+
+		it('should return false when nextRetryAt is in the future', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+			const futureTask = { ...task, nextRetryAt: Date.now() + 60_000 };
+			expect(taskManager.isRetryReady(futureTask)).toBe(false);
+		});
+
+		it('should return true when nextRetryAt is in the past', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+			const pastTask = { ...task, nextRetryAt: Date.now() - 1000 };
+			expect(taskManager.isRetryReady(pastTask)).toBe(true);
+		});
+	});
+
+	describe('retryTask', () => {
+		it('should reset failed task to pending with fresh retry budget', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+			await taskManager.failTask(task.id, 'Error', { autoRetry: false });
+
+			const retried = await taskManager.retryTask(task.id);
+
+			expect(retried.status).toBe('pending');
+			expect(retried.retryCount).toBe(0);
+			expect(retried.error).toBeUndefined();
+			expect(retried.result).toBeUndefined();
+			expect(retried.progress).toBe(0);
+		});
+
+		it('should throw for non-failed task', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+
+			await expect(taskManager.retryTask(task.id)).rejects.toThrow(
+				"Can only retry failed tasks (current status: 'pending')"
+			);
+		});
+	});
+
+	describe('failTask with manual retryPolicy', () => {
+		it('should fail permanently when retryPolicy is manual regardless of autoRetry', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+			await taskManager.updateTaskStatus(task.id, task.status, { retryPolicy: 'manual' });
+
+			const updated = await taskManager.failTask(task.id, 'Error');
+
+			expect(updated.status).toBe('failed');
+			expect(updated.error).toBe('Error');
+		});
+	});
+
+	describe('failTask with autoRetry: false', () => {
+		it('should fail permanently when autoRetry is false even with auto policy', async () => {
+			const task = await taskManager.createTask({ title: 'Task', description: '' });
+
+			const updated = await taskManager.failTask(task.id, 'Error', { autoRetry: false });
+
+			expect(updated.status).toBe('failed');
+			expect(updated.error).toBe('Error');
 		});
 	});
 });

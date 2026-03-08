@@ -262,5 +262,6 @@ async function failGroupAndTask(
 	reason: string
 ): Promise<void> {
 	groupRepo.failGroup(group.id, group.version);
-	await taskManager.failTask(group.taskId, reason);
+	// Recovery failures (session lost) should auto-retry
+	await taskManager.failTask(group.taskId, reason, { autoRetry: true });
 }

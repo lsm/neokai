@@ -264,6 +264,17 @@ class RoomStore {
 				}
 			);
 			this.cleanupFunctions.push(unsubTaskUpdate);
+
+			const unsubTaskDeleted = hub.onEvent<{ roomId: string; taskId: string }>(
+				'room.task.deleted',
+				(event) => {
+					if (event.roomId === roomId) {
+						this.tasks.value = this.tasks.value.filter((t) => t.id !== event.taskId);
+						debouncedGoalRefresh();
+					}
+				}
+			);
+			this.cleanupFunctions.push(unsubTaskDeleted);
 			this.cleanupFunctions.push(() => {
 				if (goalRefreshTimer) clearTimeout(goalRefreshTimer);
 			});

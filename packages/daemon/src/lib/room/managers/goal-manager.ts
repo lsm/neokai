@@ -15,11 +15,13 @@ import {
 	type CreateGoalParams,
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
+import type { TaskManager } from './task-manager';
 import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
 
 export class GoalManager {
 	private goalRepo: GoalRepository;
 	private taskRepo: TaskRepository;
+	private taskManager: TaskManager | null = null;
 
 	constructor(
 		private db: BunDatabase,
@@ -27,6 +29,14 @@ export class GoalManager {
 	) {
 		this.goalRepo = new GoalRepository(db);
 		this.taskRepo = new TaskRepository(db);
+	}
+
+	/**
+	 * Inject the TaskManager dependency for operations that need cascade logic.
+	 * Called after both GoalManager and TaskManager are constructed (avoids circular deps).
+	 */
+	setTaskManager(taskManager: TaskManager): void {
+		this.taskManager = taskManager;
 	}
 
 	/**
@@ -298,14 +308,60 @@ export class GoalManager {
 	}
 
 	/**
-	 * Delete a goal
+	 * Delete a goal and clean up its linked tasks.
+	 *
+	 * Non-terminal tasks are cancelled via TaskManager.cancelTaskCascade() so that
+	 * dependent tasks (including cross-goal) are properly handled. All linked tasks
+	 * are then hard-deleted. The entire operation runs in a transaction for atomicity.
 	 */
-	async deleteGoal(goalId: string): Promise<boolean> {
+	async deleteGoal(
+		goalId: string
+	): Promise<{ deleted: boolean; deletedTaskIds: string[]; cancelledTaskIds: string[] }> {
 		const goal = await this.getGoal(goalId);
 		if (!goal) {
-			return false;
+			return { deleted: false, deletedTaskIds: [], cancelledTaskIds: [] };
 		}
 
-		return this.goalRepo.deleteGoal(goalId);
+		const deletedTaskIds: string[] = [];
+		const cancelledTaskIds: string[] = [];
+		const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
+
+		// Phase 1: Cancel non-terminal tasks via TaskManager for proper cascade.
+		// This must happen before the transaction because cancelTaskCascade is async.
+		for (const taskId of goal.linkedTaskIds) {
+			const task = this.taskRepo.getTask(taskId);
+			if (!task) continue;
+
+			if (!terminalStatuses.has(task.status)) {
+				if (this.taskManager) {
+					const cascaded = await this.taskManager.cancelTaskCascade(taskId);
+					for (const ct of cascaded) {
+						// Track cascaded tasks that are NOT in this goal's linked list
+						if (!goal.linkedTaskIds.includes(ct.id)) {
+							cancelledTaskIds.push(ct.id);
+						}
+					}
+				} else {
+					// Fallback: direct repo update (no cascade) if TaskManager not injected
+					this.taskRepo.updateTask(taskId, { status: 'cancelled' });
+				}
+			}
+		}
+
+		// Phase 2: Delete linked tasks and goal in a transaction for atomicity.
+		const txn = this.db.transaction(() => {
+			for (const taskId of goal.linkedTaskIds) {
+				const task = this.taskRepo.getTask(taskId);
+				if (!task) continue;
+				this.taskRepo.deleteTask(taskId);
+				deletedTaskIds.push(taskId);
+			}
+
+			const goalDeleted = this.goalRepo.deleteGoal(goalId);
+			return goalDeleted;
+		});
+
+		const goalDeleted = txn();
+		return { deleted: goalDeleted, deletedTaskIds, cancelledTaskIds };
 	}
 }

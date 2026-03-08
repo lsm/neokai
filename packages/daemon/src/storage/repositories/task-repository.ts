@@ -148,6 +148,22 @@ export class TaskRepository {
 			fields.push('depends_on = ?');
 			values.push(JSON.stringify(params.dependsOn));
 		}
+		if (params.retryCount !== undefined) {
+			fields.push('retry_count = ?');
+			values.push(params.retryCount);
+		}
+		if (params.maxRetries !== undefined) {
+			fields.push('max_retries = ?');
+			values.push(params.maxRetries);
+		}
+		if (params.retryPolicy !== undefined) {
+			fields.push('retry_policy = ?');
+			values.push(params.retryPolicy);
+		}
+		if (params.nextRetryAt !== undefined) {
+			fields.push('next_retry_at = ?');
+			values.push(params.nextRetryAt ?? null);
+		}
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
@@ -226,6 +242,10 @@ export class TaskRepository {
 			result: (row.result as string | null) ?? undefined,
 			error: (row.error as string | null) ?? undefined,
 			dependsOn: JSON.parse(row.depends_on as string) as string[],
+			retryCount: (row.retry_count as number) ?? 0,
+			maxRetries: (row.max_retries as number) ?? 3,
+			retryPolicy: ((row.retry_policy as string) ?? 'auto') as NeoTask['retryPolicy'],
+			nextRetryAt: (row.next_retry_at as number | null) ?? undefined,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,

@@ -42,6 +42,7 @@ import { Logger } from '../logger';
 import { GoalManager } from '../room/managers/goal-manager';
 import { TaskManager } from '../room/managers/task-manager';
 import { setupDialogHandlers } from './dialog-handlers';
+import { setupTemplateHandlers } from './template-handlers';
 
 export interface RPCHandlerDependencies {
 	messageHub: MessageHub;
@@ -71,7 +72,11 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Create factory function for per-room goal managers
 	const goalManagerFactory: GoalManagerFactory = (roomId: string) => {
-		return new GoalManager(deps.db.getDatabase(), roomId);
+		const db = deps.db.getDatabase();
+		const goalManager = new GoalManager(db, roomId);
+		const taskManager = new TaskManager(db, roomId);
+		goalManager.setTaskManager(taskManager);
+		return goalManager;
 	};
 
 	// Create factory function for per-room task managers (used by goal review handlers)
@@ -79,7 +84,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		return new TaskManager(deps.db.getDatabase(), roomId);
 	};
 
-	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager);
+	setupSessionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, roomManager, deps.db);
 	setupMessageHandlers(deps.messageHub, deps.sessionManager, deps.db);
 	setupCommandHandlers(deps.messageHub, deps.sessionManager);
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
@@ -98,7 +103,8 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		roomManager,
 		deps.daemonHub,
 		deps.config.workspaceRoot,
-		deps.sessionManager
+		deps.sessionManager,
+		deps.db
 	);
 
 	// Room Runtime Service (must be created before task/goal handlers — sendHumanMessage/approveTask need it)
@@ -145,6 +151,9 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
+
+	// Template handlers (session/room templates)
+	setupTemplateHandlers(deps.messageHub, deps.daemonHub, deps.db);
 
 	// Return cleanup function to stop background services
 	return () => {

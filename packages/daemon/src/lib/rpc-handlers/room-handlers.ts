@@ -14,10 +14,13 @@
  */
 
 import type { MessageHub, WorkspacePath } from '@neokai/shared';
+import { renderTemplate } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import type { SessionManager } from '../session-manager';
+import type { Database } from '../../storage/database';
+import { TemplateRepository } from '../../storage/repositories/template-repository';
 import { getCliAgents, refresh as refreshCliAgents } from '../room/agents/cli-agent-registry';
 import { Logger } from '../logger';
 
@@ -28,8 +31,11 @@ export function setupRoomHandlers(
 	roomManager: RoomManager,
 	daemonHub: DaemonHub,
 	workspaceRoot?: string,
-	sessionManager?: SessionManager
+	sessionManager?: SessionManager,
+	db?: Database
 ): void {
+	const templateRepo = db ? new TemplateRepository(db.getDatabase()) : undefined;
+
 	// room.create - Create a new room
 	messageHub.onRequest('room.create', async (data) => {
 		const params = data as {
@@ -37,6 +43,8 @@ export function setupRoomHandlers(
 			background?: string;
 			allowedPaths?: WorkspacePath[];
 			defaultPath?: string;
+			templateId?: string;
+			templateVariables?: Record<string, string>;
 		};
 
 		if (!params.name) {
@@ -47,12 +55,45 @@ export function setupRoomHandlers(
 		const allowedPaths = params.allowedPaths ?? (workspaceRoot ? [{ path: workspaceRoot }] : []);
 		const defaultPath = params.defaultPath ?? (workspaceRoot ? workspaceRoot : undefined);
 
+		// Apply room template if provided
+		let background = params.background;
+		let roomConfig: Record<string, unknown> | undefined;
+		let defaultModel: string | undefined;
+
+		if (params.templateId && templateRepo) {
+			const template = templateRepo.getTemplate(params.templateId);
+			if (template && template.scope === 'room') {
+				const vars = params.templateVariables ?? {};
+
+				// Render system prompt as background context
+				if (template.config.systemPrompt && !background) {
+					background = renderTemplate(template.config.systemPrompt, vars);
+				}
+
+				// Apply model from template
+				if (template.config.model) {
+					defaultModel = template.config.model;
+				}
+
+				// Apply room config from template
+				if (template.roomConfig) {
+					roomConfig = { ...template.roomConfig };
+				}
+			}
+		}
+
 		const room = roomManager.createRoom({
 			name: params.name,
-			background: params.background,
+			background,
 			allowedPaths,
 			defaultPath,
+			defaultModel,
 		});
+
+		// Apply room config if template provided one
+		if (roomConfig) {
+			roomManager.updateRoom(room.id, { config: roomConfig });
+		}
 
 		// Create the room's user-facing chat session
 		// Session ID format: room:chat:${roomId}

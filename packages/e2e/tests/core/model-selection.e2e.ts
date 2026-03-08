@@ -250,35 +250,8 @@ test.describe('Default Model Configuration', () => {
 		sessionId = await createSessionViaUI(page);
 		expect(sessionId).toBeTruthy();
 
-		// Get the session data via RPC to check the model
-		const sessionData = await page.evaluate(async (sid) => {
-			const messageHub = window.__messageHub || window.appState?.messageHub;
-			if (!messageHub) {
-				throw new Error('MessageHub not available');
-			}
-
-			try {
-				const response = await messageHub.call('session.get', {
-					sessionId: sid,
-				});
-				return response;
-			} catch (error) {
-				console.error('Failed to get session:', error);
-				throw error;
-			}
-		}, sessionId);
-
-		// Verify the session was retrieved
-		expect(sessionData).toBeTruthy();
-		expect(sessionData.session).toBeTruthy();
-
-		// Verify the model is set to Haiku
-		const modelId = sessionData.session.config.model;
-		expect(modelId).toBeTruthy();
-
-		// The model should contain "haiku" in the ID (case-insensitive)
-		expect(modelId.toLowerCase()).toContain('haiku');
-
-		console.log(`✅ Session ${sessionId} created with model: ${modelId}`);
+		// Verify the model shown in the UI contains "haiku"
+		const modelDisplay = page.locator('[data-testid="model-display"], .model-name, .model-id');
+		await expect(modelDisplay.first()).toContainText(/haiku/i);
 	});
 });

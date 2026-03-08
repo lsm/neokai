@@ -140,7 +140,12 @@ const mockGoalManager = {
 			updatedAt: Date.now(),
 		})
 	),
-	deleteGoal: mock(async (): Promise<boolean> => true),
+	deleteGoal: mock(
+		async (): Promise<{ deleted: boolean; deletedTaskIds: string[] }> => ({
+			deleted: true,
+			deletedTaskIds: [],
+		})
+	),
 };
 
 const createMockGoalManager = (): GoalManagerLike => mockGoalManager as unknown as GoalManagerLike;
@@ -694,7 +699,7 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('goal.delete');
 			expect(handler).toBeDefined();
 
-			mockGoalManager.deleteGoal.mockResolvedValueOnce(false);
+			mockGoalManager.deleteGoal.mockResolvedValueOnce({ deleted: false, deletedTaskIds: [] });
 
 			const result = (await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})) as {
 				success: boolean;

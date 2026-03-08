@@ -94,6 +94,8 @@ export interface RoomRuntimeConfig {
 	maxFeedbackIterations?: number;
 	/** Tick interval in ms (default: 30000) */
 	tickInterval?: number;
+	/** Stall timeout in ms — max time without agent output before group is failed (default: 300000 / 5 min) */
+	stallTimeoutMs?: number;
 	/**
 	 * Fetch Worker assistant messages for forwarding to Leader.
 	 * Returns messages after (exclusive) the message with afterMessageId.
@@ -131,6 +133,7 @@ export class RoomRuntime {
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
+	private readonly stallTimeoutMs: number;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -208,6 +211,7 @@ export class RoomRuntime {
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
+		this.stallTimeoutMs = config.stallTimeoutMs ?? 300_000; // 5 minutes
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -997,6 +1001,9 @@ export class RoomRuntime {
 						content: enrichedContent,
 					});
 
+					// Update last activity timestamp for stall detection
+					this.groupRepo.updateLastActivityAt(group.id);
+
 					// Broadcast delta to subscribed frontends
 					if (this.messageHub) {
 						const parsed = JSON.parse(enrichedContent);
@@ -1182,12 +1189,78 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Detect groups with no agent activity for longer than stallTimeoutMs.
+	 *
+	 * Split into sync detection + async handling to avoid introducing microtask
+	 * boundaries in the common case (no stalls). This prevents queued re-ticks
+	 * from interleaving with the current tick's async operations.
+	 *
+	 * Only checks awaiting_worker state:
+	 * - awaiting_leader: leader may be processing a complex review; activity is
+	 *   tracked by mirroring so the leader's own output resets the timer.
+	 * - awaiting_human: human response time is unpredictable
+	 * - completed/failed: terminal states
+	 * - Rate-limited groups are excluded (known wait)
+	 */
+	private detectStalledGroups(): SessionGroup[] {
+		if (this.stallTimeoutMs <= 0) return [];
+
+		const activeGroups = this.groupRepo.getActiveGroups(this.room.id);
+		const now = Date.now();
+		const stalled: SessionGroup[] = [];
+
+		for (const group of activeGroups) {
+			if (group.state !== 'awaiting_worker') continue;
+			if (this.groupRepo.isRateLimited(group.id)) continue;
+
+			const lastActivity = group.lastActivityAt ?? group.createdAt;
+			const stalledFor = now - lastActivity;
+
+			if (stalledFor > this.stallTimeoutMs) {
+				stalled.push(group);
+			}
+		}
+
+		return stalled;
+	}
+
+	private async handleStalledGroups(stalledGroups: SessionGroup[]): Promise<void> {
+		const now = Date.now();
+		for (const group of stalledGroups) {
+			const lastActivity = group.lastActivityAt ?? group.createdAt;
+			const stalledFor = now - lastActivity;
+			const stalledMinutes = Math.round(stalledFor / 60_000);
+			const reason = `Stalled: no agent activity for ${stalledMinutes} minutes (timeout: ${Math.round(this.stallTimeoutMs / 60_000)}m)`;
+			log.warn(`Group ${group.id} stalled for ${stalledMinutes}m — failing task ${group.taskId}`);
+
+			this.groupRepo.appendMessage({
+				groupId: group.id,
+				role: 'system',
+				messageType: 'status',
+				content: reason,
+			});
+
+			await this.taskGroupManager.fail(group.id, reason, { autoRetry: true });
+			this.cleanupMirroring(group.id, reason);
+			await this.emitTaskUpdateById(group.taskId);
+			await this.emitGoalProgressForTask(group.taskId);
+		}
+	}
+
 	private async executeTick(): Promise<void> {
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
 		// Sync detection avoids unnecessary microtask checkpoints in the common case.
 		const zombies = this.findZombieGroups();
 		if (zombies.length > 0) {
 			await this.recoverZombieGroups(zombies);
+		}
+
+		// Stall detection: sync detect, async handle only if stalls found.
+		// Avoids microtask boundaries in the common case (no stalls).
+		const stalledGroups = this.detectStalledGroups();
+		if (stalledGroups.length > 0) {
+			await this.handleStalledGroups(stalledGroups);
 		}
 
 		// Separate active groups into planning and execution.
@@ -1209,13 +1282,23 @@ export class RoomRuntime {
 		// --- Execution track (first: sync-fast when slots are full) ---
 		if (executionSlots > 0) {
 			const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
-			const executableTasks = pendingTasks.filter(
-				(t) => (t.taskType ?? 'coding') !== 'planning'
-			);
+			const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 
 			if (executableTasks.length > 0) {
 				const readyTasks: NeoTask[] = [];
+				let nearestRetryAt: number | undefined;
 				for (const task of executableTasks) {
+					// Skip tasks in retry backoff (nextRetryAt not yet reached)
+					if (!this.taskManager.isRetryReady(task)) {
+						// Track the nearest retry time so we can schedule a tick
+						if (task.nextRetryAt) {
+							nearestRetryAt =
+								nearestRetryAt === undefined
+									? task.nextRetryAt
+									: Math.min(nearestRetryAt, task.nextRetryAt);
+						}
+						continue;
+					}
 					if (await this.taskManager.areDependenciesMet(task)) {
 						readyTasks.push(task);
 					}
@@ -1227,6 +1310,13 @@ export class RoomRuntime {
 					for (const task of toSpawn) {
 						await this.spawnGroupForTask(task);
 					}
+				}
+
+				// Schedule a tick for when the next retry-pending task becomes ready,
+				// so we don't have to wait for the regular tick interval (30s).
+				if (nearestRetryAt !== undefined) {
+					const delayMs = Math.max(1000, nearestRetryAt - Date.now() + 500);
+					setTimeout(() => this.scheduleTick(), delayMs);
 				}
 			}
 		}

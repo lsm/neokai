@@ -205,6 +205,14 @@ export interface NeoTask {
 	error?: string;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
+	/** How many times this task has been retried */
+	retryCount: number;
+	/** Maximum retry attempts allowed (default: 3) */
+	maxRetries: number;
+	/** Retry policy: 'auto' = auto-retry with backoff, 'manual' = user must retry, 'none' = no retry */
+	retryPolicy: 'auto' | 'manual' | 'none';
+	/** When this task is next eligible for retry (epoch ms), null if not waiting */
+	nextRetryAt?: number;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Start timestamp (milliseconds since epoch) */
@@ -249,10 +257,14 @@ export interface UpdateTaskParams {
 	status?: TaskStatus;
 	priority?: TaskPriority;
 	progress?: number;
-	currentStep?: string;
-	result?: string;
-	error?: string;
+	currentStep?: string | null;
+	result?: string | null;
+	error?: string | null;
 	dependsOn?: string[];
+	retryCount?: number;
+	maxRetries?: number;
+	retryPolicy?: 'auto' | 'manual' | 'none';
+	nextRetryAt?: number | null;
 }
 
 // ============================================================================
@@ -291,6 +303,14 @@ export interface TaskSummary {
 	dependsOn: string[];
 	/** Error message for failed tasks */
 	error?: string;
+	/** How many times this task has been retried */
+	retryCount?: number;
+	/** Maximum retry attempts allowed */
+	maxRetries?: number;
+	/** Retry policy: 'auto' | 'manual' | 'none' */
+	retryPolicy?: string;
+	/** When this task is next eligible for retry (epoch ms) */
+	nextRetryAt?: number;
 }
 
 /**
@@ -321,4 +341,115 @@ export interface NeoStatus {
 export interface GlobalStatus {
 	rooms: NeoStatus[];
 	totalActiveTasks: number;
+}
+
+// ============================================================================
+// Template Types
+// ============================================================================
+
+/**
+ * Template scope — whether the template is for a single session or a room
+ */
+export type TemplateScope = 'session' | 'room';
+
+/**
+ * Template variable type — determines the UI input element
+ */
+export type TemplateVariableType = 'text' | 'textarea' | 'select';
+
+/**
+ * A variable that the user fills in when applying a session/room template
+ */
+export interface SessionTemplateVariable {
+	/** Variable name (used in {{name}} placeholders) */
+	name: string;
+	/** Display label */
+	label: string;
+	/** Input type */
+	type: TemplateVariableType;
+	/** Whether this variable must be filled */
+	required: boolean;
+	/** Options for 'select' type */
+	options?: string[];
+	/** Default value */
+	default?: string;
+}
+
+/**
+ * Session/Room configuration stored in a template
+ */
+export interface TemplateConfig {
+	/** Default model */
+	model?: string;
+	/** System prompt with {{variable}} placeholders */
+	systemPrompt?: string;
+	/** MCP servers to enable */
+	tools?: string[];
+	/** Max output tokens */
+	maxTokens?: number;
+}
+
+/**
+ * Room-specific configuration stored in a template
+ */
+export interface TemplateRoomConfig {
+	/** Max concurrent task groups */
+	maxConcurrentGroups?: number;
+	/** Max review round iterations */
+	maxFeedbackIterations?: number;
+	/** Stall timeout in milliseconds */
+	stallTimeoutMs?: number;
+	/** Retry policy for failed tasks */
+	retryPolicy?: 'auto' | 'manual' | 'none';
+	/** Maximum retry attempts */
+	maxRetries?: number;
+}
+
+/**
+ * A reusable template for creating sessions or rooms
+ */
+export interface SessionTemplate {
+	/** Unique identifier */
+	id: string;
+	/** Template name (e.g., "Bug Fix", "Code Review") */
+	name: string;
+	/** Optional description */
+	description?: string;
+	/** Whether this template is for a session or a room */
+	scope: TemplateScope;
+	/** Session/model configuration */
+	config: TemplateConfig;
+	/** Room-specific configuration (only for scope: 'room') */
+	roomConfig?: TemplateRoomConfig;
+	/** Variables the user fills in when applying the template */
+	variables?: SessionTemplateVariable[];
+	/** Whether this is a built-in (non-deletable) template */
+	builtIn: boolean;
+	/** Creation timestamp (milliseconds since epoch) */
+	createdAt: number;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
+}
+
+/**
+ * Parameters for creating a new template
+ */
+export interface CreateTemplateParams {
+	name: string;
+	description?: string;
+	scope: TemplateScope;
+	config: TemplateConfig;
+	roomConfig?: TemplateRoomConfig;
+	variables?: SessionTemplateVariable[];
+}
+
+/**
+ * Parameters for updating a template
+ */
+export interface UpdateTemplateParams {
+	name?: string;
+	description?: string;
+	config?: TemplateConfig;
+	roomConfig?: TemplateRoomConfig;
+	variables?: SessionTemplateVariable[];
 }

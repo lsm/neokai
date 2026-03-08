@@ -285,7 +285,15 @@ function TaskRow({
 			)}
 			{task.status === 'failed' && (
 				<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-900/30 text-red-400 flex-shrink-0">
-					{t('tasks.failed')}
+					{task.retryCount && task.maxRetries
+						? `${t('tasks.failed')} (${task.retryCount}/${task.maxRetries})`
+						: t('tasks.failed')}
+				</span>
+			)}
+			{task.status === 'pending' && task.nextRetryAt && (
+				<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/30 text-amber-400 flex-shrink-0">
+					{t('task.retrying')}
+					{task.retryCount && task.maxRetries ? ` ${task.retryCount}/${task.maxRetries}` : ''}
 				</span>
 			)}
 
@@ -632,8 +640,18 @@ function GoalCard({
 								)}
 							>
 								{priority.text}
-								<svg class="w-2.5 h-2.5 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
+								<svg
+									class="w-2.5 h-2.5 opacity-60"
+									fill="none"
+									stroke="currentColor"
+									viewBox="0 0 24 24"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2.5"
+										d="M19 9l-7 7-7-7"
+									/>
 								</svg>
 							</button>
 							{showPriorityMenu && (
@@ -691,7 +709,12 @@ function GoalCard({
 					{restTasks.length > 0 && (
 						<>
 							{tasksExpanded && (
-								<div class={cn('px-1 py-1', attentionTasks.length > 0 && 'border-t border-dark-700/30')}>
+								<div
+									class={cn(
+										'px-1 py-1',
+										attentionTasks.length > 0 && 'border-t border-dark-700/30'
+									)}
+								>
 									{restTasks.map((task) => (
 										<TaskRow
 											key={task.id}
@@ -716,7 +739,12 @@ function GoalCard({
 									stroke="currentColor"
 									viewBox="0 0 24 24"
 								>
-									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M19 9l-7 7-7-7"
+									/>
 								</svg>
 								{tasksExpanded
 									? t('goals.tasks.hide')

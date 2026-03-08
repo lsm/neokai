@@ -42,12 +42,18 @@ export function RoomsPage() {
 				isOpen={isCreateRoomModalOpen}
 				onClose={() => (createRoomModalSignal.value = false)}
 				onSubmit={async (params) => {
-					const room = await lobbyStore.createRoom(params);
+					const room = await lobbyStore.createRoom({
+						name: params.name,
+						background: params.background,
+						templateId: params.templateId,
+						templateVariables: params.templateVariables,
+					});
 					if (room) {
 						createRoomModalSignal.value = false;
 						navigateToRoom(room.id);
 					}
 				}}
+				templates={lobbyStore.roomTemplates.value}
 			/>
 		</div>
 	);

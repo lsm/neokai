@@ -240,6 +240,7 @@ export class RoomRuntimeService {
 		const groupRepo = new SessionGroupRepository(rawDb);
 		const taskManager = new TaskManager(rawDb, room.id);
 		const goalManager = new GoalManager(rawDb, room.id);
+		goalManager.setTaskManager(taskManager);
 		const sdkMessageRepo = new SDKMessageRepository(rawDb);
 		const observer = new SessionObserver(this.ctx.daemonHub);
 		const sessionFactory = this.createSessionFactory();

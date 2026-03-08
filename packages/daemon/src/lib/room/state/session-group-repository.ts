@@ -56,6 +56,8 @@ interface TaskGroupMetadata {
 	approved?: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit?: RateLimitBackoff | null;
+	/** Timestamp of last agent activity (message output, tool call) for stall detection */
+	lastActivityAt?: number;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -104,6 +106,8 @@ export interface SessionGroup {
 	approved: boolean;
 	/** Rate limit backoff state - when set, nagging is paused until resetsAt */
 	rateLimit: RateLimitBackoff | null;
+	/** Timestamp of last agent activity for stall detection */
+	lastActivityAt: number | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -430,6 +434,39 @@ export class SessionGroupRepository {
 		return Math.max(0, remaining);
 	}
 
+	// ===== Stall Detection =====
+
+	/**
+	 * Update last activity timestamp without version check.
+	 * Called from mirroring on every agent message to track liveness.
+	 */
+	updateLastActivityAt(groupId: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, lastActivityAt: Date.now() };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
+	 * Get last activity timestamp for a group.
+	 * Returns null if no activity recorded (falls back to createdAt).
+	 */
+	getLastActivityAt(groupId: string): number | null {
+		const row = this.db
+			.prepare(`SELECT metadata FROM session_groups WHERE id = ?`)
+			.get(groupId) as Record<string, unknown> | undefined;
+		if (!row) return null;
+		const meta = this.parseMetadata(row.metadata as string);
+		return meta.lastActivityAt ?? null;
+	}
+
 	/**
 	 * Update the worker member's session_id for a group.
 	 * Used when resuming a worker session (e.g., planner phase 2).
@@ -555,6 +592,7 @@ export class SessionGroupRepository {
 			submittedForReview: meta.submittedForReview ?? false,
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
+			lastActivityAt: meta.lastActivityAt ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

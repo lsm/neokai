@@ -83,7 +83,7 @@ export class GoalRepository {
 			params.push(status);
 		}
 
-		query += ` ORDER BY priority DESC, created_at ASC`;
+		query += ` ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 END ASC, created_at ASC`;
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];

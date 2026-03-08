@@ -16,6 +16,7 @@ import type {
 	TaskPriority,
 	TaskFilter,
 	CreateTaskParams,
+	UpdateTaskParams,
 	AgentType,
 } from '@neokai/shared';
 
@@ -82,7 +83,7 @@ export class TaskManager {
 	async updateTaskStatus(
 		taskId: string,
 		status: TaskStatus,
-		updates?: Partial<NeoTask>
+		updates?: Omit<UpdateTaskParams, 'status'>
 	): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
@@ -127,10 +128,13 @@ export class TaskManager {
 	}
 
 	/**
-	 * Start task (mark as in_progress)
+	 * Start task (mark as in_progress). Clears retry scheduling fields.
 	 */
 	async startTask(taskId: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'in_progress');
+		return this.updateTaskStatus(taskId, 'in_progress', {
+			nextRetryAt: null,
+			currentStep: null,
+		});
 	}
 
 	/**
@@ -144,17 +148,53 @@ export class TaskManager {
 	}
 
 	/**
-	 * Fail task
+	 * Fail task. If retry policy is 'auto', retries remain, and autoRetry is true,
+	 * auto-schedule a retry with exponential backoff instead of leaving the task
+	 * in failed state.
+	 *
+	 * @param taskId - Task ID to fail
+	 * @param error - Error description
+	 * @param options.autoRetry - Whether to use auto-retry (default: true).
+	 *   Set to false when the failure is a deliberate agent judgment (e.g. leader
+	 *   calls fail_task). Set to true for infrastructure failures (stalls, crashes).
 	 */
-	async failTask(taskId: string, error: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'failed', {
-			error,
-		});
+	async failTask(
+		taskId: string,
+		error: string,
+		options?: { autoRetry?: boolean }
+	): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) throw new Error(`Task not found: ${taskId}`);
+
+		const autoRetry = options?.autoRetry ?? true;
+		const retryCount = task.retryCount ?? 0;
+		const maxRetries = task.maxRetries ?? 3;
+		const retryPolicy = task.retryPolicy ?? 'auto';
+
+		// Auto-retry if policy allows, retries remain, and caller permits
+		if (autoRetry && retryPolicy === 'auto' && retryCount < maxRetries) {
+			const newRetryCount = retryCount + 1;
+			// Exponential backoff: 10s, 20s, 40s, 80s... capped at 2 minutes
+			const backoffMs = Math.min(10_000 * Math.pow(2, retryCount), 120_000);
+			const nextRetryAt = Date.now() + backoffMs;
+
+			return this.updateTaskStatus(taskId, 'pending', {
+				error: null,
+				progress: 0,
+				result: null,
+				currentStep: `Auto-retry ${newRetryCount}/${maxRetries} in ${Math.round(backoffMs / 1000)}s`,
+				retryCount: newRetryCount,
+				nextRetryAt,
+			});
+		}
+
+		// No retry: mark as failed
+		return this.updateTaskStatus(taskId, 'failed', { error });
 	}
 
 	/**
-	 * Retry a failed task by resetting it to pending.
-	 * Clears error, progress, result, and currentStep so it can be re-dispatched.
+	 * Retry a failed task manually by resetting it to pending.
+	 * Resets retryCount so the task gets a fresh retry budget.
 	 */
 	async retryTask(taskId: string): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
@@ -164,15 +204,23 @@ export class TaskManager {
 		if (task.status !== 'failed') {
 			throw new Error(`Can only retry failed tasks (current status: '${task.status}')`);
 		}
-		// Use null (not undefined) to actually clear DB fields;
-		// undefined would be skipped by the repository's !== undefined check.
-		const cleared = null as unknown as undefined;
 		return this.updateTaskStatus(taskId, 'pending', {
-			error: cleared,
+			error: null,
 			progress: 0,
-			result: cleared,
-			currentStep: cleared,
+			result: null,
+			currentStep: null,
+			retryCount: 0,
+			nextRetryAt: null,
 		});
+	}
+
+	/**
+	 * Check if a pending task with nextRetryAt is ready to be dispatched.
+	 * Returns true if the task has no nextRetryAt or the retry time has passed.
+	 */
+	isRetryReady(task: NeoTask): boolean {
+		if (!task.nextRetryAt) return true;
+		return Date.now() >= task.nextRetryAt;
 	}
 
 	/**

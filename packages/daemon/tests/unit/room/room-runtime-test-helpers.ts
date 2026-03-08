@@ -100,6 +100,10 @@ const DB_SCHEMA = `
 		task_type TEXT DEFAULT 'coding',
 		created_by_task_id TEXT,
 		assigned_agent TEXT DEFAULT 'coder',
+		retry_count INTEGER NOT NULL DEFAULT 0,
+		max_retries INTEGER NOT NULL DEFAULT 3,
+		retry_policy TEXT NOT NULL DEFAULT 'auto',
+		next_retry_at INTEGER,
 		created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
 	);
 	CREATE TABLE session_groups (

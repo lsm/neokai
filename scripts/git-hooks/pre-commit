@@ -64,5 +64,10 @@ bun run knip || {
     exit 1
 }
 
+# Check E2E rules and package dependencies
+echo "🏗️ Checking architectural rules..."
+bash scripts/check-e2e-rules.sh || exit 1
+bash scripts/check-package-deps.sh || exit 1
+
 echo "✅ All pre-commit checks passed!"
 exit 0

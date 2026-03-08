@@ -38,6 +38,10 @@ describe('TaskRepository', () => {
 				result TEXT,
 				error TEXT,
 				depends_on TEXT NOT NULL DEFAULT '[]',
+				retry_count INTEGER NOT NULL DEFAULT 0,
+				max_retries INTEGER NOT NULL DEFAULT 3,
+				retry_policy TEXT NOT NULL DEFAULT 'auto',
+				next_retry_at INTEGER,
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
 				completed_at INTEGER

@@ -10,17 +10,27 @@
 import { useState } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { TemplateSelector } from './TemplateSelector';
 import { t } from '../../lib/i18n';
+import type { SessionTemplate } from '@neokai/shared';
 
 interface CreateRoomModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onSubmit: (params: { name: string; background?: string }) => Promise<void>;
+	onSubmit: (params: {
+		name: string;
+		background?: string;
+		templateId?: string;
+		templateVariables?: Record<string, string>;
+	}) => Promise<void>;
+	templates?: SessionTemplate[];
 }
 
-export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalProps) {
+export function CreateRoomModal({ isOpen, onClose, onSubmit, templates }: CreateRoomModalProps) {
 	const [name, setName] = useState('');
 	const [background, setBackground] = useState('');
+	const [selectedTemplateId, setSelectedTemplateId] = useState<string | undefined>();
+	const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
@@ -31,6 +41,20 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 			return;
 		}
 
+		// Validate required template variables
+		if (selectedTemplateId && templates) {
+			const tmpl = templates.find((t) => t.id === selectedTemplateId);
+			if (tmpl?.variables) {
+				const missing = tmpl.variables
+					.filter((v) => v.required && !templateVariables[v.name]?.trim())
+					.map((v) => v.label);
+				if (missing.length > 0) {
+					setError(`Required template fields: ${missing.join(', ')}`);
+					return;
+				}
+			}
+		}
+
 		try {
 			setSubmitting(true);
 			setError(null);
@@ -38,11 +62,18 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 			await onSubmit({
 				name: name.trim(),
 				background: background.trim() || undefined,
+				templateId: selectedTemplateId,
+				templateVariables:
+					selectedTemplateId && Object.keys(templateVariables).length > 0
+						? templateVariables
+						: undefined,
 			});
 
 			// Reset form on success
 			setName('');
 			setBackground('');
+			setSelectedTemplateId(undefined);
+			setTemplateVariables({});
 		} catch (err) {
 			setError(err instanceof Error ? err.message : t('createRoom.failed'));
 		} finally {
@@ -53,6 +84,8 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 	const handleClose = () => {
 		setName('');
 		setBackground('');
+		setSelectedTemplateId(undefined);
+		setTemplateVariables({});
 		setError(null);
 		onClose();
 	};
@@ -95,6 +128,30 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
               placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
 					/>
 				</div>
+
+				{/* Template Section */}
+				{templates && templates.length > 0 && (
+					<TemplateSelector
+						templates={templates}
+						selectedTemplateId={selectedTemplateId}
+						onSelect={(id) => {
+							setSelectedTemplateId(id);
+							// Initialize templateVariables with default values from the template
+							const tmpl = templates.find((t) => t.id === id);
+							const defaults: Record<string, string> = {};
+							if (tmpl?.variables) {
+								for (const v of tmpl.variables) {
+									if (v.default) defaults[v.name] = v.default;
+								}
+							}
+							setTemplateVariables(defaults);
+						}}
+						templateVariables={templateVariables}
+						onVariableChange={(name, value) =>
+							setTemplateVariables((prev) => ({ ...prev, [name]: value }))
+						}
+					/>
+				)}
 
 				<div class="flex gap-3 pt-2">
 					<Button type="button" variant="secondary" onClick={handleClose} fullWidth>

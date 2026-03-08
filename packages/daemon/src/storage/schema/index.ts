@@ -155,6 +155,10 @@ export function createTables(db: BunDatabase): void {
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
         assigned_agent TEXT DEFAULT 'coder',
         created_by_task_id TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        max_retries INTEGER NOT NULL DEFAULT 3,
+        retry_policy TEXT NOT NULL DEFAULT 'auto' CHECK(retry_policy IN ('auto', 'manual', 'none')),
+        next_retry_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -256,6 +260,22 @@ export function createTables(db: BunDatabase): void {
         message_type TEXT NOT NULL,
         content TEXT NOT NULL,
         created_at INTEGER NOT NULL
+      )
+    `);
+
+	// Templates table - reusable session/room templates
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS session_templates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        scope TEXT NOT NULL DEFAULT 'session' CHECK(scope IN ('session', 'room')),
+        config TEXT NOT NULL DEFAULT '{}',
+        room_config TEXT,
+        variables TEXT,
+        built_in INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       )
     `);
 

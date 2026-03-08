@@ -176,7 +176,10 @@ export class TaskGroupManager {
 			branchName
 		);
 		if (!worktreePath) {
-			await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for task');
+			// Infrastructure failure — allow auto-retry
+			await this.taskManager.failTask(task.id, 'Failed to create isolated worktree for task', {
+				autoRetry: true,
+			});
 			throw new Error('Worktree creation failed — task requires isolation');
 		}
 		const groupWorkspacePath = worktreePath;
@@ -367,9 +370,17 @@ export class TaskGroupManager {
 	/**
 	 * Fail a group - task cannot be completed.
 	 *
-	 * Called when Leader calls fail_task(reason).
+	 * @param groupId - Group to fail
+	 * @param reason - Failure reason
+	 * @param options.autoRetry - Whether to allow auto-retry (default: false).
+	 *   Leader-initiated failures (fail_task tool) default to no retry.
+	 *   Infrastructure failures (stalls) should pass true.
 	 */
-	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
+	async fail(
+		groupId: string,
+		reason: string,
+		options?: { autoRetry?: boolean }
+	): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
@@ -378,7 +389,9 @@ export class TaskGroupManager {
 		if (!updated) return null;
 
 		// Fail the task
-		await this.taskManager.failTask(group.taskId, reason);
+		await this.taskManager.failTask(group.taskId, reason, {
+			autoRetry: options?.autoRetry ?? false,
+		});
 
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
