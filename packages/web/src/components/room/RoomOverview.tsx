@@ -51,14 +51,14 @@ function RoomContextBlock({ room }: { room: Room }) {
 
 	const startEdit = (field: 'background' | 'instructions') => {
 		setEditingField(field);
-		setDraft(field === 'background' ? (room.background || '') : (room.instructions || ''));
+		setDraft(field === 'background' ? room.background || '' : room.instructions || '');
 	};
 
 	const saveEdit = async () => {
 		if (!editingField) return;
 		const field = editingField;
 		const trimmed = draft.trim();
-		const original = field === 'background' ? (room.background || '') : (room.instructions || '');
+		const original = field === 'background' ? room.background || '' : room.instructions || '';
 
 		setEditingField(null);
 		if (trimmed === original) return;
@@ -96,7 +96,7 @@ function RoomContextBlock({ room }: { room: Room }) {
 		label: string,
 		value: string,
 		placeholder: string,
-		rows: number,
+		rows: number
 	) => (
 		<div>
 			<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-2">{label}</h2>
@@ -131,8 +131,20 @@ function RoomContextBlock({ room }: { room: Room }) {
 
 	return (
 		<div class="space-y-4">
-			{renderField('background', t('createRoom.backgroundLabel'), bg, t('roomContext.contextPlaceholder'), 4)}
-			{renderField('instructions', t('roomContext.instructions'), instr, t('roomContext.instructionsPlaceholder'), 3)}
+			{renderField(
+				'background',
+				t('createRoom.backgroundLabel'),
+				bg,
+				t('roomContext.contextPlaceholder'),
+				4
+			)}
+			{renderField(
+				'instructions',
+				t('roomContext.instructions'),
+				instr,
+				t('roomContext.instructionsPlaceholder'),
+				3
+			)}
 		</div>
 	);
 }
@@ -166,11 +178,7 @@ function RuntimeBar({
 		<div class="flex items-center justify-between px-4 py-2.5 bg-dark-850 border border-dark-700 rounded-xl">
 			<div class="flex items-center gap-2">
 				<div
-					class={cn(
-						'w-2 h-2 rounded-full',
-						colors[state],
-						state === 'running' && 'animate-pulse'
-					)}
+					class={cn('w-2 h-2 rounded-full', colors[state], state === 'running' && 'animate-pulse')}
 				/>
 				<span class="text-sm text-gray-300 capitalize">{state}</span>
 			</div>
@@ -229,10 +237,7 @@ function TaskRow({
 	onClick?: (taskId: string) => void;
 	onApprove?: (taskId: string) => void;
 }) {
-	const statusConfig: Record<
-		TaskStatus,
-		{ dot: string; label: string; animate?: boolean }
-	> = {
+	const statusConfig: Record<TaskStatus, { dot: string; label: string; animate?: boolean }> = {
 		in_progress: { dot: 'bg-yellow-500', label: t('tasks.status.inProgress'), animate: true },
 		review: { dot: 'bg-purple-500', label: t('tasks.status.review') },
 		pending: { dot: 'bg-gray-400', label: t('tasks.status.pending') },
@@ -261,7 +266,11 @@ function TaskRow({
 		>
 			{/* Status dot */}
 			<div
-				class={cn('w-2 h-2 rounded-full flex-shrink-0', config.dot, config.animate && 'animate-pulse')}
+				class={cn(
+					'w-2 h-2 rounded-full flex-shrink-0',
+					config.dot,
+					config.animate && 'animate-pulse'
+				)}
 				title={config.label}
 			/>
 
@@ -428,20 +437,24 @@ function GoalCard({
 	const style = statusStyles[goal.status];
 
 	const priorityConfig: Record<GoalPriority, { text: string; class: string } | null> = {
-		urgent: { text: t('goals.priority.urgent'), class: 'text-red-400 bg-red-900/20 hover:bg-red-900/30' },
-		high: { text: t('goals.priority.high'), class: 'text-orange-400 bg-orange-900/20 hover:bg-orange-900/30' },
-		normal: { text: t('goals.priority.normal'), class: 'text-gray-400 bg-dark-700 hover:bg-dark-600' },
+		urgent: {
+			text: t('goals.priority.urgent'),
+			class: 'text-red-400 bg-red-900/20 hover:bg-red-900/30',
+		},
+		high: {
+			text: t('goals.priority.high'),
+			class: 'text-orange-400 bg-orange-900/20 hover:bg-orange-900/30',
+		},
+		normal: {
+			text: t('goals.priority.normal'),
+			class: 'text-gray-400 bg-dark-700 hover:bg-dark-600',
+		},
 		low: { text: t('goals.priority.low'), class: 'text-gray-500 bg-dark-700 hover:bg-dark-600' },
 	};
 	const priority = priorityConfig[goal.priority];
 
 	return (
-		<div
-			class={cn(
-				'bg-dark-850 border rounded-xl transition-colors',
-				style.border
-			)}
-		>
+		<div class={cn('bg-dark-850 border rounded-xl transition-colors', style.border)}>
 			{/* Card header */}
 			<div class="px-4 pt-4 pb-3">
 				<div class="flex items-start justify-between gap-2 mb-1">
@@ -466,7 +479,9 @@ function GoalCard({
 								{goal.title}
 							</h3>
 						)}
-						<span class={cn('text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0', style.badge)}>
+						<span
+							class={cn('text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0', style.badge)}
+						>
 							{style.badgeText}
 						</span>
 						{/* Priority dropdown */}
@@ -497,7 +512,8 @@ function GoalCard({
 														class={cn(
 															'w-full px-3 py-1.5 text-xs text-left transition-colors hover:bg-dark-800',
 															p === goal.priority ? 'font-semibold' : '',
-															cfg.class.split(' ').find((c) => c.startsWith('text-')) ?? 'text-gray-300'
+															cfg.class.split(' ').find((c) => c.startsWith('text-')) ??
+																'text-gray-300'
 														)}
 														onClick={(e) => {
 															e.stopPropagation();
@@ -602,9 +618,7 @@ function GoalCard({
 								style={{ width: `${Math.min(goal.progress, 100)}%` }}
 							/>
 						</div>
-						<span class="text-xs text-gray-500 w-8 text-right flex-shrink-0">
-							{goal.progress}%
-						</span>
+						<span class="text-xs text-gray-500 w-8 text-right flex-shrink-0">{goal.progress}%</span>
 					</div>
 				)}
 
@@ -651,7 +665,11 @@ function GoalCard({
 function FloatingGoalInput({
 	onSubmit,
 }: {
-	onSubmit: (data: { title: string; description?: string; priority?: GoalPriority }) => Promise<void>;
+	onSubmit: (data: {
+		title: string;
+		description?: string;
+		priority?: GoalPriority;
+	}) => Promise<void>;
 }) {
 	const [title, setTitle] = useState('');
 	const [submitting, setSubmitting] = useState(false);
@@ -713,7 +731,11 @@ export function RoomOverview({
 }: {
 	roomId: string;
 	room: Room;
-	onCreateGoal: (goal: { title: string; description?: string; priority?: GoalPriority }) => Promise<void>;
+	onCreateGoal: (goal: {
+		title: string;
+		description?: string;
+		priority?: GoalPriority;
+	}) => Promise<void>;
 	onUpdateGoal: (goalId: string, updates: Partial<RoomGoal>) => Promise<void>;
 	onDeleteGoal: (goalId: string) => Promise<void>;
 	onLinkTask: (goalId: string, taskId: string) => Promise<void>;
@@ -731,10 +753,17 @@ export function RoomOverview({
 
 	// Sort goals: active > needs_human > completed > archived, then priority, then newest
 	const sortedGoals = [...goals].sort((a, b) => {
-		const statusOrder: Record<GoalStatus, number> = { active: 0, needs_human: 1, completed: 2, archived: 3 };
-		if (statusOrder[a.status] !== statusOrder[b.status]) return statusOrder[a.status] - statusOrder[b.status];
+		const statusOrder: Record<GoalStatus, number> = {
+			active: 0,
+			needs_human: 1,
+			completed: 2,
+			archived: 3,
+		};
+		if (statusOrder[a.status] !== statusOrder[b.status])
+			return statusOrder[a.status] - statusOrder[b.status];
 		const priorityOrder: Record<GoalPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
-		if (priorityOrder[a.priority] !== priorityOrder[b.priority]) return priorityOrder[a.priority] - priorityOrder[b.priority];
+		if (priorityOrder[a.priority] !== priorityOrder[b.priority])
+			return priorityOrder[a.priority] - priorityOrder[b.priority];
 		return b.createdAt - a.createdAt;
 	});
 
@@ -745,104 +774,138 @@ export function RoomOverview({
 	// Runtime actions
 	const handlePause = async () => {
 		setActionLoading(true);
-		try { await roomStore.pauseRuntime(); } catch { /* store handles */ } finally { setActionLoading(false); setShowPauseConfirm(false); }
+		try {
+			await roomStore.pauseRuntime();
+		} catch {
+			/* store handles */
+		} finally {
+			setActionLoading(false);
+			setShowPauseConfirm(false);
+		}
 	};
 	const handleResume = async () => {
 		setActionLoading(true);
-		try { await roomStore.resumeRuntime(); } catch { /* store handles */ } finally { setActionLoading(false); }
+		try {
+			await roomStore.resumeRuntime();
+		} catch {
+			/* store handles */
+		} finally {
+			setActionLoading(false);
+		}
 	};
 	const handleStop = async () => {
 		setActionLoading(true);
-		try { await roomStore.stopRuntime(); } catch { /* store handles */ } finally { setActionLoading(false); setShowStopConfirm(false); }
+		try {
+			await roomStore.stopRuntime();
+		} catch {
+			/* store handles */
+		} finally {
+			setActionLoading(false);
+			setShowStopConfirm(false);
+		}
 	};
 	const handleStart = async () => {
 		setActionLoading(true);
-		try { await roomStore.startRuntime(); } catch { /* store handles */ } finally { setActionLoading(false); }
+		try {
+			await roomStore.startRuntime();
+		} catch {
+			/* store handles */
+		} finally {
+			setActionLoading(false);
+		}
 	};
 	const handleApprove = async () => {
 		const taskId = showApproveConfirm;
 		if (!taskId) return;
 		setApprovalLoading(true);
-		try { await roomStore.approveTask(taskId); } catch { /* store handles */ } finally { setApprovalLoading(false); setShowApproveConfirm(null); }
+		try {
+			await roomStore.approveTask(taskId);
+		} catch {
+			/* store handles */
+		} finally {
+			setApprovalLoading(false);
+			setShowApproveConfirm(null);
+		}
 	};
 
 	return (
 		<div class="h-full flex flex-col overflow-hidden">
 			<div class="flex-1 overflow-y-auto">
-			<div class="max-w-3xl mx-auto px-4 py-5 space-y-6">
-				{/* Room context (background + instructions) */}
-				<RoomContextBlock room={room} />
+				<div class="max-w-3xl mx-auto px-4 py-5 space-y-6">
+					{/* Room context (background + instructions) */}
+					<RoomContextBlock room={room} />
 
-				{/* Runtime status bar */}
-				<RuntimeBar
-					state={runtimeState}
-					onPause={() => setShowPauseConfirm(true)}
-					onResume={handleResume}
-					onStop={() => setShowStopConfirm(true)}
-					onStart={handleStart}
-					loading={actionLoading}
-				/>
+					{/* Runtime status bar */}
+					<RuntimeBar
+						state={runtimeState}
+						onPause={() => setShowPauseConfirm(true)}
+						onResume={handleResume}
+						onStop={() => setShowStopConfirm(true)}
+						onStart={handleStart}
+						loading={actionLoading}
+					/>
 
-				{/* Goals section */}
-				<div>
-					<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">{t('goals.title')}</h2>
+					{/* Goals section */}
+					<div>
+						<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
+							{t('goals.title')}
+						</h2>
 
-					{goalsLoading ? (
-						<div class="space-y-3">
-							{[1, 2].map((i) => (
-								<div key={i} class="bg-dark-850 border border-dark-700 rounded-xl p-4">
-									<Skeleton width="50%" height={18} class="mb-2" />
-									<Skeleton width="100%" height={6} />
-								</div>
-							))}
-						</div>
-					) : sortedGoals.length === 0 ? (
-						<div class="bg-dark-850 border border-dark-700 border-dashed rounded-xl p-8 text-center">
-							<CheckIcon className="w-10 h-10 text-gray-700 mx-auto mb-3" />
-							<p class="text-sm font-medium text-gray-300 mb-1">{t('goals.empty.title')}</p>
-							<p class="text-xs text-gray-500">
-								{t('goals.empty.desc')}
-							</p>
-						</div>
-					) : (
-						<div class="space-y-3">
-							{sortedGoals.map((goal) => (
-								<GoalCard
-									key={goal.id}
-									goal={goal}
-									tasks={tasks}
-									allTasks={tasks}
-									onTaskClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
-									onApprove={(taskId) => setShowApproveConfirm(taskId)}
-									onUpdate={(updates) => onUpdateGoal(goal.id, updates)}
-									onDelete={() => onDeleteGoal(goal.id)}
-								/>
-							))}
+						{goalsLoading ? (
+							<div class="space-y-3">
+								{[1, 2].map((i) => (
+									<div key={i} class="bg-dark-850 border border-dark-700 rounded-xl p-4">
+										<Skeleton width="50%" height={18} class="mb-2" />
+										<Skeleton width="100%" height={6} />
+									</div>
+								))}
+							</div>
+						) : sortedGoals.length === 0 ? (
+							<div class="bg-dark-850 border border-dark-700 border-dashed rounded-xl p-8 text-center">
+								<CheckIcon className="w-10 h-10 text-gray-700 mx-auto mb-3" />
+								<p class="text-sm font-medium text-gray-300 mb-1">{t('goals.empty.title')}</p>
+								<p class="text-xs text-gray-500">{t('goals.empty.desc')}</p>
+							</div>
+						) : (
+							<div class="space-y-3">
+								{sortedGoals.map((goal) => (
+									<GoalCard
+										key={goal.id}
+										goal={goal}
+										tasks={tasks}
+										allTasks={tasks}
+										onTaskClick={
+											roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
+										}
+										onApprove={(taskId) => setShowApproveConfirm(taskId)}
+										onUpdate={(updates) => onUpdateGoal(goal.id, updates)}
+										onDelete={() => onDeleteGoal(goal.id)}
+									/>
+								))}
+							</div>
+						)}
+					</div>
+
+					{/* Unlinked tasks (activity outside of goals) */}
+					{unlinkedTasks.length > 0 && (
+						<div>
+							<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
+								{t('tasks.activity')}
+							</h2>
+							<div class="bg-dark-850 border border-dark-700 rounded-xl px-1 py-1">
+								{unlinkedTasks.map((task) => (
+									<TaskRow
+										key={task.id}
+										task={task}
+										allTasks={tasks}
+										onClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
+										onApprove={(taskId) => setShowApproveConfirm(taskId)}
+									/>
+								))}
+							</div>
 						</div>
 					)}
 				</div>
-
-				{/* Unlinked tasks (activity outside of goals) */}
-				{unlinkedTasks.length > 0 && (
-					<div>
-						<h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-							{t('tasks.activity')}
-						</h2>
-						<div class="bg-dark-850 border border-dark-700 rounded-xl px-1 py-1">
-							{unlinkedTasks.map((task) => (
-								<TaskRow
-									key={task.id}
-									task={task}
-									allTasks={tasks}
-									onClick={roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined}
-									onApprove={(taskId) => setShowApproveConfirm(taskId)}
-								/>
-							))}
-						</div>
-					</div>
-				)}
-
-			</div>
 			</div>
 
 			{/* Floating goal input */}

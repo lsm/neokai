@@ -226,7 +226,9 @@ export function InputActionsMenu({
 									d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
 								/>
 							</svg>
-							<span class="text-sm">{rewindMode ? t('input.exitRewindMode') : t('input.rewindMode')}</span>
+							<span class="text-sm">
+								{rewindMode ? t('input.exitRewindMode') : t('input.rewindMode')}
+							</span>
 						</span>
 						{rewindMode && (
 							<svg

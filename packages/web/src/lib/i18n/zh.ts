@@ -28,8 +28,7 @@ export const zh: Record<string, string> = {
 	'rooms.countOther': '{count} 个工作室',
 	'rooms.createRoom': '创建工作室',
 	'rooms.empty.title': '暂无工作室',
-	'rooms.empty.desc':
-		'工作室帮助你组织 AI 工作。创建工作室来设定目标、分配任务和管理会话。',
+	'rooms.empty.desc': '工作室帮助你组织 AI 工作。创建工作室来设定目标、分配任务和管理会话。',
 	'rooms.empty.steps': '1. 创建工作室  2. 设定背景与目标  3. 让 AI 代理开始工作',
 	'rooms.empty.cta': '创建第一个工作室',
 
@@ -60,11 +59,9 @@ export const zh: Record<string, string> = {
 	'room.runtime.stop': '停止',
 	'room.runtime.start': '启动',
 	'room.runtime.pauseTitle': '暂停工作室',
-	'room.runtime.pauseMessage':
-		'暂停后将不会启动新任务。正在运行的会话会继续直到完成。',
+	'room.runtime.pauseMessage': '暂停后将不会启动新任务。正在运行的会话会继续直到完成。',
 	'room.runtime.stopTitle': '停止工作室',
-	'room.runtime.stopMessage':
-		'所有活跃会话将被终止。你可以稍后重新启动工作室。',
+	'room.runtime.stopMessage': '所有活跃会话将被终止。你可以稍后重新启动工作室。',
 
 	// Goals
 	'goals.title': '目标',
@@ -73,8 +70,7 @@ export const zh: Record<string, string> = {
 	'goals.editGoal': '编辑目标',
 	'goals.createFirst': '创建第一个目标',
 	'goals.empty.title': '定义你的目标',
-	'goals.empty.desc':
-		'目标描述你想要达成的事项。AI 代理会创建任务来实现这些目标。',
+	'goals.empty.desc': '目标描述你想要达成的事项。AI 代理会创建任务来实现这些目标。',
 	'goals.form.title': '标题',
 	'goals.form.titlePlaceholder': '你想要达成什么？',
 	'goals.form.description': '描述',
@@ -98,8 +94,7 @@ export const zh: Record<string, string> = {
 	// Tasks
 	'tasks.title': '任务',
 	'tasks.empty.title': '暂无任务',
-	'tasks.empty.desc':
-		'任务将工作室目标拆分为可执行的工作项，由 AI 代理完成。',
+	'tasks.empty.desc': '任务将工作室目标拆分为可执行的工作项，由 AI 代理完成。',
 	'tasks.approve': '批准',
 	'tasks.approveTitle': '批准任务',
 	'tasks.approveMessage': '此任务将进入下一阶段。',
@@ -123,8 +118,7 @@ export const zh: Record<string, string> = {
 	'createRoom.namePlaceholder': '例如：网站开发、问题修复',
 	'createRoom.nameRequired': '工作室名称不能为空',
 	'createRoom.backgroundLabel': '背景',
-	'createRoom.backgroundHelp':
-		'描述项目、目标以及 AI 代理需要了解的重要背景信息。',
+	'createRoom.backgroundHelp': '描述项目、目标以及 AI 代理需要了解的重要背景信息。',
 	'createRoom.backgroundPlaceholder': '这个工作室专注于...',
 
 	// Room Settings
@@ -134,14 +128,11 @@ export const zh: Record<string, string> = {
 	'roomSettings.roomName': '工作室名称',
 	'roomSettings.dangerZone': '危险操作',
 	'roomSettings.archive': '归档',
-	'roomSettings.archiveDesc':
-		'从活跃列表中隐藏。所有数据将被保留，可以稍后恢复。',
+	'roomSettings.archiveDesc': '从活跃列表中隐藏。所有数据将被保留，可以稍后恢复。',
 	'roomSettings.archiveTitle': '归档工作室',
-	'roomSettings.archiveConfirm':
-		'确定要归档此工作室吗？它将从活跃列表中隐藏，但所有数据都会保留。',
+	'roomSettings.archiveConfirm': '确定要归档此工作室吗？它将从活跃列表中隐藏，但所有数据都会保留。',
 	'roomSettings.deleteRoom': '删除此工作室',
-	'roomSettings.deleteDesc':
-		'永久删除此工作室及其所有会话、任务、目标和消息。此操作不可撤销。',
+	'roomSettings.deleteDesc': '永久删除此工作室及其所有会话、任务、目标和消息。此操作不可撤销。',
 	'roomSettings.deleteTitle': '永久删除工作室',
 	'roomSettings.deleteConfirm':
 		'确定要永久删除此工作室吗？所有会话、任务、目标和消息都将丢失。此操作不可撤销。',
@@ -158,20 +149,17 @@ export const zh: Record<string, string> = {
 	'roomSettings.maxPlanningRetriesDesc':
 		'目标规划失败后自动重试的次数，超过后将提交人工审核。0 表示不自动重试。',
 	'roomSettings.allowedModels': '可用模型',
-	'roomSettings.allowedModelsDesc':
-		'启用此工作室可用的模型。默认模型仅限于此列表。',
+	'roomSettings.allowedModelsDesc': '启用此工作室可用的模型。默认模型仅限于此列表。',
 	'roomSettings.selectAll': '全选',
 	'roomSettings.selectNone': '全不选',
 	'roomSettings.loadingModels': '加载模型中...',
 	'roomSettings.noModels': '暂无可用模型',
 	'roomSettings.defaultModel': '默认模型',
-	'roomSettings.defaultModelDesc':
-		'此工作室新会话的默认模型。留空则使用系统默认。',
+	'roomSettings.defaultModelDesc': '此工作室新会话的默认模型。留空则使用系统默认。',
 	'roomSettings.useSystemDefault': '使用系统默认',
 	'roomSettings.default': '默认',
 	'roomSettings.workspacePaths': '工作区路径',
-	'roomSettings.workspacePathsDesc':
-		'此工作室的允许工作区路径。代理可以操作这些目录中的文件。',
+	'roomSettings.workspacePathsDesc': '此工作室的允许工作区路径。代理可以操作这些目录中的文件。',
 	'roomSettings.noWorkspacePaths': '未配置工作区路径',
 	'roomSettings.setDefault': '设为默认',
 	'roomSettings.addDescriptionPlaceholder': '添加描述（可选）',
@@ -210,8 +198,7 @@ export const zh: Record<string, string> = {
 
 	// Room Sessions
 	'roomSessions.empty': '此工作室暂无会话',
-	'roomSessions.emptyDesc':
-		'当任务分配给 AI 代理时，会话会自动创建。',
+	'roomSessions.emptyDesc': '当任务分配给 AI 代理时，会话会自动创建。',
 
 	// Global Settings
 	'settings.title': '全局设置',
@@ -244,8 +231,7 @@ export const zh: Record<string, string> = {
 	'connection.failedDesc': '多次尝试后仍无法建立连接。',
 	'connection.reconnect': '重新连接',
 	'connection.refreshPage': '刷新页面',
-	'connection.persistHint':
-		'如果问题持续存在，请检查网络连接或尝试重启服务器。',
+	'connection.persistHint': '如果问题持续存在，请检查网络连接或尝试重启服务器。',
 
 	// Chat
 	'chat.newSession': '新建会话',
@@ -376,7 +362,9 @@ export const zh: Record<string, string> = {
 	'task.reviewHint': '审核 PR 后批准或提供反馈',
 	'task.approving': '批准中…',
 	'task.approve': '✓ 批准',
-	'task.feedbackPlaceholder': '或发送反馈以请求更改… (⌘↵ 发送)',
+	'task.sendFeedback': '发送反馈',
+	'task.sending': '发送中…',
+	'task.feedbackPlaceholder': '发送反馈以请求更改… (⌘↵ 发送)',
 	'task.leaderPlaceholder': '向 Leader 发送消息… (⌘↵ 发送)',
 	'task.workerRunning': 'Worker 正在运行 — 等待 Leader 审核',
 	'task.noActiveGroup': '没有活跃的代理组',

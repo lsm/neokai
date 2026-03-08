@@ -115,11 +115,7 @@ export function RoomAgentAvatars({ room, onClickAdd }: RoomAgentAvatarsProps) {
 									e.stopPropagation();
 									openPopoverKey.value = isOpen ? null : agent.key;
 								}}
-								title={
-									isActive
-										? `${agent.label} · ${t('roomAgentAvatars.working')}`
-										: agent.label
-								}
+								title={isActive ? `${agent.label} · ${t('roomAgentAvatars.working')}` : agent.label}
 							>
 								{visual.initial}
 								{hasCustomModel && !isActive && (

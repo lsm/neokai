@@ -20,9 +20,7 @@ export function RoomSessions({ sessions }: RoomSessionsProps) {
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
 				<ChatIcon className="w-10 h-10 text-gray-600 mx-auto mb-3" />
 				<p class="text-gray-400 font-medium">{t('roomSessions.empty')}</p>
-				<p class="text-sm text-gray-500 mt-1">
-					{t('roomSessions.emptyDesc')}
-				</p>
+				<p class="text-sm text-gray-500 mt-1">{t('roomSessions.emptyDesc')}</p>
 			</div>
 		);
 	}
@@ -45,7 +43,9 @@ export function RoomSessions({ sessions }: RoomSessionsProps) {
 							<span class="text-gray-100 truncate">{session.title || session.id.slice(0, 8)}</span>
 						</div>
 						<span class="text-xs text-gray-500">
-							{session.lastActiveAt ? formatRelativeTime(session.lastActiveAt) : t('common.unknown')}
+							{session.lastActiveAt
+								? formatRelativeTime(session.lastActiveAt)
+								: t('common.unknown')}
 						</span>
 					</button>
 				))}

@@ -473,7 +473,7 @@ a:focus-visible {
 }
 
 .animate-agent-pulse::after {
-	content: '';
+	content: "";
 	position: absolute;
 	inset: -1px;
 	border-radius: 9999px;

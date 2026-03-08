@@ -155,10 +155,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 									]}
 								/>
 								<div class="flex-1" />
-								<RoomAgentAvatars
-									room={room}
-									onClickAdd={() => setActiveTab('settings')}
-								/>
+								<RoomAgentAvatars room={room} onClickAdd={() => setActiveTab('settings')} />
 							</div>
 						</div>
 

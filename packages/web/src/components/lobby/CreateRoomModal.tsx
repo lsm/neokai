@@ -67,7 +67,9 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 				)}
 
 				<div>
-					<label class="block text-sm font-medium text-gray-300 mb-1.5">{t('createRoom.nameLabel')}</label>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						{t('createRoom.nameLabel')}
+					</label>
 					<input
 						type="text"
 						value={name}
@@ -83,9 +85,7 @@ export function CreateRoomModal({ isOpen, onClose, onSubmit }: CreateRoomModalPr
 					<label class="block text-sm font-medium text-gray-300 mb-1.5">
 						{t('createRoom.backgroundLabel')}
 					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						{t('createRoom.backgroundHelp')}
-					</p>
+					<p class="text-xs text-gray-500 mb-2">{t('createRoom.backgroundHelp')}</p>
 					<textarea
 						value={background}
 						onInput={(e) => setBackground((e.target as HTMLTextAreaElement).value)}

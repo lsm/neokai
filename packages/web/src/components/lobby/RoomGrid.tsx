@@ -26,12 +26,8 @@ export function RoomGrid({ rooms, onRoomClick, onCreateRoom }: RoomGridProps) {
 				<div class="text-center max-w-md">
 					<RoomIcon className="w-14 h-14 text-gray-600 mx-auto mb-4" />
 					<h3 class="text-lg font-semibold text-gray-100 mb-2">{t('rooms.empty.title')}</h3>
-					<p class="text-gray-400 mb-4">
-						{t('rooms.empty.desc')}
-					</p>
-					<p class="text-sm text-gray-500 mb-6">
-						{t('rooms.empty.steps')}
-					</p>
+					<p class="text-gray-400 mb-4">{t('rooms.empty.desc')}</p>
+					<p class="text-sm text-gray-500 mb-6">{t('rooms.empty.steps')}</p>
 					<Button onClick={onCreateRoom} icon={<PlusIcon className="w-4 h-4" />}>
 						{t('rooms.empty.cta')}
 					</Button>
@@ -71,7 +67,9 @@ function RoomCard({ room, onClick }: RoomCardProps) {
 			<div class="flex items-start justify-between mb-3">
 				<h3 class="font-semibold text-gray-100 truncate">{room.name}</h3>
 				{isArchived && (
-					<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">{t('common.archived')}</span>
+					<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">
+						{t('common.archived')}
+					</span>
 				)}
 			</div>
 
@@ -84,14 +82,16 @@ function RoomCard({ room, onClick }: RoomCardProps) {
 					/>
 					<span class="text-gray-400">
 						{sessionCount !== 1
-						? t('common.sessionOther', { count: sessionCount })
-						: t('common.sessionOne', { count: sessionCount })}
+							? t('common.sessionOther', { count: sessionCount })
+							: t('common.sessionOne', { count: sessionCount })}
 					</span>
 				</div>
 			</div>
 
 			<div class="mt-4 pt-4 border-t border-dark-700 flex items-center justify-between">
-				<span class="text-xs text-gray-500">{t('common.updated', { time: formatRelativeTime(room.updatedAt) })}</span>
+				<span class="text-xs text-gray-500">
+					{t('common.updated', { time: formatRelativeTime(room.updatedAt) })}
+				</span>
 				<span class="text-blue-400 text-sm opacity-0 group-hover:opacity-100 transition-opacity">
 					{t('common.enter')}
 				</span>

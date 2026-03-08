@@ -181,7 +181,9 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				toast.error(t('toast.rewindFailed', { error: result.error || 'Unknown error' }));
 			}
 		} catch (err) {
-			toast.error(t('toast.rewindFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
+			toast.error(
+				t('toast.rewindFailed', { error: err instanceof Error ? err.message : 'Unknown error' })
+			);
 		} finally {
 			setIsRewinding(false);
 			setRewindTargetUuid(null);
@@ -260,7 +262,9 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				toast.error(t('toast.rewindFailed', { error: result.error || 'Unknown error' }));
 			}
 		} catch (err) {
-			toast.error(t('toast.rewindFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
+			toast.error(
+				t('toast.rewindFailed', { error: err instanceof Error ? err.message : 'Unknown error' })
+			);
 		} finally {
 			setIsRewinding(false);
 			selectiveRewindModal.close();
@@ -921,9 +925,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 							<div class="text-center">
 								<ChatIcon className="w-12 h-12 text-gray-500 mx-auto mb-4" />
 								<p class="text-lg text-gray-300 mb-2">{t('chat.noMessages')}</p>
-								<p class="text-sm text-gray-500">
-									{t('chat.noMessagesDesc')}
-								</p>
+								<p class="text-sm text-gray-500">{t('chat.noMessagesDesc')}</p>
 							</div>
 						</div>
 					) : (
@@ -1098,11 +1100,14 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 			</div>
 
 			{/* Delete Modal */}
-			<Modal isOpen={deleteModal.isOpen} onClose={deleteModal.close} title={t('chat.deleteTitle')} size="sm">
+			<Modal
+				isOpen={deleteModal.isOpen}
+				onClose={deleteModal.close}
+				title={t('chat.deleteTitle')}
+				size="sm"
+			>
 				<div class="space-y-4">
-					<p class="text-gray-300 text-sm">
-						{t('chat.deleteConfirm')}
-					</p>
+					<p class="text-gray-300 text-sm">{t('chat.deleteConfirm')}</p>
 					<div class="flex gap-3 justify-end">
 						<Button
 							variant="secondary"
@@ -1156,9 +1161,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				size="sm"
 			>
 				<div class="space-y-4">
-					<p class="text-gray-300 text-sm">
-						{t('chat.rewindBeforeMessage')}
-					</p>
+					<p class="text-gray-300 text-sm">{t('chat.rewindBeforeMessage')}</p>
 					<div class="space-y-2">
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input
@@ -1216,9 +1219,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 				size="sm"
 			>
 				<div class="space-y-4">
-					<p class="text-gray-300 text-sm">
-						{t('chat.rewindToPoint')}
-					</p>
+					<p class="text-gray-300 text-sm">{t('chat.rewindToPoint')}</p>
 					<div class="space-y-2">
 						<label class="flex items-center gap-2 cursor-pointer">
 							<input

@@ -66,7 +66,11 @@ export function McpServersSettings() {
 
 			await updateGlobalSettings({ disabledMcpServers: updatedDisabled });
 		} catch {
-			toast.error(t('toast.mcpToggleFailed', { action: enabled ? t('mcp.enableAction') : t('mcp.disableAction') }));
+			toast.error(
+				t('toast.mcpToggleFailed', {
+					action: enabled ? t('mcp.enableAction') : t('mcp.disableAction'),
+				})
+			);
 		} finally {
 			setUpdatingServers((prev) => {
 				const next = new Set(prev);

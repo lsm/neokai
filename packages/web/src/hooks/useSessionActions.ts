@@ -71,9 +71,7 @@ export function useSessionActions({
 
 			if (roomId) {
 				// In room context: remove from room sessions and navigate to room dashboard
-				roomStore.sessions.value = roomStore.sessions.value.filter(
-					(s) => s.id !== sessionId
-				);
+				roomStore.sessions.value = roomStore.sessions.value.filter((s) => s.id !== sessionId);
 				navigateToRoom(roomId);
 			} else {
 				// Global context: refresh session list and clear current session

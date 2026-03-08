@@ -58,12 +58,14 @@ function RoomListItem({ room, onClick, reviewCount }: RoomListItemProps) {
 					{hasReview && (
 						<span class="text-xs bg-purple-800/60 text-purple-300 px-1.5 py-0.5 rounded-full font-medium">
 							{reviewCount !== 1
-							? t('common.reviewOther', { count: reviewCount ?? 0 })
-							: t('common.reviewOne', { count: reviewCount ?? 0 })}
+								? t('common.reviewOther', { count: reviewCount ?? 0 })
+								: t('common.reviewOne', { count: reviewCount ?? 0 })}
 						</span>
 					)}
 					{isArchived && (
-						<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">{t('common.archived')}</span>
+						<span class="text-xs bg-dark-700 text-gray-400 px-2 py-0.5 rounded">
+							{t('common.archived')}
+						</span>
 					)}
 				</div>
 			</div>
@@ -75,8 +77,8 @@ function RoomListItem({ room, onClick, reviewCount }: RoomListItemProps) {
 					/>
 					<span>
 						{sessionCount !== 1
-						? t('common.sessionOther', { count: sessionCount })
-						: t('common.sessionOne', { count: sessionCount })}
+							? t('common.sessionOther', { count: sessionCount })
+							: t('common.sessionOne', { count: sessionCount })}
 					</span>
 				</div>
 			</div>

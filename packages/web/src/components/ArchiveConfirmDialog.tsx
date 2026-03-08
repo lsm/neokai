@@ -51,9 +51,7 @@ export function ArchiveConfirmDialog({
 						</div>
 					))}
 				</div>
-				<p class="text-sm text-orange-400 mb-4">
-					{t('archive.commitsLostWarning')}
-				</p>
+				<p class="text-sm text-orange-400 mb-4">{t('archive.commitsLostWarning')}</p>
 				<div class="flex gap-3">
 					<Button onClick={onCancel} variant="secondary" class="flex-1">
 						{t('common.cancel')}

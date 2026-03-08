@@ -62,21 +62,14 @@ export function SessionsPage() {
 							d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
 						/>
 					</svg>
-					<h2 class="text-xl font-semibold text-gray-100 mb-2">
-						{t('sessions.welcome.title')}
-					</h2>
+					<h2 class="text-xl font-semibold text-gray-100 mb-2">{t('sessions.welcome.title')}</h2>
 					<p class="text-sm text-gray-400 mb-8">{t('sessions.welcome.desc')}</p>
 					<Button
 						onClick={handleNewSession}
 						loading={creating}
 						disabled={!canCreate}
 						icon={
-							<svg
-								class="w-4 h-4"
-								fill="none"
-								viewBox="0 0 24 24"
-								stroke="currentColor"
-							>
+							<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
 									stroke-linecap="round"
 									stroke-linejoin="round"

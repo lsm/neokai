@@ -12,13 +12,7 @@ export interface BreadcrumbProps {
 	items: BreadcrumbItem[];
 }
 
-function EditableLabel({
-	label,
-	onEdit,
-}: {
-	label: string;
-	onEdit: (newLabel: string) => void;
-}) {
+function EditableLabel({ label, onEdit }: { label: string; onEdit: (newLabel: string) => void }) {
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(label);
 	const inputRef = useRef<HTMLInputElement>(null);
@@ -77,9 +71,7 @@ export function Breadcrumb({ items }: BreadcrumbProps) {
 				const isLast = index === items.length - 1;
 				return (
 					<Fragment key={index}>
-						{index > 0 && (
-							<ChevronRightIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />
-						)}
+						{index > 0 && <ChevronRightIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />}
 						{isLast ? (
 							item.onEdit ? (
 								<EditableLabel label={item.label} onEdit={item.onEdit} />

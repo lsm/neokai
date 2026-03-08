@@ -151,7 +151,10 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label={t('settings.permissionMode')} description={t('settings.permissionModeDesc')}>
+			<SettingsRow
+				label={t('settings.permissionMode')}
+				description={t('settings.permissionModeDesc')}
+			>
 				<SettingsSelect
 					value={localPermissionMode}
 					onChange={handlePermissionModeChange}
@@ -160,7 +163,10 @@ export function GeneralSettings() {
 				/>
 			</SettingsRow>
 
-			<SettingsRow label={t('settings.thinkingLevel')} description={t('settings.thinkingLevelDesc')}>
+			<SettingsRow
+				label={t('settings.thinkingLevel')}
+				description={t('settings.thinkingLevelDesc')}
+			>
 				<SettingsSelect
 					value={localThinkingLevel}
 					onChange={handleThinkingLevelChange}

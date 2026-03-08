@@ -67,9 +67,7 @@ export function RoomContext({ room }: RoomContextProps) {
 					<label for="room-background" class="block text-sm font-medium text-gray-300 mb-1.5">
 						{t('createRoom.backgroundLabel')}
 					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						{t('createRoom.backgroundHelp')}
-					</p>
+					<p class="text-xs text-gray-500 mb-2">{t('createRoom.backgroundHelp')}</p>
 					<textarea
 						id="room-background"
 						value={background.value}
@@ -87,9 +85,7 @@ export function RoomContext({ room }: RoomContextProps) {
 					<label for="room-instructions" class="block text-sm font-medium text-gray-300 mb-1.5">
 						{t('roomContext.instructions')}
 					</label>
-					<p class="text-xs text-gray-500 mb-2">
-						{t('roomContext.instructionsDesc')}
-					</p>
+					<p class="text-xs text-gray-500 mb-2">{t('roomContext.instructionsDesc')}</p>
 					<textarea
 						id="room-instructions"
 						value={instructions.value}

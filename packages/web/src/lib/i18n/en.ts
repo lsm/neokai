@@ -98,8 +98,7 @@ export const en: Record<string, string> = {
 	// Tasks
 	'tasks.title': 'Tasks',
 	'tasks.empty.title': 'No tasks yet',
-	'tasks.empty.desc':
-		'Tasks break down room goals into actionable work items for AI agents.',
+	'tasks.empty.desc': 'Tasks break down room goals into actionable work items for AI agents.',
 	'tasks.approve': 'Approve',
 	'tasks.approveTitle': 'Approve Task',
 	'tasks.approveMessage': 'This task will proceed to the next phase.',
@@ -382,7 +381,9 @@ export const en: Record<string, string> = {
 	'task.reviewHint': 'Review the PR and approve or provide feedback',
 	'task.approving': 'Approving…',
 	'task.approve': '✓ Approve',
-	'task.feedbackPlaceholder': 'Or send feedback to request changes… (⌘↵ to send)',
+	'task.sendFeedback': 'Send Feedback',
+	'task.sending': 'Sending…',
+	'task.feedbackPlaceholder': 'Send feedback to request changes… (⌘↵ to send)',
 	'task.leaderPlaceholder': 'Send a message to the leader… (⌘↵ to send)',
 	'task.workerRunning': 'Worker is running — wait for leader review',
 	'task.noActiveGroup': 'No active agent group',

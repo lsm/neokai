@@ -140,9 +140,7 @@ export function AgentSettingsPopover({
 
 	const toggleCliAgent = useCallback(
 		(cliAgent: CliAgentInfo) => {
-			const isEnabled = subagents.value.some(
-				(r) => r.type === 'cli' && r.model === cliAgent.id
-			);
+			const isEnabled = subagents.value.some((r) => r.type === 'cli' && r.model === cliAgent.id);
 			if (isEnabled) {
 				subagents.value = subagents.value.filter(
 					(r) => !(r.type === 'cli' && r.model === cliAgent.id)
@@ -295,9 +293,7 @@ export function AgentSettingsPopover({
 				{/* Model selector */}
 				<div>
 					<div class="flex items-center justify-between gap-2">
-						<label class="text-xs font-medium text-gray-400">
-							{t('roomAgentPopover.model')}
-						</label>
+						<label class="text-xs font-medium text-gray-400">{t('roomAgentPopover.model')}</label>
 						<ModelPicker
 							value={selectedModel.value}
 							models={availableModels.value}

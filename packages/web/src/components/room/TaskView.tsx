@@ -2,9 +2,9 @@
  * TaskView Component
  *
  * Shows the task detail view with:
- * - Task header (title, status, progress, group state)
+ * - Compact header (breadcrumb + progress + info toggle)
  * - Unified conversation timeline (Worker + Leader messages in sub-agent blocks)
- * - Human input area (context-sensitive based on group.state)
+ * - Unified bottom panel (review actions / status indicator)
  *
  * Uses session group messages for a single merged timeline.
  *
@@ -15,19 +15,20 @@
  * appears when the user has scrolled up.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import type { NeoTask, SessionInfo } from '@neokai/shared';
-import { HourglassIcon } from '../icons/index.tsx';
-import { useMessageHub } from '../../hooks/useMessageHub';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
-import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { useMessageHub } from '../../hooks/useMessageHub';
+import { t } from '../../lib/i18n';
 import { roomStore } from '../../lib/room-store';
-import { ScrollToBottomButton } from '../ScrollToBottomButton';
+import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
+import { copyToClipboard } from '../../lib/utils';
 import { InputTextarea } from '../InputTextarea';
+import { ScrollToBottomButton } from '../ScrollToBottomButton';
 import { Breadcrumb } from '../ui/Breadcrumb';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
-import { copyToClipboard } from '../../lib/utils';
-import { t } from '../../lib/i18n';
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 interface CopyButtonProps {
 	text: string;
@@ -92,6 +93,16 @@ interface TaskViewProps {
 	taskId: string;
 }
 
+const TASK_STATUS_COLORS: Record<string, string> = {
+	pending: 'text-gray-400',
+	in_progress: 'text-yellow-400',
+	completed: 'text-green-400',
+	failed: 'text-red-400',
+	review: 'text-purple-400',
+	draft: 'text-gray-500',
+	cancelled: 'text-gray-500',
+};
+
 const GROUP_STATE_LABEL_KEYS: Record<string, string> = {
 	awaiting_worker: 'task.state.awaitingWorker',
 	awaiting_leader: 'task.state.awaitingLeader',
@@ -108,34 +119,26 @@ function getGroupStateLabel(state: string): string {
 	return key ? t(key) : state;
 }
 
-const TASK_STATUS_COLORS: Record<string, string> = {
-	pending: 'text-gray-400',
-	in_progress: 'text-yellow-400',
-	completed: 'text-green-400',
-	failed: 'text-red-400',
-	review: 'text-purple-400',
-	draft: 'text-gray-500',
-	cancelled: 'text-gray-500',
-};
+// ─── Bottom Panel ────────────────────────────────────────────────────────────
 
-interface HumanInputAreaProps {
+interface BottomPanelProps {
 	groupState: string;
+	feedbackIteration: number;
 	roomId: string;
 	taskId: string;
-	/** Called after a successful action that requires a full conversation re-fetch */
 	onMessageSentWithReload: () => void;
 }
 
-function HumanInputArea({
+function BottomPanel({
 	groupState,
+	feedbackIteration,
 	roomId,
 	taskId,
 	onMessageSentWithReload,
-}: HumanInputAreaProps) {
+}: BottomPanelProps) {
 	const { request } = useMessageHub();
 	const [feedbackText, setFeedbackText] = useState('');
 	const [leaderText, setLeaderText] = useState('');
-	// Separate loading states so Approve button doesn't show "Approving…" during feedback send
 	const [approving, setApproving] = useState(false);
 	const [sendingFeedback, setSendingFeedback] = useState(false);
 	const [sendingLeader, setSendingLeader] = useState(false);
@@ -163,7 +166,7 @@ function HumanInputArea({
 		try {
 			await request('task.sendHumanMessage', { roomId, taskId, message: feedbackText.trim() });
 			setFeedbackText('');
-			// Rejection feedback changes group state; re-fetch conversation to pick up the human message
+			// Feedback changes group state; re-fetch conversation to pick up the human message
 			onMessageSentWithReload();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : t('task.failedToSendFeedback'));
@@ -187,55 +190,58 @@ function HumanInputArea({
 		}
 	};
 
+	// ── Awaiting human review: unified decision panel ──
 	if (groupState === 'awaiting_human') {
 		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0">
-				{/* Prominent banner */}
-				<div class="px-4 py-2 bg-amber-900/20 border-b border-amber-800/30 flex items-center gap-2">
-					<span class="text-amber-400 text-sm font-medium flex items-center gap-1.5">
-						<HourglassIcon className="w-4 h-4" />
-						{t('task.awaitingReview')}
-					</span>
-					<span class="text-xs text-amber-500/70 ml-auto">
-						{t('task.reviewHint')}
-					</span>
+			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-3">
+				<div class="flex items-center gap-2 text-sm">
+					<span class="text-amber-400 font-medium">{t('task.awaitingReview')}</span>
+					{feedbackIteration > 0 && (
+						<span class="text-gray-500">· {t('task.iteration', { count: feedbackIteration })}</span>
+					)}
+					<span class="text-xs text-gray-600 ml-auto">{t('task.reviewHint')}</span>
 				</div>
-				<div class="px-4 py-3 space-y-2">
-					{/* Approve button */}
+
+				<InputTextarea
+					content={feedbackText}
+					onContentChange={setFeedbackText}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+							e.preventDefault();
+							void sendFeedback();
+						}
+					}}
+					onSubmit={() => void sendFeedback()}
+					disabled={sendingFeedback || approving}
+					placeholder={t('task.feedbackPlaceholder')}
+					maxChars={50000}
+				/>
+
+				<div class="flex items-center justify-end gap-2">
+					{inputError && <p class="text-xs text-red-400 mr-auto">{inputError}</p>}
 					<button
-						class="w-full py-2 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors"
+						class="px-4 py-1.5 text-sm font-medium rounded-md text-gray-300 hover:text-white bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+						onClick={() => void sendFeedback()}
+						disabled={sendingFeedback || approving || !feedbackText.trim()}
+					>
+						{sendingFeedback ? t('task.sending') : t('task.sendFeedback')}
+					</button>
+					<button
+						class="px-4 py-1.5 text-sm font-medium rounded-md text-white bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
 						onClick={approveTask}
 						disabled={approving || sendingFeedback}
 					>
 						{approving ? t('task.approving') : t('task.approve')}
 					</button>
-					{/* Feedback input using shared InputTextarea.
-					    Large maxChars so users can paste diffs/logs freely. */}
-					<InputTextarea
-						content={feedbackText}
-						onContentChange={setFeedbackText}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-								e.preventDefault();
-								void sendFeedback();
-							}
-						}}
-						onSubmit={() => void sendFeedback()}
-						disabled={sendingFeedback || approving}
-						placeholder={t('task.feedbackPlaceholder')}
-						maxChars={50000}
-					/>
-					{inputError && <p class="text-xs text-red-400">{inputError}</p>}
 				</div>
 			</div>
 		);
 	}
 
+	// ── Awaiting leader: message input ──
 	if (groupState === 'awaiting_leader') {
 		return (
 			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-				{/* Message input using shared InputTextarea.
-				    Large maxChars so users can paste context/diffs freely. */}
 				<InputTextarea
 					content={leaderText}
 					onContentChange={setLeaderText}
@@ -255,16 +261,13 @@ function HumanInputArea({
 		);
 	}
 
+	// ── Awaiting worker: status bar ──
 	if (groupState === 'awaiting_worker') {
 		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3">
-				<div title={t('task.workerRunning')}>
-					<textarea
-						class="w-full bg-dark-800 border border-dark-600/50 rounded px-3 py-2 text-sm text-gray-600 placeholder-gray-600 resize-none cursor-not-allowed"
-						placeholder={t('task.workerRunning')}
-						rows={2}
-						disabled
-					/>
+			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-2.5">
+				<div class="flex items-center gap-2 text-sm text-gray-500">
+					<div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+					{t('task.workerRunning')}
 				</div>
 			</div>
 		);
@@ -272,6 +275,8 @@ function HumanInputArea({
 
 	return null;
 }
+
+// ─── Main TaskView ───────────────────────────────────────────────────────────
 
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
@@ -282,18 +287,13 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [conversationKey, setConversationKey] = useState(0);
 	const [messageCount, setMessageCount] = useState(0);
 
-	// Session info for worker and leader (for displaying worktree path and agent info)
+	// Session info for worker and leader
 	const [workerSession, setWorkerSession] = useState<SessionInfo | null>(null);
 	const [leaderSession, setLeaderSession] = useState<SessionInfo | null>(null);
 
-	// UI state for info panel and autoscroll toggle
+	// UI state
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
-
-	// Tracks whether the conversation pane is showing its first batch of messages.
-	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
-	// and becomes false once the first non-zero messageCount arrives — at which point
-	// useAutoScroll fires its initial-load scroll path.
 	const [isFirstLoad, setIsFirstLoad] = useState(true);
 
 	// Refs for scroll container
@@ -308,12 +308,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		isInitialLoad: isFirstLoad,
 	});
 
-	// Reset conversation scroll state whenever the rendered conversation changes.
-	// This covers two cases:
-	//   1. conversationKey bumps (manual reload after approve/feedback)
-	//   2. group.id changes (room.task.update event spawns a new group)
-	// Using the combined renderer key mirrors the `key` prop on TaskConversationRenderer,
-	// so any remount that causes the child to re-fetch messages also resets the parent scroll state.
 	const rendererKey = group ? `${group.id}-${conversationKey}` : `null-${conversationKey}`;
 	useEffect(() => {
 		setIsFirstLoad(true);
@@ -321,8 +315,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		setAutoScrollEnabled(true);
 	}, [rendererKey]);
 
-	// Mark initial load done after first messages arrive (fires after the render where
-	// useAutoScroll sees isFirstLoad:true and messageCount>0, so the initial scroll fires first)
 	useEffect(() => {
 		if (messageCount > 0 && isFirstLoad) {
 			setIsFirstLoad(false);
@@ -349,11 +341,10 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				});
 				if (!cancelled && seq === fetchGroupSeq) {
 					setGroup(res.group);
-					// Fetch session info for worker and leader
 					void fetchSessionInfo(res.group);
 				}
 			} catch {
-				// Group fetch failure is non-fatal — task may not have a group yet
+				// Group fetch failure is non-fatal
 			}
 		};
 
@@ -397,7 +388,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 		load();
 
-		// Re-fetch group whenever the task status changes (e.g. group spawned or completed)
 		const unsub = onEvent<{ roomId: string; task: NeoTask }>('room.task.update', (event) => {
 			if (event.task.id === taskId && !cancelled) {
 				setTask(event.task);
@@ -436,9 +426,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		);
 	}
 
-	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
-
-	// Show input area when group is active and in an interactive state
 	const showInput =
 		group !== null &&
 		(group.state === 'awaiting_human' ||
@@ -447,7 +434,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
-			{/* Header */}
+			{/* P1: Compact header — breadcrumb + progress + info */}
 			<div class="border-b border-dark-700 bg-dark-850 px-4 flex items-center gap-3 flex-shrink-0 h-[61px]">
 				<div class="min-w-0 flex-shrink">
 					<Breadcrumb
@@ -460,42 +447,21 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						]}
 					/>
 				</div>
-				<div class="flex items-center gap-2 ml-auto flex-shrink-0">
-					{/* Status + type + iteration */}
-					<div class="hidden sm:flex items-center gap-2 text-xs">
-						<span class={`font-medium ${statusColor}`}>
-							{task.status.replace('_', ' ')}
-						</span>
-						{task.taskType && (
-							<span class="text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">
-								{task.taskType}
-							</span>
-						)}
-						{group && (
-							<span class="text-gray-500">
-								{getGroupStateLabel(group.state)}
-								{group.feedbackIteration > 0 && ` · ${t('task.iteration', { count: group.feedbackIteration })}`}
-							</span>
-						)}
-						{group?.state === 'awaiting_human' && (
-							<span class="inline-flex items-center gap-1 font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
-								{t('task.awaitingReview')}
-							</span>
-						)}
-					</div>
+				<div class="flex items-center gap-3 ml-auto flex-shrink-0">
+					{/* Progress bar */}
 					{task.progress != null && task.progress > 0 && (
-						<div class="flex items-center gap-2">
+						<div class="hidden sm:flex items-center gap-2">
 							<div class="w-24 h-1.5 bg-dark-700 rounded-full overflow-hidden">
 								<div
 									class="h-full bg-blue-500 transition-all duration-300"
 									style={{ width: `${task.progress}%` }}
 								/>
 							</div>
-							<span class="text-xs text-gray-400">{task.progress}%</span>
+							<span class="text-xs text-gray-400 tabular-nums">{task.progress}%</span>
 						</div>
 					)}
-					{/* Info toggle button */}
-						<button
+					{/* Info toggle */}
+					<button
 						class={`p-1.5 rounded transition-colors ${
 							showInfoPanel
 								? 'bg-blue-600 text-white'
@@ -516,10 +482,26 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 			</div>
 
-			{/* Info panel */}
+			{/* P2: Info panel — status, type, iteration, session details */}
 			{showInfoPanel && (
 				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-3 flex-shrink-0">
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+						{/* Status + type row */}
+						<div class="md:col-span-2 flex items-center gap-2 flex-wrap">
+							<span class={`font-medium ${TASK_STATUS_COLORS[task.status] ?? 'text-gray-400'}`}>
+								{task.status.replace(/_/g, ' ')}
+							</span>
+							{task.taskType && (
+								<span class="text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">{task.taskType}</span>
+							)}
+							{group && (
+								<span class="text-gray-500">
+									{getGroupStateLabel(group.state)}
+									{group.feedbackIteration > 0 &&
+										` · ${t('task.iteration', { count: group.feedbackIteration })}`}
+								</span>
+							)}
+						</div>
 						<div>
 							<span class="text-gray-500">{t('task.taskId')}</span>
 							<span class="text-gray-300 ml-2 font-mono">{task.id}</span>
@@ -558,7 +540,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									text={workerSession.worktree?.worktreePath ?? workerSession.workspacePath}
 								/>
 								{workerSession.config.model && (
-									<span class="text-gray-500 ml-2">({t('task.modelLabel', { model: workerSession.config.model })})</span>
+									<span class="text-gray-500 ml-2">
+										({t('task.modelLabel', { model: workerSession.config.model })})
+									</span>
 								)}
 							</div>
 						)}
@@ -572,7 +556,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 									text={leaderSession.worktree?.worktreePath ?? leaderSession.workspacePath}
 								/>
 								{leaderSession.config.model && (
-									<span class="text-gray-500 ml-2">({t('task.modelLabel', { model: leaderSession.config.model })})</span>
+									<span class="text-gray-500 ml-2">
+										({t('task.modelLabel', { model: leaderSession.config.model })})
+									</span>
 								)}
 							</div>
 						)}
@@ -597,7 +583,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 			)}
 
-			{/* Conversation timeline — scroll container owned here for autoscroll support */}
+			{/* Conversation timeline */}
 			<div class="flex-1 relative min-h-0">
 				<div ref={messagesContainerRef} class="absolute inset-0 overflow-y-auto flex flex-col">
 					{group ? (
@@ -631,11 +617,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* Scroll-to-bottom button — shown when user has scrolled up.
-				    bottomClass="bottom-4" because HumanInputArea is a sibling
-				    outside this container, not an overlapping footer. */}
+				{/* Scroll controls */}
 				<div class="absolute right-2 flex flex-col gap-2" style={{ bottom: '1rem' }}>
-					{/* Autoscroll toggle */}
 					<button
 						class={`p-2 rounded-full shadow-lg transition-colors ${
 							autoScrollEnabled
@@ -660,10 +643,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 			</div>
 
-			{/* Human input area */}
-			{showInput && (
-				<HumanInputArea
-					groupState={group!.state}
+			{/* P0: Unified bottom panel */}
+			{showInput && group && (
+				<BottomPanel
+					groupState={group.state}
+					feedbackIteration={group.feedbackIteration}
 					roomId={roomId}
 					taskId={taskId}
 					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}

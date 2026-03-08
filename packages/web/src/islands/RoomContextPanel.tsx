@@ -126,7 +126,9 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							/>
 						</svg>
 					</div>
-					<span class="flex-1 text-sm text-gray-200 text-left truncate">{t('roomPanel.roomDashboard')}</span>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">
+						{t('roomPanel.roomDashboard')}
+					</span>
 				</button>
 
 				{/* Room Agent */}
@@ -152,7 +154,9 @@ export function RoomContextPanel({ roomId, onNavigate }: RoomContextPanelProps) 
 							/>
 						</svg>
 					</div>
-					<span class="flex-1 text-sm text-gray-200 text-left truncate">{t('roomPanel.roomAgent')}</span>
+					<span class="flex-1 text-sm text-gray-200 text-left truncate">
+						{t('roomPanel.roomAgent')}
+					</span>
 				</button>
 
 				{/* Sessions */}

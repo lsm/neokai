@@ -28,9 +28,7 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
 				<CheckIcon className="w-10 h-10 text-gray-600 mx-auto mb-3" />
 				<p class="text-gray-400 font-medium">{t('tasks.empty.title')}</p>
-				<p class="text-sm text-gray-500 mt-1">
-					{t('tasks.empty.desc')}
-				</p>
+				<p class="text-sm text-gray-500 mt-1">{t('tasks.empty.desc')}</p>
 			</div>
 		);
 	}
@@ -63,7 +61,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 								d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
 							/>
 						</svg>
-						<h3 class="font-semibold text-red-400">{t('tasks.status.failed')} ({failed.length})</h3>
+						<h3 class="font-semibold text-red-400">
+							{t('tasks.status.failed')} ({failed.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{failed.map((task) => (
@@ -77,7 +77,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{inProgress.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-yellow-900/20">
-						<h3 class="font-semibold text-yellow-400">{t('tasks.status.inProgress')} ({inProgress.length})</h3>
+						<h3 class="font-semibold text-yellow-400">
+							{t('tasks.status.inProgress')} ({inProgress.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{inProgress.map((task) => (
@@ -91,7 +93,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{review.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-purple-900/20">
-						<h3 class="font-semibold text-purple-400">{t('tasks.status.review')} ({review.length})</h3>
+						<h3 class="font-semibold text-purple-400">
+							{t('tasks.status.review')} ({review.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{review.map((task) => (
@@ -112,7 +116,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{pending.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700">
-						<h3 class="font-semibold text-gray-100">{t('tasks.status.pending')} ({pending.length})</h3>
+						<h3 class="font-semibold text-gray-100">
+							{t('tasks.status.pending')} ({pending.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{pending.map((task) => (
@@ -126,7 +132,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{draft.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
-						<h3 class="font-semibold text-gray-400">{t('tasks.status.draft')} ({draft.length})</h3>
+						<h3 class="font-semibold text-gray-400">
+							{t('tasks.status.draft')} ({draft.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{draft.map((task) => (
@@ -140,7 +148,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{completed.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-green-900/20">
-						<h3 class="font-semibold text-green-400">{t('tasks.status.completed')} ({completed.length})</h3>
+						<h3 class="font-semibold text-green-400">
+							{t('tasks.status.completed')} ({completed.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{completed.map((task) => (
@@ -154,7 +164,9 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 			{cancelled.length > 0 && (
 				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
-						<h3 class="font-semibold text-gray-500">{t('tasks.status.cancelled')} ({cancelled.length})</h3>
+						<h3 class="font-semibold text-gray-500">
+							{t('tasks.status.cancelled')} ({cancelled.length})
+						</h3>
 					</div>
 					<div class="divide-y divide-dark-700">
 						{cancelled.map((task) => (

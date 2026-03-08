@@ -306,9 +306,10 @@ export function setupGoalHandlers(
 		if (!task) {
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
-		if (task.status !== 'review') {
-			throw new Error(`Task is not in review status (current: ${task.status})`);
-		}
+		// Note: We check group.state === 'awaiting_human' inside resumeWorkerFromHuman()
+		// rather than task.status === 'review' here, because the group state is the
+		// authoritative source of truth. Task status can lag behind group state transitions
+		// (e.g. after a feedback round where worker hasn't re-submitted for review yet).
 
 		const runtime = runtimeService.getRuntime(params.roomId);
 		if (!runtime) {

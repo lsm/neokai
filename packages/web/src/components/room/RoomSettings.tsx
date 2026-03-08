@@ -83,7 +83,8 @@ export function RoomSettings({
 			: 3
 	);
 	const maxConcurrentGroups = useSignal<number>(
-		typeof (room.config as Record<string, unknown> | undefined)?.['maxConcurrentGroups'] === 'number'
+		typeof (room.config as Record<string, unknown> | undefined)?.['maxConcurrentGroups'] ===
+			'number'
 			? ((room.config as Record<string, unknown>)['maxConcurrentGroups'] as number)
 			: 1
 	);
@@ -220,9 +221,7 @@ export function RoomSettings({
 		const origMaxReview =
 			typeof cfg['maxReviewRounds'] === 'number' ? (cfg['maxReviewRounds'] as number) : 3;
 		const origMaxConcurrent =
-			typeof cfg['maxConcurrentGroups'] === 'number'
-				? (cfg['maxConcurrentGroups'] as number)
-				: 1;
+			typeof cfg['maxConcurrentGroups'] === 'number' ? (cfg['maxConcurrentGroups'] as number) : 1;
 
 		return (
 			name.value !== room.name ||
@@ -269,7 +268,6 @@ export function RoomSettings({
 		<div class="flex flex-col h-full">
 			{/* Scrollable content */}
 			<div class="flex-1 overflow-y-auto p-4 space-y-8">
-
 				{/* === Section 1: Basic Info === */}
 				<section>
 					<SectionHeader>{t('roomSettings.sectionBasic')}</SectionHeader>
@@ -292,12 +290,17 @@ export function RoomSettings({
 
 						{/* Workspace Paths */}
 						<div>
-							<label class="block text-sm font-medium text-gray-300 mb-1.5">{t('roomSettings.workspacePaths')}</label>
+							<label class="block text-sm font-medium text-gray-300 mb-1.5">
+								{t('roomSettings.workspacePaths')}
+							</label>
 							<p class="text-xs text-gray-500 mb-2">{t('roomSettings.workspacePathsDesc')}</p>
 
 							<div class="space-y-2 mb-3">
 								{allowedPaths.value.map((wp) => (
-									<div key={wp.path} class="bg-dark-800 border border-dark-600 rounded-lg px-3 py-2">
+									<div
+										key={wp.path}
+										class="bg-dark-800 border border-dark-600 rounded-lg px-3 py-2"
+									>
 										<div class="flex items-center gap-2">
 											<span class="flex-1 text-sm text-gray-300 truncate font-mono">{wp.path}</span>
 											<button
@@ -309,7 +312,9 @@ export function RoomSettings({
 														: 'bg-dark-700 text-gray-400 hover:text-gray-200'
 												}`}
 											>
-												{defaultPath.value === wp.path ? t('roomSettings.default') : t('roomSettings.setDefault')}
+												{defaultPath.value === wp.path
+													? t('roomSettings.default')
+													: t('roomSettings.setDefault')}
 											</button>
 											<button
 												type="button"
@@ -317,14 +322,21 @@ export function RoomSettings({
 												class="text-gray-500 hover:text-red-400 p-1"
 											>
 												<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-													<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M6 18L18 6M6 6l12 12" />
+													<path
+														stroke-linecap="round"
+														stroke-linejoin="round"
+														stroke-width={2}
+														d="M6 18L18 6M6 6l12 12"
+													/>
 												</svg>
 											</button>
 										</div>
 										<input
 											type="text"
 											value={wp.description || ''}
-											onInput={(e) => handleUpdatePathDescription(wp.path, (e.target as HTMLInputElement).value)}
+											onInput={(e) =>
+												handleUpdatePathDescription(wp.path, (e.target as HTMLInputElement).value)
+											}
 											placeholder={t('roomSettings.addDescriptionPlaceholder')}
 											class="w-full mt-2 bg-dark-700 border border-dark-600 rounded px-2 py-1 text-xs
 												text-gray-400 placeholder-gray-600 focus:outline-none focus:border-gray-500"
@@ -347,11 +359,27 @@ export function RoomSettings({
 										class="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
 											placeholder-gray-500 focus:outline-none focus:border-blue-500 font-mono"
 										disabled={disabled}
-										onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddPath(); } }}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter') {
+												e.preventDefault();
+												handleAddPath();
+											}
+										}}
 									/>
-									<Button variant="secondary" size="sm" onClick={handleFolderPick} disabled={disabled} title="Browse folders">
+									<Button
+										variant="secondary"
+										size="sm"
+										onClick={handleFolderPick}
+										disabled={disabled}
+										title="Browse folders"
+									>
 										<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+											<path
+												stroke-linecap="round"
+												stroke-linejoin="round"
+												stroke-width={2}
+												d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+											/>
 										</svg>
 									</Button>
 								</div>
@@ -363,9 +391,19 @@ export function RoomSettings({
 									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100
 										placeholder-gray-500 focus:outline-none focus:border-blue-500"
 									disabled={disabled}
-									onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddPath(); } }}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											handleAddPath();
+										}
+									}}
 								/>
-								<Button variant="secondary" size="sm" onClick={handleAddPath} disabled={!newPath.value.trim() || disabled}>
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={handleAddPath}
+									disabled={!newPath.value.trim() || disabled}
+								>
 									{t('roomSettings.addPath')}
 								</Button>
 							</div>
@@ -395,7 +433,9 @@ export function RoomSettings({
 							>
 								<option value="">{t('roomSettings.useSystemDefault')}</option>
 								{selectableModels().map((model) => (
-									<option key={model.id} value={model.id}>{model.name}</option>
+									<option key={model.id} value={model.id}>
+										{model.name}
+									</option>
 								))}
 							</select>
 						</div>
@@ -403,14 +443,26 @@ export function RoomSettings({
 						{/* Allowed Models */}
 						<div>
 							<div class="flex items-center justify-between mb-1.5">
-								<label class="block text-sm font-medium text-gray-300">{t('roomSettings.allowedModels')}</label>
+								<label class="block text-sm font-medium text-gray-300">
+									{t('roomSettings.allowedModels')}
+								</label>
 								{!isLoadingModels.value && availableModels.value.length > 0 && (
 									<div class="flex gap-2">
-										<button type="button" onClick={handleSelectAllModels} class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40" disabled={disabled || allowedModels.value === null}>
+										<button
+											type="button"
+											onClick={handleSelectAllModels}
+											class="text-xs text-blue-400 hover:text-blue-300 disabled:opacity-40"
+											disabled={disabled || allowedModels.value === null}
+										>
 											{t('roomSettings.selectAll')}
 										</button>
 										<span class="text-xs text-gray-600">&middot;</span>
-										<button type="button" onClick={handleDeselectAllModels} class="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-40" disabled={disabled}>
+										<button
+											type="button"
+											onClick={handleDeselectAllModels}
+											class="text-xs text-gray-400 hover:text-gray-300 disabled:opacity-40"
+											disabled={disabled}
+										>
 											{t('roomSettings.selectNone')}
 										</button>
 									</div>
@@ -437,7 +489,9 @@ export function RoomSettings({
 												{model.name}
 											</span>
 											{model.id === defaultModel.value && (
-												<span class="text-xs text-blue-400 ml-auto">{t('roomSettings.default')}</span>
+												<span class="text-xs text-blue-400 ml-auto">
+													{t('roomSettings.default')}
+												</span>
 											)}
 										</label>
 									))}
@@ -456,7 +510,10 @@ export function RoomSettings({
 						<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
 							{/* Max Concurrent Tasks */}
 							<div>
-								<label for="max-concurrent-groups" class="block text-sm font-medium text-gray-300 mb-1.5">
+								<label
+									for="max-concurrent-groups"
+									class="block text-sm font-medium text-gray-300 mb-1.5"
+								>
 									{t('roomSettings.maxConcurrentTasks')}
 								</label>
 								<p class="text-xs text-gray-500 mb-2">{t('roomSettings.maxConcurrentTasksDesc')}</p>
@@ -468,7 +525,8 @@ export function RoomSettings({
 									value={maxConcurrentGroups.value}
 									onInput={(e) => {
 										const v = parseInt((e.target as HTMLInputElement).value, 10);
-										if (!isNaN(v) && v >= 1 && v <= MAX_CONCURRENT_GROUPS_LIMIT) maxConcurrentGroups.value = v;
+										if (!isNaN(v) && v >= 1 && v <= MAX_CONCURRENT_GROUPS_LIMIT)
+											maxConcurrentGroups.value = v;
 									}}
 									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500"
 									disabled={disabled}
@@ -477,7 +535,10 @@ export function RoomSettings({
 
 							{/* Max Review Rounds */}
 							<div>
-								<label for="max-review-rounds" class="block text-sm font-medium text-gray-300 mb-1.5">
+								<label
+									for="max-review-rounds"
+									class="block text-sm font-medium text-gray-300 mb-1.5"
+								>
 									{t('roomSettings.maxReviewRounds')}
 								</label>
 								<p class="text-xs text-gray-500 mb-2">{t('roomSettings.maxReviewRoundsDesc')}</p>
@@ -489,7 +550,8 @@ export function RoomSettings({
 									value={maxReviewRounds.value}
 									onInput={(e) => {
 										const v = parseInt((e.target as HTMLInputElement).value, 10);
-										if (!isNaN(v) && v >= 1 && v <= MAX_REVIEW_ROUNDS_LIMIT) maxReviewRounds.value = v;
+										if (!isNaN(v) && v >= 1 && v <= MAX_REVIEW_ROUNDS_LIMIT)
+											maxReviewRounds.value = v;
 									}}
 									class="w-full bg-dark-800 border border-dark-600 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500"
 									disabled={disabled}
@@ -498,7 +560,10 @@ export function RoomSettings({
 
 							{/* Max Planning Retries */}
 							<div>
-								<label for="max-planning-retries" class="block text-sm font-medium text-gray-300 mb-1.5">
+								<label
+									for="max-planning-retries"
+									class="block text-sm font-medium text-gray-300 mb-1.5"
+								>
 									{t('roomSettings.maxPlanningRetries')}
 								</label>
 								<p class="text-xs text-gray-500 mb-2">{t('roomSettings.maxPlanningRetriesDesc')}</p>
@@ -533,7 +598,9 @@ export function RoomSettings({
 									{onArchive && (
 										<div class="px-4 py-3 flex items-center justify-between gap-4">
 											<div class="min-w-0">
-												<p class="text-sm font-medium text-gray-200">{t('roomSettings.archiveRoomLabel')}</p>
+												<p class="text-sm font-medium text-gray-200">
+													{t('roomSettings.archiveRoomLabel')}
+												</p>
 												<p class="text-xs text-gray-500 mt-0.5">{t('roomSettings.archiveDesc')}</p>
 											</div>
 											<button
@@ -549,7 +616,9 @@ export function RoomSettings({
 									{onDelete && (
 										<div class="px-4 py-3 flex items-center justify-between gap-4">
 											<div class="min-w-0">
-												<p class="text-sm font-medium text-gray-200">{t('roomSettings.deleteRoom')}</p>
+												<p class="text-sm font-medium text-gray-200">
+													{t('roomSettings.deleteRoom')}
+												</p>
 												<p class="text-xs text-gray-500 mt-0.5">{t('roomSettings.deleteDesc')}</p>
 											</div>
 											<button
@@ -588,7 +657,12 @@ export function RoomSettings({
 				onClose={() => setShowArchiveModal(false)}
 				onConfirm={async () => {
 					setIsArchiving(true);
-					try { await onArchive?.(); } finally { setIsArchiving(false); setShowArchiveModal(false); }
+					try {
+						await onArchive?.();
+					} finally {
+						setIsArchiving(false);
+						setShowArchiveModal(false);
+					}
 				}}
 				title={t('roomSettings.archiveTitle')}
 				message={t('roomSettings.archiveConfirm')}
@@ -601,7 +675,12 @@ export function RoomSettings({
 				onClose={() => setShowDeleteModal(false)}
 				onConfirm={async () => {
 					setIsDeleting(true);
-					try { await onDelete?.(); } finally { setIsDeleting(false); setShowDeleteModal(false); }
+					try {
+						await onDelete?.();
+					} finally {
+						setIsDeleting(false);
+						setShowDeleteModal(false);
+					}
 				}}
 				title={t('roomSettings.deleteTitle')}
 				message={t('roomSettings.deleteConfirm')}

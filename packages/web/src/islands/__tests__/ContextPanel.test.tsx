@@ -371,7 +371,6 @@ describe('ContextPanel', () => {
 			// The button should open the modal by setting the signal to true
 			expect(mockCreateRoomModalSignal.value).toBe(true);
 		});
-
 	});
 
 	describe('Mobile Drawer Behavior', () => {

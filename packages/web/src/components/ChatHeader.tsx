@@ -187,9 +187,7 @@ export function ChatHeader({
 					onClick: () => navigateToRoom(roomContext.roomId),
 				},
 				// Only show session title if different from room name
-				...(sessionTitle !== roomContext.roomName
-					? [{ label: sessionTitle }]
-					: []),
+				...(sessionTitle !== roomContext.roomName ? [{ label: sessionTitle }] : []),
 			]
 		: [{ label: sessionTitle }];
 
@@ -213,9 +211,7 @@ export function ChatHeader({
 							{formatTokens(displayStats.totalTokens)}
 						</span>
 						<span>·</span>
-						<span class="font-mono text-green-400/70">
-							${displayStats.totalCost.toFixed(4)}
-						</span>
+						<span class="font-mono text-green-400/70">${displayStats.totalCost.toFixed(4)}</span>
 						{branch && (
 							<>
 								<span>·</span>

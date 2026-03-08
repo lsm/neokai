@@ -284,7 +284,9 @@ export default function SessionStatusBar({
 				{/* Coordinator Mode Toggle - only show if feature is enabled */}
 				{features.coordinator && (
 					<Tooltip
-						content={coordinatorMode ? t('status.coordinatorEnabled') : t('status.coordinatorDisabled')}
+						content={
+							coordinatorMode ? t('status.coordinatorEnabled') : t('status.coordinatorDisabled')
+						}
 						position="top"
 						delay={300}
 					>
@@ -294,7 +296,9 @@ export default function SessionStatusBar({
 							}`}
 							onClick={handleCoordinatorModeToggle}
 							disabled={coordinatorSwitching || modelSwitching}
-							title={coordinatorMode ? t('status.coordinatorEnabled') : t('status.coordinatorDisabled')}
+							title={
+								coordinatorMode ? t('status.coordinatorEnabled') : t('status.coordinatorDisabled')
+							}
 						>
 							{coordinatorSwitching ? (
 								<Spinner size="sm" />
@@ -356,7 +360,11 @@ export default function SessionStatusBar({
 				{/* Model Switcher */}
 				<div class="relative">
 					<Tooltip
-						content={currentModelInfo ? t('status.modelName', { name: currentModelInfo.name }) : t('status.switchModel')}
+						content={
+							currentModelInfo
+								? t('status.modelName', { name: currentModelInfo.name })
+								: t('status.switchModel')
+						}
 						position="top"
 						delay={300}
 					>
@@ -364,7 +372,11 @@ export default function SessionStatusBar({
 							class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
 							onClick={toggleModelDropdown}
 							disabled={modelLoading || modelSwitching || coordinatorSwitching}
-							title={currentModelInfo ? t('status.switchModelName', { name: currentModelInfo.name }) : t('status.switchModel')}
+							title={
+								currentModelInfo
+									? t('status.switchModelName', { name: currentModelInfo.name })
+									: t('status.switchModel')
+							}
 						>
 							{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
 						</button>
@@ -375,7 +387,9 @@ export default function SessionStatusBar({
 						<div
 							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn`}
 						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">{t('status.selectModel')}</div>
+							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">
+								{t('status.selectModel')}
+							</div>
 							{availableModels.map((model) => (
 								<button
 									key={model.id}
@@ -425,7 +439,9 @@ export default function SessionStatusBar({
 						<div
 							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-40 py-1 z-50 animate-slideIn`}
 						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">{t('status.thinkingLevel')}</div>
+							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">
+								{t('status.thinkingLevel')}
+							</div>
 							{(['auto', 'think8k', 'think16k', 'think32k'] as const).map((level) => (
 								<button
 									key={level}

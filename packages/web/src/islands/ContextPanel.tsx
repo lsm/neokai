@@ -158,10 +158,7 @@ function EditableRoomName({ name, className }: { name: string; className?: strin
 	}
 
 	return (
-		<h2
-			class={cn(className, 'cursor-text hover:text-white transition-colors')}
-			onClick={startEdit}
-		>
+		<h2 class={cn(className, 'cursor-text hover:text-white transition-colors')} onClick={startEdit}>
 			{name}
 		</h2>
 	);
@@ -313,7 +310,9 @@ export function ContextPanel() {
 				</div>
 
 				{/* Header */}
-				<div class={`px-4 border-b ${borderColors.ui.default} ${isRoomDetail ? 'flex items-center h-[61px]' : 'py-4'}`}>
+				<div
+					class={`px-4 border-b ${borderColors.ui.default} ${isRoomDetail ? 'flex items-center h-[61px]' : 'py-4'}`}
+				>
 					<div class={`flex items-center justify-between ${isRoomDetail ? 'flex-1' : 'mb-3'}`}>
 						{isRoomDetail ? (
 							<EditableRoomName
@@ -340,8 +339,7 @@ export function ContextPanel() {
 						</button>
 					</div>
 
-					{(navSection === 'chats' ||
-						(navSection === 'rooms' && !isRoomDetail)) && (
+					{(navSection === 'chats' || (navSection === 'rooms' && !isRoomDetail)) && (
 						<Button
 							onClick={handleAction}
 							loading={isActionLoading}

@@ -78,9 +78,7 @@ export function ConnectionOverlay() {
 				</div>
 
 				{/* FIX: Always show hint since we only display for 'failed' state now */}
-				<p class="text-xs text-gray-500 mt-4">
-					{t('connection.persistHint')}
-				</p>
+				<p class="text-xs text-gray-500 mt-4">{t('connection.persistHint')}</p>
 			</div>
 		</div>
 	);
