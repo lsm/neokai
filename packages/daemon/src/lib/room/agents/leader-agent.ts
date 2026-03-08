@@ -160,7 +160,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			for (const name of reviewerNames) {
 				sections.push(
-					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. This is a PLAN review (not code). The planner created a plan to break down a goal into tasks. Review the plan for completeness, task scoping, ordering, acceptance criteria, and feasibility. Post your review using gh pr review.")`
+					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. This is a PLAN review (not code). The planner created a plan to break down a goal into tasks. Review the plan for completeness, task scoping, ordering, acceptance criteria, and feasibility. Post your honest, critical, and actionable feedback using gh pr review.")`
 				);
 			}
 
@@ -247,7 +247,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			for (const name of reviewerNames) {
 				sections.push(
-					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. The task was: <description>. The worker implemented: <summary>. Review the code and post your review using gh pr review.")`
+					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. The task was: <description>. The worker implemented: <summary>. Review the code and post your honest, critical, and actionable feedback using gh pr review.")`
 				);
 			}
 
@@ -552,7 +552,18 @@ You MUST include this identity block at the top of every PR comment you post.
      -f body="<review body>" -f event="REQUEST_CHANGES" --jq '.html_url'
    \`\`\`
 
-   NOTE: GitHub does not allow APPROVE or REQUEST_CHANGES on your own PRs. If you get a permission error, fall back to \`-f event="COMMENT"\`.
+   Determine the event **before posting** (deterministic, no trial/error):
+   \`\`\`bash
+   ME="$(gh api user --jq .login)"
+   PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"
+   EVENT="<APPROVE_OR_REQUEST_CHANGES>"
+   [ "$ME" = "$PR_AUTHOR" ] && EVENT="COMMENT"
+
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="$EVENT" --jq '.html_url'
+   \`\`\`
+
+   If EVENT is \`COMMENT\` (own PR), keep your recommendation (APPROVE/REQUEST_CHANGES) in the review body text.
 
    Include this header in your review body:
    \`\`\`
@@ -704,7 +715,18 @@ ${cliInstructions}
      -f body="<review body>" -f event="REQUEST_CHANGES" --jq '.html_url'
    \`\`\`
 
-   NOTE: GitHub does not allow APPROVE or REQUEST_CHANGES on your own PRs. If you get a permission error, fall back to \`-f event="COMMENT"\`.
+   Determine the event **before posting** (deterministic, no trial/error):
+   \`\`\`bash
+   ME="$(gh api user --jq .login)"
+   PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"
+   EVENT="<APPROVE_OR_REQUEST_CHANGES>"
+   [ "$ME" = "$PR_AUTHOR" ] && EVENT="COMMENT"
+
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="$EVENT" --jq '.html_url'
+   \`\`\`
+
+   If EVENT is \`COMMENT\` (own PR), keep your recommendation (APPROVE/REQUEST_CHANGES) in the review body text.
 
    Include this header:
    \`\`\`
