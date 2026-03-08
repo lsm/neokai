@@ -18,6 +18,9 @@ let mockTasks: ReturnType<typeof signal<TaskSummary[]>>;
 let mockSessions: ReturnType<typeof signal<{ id: string; title: string; status: string }[]>>;
 let mockRoomId: ReturnType<typeof signal<string | null>>;
 let mockRuntimeState: ReturnType<typeof signal<RuntimeState | null>>;
+let mockRuntimeModels: ReturnType<
+	typeof signal<{ leaderModel: string | null; workerModel: string | null }>
+>;
 const mockPauseRuntime = vi.fn().mockResolvedValue(undefined);
 const mockResumeRuntime = vi.fn().mockResolvedValue(undefined);
 const mockStopRuntime = vi.fn().mockResolvedValue(undefined);
@@ -31,11 +34,13 @@ vi.mock('../../lib/room-store.ts', () => ({
 			sessions: mockSessions,
 			roomId: mockRoomId,
 			runtimeState: mockRuntimeState,
+			runtimeModels: mockRuntimeModels,
 			pauseRuntime: mockPauseRuntime,
 			resumeRuntime: mockResumeRuntime,
 			stopRuntime: mockStopRuntime,
 			startRuntime: mockStartRuntime,
 			approveTask: mockApproveTask,
+			archiveRoom: vi.fn().mockResolvedValue(undefined),
 		};
 	},
 }));
@@ -57,6 +62,10 @@ mockTasks = signal<TaskSummary[]>([]);
 mockSessions = signal([]);
 mockRoomId = signal<string | null>('room-1');
 mockRuntimeState = signal<RuntimeState | null>(null);
+mockRuntimeModels = signal<{ leaderModel: string | null; workerModel: string | null }>({
+	leaderModel: null,
+	workerModel: null,
+});
 
 import { RoomDashboard } from './RoomDashboard';
 
@@ -67,6 +76,7 @@ describe('RoomDashboard', () => {
 		mockSessions.value = [];
 		mockRoomId.value = 'room-1';
 		mockRuntimeState.value = null;
+		mockRuntimeModels.value = { leaderModel: null, workerModel: null };
 		mockPauseRuntime.mockClear();
 		mockResumeRuntime.mockClear();
 		mockStopRuntime.mockClear();
@@ -91,6 +101,15 @@ describe('RoomDashboard', () => {
 		progress: 0,
 		...overrides,
 	});
+
+	const selectReviewTab = async (container: Element) => {
+		const reviewTab = Array.from(container.querySelectorAll('button')).find((b) =>
+			b.textContent?.includes('Review')
+		);
+		if (reviewTab) {
+			await fireEvent.click(reviewTab);
+		}
+	};
 
 	describe('Runtime State Indicator', () => {
 		it('should not show runtime controls when state is null', () => {
@@ -360,9 +379,10 @@ describe('RoomDashboard', () => {
 		it('should show approve confirmation dialog when Approve is clicked on a review task', async () => {
 			mockTasks.value = [createTask('t1', 'review', { title: 'Review this' })];
 
-			render(<RoomDashboard />);
+			const { container } = render(<RoomDashboard />);
+			await selectReviewTab(container);
 
-			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
 				(b) => b.textContent === 'Approve'
 			)!;
 			await fireEvent.click(approveBtn);
@@ -374,9 +394,10 @@ describe('RoomDashboard', () => {
 		it('should not call approveTask until confirmation is accepted', async () => {
 			mockTasks.value = [createTask('t1', 'review')];
 
-			render(<RoomDashboard />);
+			const { container } = render(<RoomDashboard />);
+			await selectReviewTab(container);
 
-			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
 				(b) => b.textContent === 'Approve'
 			)!;
 			await fireEvent.click(approveBtn);
@@ -387,10 +408,11 @@ describe('RoomDashboard', () => {
 		it('should call approveTask with task id when approve confirmation is accepted', async () => {
 			mockTasks.value = [createTask('task-42', 'review')];
 
-			render(<RoomDashboard />);
+			const { container } = render(<RoomDashboard />);
+			await selectReviewTab(container);
 
 			// Click the Approve button on the task
-			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
 				(b) => b.textContent === 'Approve'
 			)!;
 			await fireEvent.click(approveBtn);
@@ -409,9 +431,10 @@ describe('RoomDashboard', () => {
 		it('should close approve confirmation when cancel is clicked', async () => {
 			mockTasks.value = [createTask('t1', 'review')];
 
-			render(<RoomDashboard />);
+			const { container } = render(<RoomDashboard />);
+			await selectReviewTab(container);
 
-			const approveBtn = Array.from(document.body.querySelectorAll('button')).find(
+			const approveBtn = Array.from(container.querySelectorAll('button')).find(
 				(b) => b.textContent === 'Approve'
 			)!;
 			await fireEvent.click(approveBtn);
@@ -466,6 +489,7 @@ describe('RoomDashboard', () => {
 			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
 
 			const { container } = render(<RoomDashboard />);
+			await selectReviewTab(container);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
 				b.textContent?.includes('View')
@@ -481,6 +505,7 @@ describe('RoomDashboard', () => {
 			mockTasks.value = [createTask('task-99', 'review', { title: 'Review Task' })];
 
 			const { container } = render(<RoomDashboard />);
+			await selectReviewTab(container);
 
 			const viewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
 				b.textContent?.includes('View')
