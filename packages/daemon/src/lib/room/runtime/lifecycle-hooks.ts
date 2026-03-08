@@ -527,7 +527,7 @@ export async function runLeaderCompleteGate(
 ): Promise<HookResult> {
 	// Human-approved tasks: skip PR/review checks but verify merge for PR-based tasks.
 	// For planning: verify draft tasks were created.
-	// For coder/general: verify PR was actually merged (worker may have failed the merge).
+	// For coder/general: verify PR was actually merged (leader handles merge after approval).
 	if (ctx.approved) {
 		if (ctx.taskType === 'planning') {
 			return checkLeaderDraftsExist(ctx, opts);

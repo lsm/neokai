@@ -120,6 +120,30 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	);
 	sections.push(`Do NOT respond with only text.`);
 
+	// Post-approval workflow (when human approves after submit_for_review)
+	if (!isPlanReview) {
+		sections.push(`\n## Post-Approval Workflow (CRITICAL)\n`);
+		sections.push(
+			`When the worker output envelope shows \`approved: true\`, the human has approved the PR. You must now complete the task by:`
+		);
+		sections.push(`\n1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:`);
+		sections.push(
+			`   \`\`\`bash\n   gh pr merge <PR_NUMBER> --squash --delete-branch\n   \`\`\`\n`
+		);
+		sections.push(`2. **Sync the root repo** — Pull the merged changes into the root workspace:`);
+		sections.push(
+			`   \`\`\`bash\n   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n   ` +
+				`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n   ` +
+				`git fetch origin && git pull origin $DEFAULT_BRANCH\n   \`\`\`\n`
+		);
+		sections.push(
+			`3. **Call \`complete_task\`** — Mark the task done with a summary of what was accomplished.`
+		);
+		sections.push(
+			`\n**IMPORTANT**: Do NOT send the worker back to do the merge. The leader handles merge and completion after human approval.`
+		);
+	}
+
 	// Handling worker questions
 	sections.push(`\n## Handling Worker Questions\n`);
 	sections.push(
