@@ -255,6 +255,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Install Dev Proxy (Linux)
+        if: runner.os == 'Linux' && matrix.mock_sdk == true
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/install.sh)"
+          # Add devproxy to PATH for subsequent steps
+          echo "$HOME/.devproxy" >> $GITHUB_PATH
+
+      - name: Start Dev Proxy
+        if: matrix.mock_sdk == true
+        run: |
+          cd .devproxy
+          devproxy --port 8000 &
+          DEVPROXY_PID=$!
+          echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
+          # Wait for proxy to be ready
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
+              echo "Dev Proxy is ready"
+              break
+            fi
+            sleep 0.5
+          done
+
       - name: Install dependencies
         run: bun install
 
@@ -262,7 +285,12 @@ jobs:
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
-          NEOKAI_AGENT_SDK_MOCK: ${{ matrix.mock_sdk == true && 'true' || '' }}
+          # Use Dev Proxy for mock_sdk tests instead of in-process mock
+          NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          HTTPS_PROXY: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
+          HTTP_PROXY: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
+          NODE_USE_ENV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          # For Dev Proxy tests, still need a mock API key
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
@@ -272,6 +300,13 @@ jobs:
           DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm')) || '' }}
           # Prefer MiniMax highspeed as the default model when using MiniMax.
           DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.5-highspeed' || '' }}
+
+      - name: Stop Dev Proxy
+        if: always() && matrix.mock_sdk == true
+        run: |
+          if [ -n "$DEVPROXY_PID" ]; then
+            kill $DEVPROXY_PID 2>/dev/null || true
+          fi
 
       - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon

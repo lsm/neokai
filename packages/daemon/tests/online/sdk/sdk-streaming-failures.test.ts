@@ -27,8 +27,8 @@ import {
 // Use temp directory for test workspaces
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-// Detect mock mode for faster timeouts
-const IS_MOCK = !!process.env.NEOKAI_AGENT_SDK_MOCK;
+// Detect mock mode for faster timeouts (either in-process mock or Dev Proxy)
+const IS_MOCK = !!(process.env.NEOKAI_AGENT_SDK_MOCK || process.env.NEOKAI_USE_DEV_PROXY);
 const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
 const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
 const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
