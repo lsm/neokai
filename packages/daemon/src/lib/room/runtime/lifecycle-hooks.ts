@@ -457,7 +457,7 @@ export async function checkPrIsMergeable(
 
 	// Get PR details with mergeable status and CI status
 	const { stdout: prJson, exitCode: ghExit } = await run(
-		['gh', 'pr', 'view', branch, '--json', 'mergeable,mergeableState,statusCheckRollup'],
+		['gh', 'pr', 'view', branch, '--json', 'mergeable,mergeStateStatus,statusCheckRollup'],
 		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
@@ -479,8 +479,8 @@ export async function checkPrIsMergeable(
 			};
 		}
 
-		// Check mergeableState for CONFLICTING status
-		if (pr.mergeableState === 'CONFLICTING') {
+		// Check mergeStateStatus for DIRTY or CONFLICTING (both indicate conflicts)
+		if (pr.mergeStateStatus === 'DIRTY' || pr.mergeStateStatus === 'CONFLICTING') {
 			return {
 				pass: false,
 				reason: 'PR has merge conflicts. Please resolve conflicts before submitting for review.',
