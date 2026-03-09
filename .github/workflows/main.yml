@@ -885,9 +885,6 @@ jobs:
           ANTHROPIC_API_KEY: "sk-devproxy-test-key"
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ""
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_PROVIDER: glm
-          DEFAULT_MODEL: glm-5
           CI: true
 
       - name: Stop Dev Proxy
