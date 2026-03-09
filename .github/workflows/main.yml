@@ -271,7 +271,7 @@ jobs:
       - name: Start Dev Proxy
         if: matrix.mock_sdk == true
         run: |
-          devproxy --port 8000 --config-file .devproxy/devproxyrc.json &
+          devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
           DEVPROXY_PID=$!
           echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
           # Wait for proxy to be ready
@@ -294,8 +294,9 @@ jobs:
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
-          # For Dev Proxy tests, still need a mock API key
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
+          # For Dev Proxy tests, never pass real Anthropic credentials.
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
+          ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}

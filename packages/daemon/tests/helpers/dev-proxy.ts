@@ -44,7 +44,7 @@
  * https://learn.microsoft.com/en-us/microsoft-cloud/dev/dev-proxy/get-started/set-up
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { setTimeout as sleep } from 'timers/promises';
@@ -85,7 +85,7 @@ export interface DevProxyOptions {
 
 	/**
 	 * Log level for Dev Proxy
-	 * Default: 'warning' (reduced output during tests)
+	 * Default: 'information'
 	 */
 	logLevel?: 'debug' | 'information' | 'warning' | 'error' | 'trace';
 }
@@ -195,7 +195,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 		mocksPath: userMocksPath,
 		startTimeout = 10000,
 		setEnvVars = true,
-		logLevel = 'warning',
+		logLevel = 'information',
 	} = options;
 
 	// Resolve paths
@@ -208,6 +208,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 	const configPath = userConfigPath || path.join(devProxyDir, 'devproxyrc.json');
 	const mocksPath = userMocksPath || path.join(devProxyDir, 'mocks.json');
 	const logPath = path.join(devProxyDir, 'devproxy.log');
+	const captureLogsOnStop = process.env.NEOKAI_DEV_PROXY_CAPTURE_LOGS === '1';
 
 	// Ensure .devproxy directory exists (may not exist in git worktrees)
 	if (!fs.existsSync(devProxyDir)) {
@@ -221,20 +222,25 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			defaultConfigPath,
 			JSON.stringify(
 				{
-					$schema:
-						'https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/rc.schema.json',
 					plugins: [
 						{
 							name: 'MockResponsePlugin',
 							enabled: true,
-							pluginPath: 'Microsoft.DevProxy.Plugins.Mocks.MockResponsePlugin',
+							pluginPath: '~appFolder/plugins/DevProxy.Plugins.dll',
 							configSection: 'mockResponsePlugin',
-							urlsToWatch: ['https://api.anthropic.com/*'],
 						},
+					],
+					urlsToWatch: [
+						'http://127.0.0.1:8000/*',
+						'http://localhost:8000/*',
+						'https://api.anthropic.com/*',
 					],
 					mockResponsePlugin: {
 						mocksFile: 'mocks.json',
 					},
+					logLevel: 'information',
+					port,
+					labelMode: 'text',
 				},
 				null,
 				2
@@ -249,12 +255,10 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 			defaultMocksPath,
 			JSON.stringify(
 				{
-					$schema:
-						'https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.1.0/mockresponseplugin.mocksfile.schema.json',
 					mocks: [
 						{
 							request: {
-								url: 'https://api.anthropic.com/v1/messages',
+								url: `http://127.0.0.1:${port}/v1/messages?beta=true`,
 								method: 'POST',
 							},
 							response: {
@@ -302,8 +306,47 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 	}
 
 	// State
-	let process: ChildProcess | null = null;
+	let running = false;
 	let originalEnv: Record<string, string | undefined> = {};
+
+	const runDevProxyCommand = async (
+		args: string[],
+		timeoutMs = 10000
+	): Promise<{ code: number | null; stdout: string; stderr: string }> => {
+		return new Promise((resolve, reject) => {
+			const proc = spawn('devproxy', args, {
+				cwd: devProxyDir,
+				stdio: ['ignore', 'pipe', 'pipe'],
+			});
+
+			let stdout = '';
+			let stderr = '';
+			const timeout = setTimeout(() => {
+				try {
+					proc.kill('SIGTERM');
+				} catch {
+					// Ignore process termination errors
+				}
+				reject(new Error(`devproxy ${args.join(' ')} timed out after ${timeoutMs}ms`));
+			}, timeoutMs);
+
+			proc.stdout?.on('data', (data: Buffer) => {
+				stdout += data.toString();
+			});
+			proc.stderr?.on('data', (data: Buffer) => {
+				stderr += data.toString();
+			});
+
+			proc.on('error', (error) => {
+				clearTimeout(timeout);
+				reject(error);
+			});
+			proc.on('close', (code) => {
+				clearTimeout(timeout);
+				resolve({ code, stdout, stderr });
+			});
+		});
+	};
 
 	// Helper to check if proxy is responding
 	const checkProxyReady = async (): Promise<boolean> => {
@@ -337,7 +380,7 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 	// Store original env var
 	const saveEnvVar = (key: string) => {
 		if (!(key in originalEnv)) {
-			originalEnv[key] = process?.env?.[key] ?? globalThis.process.env[key];
+			originalEnv[key] = globalThis.process.env[key];
 		}
 	};
 
@@ -364,11 +407,11 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 		},
 
 		get pid() {
-			return process?.pid;
+			return undefined;
 		},
 
 		async start() {
-			if (process) {
+			if (running) {
 				throw new Error('Dev Proxy is already running');
 			}
 
@@ -385,105 +428,70 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 				fs.mkdirSync(logDir, { recursive: true });
 			}
 
-			// Start Dev Proxy
-			return new Promise((resolve, reject) => {
-				const timeout = setTimeout(() => {
-					if (process) {
-						process.kill('SIGTERM');
-						process = null;
+			fs.writeFileSync(logPath, '');
+
+			const startResult = await runDevProxyCommand(
+				['--detach', '--no-first-run', '--port', String(port), '--log-level', logLevel, '--record'],
+				startTimeout
+			);
+
+			if (startResult.code !== 0) {
+				throw new Error(
+					`Failed to start Dev Proxy (exit ${startResult.code ?? 'unknown'}): ` +
+						(startResult.stderr || startResult.stdout || 'no output')
+				);
+			}
+
+			const startTime = Date.now();
+			while (Date.now() - startTime < startTimeout) {
+				if (await checkProxyReady()) {
+					running = true;
+					if (setEnvVars) {
+						setProxyEnvVars();
 					}
-					reject(new Error(`Dev Proxy failed to start within ${startTimeout}ms`));
-				}, startTimeout);
+					return;
+				}
+				await sleep(100);
+			}
 
-				// Open log file for writing
-				const logFile = fs.openSync(logPath, 'w');
-
-				// Spawn devproxy process
-				process = spawn('devproxy', ['--port', String(port), '--log-level', logLevel], {
-					cwd: devProxyDir,
-					stdio: ['ignore', logFile, logFile],
-					detached: false,
-				});
-
-				process.on('error', (err) => {
-					clearTimeout(timeout);
-					process = null;
-					reject(new Error(`Failed to start Dev Proxy: ${err.message}`));
-				});
-
-				process.on('exit', (code, signal) => {
-					if (code !== 0 && code !== null) {
-						// Only reject if we haven't already resolved
-						clearTimeout(timeout);
-						if (process) {
-							process = null;
-							reject(new Error(`Dev Proxy exited with code ${code}`));
-						}
-					}
-				});
-
-				// Poll for proxy readiness
-				const checkReady = async () => {
-					try {
-						const ready = await checkProxyReady();
-						if (ready) {
-							clearTimeout(timeout);
-							if (setEnvVars) {
-								setProxyEnvVars();
-							}
-							resolve();
-						} else {
-							setTimeout(checkReady, 100);
-						}
-					} catch {
-						setTimeout(checkReady, 100);
-					}
-				};
-
-				// Give process a moment to start before checking
-				setTimeout(checkReady, 500);
-			});
+			throw new Error(`Dev Proxy failed to become ready within ${startTimeout}ms`);
 		},
 
 		async stop() {
-			if (!process) {
+			if (!running) {
 				return;
 			}
 
-			return new Promise((resolve) => {
-				const proc = process;
-				process = null;
-
-				if (!proc) {
-					resolve();
-					return;
-				}
-
-				// Set up exit handler
-				const exitHandler = () => {
-					resolve();
-				};
-				proc.on('exit', exitHandler);
-
-				// Send SIGTERM for graceful shutdown
-				proc.kill('SIGTERM');
-
-				// Force kill after 5 seconds
-				setTimeout(() => {
-					if (proc.pid) {
-						try {
-							process?.kill('SIGKILL');
-						} catch {
-							// Process already dead
-						}
+			if (captureLogsOnStop) {
+				try {
+					const logs = await runDevProxyCommand(
+						['logs', '--lines', '2000', '--output', 'text'],
+						5000
+					);
+					const output = [logs.stdout.trim(), logs.stderr.trim()].filter(Boolean).join('\n');
+					if (output) {
+						fs.appendFileSync(logPath, `${output}\n`);
 					}
-					resolve();
-				}, 5000);
-			});
+				} catch {
+					// Ignore log collection failures
+				}
+			}
+
+			await runDevProxyCommand(['stop'], 5000);
+
+			const stopStart = Date.now();
+			while (Date.now() - stopStart < 5000) {
+				if (!(await checkProxyReady())) {
+					break;
+				}
+				await sleep(100);
+			}
+
+			running = false;
 		},
 
 		isRunning() {
-			return process !== null && process.pid !== undefined;
+			return running;
 		},
 
 		async waitForReady(timeout = 5000) {

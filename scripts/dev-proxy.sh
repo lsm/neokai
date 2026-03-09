@@ -38,7 +38,7 @@ start_proxy() {
 
 	# Start Dev Proxy in detached mode (requires v2.2.0+)
 	cd "$DEV_PROXY_DIR"
-	nohup devproxy --port "$PORT" > "$LOG_FILE" 2>&1 &
+	nohup devproxy --no-first-run --record --log-level information --port "$PORT" > "$LOG_FILE" 2>&1 &
 	PID=$!
 	echo $PID > "$PID_FILE"
 

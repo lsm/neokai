@@ -8,6 +8,45 @@ Dev Proxy is a Microsoft tool that intercepts HTTP requests and can return mock 
 
 **Sample Reference:** [pnp/proxy-samples - simulate-anthropic](https://github.com/pnp/proxy-samples/tree/main/samples/simulate-anthropic)
 
+## Current Test Behavior (Strict Mode)
+
+For daemon online tests, use:
+
+```bash
+NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+```
+
+When `NEOKAI_USE_DEV_PROXY=1` is enabled in the daemon test helper:
+
+1. Dev Proxy is mandatory for the run; startup failure causes test setup failure.
+2. Real Anthropic credentials are blocked for the test process:
+   - `CLAUDE_CODE_OAUTH_TOKEN=''`
+   - `ANTHROPIC_AUTH_TOKEN=''`
+   - `ANTHROPIC_API_KEY='sk-devproxy-test-key'`
+3. Requests are routed to local Dev Proxy URL (`http://127.0.0.1:8000`).
+4. Dev Proxy is reused across tests in the same process by default (`NEOKAI_DEV_PROXY_REUSE=1`).
+
+This prevents silent fallbacks to real credentialed Anthropic traffic.
+Reuse mode removes per-test Dev Proxy start/stop overhead and is recommended for CI.
+
+Set `NEOKAI_DEV_PROXY_REUSE=0` to force per-test Dev Proxy lifecycle behavior.
+
+To confirm requests were mocked:
+
+```bash
+# Optional: persist logs to .devproxy/devproxy.log when helper stops proxy
+NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+tail -n 120 .devproxy/devproxy.log
+
+# Or read directly from devproxy
+devproxy logs --lines 120 --output text
+```
+
+Expected lines include:
+
+- `req ... POST http://127.0.0.1:8000/v1/messages?beta=true`
+- `mock ... MockResponsePlugin: 200 ...`
+
 ## How the Claude Agent SDK Makes HTTP Requests
 
 Understanding the SDK's HTTP behavior is crucial for proxy integration:

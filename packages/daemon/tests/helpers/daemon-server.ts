@@ -18,8 +18,9 @@
  * because SDK subprocesses properly inherit it.
  */
 
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'path';
+import net from 'net';
 import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { createDaemonApp, type DaemonAppContext } from '../../src/app';
 import { getConfig } from '../../src/config';
@@ -97,6 +98,248 @@ export interface DaemonServerContext {
 	devProxy: DevProxyController | null;
 }
 
+function getDevProxyPort(options?: DevProxyOptions): number {
+	return options?.port ?? 8000;
+}
+
+interface DevProxyLease {
+	controller: DevProxyController | null;
+	release: () => Promise<void>;
+}
+
+let sharedDevProxyController: DevProxyController | null = null;
+let sharedDevProxyPort: number | null = null;
+let sharedDevProxyRefCount = 0;
+let sharedDevProxyExitHookInstalled = false;
+let sharedDevProxyStopTimer: ReturnType<typeof setTimeout> | null = null;
+let sharedDevProxyStopPromise: Promise<void> | null = null;
+
+function shouldReuseDevProxy(): boolean {
+	// Reuse one Dev Proxy instance across tests in the same process by default.
+	// Set NEOKAI_DEV_PROXY_REUSE=0 to force per-test start/stop behavior.
+	return process.env.NEOKAI_DEV_PROXY_REUSE !== '0';
+}
+
+function getSharedDevProxyIdleTtlMs(): number {
+	// Keep proxy warm between test transitions, then auto-stop when idle.
+	const raw = process.env.NEOKAI_DEV_PROXY_IDLE_TTL_MS;
+	if (!raw) {
+		return 2000;
+	}
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2000;
+}
+
+function clearSharedDevProxyStopTimer(): void {
+	if (sharedDevProxyStopTimer) {
+		clearTimeout(sharedDevProxyStopTimer);
+		sharedDevProxyStopTimer = null;
+	}
+}
+
+async function stopSharedDevProxyAsync(): Promise<void> {
+	if (!sharedDevProxyController) {
+		return;
+	}
+	if (sharedDevProxyStopPromise) {
+		await sharedDevProxyStopPromise;
+		return;
+	}
+
+	const controller = sharedDevProxyController;
+	sharedDevProxyStopPromise = (async () => {
+		try {
+			await controller.stop();
+		} catch {
+			// Best-effort cleanup
+		}
+		try {
+			controller.restoreEnv();
+		} catch {
+			// Best-effort env restoration
+		}
+		if (sharedDevProxyController === controller) {
+			sharedDevProxyController = null;
+			sharedDevProxyPort = null;
+			sharedDevProxyRefCount = 0;
+		}
+	})();
+
+	try {
+		await sharedDevProxyStopPromise;
+	} finally {
+		sharedDevProxyStopPromise = null;
+	}
+}
+
+function scheduleSharedDevProxyStopIfIdle(): void {
+	clearSharedDevProxyStopTimer();
+	sharedDevProxyStopTimer = setTimeout(() => {
+		sharedDevProxyStopTimer = null;
+		if (sharedDevProxyRefCount === 0) {
+			void stopSharedDevProxyAsync();
+		}
+	}, getSharedDevProxyIdleTtlMs());
+	// Don't keep test process alive solely for deferred proxy shutdown.
+	sharedDevProxyStopTimer.unref?.();
+}
+
+function installSharedDevProxyExitHook(): void {
+	if (sharedDevProxyExitHookInstalled) {
+		return;
+	}
+	sharedDevProxyExitHookInstalled = true;
+
+	process.once('exit', () => {
+		clearSharedDevProxyStopTimer();
+		if (!sharedDevProxyController) {
+			return;
+		}
+		try {
+			// Detached Dev Proxy should be stopped explicitly to avoid local process leaks.
+			spawnSync('devproxy', ['stop'], { stdio: 'ignore' });
+		} catch {
+			// Best-effort cleanup
+		}
+		try {
+			sharedDevProxyController.restoreEnv();
+		} catch {
+			// Best-effort env restoration
+		}
+		sharedDevProxyController = null;
+		sharedDevProxyPort = null;
+		sharedDevProxyRefCount = 0;
+		sharedDevProxyStopPromise = null;
+	});
+}
+
+async function isTcpPortOpen(port: number, host = '127.0.0.1', timeoutMs = 1000): Promise<boolean> {
+	return new Promise((resolve) => {
+		const socket = net.createConnection({ port, host });
+		const done = (result: boolean) => {
+			socket.removeAllListeners();
+			socket.destroy();
+			resolve(result);
+		};
+
+		socket.setTimeout(timeoutMs);
+		socket.once('connect', () => done(true));
+		socket.once('timeout', () => done(false));
+		socket.once('error', () => done(false));
+	});
+}
+
+async function waitForTcpPortOpen(
+	port: number,
+	host = '127.0.0.1',
+	timeoutMs = 4000
+): Promise<boolean> {
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		if (await isTcpPortOpen(port, host, 500)) {
+			return true;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	return false;
+}
+
+async function acquireDevProxyLease(
+	shouldUseDevProxy: boolean,
+	devProxyOptions?: DevProxyOptions
+): Promise<DevProxyLease> {
+	if (!shouldUseDevProxy) {
+		return {
+			controller: null,
+			release: async () => {},
+		};
+	}
+
+	const devProxyPort = getDevProxyPort(devProxyOptions);
+	const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
+	const reuse = shouldReuseDevProxy();
+
+	if (reuse && sharedDevProxyStopPromise) {
+		await sharedDevProxyStopPromise;
+	}
+	if (reuse) {
+		clearSharedDevProxyStopTimer();
+	}
+
+	if (reuse && sharedDevProxyController) {
+		if (sharedDevProxyPort !== null && sharedDevProxyPort !== devProxyPort) {
+			throw new Error(
+				`Dev Proxy reuse conflict: existing shared port ${sharedDevProxyPort}, requested ${devProxyPort}`
+			);
+		}
+		sharedDevProxyRefCount++;
+		return {
+			controller: sharedDevProxyController,
+			release: async () => {
+				sharedDevProxyRefCount = Math.max(0, sharedDevProxyRefCount - 1);
+				if (sharedDevProxyRefCount === 0) {
+					scheduleSharedDevProxyStopIfIdle();
+				}
+			},
+		};
+	}
+
+	let devProxy: DevProxyController | null = createDevProxyController({
+		// Daemon helper explicitly sets env vars for both in-process and spawned modes.
+		// Keep proxy lifecycle independent from parent-process env mutation.
+		setEnvVars: false,
+		...devProxyOptions,
+	});
+	let startedByHelper = false;
+
+	try {
+		await devProxy.start();
+		startedByHelper = true;
+	} catch (error) {
+		devProxy = null;
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		// If another worker/process just started Dev Proxy, give it extra time to bind.
+		const readyTimeout = errorMessage.includes('already running') ? 12000 : 3000;
+		const proxyAlreadyRunning = await waitForTcpPortOpen(devProxyPort, '127.0.0.1', readyTimeout);
+		if (!proxyAlreadyRunning) {
+			throw new Error(
+				`Dev Proxy is required for this test run but is unavailable on ${devProxyBaseUrl}. ` +
+					`Startup error: ${errorMessage}`
+			);
+		}
+		console.warn(
+			`Warning: Could not start Dev Proxy controller, using existing proxy at ${devProxyBaseUrl}. ` +
+				`Error: ${errorMessage}`
+		);
+	}
+
+	if (reuse && startedByHelper && devProxy) {
+		sharedDevProxyController = devProxy;
+		sharedDevProxyPort = devProxyPort;
+		sharedDevProxyRefCount = 1;
+		installSharedDevProxyExitHook();
+		return {
+			controller: devProxy,
+			release: async () => {
+				sharedDevProxyRefCount = Math.max(0, sharedDevProxyRefCount - 1);
+				if (sharedDevProxyRefCount === 0) {
+					scheduleSharedDevProxyStopIfIdle();
+				}
+			},
+		};
+	}
+
+	return {
+		controller: devProxy,
+		release: async () => {
+			if (devProxy && startedByHelper) {
+				await devProxy.stop();
+				devProxy.restoreEnv();
+			}
+		},
+	};
+}
+
 /**
  * Spawn a daemon server as a child process
  *
@@ -113,27 +356,11 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 
 	// Start Dev Proxy if requested
 	// Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
-	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
-
-	if (shouldUseDevProxy) {
-		devProxy = createDevProxyController({
-			setEnvVars: true, // Sets ANTHROPIC_BASE_URL to proxy URL
-			...devProxyOptions,
-		});
-		try {
-			await devProxy.start();
-			// Proxy env vars are set by DevProxyController when setEnvVars: true
-		} catch (error) {
-			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
-			// Tests will use real API calls if credentials are available
-			console.warn(
-				'Warning: Could not start Dev Proxy, continuing without mocking. Error: ' +
-					(error instanceof Error ? error.message : String(error))
-			);
-			devProxy = null;
-		}
-	}
+	const devProxyPort = getDevProxyPort(devProxyOptions);
+	const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
+	const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
+	const devProxy = devProxyLease.controller;
 
 	// Create a standalone daemon server entry point
 	const serverPath = path.join(__dirname, 'standalone-server.ts');
@@ -141,14 +368,15 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	// Build environment for daemon process
 	const daemonEnv: Record<string, string> = {
 		...process.env,
+		...customEnv,
 		NEOKAI_USE_DEV_PROXY: shouldUseDevProxy ? '1' : process.env.NEOKAI_USE_DEV_PROXY,
-		ANTHROPIC_BASE_URL: shouldUseDevProxy
-			? 'http://127.0.0.1:8000'
-			: process.env.ANTHROPIC_BASE_URL,
+		ANTHROPIC_BASE_URL: shouldUseDevProxy ? devProxyBaseUrl : process.env.ANTHROPIC_BASE_URL,
+		ANTHROPIC_API_KEY: shouldUseDevProxy ? 'sk-devproxy-test-key' : process.env.ANTHROPIC_API_KEY,
+		ANTHROPIC_AUTH_TOKEN: shouldUseDevProxy ? '' : process.env.ANTHROPIC_AUTH_TOKEN,
+		CLAUDE_CODE_OAUTH_TOKEN: shouldUseDevProxy ? '' : process.env.CLAUDE_CODE_OAUTH_TOKEN,
 		PORT: userPort.toString(),
 		NODE_ENV: 'test',
 		NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
-		...customEnv,
 	};
 
 	// Note: Proxy env vars are inherited from parent process via ...process.env
@@ -247,9 +475,7 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 				daemonProcess.once('exit', () => resolve());
 			});
 			// Stop Dev Proxy (no need to restore env in spawned mode)
-			if (devProxy) {
-				await devProxy.stop();
-			}
+			await devProxyLease.release();
 		},
 		trackSession: (sessionId: string) => {
 			trackedSessions.push(sessionId);
@@ -281,31 +507,25 @@ async function createInProcessDaemonServer(
 
 	// Start Dev Proxy if requested
 	// Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
-	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
-
-	if (shouldUseDevProxy) {
-		devProxy = createDevProxyController({
-			setEnvVars: true, // Sets ANTHROPIC_BASE_URL to proxy URL
-			...devProxyOptions,
-		});
-		try {
-			await devProxy.start();
-			// Proxy env vars are set by DevProxyController when setEnvVars: true
-		} catch (error) {
-			// If Dev Proxy can't start (not installed, etc.), skip it and continue without mocking
-			// Tests will use real API calls if credentials are available
-			console.warn(
-				'Warning: Could not start Dev Proxy, continuing without mocking. Error: ' +
-					(error instanceof Error ? error.message : String(error))
-			);
-			devProxy = null;
-		}
-	}
+	const devProxyPort = getDevProxyPort(devProxyOptions);
+	const devProxyBaseUrl = `http://127.0.0.1:${devProxyPort}`;
+	const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
+	const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+	const originalAnthropicAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
+	const originalClaudeCodeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	const devProxyLease = await acquireDevProxyLease(shouldUseDevProxy, devProxyOptions);
+	const devProxy = devProxyLease.controller;
 
 	// Apply custom env vars
 	for (const [key, value] of Object.entries(customEnv)) {
 		process.env[key] = value;
+	}
+	if (shouldUseDevProxy) {
+		process.env.ANTHROPIC_BASE_URL = devProxyBaseUrl;
+		process.env.ANTHROPIC_API_KEY = 'sk-devproxy-test-key';
+		process.env.ANTHROPIC_AUTH_TOKEN = '';
+		process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
 	}
 
 	// Online tests do real provider calls and often need longer startup windows in CI.
@@ -411,9 +631,28 @@ async function createInProcessDaemonServer(
 			}
 
 			// Stop Dev Proxy and restore environment variables if Dev Proxy was started
-			if (devProxy) {
-				await devProxy.stop();
-				devProxy.restoreEnv();
+			await devProxyLease.release();
+			if (shouldUseDevProxy) {
+				if (originalAnthropicBaseUrl === undefined) {
+					delete process.env.ANTHROPIC_BASE_URL;
+				} else {
+					process.env.ANTHROPIC_BASE_URL = originalAnthropicBaseUrl;
+				}
+				if (originalAnthropicApiKey === undefined) {
+					delete process.env.ANTHROPIC_API_KEY;
+				} else {
+					process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+				}
+				if (originalAnthropicAuthToken === undefined) {
+					delete process.env.ANTHROPIC_AUTH_TOKEN;
+				} else {
+					process.env.ANTHROPIC_AUTH_TOKEN = originalAnthropicAuthToken;
+				}
+				if (originalClaudeCodeOauthToken === undefined) {
+					delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+				} else {
+					process.env.CLAUDE_CODE_OAUTH_TOKEN = originalClaudeCodeOauthToken;
+				}
 			}
 		},
 		trackSession: (sessionId: string) => {
