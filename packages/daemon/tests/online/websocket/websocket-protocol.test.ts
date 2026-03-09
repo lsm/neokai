@@ -72,45 +72,49 @@ describe('WebSocket Protocol', () => {
 			ws.close();
 		});
 
-		test('should handle multiple concurrent connections', async () => {
-			const ws1 = createWebSocket(daemon.baseUrl);
-			const ws2 = createWebSocket(daemon.baseUrl);
-			const ws3 = createWebSocket(daemon.baseUrl);
+		test(
+			'should handle multiple concurrent connections',
+			async () => {
+				const ws1 = createWebSocket(daemon.baseUrl);
+				const ws2 = createWebSocket(daemon.baseUrl);
+				const ws3 = createWebSocket(daemon.baseUrl);
 
-			await Promise.all([
-				waitForWebSocketState(ws1, WebSocket.OPEN),
-				waitForWebSocketState(ws2, WebSocket.OPEN),
-				waitForWebSocketState(ws3, WebSocket.OPEN),
-			]);
+				await Promise.all([
+					waitForWebSocketState(ws1, WebSocket.OPEN),
+					waitForWebSocketState(ws2, WebSocket.OPEN),
+					waitForWebSocketState(ws3, WebSocket.OPEN),
+				]);
 
-			expect(ws1.readyState).toBe(WebSocket.OPEN);
-			expect(ws2.readyState).toBe(WebSocket.OPEN);
-			expect(ws3.readyState).toBe(WebSocket.OPEN);
+				expect(ws1.readyState).toBe(WebSocket.OPEN);
+				expect(ws2.readyState).toBe(WebSocket.OPEN);
+				expect(ws3.readyState).toBe(WebSocket.OPEN);
 
-			// All connections should be able to make RPC calls
-			await Bun.sleep(100); // Let connection.established events drain
+				// All connections should be able to make RPC calls
+				await Bun.sleep(100); // Let connection.established events drain
 
-			sendRPCCall(ws1, 'session.list');
-			sendRPCCall(ws2, 'session.list');
-			sendRPCCall(ws3, 'session.list');
+				sendRPCCall(ws1, 'session.list');
+				sendRPCCall(ws2, 'session.list');
+				sendRPCCall(ws3, 'session.list');
 
-			const getResult = async (ws: WebSocket) => {
-				while (true) {
-					const msg = await waitForWebSocketMessage(ws, 10000);
-					if (msg.type === 'RSP') return msg;
-				}
-			};
+				const getResult = async (ws: WebSocket) => {
+					while (true) {
+						const msg = await waitForWebSocketMessage(ws, 10000);
+						if (msg.type === 'RSP') return msg;
+					}
+				};
 
-			const [r1, r2, r3] = await Promise.all([getResult(ws1), getResult(ws2), getResult(ws3)]);
+				const [r1, r2, r3] = await Promise.all([getResult(ws1), getResult(ws2), getResult(ws3)]);
 
-			expect(r1.type).toBe('RSP');
-			expect(r2.type).toBe('RSP');
-			expect(r3.type).toBe('RSP');
+				expect(r1.type).toBe('RSP');
+				expect(r2.type).toBe('RSP');
+				expect(r3.type).toBe('RSP');
 
-			ws1.close();
-			ws2.close();
-			ws3.close();
-		}, TEST_TIMEOUT);
+				ws1.close();
+				ws2.close();
+				ws3.close();
+			},
+			TEST_TIMEOUT
+		);
 
 		test('should handle client disconnection without affecting other clients', async () => {
 			const ws1 = createWebSocket(daemon.baseUrl);
