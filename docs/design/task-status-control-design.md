@@ -20,8 +20,8 @@ stateDiagram-v2
     in_progress --> cancelled: Human cancels
 
     review --> completed: Human approves
-    review --> failed: Human rejects (fatal)
-    review --> in_progress: Human rejects (retry)
+    review --> failed: Human marks failed (manual terminal)
+    review --> in_progress: Human rejects (task.reject)
 
     failed --> pending: Restart (human retry)
     failed --> in_progress: Restart (human retry)
@@ -46,6 +46,18 @@ stateDiagram-v2
 | `failed` | `pending`, `in_progress` | Restart: human can retry failed task |
 | `cancelled` | `pending`, `in_progress` | Restart: human can retry cancelled task |
 
+## Session Group State (Current)
+
+`session_groups.state` is retained for compatibility and uses:
+
+- `awaiting_worker`
+- `awaiting_leader`
+- `awaiting_human`
+- `completed`
+- `failed`
+
+`hibernated` is not part of the current model.
+
 ## Transition Behavior
 
 ### Validated via `setTaskStatus()`
@@ -68,11 +80,26 @@ All status transitions are validated against `VALID_STATUS_TRANSITIONS` before a
 When a task has an active session group (agents currently running) and transitions to a terminal state (`completed`, `failed`, `cancelled`), the system:
 
 1. Looks up the active group for the task
-2. Calls `taskGroupManager.cancel()` to stop running agents
-3. If cancellation fails (returns `null` due to version conflict or missing group), throws an error
-4. Only then applies the status change to the task
+2. For `cancelled`, calls `runtime.cancelTask(taskId)` (task cancel + group/session cleanup)
+3. For `completed` or `failed`, calls `runtime.terminateTaskGroup(taskId)` (group/session cleanup only)
+4. If runtime cleanup fails, throws an error
+5. Only then applies (or returns) the final task status
 
-This ensures agents are properly stopped before marking a task as complete/failed/cancelled.
+For `task.cancel`, if runtime exists, the handler delegates directly to `runtime.cancelTask(taskId)`.
+
+```mermaid
+flowchart LR
+    A["task.cancel"] --> B["runtime.cancelTask(taskId)"]
+    C["task.setStatus(cancelled)"] --> B
+    D["task.setStatus(completed|failed)"] --> E["runtime.terminateTaskGroup(taskId)"]
+    E --> F["persist requested terminal status"]
+```
+
+### Human Review RPCs
+
+- **`task.approve`**: requires `review` status and resumes runtime with `approved=true`.
+- **`task.reject`**: requires `review` status and resumes runtime with `approved=false` plus feedback.
+- **`task.sendHumanMessage`**: direct human messaging to `worker` (default) or `leader` without state gating.
 
 ## API
 
@@ -118,6 +145,33 @@ This ensures agents are properly stopped before marking a task as complete/faile
 
 // Response
 { task: NeoTask }
+```
+
+**`task.approve`** - Human approval while task is in `review`
+
+```typescript
+// Request
+{
+  roomId: string;
+  taskId: string;
+}
+
+// Response
+{ success: boolean }
+```
+
+**`task.reject`** - Human rejection while task is in `review`
+
+```typescript
+// Request
+{
+  roomId: string;
+  taskId: string;
+  feedback: string;
+}
+
+// Response
+{ success: boolean }
 ```
 
 ### Events

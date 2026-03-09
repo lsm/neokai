@@ -109,7 +109,7 @@ describe('Room Agent Tools', () => {
 			hibernatedAt: null,
 			tokensUsed: 0,
 			workerRole: 'coder',
-			submittedForReview: false,
+			submittedForReview: state === 'awaiting_human',
 			approved: false,
 		});
 		db.run(
@@ -779,10 +779,11 @@ describe('Room Agent Tools', () => {
 		it('should route message to worker when group is in awaiting_human state', async () => {
 			let capturedArgs: unknown[] = [];
 			const mockRuntime = {
-				resumeWorkerFromHuman: async (...args: unknown[]) => {
+				injectMessageToWorker: async (...args: unknown[]) => {
 					capturedArgs = args;
 					return true;
 				},
+				resumeWorkerFromHuman: async () => true,
 				injectMessageToLeader: async () => true,
 			};
 			const h = createRoomAgentToolHandlers({
@@ -800,16 +801,16 @@ describe('Room Agent Tools', () => {
 				await h.send_message_to_task({ task_id: taskId, message: 'Looks good, proceed' })
 			);
 			expect(result.success).toBe(true);
-			// routeHumanMessageToGroup calls resumeWorkerFromHuman for awaiting_human state
 			expect(capturedArgs[0]).toBe(taskId);
 			expect(capturedArgs[1]).toBe('Looks good, proceed');
 		});
 
-		it('should route message to leader when group is in awaiting_leader state', async () => {
+		it('should route message to worker by default even when group is in awaiting_leader state', async () => {
 			let capturedArgs: unknown[] = [];
 			const mockRuntime = {
 				resumeWorkerFromHuman: async () => true,
-				injectMessageToLeader: async (...args: unknown[]) => {
+				injectMessageToLeader: async () => true,
+				injectMessageToWorker: async (...args: unknown[]) => {
 					capturedArgs = args;
 					return true;
 				},
@@ -906,7 +907,7 @@ describe('Room Agent Tools', () => {
 		it('should report awaitingHumanReview as false for non-awaiting_human groups', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
-			insertGroup(taskId, false /* submittedForReview */);
+			insertGroup(taskId, 'awaiting_worker');
 
 			const result = parseResult(await handlers.get_task_detail({ task_id: taskId }));
 			const group = result.group as { completedAt: number | null; awaitingHumanReview: boolean };

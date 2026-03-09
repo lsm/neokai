@@ -1,5 +1,13 @@
 # Room Runtime Implementation Plan
 
+> Historical note (outdated state model):
+> This implementation plan references older orchestration states (`awaiting_craft`, `awaiting_lead`, `hibernated`) and `escalated` task status, which are not current.
+> For current behavior, use:
+> - `docs/design/pr-review-workflow.md`
+> - `docs/design/task-status-control-design.md`
+> - `docs/design/room-runtime-spec.md`
+> Current compatibility `session_groups.state` values are: `awaiting_worker | awaiting_leader | awaiting_human | completed | failed` (`hibernated` removed).
+
 Status: Draft
 Date: 2026-02-24
 Related: [Room Runtime Spec v0.21](./room-runtime-spec.md)

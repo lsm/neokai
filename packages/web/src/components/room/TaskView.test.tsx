@@ -2,7 +2,7 @@
  * Tests for TaskView Component
  *
  * Tests the "Awaiting your review" pulsing badge in the header
- * when group.state === 'awaiting_human', and its absence otherwise.
+ * when group.submittedForReview is true, and its absence otherwise.
  *
  * Also covers the shared autoscroll/ScrollToBottomButton integration and
  * InputTextarea usage in HumanInputArea.
@@ -153,6 +153,8 @@ function makeGroup(state: string, feedbackIteration = 0) {
 		workerRole: 'worker',
 		state,
 		feedbackIteration,
+		submittedForReview: state === 'awaiting_human',
+		approved: false,
 		createdAt: Date.now(),
 		completedAt: null,
 	};
@@ -230,7 +232,7 @@ describe('TaskView — awaiting_human badge', () => {
 		expect(container.textContent).not.toContain('Awaiting your review');
 	});
 
-	it('shows group state label in header', async () => {
+	it('does not show review bar when group is not submitted for review', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
@@ -240,8 +242,9 @@ describe('TaskView — awaiting_human badge', () => {
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
 		await waitFor(() => {
-			expect(container.textContent).toContain('Leader reviewing');
+			expect(container.textContent).not.toContain('Loading task');
 		});
+		expect(container.querySelector('.bg-amber-900\\/20')).toBeNull();
 	});
 });
 
@@ -401,11 +404,11 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		});
 	});
 
-	it('approves task via goal.approveTask in awaiting_human state', async () => {
+	it('approves task via task.approve in awaiting_human state', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
-			if (method === 'goal.approveTask') return {};
+			if (method === 'task.approve') return {};
 			return {};
 		});
 
@@ -425,7 +428,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		fireEvent.click(approveBtn);
 
 		await waitFor(() => {
-			expect(mockRequest).toHaveBeenCalledWith('goal.approveTask', {
+			expect(mockRequest).toHaveBeenCalledWith('task.approve', {
 				roomId: 'room-1',
 				taskId: 'task-1',
 			});
@@ -470,6 +473,9 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Please focus on auth first' } });
 
+		// Explicitly target leader in the dropdown.
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-leader'));
 		fireEvent.click(getByTestId('input-textarea-send'));
 
 		await waitFor(() => {

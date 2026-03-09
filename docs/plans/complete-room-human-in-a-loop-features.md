@@ -1,5 +1,13 @@
 # Plan: Complete Room Human-in-a-Loop Features
 
+> Historical plan note:
+> This plan captures an earlier design iteration and includes stale routing/group-state assumptions.
+> For current implementation behavior, use:
+> - `docs/design/pr-review-workflow.md`
+> - `docs/design/task-status-control-design.md`
+> - `docs/design/room-runtime-spec.md`
+> Current compatibility `session_groups.state` values are: `awaiting_worker | awaiting_leader | awaiting_human | completed | failed` (`hibernated` removed).
+
 ## Goal
 
 Allow humans to interact with room agents during autonomous task execution via two channels:
@@ -9,7 +17,7 @@ Allow humans to interact with room agents during autonomous task execution via t
 ## Current State
 
 - `awaiting_human` group state and `resumeWorkerFromHuman()` exist in `RoomRuntime`
-- `goal.approveTask` RPC exists but only handles approval (not rejection with feedback)
+- `task.approve` RPC exists but only handles approval (not rejection with feedback)
 - Room chat session (`room:chat:${roomId}`) exists with basic room-agent MCP tools (create_goal, list_goals, update_goal, create_task, list_tasks, update_task, cancel_task, get_room_status)
 - `TaskView` calls `request('task.get', ...)` but **no `task.get` RPC handler exists** — it must be added as a prerequisite
 - `TaskView` and `TaskConversationRenderer` display group conversation but have no human input
@@ -94,7 +102,7 @@ Add a message composition area at the bottom of `packages/web/src/components/roo
 
 **When `awaiting_human`:**
 - Prominent "Awaiting your review" banner
-- "Approve" button (calls existing `goal.approveTask` RPC) with green styling
+- "Approve" button (calls existing `task.approve` RPC) with green styling
 - Text input + "Send Feedback" button (calls `task.sendHumanMessage` RPC) that resumes worker with rejection feedback
 
 **When `awaiting_leader`:**
@@ -111,7 +119,7 @@ Human messages must render in `TaskConversationRenderer.tsx` with the existing `
 
 **Acceptance criteria:**
 - TaskView shows Approve + feedback input when `awaiting_human`
-- Approve button calls `goal.approveTask` successfully
+- Approve button calls `task.approve` successfully
 - Feedback input calls `task.sendHumanMessage` and the message appears in the conversation timeline
 - TaskView shows a generic "Send to Leader" input for `awaiting_leader` state
 - Input is disabled (with tooltip) for `awaiting_worker` state
@@ -206,7 +214,7 @@ In `packages/web/src/lib/room-store.ts`, when a `room.task.update` event arrives
 **2. Task list review actions in RoomDashboard**
 
 In `packages/web/src/components/room/RoomTasks.tsx`, for tasks in `review` status, show both:
-- "Approve" button (existing) — calls `goal.approveTask`
+- "Approve" button (existing) — calls `task.approve`
 - "View" button — navigates to TaskView so the human can read the conversation before deciding
 
 **3. Review count badge on room list**

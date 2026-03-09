@@ -15,12 +15,20 @@
  */
 
 import { describe, expect, it, beforeEach, mock, afterEach } from 'bun:test';
-import { MessageHub, type RoomGoal, type GoalStatus, type GoalPriority } from '@neokai/shared';
+import {
+	MessageHub,
+	type RoomGoal,
+	type GoalStatus,
+	type GoalPriority,
+	type NeoTask,
+} from '@neokai/shared';
 import {
 	setupGoalHandlers,
 	type GoalManagerLike,
+	type TaskManagerFactory,
 } from '../../../src/lib/rpc-handlers/goal-handlers';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
+import type { RoomRuntimeService } from '../../../src/lib/room/runtime/room-runtime-service';
 
 // Type for captured request handlers
 type RequestHandler = (data: unknown, context: unknown) => Promise<unknown>;
@@ -701,6 +709,122 @@ describe('Goal RPC Handlers', () => {
 			};
 
 			expect(result.success).toBe(false);
+		});
+	});
+
+	describe('task approval handlers', () => {
+		function setupApprovalHandlers(task: NeoTask | null, resumeResult = true) {
+			const taskManager = {
+				getTask: mock(async () => task),
+				reviewTask: mock(async () => task),
+				updateTaskStatus: mock(async () => task),
+			};
+			const taskManagerFactory: TaskManagerFactory = mock(() => taskManager);
+
+			const runtime = {
+				resumeWorkerFromHuman: mock(async () => resumeResult),
+			};
+			const runtimeService = {
+				getRuntime: mock(() => runtime),
+			} as unknown as RoomRuntimeService;
+
+			setupGoalHandlers(
+				messageHubData.hub,
+				daemonHubData.daemonHub,
+				createMockGoalManager,
+				taskManagerFactory,
+				runtimeService
+			);
+
+			return { taskManager, runtime, runtimeService };
+		}
+
+		it('registers task.approve handler', async () => {
+			setupApprovalHandlers(null, true);
+			expect(messageHubData.handlers.get('task.approve')).toBeDefined();
+		});
+
+		it('approves coding task via task.approve and resumes runtime', async () => {
+			const task = {
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Task',
+				description: '',
+				status: 'review',
+				priority: 'normal',
+				taskType: 'coding',
+				progress: 0,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as NeoTask;
+			const { runtime } = setupApprovalHandlers(task, true);
+			const handler = messageHubData.handlers.get('task.approve');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+				success: boolean;
+			};
+
+			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
+				'task-123',
+				expect.stringContaining('Human has approved the PR'),
+				{ approved: true }
+			);
+			expect(result.success).toBe(true);
+		});
+
+		it('approves planning task via task.approve and resumes runtime', async () => {
+			const task = {
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Task',
+				description: '',
+				status: 'review',
+				priority: 'normal',
+				taskType: 'planning',
+				progress: 0,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as NeoTask;
+			const { runtime } = setupApprovalHandlers(task, true);
+			const handler = messageHubData.handlers.get('task.approve');
+			expect(handler).toBeDefined();
+
+			const result = (await handler!({ roomId: 'room-123', taskId: 'task-123' }, {})) as {
+				success: boolean;
+			};
+
+			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
+				'task-123',
+				expect.stringContaining('create tasks 1:1 from the approved plan'),
+				{ approved: true }
+			);
+			expect(result.success).toBe(true);
+		});
+
+		it('throws when task.approve resume fails', async () => {
+			const task = {
+				id: 'task-123',
+				roomId: 'room-123',
+				title: 'Task',
+				description: '',
+				status: 'review',
+				priority: 'normal',
+				taskType: 'coding',
+				progress: 0,
+				dependsOn: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as NeoTask;
+			setupApprovalHandlers(task, false);
+			const handler = messageHubData.handlers.get('task.approve');
+			expect(handler).toBeDefined();
+
+			await expect(handler!({ roomId: 'room-123', taskId: 'task-123' }, {})).rejects.toThrow(
+				'Failed to resume task task-123'
+			);
 		});
 	});
 });

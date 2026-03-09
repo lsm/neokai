@@ -8,7 +8,7 @@
  *          sub-agents to review the plan PR. After reviews pass, leader
  *          calls submit_for_review → task goes to 'review' / awaiting_human.
  *
- * Human approval: goal.approveTask routes planning tasks to WORKER (not leader).
+ * Human approval: task.approve resumes the planner flow through leader routing.
  *                 Sets approved=true, injects approval into existing worker session (phase 2).
  *
  * Phase 2: Planner merges plan PR, reads PLAN.md, creates tasks 1:1 from
@@ -223,7 +223,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 
 				// --- Stage 6: Human approves → triggers phase 2 planner ---
 				console.log('Approving planning task (human approval)...');
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: planningTask.id,
 				});

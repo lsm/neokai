@@ -820,22 +820,45 @@ export class RoomRuntime {
 		// Determine if this is an approval
 		const isApproval =
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
+		const previousStatus = task.status;
+		const previousApproved = group.approved;
 
-		if (isApproval) {
+		if (isApproval && !previousApproved) {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
 		// Move task back to in_progress
-		await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
+		try {
+			await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
+		} catch (error) {
+			if (isApproval && !previousApproved) {
+				this.groupRepo.setApproved(group.id, previousApproved);
+			}
+			log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
+			return false;
+		}
 
 		// Route ALL messages (approval and rejection) to leader
 		// Leader handles: approval → merge + complete_task
 		// Leader handles: rejection → send_to_worker + handoff_to_worker
 		try {
 			const updated = await this.taskGroupManager.resumeLeaderFromHuman(group.id, message);
-			if (!updated) return false;
+			if (!updated) {
+				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
+				if (isApproval && !previousApproved) {
+					this.groupRepo.setApproved(group.id, previousApproved);
+				}
+				return false;
+			}
 		} catch (error) {
-			await this.taskManager.reviewTask(group.taskId);
+			try {
+				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
+			} catch (rollbackError) {
+				log.warn(`Failed to rollback task ${taskId} status after resume error:`, rollbackError);
+			}
+			if (isApproval && !previousApproved) {
+				this.groupRepo.setApproved(group.id, previousApproved);
+			}
 			log.error(`Failed to resume from human for task ${taskId}:`, error);
 			return false;
 		}
@@ -843,6 +866,31 @@ export class RoomRuntime {
 		await this.emitTaskUpdateById(group.taskId);
 		await this.emitGoalProgressForTask(group.taskId);
 		this.scheduleTick();
+		return true;
+	}
+
+	/**
+	 * Terminate the task's active group (if any) without changing task status.
+	 *
+	 * Used by task.setStatus paths that move tasks to terminal states other than
+	 * cancelled. This ensures agent sessions and mirroring are cleaned up while
+	 * preserving the caller's chosen task status transition.
+	 */
+	async terminateTaskGroup(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group) return true;
+
+		const isActiveGroup = group.completedAt === null;
+		if (isActiveGroup) {
+			const terminated = await this.taskGroupManager.terminateGroup(group.id);
+			if (!terminated) return false;
+		}
+
+		await this.terminateGroupSessions(group);
+		this.cleanupMirroring(
+			group.id,
+			isActiveGroup ? 'Task group terminated by user status change.' : undefined
+		);
 		return true;
 	}
 
@@ -876,7 +924,11 @@ export class RoomRuntime {
 		const isActiveGroup = !!group && group.completedAt === null;
 		if (group) {
 			if (isActiveGroup) {
-				await this.taskGroupManager.terminateGroup(group.id);
+				const terminated = await this.taskGroupManager.terminateGroup(group.id);
+				if (!terminated) {
+					log.warn(`Failed to terminate active group ${group.id} during cancelTask(${taskId})`);
+					return { success: false, cancelledTaskIds: [...cancelledTaskIds] };
+				}
 			}
 			await this.terminateGroupSessions(group);
 			this.cleanupMirroring(group.id, isActiveGroup ? 'Task cancelled by user.' : undefined);

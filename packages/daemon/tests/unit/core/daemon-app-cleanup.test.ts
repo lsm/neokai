@@ -8,7 +8,7 @@
  * OFFLINE TESTS - No API calls required
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { createDaemonApp } from '../../../src/app';
 import type { Config } from '../../../src/config';
 
@@ -20,6 +20,7 @@ describe('Daemon App Cleanup', () => {
 	let originalClaudeCodeOAuthToken: string | undefined;
 	let originalAnthropicAuthToken: string | undefined;
 	let originalGlmApiKey: string | undefined;
+	let bunServeSpy: ReturnType<typeof spyOn> | null = null;
 	const logs: string[] = [];
 
 	beforeEach(() => {
@@ -39,6 +40,14 @@ describe('Daemon App Cleanup', () => {
 		originalConsoleError = console.error;
 		console.log = (...args) => logs.push(args.join(' '));
 		console.error = (...args) => logs.push(args.join(' '));
+
+		// Avoid real socket binding in unit tests.
+		bunServeSpy = spyOn(Bun, 'serve').mockImplementation(
+			(_opts: Parameters<typeof Bun.serve>[0]) =>
+				({
+					stop() {},
+				}) as never
+		);
 
 		// Use in-memory database for tests
 		const tmpDir = process.env.TMPDIR || '/tmp';
@@ -82,6 +91,10 @@ describe('Daemon App Cleanup', () => {
 		// Restore console
 		console.log = originalConsoleLog;
 		console.error = originalConsoleError;
+		if (bunServeSpy) {
+			bunServeSpy.mockRestore();
+			bunServeSpy = null;
+		}
 		logs.length = 0;
 	});
 
