@@ -7,9 +7,20 @@
  * - RPC call/response correlation
  * - Error handling (invalid JSON, non-existent method, session validation)
  * - Large message handling
+ *
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
+ *
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/websocket/websocket-protocol.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+
+// Detect mock mode for Dev Proxy
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import {
 	createWebSocket,
@@ -24,13 +35,13 @@ describe('WebSocket Protocol', () => {
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
 		if (daemon) {
 			await daemon.waitForExit();
 		}
-	});
+	}, SETUP_TIMEOUT);
 
 	describe('Connection Lifecycle', () => {
 		test('should establish WebSocket connection', async () => {
