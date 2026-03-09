@@ -99,24 +99,28 @@ Tests are categorized in CI's `discover` job (main.yml lines 620-680) using a ha
 6. settings-settings-modal
 7. serial-auth-error-scenarios
 
-**Root cause analysis (to be determined during implementation):**
-- Download artifacts to identify root cause: `gh run download 22868755618 -n e2e-results-[test-name]`
-- Common root causes:
-  - **Real bugs**: Actual application issues that need fixing in source code
-  - **Flaky tests**: Timing-dependent tests that occasionally fail
-  - **Out-of-date assertions**: Tests expecting old UI patterns
-  - **Missing elements**: UI changes breaking selectors
+**Initial root cause analysis from CI artifacts:**
+Based on downloaded artifacts (run 22868755618):
+- **core-navigation-3-column**: Test expects 3-column chat view but app shows Lobby page instead. Page snapshot shows "Neo Lobby" heading - test may need session creation or assertion update.
+- **read-only-home**: Similar pattern - test expects home page elements but gets Lobby. May be same root cause as navigation-3-column.
+
+**Remaining 5 tests need investigation** (download artifacts to analyze):
+- read-only-ui-components
+- features-thinking-level-selector
+- serial-error-scenarios
+- settings-settings-modal
+- serial-auth-error-scenarios
 
 **Method:**
-- Download artifacts to see failure details for each test
-- Run each failing test individually to debug: `make run-e2e TEST=tests/[path].e2e.ts`
-- Categorize each failure: real bug, flaky, or assertion issue
-- Fix each test one by one, running locally to verify before marking complete
-- Document root cause for each failure
+- Download artifacts: `gh run download 22868755618 -n e2e-results-[test-name]`
+- Check error-context.md in test-results for failure snapshots
+- Run each failing test: `make run-e2e TEST=tests/[path].e2e.ts`
+- Categorize each failure: real bug in app OR test needs updating
+- Fix each test one by one
 **Acceptance Criteria:**
 - All 7 failing no-LLM tests pass when run against the binary
 - Each fix verified individually before moving to next
-- Root cause documented for each failing test
+- Root cause documented for each failing test (real bug OR test update needed)
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 #### Task 2: Update CI job name from "e2e" to "e2e-no-llm"
