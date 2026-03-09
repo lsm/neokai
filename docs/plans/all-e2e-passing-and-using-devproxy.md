@@ -107,12 +107,24 @@ bunx playwright test tests/smoke/ tests/core/ tests/features/ tests/read-only/ t
 **Mock behavior:** Returns canned "[MOCKED] Hello! I'm Claude, an AI assistant."
 **Required changes:**
 - Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
-- Change response assertions to accept any assistant message: `await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({ timeout: 5000 });`
-- Remove specific text assertions like `text=/TEST_OK|test_ok/i`
+- Update line 63 assertion from:
+  ```javascript
+  await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({ timeout: 60000 });
+  ```
+  To:
+  ```javascript
+  if (IS_MOCK) {
+    // Just verify any assistant message appears
+    await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({ timeout: 5000 });
+  } else {
+    await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({ timeout: 60000 });
+  }
+  ```
+- Similarly update any other test cases in this file that expect specific LLM responses
 **Reference:** See `packages/daemon/tests/online/convo/multiturn-conversation.test.ts` for IS_MOCK pattern
 **Acceptance Criteria:**
 - Test detects mock mode via IS_MOCK environment variable
-- Assertions updated to accept mock responses (any assistant message visible)
+- Assertions updated to accept mock responses - verify any assistant message visible instead of specific text
 - Test passes with devproxy running
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -120,44 +132,79 @@ bunx playwright test tests/smoke/ tests/core/ tests/features/ tests/read-only/ t
 **Agent:** coder
 **Description:** Update the test to handle devproxy mock responses. Note: interrupt tests rely on timing - mock responses return instantly, so test timing assertions may need adjustment.
 **Current behavior:** Tests send messages like "Write a detailed essay about quantum computing" and verify stop button appears/can be clicked during processing
-**Mock behavior:** Returns instantly, so processing window is very short
+**Mock behavior:** Returns instantly (milliseconds vs seconds for real API), so processing window is very short
 **Required changes:**
-- Add IS_MOCK check at top
-- Reduce wait times in mock mode (e.g., `waitForTimeout(100)` instead of `waitForTimeout(1000)`)
-- Assertions for button visibility/clickability should still work but timing may need adjustment
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- Key timing issues:
+  - Line 38: `await page.waitForTimeout(1000)` - reduce to `100` in mock mode
+  - Line 65: `await page.waitForTimeout(1000)` - reduce to `100` in mock mode
+  - Line 90: `await page.waitForTimeout(1000)` - reduce to `100` in mock mode
+  - Line 178: `await page.waitForTimeout(1000)` - reduce to `100` in mock mode
+  - Line 188: `await page.waitForTimeout(2000)` - reduce to `200` in mock mode
+- Use conditional timing:
+  ```javascript
+  const waitTime = IS_MOCK ? 100 : 1000;
+  await page.waitForTimeout(waitTime);
+  ```
+- Alternatively: The tests verify button state transitions - with instant mock, we just need to verify the transition happens at all, not the timing
 **Acceptance Criteria:**
 - Test detects mock mode via IS_MOCK environment variable
-- Timing adjustments made for instant mock responses
+- Timing adjusted: reduce waitForTimeout from 1000ms to 100ms in mock mode
 - Test passes with devproxy running
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 #### Task 4c: Update core/interrupt-error-bug.e2e.ts to use devproxy
 **Agent:** coder
-**Description:** Update the test to handle devproxy mock responses. This is a fixme test that expects to fail - may need special handling.
-**Current behavior:** Test marked with `test.fixme()` - expects race condition bug to exist
-**Mock behavior:** Returns instantly
+**Description:** Update the test to handle devproxy mock responses. This is a fixme test that documents a race condition bug - with instant mock responses, the race condition behavior may differ from real API.
+**Current behavior:** Test marked with `test.fixme()` - expects race condition bug to exist (line 32: `test.fixme('should allow sending messages immediately after interrupt without reset'...`)
+**Mock behavior:** Returns instantly, so the race condition may not manifest the same way
 **Required changes:**
-- Add IS_MOCK check
-- May need to skip certain assertions in mock mode or adjust timing
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- In mock mode, the test should likely be skipped or have different assertions because:
+  - The bug being tested (race condition requiring reset) depends on slow API responses
+  - With instant mock, the race doesn't occur the same way
+- Recommended approach:
+  ```javascript
+  test.fixme(IS_MOCK, 'Race condition bug not reproducible with instant mock responses');
+  test('should allow sending messages immediately after interrupt without reset', async ({ page }) => {
+    // existing test code
+  });
+  ```
+- The test will remain as fixme in both modes, but for different reasons:
+  - Real API: bug exists
+  - Mock API: race condition not reproducible
 **Acceptance Criteria:**
 - Test detects mock mode via IS_MOCK environment variable
-- Test behavior documented for mock vs real mode
+- Test appropriately skips/notes that race condition isn't testable with mocks
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 #### Task 4d: Update core/context-features.e2e.ts to use devproxy
 **Agent:** coder
 **Description:** Update the test to handle devproxy mock responses. Tests use `waitForAssistantResponse` helper and check for context data.
 **Current behavior:** Tests send messages and verify context usage indicator works. Many tests use `test.skip()` if provider doesn't report context data.
-**Mock behavior:** Mock returns response but may not include context usage data
+**Mock behavior:** Devproxy mock DOES include usage data (verified):
+```json
+{
+  "usage": {
+    "input_tokens": 50,
+    "output_tokens": 20,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "service_tier": "standard"
+  }
+}
+```
 **Required changes:**
-- Add IS_MOCK check
-- Tests already handle missing context data via `waitForContextData()` helper that returns false if no data
-- Should work largely as-is, but may need to verify mock includes context data
-**Reference:** Devproxy mock includes usage data: `"usage": {"input_tokens": 50, "output_tokens": 20, ...}`
+- Add IS_MOCK check at top: `const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;`
+- Verify mock returns usage data by checking `.devproxy/devproxy.log` after test run
+- The `waitForContextData()` helper already handles missing context data gracefully
+- In mock mode: the tests should PASS because mock includes usage data
+- If any tests fail: may need to adjust the helper or add IS_MOCK awareness
+**Reference:** See `.devproxy/mocks.json` lines 46-52 and 104-111 for mock usage data
 **Acceptance Criteria:**
 - Test detects mock mode via IS_MOCK environment variable
-- Context assertions work with mock response usage data
-- Test passes with devproxy running
+- Context assertions work with mock response usage data (verified: mock includes usage)
+- Test passes with devproxy running - no skips needed in mock mode
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 #### Task 4e: Update features/archive.e2e.ts to use devproxy
