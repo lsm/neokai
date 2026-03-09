@@ -152,7 +152,6 @@ jobs:
           # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
           - module: agent-context
             test_path: tests/online/agent/context-command.test.ts
-            mock_sdk: true
           - module: agent-sdk
             test_path: tests/online/agent/agent-session-sdk.test.ts
             mock_sdk: true
@@ -180,7 +179,6 @@ jobs:
           - module: git
             test_path: tests/online/git
             timeout: 10
-            mock_sdk: true
           - module: lifecycle
             test_path: tests/online/lifecycle
             mock_sdk: true
@@ -248,7 +246,6 @@ jobs:
             mock_sdk: true
           - module: websocket
             test_path: tests/online/websocket
-            mock_sdk: true
 
     steps:
       - uses: actions/checkout@v4
