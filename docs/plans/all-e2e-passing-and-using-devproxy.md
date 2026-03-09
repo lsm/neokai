@@ -89,7 +89,7 @@ Tests are categorized in CI's `discover` job (main.yml lines 620-680) using a ha
 
 #### Task 1: Fix 7 failing no-LLM e2e tests
 **Agent:** coder
-**Description:** Fix the 7 failing no-LLM e2e tests identified in the baseline. Each test should be fixed individually and verified.
+**Description:** Fix the 7 failing no-LLM e2e tests identified in the baseline. Each test should be fixed individually and verified. Document root cause for each failure.
 **Failing tests (from baseline):**
 1. core-navigation-3-column
 2. read-only-home
@@ -99,13 +99,24 @@ Tests are categorized in CI's `discover` job (main.yml lines 620-680) using a ha
 6. settings-settings-modal
 7. serial-auth-error-scenarios
 
+**Root cause analysis (to be determined during implementation):**
+- Download artifacts to identify root cause: `gh run download 22868755618 -n e2e-results-[test-name]`
+- Common root causes:
+  - **Real bugs**: Actual application issues that need fixing in source code
+  - **Flaky tests**: Timing-dependent tests that occasionally fail
+  - **Out-of-date assertions**: Tests expecting old UI patterns
+  - **Missing elements**: UI changes breaking selectors
+
 **Method:**
-- Download artifacts to see failure details: `gh run download 22868755618 -n e2e-results-[test-name]`
+- Download artifacts to see failure details for each test
 - Run each failing test individually to debug: `make run-e2e TEST=tests/[path].e2e.ts`
+- Categorize each failure: real bug, flaky, or assertion issue
 - Fix each test one by one, running locally to verify before marking complete
+- Document root cause for each failure
 **Acceptance Criteria:**
 - All 7 failing no-LLM tests pass when run against the binary
 - Each fix verified individually before moving to next
+- Root cause documented for each failing test
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 #### Task 2: Update CI job name from "e2e" to "e2e-no-llm"
@@ -129,14 +140,16 @@ Tests are categorized in CI's `discover` job (main.yml lines 620-680) using a ha
 1. Add "Install Dev Proxy" step to e2e-llm job (similar to daemon online tests)
 2. Add "Start Dev Proxy" step before tests run
 3. Set environment variables:
+   - `NEOKAI_USE_DEV_PROXY=1` (enables devproxy mode)
    - `ANTHROPIC_BASE_URL=http://127.0.0.1:8000`
    - `ANTHROPIC_API_KEY=sk-devproxy-test-key`
    - `ANTHROPIC_AUTH_TOKEN=""` (clear any real token)
+   - `CLAUDE_CODE_OAUTH_TOKEN=""` (clear any real token)
 4. Add "Stop Dev Proxy" step in `if: always()` to cleanup
 **Reference:** See daemon online test configuration in `main.yml` lines 263-314
 **Acceptance Criteria:**
 - Devproxy is installed and started in e2e-llm job before tests run
-- Binary is configured to use devproxy via ANTHROPIC_BASE_URL
+- Binary is configured to use devproxy via ANTHROPIC_BASE_URL and NEOKAI_USE_DEV_PROXY=1
 - Devproxy is stopped after tests complete
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
