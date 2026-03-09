@@ -120,6 +120,7 @@ Based on downloaded artifacts (run 22868755618):
 **Acceptance Criteria:**
 - All 7 failing no-LLM tests pass when run against the binary
 - Each fix verified individually before moving to next
+- After all individual fixes, run no-LLM test group to verify no regressions
 - Root cause documented for each failing test (real bug OR test update needed)
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
