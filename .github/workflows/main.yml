@@ -231,7 +231,6 @@ jobs:
               tests/online/rpc/rpc-remove-output.test.ts
               tests/online/rpc/rpc-rewind-handlers.test.ts
               tests/online/rpc/rpc-session-filtering.test.ts
-            mock_sdk: true
           - module: rpc-3
             test_path: >-
               tests/online/rpc/rpc-session-handlers-extended.test.ts

@@ -192,8 +192,6 @@ describe('Message RPC Handlers', () => {
 
 				// Should have assistant section with content
 				expect(result.markdown).toContain('## Assistant');
-				// Dev Proxy returns a mocked response
-				expect(result.markdown).toContain('MOCKED BY DEV PROXY');
 			},
 			TIMEOUT
 		);
