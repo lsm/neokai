@@ -33,19 +33,30 @@
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED BY DEV PROXY] Hello! This is a mocked response from Dev Proxy for testing purposes."
+							"text": "[MOCKED] The answer is 2."
 						}
 					],
-					"model": "claude-sonnet-4-20250514",
+					"model": "claude-haiku-20250307",
 					"stop_reason": "end_turn",
 					"stop_sequence": null,
 					"usage": {
-						"input_tokens": 12,
-						"output_tokens": 48,
+						"input_tokens": 100,
+						"output_tokens": 20,
 						"cache_creation_input_tokens": 0,
 						"cache_read_input_tokens": 0,
 						"service_tier": "standard"
-					}
+					},
+					"messages": [
+						{
+							"type": "user",
+							"uuid": "00000000-0000-0000-0000-000000000001",
+							"isReplay": true,
+							"message": {
+								"role": "user",
+								"content": "<local-command-stdout>\n\n## Context Usage\n\n**Tokens:** 18k / 200k (9%)\n\n### Breakdown\n\n| Category | Tokens | % |\n|----------|--------|---|\n| System prompt | 8k | 4% |\n| System tools | 5k | 2.5% |\n| Messages | 3k | 1.5% |\n| Free space | 184k | 92% |\n\n*Model: claude-haiku-20250307*\n</local-command-stdout>"
+							}
+						}
+					]
 				}
 			}
 		}
