@@ -807,6 +807,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
+      - name: Install Dev Proxy (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -sL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash
+          # The setup script installs devproxy to ./devproxy in the current directory
+          # Add it to PATH for subsequent steps
+          echo "$PWD/devproxy" >> $GITHUB_PATH
+
+      - name: Start Dev Proxy
+        run: |
+          devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
+          DEVPROXY_PID=$!
+          echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
+          # Wait for proxy to be ready
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
+              echo "Dev Proxy is ready"
+              break
+            fi
+            sleep 0.5
+          done
+
       - name: Install dependencies
         run: |
           echo "Starting bun install at $(date)"
@@ -858,10 +880,19 @@ jobs:
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             bunx playwright test "tests/${{ matrix.test.path }}.e2e.ts"
         env:
-          GLM_API_KEY: ${{ secrets.GLM_API_KEY }}
-          DEFAULT_PROVIDER: glm
-          DEFAULT_MODEL: glm-5
+          NEOKAI_USE_DEV_PROXY: "1"
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:8000"
+          ANTHROPIC_API_KEY: "sk-devproxy-test-key"
+          ANTHROPIC_AUTH_TOKEN: ""
+          CLAUDE_CODE_OAUTH_TOKEN: ""
           CI: true
+
+      - name: Stop Dev Proxy
+        if: always()
+        run: |
+          if [ -n "$DEVPROXY_PID" ]; then
+            kill $DEVPROXY_PID 2>/dev/null || true
+          fi
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
