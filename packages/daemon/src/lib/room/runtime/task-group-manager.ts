@@ -331,6 +331,9 @@ export class TaskGroupManager {
 				groupId: group.id,
 				model: this.model,
 				reviewContext: deferredLeader.reviewContext,
+				goalManager: this.goalManager,
+				taskManager: this.taskManager,
+				groupRepo: this.groupRepo,
 			};
 			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
