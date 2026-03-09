@@ -10,18 +10,14 @@
  * MODES:
  * - Dev Proxy (default in CI): Set NEOKAI_USE_DEV_PROXY=1 for mocked responses
  * - Real API: Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- *
- * Note: Some tests are skipped in mock mode because Dev Proxy doesn't intercept
- * Anthropic API calls properly (ANTHROPIC_BASE_URL not passed to SDK for anthropic provider).
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 
-// Detect mock mode - Dev Proxy doesn't work for Anthropic provider
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
-const TIMEOUT = IS_MOCK ? 15000 : 30000;
+// Tests that send messages to mock SDK need longer timeout on CI
+const TIMEOUT = 15000;
 
 describe('Message RPC Handlers', () => {
 	let daemon: DaemonServerContext;
@@ -58,9 +54,7 @@ describe('Message RPC Handlers', () => {
 	}
 
 	describe('message.sdkMessages', () => {
-		// Skip in mock mode - Dev Proxy doesn't intercept Anthropic API calls
-		const maybeSkip = IS_MOCK ? test.skip : test;
-		maybeSkip(
+		test(
 			'should get SDK messages for a session',
 			async () => {
 				const sessionId = await createSessionWithMessages();
@@ -76,7 +70,7 @@ describe('Message RPC Handlers', () => {
 			TIMEOUT
 		);
 
-		maybeSkip(
+		test(
 			'should support limit parameter',
 			async () => {
 				const sessionId = await createSessionWithMessages();
@@ -186,9 +180,7 @@ describe('Message RPC Handlers', () => {
 			TIMEOUT
 		);
 
-		// Skip in mock mode - Dev Proxy doesn't intercept Anthropic API calls
-		const maybeSkipExport = IS_MOCK ? test.skip : test;
-		maybeSkipExport(
+		test(
 			'should include assistant response in markdown export',
 			async () => {
 				const sessionId = await createSessionWithMessages();
