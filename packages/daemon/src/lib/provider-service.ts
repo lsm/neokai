@@ -359,6 +359,10 @@ export class ProviderService {
 		const provider = registry.detectProvider(modelId);
 
 		if (!provider || provider.id === 'anthropic') {
+			// When Dev Proxy is enabled, route Anthropic API calls through the proxy
+			if (process.env.NEOKAI_USE_DEV_PROXY === '1') {
+				return { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000' };
+			}
 			return {};
 		}
 
@@ -377,6 +381,10 @@ export class ProviderService {
 		const provider = registry.get(providerId);
 
 		if (!provider || providerId === 'anthropic') {
+			// When Dev Proxy is enabled, route Anthropic API calls through the proxy
+			if (process.env.NEOKAI_USE_DEV_PROXY === '1') {
+				return { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000' };
+			}
 			return {};
 		}
 

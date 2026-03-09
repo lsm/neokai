@@ -135,6 +135,38 @@ Initialization order matters: Router → MessageHub, then Transport → MessageH
 
 Unit tests preload `packages/daemon/tests/unit/setup.ts` which sets `NODE_ENV='test'`, clears all API keys (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, GLM_API_KEY, ZHIPU_API_KEY), and suppresses console output. This ensures unit tests never make real API calls.
 
+#### Dev Proxy Mode for Online Tests
+
+Use `NEOKAI_USE_DEV_PROXY=1` for mocked online tests:
+
+```bash
+NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+```
+
+Behavior when this flag is enabled in `createDaemonServer()`:
+- Dev Proxy is required; if unavailable, tests fail fast (no silent fallback)
+- `CLAUDE_CODE_OAUTH_TOKEN` is cleared
+- `ANTHROPIC_AUTH_TOKEN` is cleared
+- `ANTHROPIC_API_KEY` is replaced with a dummy test key
+- Dev Proxy is reused across tests in the same process by default (`NEOKAI_DEV_PROXY_REUSE=1`)
+
+This prevents accidental use of real Anthropic credentials in dev-proxy test runs.
+
+To verify requests are mocked, inspect:
+
+```bash
+# Optional: persist helper-collected logs
+NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+tail -n 120 .devproxy/devproxy.log
+
+# Or query live logs from devproxy
+devproxy logs --lines 120 --output text
+```
+
+Expected lines include:
+- `req ... POST http://127.0.0.1:8000/v1/messages?beta=true`
+- `mock ... MockResponsePlugin: 200 ...`
+
 #### E2E Test Rules
 
 E2E tests are **pure browser-based Playwright tests** simulating real end-user interactions. They must NOT contain direct API calls or internal state access.

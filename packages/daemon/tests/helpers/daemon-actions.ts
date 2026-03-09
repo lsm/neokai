@@ -22,6 +22,10 @@ export async function sendMessage(
 		deliveryMode?: MessageDeliveryMode;
 	} = {}
 ): Promise<{ messageId: string }> {
+	// Capture baseline count so we can detect post-send progress even when
+	// state flips back to idle too quickly in mocked/proxy mode.
+	const baselineMessageCount = await getMessageCount(daemon, sessionId);
+
 	const result = (await daemon.messageHub.request('message.send', {
 		sessionId,
 		content,
@@ -30,18 +34,32 @@ export async function sendMessage(
 
 	// message.send acknowledges persistence, not query start.
 	// Wait briefly for agent to leave idle so downstream waitForIdle() calls don't
-	// resolve against the pre-send idle state.
+	// resolve against the pre-send idle state. In fast mock/proxy mode, state can
+	// return to idle before we sample it, so also detect SDK message growth.
+	const isFastMockMode =
+		process.env.NEOKAI_USE_DEV_PROXY === '1' || process.env.NEOKAI_AGENT_SDK_MOCK === '1';
+	const maxStartWaitMs = isFastMockMode ? 1200 : 5000;
+	const pollIntervalMs = isFastMockMode ? 20 : 10;
 	const start = Date.now();
-	while (Date.now() - start < 5000) {
+	while (Date.now() - start < maxStartWaitMs) {
 		try {
 			const state = await getProcessingState(daemon, sessionId);
 			if (state.status !== 'idle' && state.status !== 'unknown') {
 				break;
 			}
+
+			// If we can observe additional SDK messages beyond the newly persisted
+			// user message, processing has started/completed for this turn.
+			if (baselineMessageCount !== null) {
+				const currentCount = await getMessageCount(daemon, sessionId);
+				if (currentCount !== null && currentCount > baselineMessageCount + 1) {
+					break;
+				}
+			}
 		} catch {
 			// Ignore transient RPC failures while query bootstraps
 		}
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
 	}
 
 	return result;
@@ -197,6 +215,23 @@ export async function getSession(
 	}
 
 	return result.session;
+}
+
+/**
+ * Get total SDK message count for a session
+ */
+async function getMessageCount(
+	daemon: DaemonServerContext,
+	sessionId: string
+): Promise<number | null> {
+	try {
+		const result = (await daemon.messageHub.request('message.count', {
+			sessionId,
+		})) as { count?: number } | undefined;
+		return typeof result?.count === 'number' ? result.count : null;
+	} catch {
+		return null;
+	}
 }
 
 /**

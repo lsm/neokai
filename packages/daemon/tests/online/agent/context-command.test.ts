@@ -1,16 +1,15 @@
 /**
  * Context Command Online Tests
  *
- * These tests use the REAL Claude Agent SDK with actual API credentials.
- * They verify that the /context command is sent at turn end and the response
+ * These tests verify that the /context command is sent at turn end and the response
  * is correctly parsed.
  *
- * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
- * MODEL:
- * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/agent/context-command.test.ts
  *
  * Test Coverage:
  * 1. /context command is queued after each turn
@@ -28,6 +27,13 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, getSession } from '../../helpers/daemon-actions';
 import type { ContextInfo } from '@neokai/shared';
 
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
+const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
+const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 150000;
+
 interface SDKMessageResult {
 	type: string;
 	subtype?: string;
@@ -42,16 +48,16 @@ interface SDKMessageResult {
 describe('Context Command Online Tests', () => {
 	let daemon: DaemonServerContext;
 
-	// Skip all tests if no Anthropic credentials (context command requires Claude SDK)
+	// Skip all tests if no Anthropic credentials (or not using Dev Proxy mock)
 	const hasAnthropicCredentials =
-		process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		IS_MOCK || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
 	beforeEach(async () => {
 		if (!hasAnthropicCredentials) {
 			return; // Skip setup if no credentials
 		}
 		daemon = await createDaemonServer();
-	}, 30000);
+	}, SETUP_TIMEOUT);
 
 	afterEach(
 		async () => {
@@ -72,17 +78,18 @@ describe('Context Command Online Tests', () => {
 				console.log('Skipping - no Anthropic API credentials');
 				return;
 			}
+
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
+				config: { model: MODEL, permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
 			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
-			await waitForIdle(daemon, sessionId, 30000);
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
 			const session = await getSession(daemon, sessionId);
 			const metadata = session.metadata as {
@@ -148,18 +155,18 @@ describe('Context Command Online Tests', () => {
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Loop Regression Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
+				config: { model: MODEL, permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
 			await sendMessage(daemon, sessionId, 'Say hello in one short sentence.');
-			await waitForIdle(daemon, sessionId, 60000);
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT * 2);
 
 			// Allow any queued internal follow-up to settle, then ensure idle again
 			await new Promise((resolve) => setTimeout(resolve, 1500));
-			await waitForIdle(daemon, sessionId, 30000);
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
 			const result = (await daemon.messageHub.request('message.sdkMessages', {
 				sessionId,
