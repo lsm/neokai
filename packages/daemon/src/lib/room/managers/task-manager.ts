@@ -388,6 +388,25 @@ export class TaskManager {
 	}
 
 	/**
+	 * Archive task - sets archivedAt timestamp.
+	 * Archived tasks are hidden from UI by default.
+	 * This is orthogonal to task status - any task can be archived.
+	 */
+	async archiveTask(taskId: string): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		const updatedTask = this.taskRepo.archiveTask(taskId);
+		if (!updatedTask) {
+			throw new Error(`Failed to archive task: ${taskId}`);
+		}
+
+		return updatedTask;
+	}
+
+	/**
 	 * Update task fields (title, description, priority, dependsOn) without changing status.
 	 * Works for tasks in any status — used by the room agent.
 	 */

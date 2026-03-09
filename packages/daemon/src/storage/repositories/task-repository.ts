@@ -162,6 +162,17 @@ export class TaskRepository {
 	}
 
 	/**
+	 * Archive a task by setting archived_at timestamp.
+	 * Archived tasks are hidden from UI by default.
+	 * Returns the updated task or null if not found.
+	 */
+	archiveTask(id: string): NeoTask | null {
+		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getTask(id);
+	}
+
+	/**
 	 * Delete all tasks for a room
 	 */
 	deleteTasksForRoom(roomId: string): void {
@@ -225,6 +236,7 @@ export class TaskRepository {
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
+			archivedAt: (row.archived_at as number | null) ?? undefined,
 		};
 	}
 }

@@ -437,6 +437,7 @@ export class TaskGroupManager {
 	 * Fail a group - task cannot be completed.
 	 *
 	 * Called when Leader calls fail_task(reason).
+	 * Note: Worktree is NOT cleaned up on failure to allow debugging.
 	 */
 	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -453,8 +454,8 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
-		// Cleanup worktree (best-effort)
-		await this.cleanupWorktree(group);
+		// NOTE: Worktree is NOT cleaned up on failure to allow debugging.
+		// Use archiveGroup() to cleanup worktree for failed tasks.
 
 		return updated;
 	}
@@ -612,6 +613,25 @@ export class TaskGroupManager {
 		await this.taskManager.cancelTask(terminated.taskId);
 
 		return terminated;
+	}
+
+	/**
+	 * Archive a group - cleanup worktree regardless of state.
+	 *
+	 * Called when user archives a task via UI. This cleans up the worktree
+	 * to free disk space even for failed tasks (kept for debugging initially).
+	 *
+	 * Note: This only cleans up the worktree. Task archival (archivedAt timestamp)
+	 * is handled separately by TaskManager.archiveTask().
+	 */
+	async archiveGroup(groupId: string): Promise<SessionGroup | null> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) return null;
+
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
+
+		return group;
 	}
 
 	/**

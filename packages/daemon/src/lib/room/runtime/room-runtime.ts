@@ -895,6 +895,27 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Archive a task group - cleanup worktree regardless of state.
+	 *
+	 * Called when user archives a task via UI. This cleans up the worktree
+	 * to free disk space even for failed tasks (kept for debugging initially).
+	 * Also sets the archivedAt timestamp on the task.
+	 */
+	async archiveTaskGroup(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+
+		// Cleanup worktree via TaskGroupManager (handles both active and completed groups)
+		if (group) {
+			await this.taskGroupManager.archiveGroup(group.id);
+		}
+
+		// Set archivedAt timestamp on task
+		await this.taskManager.archiveTask(taskId);
+
+		return true;
+	}
+
+	/**
 	 * Cancel a task and terminate its active session group (if any).
 	 *
 	 * This is used by the Room Agent `cancel_task` tool. It ensures cancellation

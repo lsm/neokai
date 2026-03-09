@@ -806,7 +806,7 @@ describe('TaskGroupManager', () => {
 			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
 		});
 
-		it('should cleanup worktree on task failure', async () => {
+		it('should NOT cleanup worktree on task failure (kept for debugging)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -822,6 +822,34 @@ describe('TaskGroupManager', () => {
 
 			await manager.fail(group.id, 'Task failed');
 
+			// Worktree should NOT be cleaned up on failure - kept for debugging
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
+		});
+
+		it('should cleanup worktree on archiveGroup (even for failed tasks)', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First fail the group
+			await manager.fail(group.id, 'Task failed');
+
+			// Worktree should still exist
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
+
+			// Now archive the group
+			await manager.archiveGroup(group.id);
+
+			// Now worktree should be cleaned up
 			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
 		});
 

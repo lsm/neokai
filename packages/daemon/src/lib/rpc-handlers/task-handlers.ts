@@ -29,7 +29,7 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus'
+	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus' | 'archiveTask'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -225,6 +225,40 @@ export function setupTaskHandlers(
 		emitRoomOverview(params.roomId);
 
 		return { task: cancelledTask };
+	});
+
+	// task.archive - Archive a task (cleanup worktree, hide from UI)
+	messageHub.onRequest('task.archive', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// If there's an active group with runtime, cleanup worktree
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				await runtime.archiveTaskGroup(params.taskId);
+			}
+		}
+
+		// Mark task as archived
+		const archivedTask = await taskManager.archiveTask(params.taskId);
+		emitTaskUpdate(params.roomId, archivedTask);
+		emitRoomOverview(params.roomId);
+
+		log.info(`Task ${params.taskId} archived in room ${params.roomId}`);
+		return { task: archivedTask };
 	});
 
 	// task.setStatus - Set task status with validation (human-initiated)

@@ -211,6 +211,8 @@ export interface NeoTask {
 	startedAt?: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
+	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
+	archivedAt?: number | null;
 }
 
 /**
