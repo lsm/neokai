@@ -889,7 +889,7 @@ jobs:
       - test-web
       - test-cli
       - coverage-gate
-      - e2e
+      - e2e-no-llm
       - e2e-llm
 
     steps:
@@ -901,7 +901,7 @@ jobs:
              [[ "${{ needs.test-web.result }}" != "success" ]] || \
              [[ "${{ needs.test-cli.result }}" != "success" ]] || \
              [[ "${{ needs.coverage-gate.result }}" != "success" && "${{ needs.coverage-gate.result }}" != "skipped" ]] || \
-             [[ "${{ needs.e2e.result }}" != "success" && "${{ needs.e2e.result }}" != "skipped" ]] || \
+             [[ "${{ needs.e2e-no-llm.result }}" != "success" && "${{ needs.e2e-no-llm.result }}" != "skipped" ]] || \
              [[ "${{ needs.e2e-llm.result }}" != "success" && "${{ needs.e2e-llm.result }}" != "skipped" ]]; then
             echo "One or more jobs failed:"
             echo "  check: ${{ needs.check.result }}"
@@ -910,7 +910,7 @@ jobs:
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  test-cli: ${{ needs.test-cli.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
-            echo "  e2e: ${{ needs.e2e.result }}"
+            echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
             echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
             exit 1
           fi
