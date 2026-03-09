@@ -957,9 +957,8 @@ export class RoomRuntime {
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.workerSessionId)) return false;
 
-		const formattedMessage = `[Human intervention]\n\n${message}`;
 		try {
-			await this.sessionFactory.injectMessage(group.workerSessionId, formattedMessage);
+			await this.sessionFactory.injectMessage(group.workerSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into worker session ${group.workerSessionId}:`, error);
 			return false;
@@ -983,9 +982,8 @@ export class RoomRuntime {
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.leaderSessionId)) return false;
 
-		const formattedMessage = `[Human intervention]\n\n${message}`;
 		try {
-			await this.sessionFactory.injectMessage(group.leaderSessionId, formattedMessage);
+			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
 			return false;
