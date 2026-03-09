@@ -558,7 +558,7 @@ describe('MessageHubRouter', () => {
 	});
 
 	describe('Custom Logger', () => {
-		test('should use custom logger', () => {
+		test('should use custom logger for errors only', () => {
 			const mockLogger = {
 				log: mock(() => {}),
 				warn: mock(() => {}),
@@ -573,7 +573,8 @@ describe('MessageHubRouter', () => {
 			const conn1 = createMockConnection(mockWs1);
 			customRouter.registerConnection(conn1);
 
-			expect(mockLogger.log).toHaveBeenCalled();
+			// Debug logging is disabled - only errors are logged
+			expect(mockLogger.log).not.toHaveBeenCalled();
 		});
 
 		test('should not log when debug is false', () => {
