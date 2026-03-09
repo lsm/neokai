@@ -8,59 +8,6 @@
 				"body": {
 					"matcher": ".JsonContains",
 					"key": "messages",
-					"value": "What is 1+1"
-				}
-			},
-			"response": {
-				"statusCode": 200,
-				"headers": [
-					{
-						"name": "content-type",
-						"value": "application/json"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-limit",
-						"value": "50"
-					},
-					{
-						"name": "anthropic-ratelimit-requests-remaining",
-						"value": "49"
-					},
-					{
-						"name": "x-mocked-by",
-						"value": "Dev Proxy MockResponsePlugin"
-					}
-				],
-				"body": {
-					"id": "msg_mock123",
-					"type": "message",
-					"role": "assistant",
-					"content": [
-						{
-							"type": "text",
-							"text": "[MOCKED] The answer is 2."
-						}
-					],
-					"model": "claude-haiku-20250307",
-					"stop_reason": "end_turn",
-					"stop_sequence": null,
-					"usage": {
-						"input_tokens": 100,
-						"output_tokens": 20,
-						"cache_creation_input_tokens": 0,
-						"cache_read_input_tokens": 0,
-						"service_tier": "standard"
-					}
-				}
-			}
-		},
-		{
-			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
-				"method": "POST",
-				"body": {
-					"matcher": ".JsonContains",
-					"key": "messages",
 					"value": "/context"
 				}
 			},
@@ -115,6 +62,54 @@
 							}
 						}
 					]
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-limit",
+						"value": "50"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-remaining",
+						"value": "49"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin"
+					}
+				],
+				"body": {
+					"id": "msg_mock_default",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Hello! I'm Claude, an AI assistant."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 50,
+						"output_tokens": 20,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
 				}
 			}
 		}
