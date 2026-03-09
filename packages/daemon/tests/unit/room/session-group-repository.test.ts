@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
-import type { GroupState } from '../../../src/lib/room/state/session-group-repository';
 
 describe('SessionGroupRepository', () => {
 	let db: Database;
@@ -80,7 +79,6 @@ describe('SessionGroupRepository', () => {
 			expect(group.workerSessionId).toBe(workerSessionId);
 			expect(group.leaderSessionId).toBe(leaderSessionId);
 			expect(group.workerRole).toBe('coder');
-			expect(group.state).toBe('awaiting_worker');
 			expect(group.feedbackIteration).toBe(0);
 			expect(group.leaderContractViolations).toBe(0);
 			expect(group.lastProcessedLeaderTurnId).toBeNull();
@@ -140,22 +138,6 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
-	describe('updateGroupState', () => {
-		it('should update state with correct version', () => {
-			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			const updated = repo.updateGroupState(group.id, 'awaiting_leader', group.version);
-			expect(updated).not.toBeNull();
-			expect(updated!.state).toBe('awaiting_leader');
-			expect(updated!.version).toBe(group.version + 1);
-		});
-
-		it('should return null on version mismatch', () => {
-			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			const result = repo.updateGroupState(group.id, 'awaiting_leader', group.version + 999);
-			expect(result).toBeNull();
-		});
-	});
-
 	describe('incrementFeedbackIteration', () => {
 		it('should increment feedback count', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
@@ -174,10 +156,9 @@ describe('SessionGroupRepository', () => {
 	});
 
 	describe('completeGroup', () => {
-		it('should set state to completed and set completedAt', () => {
+		it('should set completedAt timestamp', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			const completed = repo.completeGroup(group.id, group.version);
-			expect(completed!.state).toBe('completed');
 			expect(completed!.completedAt).toBeDefined();
 			expect(completed!.completedAt).toBeGreaterThan(0);
 			expect(completed!.version).toBe(group.version + 1);
@@ -185,10 +166,9 @@ describe('SessionGroupRepository', () => {
 	});
 
 	describe('failGroup', () => {
-		it('should set state to failed and set completedAt', () => {
+		it('should set completedAt timestamp', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			const failed = repo.failGroup(group.id, group.version);
-			expect(failed!.state).toBe('failed');
 			expect(failed!.completedAt).toBeDefined();
 			expect(failed!.completedAt).toBeGreaterThan(0);
 		});
@@ -252,7 +232,7 @@ describe('SessionGroupRepository', () => {
 	});
 
 	describe('resetGroupForRestart', () => {
-		it('should reset failed group to awaiting_worker state', () => {
+		it('should reset failed group (clear completedAt)', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			// Set to failed state
 			repo.failGroup(group.id, group.version);
@@ -260,11 +240,10 @@ describe('SessionGroupRepository', () => {
 			// Reset for restart
 			const reset = repo.resetGroupForRestart(group.id);
 			expect(reset).not.toBeNull();
-			expect(reset!.state).toBe('awaiting_worker');
 			expect(reset!.completedAt).toBeNull();
 		});
 
-		it('should reset completed group to awaiting_worker state', () => {
+		it('should reset completed group (clear completedAt)', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			// Set to completed state
 			repo.completeGroup(group.id, group.version);
@@ -272,7 +251,6 @@ describe('SessionGroupRepository', () => {
 			// Reset for restart
 			const reset = repo.resetGroupForRestart(group.id);
 			expect(reset).not.toBeNull();
-			expect(reset!.state).toBe('awaiting_worker');
 			expect(reset!.completedAt).toBeNull();
 		});
 
@@ -347,16 +325,16 @@ describe('SessionGroupRepository', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 
 			// First update succeeds
-			const first = repo.updateGroupState(group.id, 'awaiting_leader', group.version);
+			const first = repo.incrementFeedbackIteration(group.id, group.version);
 			expect(first).not.toBeNull();
 
 			// Second update with stale version fails
-			const second = repo.updateGroupState(group.id, 'awaiting_human', group.version);
+			const second = repo.incrementFeedbackIteration(group.id, group.version);
 			expect(second).toBeNull();
 
 			// Verify first update stuck
 			const final = repo.getGroup(group.id);
-			expect(final!.state).toBe('awaiting_leader');
+			expect(final!.feedbackIteration).toBe(1);
 		});
 	});
 
@@ -394,26 +372,6 @@ describe('SessionGroupRepository', () => {
 			const page2 = repo.getEvents(group.id, { afterId: page1.events.at(-1)!.id });
 			expect(page2.events).toHaveLength(2);
 			expect(page2.hasMore).toBe(false);
-		});
-	});
-
-	describe('GroupState type coverage', () => {
-		it('should accept all valid states', () => {
-			const states: GroupState[] = [
-				'awaiting_worker',
-				'awaiting_leader',
-				'awaiting_human',
-				'completed',
-				'failed',
-			];
-			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			let currentVersion = group.version;
-
-			for (const state of states.slice(0, 3)) {
-				const updated = repo.updateGroupState(group.id, state, currentVersion);
-				expect(updated).not.toBeNull();
-				currentVersion = updated!.version;
-			}
 		});
 	});
 

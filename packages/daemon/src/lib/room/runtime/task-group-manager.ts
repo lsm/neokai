@@ -356,17 +356,12 @@ export class TaskGroupManager {
 			this.groupRepo.setDeferredLeader(groupId, null);
 		}
 
-		// Update group state to awaiting_leader
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
-
-		if (updated) {
-			// Increment feedback iteration (1-based: first review = iteration 1)
-			this.groupRepo.incrementFeedbackIteration(groupId, updated.version);
-			// Reset leader contract state for the new review round
-			const afterIncrement = this.groupRepo.getGroup(groupId);
-			if (afterIncrement) {
-				this.groupRepo.resetLeaderContractViolations(groupId, afterIncrement.version);
-			}
+		// Increment feedback iteration (1-based: first review = iteration 1)
+		this.groupRepo.incrementFeedbackIteration(groupId, group.version);
+		// Reset leader contract state for the new review round
+		const afterIncrement = this.groupRepo.getGroup(groupId);
+		if (afterIncrement) {
+			this.groupRepo.resetLeaderContractViolations(groupId, afterIncrement.version);
 		}
 
 		return this.groupRepo.getGroup(groupId);
@@ -399,10 +394,7 @@ export class TaskGroupManager {
 			});
 		}
 
-		// Optional transition: keep leader in control when using queue/steer forwarding.
-		if (opts?.transitionState !== false) {
-			this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
-		}
+		// No state transition - simplified model allows messages anytime
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -457,25 +449,21 @@ export class TaskGroupManager {
 	 * Submit a group for human review - work is done, PR awaits human approval.
 	 *
 	 * Called when Leader calls submit_for_review(pr_url).
-	 * Transitions the group to 'awaiting_human' (slot stays occupied but paused)
-	 * and moves the task to 'review' status.
+	 * Moves the task to 'review' status. The submittedForReview flag should be
+	 * set by the caller to indicate the group is awaiting human action.
 	 */
 	async submitForReview(groupId: string, prUrl: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		// Pause the group in awaiting_human (does NOT free the slot — slot exclusion is done in executeTick)
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
-		if (!updated) return null;
-
 		// Move task to review status with PR URL
 		await this.taskManager.reviewTask(group.taskId, prUrl);
 
-		return updated;
+		return this.groupRepo.getGroup(groupId);
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the existing worker.
+	 * Resume a group from human review by injecting a message into the existing worker.
 	 *
 	 * Used for:
 	 * - Rejection: worker addresses feedback
@@ -486,16 +474,12 @@ export class TaskGroupManager {
 	 */
 	async resumeWorkerFromHuman(groupId: string, message: string): Promise<boolean> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_human') return false;
-
-		// Transition: awaiting_human → awaiting_worker
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
-		if (!updated) return false;
+		if (!group || !group.submittedForReview) return false;
 
 		// Reset state for the new review round.
 		// feedbackIteration is reset to 0 so the resumed task gets a fresh iteration budget —
 		// without this the task would immediately re-escalate on the very next leader cycle.
-		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
+		this.groupRepo.resetLeaderContractViolations(groupId, group.version);
 		this.groupRepo.setSubmittedForReview(groupId, false);
 		const afterReset = this.groupRepo.getGroup(groupId);
 		if (afterReset) {
@@ -503,18 +487,7 @@ export class TaskGroupManager {
 		}
 
 		// Inject approval message into existing worker session.
-		// If injection fails (e.g., session not in cache after restart), rollback
-		// the group state so the task stays in review for retry.
-		try {
-			await this.sessionFactory.injectMessage(group.workerSessionId, message);
-		} catch (error) {
-			// Rollback: revert group back to awaiting_human
-			const current = this.groupRepo.getGroup(groupId);
-			if (current && current.state === 'awaiting_worker') {
-				this.groupRepo.updateGroupState(groupId, 'awaiting_human', current.version);
-			}
-			throw error;
-		}
+		await this.sessionFactory.injectMessage(group.workerSessionId, message);
 
 		return true;
 	}
@@ -531,41 +504,27 @@ export class TaskGroupManager {
 	 */
 	async resumeLeaderFromHuman(groupId: string, message: string): Promise<boolean> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_human') return false;
+		if (!group || !group.submittedForReview) return false;
 
 		// Ensure leader session exists
 		if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
 			return false;
 		}
 
-		// Transition: awaiting_human → awaiting_leader
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_leader', group.version);
-		if (!updated) return false;
-
 		// Reset state for the new cycle (same as resumeWorkerFromHuman).
 		// feedbackIteration is reset to 0 so the worker gets a fresh iteration budget.
 		// submittedForReview is reset so the worker must re-submit for review after addressing feedback.
 		// For approval path, these resets are harmless since leader will complete the task.
 		// For rejection path, these resets are essential for the worker to have a fresh start.
-		this.groupRepo.resetLeaderContractViolations(groupId, updated.version);
+		this.groupRepo.resetLeaderContractViolations(groupId, group.version);
 		this.groupRepo.setSubmittedForReview(groupId, false);
 		const afterReset = this.groupRepo.getGroup(groupId);
 		if (afterReset) {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
 
-		// Inject approval message into existing leader session.
-		// If injection fails, rollback the group state so the task stays in review for retry.
-		try {
-			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
-		} catch (error) {
-			// Rollback: revert group back to awaiting_human
-			const current = this.groupRepo.getGroup(groupId);
-			if (current && current.state === 'awaiting_leader') {
-				this.groupRepo.updateGroupState(groupId, 'awaiting_human', current.version);
-			}
-			throw error;
-		}
+		// Inject approval message into existing leader session
+		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 
 		return true;
 	}
@@ -574,7 +533,7 @@ export class TaskGroupManager {
 	 * Escalate a group to human review because max feedback iterations were reached.
 	 *
 	 * Called by the runtime (NOT the leader) when feedbackIteration >= maxFeedbackIterations.
-	 * Transitions the group to 'awaiting_human' and the task to 'review' so a human
+	 * Sets submittedForReview flag and moves task to 'review' status so a human
 	 * can inspect progress and decide whether to approve, reject, or provide guidance.
 	 *
 	 * Unlike submitForReview (triggered by leader's submit_for_review tool call),
@@ -584,14 +543,13 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		// Pause the group in awaiting_human (slot stays occupied but paused)
-		const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_human', group.version);
-		if (!updated) return null;
+		// Set submittedForReview flag to indicate awaiting human action
+		this.groupRepo.setSubmittedForReview(groupId, true);
 
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);
 
-		return updated;
+		return this.groupRepo.getGroup(groupId);
 	}
 
 	/**
@@ -603,7 +561,7 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
-		if (group.state === 'completed' || group.state === 'failed') {
+		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
 			return group;

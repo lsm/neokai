@@ -206,7 +206,7 @@ export function setupTaskHandlers(
 			if (runtime) {
 				const groupRepo = new SessionGroupRepository(db.getDatabase());
 				const group = groupRepo.getGroupByTaskId(params.taskId);
-				if (group && group.state !== 'completed' && group.state !== 'failed') {
+				if (group && group.completedAt === null) {
 					// Cancel the task group (stops agents and marks task as cancelled)
 					// cancel() returns null if the group doesn't exist or version conflict occurred
 					const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
@@ -275,7 +275,7 @@ export function setupTaskHandlers(
 			if (runtime) {
 				const groupRepo = new SessionGroupRepository(db.getDatabase());
 				const group = groupRepo.getGroupByTaskId(params.taskId);
-				if (group && group.state !== 'completed' && group.state !== 'failed') {
+				if (group && group.completedAt === null) {
 					// Cancel active group if moving to terminal state
 					if (
 						params.status === 'completed' ||
@@ -357,16 +357,15 @@ export function setupTaskHandlers(
 
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
 		const group = groupRepo.getGroupByTaskId(params.taskId);
-		if (!group || group.state !== 'awaiting_human') {
-			throw new Error('Task is not awaiting human review');
+		if (!group) {
+			throw new Error('No active session group for this task');
 		}
 
-		// Resume worker with rejection feedback
-		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, params.feedback.trim(), {
-			approved: false,
-		});
-		if (!resumed) {
-			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
+		// Send rejection feedback to leader - leader handles routing to worker
+		const message = `[Human Rejection]\n\n${params.feedback.trim()}`;
+		const injected = await runtime.injectMessageToLeader(params.taskId, message);
+		if (!injected) {
+			throw new Error('Failed to inject rejection feedback into leader session');
 		}
 
 		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);
@@ -397,8 +396,9 @@ export function setupTaskHandlers(
 				taskId: group.taskId,
 				workerSessionId: group.workerSessionId,
 				leaderSessionId: group.leaderSessionId,
-				state: group.state,
+				workerRole: group.workerRole,
 				feedbackIteration: group.feedbackIteration,
+				submittedForReview: group.submittedForReview,
 				approved: group.approved,
 				createdAt: group.createdAt,
 				completedAt: group.completedAt,
@@ -615,13 +615,13 @@ export function setupTaskHandlers(
 		return { messages, hasMore: false, nextCursor, hasOlder, oldestCursor };
 	});
 
-	// task.sendHumanMessage - Send a human message to the active agent in a task group
+	// task.sendHumanMessage - Send a human message to the worker or leader in a task group
 	messageHub.onRequest('task.sendHumanMessage', async (data) => {
 		const params = data as {
 			roomId: string;
 			taskId: string;
 			message: string;
-			target?: 'auto' | 'worker' | 'leader';
+			target?: 'worker' | 'leader';
 		};
 
 		if (!params.roomId) {
@@ -639,8 +639,8 @@ export function setupTaskHandlers(
 		if (params.message.length > 10_000) {
 			throw new Error('Message is too long (max 10,000 characters)');
 		}
-		const target = params.target ?? 'auto';
-		if (target !== 'auto' && target !== 'worker' && target !== 'leader') {
+		const target = params.target ?? 'worker';
+		if (target !== 'worker' && target !== 'leader') {
 			throw new Error(`Invalid target: ${target}`);
 		}
 		if (!runtimeService) {
@@ -666,8 +666,7 @@ export function setupTaskHandlers(
 			groupRepo,
 			params.taskId,
 			params.message.trim(),
-			target,
-			messageHub
+			target
 		);
 
 		if (!result.success) {
