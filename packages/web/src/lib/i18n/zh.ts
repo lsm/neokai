@@ -451,6 +451,8 @@ export const zh: Record<string, string> = {
 	'toast.toolsConfigFailed': '保存工具配置失败',
 	'toast.toolsMinSource': '至少需要启用一个设置来源',
 	'toast.taskReviewReady': '任务待审核：{title}',
+	'toast.taskRetried': '任务重试已发起',
+	'toast.retryFailed': '重试任务失败',
 	'toast.daemonConnectFailed': '连接守护进程失败',
 
 	// Chat container

@@ -201,11 +201,12 @@ export class RoomRuntime {
 		if (!this.daemonHub) return;
 		const goals = await this.goalManager.getGoalsForTask(taskId);
 		for (const goal of goals) {
-			void this.daemonHub.emit('goal.progressUpdated', {
+			// Emit full goal object so frontend receives updated status, linkedTaskIds, and progress
+			void this.daemonHub.emit('goal.updated', {
 				sessionId: `room:${this.roomId}`,
 				roomId: this.roomId,
 				goalId: goal.id,
-				progress: goal.progress ?? 0,
+				goal,
 			});
 		}
 	}

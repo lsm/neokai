@@ -196,8 +196,13 @@ export function setupGoalHandlers(
 			);
 		} else if (priority) {
 			goal = await goalManager.updateGoalPriority(params.goalId, priority);
+		} else if (Object.keys(rest).length > 0) {
+			// Handle field-only updates (e.g. description, title) without status/progress/priority
+			const existing = await goalManager.getGoal(params.goalId);
+			if (!existing) throw new Error(`Goal not found: ${params.goalId}`);
+			goal = await goalManager.updateGoalStatus(params.goalId, existing.status, rest);
 		} else {
-			throw new Error('No update fields provided (status, progress, or priority required)');
+			throw new Error('No update fields provided');
 		}
 
 		emitGoalUpdated(params.roomId, params.goalId, goal);

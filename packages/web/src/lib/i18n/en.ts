@@ -470,6 +470,8 @@ export const en: Record<string, string> = {
 	'toast.toolsConfigFailed': 'Failed to save tools configuration',
 	'toast.toolsMinSource': 'At least one setting source must be enabled',
 	'toast.taskReviewReady': 'Task ready for review: {title}',
+	'toast.taskRetried': 'Task retry initiated',
+	'toast.retryFailed': 'Failed to retry task',
 	'toast.daemonConnectFailed': 'Failed to connect to daemon',
 
 	// Chat container

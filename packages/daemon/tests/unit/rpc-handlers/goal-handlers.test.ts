@@ -462,13 +462,20 @@ describe('Goal RPC Handlers', () => {
 			).rejects.toThrow('No update fields provided');
 		});
 
-		it('throws error when updates has no recognized fields', async () => {
+		it('supports field-only updates (e.g. title, description) without status/progress/priority', async () => {
 			const handler = messageHubData.handlers.get('goal.update');
 			expect(handler).toBeDefined();
 
-			await expect(
-				handler!({ roomId: 'room-123', goalId: 'goal-123', updates: { title: 'New Title' } }, {})
-			).rejects.toThrow('No update fields provided');
+			const result = (await handler!(
+				{ roomId: 'room-123', goalId: 'goal-123', updates: { title: 'New Title' } },
+				{}
+			)) as { goal: RoomGoal };
+			expect(result.goal).toBeDefined();
+			// Uses updateGoalStatus with existing status to apply the update
+			expect(mockGoalManager.getGoal).toHaveBeenCalledWith('goal-123');
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith('goal-123', 'active', {
+				title: 'New Title',
+			});
 		});
 
 		it('emits goal.updated event', async () => {

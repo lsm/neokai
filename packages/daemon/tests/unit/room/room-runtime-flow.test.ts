@@ -333,14 +333,8 @@ describe('RoomRuntime flow', () => {
 		});
 
 		it('should escalate task to human review (not fail) when max feedback iterations reached', async () => {
-			// Create a new context with maxFeedbackIterations = 5
-			// (default is 3)
-			ctx.runtime.stop();
-			ctx.db.close();
-			ctx = createRuntimeTestContext({ maxFeedbackIterations: 5 });
-
 			// feedbackIteration is incremented by routeWorkerToLeader (1-based).
-			// The check fires when feedbackIteration >= maxFeedbackIterations,
+			// The check fires when feedbackIteration >= maxFeedbackIterations (5),
 			// i.e., on the 5th review round when the leader tries send_to_worker.
 
 			const { task } = await createGoalAndTask(ctx);
@@ -348,13 +342,13 @@ describe('RoomRuntime flow', () => {
 			await ctx.runtime.tick();
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 
-			// Complete 2 full feedback rounds (feedbackIteration reaches 2 after round 2)
-			for (let i = 0; i < 2; i++) {
+			// Complete 4 full feedback rounds (feedbackIteration reaches 4 after round 4)
+			for (let i = 0; i < 4; i++) {
 				await ctx.runtime.onWorkerTerminalState(group.id, {
 					sessionId: group.workerSessionId,
 					kind: 'idle',
 				});
-				// send_to_worker succeeds: feedbackIteration i+1 < 3
+				// send_to_worker succeeds: feedbackIteration i+1 < 5
 				const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
 					mode: 'queue',
@@ -364,14 +358,14 @@ describe('RoomRuntime flow', () => {
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
-			// 3rd review round: routeWorkerToLeader increments feedbackIteration to 3
+			// 5th review round: routeWorkerToLeader increments feedbackIteration to 5
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
-			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(3);
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(5);
 
-			// Leader tries send_to_worker: 3 >= 3 → runtime escalates
+			// Leader tries send_to_worker: 5 >= 5 → runtime escalates
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'One more round',
 			});
@@ -395,8 +389,8 @@ describe('RoomRuntime flow', () => {
 			await ctx.runtime.tick();
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 
-			// 2 full rounds + trigger escalation on the 3rd (maxFeedbackIterations default = 3)
-			for (let i = 0; i < 2; i++) {
+			// 4 full rounds + trigger escalation on the 5th (maxFeedbackIterations = 5)
+			for (let i = 0; i < 4; i++) {
 				await ctx.runtime.onWorkerTerminalState(group.id, {
 					sessionId: group.workerSessionId,
 					kind: 'idle',

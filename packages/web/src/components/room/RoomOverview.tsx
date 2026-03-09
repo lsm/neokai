@@ -540,10 +540,21 @@ function GoalCard({
 									{failedTasks.length > 0 && onRetryTask && (
 										<button
 											class="w-full px-3 py-1.5 text-sm text-left text-amber-400 hover:bg-dark-800 transition-colors"
-											onClick={() => {
+											onClick={async () => {
 												setShowActions(false);
-												for (const task of failedTasks) {
-													onRetryTask(task.id);
+												try {
+													// Reactivate goal if it was in needs_human state
+													if (goal.status === 'needs_human') {
+														await onUpdate({ status: 'active' });
+													}
+													for (const task of failedTasks) {
+														onRetryTask(task.id);
+													}
+													toast.success(t('toast.taskRetried'));
+												} catch (err) {
+													toast.error(
+														err instanceof Error ? err.message : t('toast.retryFailed')
+													);
 												}
 											}}
 										>
@@ -976,7 +987,15 @@ export function RoomOverview({
 											roomId ? (taskId) => navigateToRoomTask(roomId, taskId) : undefined
 										}
 										onApprove={(taskId) => setShowApproveConfirm(taskId)}
-										onRetryTask={(taskId) => void roomStore.retryTask(taskId)}
+										onRetryTask={(taskId) => {
+											roomStore.retryTask(taskId).catch((err) => {
+												toast.error(
+													err instanceof Error
+														? err.message
+														: t('toast.retryFailed')
+												);
+											});
+										}}
 										onUpdate={(updates) => onUpdateGoal(goal.id, updates)}
 										onDelete={() => onDeleteGoal(goal.id)}
 									/>
