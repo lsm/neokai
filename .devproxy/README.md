@@ -5,18 +5,43 @@ This directory contains mock response files for the NeoKai test suite. These fil
 ## Quick Start
 
 ```bash
-# Start Dev Proxy with default mocks
-bun run test:proxy:start
+# Run one online test with Dev Proxy (helper auto starts/stops proxy)
+NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
 
-# Set environment for tests
-export HTTPS_PROXY=http://127.0.0.1:8000
-export HTTP_PROXY=http://127.0.0.1:8000
-export NODE_USE_ENV_PROXY=1
-export NODE_EXTRA_CA_CERTS=~/.proxy/rootCA.pem
-
-# Run tests
-NEOKAI_TEST_ONLINE=true bun test packages/daemon/tests/online/
+# Or run all online tests
+NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/
 ```
+
+### Strict Safety in Dev Proxy Mode
+
+When `NEOKAI_USE_DEV_PROXY=1` is enabled via the online test helper:
+
+- `CLAUDE_CODE_OAUTH_TOKEN` is cleared
+- `ANTHROPIC_AUTH_TOKEN` is cleared
+- `ANTHROPIC_API_KEY` is replaced with a dummy test key
+- Tests fail fast if Dev Proxy is unavailable
+
+This prevents accidental real Anthropic credential usage during mocked runs.
+
+### Verify Requests Hit Dev Proxy
+
+After a test run, either:
+
+```bash
+# Persist logs to .devproxy/devproxy.log during helper-managed stop
+NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+tail -n 120 .devproxy/devproxy.log
+
+# Or read directly from devproxy
+devproxy logs --lines 120 --output text
+```
+
+Expected signal of a properly mocked request:
+
+- `req ... POST http://127.0.0.1:8000/v1/messages?beta=true`
+- `mock ... MockResponsePlugin: 200 ...`
+
+If you see `pass ... Passed through`, the request did not match a mock.
 
 ## Mock Files
 
@@ -125,7 +150,7 @@ Example:
 ```json
 {
   "request": {
-    "url": "https://api.anthropic.com/v1/messages",
+    "url": "http://127.0.0.1:8000/v1/messages?beta=true",
     "method": "POST",
     "bodyFragment": {
       "messages": [

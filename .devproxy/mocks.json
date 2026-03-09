@@ -1,9 +1,72 @@
 {
-	"$schema": "https://raw.githubusercontent.com/dotnet/dev-proxy/main/schemas/v2.2.0/mockresponseplugin.mocksfile.schema.json",
 	"mocks": [
 		{
 			"request": {
-				"url": "https://api.anthropic.com/v1/messages",
+				"url": "http://127.0.0.1:8000/v1/messages",
+				"method": "POST",
+				"body": {
+					"matcher": ".JsonContains",
+					"key": "messages",
+					"value": "/context"
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-limit",
+						"value": "50"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-remaining",
+						"value": "49"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin"
+					}
+				],
+				"body": {
+					"id": "msg_mock_context",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Context: 18k/200k (9%)"
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 50,
+						"output_tokens": 10,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					},
+					"messages": [
+						{
+							"type": "user",
+							"uuid": "00000000-0000-0000-0000-000000000001",
+							"isReplay": true,
+							"message": {
+								"role": "user",
+								"content": "<local-command-stdout>\n\n## Context Usage\n\n**Tokens:** 18k / 200k (9%)\n\n### Breakdown\n\n| Category | Tokens | % |\n|----------|--------|---|\n| System prompt | 8k | 4% |\n| System tools | 5k | 2.5% |\n| Messages | 3k | 1.5% |\n| Free space | 184k | 92% |\n\n*Model: claude-haiku-20250307*\n</local-command-stdout>"
+							}
+						}
+					]
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages",
 				"method": "POST"
 			},
 			"response": {
@@ -27,21 +90,133 @@
 					}
 				],
 				"body": {
-					"id": "msg_mock123",
+					"id": "msg_mock_default",
 					"type": "message",
 					"role": "assistant",
 					"content": [
 						{
 							"type": "text",
-							"text": "[MOCKED BY DEV PROXY] Hello! This is a mocked response from Dev Proxy for testing purposes."
+							"text": "[MOCKED] Hello! I'm Claude, an AI assistant."
 						}
 					],
-					"model": "claude-sonnet-4-20250514",
+					"model": "claude-haiku-20250307",
 					"stop_reason": "end_turn",
 					"stop_sequence": null,
 					"usage": {
-						"input_tokens": 12,
-						"output_tokens": 48,
+						"input_tokens": 50,
+						"output_tokens": 20,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST",
+				"body": {
+					"matcher": ".JsonContains",
+					"key": "messages",
+					"value": "/context"
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-limit",
+						"value": "50"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-remaining",
+						"value": "49"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin"
+					}
+				],
+				"body": {
+					"id": "msg_mock_context",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Context: 18k/200k (9%)"
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 50,
+						"output_tokens": 10,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					},
+					"messages": [
+						{
+							"type": "user",
+							"uuid": "00000000-0000-0000-0000-000000000001",
+							"isReplay": true,
+							"message": {
+								"role": "user",
+								"content": "<local-command-stdout>\n\n## Context Usage\n\n**Tokens:** 18k / 200k (9%)\n\n### Breakdown\n\n| Category | Tokens | % |\n|----------|--------|---|\n| System prompt | 8k | 4% |\n| System tools | 5k | 2.5% |\n| Messages | 3k | 1.5% |\n| Free space | 184k | 92% |\n\n*Model: claude-haiku-20250307*\n</local-command-stdout>"
+							}
+						}
+					]
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "http://127.0.0.1:8000/v1/messages?beta=true",
+				"method": "POST"
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-limit",
+						"value": "50"
+					},
+					{
+						"name": "anthropic-ratelimit-requests-remaining",
+						"value": "49"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin"
+					}
+				],
+				"body": {
+					"id": "msg_mock_default",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "[MOCKED] Hello! I'm Claude, an AI assistant."
+						}
+					],
+					"model": "claude-haiku-20250307",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 50,
+						"output_tokens": 20,
 						"cache_creation_input_tokens": 0,
 						"cache_read_input_tokens": 0,
 						"service_tier": "standard"

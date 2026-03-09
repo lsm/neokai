@@ -74,12 +74,11 @@ describe('Dev Proxy Helper', () => {
 				try {
 					await controller.start();
 					expect(controller.isRunning()).toBe(true);
-					expect(controller.pid).toBeDefined();
+					// Detached devproxy process doesn't expose a stable PID in this helper.
+					expect(controller.pid).toBeUndefined();
 
-					// Verify environment variables are set
-					expect(process.env.HTTPS_PROXY).toContain('127.0.0.1:');
-					expect(process.env.HTTP_PROXY).toContain('127.0.0.1:');
-					expect(process.env.NODE_USE_ENV_PROXY).toBe('1');
+					// Verify ANTHROPIC_BASE_URL is redirected to the local proxy
+					expect(process.env.ANTHROPIC_BASE_URL).toBe(controller.proxyUrl);
 				} finally {
 					await controller.stop();
 					expect(controller.isRunning()).toBe(false);
@@ -92,9 +91,7 @@ describe('Dev Proxy Helper', () => {
 			'should restore environment variables after stop',
 			async () => {
 				// Save original values
-				const originalHttpsProxy = process.env.HTTPS_PROXY;
-				const originalHttpProxy = process.env.HTTP_PROXY;
-				const originalNodeUseEnvProxy = process.env.NODE_USE_ENV_PROXY;
+				const originalAnthropicBaseUrl = process.env.ANTHROPIC_BASE_URL;
 
 				const controller = createDevProxyController({
 					port: 8200 + Math.floor(Math.random() * 100),
@@ -103,14 +100,12 @@ describe('Dev Proxy Helper', () => {
 
 				try {
 					await controller.start();
-					expect(process.env.HTTPS_PROXY).toBeDefined();
+					expect(process.env.ANTHROPIC_BASE_URL).toBe(controller.proxyUrl);
 
 					controller.restoreEnv();
 
 					// Should restore to original values
-					expect(process.env.HTTPS_PROXY).toBe(originalHttpsProxy);
-					expect(process.env.HTTP_PROXY).toBe(originalHttpProxy);
-					expect(process.env.NODE_USE_ENV_PROXY).toBe(originalNodeUseEnvProxy);
+					expect(process.env.ANTHROPIC_BASE_URL).toBe(originalAnthropicBaseUrl);
 				} finally {
 					await controller.stop();
 				}
