@@ -139,7 +139,18 @@ function makeRuntimeService(resumeResult = true, injectResult = true) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
-	const runtime = { resumeWorkerFromHuman, injectMessageToLeader, injectMessageToWorker };
+	const cancelTask = mock(async () => ({
+		success: injectResult,
+		cancelledTaskIds: injectResult ? ['task-1'] : [],
+	}));
+	const terminateTaskGroup = mock(async () => injectResult);
+	const runtime = {
+		resumeWorkerFromHuman,
+		injectMessageToLeader,
+		injectMessageToWorker,
+		cancelTask,
+		terminateTaskGroup,
+	};
 	const service = {
 		getRuntime: mock(() => runtime),
 	} as unknown as RoomRuntimeService;
@@ -389,6 +400,16 @@ describe('task.cancel RPC Handler', () => {
 	});
 
 	describe('happy paths', () => {
+		it('uses runtime.cancelTask when runtime is available', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			const { service, runtime } = makeRuntimeService(true);
+			setup({ task: inProgressTask, submittedForReview: false, runtimeService: service });
+
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			expect(runtime.cancelTask).toHaveBeenCalledWith('task-1');
+			expect(result).toEqual({ task: inProgressTask });
+		});
+
 		it('cancels a pending task without active group', async () => {
 			const pendingTask = { ...mockTask, status: 'pending' as const };
 			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
@@ -546,14 +567,29 @@ describe('task.reject RPC Handler', () => {
 	describe('happy path', () => {
 		it('rejects a task in review with active group', async () => {
 			const reviewTask = { ...mockTask, status: 'review' as const };
-			const { service } = makeRuntimeService(true);
+			const { service, runtime } = makeRuntimeService(true);
 			setup({ task: reviewTask, submittedForReview: true, runtimeService: service });
 
 			const result = await getHandler()(
 				{ roomId: 'room-1', taskId: 'task-1', feedback: 'please fix the bug' },
 				{}
 			);
+			expect(runtime.resumeWorkerFromHuman).toHaveBeenCalledWith(
+				'task-1',
+				'[Human Rejection]\n\nplease fix the bug',
+				{ approved: false }
+			);
 			expect(result).toEqual({ success: true });
+		});
+
+		it('throws when runtime resume fails', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const { service } = makeRuntimeService(false);
+			setup({ task: reviewTask, submittedForReview: true, runtimeService: service });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'please fix' }, {})
+			).rejects.toThrow('Failed to reject task');
 		});
 	});
 });
@@ -582,20 +618,21 @@ describe('task.setStatus RPC Handler', () => {
 		return mock(() => manager);
 	}
 
-	/**
-	 * Create a runtime service with a taskGroupManager that can be controlled
-	 */
-	function makeRuntimeServiceWithGroupManager(
-		cancelResult: unknown = { id: 'group-1', state: 'cancelled' }
-	) {
-		const cancel = mock(async () => cancelResult);
-		const runtime = {
-			taskGroupManager: { cancel },
-		};
+	/** Create a runtime service with cancelTask/terminateTaskGroup controls. */
+	function makeRuntimeServiceWithRuntimeCleanup(options?: {
+		cancelSuccess?: boolean;
+		terminateSuccess?: boolean;
+	}) {
+		const cancelTask = mock(async () => ({
+			success: options?.cancelSuccess ?? true,
+			cancelledTaskIds: options?.cancelSuccess === false ? [] : ['task-1'],
+		}));
+		const terminateTaskGroup = mock(async () => options?.terminateSuccess ?? true);
+		const runtime = { cancelTask, terminateTaskGroup };
 		const service = {
 			getRuntime: mock(() => runtime),
 		} as unknown as RoomRuntimeService;
-		return { service, runtime, cancel };
+		return { service, runtime, cancelTask, terminateTaskGroup };
 	}
 
 	function setup(opts: {
@@ -684,8 +721,7 @@ describe('task.setStatus RPC Handler', () => {
 
 	describe('group cancellation', () => {
 		it('throws when group cancellation fails due to version conflict', async () => {
-			// Create runtime service where cancel returns null (simulating version conflict)
-			const { service } = makeRuntimeServiceWithGroupManager(null);
+			const { service } = makeRuntimeServiceWithRuntimeCleanup({ terminateSuccess: false });
 
 			setup({
 				task: mockTask, // in_progress status
@@ -695,15 +731,11 @@ describe('task.setStatus RPC Handler', () => {
 
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'completed' }, {})
-			).rejects.toThrow('Failed to cancel task group');
+			).rejects.toThrow('Failed to terminate task group');
 		});
 
 		it('succeeds when group cancellation succeeds', async () => {
-			// Create runtime service where cancel returns a valid group
-			const { service, cancel } = makeRuntimeServiceWithGroupManager({
-				id: 'group-1',
-				completedAt: Date.now(),
-			});
+			const { service, terminateTaskGroup } = makeRuntimeServiceWithRuntimeCleanup();
 
 			setup({
 				task: mockTask, // in_progress status
@@ -715,12 +747,14 @@ describe('task.setStatus RPC Handler', () => {
 				{ roomId: 'room-1', taskId: 'task-1', status: 'completed' },
 				{}
 			);
-			expect(cancel).toHaveBeenCalledWith('group-1');
+			expect(terminateTaskGroup).toHaveBeenCalledWith('task-1');
 			expect(result).toEqual({ task: { ...mockTask, status: 'completed' } });
 		});
 
-		it('does not cancel group when moving to non-terminal state', async () => {
-			const { service, cancel } = makeRuntimeServiceWithGroupManager();
+		it('uses runtime.cancelTask when moving to cancelled', async () => {
+			const { service, cancelTask, terminateTaskGroup } = makeRuntimeServiceWithRuntimeCleanup({
+				cancelSuccess: true,
+			});
 
 			setup({
 				task: mockTask, // in_progress status
@@ -728,9 +762,28 @@ describe('task.setStatus RPC Handler', () => {
 				runtimeService: service,
 			});
 
-			// Moving to 'review' is not a terminal state, so group shouldn't be cancelled
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', status: 'cancelled' },
+				{}
+			);
+			expect(cancelTask).toHaveBeenCalledWith('task-1');
+			expect(terminateTaskGroup).not.toHaveBeenCalled();
+			expect(result).toEqual({ task: mockTask });
+		});
+
+		it('does not terminate group when moving to non-terminal state', async () => {
+			const { service, cancelTask, terminateTaskGroup } = makeRuntimeServiceWithRuntimeCleanup();
+
+			setup({
+				task: mockTask, // in_progress status
+				submittedForReview: true,
+				runtimeService: service,
+			});
+
+			// Moving to 'review' is not a terminal state, so group shouldn't be terminated
 			await getHandler()({ roomId: 'room-1', taskId: 'task-1', status: 'review' }, {});
-			expect(cancel).not.toHaveBeenCalled();
+			expect(cancelTask).not.toHaveBeenCalled();
+			expect(terminateTaskGroup).not.toHaveBeenCalled();
 		});
 
 		it('does not cancel group when no runtime service', async () => {

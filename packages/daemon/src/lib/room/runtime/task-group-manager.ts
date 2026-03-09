@@ -363,6 +363,8 @@ export class TaskGroupManager {
 		if (afterIncrement) {
 			this.groupRepo.resetLeaderContractViolations(groupId, afterIncrement.version);
 		}
+		// Keep legacy state column in sync for compatibility.
+		this.groupRepo.setCompatibilityState(groupId, 'awaiting_leader');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -394,7 +396,8 @@ export class TaskGroupManager {
 			});
 		}
 
-		// No state transition - simplified model allows messages anytime
+		// Keep legacy state column in sync for compatibility.
+		this.groupRepo.setCompatibilityState(groupId, 'awaiting_worker');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -458,6 +461,7 @@ export class TaskGroupManager {
 
 		// Move task to review status with PR URL
 		await this.taskManager.reviewTask(group.taskId, prUrl);
+		this.groupRepo.setCompatibilityState(groupId, 'awaiting_human');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -488,6 +492,7 @@ export class TaskGroupManager {
 
 		// Inject approval message into existing worker session.
 		await this.sessionFactory.injectMessage(group.workerSessionId, message);
+		this.groupRepo.setCompatibilityState(groupId, 'awaiting_worker');
 
 		return true;
 	}
@@ -511,6 +516,10 @@ export class TaskGroupManager {
 			return false;
 		}
 
+		// Inject into leader first. If this fails, caller can safely rollback
+		// task status/approval without restoring group metadata.
+		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+
 		// Reset state for the new cycle (same as resumeWorkerFromHuman).
 		// feedbackIteration is reset to 0 so the worker gets a fresh iteration budget.
 		// submittedForReview is reset so the worker must re-submit for review after addressing feedback.
@@ -522,9 +531,7 @@ export class TaskGroupManager {
 		if (afterReset) {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
-
-		// Inject approval message into existing leader session
-		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+		this.groupRepo.setCompatibilityState(groupId, 'awaiting_leader');
 
 		return true;
 	}
@@ -545,6 +552,7 @@ export class TaskGroupManager {
 
 		// Set submittedForReview flag to indicate awaiting human action
 		this.groupRepo.setSubmittedForReview(groupId, true);
+		this.groupRepo.setCompatibilityState(groupId, 'awaiting_human');
 
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);

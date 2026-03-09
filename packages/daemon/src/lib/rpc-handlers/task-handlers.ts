@@ -204,24 +204,17 @@ export function setupTaskHandlers(
 		if (runtimeService) {
 			const runtime = runtimeService.getRuntime(params.roomId);
 			if (runtime) {
-				const groupRepo = new SessionGroupRepository(db.getDatabase());
-				const group = groupRepo.getGroupByTaskId(params.taskId);
-				if (group && group.completedAt === null) {
-					// Cancel the task group (stops agents and marks task as cancelled)
-					// cancel() returns null if the group doesn't exist or version conflict occurred
-					const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
-					if (!cancelledGroup) {
-						throw new Error(
-							`Failed to cancel task ${params.taskId} — group may have been modified concurrently`
-						);
-					}
-					// Reload task to get updated status
-					const updatedTask = await taskManager.getTask(params.taskId);
-					if (updatedTask) {
-						emitTaskUpdate(params.roomId, updatedTask);
-						emitRoomOverview(params.roomId);
-						return { task: updatedTask };
-					}
+				const result = await runtime.cancelTask(params.taskId);
+				if (!result.success) {
+					throw new Error(
+						`Failed to cancel task ${params.taskId} — runtime cancellation was unsuccessful`
+					);
+				}
+				const updatedTask = await taskManager.getTask(params.taskId);
+				if (updatedTask) {
+					emitTaskUpdate(params.roomId, updatedTask);
+					emitRoomOverview(params.roomId);
+					return { task: updatedTask };
 				}
 			}
 		}
@@ -269,25 +262,36 @@ export function setupTaskHandlers(
 			);
 		}
 
-		// If there's an active group with runtime, cancel it when moving to terminal state
+		// If there's an active group with runtime, terminate it on terminal transitions.
 		if (runtimeService) {
 			const runtime = runtimeService.getRuntime(params.roomId);
 			if (runtime) {
-				const groupRepo = new SessionGroupRepository(db.getDatabase());
-				const group = groupRepo.getGroupByTaskId(params.taskId);
-				if (group && group.completedAt === null) {
-					// Cancel active group if moving to terminal state
-					if (
-						params.status === 'completed' ||
-						params.status === 'failed' ||
-						params.status === 'cancelled'
-					) {
-						const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
-						if (!cancelledGroup) {
+				const isTerminalStatus =
+					params.status === 'completed' ||
+					params.status === 'failed' ||
+					params.status === 'cancelled';
+				if (isTerminalStatus) {
+					if (params.status === 'cancelled') {
+						const cancelResult = await runtime.cancelTask(params.taskId);
+						if (!cancelResult.success) {
 							throw new Error(
-								`Failed to cancel task group for task ${params.taskId} — group may have been modified concurrently`
+								`Failed to cancel task ${params.taskId} — runtime cancellation was unsuccessful`
 							);
 						}
+						const cancelledTask = await taskManager.getTask(params.taskId);
+						if (!cancelledTask) {
+							throw new Error(`Task not found: ${params.taskId}`);
+						}
+						emitTaskUpdate(params.roomId, cancelledTask);
+						emitRoomOverview(params.roomId);
+						return { task: cancelledTask };
+					}
+
+					const terminated = await runtime.terminateTaskGroup(params.taskId);
+					if (!terminated) {
+						throw new Error(
+							`Failed to terminate task group for task ${params.taskId} — group may have been modified concurrently`
+						);
 					}
 				}
 			}
@@ -361,11 +365,13 @@ export function setupTaskHandlers(
 			throw new Error('No active session group for this task');
 		}
 
-		// Send rejection feedback to leader - leader handles routing to worker
+		// Resume via runtime so review parking flags and task status are updated consistently.
 		const message = `[Human Rejection]\n\n${params.feedback.trim()}`;
-		const injected = await runtime.injectMessageToLeader(params.taskId, message);
-		if (!injected) {
-			throw new Error('Failed to inject rejection feedback into leader session');
+		const resumed = await runtime.resumeWorkerFromHuman(params.taskId, message, {
+			approved: false,
+		});
+		if (!resumed) {
+			throw new Error('Failed to reject task — task may not be awaiting review');
 		}
 
 		log.info(`Task ${params.taskId} rejected by human in room ${params.roomId}`);

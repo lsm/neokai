@@ -122,7 +122,7 @@ function HeaderReviewBar({ roomId, taskId, onApproved, onRejected }: HeaderRevie
 		setApproving(true);
 		setError(null);
 		try {
-			await request('goal.approveTask', { roomId, taskId });
+			await request('task.approve', { roomId, taskId });
 			// Approval changes group state; re-fetch conversation to pick up the approval message
 			onApproved();
 		} catch (err) {

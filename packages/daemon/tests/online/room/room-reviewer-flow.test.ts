@@ -137,9 +137,9 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				);
 			}
 
-			// If planning is in 'review', approve it via goal.approveTask to trigger phase 2
+			// If planning is in 'review', approve it via task.approve to trigger phase 2
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
@@ -279,7 +279,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			// This should route to the WORKER (not leader) with approved=true
 			// Worker merges the PR via `gh pr merge`, then exits
 			// Leader receives terminal state and calls complete_task (bypasses submittedForReview gate)
-			const result = await daemon.messageHub.request('goal.approveTask', {
+			const result = await daemon.messageHub.request('task.approve', {
 				roomId,
 				taskId: codingTaskId,
 			});
