@@ -684,8 +684,8 @@ jobs:
   # UI-only tests that don't require LLM API calls
   # ============================================
 
-  e2e:
-    name: E2E (${{ matrix.test.name }})
+  e2e-no-llm:
+    name: E2E No-LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
     # Skip E2E tests for release PRs to avoid blocking releases with flaky tests
@@ -769,7 +769,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: e2e-results-${{ matrix.test.name }}
+          name: e2e-no-llm-results-${{ matrix.test.name }}
           path: |
             packages/e2e/test-results/
             packages/e2e/playwright-report/
