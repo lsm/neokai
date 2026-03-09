@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
-import type { GroupState } from '../../../src/lib/room/state/session-group-repository';
 
 describe('SessionGroupRepository', () => {
 	let db: Database;
@@ -13,6 +12,8 @@ describe('SessionGroupRepository', () => {
 
 	beforeEach(() => {
 		db = new Database(':memory:');
+		// Enable foreign keys for cascade delete to work
+		db.exec('PRAGMA foreign_keys = ON');
 		db.exec(`
 			CREATE TABLE rooms (
 				id TEXT PRIMARY KEY,
@@ -55,13 +56,11 @@ describe('SessionGroupRepository', () => {
 				joined_at INTEGER NOT NULL,
 				PRIMARY KEY (group_id, session_id)
 			);
-			CREATE TABLE session_group_messages (
+			CREATE TABLE task_group_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-				session_id TEXT,
-				role TEXT NOT NULL,
-				message_type TEXT NOT NULL,
-				content TEXT NOT NULL,
+				kind TEXT NOT NULL,
+				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
 
@@ -84,7 +83,6 @@ describe('SessionGroupRepository', () => {
 			expect(group.workerSessionId).toBe(workerSessionId);
 			expect(group.leaderSessionId).toBe(leaderSessionId);
 			expect(group.workerRole).toBe('coder');
-			expect(group.state).toBe('awaiting_worker');
 			expect(group.feedbackIteration).toBe(0);
 			expect(group.leaderContractViolations).toBe(0);
 			expect(group.lastProcessedLeaderTurnId).toBeNull();
@@ -144,22 +142,6 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
-	describe('updateGroupState', () => {
-		it('should update state with correct version', () => {
-			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			const updated = repo.updateGroupState(group.id, 'awaiting_leader', group.version);
-			expect(updated).not.toBeNull();
-			expect(updated!.state).toBe('awaiting_leader');
-			expect(updated!.version).toBe(group.version + 1);
-		});
-
-		it('should return null on version mismatch', () => {
-			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			const result = repo.updateGroupState(group.id, 'awaiting_leader', group.version + 999);
-			expect(result).toBeNull();
-		});
-	});
-
 	describe('incrementFeedbackIteration', () => {
 		it('should increment feedback count', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
@@ -178,10 +160,9 @@ describe('SessionGroupRepository', () => {
 	});
 
 	describe('completeGroup', () => {
-		it('should set state to completed and set completedAt', () => {
+		it('should set completedAt timestamp', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			const completed = repo.completeGroup(group.id, group.version);
-			expect(completed!.state).toBe('completed');
 			expect(completed!.completedAt).toBeDefined();
 			expect(completed!.completedAt).toBeGreaterThan(0);
 			expect(completed!.version).toBe(group.version + 1);
@@ -189,12 +170,131 @@ describe('SessionGroupRepository', () => {
 	});
 
 	describe('failGroup', () => {
-		it('should set state to failed and set completedAt', () => {
+		it('should set completedAt timestamp', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			const failed = repo.failGroup(group.id, group.version);
-			expect(failed!.state).toBe('failed');
 			expect(failed!.completedAt).toBeDefined();
 			expect(failed!.completedAt).toBeGreaterThan(0);
+		});
+	});
+
+	describe('deleteGroup', () => {
+		it('should delete a group', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(repo.getGroup(group.id)).not.toBeNull();
+
+			const result = repo.deleteGroup(group.id);
+			expect(result).toBe(true);
+			expect(repo.getGroup(group.id)).toBeNull();
+		});
+
+		it('should return false when group does not exist', () => {
+			const result = repo.deleteGroup('non-existent-group');
+			expect(result).toBe(false);
+		});
+
+		it('should cascade delete members', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+
+			// Verify members exist
+			const members = db
+				.prepare('SELECT * FROM session_group_members WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(members).toHaveLength(2);
+
+			// Delete the group
+			repo.deleteGroup(group.id);
+
+			// Members should be deleted too
+			const remainingMembers = db
+				.prepare('SELECT * FROM session_group_members WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(remainingMembers).toHaveLength(0);
+		});
+
+		it('should cascade delete events', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+
+			// Add some events
+			repo.appendEvent({ groupId: group.id, kind: 'status', payloadJson: '{}' });
+			repo.appendEvent({ groupId: group.id, kind: 'log', payloadJson: '{}' });
+
+			const events = db
+				.prepare('SELECT * FROM task_group_events WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(events).toHaveLength(2);
+
+			// Delete the group
+			repo.deleteGroup(group.id);
+
+			// Events should be deleted too
+			const remainingEvents = db
+				.prepare('SELECT * FROM task_group_events WHERE group_id = ?')
+				.all(group.id) as unknown[];
+			expect(remainingEvents).toHaveLength(0);
+		});
+	});
+
+	describe('resetGroupForRestart', () => {
+		it('should reset failed group (clear completedAt)', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			// Set to failed state
+			repo.failGroup(group.id, group.version);
+
+			// Reset for restart
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset).not.toBeNull();
+			expect(reset!.completedAt).toBeNull();
+		});
+
+		it('should reset completed group (clear completedAt)', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			// Set to completed state
+			repo.completeGroup(group.id, group.version);
+
+			// Reset for restart
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset).not.toBeNull();
+			expect(reset!.completedAt).toBeNull();
+		});
+
+		it('should preserve workerRole and workspacePath', () => {
+			const group = repo.createGroup(
+				taskId,
+				workerSessionId,
+				leaderSessionId,
+				'planner',
+				'/workspace'
+			);
+			repo.failGroup(group.id, group.version);
+
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset!.workerRole).toBe('planner');
+			expect(reset!.workspacePath).toBe('/workspace');
+		});
+
+		it('should reset metadata fields to defaults', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset!.feedbackIteration).toBe(0);
+			expect(reset!.tokensUsed).toBe(0);
+			expect(reset!.submittedForReview).toBe(false);
+			expect(reset!.approved).toBe(false);
+		});
+
+		it('should return null for non-existent group', () => {
+			const result = repo.resetGroupForRestart('non-existent');
+			expect(result).toBeNull();
+		});
+
+		it('should increment version', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+
+			const reset = repo.resetGroupForRestart(group.id);
+			expect(reset!.version).toBe(group.version + 2); // +1 for failGroup, +1 for reset
 		});
 	});
 
@@ -229,77 +329,53 @@ describe('SessionGroupRepository', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 
 			// First update succeeds
-			const first = repo.updateGroupState(group.id, 'awaiting_leader', group.version);
+			const first = repo.incrementFeedbackIteration(group.id, group.version);
 			expect(first).not.toBeNull();
 
 			// Second update with stale version fails
-			const second = repo.updateGroupState(group.id, 'awaiting_human', group.version);
+			const second = repo.incrementFeedbackIteration(group.id, group.version);
 			expect(second).toBeNull();
 
 			// Verify first update stuck
 			const final = repo.getGroup(group.id);
-			expect(final!.state).toBe('awaiting_leader');
+			expect(final!.feedbackIteration).toBe(1);
 		});
 	});
 
-	describe('appendMessage / getMessages', () => {
-		it('should append and retrieve messages', () => {
+	describe('appendEvent / getEvents', () => {
+		it('should append and retrieve events', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			const msgId = repo.appendMessage({
+			const eventId = repo.appendEvent({
 				groupId: group.id,
-				sessionId: workerSessionId,
-				role: 'coder',
-				messageType: 'text',
-				content: 'Hello from Coder',
+				kind: 'status',
+				payloadJson: JSON.stringify({ text: 'Hello status' }),
 			});
-			expect(msgId).toBeGreaterThan(0);
+			expect(eventId).toBeGreaterThan(0);
 
-			const { messages, hasMore } = repo.getMessages(group.id);
-			expect(messages).toHaveLength(1);
-			expect(messages[0].role).toBe('coder');
-			expect(messages[0].content).toBe('Hello from Coder');
-			expect(messages[0].sessionId).toBe(workerSessionId);
+			const { events, hasMore } = repo.getEvents(group.id);
+			expect(events).toHaveLength(1);
+			expect(events[0].kind).toBe('status');
+			expect(events[0].payloadJson).toBe(JSON.stringify({ text: 'Hello status' }));
 			expect(hasMore).toBe(false);
 		});
 
-		it('should paginate messages', () => {
+		it('should paginate events', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			for (let i = 0; i < 5; i++) {
-				repo.appendMessage({
+				repo.appendEvent({
 					groupId: group.id,
-					role: 'coder',
-					messageType: 'text',
-					content: `msg ${i}`,
+					kind: 'status',
+					payloadJson: JSON.stringify({ text: `event ${i}` }),
 				});
 			}
 
-			const page1 = repo.getMessages(group.id, { limit: 3 });
-			expect(page1.messages).toHaveLength(3);
+			const page1 = repo.getEvents(group.id, { limit: 3 });
+			expect(page1.events).toHaveLength(3);
 			expect(page1.hasMore).toBe(true);
 
-			const page2 = repo.getMessages(group.id, { afterId: page1.messages.at(-1)!.id });
-			expect(page2.messages).toHaveLength(2);
+			const page2 = repo.getEvents(group.id, { afterId: page1.events.at(-1)!.id });
+			expect(page2.events).toHaveLength(2);
 			expect(page2.hasMore).toBe(false);
-		});
-	});
-
-	describe('GroupState type coverage', () => {
-		it('should accept all valid states', () => {
-			const states: GroupState[] = [
-				'awaiting_worker',
-				'awaiting_leader',
-				'awaiting_human',
-				'completed',
-				'failed',
-			];
-			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
-			let currentVersion = group.version;
-
-			for (const state of states.slice(0, 3)) {
-				const updated = repo.updateGroupState(group.id, state, currentVersion);
-				expect(updated).not.toBeNull();
-				currentVersion = updated!.version;
-			}
 		});
 	});
 

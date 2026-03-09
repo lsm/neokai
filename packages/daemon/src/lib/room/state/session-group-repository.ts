@@ -1,10 +1,9 @@
 /**
- * SessionGroupRepository - CRUD for session_groups, session_group_members, session_group_messages
+ * SessionGroupRepository - CRUD for session_groups, session_group_members, task_group_events
  *
  * Generic multi-agent collaboration groups. For (Worker, Leader) task groups:
  *   group_type = 'task', ref_id = task_id
  *   members: role='worker' + role='leader'
- *   state: awaiting_worker | awaiting_leader | awaiting_human | hibernated | completed | failed
  *
  * The actual worker type (planner, coder, general) is stored in metadata.workerRole.
  *
@@ -12,17 +11,14 @@
  * as JSON in the metadata column — no schema change needed for new fields.
  *
  * All update methods use version-based optimistic locking.
+ *
+ * NOTE: The `state` DB column is legacy and no longer used for routing decisions.
+ * Use `completedAt` to check if a group is terminal, and `submittedForReview` to
+ * check if a group is awaiting human review.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-
-export type GroupState =
-	| 'awaiting_worker'
-	| 'awaiting_leader'
-	| 'awaiting_human'
-	| 'completed'
-	| 'failed';
 
 /** Rate limit backoff state stored in group metadata */
 export interface RateLimitBackoff {
@@ -33,6 +29,25 @@ export interface RateLimitBackoff {
 	/** Which session hit the limit ('worker' | 'leader') */
 	sessionRole: 'worker' | 'leader';
 }
+
+/** Persisted bootstrap context for lazily creating Leader sessions */
+export interface DeferredLeaderConfig {
+	roomId: string;
+	goalId: string;
+	reviewContext?: 'plan_review' | 'code_review';
+	leaderTaskContext?: string;
+}
+
+/**
+ * Compatibility state persisted in session_groups.state.
+ * Runtime routing should prefer submittedForReview/completedAt.
+ */
+export type GroupState =
+	| 'awaiting_worker'
+	| 'awaiting_leader'
+	| 'awaiting_human'
+	| 'completed'
+	| 'failed';
 
 /** Type-specific metadata for task groups */
 interface TaskGroupMetadata {
@@ -58,6 +73,8 @@ interface TaskGroupMetadata {
 	rateLimit?: RateLimitBackoff | null;
 	/** Timestamp of last agent activity (message output, tool call) for stall detection */
 	lastActivityAt?: number;
+	/** Persisted bootstrap config for deferred Leader creation */
+	deferredLeader?: DeferredLeaderConfig | null;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -71,6 +88,7 @@ function defaultMetadata(): TaskGroupMetadata {
 		activeWorkElapsed: 0,
 		hibernatedAt: null,
 		tokensUsed: 0,
+		deferredLeader: null,
 	};
 }
 
@@ -83,11 +101,12 @@ export interface SessionGroup {
 	/** ref_id — the task_id for task groups */
 	taskId: string;
 	groupType: string;
+	/** Compatibility mirror only; not authoritative for routing. */
+	state: GroupState;
 	workerSessionId: string;
 	leaderSessionId: string;
 	/** The specific worker agent type: 'planner', 'coder', 'general' */
 	workerRole: string;
-	state: GroupState;
 	feedbackIteration: number;
 	leaderContractViolations: number;
 	leaderCalledTool: boolean;
@@ -108,17 +127,17 @@ export interface SessionGroup {
 	rateLimit: RateLimitBackoff | null;
 	/** Timestamp of last agent activity for stall detection */
 	lastActivityAt: number | null;
+	/** Persisted bootstrap config for deferred Leader creation */
+	deferredLeader: DeferredLeaderConfig | null;
 	createdAt: number;
 	completedAt: number | null;
 }
 
-export interface SessionGroupMessage {
+export interface TaskGroupEvent {
 	id: number;
 	groupId: string;
-	sessionId: string | null;
-	role: string;
-	messageType: string;
-	content: string;
+	kind: string;
+	payloadJson: string | null;
 	createdAt: number;
 }
 
@@ -204,25 +223,10 @@ export class SessionGroupRepository {
 				JOIN tasks t ON sg.ref_id = t.id
 				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
 				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
-				WHERE t.room_id = ? AND sg.state NOT IN ('completed', 'failed')`
+				WHERE t.room_id = ? AND sg.completed_at IS NULL`
 			)
 			.all(roomId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToGroup(r));
-	}
-
-	updateGroupState(
-		groupId: string,
-		newState: GroupState,
-		expectedVersion: number
-	): SessionGroup | null {
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups SET state = ?, version = version + 1
-			 WHERE id = ? AND version = ?`
-			)
-			.run(newState, groupId, expectedVersion);
-		if (result.changes === 0) return null;
-		return this.getGroup(groupId);
 	}
 
 	completeGroup(groupId: string, expectedVersion: number): SessionGroup | null {
@@ -245,6 +249,48 @@ export class SessionGroupRepository {
 			 WHERE id = ? AND version = ?`
 			)
 			.run(now, groupId, expectedVersion);
+		if (result.changes === 0) return null;
+		return this.getGroup(groupId);
+	}
+
+	/**
+	 * Delete a group and its members.
+	 * The database schema uses ON DELETE CASCADE, so members and events are
+	 * automatically deleted when the group is deleted.
+	 */
+	deleteGroup(groupId: string): boolean {
+		const result = this.db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(groupId);
+		return result.changes > 0;
+	}
+
+	/**
+	 * Reset a failed/completed group for task restart.
+	 * Clears completed_at and resets metadata fields to allow the task to be
+	 * picked up fresh by the runtime.
+	 */
+	resetGroupForRestart(groupId: string): SessionGroup | null {
+		const current = this.getGroup(groupId);
+		if (!current) return null;
+
+		// Reset metadata to fresh state
+		const resetMetadata: TaskGroupMetadata = {
+			...defaultMetadata(),
+			workerRole: current.workerRole,
+			workspacePath: current.workspacePath,
+			deferredLeader: current.deferredLeader,
+		};
+
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET state = 'awaiting_worker',
+				     completed_at = NULL,
+				     metadata = ?,
+				     version = version + 1
+				 WHERE id = ?`
+			)
+			.run(JSON.stringify(resetMetadata), groupId);
+
 		if (result.changes === 0) return null;
 		return this.getGroup(groupId);
 	}
@@ -385,6 +431,32 @@ export class SessionGroupRepository {
 			.run(JSON.stringify(merged), groupId);
 	}
 
+	/**
+	 * Update legacy state column for compatibility/observability.
+	 * Runtime routing should not depend on this value.
+	 */
+	setCompatibilityState(groupId: string, state: GroupState): void {
+		this.db.prepare(`UPDATE session_groups SET state = ? WHERE id = ?`).run(state, groupId);
+	}
+
+	/**
+	 * Persist deferred Leader bootstrap configuration.
+	 * Stored in metadata so runtime restart can still lazy-create the leader session.
+	 */
+	setDeferredLeader(groupId: string, deferredLeader: DeferredLeaderConfig | null): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, deferredLeader };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
 	// ===== Rate Limit Backoff =====
 
 	/**
@@ -489,41 +561,28 @@ export class SessionGroupRepository {
 		});
 	}
 
-	// ===== Messages (append-only unified conversation timeline) =====
+	// ===== Group events (status/system timeline, no mirrored SDK chat) =====
 
-	appendMessage(params: {
-		groupId: string;
-		sessionId?: string;
-		role: string;
-		messageType: string;
-		content: string;
-	}): number {
+	appendEvent(params: { groupId: string; kind: string; payloadJson?: string }): number {
 		const result = this.db
 			.prepare(
-				`INSERT INTO session_group_messages (group_id, session_id, role, message_type, content, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
+				`INSERT INTO task_group_events (group_id, kind, payload_json, created_at)
+			 VALUES (?, ?, ?, ?)`
 			)
-			.run(
-				params.groupId,
-				params.sessionId ?? null,
-				params.role,
-				params.messageType,
-				params.content,
-				Date.now()
-			);
+			.run(params.groupId, params.kind, params.payloadJson ?? null, Date.now());
 		return Number(result.lastInsertRowid);
 	}
 
-	getMessages(
+	getEvents(
 		groupId: string,
 		options?: { afterId?: number; limit?: number }
-	): { messages: SessionGroupMessage[]; hasMore: boolean } {
+	): { events: TaskGroupEvent[]; hasMore: boolean } {
 		const limit = options?.limit ?? 100;
 		const afterId = options?.afterId ?? 0;
 
 		const rows = this.db
 			.prepare(
-				`SELECT * FROM session_group_messages
+				`SELECT * FROM task_group_events
 			 WHERE group_id = ? AND id > ?
 			 ORDER BY id ASC
 			 LIMIT ?`
@@ -531,17 +590,15 @@ export class SessionGroupRepository {
 			.all(groupId, afterId, limit + 1) as Record<string, unknown>[];
 
 		const hasMore = rows.length > limit;
-		const messages = rows.slice(0, limit).map((r) => ({
+		const events = rows.slice(0, limit).map((r) => ({
 			id: r.id as number,
 			groupId: r.group_id as string,
-			sessionId: r.session_id as string | null,
-			role: r.role as string,
-			messageType: r.message_type as string,
-			content: r.content as string,
+			kind: r.kind as string,
+			payloadJson: r.payload_json as string | null,
 			createdAt: r.created_at as number,
 		}));
 
-		return { messages, hasMore };
+		return { events, hasMore };
 	}
 
 	// ===== Private helpers =====
@@ -570,14 +627,15 @@ export class SessionGroupRepository {
 
 	private rowToGroup(row: Record<string, unknown>): SessionGroup {
 		const meta = this.parseMetadata(row.metadata as string | null);
+		const state = ((row.state as string | null) ?? 'awaiting_worker') as GroupState;
 		return {
 			id: row.id as string,
 			taskId: row.ref_id as string,
 			groupType: row.group_type as string,
+			state,
 			workerSessionId: (row.worker_session_id as string) ?? '',
 			leaderSessionId: (row.leader_session_id as string) ?? '',
 			workerRole: meta.workerRole ?? 'coder',
-			state: row.state as GroupState,
 			feedbackIteration: meta.feedbackIteration,
 			leaderContractViolations: meta.leaderContractViolations,
 			leaderCalledTool: meta.leaderCalledTool ?? false,
@@ -589,10 +647,11 @@ export class SessionGroupRepository {
 			version: row.version as number,
 			tokensUsed: meta.tokensUsed,
 			workspacePath: meta.workspacePath,
-			submittedForReview: meta.submittedForReview ?? false,
+			submittedForReview: meta.submittedForReview === true || state === 'awaiting_human',
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
 			lastActivityAt: meta.lastActivityAt ?? null,
+			deferredLeader: meta.deferredLeader ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

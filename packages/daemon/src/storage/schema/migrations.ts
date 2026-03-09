@@ -81,6 +81,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 19: Add retry columns to tasks table (retry_count, max_retries, retry_policy, next_retry_at)
 	runMigration19(db);
+
+	// Migration 20: Remove legacy mirrored session_group_messages table
+	runMigration20(db);
 }
 
 /**
@@ -584,18 +587,15 @@ function runMigration15(db: BunDatabase): void {
 function runMigration16(db: BunDatabase): void {
 	// --- Tasks table: replace 'escalated' with 'review' ---
 	if (tableExists(db, 'tasks')) {
-		// Test if migration is needed by trying to insert a 'review' status
-		const testId = '__migration15_task_test__';
-		let needsTaskMigration = false;
-		try {
-			db.prepare(
-				`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
-				 VALUES (?, 'test', 'test', 'test', 'review', 'normal', '[]', 0)`
-			).run(testId);
-			db.prepare(`DELETE FROM tasks WHERE id = ?`).run(testId);
-		} catch {
-			needsTaskMigration = true;
-		}
+		// Inspect CHECK constraint text instead of probe INSERT.
+		// Probe inserts can fail due to FK constraints (tasks.room_id -> rooms.id)
+		// even when the status CHECK is already migrated.
+		const tableInfo = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+			.get() as { sql: string } | null;
+		const needsTaskMigration =
+			tableInfo !== null &&
+			(tableInfo.sql.includes("'escalated'") || !tableInfo.sql.includes("'review'"));
 
 		if (needsTaskMigration) {
 			db.exec('PRAGMA foreign_keys = OFF');
@@ -614,7 +614,7 @@ function runMigration16(db: BunDatabase): void {
 						room_id TEXT NOT NULL,
 						title TEXT NOT NULL,
 						description TEXT NOT NULL,
-						status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed')),
+						status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled')),
 						priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
 						progress INTEGER,
 						current_step TEXT,
@@ -779,6 +779,7 @@ function runMigration17(db: BunDatabase): void {
 
 		// Determine which optional columns exist so we can carry them over
 		const hasGoalReviewAttempts = tableHasColumn(db, 'goals', 'goal_review_attempts');
+		const hasPlanningAttempts = tableHasColumn(db, 'goals', 'planning_attempts');
 
 		db.exec(`
 			CREATE TABLE goals_new (
@@ -816,8 +817,10 @@ function runMigration17(db: BunDatabase): void {
 			'created_at',
 			'updated_at',
 			'completed_at',
-			'planning_attempts',
 		];
+		if (hasPlanningAttempts) {
+			cols.push('planning_attempts');
+		}
 		if (hasGoalReviewAttempts) {
 			cols.push('goal_review_attempts');
 		}
@@ -969,6 +972,11 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
  * - Rebuilds the table if the type CHECK constraint is outdated, mapping any
  *   dev-only type values to their production equivalents before the rebuild.
  */
+function runMigration20(db: BunDatabase): void {
+	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
+	db.exec(`DROP INDEX IF EXISTS idx_sgmsg_group`);
+}
+
 function runMigrationRoomCleanup(db: BunDatabase): void {
 	db.exec(`PRAGMA foreign_keys = OFF`);
 	try {

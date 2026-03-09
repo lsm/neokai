@@ -7,6 +7,7 @@ export interface ModelInfo {
 	id: string;
 	name: string;
 	family: string;
+	provider: string;
 }
 
 export interface CliAgentInfo {
@@ -64,10 +65,12 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	__default__: '💎',
 };
 
-export function detectFamily(id: string): string {
+export const ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS = new Set(['anthropic', 'glm', 'minimax']);
+
+export function detectFamily(id: string, provider?: string): string {
 	if (id.includes('opus')) return 'opus';
 	if (id.includes('haiku')) return 'haiku';
-	if (id.toLowerCase().startsWith('glm-')) return 'glm';
-	if (id.toLowerCase().startsWith('minimax-')) return 'minimax';
+	if (provider === 'glm' || id.toLowerCase().startsWith('glm-')) return 'glm';
+	if (provider === 'minimax' || id.toLowerCase().startsWith('minimax-')) return 'minimax';
 	return 'sonnet';
 }

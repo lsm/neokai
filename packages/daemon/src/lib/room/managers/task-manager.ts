@@ -20,6 +20,27 @@ import type {
 	AgentType,
 } from '@neokai/shared';
 
+/**
+ * Valid task status transitions
+ * Maps current status -> allowed next statuses
+ */
+export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+	draft: ['pending'],
+	pending: ['in_progress', 'cancelled'],
+	in_progress: ['review', 'completed', 'failed', 'cancelled'],
+	review: ['completed', 'failed', 'in_progress'],
+	completed: [], // Terminal state
+	failed: ['pending', 'in_progress'], // Restart allowed
+	cancelled: ['pending', 'in_progress'], // Restart allowed
+};
+
+/**
+ * Check if a status transition is valid
+ */
+export function isValidStatusTransition(from: TaskStatus, to: TaskStatus): boolean {
+	return VALID_STATUS_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
 export class TaskManager {
 	private taskRepo: TaskRepository;
 
@@ -145,6 +166,60 @@ export class TaskManager {
 			result,
 			progress: 100,
 		});
+	}
+
+	/**
+	 * Set task status with validation.
+	 * Validates that the transition is allowed before applying.
+	 * Optionally clears error/result fields when restarting from failed/cancelled.
+	 * Optionally sets result for completed status.
+	 */
+	async setTaskStatus(
+		taskId: string,
+		newStatus: TaskStatus,
+		options?: { result?: string; error?: string }
+	): Promise<NeoTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		// Validate transition
+		if (!isValidStatusTransition(task.status, newStatus)) {
+			throw new Error(
+				`Invalid status transition from '${task.status}' to '${newStatus}'. ` +
+					`Allowed transitions: ${VALID_STATUS_TRANSITIONS[task.status].join(', ') || 'none'}`
+			);
+		}
+
+		// Build updates based on new status
+		const updates: Partial<NeoTask> = {};
+
+		if (newStatus === 'completed') {
+			updates.progress = 100;
+			if (options?.result) {
+				updates.result = options.result;
+			}
+		}
+
+		if (newStatus === 'failed') {
+			if (options?.error) {
+				updates.error = options.error;
+			}
+		}
+
+		// Clear error/result when restarting from failed/cancelled
+		if (
+			(task.status === 'failed' || task.status === 'cancelled') &&
+			(newStatus === 'pending' || newStatus === 'in_progress')
+		) {
+			// Use null to explicitly clear these fields in the database
+			updates.error = null;
+			updates.result = null;
+			updates.progress = null;
+		}
+
+		return this.updateTaskStatus(taskId, newStatus, updates);
 	}
 
 	/**
@@ -384,7 +459,7 @@ export class TaskManager {
 	}
 
 	/**
-	 * Update task fields (title, description, priority) without changing status.
+	 * Update task fields (title, description, priority, dependsOn) without changing status.
 	 * Works for tasks in any status — used by the room agent.
 	 */
 	async updateTaskFields(
@@ -393,11 +468,22 @@ export class TaskManager {
 			title?: string;
 			description?: string;
 			priority?: TaskPriority;
+			dependsOn?: string[];
 		}
 	): Promise<NeoTask> {
 		const task = await this.getTask(taskId);
 		if (!task) {
 			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		// Validate that all new dependency task IDs exist in this room
+		if (updates.dependsOn && updates.dependsOn.length > 0) {
+			for (const depId of updates.dependsOn) {
+				const depTask = await this.getTask(depId);
+				if (!depTask) {
+					throw new Error(`Dependency task not found in room: ${depId}`);
+				}
+			}
 		}
 
 		const updatedTask = this.taskRepo.updateTask(taskId, updates);

@@ -495,8 +495,20 @@ describe('runWorkerExitGate', () => {
 		expect(result.bounceMessage).toContain('gh pr create');
 	});
 
-	test('passes for general role with no applicable hooks', async () => {
-		const result = await runWorkerExitGate(makeWorkerCtx({ workerRole: 'general' }));
+	test('runs general role PR hooks and passes when PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research-summary', exitCode: 0 },
+			'gh pr list --head feat/research-summary --json number,url --state open': {
+				stdout: '[{"number":1,"url":"https://github.com/org/repo/pull/1"}]',
+				exitCode: 0,
+			},
+			'git rev-parse HEAD': { stdout: 'abc123', exitCode: 0 },
+			'gh pr view --json headRefOid --jq .headRefOid': { stdout: 'abc123', exitCode: 0 },
+		});
+		const result = await runWorkerExitGate(
+			makeWorkerCtx({ workerRole: 'general', approved: false }),
+			opts
+		);
 		expect(result.pass).toBe(true);
 	});
 });
@@ -585,9 +597,17 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.pass).toBe(false);
 	});
 
-	test('passes for general tasks with no applicable hooks', async () => {
+	test('checks PR for general tasks and passes when PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research-summary', exitCode: 0 },
+			'gh pr list --head feat/research-summary --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+		});
 		const result = await runLeaderCompleteGate(
-			makeLeaderCtx({ workerRole: 'general', taskType: 'research' })
+			makeLeaderCtx({ workerRole: 'general', taskType: 'research' }),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -717,17 +737,32 @@ describe('runWorkerExitGate — approved bypass', () => {
 });
 
 describe('runLeaderSubmitGate', () => {
-	test('passes for non-coder tasks without checking PR', async () => {
-		// General task — no git/gh checks should run
+	test('checks PR for general tasks and passes when PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research-summary', exitCode: 0 },
+			'gh pr list --head feat/research-summary --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+		});
 		const result = await runLeaderSubmitGate(
-			makeLeaderCtx({ workerRole: 'general', taskType: 'research' })
+			makeLeaderCtx({ workerRole: 'general', taskType: 'research' }),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
 
-	test('passes for planner tasks without checking PR', async () => {
+	test('checks PR for planner tasks and passes when PR exists', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr list --head plan/new-feature --json number --state open': {
+				stdout: '[{"number":1}]',
+				exitCode: 0,
+			},
+		});
 		const result = await runLeaderSubmitGate(
-			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning' })
+			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning' }),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});

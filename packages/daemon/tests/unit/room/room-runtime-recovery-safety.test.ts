@@ -14,18 +14,24 @@ import {
 /**
  * Helper: create a task + session group directly in DB (bypassing tick).
  * Avoids race conditions from scheduleTick background ticks.
+ * @param submittedForReview - If true, sets the group as awaiting human review
  */
 async function createTaskWithGroup(
 	ctx: RuntimeTestContext,
-	groupState = 'awaiting_worker'
+	submittedForReview = false
 ): Promise<{ taskId: string; groupId: string; workerSessionId: string; leaderSessionId: string }> {
 	const { task } = await createGoalAndTask(ctx);
 	const group = ctx.groupRepo.createGroup(task.id, `worker:${task.id}`, `leader:${task.id}`);
 	await ctx.taskManager.updateTaskStatus(task.id, 'in_progress');
 
-	if (groupState !== 'awaiting_worker') {
-		ctx.groupRepo.updateGroupState(group.id, groupState as never, group.version);
+	if (submittedForReview) {
+		// Set submittedForReview flag and task status to review
+		ctx.groupRepo.setSubmittedForReview(group.id, true);
+		await ctx.taskManager.reviewTask(task.id);
 	}
+
+	// Reload group to get the updated values after setSubmittedForReview
+	const updatedGroup = ctx.groupRepo.getGroup(group.id);
 
 	return {
 		taskId: task.id,
@@ -72,7 +78,7 @@ describe('Zombie detection in tick', () => {
 
 		// Group should still be active (not failed)
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('awaiting_worker');
+		expect(updated!.completedAt).toBeNull();
 	});
 
 	it('should fail group when zombie worker cannot be restored', async () => {
@@ -90,7 +96,7 @@ describe('Zombie detection in tick', () => {
 
 		// Group should be failed
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('failed');
+		expect(updated!.completedAt).not.toBeNull();
 
 		// Task should be failed
 		const updatedTask = await ctx.taskManager.getTask(taskId);
@@ -98,7 +104,7 @@ describe('Zombie detection in tick', () => {
 	});
 
 	it('should restore a zombie leader session during tick', async () => {
-		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx, 'awaiting_leader');
+		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx);
 
 		// Leader is missing from cache — becomes live after first restore
 		const restoredSessions = new Set<string>();
@@ -122,11 +128,11 @@ describe('Zombie detection in tick', () => {
 
 		// Group should still be active
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('awaiting_leader');
+		expect(updated!.completedAt).toBeNull();
 	});
 
-	it('should fail group when zombie leader cannot be restored', async () => {
-		const { taskId, groupId, leaderSessionId } = await createTaskWithGroup(ctx, 'awaiting_leader');
+	it('should continue when zombie leader cannot be restored (lazily created)', async () => {
+		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx);
 
 		// Leader missing and unrestorable
 		ctx.sessionFactory.hasSession = (sessionId: string) => {
@@ -138,11 +144,9 @@ describe('Zombie detection in tick', () => {
 		ctx.runtime.start();
 		await ctx.runtime.tick();
 
+		// Group should NOT be failed - leader is created lazily later
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('failed');
-
-		const updatedTask = await ctx.taskManager.getTask(taskId);
-		expect(updatedTask!.status).toBe('failed');
+		expect(updated!.completedAt).toBeNull();
 	});
 
 	it('should not interfere with normal tick when no zombies exist', async () => {
@@ -202,12 +206,12 @@ describe('Zombie detection in tick', () => {
 		expect(restoredSessions.has('worker-2')).toBe(true);
 
 		// Both groups should remain active
-		expect(ctx.groupRepo.getGroup(group1.id)!.state).toBe('awaiting_worker');
-		expect(ctx.groupRepo.getGroup(group2.id)!.state).toBe('awaiting_worker');
+		expect(ctx.groupRepo.getGroup(group1.id)!.completedAt).toBeNull();
+		expect(ctx.groupRepo.getGroup(group2.id)!.completedAt).toBeNull();
 	});
 
-	it('should restore zombie worker in awaiting_human group during tick', async () => {
-		const { groupId, workerSessionId } = await createTaskWithGroup(ctx, 'awaiting_human');
+	it('should restore zombie worker in submitted_for_review group during tick', async () => {
+		const { groupId, workerSessionId } = await createTaskWithGroup(ctx, true);
 
 		// Worker is missing — becomes live after restore
 		const restoredSessions = new Set<string>();
@@ -229,13 +233,13 @@ describe('Zombie detection in tick', () => {
 		);
 		expect(restoreCalls).toHaveLength(1);
 
-		// Group should remain in awaiting_human (not failed)
+		// Group should remain active (not failed)
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('awaiting_human');
+		expect(updated!.completedAt).toBeNull();
 	});
 
-	it('should fail awaiting_human group when worker cannot be restored', async () => {
-		const { taskId, groupId, workerSessionId } = await createTaskWithGroup(ctx, 'awaiting_human');
+	it('should fail submitted_for_review group when worker cannot be restored', async () => {
+		const { taskId, groupId, workerSessionId } = await createTaskWithGroup(ctx, true);
 
 		ctx.sessionFactory.hasSession = (sessionId: string) => {
 			if (sessionId === workerSessionId) return false;
@@ -247,7 +251,7 @@ describe('Zombie detection in tick', () => {
 		await ctx.runtime.tick();
 
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('failed');
+		expect(updated!.completedAt).not.toBeNull();
 
 		const updatedTask = await ctx.taskManager.getTask(taskId);
 		expect(updatedTask!.status).toBe('failed');
@@ -274,7 +278,7 @@ describe('Zombie detection in tick', () => {
 	});
 
 	it('should reattach observer after restoring zombie leader', async () => {
-		const { leaderSessionId } = await createTaskWithGroup(ctx, 'awaiting_leader');
+		const { leaderSessionId } = await createTaskWithGroup(ctx);
 
 		const restoredSessions = new Set<string>();
 		ctx.sessionFactory.hasSession = (sessionId: string) => {
@@ -305,9 +309,9 @@ describe('resumeWorkerFromHuman rollback', () => {
 		ctx.db.close();
 	});
 
-	it('should rollback task and group state when injectMessage fails', async () => {
-		const { taskId, groupId } = await createTaskWithGroup(ctx, 'awaiting_human');
-		await ctx.taskManager.reviewTask(taskId);
+	it('should rollback task when injectMessage fails', async () => {
+		const { taskId } = await createTaskWithGroup(ctx, true);
+		// Task is already in review status from createTaskWithGroup
 
 		// Make injectMessage fail (simulates session not in cache after restart)
 		ctx.sessionFactory.injectMessage = async () => {
@@ -318,26 +322,22 @@ describe('resumeWorkerFromHuman rollback', () => {
 		const result = await ctx.runtime.resumeWorkerFromHuman(taskId, 'Approved');
 		expect(result).toBe(false);
 
-		// Group should revert to awaiting_human (not stuck in awaiting_worker)
-		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('awaiting_human');
-
 		// Task should revert to review (not stuck in in_progress)
 		const updatedTask = await ctx.taskManager.getTask(taskId);
 		expect(updatedTask!.status).toBe('review');
 	});
 
 	it('should succeed normally when injectMessage works', async () => {
-		const { taskId, groupId } = await createTaskWithGroup(ctx, 'awaiting_human');
-		await ctx.taskManager.reviewTask(taskId);
+		const { taskId, groupId } = await createTaskWithGroup(ctx, true);
+		// Task is already in review status from createTaskWithGroup
 
 		ctx.runtime.start();
 		const result = await ctx.runtime.resumeWorkerFromHuman(taskId, 'Approved');
 		expect(result).toBe(true);
 
-		// Group should be awaiting_worker
+		// Group should still be active (completedAt null)
 		const updated = ctx.groupRepo.getGroup(groupId);
-		expect(updated!.state).toBe('awaiting_worker');
+		expect(updated!.completedAt).toBeNull();
 
 		// Task should be in_progress
 		const updatedTask = await ctx.taskManager.getTask(taskId);
@@ -350,8 +350,8 @@ describe('resumeWorkerFromHuman rollback', () => {
 		expect(result).toBe(false);
 	});
 
-	it('should return false when group is not in awaiting_human', async () => {
-		const { taskId } = await createTaskWithGroup(ctx, 'awaiting_worker');
+	it('should return false when group is not in submitted_for_review', async () => {
+		const { taskId } = await createTaskWithGroup(ctx, false);
 
 		ctx.runtime.start();
 		const result = await ctx.runtime.resumeWorkerFromHuman(taskId, 'Approved');

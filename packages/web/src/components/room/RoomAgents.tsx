@@ -28,6 +28,7 @@ import {
 	type AgentSubagents,
 	BUILTIN_AGENTS,
 	MODEL_FAMILY_ICONS,
+	ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS,
 	detectFamily,
 } from './agent-shared';
 
@@ -419,7 +420,12 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				const hub = await connectionManager.getHub();
 				const [modelsRes, cliRes] = await Promise.all([
 					hub.request<{
-						models: Array<{ id: string; display_name?: string; name?: string }>;
+						models: Array<{
+							id: string;
+							display_name?: string;
+							name?: string;
+							provider?: string;
+						}>;
 					}>('models.list'),
 					hub
 						.request<{ agents: CliAgentInfo[] }>('agents.cli.list')
@@ -428,7 +434,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				availableModels.value = (modelsRes.models ?? []).map((m) => ({
 					id: m.id,
 					name: m.display_name ?? m.name ?? m.id,
-					family: detectFamily(m.id),
+					provider: m.provider ?? 'unknown',
+					family: detectFamily(m.id, m.provider),
 				}));
 				cliAgents.value = cliRes.agents ?? [];
 			} catch {
@@ -496,6 +503,12 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		return m ? `Default (${m.name})` : `Default (${selectedDefaultModel.value})`;
 	});
 
+	// SDK subagents run through Claude Agent SDK, so keep this list limited
+	// to Anthropic-compatible providers.
+	const sdkSubagentModels = useComputed(() =>
+		availableModels.value.filter((m) => ANTHROPIC_COMPAT_SUBAGENT_PROVIDERS.has(m.provider))
+	);
+
 	const updateAgentModel = useCallback(
 		(key: string, model: string) => {
 			const updated = { ...agentModels.value };
@@ -552,7 +565,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 		const current = getSubagentsForRole(role);
 		// Avoid duplicates
 		if (current.some((r) => r.type !== 'cli' && r.model === model)) return;
-		agentSubagents.value = { ...agentSubagents.value, [role]: [...current, { model }] };
+		const modelInfo = availableModels.value.find((m) => m.id === model);
+		agentSubagents.value = {
+			...agentSubagents.value,
+			[role]: [...current, { model, provider: modelInfo?.provider }],
+		};
 	};
 
 	const removeSdkSubagentFor = (role: string, model: string) => {
@@ -722,9 +739,11 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 										</div>
 
 										{/* Sub Agent Models */}
-										<div class="text-xs text-gray-500 mb-2">Sub Agent Models</div>
+										<div class="text-xs text-gray-500 mb-2">
+											Sub Agent Models (Anthropic-compatible)
+										</div>
 										<ModelTagsInput
-											models={availableModels.value}
+											models={sdkSubagentModels.value}
 											selected={getSdkSubagentsFor(agent.key)
 												.map((s) => s.model)
 												.filter(Boolean)}

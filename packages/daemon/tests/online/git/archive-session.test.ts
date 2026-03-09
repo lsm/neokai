@@ -1,12 +1,20 @@
 /**
  * Archive Session Tests
  *
- * Tests session.archive RPC with real git worktrees via WebSocket:
+ * These tests use the REAL Claude Agent SDK with actual API credentials.
+ * They verify session.archive RPC with real git worktrees via WebSocket:
  * - Archive without worktree (direct archive)
  * - Archive with worktree (no commits ahead)
  * - Archive with worktree (commits ahead, requires confirmation)
  * - Squash-merge detection
  * - Error handling and idempotency
+ *
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
+ *
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/git/archive-session.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -16,6 +24,12 @@ import { execSync } from 'child_process';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
 
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
+const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 90000;
+
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
 describe('Archive Session', () => {
@@ -24,11 +38,11 @@ describe('Archive Session', () => {
 	// Worktree tests need longer hook timeouts on CI (daemon cleanup after worktree ops)
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	}, 15000);
+	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
 		await daemon.waitForExit();
-	}, 15000);
+	}, SETUP_TIMEOUT);
 
 	async function createSession(workspacePath: string): Promise<string> {
 		const { sessionId } = (await daemon.messageHub.request('session.create', {
@@ -121,164 +135,184 @@ describe('Archive Session', () => {
 	});
 
 	describe('With worktree (no commits ahead)', () => {
-		test('should archive without confirmation', async () => {
-			const repoPath = createGitRepo();
+		test(
+			'should archive without confirmation',
+			async () => {
+				const repoPath = createGitRepo();
 
-			try {
-				const { sessionId } = await createSessionWithWorktree(repoPath);
+				try {
+					const { sessionId } = await createSessionWithWorktree(repoPath);
 
-				// Archive without confirmation (no commits ahead)
-				const result = await archiveSession(sessionId, false);
+					// Archive without confirmation (no commits ahead)
+					const result = await archiveSession(sessionId, false);
 
-				expect(result.success).toBe(true);
-				expect(result.requiresConfirmation).toBe(false);
+					expect(result.success).toBe(true);
+					expect(result.requiresConfirmation).toBe(false);
 
-				// Verify session is archived
-				const session = await getSession(sessionId);
-				expect(session.status).toBe('archived');
-				expect(session.archivedAt).toBeString();
-				expect(session.worktree).toBeUndefined();
-			} finally {
-				fs.rmSync(repoPath, { recursive: true, force: true });
-			}
-		}, 30000);
+					// Verify session is archived
+					const session = await getSession(sessionId);
+					expect(session.status).toBe('archived');
+					expect(session.archivedAt).toBeString();
+					expect(session.worktree).toBeUndefined();
+				} finally {
+					fs.rmSync(repoPath, { recursive: true, force: true });
+				}
+			},
+			TEST_TIMEOUT
+		);
 	});
 
 	describe('With worktree (commits ahead)', () => {
-		test('should require confirmation when commits ahead', async () => {
-			const repoPath = createGitRepo();
+		test(
+			'should require confirmation when commits ahead',
+			async () => {
+				const repoPath = createGitRepo();
 
-			try {
-				const { sessionId, worktreePath } = await createSessionWithWorktree(repoPath);
+				try {
+					const { sessionId, worktreePath } = await createSessionWithWorktree(repoPath);
 
-				// Make a commit in the worktree
-				fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'new feature');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "Add new feature"', { cwd: worktreePath });
+					// Make a commit in the worktree
+					fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'new feature');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "Add new feature"', { cwd: worktreePath });
 
-				// Try to archive without confirmation
-				const result = await archiveSession(sessionId, false);
+					// Try to archive without confirmation
+					const result = await archiveSession(sessionId, false);
 
-				expect(result.success).toBe(false);
-				expect(result.requiresConfirmation).toBe(true);
-				expect(result.commitStatus).toBeDefined();
+					expect(result.success).toBe(false);
+					expect(result.requiresConfirmation).toBe(true);
+					expect(result.commitStatus).toBeDefined();
 
-				const commitStatus = result.commitStatus as {
-					hasCommitsAhead: boolean;
-					commits: Array<{ message: string; author: string; hash: string; date: string }>;
-				};
-				expect(commitStatus.hasCommitsAhead).toBe(true);
-				expect(commitStatus.commits.length).toBe(1);
-				expect(commitStatus.commits[0].message).toBe('Add new feature');
-				expect(commitStatus.commits[0].author).toBe('Test User');
+					const commitStatus = result.commitStatus as {
+						hasCommitsAhead: boolean;
+						commits: Array<{ message: string; author: string; hash: string; date: string }>;
+					};
+					expect(commitStatus.hasCommitsAhead).toBe(true);
+					expect(commitStatus.commits.length).toBe(1);
+					expect(commitStatus.commits[0].message).toBe('Add new feature');
+					expect(commitStatus.commits[0].author).toBe('Test User');
 
-				// Session should still be active
-				const session = await getSession(sessionId);
-				expect(session.status).toBe('active');
-			} finally {
-				fs.rmSync(repoPath, { recursive: true, force: true });
-			}
-		}, 30000);
+					// Session should still be active
+					const session = await getSession(sessionId);
+					expect(session.status).toBe('active');
+				} finally {
+					fs.rmSync(repoPath, { recursive: true, force: true });
+				}
+			},
+			TEST_TIMEOUT
+		);
 
-		test('should archive after confirmation even with commits ahead', async () => {
-			const repoPath = createGitRepo();
+		test(
+			'should archive after confirmation even with commits ahead',
+			async () => {
+				const repoPath = createGitRepo();
 
-			try {
-				const { sessionId, worktreePath } = await createSessionWithWorktree(repoPath);
+				try {
+					const { sessionId, worktreePath } = await createSessionWithWorktree(repoPath);
 
-				// Make multiple commits
-				fs.writeFileSync(path.join(worktreePath, 'file1.txt'), 'content 1');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "First change"', { cwd: worktreePath });
+					// Make multiple commits
+					fs.writeFileSync(path.join(worktreePath, 'file1.txt'), 'content 1');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "First change"', { cwd: worktreePath });
 
-				fs.writeFileSync(path.join(worktreePath, 'file2.txt'), 'content 2');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "Second change"', { cwd: worktreePath });
+					fs.writeFileSync(path.join(worktreePath, 'file2.txt'), 'content 2');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "Second change"', { cwd: worktreePath });
 
-				// Archive with confirmation
-				const result = await archiveSession(sessionId, true);
+					// Archive with confirmation
+					const result = await archiveSession(sessionId, true);
 
-				expect(result.success).toBe(true);
-				expect(result.requiresConfirmation).toBe(false);
-				expect(result.commitsRemoved).toBe(2);
+					expect(result.success).toBe(true);
+					expect(result.requiresConfirmation).toBe(false);
+					expect(result.commitsRemoved).toBe(2);
 
-				const session = await getSession(sessionId);
-				expect(session.status).toBe('archived');
-				expect(session.worktree).toBeUndefined();
-			} finally {
-				fs.rmSync(repoPath, { recursive: true, force: true });
-			}
-		}, 30000);
+					const session = await getSession(sessionId);
+					expect(session.status).toBe('archived');
+					expect(session.worktree).toBeUndefined();
+				} finally {
+					fs.rmSync(repoPath, { recursive: true, force: true });
+				}
+			},
+			TEST_TIMEOUT
+		);
 	});
 
 	describe('Squash-merge detection', () => {
-		test('should NOT require confirmation when commits are squash-merged', async () => {
-			const repoPath = createGitRepo();
+		test(
+			'should NOT require confirmation when commits are squash-merged',
+			async () => {
+				const repoPath = createGitRepo();
 
-			try {
-				const { sessionId, worktreePath, branch } = await createSessionWithWorktree(repoPath);
+				try {
+					const { sessionId, worktreePath, branch } = await createSessionWithWorktree(repoPath);
 
-				// Make commits in worktree
-				fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "Add feature"', { cwd: worktreePath });
+					// Make commits in worktree
+					fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "Add feature"', { cwd: worktreePath });
 
-				fs.writeFileSync(path.join(worktreePath, 'feature2.txt'), 'more code');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "Add more feature"', { cwd: worktreePath });
+					fs.writeFileSync(path.join(worktreePath, 'feature2.txt'), 'more code');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "Add more feature"', { cwd: worktreePath });
 
-				// Simulate squash merge to main
-				execSync('git checkout main', { cwd: repoPath });
-				execSync(`git merge --squash ${branch}`, { cwd: repoPath });
-				execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
+					// Simulate squash merge to main
+					execSync('git checkout main', { cwd: repoPath });
+					execSync(`git merge --squash ${branch}`, { cwd: repoPath });
+					execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
 
-				// Archive should NOT require confirmation
-				const result = await archiveSession(sessionId, false);
+					// Archive should NOT require confirmation
+					const result = await archiveSession(sessionId, false);
 
-				expect(result.success).toBe(true);
-				expect(result.requiresConfirmation).toBe(false);
-			} finally {
-				fs.rmSync(repoPath, { recursive: true, force: true });
-			}
-		}, 30000);
+					expect(result.success).toBe(true);
+					expect(result.requiresConfirmation).toBe(false);
+				} finally {
+					fs.rmSync(repoPath, { recursive: true, force: true });
+				}
+			},
+			TEST_TIMEOUT
+		);
 
-		test('should require confirmation when new commits exist after squash merge', async () => {
-			const repoPath = createGitRepo();
+		test(
+			'should require confirmation when new commits exist after squash merge',
+			async () => {
+				const repoPath = createGitRepo();
 
-			try {
-				const { sessionId, worktreePath, branch } = await createSessionWithWorktree(repoPath);
+				try {
+					const { sessionId, worktreePath, branch } = await createSessionWithWorktree(repoPath);
 
-				// Make initial commit
-				fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "Add feature"', { cwd: worktreePath });
+					// Make initial commit
+					fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature code');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "Add feature"', { cwd: worktreePath });
 
-				// Squash merge to main
-				execSync('git checkout main', { cwd: repoPath });
-				execSync(`git merge --squash ${branch}`, { cwd: repoPath });
-				execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
+					// Squash merge to main
+					execSync('git checkout main', { cwd: repoPath });
+					execSync(`git merge --squash ${branch}`, { cwd: repoPath });
+					execSync('git commit -m "feat: add feature (squash merged)"', { cwd: repoPath });
 
-				// Make another commit in worktree (new work not on main)
-				fs.writeFileSync(path.join(worktreePath, 'new-work.txt'), 'new work');
-				execSync('git add .', { cwd: worktreePath });
-				execSync('git commit -m "Add new work"', { cwd: worktreePath });
+					// Make another commit in worktree (new work not on main)
+					fs.writeFileSync(path.join(worktreePath, 'new-work.txt'), 'new work');
+					execSync('git add .', { cwd: worktreePath });
+					execSync('git commit -m "Add new work"', { cwd: worktreePath });
 
-				// Should require confirmation — new work not on main
-				const result = await archiveSession(sessionId, false);
+					// Should require confirmation — new work not on main
+					const result = await archiveSession(sessionId, false);
 
-				expect(result.success).toBe(false);
-				expect(result.requiresConfirmation).toBe(true);
-				const commitStatus = result.commitStatus as {
-					hasCommitsAhead: boolean;
-					commits: Array<{ message: string }>;
-				};
-				expect(commitStatus.hasCommitsAhead).toBe(true);
-				const hasNewWork = commitStatus.commits.some((c) => c.message === 'Add new work');
-				expect(hasNewWork).toBe(true);
-			} finally {
-				fs.rmSync(repoPath, { recursive: true, force: true });
-			}
-		}, 30000);
+					expect(result.success).toBe(false);
+					expect(result.requiresConfirmation).toBe(true);
+					const commitStatus = result.commitStatus as {
+						hasCommitsAhead: boolean;
+						commits: Array<{ message: string }>;
+					};
+					expect(commitStatus.hasCommitsAhead).toBe(true);
+					const hasNewWork = commitStatus.commits.some((c) => c.message === 'Add new work');
+					expect(hasNewWork).toBe(true);
+				} finally {
+					fs.rmSync(repoPath, { recursive: true, force: true });
+				}
+			},
+			TEST_TIMEOUT
+		);
 	});
 
 	describe('Error handling', () => {

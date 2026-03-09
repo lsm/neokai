@@ -1,8 +1,9 @@
 /**
  * Leader Agent Factory - Creates AgentSessionInit for Leader (reviewer) sessions
  *
- * The Leader agent reviews worker output and must call exactly one terminal tool per turn:
- * - send_to_worker(message) - Send feedback for another iteration
+ * The Leader agent reviews worker output and routes outcomes via MCP tools:
+ * - send_to_worker(message, mode) - Forward feedback to worker (steer/queue)
+ * - handoff_to_worker() - Explicitly return control to worker
  * - complete_task(summary) - Accept work, mark task done
  * - fail_task(reason) - Task is not achievable
  * - replan_goal(reason) - Fail task and trigger replanning with context
@@ -46,7 +47,12 @@ export interface LeaderToolResult {
  * The RoomRuntime implements this to handle tool calls.
  */
 export interface LeaderToolCallbacks {
-	sendToWorker(groupId: string, message: string): Promise<LeaderToolResult>;
+	sendToWorker(
+		groupId: string,
+		message: string,
+		mode?: 'steer' | 'queue'
+	): Promise<LeaderToolResult>;
+	handoffToWorker(groupId: string): Promise<LeaderToolResult>;
 	completeTask(groupId: string, summary: string): Promise<LeaderToolResult>;
 	failTask(groupId: string, reason: string): Promise<LeaderToolResult>;
 	replanGoal(groupId: string, reason: string): Promise<LeaderToolResult>;
@@ -93,8 +99,17 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 
 	// Tool contract
 	sections.push(`\n## Tool Contract (CRITICAL)\n`);
-	sections.push(`You MUST call exactly one tool per turn:`);
-	sections.push(`- \`send_to_worker\` — Send feedback if the work needs changes`);
+	sections.push(`You MUST call tools (no text-only final responses).`);
+	sections.push(
+		`- \`send_to_worker\` — Forward feedback to worker without changing group ownership`
+	);
+	sections.push(
+		`  - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)`
+	);
+	sections.push(`  - mode=\`steer\`: inject for current-turn steering`);
+	sections.push(
+		`- \`handoff_to_worker\` — Explicitly return ownership to worker (awaiting_worker)`
+	);
 	sections.push(`- \`complete_task\` — Accept the work if it meets all requirements`);
 	sections.push(`- \`fail_task\` — Mark the task as not achievable`);
 	sections.push(
@@ -103,7 +118,43 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	sections.push(
 		`- \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval\n`
 	);
-	sections.push(`Do NOT respond with only text. You MUST call one of the above tools.`);
+	sections.push(`Do NOT respond with only text.`);
+
+	// Post-approval workflow (when human approves after submit_for_review)
+	// This applies to ALL task types: planner, coder, and general
+	sections.push(`\n## Post-Approval Workflow (CRITICAL)\n`);
+	sections.push(
+		`When the human message indicates approval (e.g., "approved", "merge it", "looks good"), you must complete the task by:`
+	);
+	sections.push(`\n1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:`);
+	sections.push(`   \`\`\`bash\n   gh pr merge <PR_NUMBER> --squash --delete-branch\n   \`\`\`\n`);
+	sections.push(`2. **Sync the root repo** — Pull the merged changes into the root workspace:`);
+	sections.push(
+		`   \`\`\`bash\n   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n   ` +
+			`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n   ` +
+			`git fetch origin && git pull origin $DEFAULT_BRANCH\n   \`\`\`\n`
+	);
+	sections.push(
+		`3. **Call \`complete_task\`** — Mark the task done with a summary of what was accomplished.`
+	);
+	sections.push(
+		`\n**IMPORTANT**: Do NOT send the worker back to do the merge. The leader handles merge and completion after human approval.`
+	);
+
+	// Post-rejection workflow (when human rejects and provides feedback)
+	sections.push(`\n## Post-Rejection Workflow\n`);
+	sections.push(
+		`When the human message indicates rejection with feedback (e.g., "fix the tests", "needs changes"):`
+	);
+	sections.push(
+		`\n1. **Forward feedback to worker** — Call \`send_to_worker\` (mode: "queue") with the human's feedback`
+	);
+	sections.push(
+		`2. **Hand off to worker** — Call \`handoff_to_worker\` so the worker can address the feedback`
+	);
+	sections.push(
+		`\nAfter the worker addresses feedback and exits again, you will receive the updated output for review.`
+	);
 
 	// Handling worker questions
 	sections.push(`\n## Handling Worker Questions\n`);
@@ -111,7 +162,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		`If the worker output shows \`Terminal state: waiting_for_input\`, the worker is asking a question.`
 	);
 	sections.push(
-		`- If you can answer the question from the goal/task context, use \`send_to_worker\` with the answer`
+		`- If you can answer the question from the goal/task context, call \`send_to_worker\` (mode: "steer") with the answer, then call \`handoff_to_worker\``
 	);
 	sections.push(
 		`- If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`
@@ -151,7 +202,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`Extract the PR number (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
 			);
 			sections.push(
-				`If no PR was created, use \`send_to_worker\` asking the planner to create one before review can proceed.\n`
+				`If no PR was created, call \`send_to_worker\` (mode: "queue") asking the planner to create one before review can proceed, then call \`handoff_to_worker\`.\n`
 			);
 
 			sections.push(`### Step 2: Dispatch Reviewer Sub-agents`);
@@ -160,7 +211,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			for (const name of reviewerNames) {
 				sections.push(
-					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. This is a PLAN review (not code). The planner created a plan to break down a goal into tasks. Review the plan for completeness, task scoping, ordering, acceptance criteria, and feasibility. Post your review using gh pr review.")`
+					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. This is a PLAN review (not code). The planner created a plan to break down a goal into tasks. Review the plan for completeness, task scoping, ordering, acceptance criteria, and feasibility. Post your honest, critical, and actionable feedback using gh pr review.")`
 				);
 			}
 
@@ -170,7 +221,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			sections.push(`### Step 4: Route\n`);
 			sections.push(
-				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+				`- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+			);
+			sections.push(
+				`  - You may call \`send_to_worker\` multiple times as reviewer results arrive. When done forwarding for this cycle, call \`handoff_to_worker\`.`
 			);
 			sections.push(
 				`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval`
@@ -184,25 +238,29 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 		} else {
 			sections.push(`\n## Plan Review Guidelines\n`);
-			sections.push(`1. Check that the plan covers all aspects of the goal`);
-			sections.push(`2. Verify each task has clear, specific acceptance criteria`);
-			sections.push(`3. Ensure tasks are ordered correctly by dependency`);
-			sections.push(`4. Check that tasks are well-scoped (not too broad or too narrow)`);
 			sections.push(
-				`5. Verify appropriate agent types are assigned (coder for implementation, general for non-coding)`
+				`**Every iteration follows the same workflow** — including after the planner addresses feedback.`
+			);
+			sections.push(`1. Read the planner output and extract the PR number/URL.`);
+			sections.push(
+				`2. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`6. If the plan needs changes, use \`send_to_worker\` with specific feedback on what to add, remove, or modify`
+				`3. Review the plan PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.`
+			);
+			sections.push(`4. Route strictly by severity from your posted review:`);
+			sections.push(
+				`   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message. Then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`7. If the plan is comprehensive and well-structured, use \`submit_for_review\` to submit it for human approval before execution begins`
+				`   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval.`
 			);
 			sections.push(
-				`8. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted`
+				`   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).`
 			);
-			sections.push(`9. Use \`fail_task\` only if the goal is fundamentally not plannable`);
+			sections.push(`5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.`);
 			sections.push(
-				`10. Use \`replan_goal\` if the plan reveals a flawed approach that needs rethinking`
+				`6. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted.`
 			);
 		}
 	} else {
@@ -238,7 +296,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 				`Extract the PR number if one was created (look for "PR #123", GitHub PR URLs, or \`gh pr create\` output).`
 			);
 			sections.push(
-				`If no PR was created, use \`send_to_worker\` asking the worker to create one before review can proceed.\n`
+				`If no PR was created, call \`send_to_worker\` (mode: "queue") asking the worker to create one before review can proceed, then call \`handoff_to_worker\`.\n`
 			);
 
 			sections.push(`### Step 2: Dispatch Reviewer Sub-agents`);
@@ -247,7 +305,7 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			for (const name of reviewerNames) {
 				sections.push(
-					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. The task was: <description>. The worker implemented: <summary>. Review the code and post your review using gh pr review.")`
+					`- Task(subagent_type: "${name}", prompt: "Review PR #<NUMBER>. The task was: <description>. The worker implemented: <summary>. Review the code and post your honest, critical, and actionable feedback using gh pr review.")`
 				);
 			}
 
@@ -257,7 +315,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			sections.push(`### Step 4: Route\n`);
 			sections.push(
-				`- **Any P0/P1/P2 issues** → \`send_to_worker\` with ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+				`- **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.`
+			);
+			sections.push(
+				`  - You may call \`send_to_worker\` multiple times as reviewer results arrive. When done forwarding for this cycle, call \`handoff_to_worker\`.`
 			);
 			sections.push(`- **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL`);
 			sections.push(
@@ -266,16 +327,23 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			sections.push(`- **Fundamentally broken** → \`fail_task\` or \`replan_goal\``);
 		} else {
 			sections.push(`\n## Code Review Guidelines\n`);
-			sections.push(`1. Check that the implementation matches the task description`);
-			sections.push(`2. Verify correctness and completeness`);
 			sections.push(
-				`3. If issues are found, use \`send_to_worker\` with specific actionable feedback`
+				`**Every iteration follows the same workflow** — including after the worker addresses feedback.`
+			);
+			sections.push(`1. Read the worker output and extract the PR number/URL.`);
+			sections.push(
+				`2. Require a PR before final approval. If no PR exists yet, use \`send_to_worker\` (mode: "queue") to request one, then call \`handoff_to_worker\`.`
 			);
 			sections.push(
-				`4. If the work is complete, correct, and a PR was created, use \`submit_for_review\` with the PR URL`
+				`3. Review the PR yourself and post your honest, critical, and actionable feedback on the PR using \`gh pr review\`.`
 			);
+			sections.push(`4. Route strictly by severity from your posted review:`);
 			sections.push(
-				`5. If no PR is needed (non-coding tasks), use \`complete_task\` with a summary`
+				`   - **Any P0/P1/P2 issues** → \`send_to_worker\` (mode: "queue") with ONLY your review URL(s), one per line. Do NOT paste full review text into the worker message. Then call \`handoff_to_worker\`.`
+			);
+			sections.push(`   - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL.`);
+			sections.push(
+				`   - **Review post TIMEOUT/ERROR** → \`submit_for_review\` with the PR URL (let human decide).`
 			);
 		}
 
@@ -331,8 +399,14 @@ export function buildLeaderTaskContext(config: LeaderAgentConfig): string {
  */
 export function createLeaderToolHandlers(groupId: string, callbacks: LeaderToolCallbacks) {
 	return {
-		async send_to_worker(args: { message: string }): Promise<LeaderToolResult> {
-			return callbacks.sendToWorker(groupId, args.message);
+		async send_to_worker(args: {
+			message: string;
+			mode?: 'steer' | 'queue';
+		}): Promise<LeaderToolResult> {
+			return callbacks.sendToWorker(groupId, args.message, args.mode);
+		},
+		async handoff_to_worker(): Promise<LeaderToolResult> {
+			return callbacks.handoffToWorker(groupId);
 		},
 		async complete_task(args: { summary: string }): Promise<LeaderToolResult> {
 			return callbacks.completeTask(groupId, args.summary);
@@ -359,11 +433,21 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 	const tools = [
 		tool(
 			'send_to_worker',
-			'Send feedback to the worker agent for another iteration of work',
+			'Send feedback to the worker agent. mode=queue (default) enqueues for next turn; mode=steer injects current-turn guidance.',
 			{
 				message: z.string().describe('Specific, actionable feedback for the worker agent'),
+				mode: z
+					.enum(['steer', 'queue'])
+					.optional()
+					.describe('Delivery mode: queue (default) or steer (immediate)'),
 			},
 			(args) => handlers.send_to_worker(args)
+		),
+		tool(
+			'handoff_to_worker',
+			'Explicitly return ownership to the worker after forwarding feedback',
+			{},
+			() => handlers.handoff_to_worker()
 		),
 		tool(
 			'complete_task',
@@ -414,10 +498,8 @@ interface SubagentConfig {
 	model: string;
 	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
 	provider?: string;
-	/** For CLI-only models: use a driver model that calls the CLI via Bash */
+	/** Marks this reviewer as CLI-based (external tool orchestrated via Bash) */
 	type?: 'cli';
-	/** Model to use as driver when type is 'cli'. Defaults to leader's model. */
-	driver_model?: string;
 	/** Full model ID when different from the short name in 'model' */
 	modelId?: string;
 	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
@@ -554,7 +636,18 @@ You MUST include this identity block at the top of every PR comment you post.
      -f body="<review body>" -f event="REQUEST_CHANGES" --jq '.html_url'
    \`\`\`
 
-   NOTE: GitHub does not allow APPROVE or REQUEST_CHANGES on your own PRs. If you get a permission error, fall back to \`-f event="COMMENT"\`.
+   Determine the event **before posting** (deterministic, no trial/error):
+   \`\`\`bash
+   ME="$(gh api user --jq .login)"
+   PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"
+   EVENT="<APPROVE_OR_REQUEST_CHANGES>"
+   [ "$ME" = "$PR_AUTHOR" ] && EVENT="COMMENT"
+
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="$EVENT" --jq '.html_url'
+   \`\`\`
+
+   If EVENT is \`COMMENT\` (own PR), keep your recommendation (APPROVE/REQUEST_CHANGES) in the review body text.
 
    Include this header in your review body:
    \`\`\`
@@ -630,6 +723,23 @@ copilot -s --autopilot --yolo --no-ask-user --max-autopilot-continues 10${modelF
 - Capture stdout — the final review output is printed there.`;
 	}
 
+	if (tool === 'pi') {
+		return `### Pi CLI (GitHub Copilot Provider)
+
+Run Pi in one-shot mode to review the code via the GitHub Copilot provider:
+
+\`\`\`bash
+pi -p --no-session --provider github-copilot${modelFlag} \\
+  --tools read,bash,grep,find,ls \\
+  "<YOUR REVIEW PROMPT HERE>" 2>&1
+\`\`\`
+
+- \`-p\` runs one-shot and exits; \`--no-session\` keeps it ephemeral.
+- \`--provider github-copilot\` ensures parity with native Copilot CLI model routing.
+- \`--tools read,bash,grep,find,ls\` keeps the review read-only.${cliModel ? '' : '\n- Do NOT pass `--model` — Pi uses the provider default model.'}
+- Capture stdout — the final review output is printed there.`;
+	}
+
 	// Generic fallback for unknown CLI tools
 	return `### ${cliTool} CLI
 
@@ -689,7 +799,18 @@ ${cliInstructions}
      -f body="<review body>" -f event="REQUEST_CHANGES" --jq '.html_url'
    \`\`\`
 
-   NOTE: GitHub does not allow APPROVE or REQUEST_CHANGES on your own PRs. If you get a permission error, fall back to \`-f event="COMMENT"\`.
+   Determine the event **before posting** (deterministic, no trial/error):
+   \`\`\`bash
+   ME="$(gh api user --jq .login)"
+   PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"
+   EVENT="<APPROVE_OR_REQUEST_CHANGES>"
+   [ "$ME" = "$PR_AUTHOR" ] && EVENT="COMMENT"
+
+   GH_PAGER=cat gh api repos/{owner}/{repo}/pulls/{pr}/reviews \\
+     -f body="<review body>" -f event="$EVENT" --jq '.html_url'
+   \`\`\`
+
+   If EVENT is \`COMMENT\` (own PR), keep your recommendation (APPROVE/REQUEST_CHANGES) in the review body text.
 
    Include this header:
    \`\`\`
@@ -735,13 +856,24 @@ export function toReviewerName(reviewer: SubagentConfig, existingNames: Set<stri
  * Auto-resolve provider name from known CLI agent names and model IDs.
  */
 function resolveProvider(reviewer: SubagentConfig): string {
-	if (reviewer.provider) return reviewer.provider;
+	if (reviewer.provider) {
+		const provider = reviewer.provider.toLowerCase();
+		if (provider === 'anthropic') return 'Anthropic';
+		if (provider === 'glm') return 'GLM';
+		if (provider === 'minimax') return 'MiniMax';
+		if (provider === 'openai') return 'OpenAI';
+		if (provider === 'github-copilot' || provider === 'github') return 'GitHub';
+		if (provider === 'google') return 'Google';
+		return reviewer.provider;
+	}
 	const m = reviewer.model.toLowerCase();
 	if (m.includes('codex') || m.includes('gpt') || m.includes('openai')) return 'OpenAI';
 	if (m.includes('claude') || m.includes('opus') || m.includes('sonnet') || m.includes('haiku'))
 		return 'Anthropic';
+	if (m.includes('glm')) return 'GLM';
+	if (m.includes('minimax')) return 'MiniMax';
 	if (m.includes('gemini') || m.includes('google')) return 'Google';
-	if (m.includes('copilot')) return 'GitHub';
+	if (m.includes('copilot') || m === 'pi') return 'GitHub';
 	return 'unknown';
 }
 
@@ -757,6 +889,7 @@ function resolveModelId(reviewer: SubagentConfig): string {
 	if (m === 'sonnet') return 'claude-sonnet-4-6';
 	if (m === 'haiku') return 'claude-haiku-4-5';
 	if (m === 'codex' || m === 'codex-review') return 'gpt-5.3-codex';
+	if (m === 'pi') return 'github-copilot';
 	return reviewer.model;
 }
 
@@ -766,7 +899,7 @@ export function buildReviewerAgents(
 ): Record<string, AgentDefinition> {
 	const agents: Record<string, AgentDefinition> = {};
 	const usedNames = new Set<string>();
-	const defaultDriverModel = leaderModel ?? 'sonnet';
+	const runtimeModelLabel = leaderModel ?? 'sonnet';
 
 	for (const reviewer of reviewers) {
 		const name = toReviewerName(reviewer, usedNames);
@@ -774,20 +907,22 @@ export function buildReviewerAgents(
 		const modelId = resolveModelId(reviewer);
 
 		if (reviewer.type === 'cli') {
-			const driverModel = reviewer.driver_model ?? defaultDriverModel;
-			// CLI-based reviewer: a driver model calls the external tool via Bash
+			const orchestratorModel = runtimeModelLabel;
+			// CLI-based reviewer: always inherit Leader runtime model.
 			agents[name] = {
-				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${driverModel}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
+				description: `Code reviewer using ${reviewer.model} CLI (${provider} via ${orchestratorModel}). Runs the CLI tool via Bash and posts findings as PR reviews.`,
 				tools: REVIEWER_TOOLS,
-				model: toAgentModel(driverModel),
+				model: 'inherit',
 				prompt: buildCliReviewerPrompt(reviewer.model, provider, modelId, reviewer.cliModel),
 			};
 		} else {
-			// Direct SDK reviewer: uses the specified model natively
+			// SDK reviewers use the closest SDK tier for the configured model.
+			// This allows Anthropic-compatible providers (e.g. GLM/MiniMax) to
+			// route reviewer tiers via ANTHROPIC_DEFAULT_*_MODEL env mapping.
 			agents[name] = {
 				description: `Code reviewer using ${modelId} (${provider}). Reviews code changes for correctness, quality, and security.`,
 				tools: REVIEWER_TOOLS,
-				model: toAgentModel(reviewer.model),
+				model: toAgentModel(modelId),
 				prompt: buildSdkReviewerPrompt(modelId, provider),
 			};
 		}

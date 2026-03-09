@@ -44,8 +44,12 @@ export function createMockSessionFactory() {
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
-		async injectMessage(sessionId: string, message: string) {
-			calls.push({ method: 'injectMessage', args: [sessionId, message] });
+		async injectMessage(
+			sessionId: string,
+			message: string,
+			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+		) {
+			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
 		hasSession(_sessionId: string) {
 			return true;
@@ -60,6 +64,9 @@ export function createMockSessionFactory() {
 		async restoreSession(sessionId: string) {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
 			return true;
+		},
+		async stopSession(sessionId: string) {
+			calls.push({ method: 'stopSession', args: [sessionId] });
 		},
 	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
 }
@@ -119,11 +126,12 @@ const DB_SCHEMA = `
 		session_id TEXT NOT NULL, role TEXT NOT NULL, joined_at INTEGER NOT NULL,
 		PRIMARY KEY (group_id, session_id)
 	);
-	CREATE TABLE session_group_messages (
+	CREATE TABLE task_group_events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-		session_id TEXT, role TEXT NOT NULL, message_type TEXT NOT NULL,
-		content TEXT NOT NULL, created_at INTEGER NOT NULL
+		kind TEXT NOT NULL,
+		payload_json TEXT,
+		created_at INTEGER NOT NULL
 	);
 `;
 
@@ -158,9 +166,10 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 	const taskManager = new TaskManager(db as never, 'room-1');
 	const goalManager = new GoalManager(db as never, 'room-1');
 	const sessionFactory = createMockSessionFactory();
+	const room = makeRoom(opts?.room);
 
 	const runtime = new RoomRuntime({
-		room: makeRoom(opts?.room),
+		room,
 		groupRepo,
 		sessionObserver: observer,
 		taskManager,
@@ -170,7 +179,15 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
 		tickInterval: 60_000,
-		hookOptions: opts?.hookOptions,
+		hookOptions:
+			opts?.hookOptions ??
+			({
+				runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
+			} as const),
+		// Fetch from managers (reads from DB) instead of caching objects
+		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+		getTask: (taskId) => taskManager.getTask(taskId),
+		getGoal: (goalId) => goalManager.getGoal(goalId),
 	});
 
 	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
@@ -187,8 +204,7 @@ export async function createGoalAndTask(
 	const task = await ctx.taskManager.createTask({
 		title: 'Add GET /health',
 		description: 'Returns 200 OK',
-		// Default to 'general' for most unit tests so they don't hit the
-		// submit_for_review state machine gate (which is coder-specific).
+		// Default to 'general' for most unit tests.
 		assignedAgent: opts?.assignedAgent ?? 'general',
 	});
 	await ctx.goalManager.linkTaskToGoal(goal.id, task.id);

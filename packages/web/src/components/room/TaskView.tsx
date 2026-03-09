@@ -21,14 +21,14 @@ import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { t } from '../../lib/i18n';
 import { roomStore } from '../../lib/room-store';
+import { useModal } from '../../hooks/useModal';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { copyToClipboard } from '../../lib/utils';
+import { ConfirmModal } from '../ui/ConfirmModal';
+import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
-import { Breadcrumb } from '../ui/Breadcrumb';
 import { TaskConversationRenderer } from './TaskConversationRenderer';
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 interface CopyButtonProps {
 	text: string;
@@ -82,8 +82,8 @@ interface TaskGroupInfo {
 	workerSessionId: string;
 	leaderSessionId: string;
 	workerRole: string;
-	state: string;
 	feedbackIteration: number;
+	submittedForReview: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -103,177 +103,272 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	cancelled: 'text-gray-500',
 };
 
-const GROUP_STATE_LABEL_KEYS: Record<string, string> = {
-	awaiting_worker: 'task.state.awaitingWorker',
-	awaiting_leader: 'task.state.awaitingLeader',
-	awaiting_human: 'task.state.awaitingHuman',
-	completed: 'task.state.completed',
-	failed: 'task.state.failed',
-	// Backward compat
-	awaiting_craft: 'task.state.awaitingWorker',
-	awaiting_lead: 'task.state.awaitingLeader',
-};
-
-function getGroupStateLabel(state: string): string {
-	const key = GROUP_STATE_LABEL_KEYS[state];
-	return key ? t(key) : state;
-}
-
-// ─── Bottom Panel ────────────────────────────────────────────────────────────
-
-interface BottomPanelProps {
-	groupState: string;
-	feedbackIteration: number;
+interface HeaderReviewBarProps {
 	roomId: string;
 	taskId: string;
-	onMessageSentWithReload: () => void;
+	/** Called after approval to refresh the conversation */
+	onApproved: () => void;
+	/** Called after rejection to refresh the conversation */
+	onRejected: () => void;
 }
 
-function BottomPanel({
-	groupState,
-	feedbackIteration,
-	roomId,
-	taskId,
-	onMessageSentWithReload,
-}: BottomPanelProps) {
+function HeaderReviewBar({ roomId, taskId, onApproved, onRejected }: HeaderReviewBarProps) {
 	const { request } = useMessageHub();
-	const [feedbackText, setFeedbackText] = useState('');
-	const [leaderText, setLeaderText] = useState('');
 	const [approving, setApproving] = useState(false);
-	const [sendingFeedback, setSendingFeedback] = useState(false);
-	const [sendingLeader, setSendingLeader] = useState(false);
-	const [inputError, setInputError] = useState<string | null>(null);
+	const [rejecting, setRejecting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const rejectModal = useModal();
 
 	const approveTask = async () => {
-		if (approving || sendingFeedback) return;
+		if (approving) return;
 		setApproving(true);
-		setInputError(null);
+		setError(null);
 		try {
-			await request('goal.approveTask', { roomId, taskId });
-			// Approval changes group state; re-fetch conversation to pick up the approval message
-			onMessageSentWithReload();
+			await request('task.approve', { roomId, taskId });
+			onApproved();
 		} catch (err) {
-			setInputError(err instanceof Error ? err.message : t('task.failedToApprove'));
+			setError(err instanceof Error ? err.message : 'Failed to approve task');
 		} finally {
 			setApproving(false);
 		}
 	};
 
-	const sendFeedback = async () => {
-		if (sendingFeedback || approving || !feedbackText.trim()) return;
-		setSendingFeedback(true);
+	const rejectTask = async (feedback: string) => {
+		if (rejecting) return;
+		setRejecting(true);
+		setError(null);
+		try {
+			await request('task.reject', { roomId, taskId, feedback });
+			rejectModal.close();
+			onRejected();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to reject task');
+		} finally {
+			setRejecting(false);
+		}
+	};
+
+	return (
+		<>
+			<div class="border-b border-amber-700/30 bg-amber-900/20 px-4 py-2 flex items-center gap-3 flex-shrink-0">
+				<div class="flex-1 flex items-center gap-2">
+					<span class="text-amber-400 text-sm font-medium">
+						Review the PR and approve or provide feedback below
+					</span>
+				</div>
+				<div class="flex items-center gap-2">
+					<button
+						class="py-1.5 px-4 rounded bg-red-700 hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+						onClick={rejectModal.open}
+						disabled={rejecting || approving}
+					>
+						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+						<span>Reject</span>
+					</button>
+					<button
+						class="py-1.5 px-4 rounded bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-colors flex items-center gap-1.5"
+						onClick={approveTask}
+						disabled={approving || rejecting}
+					>
+						{approving ? (
+							<>
+								<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+									<circle
+										class="opacity-25"
+										cx="12"
+										cy="12"
+										r="10"
+										stroke="currentColor"
+										stroke-width="4"
+									/>
+									<path
+										class="opacity-75"
+										fill="currentColor"
+										d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+									/>
+								</svg>
+								<span>Approving…</span>
+							</>
+						) : (
+							<>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M5 13l4 4L19 7"
+									/>
+								</svg>
+								<span>Approve</span>
+							</>
+						)}
+					</button>
+				</div>
+				{error && <span class="text-xs text-red-400">{error}</span>}
+			</div>
+			<RejectModal
+				isOpen={rejectModal.isOpen}
+				onClose={rejectModal.close}
+				onConfirm={rejectTask}
+				title="Reject Task"
+				message="Please provide feedback explaining why this task is being rejected. The worker will receive this feedback and can address the issues."
+				isLoading={rejecting}
+			/>
+		</>
+	);
+}
+
+type HumanMessageTarget = 'worker' | 'leader';
+
+interface HumanInputAreaProps {
+	hasGroup: boolean;
+	roomId: string;
+	taskId: string;
+	onMessageSentWithReload: () => void;
+}
+
+const TARGET_LABELS: Record<HumanMessageTarget, string> = {
+	worker: 'Worker',
+	leader: 'Leader',
+};
+
+function HumanInputArea({
+	hasGroup,
+	roomId,
+	taskId,
+	onMessageSentWithReload,
+}: HumanInputAreaProps) {
+	const { request } = useMessageHub();
+	const [messageText, setMessageText] = useState('');
+	const [sending, setSending] = useState(false);
+	const [inputError, setInputError] = useState<string | null>(null);
+	const [target, setTarget] = useState<HumanMessageTarget>('worker');
+	const [menuOpen, setMenuOpen] = useState(false);
+	const menuRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (!menuOpen) return;
+		const onDocMouseDown = (event: MouseEvent) => {
+			const targetNode = event.target as Node;
+			if (menuRef.current && !menuRef.current.contains(targetNode)) {
+				setMenuOpen(false);
+			}
+		};
+		document.addEventListener('mousedown', onDocMouseDown);
+		return () => document.removeEventListener('mousedown', onDocMouseDown);
+	}, [menuOpen]);
+
+	const canSend = hasGroup;
+
+	const sendMessage = async () => {
+		if (sending || !messageText.trim() || !canSend) return;
+		setSending(true);
 		setInputError(null);
 		try {
-			await request('task.sendHumanMessage', { roomId, taskId, message: feedbackText.trim() });
-			setFeedbackText('');
-			// Feedback changes group state; re-fetch conversation to pick up the human message
+			await request('task.sendHumanMessage', {
+				roomId,
+				taskId,
+				message: messageText.trim(),
+				target,
+			});
+			setMessageText('');
 			onMessageSentWithReload();
 		} catch (err) {
-			setInputError(err instanceof Error ? err.message : t('task.failedToSendFeedback'));
+			setInputError(err instanceof Error ? err.message : 'Failed to send message');
 		} finally {
-			setSendingFeedback(false);
+			setSending(false);
 		}
 	};
 
-	const sendToLeader = async () => {
-		if (sendingLeader || !leaderText.trim()) return;
-		setSendingLeader(true);
-		setInputError(null);
-		try {
-			await request('task.sendHumanMessage', { roomId, taskId, message: leaderText.trim() });
-			setLeaderText('');
-			// state.groupMessages.delta handles the live update — no reload needed
-		} catch (err) {
-			setInputError(err instanceof Error ? err.message : t('task.failedToSendMessage'));
-		} finally {
-			setSendingLeader(false);
-		}
-	};
+	const placeholder = !hasGroup
+		? 'No active agent group yet — input will activate once a group starts.'
+		: target === 'leader'
+			? 'Send a message to the leader… (⌘↵ to send)'
+			: 'Send a message to the worker… (⌘↵ to send)';
 
-	// ── Awaiting human review: unified decision panel ──
-	if (groupState === 'awaiting_human') {
-		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-3">
-				<div class="flex items-center gap-2 text-sm">
-					<span class="text-amber-400 font-medium">{t('task.awaitingReview')}</span>
-					{feedbackIteration > 0 && (
-						<span class="text-gray-500">· {t('task.iteration', { count: feedbackIteration })}</span>
-					)}
-					<span class="text-xs text-gray-600 ml-auto">{t('task.reviewHint')}</span>
-				</div>
+	return (
+		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
+			<InputTextarea
+				content={messageText}
+				onContentChange={setMessageText}
+				onKeyDown={(e) => {
+					if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+						e.preventDefault();
+						void sendMessage();
+					}
+				}}
+				onSubmit={() => void sendMessage()}
+				disabled={sending || !canSend}
+				placeholder={placeholder}
+				maxChars={50000}
+				leadingPaddingClass="pl-[5.75rem]"
+				leadingElement={
+					<div class="relative" ref={menuRef}>
+						<button
+							type="button"
+							class="inline-flex h-9 items-center gap-1 rounded-3xl bg-blue-500 px-3 text-xs font-medium text-white hover:bg-blue-600 active:scale-95 transition-all"
+							onClick={(e) => {
+								e.stopPropagation();
+								setMenuOpen((open) => !open);
+							}}
+							data-testid="task-target-button"
+							title="Select target agent"
+						>
+							<span>{TARGET_LABELS[target]}</span>
+							<svg
+								class="w-3 h-3 text-white/90"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width="2"
+									d="M19 9l-7 7-7-7"
+								/>
+							</svg>
+						</button>
 
-				<InputTextarea
-					content={feedbackText}
-					onContentChange={setFeedbackText}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-							e.preventDefault();
-							void sendFeedback();
-						}
-					}}
-					onSubmit={() => void sendFeedback()}
-					disabled={sendingFeedback || approving}
-					placeholder={t('task.feedbackPlaceholder')}
-					maxChars={50000}
-				/>
-
-				<div class="flex items-center justify-end gap-2">
-					{inputError && <p class="text-xs text-red-400 mr-auto">{inputError}</p>}
-					<button
-						class="px-4 py-1.5 text-sm font-medium rounded-md text-gray-300 hover:text-white bg-dark-700 hover:bg-dark-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						onClick={() => void sendFeedback()}
-						disabled={sendingFeedback || approving || !feedbackText.trim()}
-					>
-						{sendingFeedback ? t('task.sending') : t('task.sendFeedback')}
-					</button>
-					<button
-						class="px-4 py-1.5 text-sm font-medium rounded-md text-white bg-green-700 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						onClick={approveTask}
-						disabled={approving || sendingFeedback}
-					>
-						{approving ? t('task.approving') : t('task.approve')}
-					</button>
-				</div>
-			</div>
-		);
-	}
-
-	// ── Awaiting leader: message input ──
-	if (groupState === 'awaiting_leader') {
-		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
-				<InputTextarea
-					content={leaderText}
-					onContentChange={setLeaderText}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-							e.preventDefault();
-							void sendToLeader();
-						}
-					}}
-					onSubmit={() => void sendToLeader()}
-					disabled={sendingLeader}
-					placeholder={t('task.leaderPlaceholder')}
-					maxChars={50000}
-				/>
-				{inputError && <p class="text-xs text-red-400">{inputError}</p>}
-			</div>
-		);
-	}
-
-	// ── Awaiting worker: status bar ──
-	if (groupState === 'awaiting_worker') {
-		return (
-			<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-2.5">
-				<div class="flex items-center gap-2 text-sm text-gray-500">
-					<div class="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-					{t('task.workerRunning')}
-				</div>
-			</div>
-		);
-	}
-
-	return null;
+						{menuOpen && (
+							<div class="absolute bottom-full mb-2 left-0 z-20 min-w-[140px] rounded-lg border border-dark-600 bg-dark-800 py-1 shadow-xl">
+								{(['worker', 'leader'] as const).map((option) => {
+									const selected = target === option;
+									return (
+										<button
+											key={option}
+											type="button"
+											onClick={() => {
+												setTarget(option);
+												setMenuOpen(false);
+											}}
+											data-testid={`task-target-option-${option}`}
+											class={`block w-full px-3 py-1.5 text-left text-xs transition-colors ${
+												selected
+													? 'text-blue-400 bg-dark-700/70'
+													: 'text-gray-200 hover:bg-dark-700'
+											}`}
+										>
+											{TARGET_LABELS[option]}
+										</button>
+									);
+								})}
+							</div>
+						)}
+					</div>
+				}
+			/>
+			{!canSend && <p class="text-xs text-gray-500">No active group to receive messages yet.</p>}
+			{inputError && <p class="text-xs text-red-400">{inputError}</p>}
+		</div>
+	);
 }
 
 // ─── Main TaskView ───────────────────────────────────────────────────────────
@@ -294,6 +389,13 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	// UI state
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
+
+	// Cancel task modal state
+	const cancelModal = useModal();
+	const [cancelling, setCancelling] = useState(false);
+	const [cancelError, setCancelError] = useState<string | null>(null);
+
+	// Tracks whether the conversation pane is showing its first batch of messages.
 	const [isFirstLoad, setIsFirstLoad] = useState(true);
 	const [retrying, setRetrying] = useState(false);
 
@@ -427,82 +529,128 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		);
 	}
 
-	const showInput =
-		group !== null &&
-		(group.state === 'awaiting_human' ||
-			group.state === 'awaiting_leader' ||
-			group.state === 'awaiting_worker');
+	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
 
+	// Determine if cancel button should be shown (pending, in_progress, or review status)
+	const canCancel =
+		task.status === 'pending' || task.status === 'in_progress' || task.status === 'review';
+
+	// Cancel task handler
+	const cancelTask = async () => {
+		if (cancelling) return;
+		setCancelling(true);
+		setCancelError(null);
+		try {
+			await request('task.cancel', { roomId, taskId });
+			cancelModal.close();
+			// Navigate back to room since task is now cancelled
+			navigateToRoom(roomId);
+		} catch (err) {
+			setCancelError(err instanceof Error ? err.message : 'Failed to cancel task');
+		} finally {
+			setCancelling(false);
+		}
+	};
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
-			{/* P1: Compact header — breadcrumb + progress + info */}
-			<div class="border-b border-dark-700 bg-dark-850 px-4 flex items-center gap-3 flex-shrink-0 h-[61px]">
-				<div class="min-w-0 flex-shrink">
-					<Breadcrumb
-						items={[
-							{
-								label: roomStore.room.value?.name ?? t('task.room'),
-								onClick: () => navigateToRoom(roomId),
-							},
-							{ label: task.title },
-						]}
-					/>
-				</div>
-				<div class="flex items-center gap-3 ml-auto flex-shrink-0">
-					{/* Progress bar */}
-					{task.progress != null && task.progress > 0 && (
-						<div class="hidden sm:flex items-center gap-2">
-							<div class="w-24 h-1.5 bg-dark-700 rounded-full overflow-hidden">
-								<div
-									class="h-full bg-blue-500 transition-all duration-300"
-									style={{ width: `${task.progress}%` }}
-								/>
-							</div>
-							<span class="text-xs text-gray-400 tabular-nums">{task.progress}%</span>
+			{/* Header */}
+			<div class="border-b border-dark-700 bg-dark-850 px-4 py-3 flex items-center gap-3 flex-shrink-0">
+				<button
+					class="text-gray-400 hover:text-gray-200 transition-colors text-sm"
+					onClick={() => navigateToRoom(roomId)}
+					title="Back to room"
+				>
+					←
+				</button>
+				<div class="flex-1 min-w-0">
+					<div class="flex items-center gap-2 flex-wrap">
+						<h2 class="text-base font-semibold text-gray-100 truncate">{task.title}</h2>
+						<span class={`text-xs font-medium ${statusColor}`}>
+							{task.status.replace('_', ' ')}
+						</span>
+						{task.taskType && (
+							<span class="text-xs text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">
+								{task.taskType}
+							</span>
+						)}
+					</div>
+					{group && (
+						<div class="flex items-center gap-2 mt-0.5">
+							<p class="text-xs text-gray-500">
+								{group.feedbackIteration > 0 && `iteration ${group.feedbackIteration}`}
+							</p>
+							{group.submittedForReview && (
+								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
+									Awaiting your review
+								</span>
+							)}
 						</div>
 					)}
-					{/* Info toggle */}
+				</div>
+				{task.progress != null && task.progress > 0 && (
+					<div class="flex items-center gap-2 flex-shrink-0">
+						<div class="w-24 h-1.5 bg-dark-700 rounded-full overflow-hidden">
+							<div
+								class="h-full bg-blue-500 transition-all duration-300"
+								style={{ width: `${task.progress}%` }}
+							/>
+						</div>
+						<span class="text-xs text-gray-400">{task.progress}%</span>
+					</div>
+				)}
+				{/* Cancel button - shown for pending, in_progress, or review tasks */}
+				{canCancel && (
 					<button
-						class={`p-1.5 rounded transition-colors ${
-							showInfoPanel
-								? 'bg-blue-600 text-white'
-								: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
-						}`}
-						onClick={() => setShowInfoPanel(!showInfoPanel)}
-						title={t('task.taskInfo')}
+						class="p-1.5 rounded text-red-400 hover:text-red-300 hover:bg-dark-700 transition-colors"
+						onClick={cancelModal.open}
+						title="Cancel task"
+						disabled={cancelling}
 					>
 						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 							<path
 								stroke-linecap="round"
 								stroke-linejoin="round"
 								stroke-width="2"
-								d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+								d="M6 18L18 6M6 6l12 12"
 							/>
 						</svg>
 					</button>
-				</div>
+				)}
+				{/* Info toggle button */}
+				<button
+					class={`p-1.5 rounded transition-colors ${
+						showInfoPanel
+							? 'bg-blue-600 text-white'
+							: 'text-gray-400 hover:text-gray-200 hover:bg-dark-700'
+					}`}
+					onClick={() => setShowInfoPanel(!showInfoPanel)}
+					title={t('task.taskInfo')}
+				>
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width="2"
+							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+						/>
+					</svg>
+				</button>
 			</div>
 
-			{/* P2: Info panel — status, type, iteration, session details */}
+			{/* Header Review Bar - shown when awaiting human approval */}
+			{group?.submittedForReview && (
+				<HeaderReviewBar
+					roomId={roomId}
+					taskId={taskId}
+					onApproved={() => setConversationKey((k) => k + 1)}
+					onRejected={() => setConversationKey((k) => k + 1)}
+				/>
+			)}
+
+			{/* Info panel */}
 			{showInfoPanel && (
 				<div class="border-b border-dark-700 bg-dark-850/50 px-4 py-3 flex-shrink-0">
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-						{/* Status + type row */}
-						<div class="md:col-span-2 flex items-center gap-2 flex-wrap">
-							<span class={`font-medium ${TASK_STATUS_COLORS[task.status] ?? 'text-gray-400'}`}>
-								{task.status.replace(/_/g, ' ')}
-							</span>
-							{task.taskType && (
-								<span class="text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">{task.taskType}</span>
-							)}
-							{group && (
-								<span class="text-gray-500">
-									{getGroupStateLabel(group.state)}
-									{group.feedbackIteration > 0 &&
-										` · ${t('task.iteration', { count: group.feedbackIteration })}`}
-								</span>
-							)}
-						</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
 						<div>
 							<span class="text-gray-500">{t('task.taskId')}</span>
 							<span class="text-gray-300 ml-2 font-mono">{task.id}</span>
@@ -618,8 +766,11 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* Scroll controls */}
-				<div class="absolute right-2 flex flex-col gap-2" style={{ bottom: '1rem' }}>
+				{/* Scroll-to-bottom button */}
+				<div
+					class="absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
+					style={{ bottom: '1rem' }}
+				>
 					<button
 						class={`p-2 rounded-full shadow-lg transition-colors ${
 							autoScrollEnabled
@@ -644,17 +795,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				</div>
 			</div>
 
-			{/* P0: Unified bottom panel */}
-			{showInput && group && (
-				<BottomPanel
-					groupState={group.state}
-					feedbackIteration={group.feedbackIteration}
-					roomId={roomId}
-					taskId={taskId}
-					onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
-				/>
-			)}
-
 			{/* Retry bar for failed tasks */}
 			{task.status === 'failed' && (
 				<div class="border-t border-dark-700 bg-dark-850 px-4 py-3 flex items-center justify-between">
@@ -673,6 +813,27 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					</button>
 				</div>
 			)}
+
+			{/* Human input area (always visible) */}
+			<HumanInputArea
+				hasGroup={group !== null}
+				roomId={roomId}
+				taskId={taskId}
+				onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
+			/>
+
+			{/* Cancel confirmation modal */}
+			<ConfirmModal
+				isOpen={cancelModal.isOpen}
+				onClose={cancelModal.close}
+				onConfirm={cancelTask}
+				title="Cancel Task"
+				message="Are you sure you want to cancel this task? This action cannot be undone."
+				confirmText="Cancel Task"
+				confirmButtonVariant="danger"
+				isLoading={cancelling}
+				error={cancelError}
+			/>
 		</div>
 	);
 }

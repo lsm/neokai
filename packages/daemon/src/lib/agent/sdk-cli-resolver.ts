@@ -40,6 +40,7 @@ let cachedCliPath: string | undefined;
  *
  * The path points to a /$bunfs/root/ virtual path that is readable
  * within this process but not accessible by child processes.
+ * @public Used by packages/cli/prod-entry.ts in compiled binaries.
  */
 export function setEmbeddedCliPath(path: string): void {
 	embeddedCliPath = path;
@@ -116,7 +117,10 @@ function extractEmbeddedCli(): string | undefined {
 	}
 }
 
-/** @internal Reset module state for testing */
+/**
+ * Reset module state for testing.
+ * @public Exported for unit tests.
+ */
 export function _resetForTesting(): void {
 	embeddedCliPath = undefined;
 	cachedCliPath = undefined;

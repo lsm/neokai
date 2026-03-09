@@ -1,19 +1,10 @@
 /**
  * Human Message Routing
  *
- * Shared helper that routes a human message to the correct agent(s) based on
- * the current state of the session group associated with a task.
- *
- * State routing:
- * - awaiting_human  → inject into worker (resume from human approval/rejection)
- * - awaiting_leader → inject into leader + append to group timeline
- * - awaiting_worker → error: worker is running, wait for leader review
- * - completed       → error: task is already completed
- * - failed          → error: task has already failed
- * - no group        → error: no active session group for the task
+ * Routes a human message to the worker or leader session.
+ * No state gates - messages can be sent to either agent at any time.
  */
 
-import type { MessageHub } from '@neokai/shared';
 import type { RoomRuntime } from './room-runtime';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 
@@ -22,21 +13,23 @@ export interface HumanMessageResult {
 	error?: string;
 }
 
+export type HumanMessageTarget = 'worker' | 'leader';
+
 /**
- * Route a human message to the correct agent based on the group's current state.
+ * Route a human message to the specified agent.
  *
  * @param runtime       The RoomRuntime instance for the room
  * @param groupRepo     The SessionGroupRepository for DB access
  * @param taskId        The task ID to route the message to
  * @param message       The human message content
- * @param messageHub    Optional MessageHub for broadcasting the delta event to frontends
+ * @param target        Target agent ('worker' | 'leader'), defaults to 'worker'
  */
 export async function routeHumanMessageToGroup(
 	runtime: RoomRuntime,
 	groupRepo: SessionGroupRepository,
 	taskId: string,
 	message: string,
-	messageHub?: MessageHub
+	target: HumanMessageTarget = 'worker'
 ): Promise<HumanMessageResult> {
 	const group = groupRepo.getGroupByTaskId(taskId);
 
@@ -44,80 +37,21 @@ export async function routeHumanMessageToGroup(
 		return { success: false, error: 'No active session group found for this task' };
 	}
 
-	switch (group.state) {
-		case 'awaiting_human': {
-			// Worker is paused waiting for human — inject directly into worker.
-			// resumeWorkerFromHuman() appends the message internally; do NOT call appendMessage here.
-			const resumed = await runtime.resumeWorkerFromHuman(taskId, message, { approved: false });
-			if (!resumed) {
-				return { success: false, error: 'Failed to resume worker from human message' };
-			}
-			return { success: true };
-		}
+	// Check if group is terminated using completedAt timestamp
+	if (group.completedAt !== null) {
+		return { success: false, error: 'Task is already completed or failed' };
+	}
 
-		case 'awaiting_leader': {
-			// Leader is actively reviewing — inject message and record it in the timeline.
-			// Note: injectMessageToLeader writes to the SDK messages table only; we must
-			// also explicitly append to session_group_messages so it appears in the UI.
-			// This is NOT a double-write — the two paths write to different tables.
-			const injected = await runtime.injectMessageToLeader(taskId, message);
-			if (!injected) {
-				return { success: false, error: 'Failed to inject message into leader session' };
-			}
-			// Store as a 'user' message with JSON content so the frontend renderer can
-			// parse it (renderer calls JSON.parse for all non-'status' message types).
-			// Use crypto.randomUUID() in turnId to guarantee uniqueness even when multiple
-			// messages are sent within the same millisecond.
-			const now = Date.now();
-			const messageContent = {
-				type: 'user',
-				message: {
-					role: 'user',
-					content: [{ type: 'text', text: message }],
-				},
-				_taskMeta: {
-					authorRole: 'human',
-					authorSessionId: '',
-					turnId: `human_${group.id}_${group.feedbackIteration}_${crypto.randomUUID()}`,
-					iteration: group.feedbackIteration,
-				},
-			};
-			groupRepo.appendMessage({
-				groupId: group.id,
-				role: 'human',
-				messageType: 'user',
-				content: JSON.stringify(messageContent),
-			});
-			// Broadcast to subscribed frontends so the message appears immediately.
-			// Wrap in try/catch: persist already succeeded; a broadcast failure must not
-			// surface as an RPC error since the message is safely stored.
-			if (messageHub) {
-				try {
-					messageHub.event(
-						'state.groupMessages.delta',
-						{ added: [{ ...messageContent, timestamp: now }], timestamp: now },
-						{ channel: `group:${group.id}` }
-					);
-				} catch {
-					// Broadcast failure is non-fatal — message is already persisted.
-				}
-			}
-			return { success: true };
-		}
-
-		case 'awaiting_worker':
-			return {
-				success: false,
-				error: 'Worker is running — wait for leader review before sending messages',
-			};
-
-		case 'completed':
-			return { success: false, error: 'Task is already completed' };
-
-		case 'failed':
-			return { success: false, error: 'Task has already failed' };
-
-		default:
-			return { success: false, error: `Unexpected group state: ${group.state}` };
+	// Simple routing - no state checks
+	if (target === 'leader') {
+		const injected = await runtime.injectMessageToLeader(taskId, message);
+		return injected
+			? { success: true }
+			: { success: false, error: 'Failed to inject message into leader session' };
+	} else {
+		const injected = await runtime.injectMessageToWorker(taskId, message);
+		return injected
+			? { success: true }
+			: { success: false, error: 'Failed to inject message into worker session' };
 	}
 }

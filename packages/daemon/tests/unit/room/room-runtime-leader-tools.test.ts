@@ -20,8 +20,9 @@ describe('RoomRuntime leader tools', () => {
 	});
 
 	describe('handleLeaderTool', () => {
-		it('should handle complete_task', async () => {
-			const { task, group } = await spawnAndRouteToLeader(ctx);
+		it('should handle complete_task after submit_for_review gate is satisfied', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Health endpoint added',
@@ -48,24 +49,40 @@ describe('RoomRuntime leader tools', () => {
 			expect(updatedTask!.status).toBe('failed');
 		});
 
-		it('should handle send_to_worker', async () => {
+		it('should handle send_to_worker and route turn back to worker', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Fix the tests',
+				mode: 'queue',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(true);
 
-			// Should inject feedback into worker session
+			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
+			expect(updatedGroup.state).toBe('awaiting_worker');
+
+			// Should inject feedback into worker session using queue mode
 			const injectCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'injectMessage' && (c.args[1] as string).includes('LEADER FEEDBACK')
 			);
 			expect(injectCalls.length).toBeGreaterThan(0);
+			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
 		});
 
-		it('should reject if group not in awaiting_leader state', async () => {
+		it('should handoff_to_worker explicitly (no-op compatibility tool)', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(true);
+
+			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
+			expect(updatedGroup.state).toBe('awaiting_leader');
+		});
+
+		it('should reject complete_task until submit_for_review is called', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
@@ -73,14 +90,14 @@ describe('RoomRuntime leader tools', () => {
 			const groups = ctx.groupRepo.getActiveGroups('room-1');
 			const group = groups[0];
 
-			// Group is in awaiting_worker (haven't routed to leader yet)
+			// Group is active but has not called submit_for_review yet.
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Done',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('awaiting_leader');
+			expect(parsed.error).toContain('submit_for_review');
 		});
 
 		it('should reject for non-existent group', async () => {

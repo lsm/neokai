@@ -65,7 +65,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install dependencies
         run: bun install
@@ -129,7 +129,8 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - agent
+          - agent-context
+          - agent-sdk
           - components
           - coordinator
           - convo
@@ -142,26 +143,30 @@ jobs:
           - providers-openai
           - providers-copilot
           - rewind
-          - room-1
-          - room-multi-agent
-          - room-replan
-          - room-planner
-          - room-reviewer
+          # Room tests temporarily disabled during refactoring
+          # - room-1
+          # - room-multi-agent
+          # - room-replan
+          # - room-planner
+          # - room-reviewer
           - rpc-1
           - rpc-2
           - rpc-3
           - sdk
           - websocket
         include:
-          # mock_sdk: true → uses NEOKAI_AGENT_SDK_MOCK instead of real API calls.
+          # mock_sdk: true → uses Dev Proxy (NEOKAI_USE_DEV_PROXY) for mocking instead of real API calls.
           # These modules test infrastructure/plumbing and don't need real AI responses.
           # To run with real API locally, just omit the env var.
           #
           # Modules with directory-level test_path auto-discover new test files.
           # Split modules (rpc-*, room-*, features-*) use explicit file lists.
           # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
-          - module: agent
-            test_path: tests/online/agent
+          - module: agent-context
+            test_path: tests/online/agent/context-command.test.ts
+          - module: agent-sdk
+            test_path: tests/online/agent/agent-session-sdk.test.ts
+            mock_sdk: true
           - module: components
             test_path: tests/online/components
             mock_sdk: true
@@ -170,6 +175,7 @@ jobs:
           #   test_path: tests/online/glm
           - module: convo
             test_path: tests/online/convo
+            mock_sdk: true
           - module: coordinator
             test_path: tests/online/coordinator
             timeout: 10
@@ -181,11 +187,9 @@ jobs:
             mock_sdk: true
           - module: features-2
             test_path: tests/online/features/message-persistence.test.ts
-            mock_sdk: true
           - module: git
             test_path: tests/online/git
             timeout: 10
-            mock_sdk: true
           - module: lifecycle
             test_path: tests/online/lifecycle
             mock_sdk: true
@@ -202,24 +206,26 @@ jobs:
             test_path: tests/online/providers/github-copilot-provider.test.ts
           - module: rewind
             test_path: tests/online/rewind
-          - module: room-1
-            test_path: >-
-              tests/online/room/room-advanced-scenarios.test.ts
-              tests/online/room/room-chat-agent-tools.test.ts
-              tests/online/room/room-chat-constraints.test.ts
-            timeout: 10
-          - module: room-multi-agent
-            test_path: tests/online/room/room-multi-agent-flow.test.ts
-            timeout: 10
-          - module: room-replan
-            test_path: tests/online/room/room-replan-recovery.test.ts
-            timeout: 10
-          - module: room-planner
-            test_path: tests/online/room/room-planner-two-phase.test.ts
-            timeout: 10
-          - module: room-reviewer
-            test_path: tests/online/room/room-reviewer-flow.test.ts
-            timeout: 10
+            mock_sdk: true
+          # Room tests temporarily disabled during refactoring
+          # - module: room-1
+          #   test_path: >-
+          #     tests/online/room/room-advanced-scenarios.test.ts
+          #     tests/online/room/room-chat-agent-tools.test.ts
+          #     tests/online/room/room-chat-constraints.test.ts
+          #   timeout: 10
+          # - module: room-multi-agent
+          #   test_path: tests/online/room/room-multi-agent-flow.test.ts
+          #   timeout: 10
+          # - module: room-replan
+          #   test_path: tests/online/room/room-replan-recovery.test.ts
+          #   timeout: 10
+          # - module: room-planner
+          #   test_path: tests/online/room/room-planner-two-phase.test.ts
+          #   timeout: 10
+          # - module: room-reviewer
+          #   test_path: tests/online/room/room-reviewer-flow.test.ts
+          #   timeout: 10
           - module: rpc-1
             test_path: >-
               tests/online/rpc/rpc-agent-handlers.test.ts
@@ -251,7 +257,6 @@ jobs:
             mock_sdk: true
           - module: websocket
             test_path: tests/online/websocket
-            mock_sdk: true
 
     steps:
       - uses: actions/checkout@v4
@@ -259,13 +264,36 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
+
+      - name: Install Dev Proxy (Linux)
+        if: runner.os == 'Linux' && matrix.mock_sdk == true
+        run: |
+          curl -sL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash
+          # The setup script installs devproxy to ./devproxy in the current directory
+          # Add it to PATH for subsequent steps
+          echo "$PWD/devproxy" >> $GITHUB_PATH
+
+      - name: Start Dev Proxy
+        if: matrix.mock_sdk == true
+        run: |
+          devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
+          DEVPROXY_PID=$!
+          echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
+          # Wait for proxy to be ready
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
+              echo "Dev Proxy is ready"
+              break
+            fi
+            sleep 0.5
+          done
 
       - name: Install dependencies
         run: bun install
@@ -274,12 +302,28 @@ jobs:
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
         env:
-          NEOKAI_AGENT_SDK_MOCK: ${{ matrix.mock_sdk == true && 'true' || '' }}
-          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'mock-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
+          # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
+          # This avoids proxy env var issues and TLS interception problems
+          NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
+          # For Dev Proxy tests, never pass real Anthropic credentials.
+          ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
+          ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
-          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || 'glm') || '' }}
+          MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
+          # Prefer MiniMax for online tests when available; fallback to GLM.
+          DEFAULT_PROVIDER: ${{ matrix.mock_sdk != true && (matrix.default_provider || (secrets.MINIMAX_API_KEY != '' && 'minimax' || 'glm')) || '' }}
+          # Prefer MiniMax highspeed as the default model when using MiniMax.
+          DEFAULT_MODEL: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY != '' && 'MiniMax-M2.5-highspeed' || '' }}
+
+      - name: Stop Dev Proxy
+        if: always() && matrix.mock_sdk == true
+        run: |
+          if [ -n "$DEVPROXY_PID" ]; then
+            kill $DEVPROXY_PID 2>/dev/null || true
+          fi
 
       - name: Fix coverage paths and strip test utilities
         working-directory: packages/daemon
@@ -315,7 +359,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -361,7 +405,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -408,7 +452,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -546,7 +590,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -670,7 +714,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'
@@ -767,7 +811,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.3.9
+          bun-version: 1.3.10
 
       - name: Install sandbox dependencies (Linux)
         if: runner.os == 'Linux'

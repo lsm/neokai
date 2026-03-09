@@ -30,8 +30,15 @@ let initialized = false;
  * @returns The global provider registry
  */
 export function initializeProviders(): ProviderRegistry {
+	// If already initialized, return the existing registry
+	// This handles the case where getProviderRegistry() was called but no providers were registered
 	if (initialized) {
-		return getProviderRegistry();
+		const registry = getProviderRegistry();
+		// Check if registry has any providers - if not, we need to reinitialize
+		if (registry.size > 0) {
+			return registry;
+		}
+		// Registry was reset but initialized flag wasn't - need to reinitialize
 	}
 
 	const registry = getProviderRegistry();

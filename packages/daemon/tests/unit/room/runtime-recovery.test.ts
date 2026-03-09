@@ -32,8 +32,12 @@ function createMockSessionFactory() {
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
-		async injectMessage(sessionId: string, message: string) {
-			calls.push({ method: 'injectMessage', args: [sessionId, message] });
+		async injectMessage(
+			sessionId: string,
+			message: string,
+			opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+		) {
+			calls.push({ method: 'injectMessage', args: [sessionId, message, opts] });
 		},
 		hasSession(_sessionId: string) {
 			return true;
@@ -130,13 +134,11 @@ describe('Runtime Recovery', () => {
 				joined_at INTEGER NOT NULL,
 				PRIMARY KEY (group_id, session_id)
 			);
-			CREATE TABLE session_group_messages (
+			CREATE TABLE task_group_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				group_id TEXT NOT NULL REFERENCES session_groups(id) ON DELETE CASCADE,
-				session_id TEXT,
-				role TEXT NOT NULL,
-				message_type TEXT NOT NULL,
-				content TEXT NOT NULL,
+				kind TEXT NOT NULL,
+				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('room-1', 'Test', ${Date.now()}, ${Date.now()});
@@ -180,7 +182,7 @@ describe('Runtime Recovery', () => {
 
 		const group = groupRepo.createGroup(taskId, `worker:${taskId}`, `leader:${taskId}`);
 		if (groupState !== 'awaiting_worker') {
-			groupRepo.updateGroupState(group.id, groupState as never, group.version);
+			groupRepo.setCompatibilityState(group.id, groupState as never);
 		}
 
 		return { taskId, group: groupRepo.getGroup(group.id) };
@@ -246,9 +248,9 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.failedGroups).toBe(1);
-		const updatedGroup = groupRepo.getGroup(group!.id);
-		expect(updatedGroup!.state).toBe('failed');
+		expect(result.failedGroups).toBe(0);
+		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
 
 		// Recovery failures pass autoRetry: true, so the task auto-retries to pending
 		const task = await taskManager.getTask(taskId);
@@ -270,8 +272,31 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.reattachedObservers).toBe(1);
+		expect(result.reattachedObservers).toBe(2);
 		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
+	});
+
+	it('should observe leader session id in awaiting_worker recovery even before leader exists', async () => {
+		const { group } = createTaskAndGroup('awaiting_worker');
+
+		const checker = createDefaultChecker({
+			sessionExists: (id) => !id.startsWith('leader:'),
+			isLive: (id) => !id.startsWith('leader:'),
+		});
+
+		const result = await recoverRuntime(
+			'room-1',
+			groupRepo,
+			taskManager,
+			observer,
+			checker,
+			runtime
+		);
+
+		expect(result.failedGroups).toBe(0);
+		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
 	});
 
 	it('should reattach observers for active leader sessions', async () => {
@@ -288,7 +313,8 @@ describe('Runtime Recovery', () => {
 			runtime
 		);
 
-		expect(result.reattachedObservers).toBe(1);
+		expect(result.reattachedObservers).toBe(2);
+		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
 		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
 	});
 
@@ -334,9 +360,10 @@ describe('Runtime Recovery', () => {
 		expect(result.recoveredGroups).toBe(1);
 		expect(result.failedGroups).toBe(0);
 		expect(result.restoredSessions).toBeGreaterThanOrEqual(1);
-		expect(result.reattachedObservers).toBe(1);
+		expect(result.reattachedObservers).toBe(2);
 		// Worker observer should be attached for future approval
 		expect(observer.isObserving(group!.workerSessionId)).toBe(true);
+		expect(observer.isObserving(group!.leaderSessionId)).toBe(true);
 	});
 
 	it('should fail awaiting_human group when worker cannot be restored', async () => {
@@ -389,7 +416,7 @@ describe('Runtime Recovery', () => {
 
 		expect(result.restoredSessions).toBeGreaterThanOrEqual(1);
 		expect(restoreCalls).toContain(group!.workerSessionId);
-		expect(result.reattachedObservers).toBe(1);
+		expect(result.reattachedObservers).toBe(2);
 	});
 
 	it('should handle multiple groups with mixed states', async () => {
@@ -409,7 +436,7 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.recoveredGroups).toBe(3);
-		// All 3 groups get observers (awaiting_human now restores and observes too)
-		expect(result.reattachedObservers).toBe(3);
+		// Each group observes both worker and leader sessions.
+		expect(result.reattachedObservers).toBe(6);
 	});
 });

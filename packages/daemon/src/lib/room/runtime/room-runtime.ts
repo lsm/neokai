@@ -47,7 +47,6 @@ import {
 	formatWorkerToLeaderEnvelope,
 	formatPlanEnvelope,
 	formatLeaderToWorkerFeedback,
-	formatLeaderContractNudge,
 	sortTasksByPriority,
 } from './message-routing';
 import { isRateLimitError, createRateLimitBackoff } from './rate-limit-utils';
@@ -87,7 +86,12 @@ export interface RoomRuntimeConfig {
 	goalManager: GoalManager;
 	sessionFactory: SessionFactory;
 	workspacePath: string;
+	/** Leader model (agentModels.leader > room.defaultModel > global default) */
 	model?: string;
+	/** Worker model (agentModels.worker > room.defaultModel > global default) */
+	workerModel?: string;
+	/** Global default model for fallback when room doesn't specify one */
+	defaultModel?: string;
 	/** Max concurrent groups (default: 1 for MVP) */
 	maxConcurrentGroups?: number;
 	/** Max feedback iterations before auto-escalation (default: 3) */
@@ -108,6 +112,12 @@ export interface RoomRuntimeConfig {
 	messageHub?: MessageHub;
 	/** Hook options for lifecycle gates (test injection point) */
 	hookOptions?: HookOptions;
+	/** Fetch room from DB by ID (for lazy leader init with current config) */
+	getRoom: (roomId: string) => Room | null;
+	/** Fetch task from DB by ID (for lazy leader init with current data) */
+	getTask: (taskId: string) => Promise<NeoTask | null>;
+	/** Fetch goal from DB by ID (for lazy leader init with current data) */
+	getGoal: (goalId: string) => Promise<RoomGoal | null>;
 }
 
 function jsonResult(data: Record<string, unknown>): LeaderToolResult {
@@ -120,6 +130,7 @@ export class RoomRuntime {
 	private tickQueued = false;
 	private tickTimer: ReturnType<typeof setInterval> | null = null;
 
+	private readonly roomId: string;
 	private room: Room;
 	private readonly groupRepo: SessionGroupRepository;
 	private readonly observer: SessionObserver;
@@ -134,6 +145,8 @@ export class RoomRuntime {
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
 	private readonly stallTimeoutMs: number;
+	private readonly getRoomById: (roomId: string) => Room | null;
+	private readonly defaultModel: string;
 
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
@@ -147,8 +160,8 @@ export class RoomRuntime {
 	private emitTaskUpdate(task: NeoTask): void {
 		if (!this.daemonHub) return;
 		void this.daemonHub.emit('room.task.update', {
-			sessionId: `room:${this.room.id}`,
-			roomId: this.room.id,
+			sessionId: `room:${this.roomId}`,
+			roomId: this.roomId,
 			task,
 		});
 	}
@@ -188,16 +201,17 @@ export class RoomRuntime {
 		if (!this.daemonHub) return;
 		const goals = await this.goalManager.getGoalsForTask(taskId);
 		for (const goal of goals) {
-			void this.daemonHub.emit('goal.updated', {
-				sessionId: `room:${this.room.id}`,
-				roomId: this.room.id,
+			void this.daemonHub.emit('goal.progressUpdated', {
+				sessionId: `room:${this.roomId}`,
+				roomId: this.roomId,
 				goalId: goal.id,
-				goal,
+				progress: goal.progress ?? 0,
 			});
 		}
 	}
 
 	constructor(config: RoomRuntimeConfig) {
+		this.roomId = config.room.id;
 		this.room = config.room;
 		this.groupRepo = config.groupRepo;
 		this.observer = config.sessionObserver;
@@ -212,6 +226,8 @@ export class RoomRuntime {
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
 		this.stallTimeoutMs = config.stallTimeoutMs ?? 300_000; // 5 minutes
+		this.getRoomById = config.getRoom;
+		this.defaultModel = config.defaultModel ?? 'sonnet';
 
 		this.taskGroupManager = new TaskGroupManager({
 			groupRepo: config.groupRepo,
@@ -221,7 +237,17 @@ export class RoomRuntime {
 			sessionFactory: config.sessionFactory,
 			workspacePath: config.workspacePath,
 			model: config.model,
+			workerModel: config.workerModel,
+			getRoom: config.getRoom,
+			getTask: config.getTask,
+			getGoal: config.getGoal,
 		});
+
+		// Keep test and direct-runtime usage predictable: when no explicit leader model
+		// is provided, derive it from the initial room config.
+		if (!config.model || config.model.trim() === '') {
+			this.taskGroupManager.updateModel(this.resolveAgentModel(config.room, 'leader'));
+		}
 	}
 
 	// =========================================================================
@@ -262,14 +288,56 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Update the room reference with the latest data.
-	 * Called when room config changes so lifecycle hooks see the current config.
-	 * Also picks up new maxConcurrentGroups and maxReviewRounds values reactively.
-	 * Stale or removed config keys fall back to their documented defaults.
+	 * Resolve model for a room agent role.
+	 * Priority: room.config.agentModels[role] > room.defaultModel > global default.
+	 */
+	private resolveAgentModel(room: Room, role: 'leader' | 'planner' | 'coder' | 'general'): string {
+		const config = (room.config ?? {}) as Record<string, unknown>;
+		const agentModels = config.agentModels as Record<string, string> | undefined;
+		const roleModel = agentModels?.[role];
+		if (typeof roleModel === 'string' && roleModel.trim() !== '') {
+			return roleModel;
+		}
+		if (typeof room.defaultModel === 'string' && room.defaultModel.trim() !== '') {
+			return room.defaultModel;
+		}
+		return this.defaultModel;
+	}
+
+	/**
+	 * Return the freshest room snapshot available to the runtime.
+	 * Prefer newer snapshots by updatedAt so updateRoom() calls can take effect
+	 * immediately even if an external room provider still returns stale data.
+	 */
+	private getCurrentRoom(): Room | null {
+		const liveRoom = this.getRoomById(this.roomId);
+		if (!liveRoom) return this.room;
+
+		const liveUpdatedAt = liveRoom.updatedAt ?? 0;
+		const snapshotUpdatedAt = this.room.updatedAt ?? 0;
+		return liveUpdatedAt > snapshotUpdatedAt ? liveRoom : this.room;
+	}
+
+	/**
+	 * Update runtime config from the latest room state.
+	 * Called when room config changes so lifecycle hooks see current values.
 	 */
 	updateRoom(room: Room): void {
-		this.room = room;
-		const config = (room.config ?? {}) as Record<string, unknown>;
+		if (room.id === this.roomId) {
+			this.room = room;
+		}
+
+		const currentRoom = this.getCurrentRoom();
+		if (!currentRoom) {
+			log.warn(`Cannot refresh room runtime config: room not found (${this.roomId})`);
+			return;
+		}
+		this.room = currentRoom;
+		const config = (currentRoom.config ?? {}) as Record<string, unknown>;
+
+		// Keep TaskGroupManager model aligned to the current Leader model.
+		this.taskGroupManager.updateModel(this.resolveAgentModel(currentRoom, 'leader'));
+
 		const rawGroups = config.maxConcurrentGroups;
 		this.maxConcurrentGroups =
 			typeof rawGroups === 'number' && rawGroups >= 1
@@ -285,9 +353,11 @@ export class RoomRuntime {
 	/**
 	 * Maximum planning attempts for this room.
 	 * Reads from room.config.maxPlanningRetries (default: 0 = no auto-retry).
+	 * Fetches fresh room from DB to get current config.
 	 */
 	private get maxPlanningAttempts(): number {
-		const cfg = this.room.config ?? {};
+		const currentRoom = this.getCurrentRoom();
+		const cfg = currentRoom?.config ?? {};
 		const value = (cfg as Record<string, unknown>)['maxPlanningRetries'];
 		if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
 			// maxPlanningRetries is "how many retries after first failure":
@@ -321,7 +391,7 @@ export class RoomRuntime {
 	 */
 	async onWorkerTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_worker') return;
+		if (!group) return;
 
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
@@ -340,11 +410,8 @@ export class RoomRuntime {
 			const dirty = await this.isWorktreeDirty(groupWorkspace);
 			if (dirty) {
 				log.info(`Worktree dirty for group ${groupId} — sending worker back to clean up.`);
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: 'Worktree has uncommitted changes. Sending worker back to clean up.',
+				this.appendGroupEvent(groupId, 'status', {
+					text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -357,7 +424,7 @@ export class RoomRuntime {
 		}
 
 		// Lifecycle hooks: Worker Exit Gate
-		// Validates preconditions before routing to leader (branch/PR for coders, tasks for planners)
+		// Validates preconditions before routing to leader (branch/PR for coder/general, tasks for planners)
 		{
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
 			const hookCtx: WorkerExitHookContext = {
@@ -375,11 +442,8 @@ export class RoomRuntime {
 			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			if (!gateResult.pass) {
 				log.info(`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`);
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Worker exit gate: ${gateResult.reason}`,
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Worker exit gate: ${gateResult.reason}`,
 				});
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
@@ -412,11 +476,10 @@ export class RoomRuntime {
 					`Rate limit detected in worker output for group ${groupId}. ` +
 						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 				);
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+				this.appendGroupEvent(groupId, 'rate_limited', {
+					text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+					resetsAt: rateLimitBackoff.resetsAt,
+					sessionRole: 'worker',
 				});
 				this.scheduleTickAfterRateLimitReset(groupId);
 				return;
@@ -460,16 +523,15 @@ export class RoomRuntime {
 			this.groupRepo.updateLastForwardedMessageId(groupId, lastMessage.id, group.version);
 		}
 
-		// Insert status message into group timeline
-		this.groupRepo.appendMessage({
-			groupId,
-			role: 'system',
-			messageType: 'status',
-			content: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
+		// Insert status event into group timeline
+		this.appendGroupEvent(groupId, 'status', {
+			text: `Worker (${group.workerRole}) finished (${terminalState.kind}). Routing to Leader for review.`,
 		});
 
-		// Route to Leader
-		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope);
+		// Route to Leader (room fetched from DB via getRoom)
+		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, (groupId) =>
+			this.createLeaderCallbacks(groupId)
+		);
 
 		// Update task progress based on review iteration
 		// Formula: iteration 1 → 20%, then +60%/maxRounds per subsequent round, capped at 80%
@@ -484,48 +546,21 @@ export class RoomRuntime {
 
 	/**
 	 * Called when Leader reaches a terminal state.
-	 * Validates Leader tool contract (retry-then-fail).
+	 * No state checks - leader can finish without calling a tool.
 	 */
 	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_leader') return;
+		if (!group) return;
 
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {
-			log.info(`Leader reached terminal state while rate limited - pausing nudge`);
+			log.info(`Leader reached terminal state while rate limited - pausing`);
 			this.scheduleTickAfterRateLimitReset(groupId);
 			return;
 		}
 
-		// Check if Leader called a tool (persisted in DB metadata)
-		const calledTool = group.leaderCalledTool;
-
-		if (calledTool) {
-			// Leader called a tool → success, no action needed
-			// (The tool handler already processed the action)
-			return;
-		}
-
-		// Contract violation: Leader reached terminal without calling a tool
-		const violations = group.leaderContractViolations;
-
-		if (violations === 0) {
-			// First violation: nudge
-			const nudge = formatLeaderContractNudge();
-			await this.sessionFactory.injectMessage(group.leaderSessionId, nudge);
-			this.groupRepo.updateLeaderContractViolations(
-				groupId,
-				1,
-				'', // turn ID placeholder - MVP doesn't track turn IDs
-				group.version
-			);
-		} else {
-			// Second+ violation: fail the group
-			await this.taskGroupManager.fail(groupId, 'Leader failed to call required tool after nudge');
-			this.cleanupMirroring(groupId, 'Leader contract violation — task failed.');
-			await this.emitTaskUpdateById(group.taskId);
-			this.scheduleTick();
-		}
+		// Leader can finish without calling a tool - that's fine.
+		// No contract violation logic needed.
 	}
 
 	// =========================================================================
@@ -539,34 +574,31 @@ export class RoomRuntime {
 	async handleLeaderTool(
 		groupId: string,
 		toolName: string,
-		params: { message?: string; summary?: string; reason?: string; pr_url?: string }
+		params: {
+			message?: string;
+			mode?: 'steer' | 'queue';
+			summary?: string;
+			reason?: string;
+			pr_url?: string;
+		}
 	): Promise<LeaderToolResult> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) {
 			return jsonResult({ success: false, error: `Group not found: ${groupId}` });
 		}
 
-		if (group.state !== 'awaiting_leader') {
-			return jsonResult({
-				success: false,
-				error: `Group not in awaiting_leader state (current: ${group.state})`,
-			});
-		}
-
-		// Mark that Leader called a tool (persisted immediately for restart safety)
-		this.groupRepo.setLeaderCalledTool(groupId, true);
+		// No state guard - tools always available
 
 		switch (toolName) {
 			case 'send_to_worker': {
 				// Enforce max feedback iterations — runtime escalates to human review.
-				// Like submit_for_review, this transitions to awaiting_human so we deliberately
-				// do NOT call cleanupMirroring (keeps mirroring running, consistent behaviour).
 				// The reason is persisted in the group timeline by escalateToHumanReview().
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
-					await this.taskGroupManager.escalateToHumanReview(
-						groupId,
-						`Max feedback iterations (${this.maxFeedbackIterations}) reached`
-					);
+					const reason = `Max feedback iterations (${this.maxFeedbackIterations}) reached`;
+					await this.taskGroupManager.escalateToHumanReview(groupId, reason);
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Escalated for human review: ${reason}`,
+					});
 					await this.emitTaskUpdateById(group.taskId);
 					await this.emitGoalProgressForTask(group.taskId);
 					this.scheduleTick();
@@ -576,6 +608,8 @@ export class RoomRuntime {
 					});
 				}
 				const message = params.message ?? '';
+				const mode = params.mode ?? 'queue';
+				const deliveryMode = mode === 'queue' ? 'next_turn' : 'current_turn';
 				// feedbackIteration is already 1-based (incremented in routeWorkerToLeader)
 				const currentIteration = group.feedbackIteration;
 				const feedback = formatLeaderToWorkerFeedback(message, currentIteration);
@@ -583,29 +617,42 @@ export class RoomRuntime {
 				// Clear any rate limit backoff since we're starting a new iteration
 				this.groupRepo.clearRateLimit(groupId);
 
-				// Insert status message into group timeline
-				this.groupRepo.appendMessage({
-					groupId,
-					role: 'system',
-					messageType: 'status',
-					content: `Leader sent feedback to Worker (iteration ${currentIteration}).`,
+				// Insert status event into group timeline
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Leader forwarded feedback to Worker (iteration ${currentIteration}, mode: ${mode}).`,
 				});
 
-				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback);
+				await this.taskGroupManager.routeLeaderToWorker(groupId, feedback, {
+					deliveryMode,
+					transitionState: false,
+				});
 				return jsonResult({
 					success: true,
-					message: 'Feedback sent to Worker. Waiting for next iteration.',
+					message: 'Feedback sent to worker.',
+				});
+			}
+
+			case 'handoff_to_worker': {
+				// No-op: no state to transition. Kept for backward compatibility.
+				this.appendGroupEvent(groupId, 'status', {
+					text: 'Leader signaled handoff to Worker (no-op).',
+				});
+				return jsonResult({
+					success: true,
+					message: 'Handoff acknowledged. Use send_to_worker to send messages.',
 				});
 			}
 
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
-				// State machine enforcement: coding and planning tasks must go through submit_for_review first.
-				// Both follow a two-phase flow: work → review → human approval → merge/create tasks → complete.
+				// State machine enforcement: PR/planning tasks must go through submit_for_review first.
+				// They follow a two-phase flow: work → review → human approval → merge/create tasks → complete.
 				// Exception: approved=true means human already approved (PR or plan).
 				if (
-					(group.workerRole === 'coder' || group.workerRole === 'planner') &&
+					(group.workerRole === 'coder' ||
+						group.workerRole === 'general' ||
+						group.workerRole === 'planner') &&
 					!group.submittedForReview &&
 					!group.approved
 				) {
@@ -623,7 +670,8 @@ export class RoomRuntime {
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
 					if (hookTask) {
-						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
+						const currentRoom = this.getCurrentRoom();
+						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
 
@@ -643,11 +691,8 @@ export class RoomRuntime {
 						const gateResult = await runLeaderCompleteGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader complete gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendMessage({
-								groupId,
-								role: 'system',
-								messageType: 'status',
-								content: `Leader complete gate: ${gateResult.reason}`,
+							this.appendGroupEvent(groupId, 'status', {
+								text: `Leader complete gate: ${gateResult.reason}`,
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -688,11 +733,17 @@ export class RoomRuntime {
 			case 'submit_for_review': {
 				const prUrl = params.pr_url ?? '';
 
-				// Lifecycle gate: validate PR exists for coding/planning tasks (and reviews if reviewers configured)
+				// Lifecycle gate: validate PR exists for PR/planning tasks (and reviews if reviewers configured)
 				{
 					const hookTask = await this.taskManager.getTask(group.taskId);
-					if (hookTask && (group.workerRole === 'coder' || group.workerRole === 'planner')) {
-						const roomConfig = (this.room.config ?? {}) as Record<string, unknown>;
+					if (
+						hookTask &&
+						(group.workerRole === 'coder' ||
+							group.workerRole === 'general' ||
+							group.workerRole === 'planner')
+					) {
+						const currentRoom = this.getCurrentRoom();
+						const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 						const agentSubs = roomConfig.agentSubagents as Record<string, unknown[]> | undefined;
 						const hasReviewers = !!agentSubs?.leader?.length;
 
@@ -707,11 +758,8 @@ export class RoomRuntime {
 						const gateResult = await runLeaderSubmitGate(hookCtx, this.hookOptions);
 						if (!gateResult.pass) {
 							log.info(`Leader submit gate failed for group ${groupId}: ${gateResult.reason}`);
-							this.groupRepo.appendMessage({
-								groupId,
-								role: 'system',
-								messageType: 'status',
-								content: `Leader submit gate: ${gateResult.reason}`,
+							this.appendGroupEvent(groupId, 'status', {
+								text: `Leader submit gate: ${gateResult.reason}`,
 							});
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
@@ -748,8 +796,11 @@ export class RoomRuntime {
 	 */
 	createLeaderCallbacks(groupId: string): LeaderToolCallbacks {
 		return {
-			sendToWorker: async (_groupId: string, message: string) => {
-				return this.handleLeaderTool(groupId, 'send_to_worker', { message });
+			sendToWorker: async (_groupId: string, message: string, mode?: 'steer' | 'queue') => {
+				return this.handleLeaderTool(groupId, 'send_to_worker', { message, mode });
+			},
+			handoffToWorker: async (_groupId: string) => {
+				return this.handleLeaderTool(groupId, 'handoff_to_worker', {});
 			},
 			completeTask: async (_groupId: string, summary: string) => {
 				return this.handleLeaderTool(groupId, 'complete_task', { summary });
@@ -767,11 +818,11 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the existing worker.
+	 * Resume a group from awaiting_human by injecting a message into the appropriate session.
 	 *
-	 * Used for all task types (planning, coding, general):
-	 * - Approve: sets approved=true → worker merges PR (planner also creates tasks)
-	 * - Reject: no flag set, submittedForReview reset → worker addresses feedback
+	 * Routing logic:
+	 * - ALL approvals (planner, coder, general) → leader (merges PR + calls complete_task)
+	 * - ALL rejections (planner, coder, general) → leader (forwards feedback to worker)
 	 *
 	 * Reuses the same worker and leader sessions — no new sessions are created.
 	 */
@@ -781,33 +832,56 @@ export class RoomRuntime {
 		opts?: { approved?: boolean }
 	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group || group.state !== 'awaiting_human') return false;
+		// Check group exists and is not completed/failed
+		if (!group || group.completedAt !== null) return false;
 
 		// Verify the task belongs to this runtime's room
 		const task = await this.taskManager.getTask(taskId);
 		if (!task) return false;
 
-		// Set approved when:
-		// - explicitly requested via opts.approved === true, OR
-		// - resuming a planner (always treated as an approval) UNLESS explicitly denied
-		const shouldApprove =
+		// Determine if this is an approval
+		const isApproval =
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
-		if (shouldApprove) {
+		const previousStatus = task.status;
+		const previousApproved = group.approved;
+
+		if (isApproval && !previousApproved) {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
 		// Move task back to in_progress
-		await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
-
-		// Delegate to TaskGroupManager (injects message into existing worker).
-		// If injection fails, TaskGroupManager rolls back group state. We also
-		// revert the task status so the task stays in review for retry.
 		try {
-			const updated = await this.taskGroupManager.resumeWorkerFromHuman(group.id, message);
-			if (!updated) return false;
+			await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
 		} catch (error) {
-			await this.taskManager.reviewTask(group.taskId);
-			log.error(`Failed to resume worker from human for task ${taskId}:`, error);
+			if (isApproval && !previousApproved) {
+				this.groupRepo.setApproved(group.id, previousApproved);
+			}
+			log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
+			return false;
+		}
+
+		// Route ALL messages (approval and rejection) to leader
+		// Leader handles: approval → merge + complete_task
+		// Leader handles: rejection → send_to_worker + handoff_to_worker
+		try {
+			const updated = await this.taskGroupManager.resumeLeaderFromHuman(group.id, message);
+			if (!updated) {
+				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
+				if (isApproval && !previousApproved) {
+					this.groupRepo.setApproved(group.id, previousApproved);
+				}
+				return false;
+			}
+		} catch (error) {
+			try {
+				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
+			} catch (rollbackError) {
+				log.warn(`Failed to rollback task ${taskId} status after resume error:`, rollbackError);
+			}
+			if (isApproval && !previousApproved) {
+				this.groupRepo.setApproved(group.id, previousApproved);
+			}
+			log.error(`Failed to resume from human for task ${taskId}:`, error);
 			return false;
 		}
 
@@ -818,21 +892,118 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Terminate the task's active group (if any) without changing task status.
+	 *
+	 * Used by task.setStatus paths that move tasks to terminal states other than
+	 * cancelled. This ensures agent sessions and mirroring are cleaned up while
+	 * preserving the caller's chosen task status transition.
+	 */
+	async terminateTaskGroup(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group) return true;
+
+		const isActiveGroup = group.completedAt === null;
+		if (isActiveGroup) {
+			const terminated = await this.taskGroupManager.terminateGroup(group.id);
+			if (!terminated) return false;
+		}
+
+		await this.terminateGroupSessions(group);
+		this.cleanupMirroring(
+			group.id,
+			isActiveGroup ? 'Task group terminated by user status change.' : undefined
+		);
+		return true;
+	}
+
+	/**
+	 * Cancel a task and terminate its active session group (if any).
+	 *
+	 * This is used by the Room Agent `cancel_task` tool. It ensures cancellation
+	 * is not just a task-status change: active groups are transitioned to terminal
+	 * state and their sessions are stopped so concurrency slots are freed.
+	 *
+	 * Returns all cancelled task IDs (root task + cascade-cancelled dependents).
+	 */
+	async cancelTask(taskId: string): Promise<{ success: boolean; cancelledTaskIds: string[] }> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) {
+			return { success: false, cancelledTaskIds: [] };
+		}
+
+		const cancelledTaskIds = new Set<string>();
+
+		// 1) Ensure task status is cancelled (idempotent) and cascade to pending dependents.
+		const cancelledTasks = await this.taskManager.cancelTaskCascade(taskId);
+		for (const cancelledTask of cancelledTasks) {
+			cancelledTaskIds.add(cancelledTask.id);
+		}
+
+		// 2) Clean up session group resources if a group exists.
+		// Terminate is only needed for active groups, but session/
+		// mirroring cleanup is safe and idempotent for any group.
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		const isActiveGroup = !!group && group.completedAt === null;
+		if (group) {
+			if (isActiveGroup) {
+				const terminated = await this.taskGroupManager.terminateGroup(group.id);
+				if (!terminated) {
+					log.warn(`Failed to terminate active group ${group.id} during cancelTask(${taskId})`);
+					return { success: false, cancelledTaskIds: [...cancelledTaskIds] };
+				}
+			}
+			await this.terminateGroupSessions(group);
+			this.cleanupMirroring(group.id, isActiveGroup ? 'Task cancelled by user.' : undefined);
+			cancelledTaskIds.add(group.taskId);
+		}
+
+		for (const cancelledTaskId of cancelledTaskIds) {
+			await this.emitTaskUpdateById(cancelledTaskId);
+			await this.emitGoalProgressForTask(cancelledTaskId);
+		}
+
+		this.scheduleTick();
+		return { success: true, cancelledTaskIds: [...cancelledTaskIds] };
+	}
+
+	/**
+	 * Inject a human message directly into the worker session.
+	 *
+	 * Used when a human wants to provide additional context directly to the worker.
+	 *
+	 * Returns true on success, false if no group exists, the worker session is not
+	 * currently available, or the injection fails.
+	 */
+	async injectMessageToWorker(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group) return false;
+		if (!this.sessionFactory.hasSession(group.workerSessionId)) return false;
+
+		const formattedMessage = `[Human intervention]\n\n${message}`;
+		try {
+			await this.sessionFactory.injectMessage(group.workerSessionId, formattedMessage);
+		} catch (error) {
+			log.error(`Failed to inject message into worker session ${group.workerSessionId}:`, error);
+			return false;
+		}
+		return true;
+	}
+
+	/**
 	 * Inject a human message directly into the leader session.
 	 *
-	 * Used when the group is awaiting_leader and a human wants to provide
-	 * guidance or additional context to the leader agent.
+	 * Used when a human wants to provide guidance directly to the leader agent.
 	 *
-	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only
-	 * (not to session_group_messages). Callers that want the message to appear in
-	 * the group timeline must call groupRepo.appendMessage() separately.
+	 * Note: sessionFactory.injectMessage() writes to the SDK messages table only.
+	 * Task timelines are reconstructed from SDK messages + task_group_events.
 	 *
-	 * Returns true on success, false if the group is not in awaiting_leader state
-	 * or if the injection fails.
+	 * Returns true on success, false if no group exists, the leader session is not
+	 * currently available, or the injection fails.
 	 */
 	async injectMessageToLeader(taskId: string, message: string): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group || group.state !== 'awaiting_leader') return false;
+		if (!group) return false;
+		if (!this.sessionFactory.hasSession(group.leaderSessionId)) return false;
 
 		const formattedMessage = `[Human intervention]\n\n${message}`;
 		try {
@@ -896,11 +1067,16 @@ export class RoomRuntime {
 					return this.taskManager.removeDraftTask(taskId);
 				};
 
+				// Fetch fresh room for MCP server init (config may have changed)
+				const currentRoom = this.getCurrentRoom();
+				if (!currentRoom) {
+					throw new Error(`Room not found while restoring planner MCP server: ${this.roomId}`);
+				}
 				const goal = await this.goalManager.getGoalsForTask(task.id).then((g) => g[0] ?? null);
 				const mcpServer = createPlannerMcpServer({
 					task,
 					goal: goal!,
-					room: this.room,
+					room: currentRoom,
 					sessionId: group.workerSessionId,
 					workspacePath: group.workspacePath ?? this.taskGroupManager.workspacePath,
 					createDraftTask,
@@ -931,15 +1107,14 @@ export class RoomRuntime {
 	// =========================================================================
 
 	/**
-	 * Set up message mirroring for a group's worker/leader sessions.
-	 * Subscribes to DaemonHub sdk.message events and appends enriched messages
-	 * into the group's session_group_messages timeline.
+	 * Set up live message forwarding for a group's worker/leader sessions.
 	 *
-	 * Messages are enriched with _taskMeta (authorRole, turnId, iteration) so
-	 * the frontend can render them with turn-based grouping and color-coding.
+	 * Subscribes to DaemonHub sdk.message events and broadcasts enriched deltas
+	 * on state.groupMessages.delta for TaskConversationRenderer.
 	 *
-	 * turnId is computed deterministically: `turn_{groupId}_{iteration}_{shortSessionId}`
-	 * This avoids in-memory state and survives daemon restarts.
+	 * IMPORTANT: We intentionally do NOT mirror worker/leader SDK messages into
+	 * any group message table anymore. Task view history is reconstructed from each
+	 * session's sdk_messages stream via task.getGroupMessages.
 	 */
 	private setupMirroring(group: SessionGroup): void {
 		if (!this.daemonHub) return;
@@ -969,11 +1144,10 @@ export class RoomRuntime {
 								`Rate limit detected in ${role} message for group ${group.id}. ` +
 									`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
 							);
-							this.groupRepo.appendMessage({
-								groupId: group.id,
-								role: 'system',
-								messageType: 'status',
-								content: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+							this.appendGroupEvent(group.id, 'rate_limited', {
+								text: `Rate limit detected in ${role} output. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+								resetsAt: rateLimitBackoff.resetsAt,
+								sessionRole,
 							});
 						}
 					}
@@ -983,33 +1157,23 @@ export class RoomRuntime {
 					const iteration = currentGroup?.feedbackIteration ?? group.feedbackIteration;
 					const turnId = `turn_${group.id}_${iteration}_${shortSessionId}`;
 
-					const enrichedContent = JSON.stringify({
-						...event.message,
-						_taskMeta: {
-							authorRole: role,
-							authorSessionId: sessionId,
-							turnId,
-							iteration,
-						},
-					});
-
-					this.groupRepo.appendMessage({
-						groupId: group.id,
-						sessionId,
-						role,
-						messageType: event.message.type as string,
-						content: enrichedContent,
-					});
-
 					// Update last activity timestamp for stall detection
 					this.groupRepo.updateLastActivityAt(group.id);
 
-					// Broadcast delta to subscribed frontends
+					// Broadcast enriched delta to subscribed frontends.
 					if (this.messageHub) {
-						const parsed = JSON.parse(enrichedContent);
+						const enrichedMessage = {
+							...event.message,
+							_taskMeta: {
+								authorRole: role,
+								authorSessionId: sessionId,
+								turnId,
+								iteration,
+							},
+						};
 						this.messageHub.event(
 							'state.groupMessages.delta',
-							{ added: [{ ...parsed, timestamp: Date.now() }], timestamp: Date.now() },
+							{ added: [{ ...enrichedMessage, timestamp: Date.now() }], timestamp: Date.now() },
 							{ channel: `group:${group.id}` }
 						);
 					}
@@ -1032,6 +1196,29 @@ export class RoomRuntime {
 	 * Clean up mirroring subscriptions for a group.
 	 * Optionally inserts a final status message into the group timeline.
 	 */
+	private appendGroupEvent(
+		groupId: string,
+		kind: string,
+		payload?: { text?: string; [key: string]: unknown }
+	): void {
+		this.groupRepo.appendEvent({
+			groupId,
+			kind,
+			payloadJson: payload ? JSON.stringify(payload) : undefined,
+		});
+		if (this.messageHub) {
+			const now = Date.now();
+			this.messageHub.event(
+				'state.groupMessages.delta',
+				{
+					added: [{ type: 'status', text: payload?.text ?? kind, timestamp: now }],
+					timestamp: now,
+				},
+				{ channel: `group:${groupId}` }
+			);
+		}
+	}
+
 	private cleanupMirroring(groupId: string, statusText?: string): void {
 		const cleanup = this.mirroringCleanups.get(groupId);
 		if (cleanup) {
@@ -1040,12 +1227,25 @@ export class RoomRuntime {
 		}
 
 		if (statusText) {
-			this.groupRepo.appendMessage({
-				groupId,
-				role: 'system',
-				messageType: 'status',
-				content: statusText,
-			});
+			this.appendGroupEvent(groupId, 'status', { text: statusText });
+		}
+	}
+
+	/**
+	 * Stop and cleanup sessions for a group, if the session factory supports it.
+	 * Used on explicit task cancellation to immediately terminate agent activity.
+	 */
+	private async terminateGroupSessions(group: SessionGroup): Promise<void> {
+		if (!this.sessionFactory.stopSession) {
+			return;
+		}
+
+		for (const sessionId of [group.workerSessionId, group.leaderSessionId]) {
+			try {
+				await this.sessionFactory.stopSession(sessionId);
+			} catch (error) {
+				log.warn(`Failed to stop session ${sessionId} for group ${group.id}:`, error);
+			}
 		}
 	}
 
@@ -1087,13 +1287,12 @@ export class RoomRuntime {
 	 * checkpoints when there are no zombies (common case).
 	 */
 	private findZombieGroups(): SessionGroup[] {
-		const allActiveGroups = this.groupRepo.getActiveGroups(this.room.id);
+		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
 		const zombies: SessionGroup[] = [];
 
 		for (const group of allActiveGroups) {
 			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
-			const leaderMissing =
-				group.state === 'awaiting_leader' && !this.sessionFactory.hasSession(group.leaderSessionId);
+			const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
 
 			if (workerMissing || leaderMissing) {
 				zombies.push(group);
@@ -1113,7 +1312,7 @@ export class RoomRuntime {
 			let workerRestored = false;
 			if (!this.sessionFactory.hasSession(group.workerSessionId)) {
 				log.warn(
-					`Zombie detected: group ${group.id} (state=${group.state}) ` +
+					`Zombie detected: group ${group.id} ` +
 						`worker ${group.workerSessionId} not in cache. Attempting restore.`
 				);
 				const restored = await this.sessionFactory.restoreSession(group.workerSessionId);
@@ -1137,14 +1336,11 @@ export class RoomRuntime {
 				}
 			}
 
-			// Check leader session liveness (only when leader is the active actor)
+			// Check leader session liveness
 			let leaderRestored = false;
-			if (
-				group.state === 'awaiting_leader' &&
-				!this.sessionFactory.hasSession(group.leaderSessionId)
-			) {
+			if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
 				log.warn(
-					`Zombie detected: group ${group.id} (state=awaiting_leader) ` +
+					`Zombie detected: group ${group.id} ` +
 						`leader ${group.leaderSessionId} not in cache. Attempting restore.`
 				);
 				const restored = await this.sessionFactory.restoreSession(group.leaderSessionId);
@@ -1155,29 +1351,28 @@ export class RoomRuntime {
 					});
 					leaderRestored = true;
 				} else {
-					log.error(
-						`Failed to restore leader ${group.leaderSessionId}. Failing group ${group.id}.`
+					// Leader restoration failure is not fatal - leader may be lazily created
+					log.warn(
+						`Could not restore leader ${group.leaderSessionId} for group ${group.id} - may be lazily created later.`
 					);
-					await this.taskGroupManager.fail(
-						group.id,
-						'Leader session lost and could not be restored'
-					);
-					this.cleanupMirroring(group.id, 'Leader session lost — could not be restored.');
-					await this.emitTaskUpdateById(group.taskId);
 				}
 			}
 
-			// Inject continuation message for restored sessions that need to resume work.
+			// Inject continuation message for restored sessions.
 			// The SDK query is started lazily by injectMessage → ensureQueryStarted().
-			// Sessions in awaiting_human don't need a message — human will provide one.
+			// Groups awaiting human review don't need a message — human will provide one.
+			if (group.submittedForReview) {
+				continue; // Awaiting human - no continuation message needed
+			}
+
 			try {
-				if (workerRestored && group.state === 'awaiting_worker') {
+				if (workerRestored) {
 					await this.sessionFactory.injectMessage(
 						group.workerSessionId,
 						'The system was restarted. Continue working on the task from where you left off.'
 					);
 				}
-				if (leaderRestored && group.state === 'awaiting_leader') {
+				if (leaderRestored) {
 					await this.sessionFactory.injectMessage(
 						group.leaderSessionId,
 						'The system was restarted. Continue reviewing from where you left off.'
@@ -1234,11 +1429,10 @@ export class RoomRuntime {
 			const reason = `Stalled: no agent activity for ${stalledMinutes} minutes (timeout: ${Math.round(this.stallTimeoutMs / 60_000)}m)`;
 			log.warn(`Group ${group.id} stalled for ${stalledMinutes}m — failing task ${group.taskId}`);
 
-			this.groupRepo.appendMessage({
+			this.groupRepo.appendEvent({
 				groupId: group.id,
-				role: 'system',
-				messageType: 'status',
-				content: reason,
+				kind: 'stall_detected',
+				payloadJson: JSON.stringify({ text: reason }),
 			});
 
 			await this.taskGroupManager.fail(group.id, reason, { autoRetry: true });
@@ -1266,9 +1460,10 @@ export class RoomRuntime {
 		// Separate active groups into planning and execution.
 		// Planning runs on its own track (max 1 concurrent) and does NOT consume execution slots.
 		// This prevents a new goal's planning from blocking ready tasks of other goals.
+		// Groups submitted for review don't consume slots.
 		const activeGroups = this.groupRepo
-			.getActiveGroups(this.room.id)
-			.filter((g) => g.state !== 'awaiting_human');
+			.getActiveGroups(this.roomId)
+			.filter((g) => !g.submittedForReview);
 		const activePlanningGroups = activeGroups.filter((g) => g.workerRole === 'planner');
 		const activeExecutionGroups = activeGroups.filter((g) => g.workerRole !== 'planner');
 
@@ -1471,6 +1666,16 @@ export class RoomRuntime {
 			return this.taskManager.removeDraftTask(taskId);
 		};
 
+		// Fetch fresh room for worker/leader init (config may have changed)
+		const currentRoom = this.getCurrentRoom();
+		if (!currentRoom) {
+			await this.taskManager.failTask(planningTask.id, `Room not found: ${this.roomId}`);
+			await this.emitTaskUpdateById(planningTask.id);
+			return;
+		}
+		const plannerModel = this.resolveAgentModel(currentRoom, 'planner');
+		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
+
 		// Build WorkerConfig for the Planner agent
 		// isPlanApproved uses a mutable ref — groupId is set after spawn() returns
 		let spawnedGroupId: string | null = null;
@@ -1481,10 +1686,10 @@ export class RoomRuntime {
 		const plannerConfig = {
 			task: planningTask,
 			goal,
-			room: this.room,
+			room: currentRoom,
 			sessionId: '', // placeholder — overwritten by initFactory
 			workspacePath: this.taskGroupManager.workspacePath,
-			model: this.taskGroupManager.model,
+			model: plannerModel,
 			createDraftTask,
 			updateDraftTask,
 			removeDraftTask,
@@ -1499,11 +1704,11 @@ export class RoomRuntime {
 			leaderTaskContext: buildLeaderTaskContext({
 				task: planningTask,
 				goal,
-				room: this.room,
+				room: currentRoom,
 				sessionId: '', // not used by buildLeaderTaskContext
 				workspacePath: this.taskGroupManager.workspacePath,
 				groupId: '', // not used by buildLeaderTaskContext
-				model: this.taskGroupManager.model,
+				model: leaderModel,
 				reviewContext: 'plan_review',
 			}),
 		};
@@ -1515,7 +1720,7 @@ export class RoomRuntime {
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
-				this.room,
+				currentRoom,
 				planningTask,
 				goal,
 				(groupId, state) => this.onWorkerTerminalState(groupId, state),
@@ -1560,19 +1765,30 @@ export class RoomRuntime {
 			.filter((t) => goalLinkedIds.has(t.id) && t.id !== task.id)
 			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);
 
+		// Fetch fresh room for worker/leader init (config may have changed)
+		const currentRoom = this.getCurrentRoom();
+		if (!currentRoom) {
+			await this.taskManager.failTask(task.id, `Room not found: ${this.roomId}`);
+			await this.emitTaskUpdateById(task.id);
+			return;
+		}
+
 		// Determine worker config based on assigned agent type
 		const agentType = task.assignedAgent ?? 'coder';
+		const workerRole = agentType === 'general' ? 'general' : 'coder';
+		const workerModel = this.resolveAgentModel(currentRoom, workerRole);
+		const leaderModel = this.resolveAgentModel(currentRoom, 'leader');
 		let workerConfig: WorkerConfig;
 
 		// Shared leader context config (groupId not used by buildLeaderTaskContext)
 		const leaderContextConfig = {
 			task,
 			goal,
-			room: this.room,
+			room: currentRoom,
 			sessionId: '',
 			workspacePath: this.taskGroupManager.workspacePath,
 			groupId: '',
-			model: this.taskGroupManager.model,
+			model: leaderModel,
 			reviewContext: 'code_review' as const,
 		};
 
@@ -1580,10 +1796,10 @@ export class RoomRuntime {
 			const generalConfig = {
 				task,
 				goal,
-				room: this.room,
+				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: this.taskGroupManager.model,
+				model: workerModel,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -1598,10 +1814,10 @@ export class RoomRuntime {
 			const coderConfig = {
 				task,
 				goal,
-				room: this.room,
+				room: currentRoom,
 				sessionId: '', // placeholder — overwritten by initFactory
 				workspacePath: this.taskGroupManager.workspacePath,
-				model: this.taskGroupManager.model,
+				model: workerModel,
 				previousTaskSummaries,
 			};
 			workerConfig = {
@@ -1616,7 +1832,7 @@ export class RoomRuntime {
 		let group;
 		try {
 			group = await this.taskGroupManager.spawn(
-				this.room,
+				currentRoom,
 				task,
 				goal,
 				(groupId, state) => this.onWorkerTerminalState(groupId, state),

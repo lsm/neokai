@@ -9,7 +9,7 @@
  *
  * REQUIREMENTS:
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls
+ * - Makes real API calls (mock mode not supported for multi-agent flow)
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -114,10 +114,10 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
-			// If planning is in 'review', approve via goal.approveTask to trigger phase 2
+			// If planning is in 'review', approve via task.approve to trigger phase 2
 			// (worker resumes with approved=true, creates draft tasks, leader completes)
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
@@ -155,9 +155,9 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
-			// If coding is in 'review', approve via goal.approveTask to trigger PR merge
+			// If coding is in 'review', approve via task.approve to trigger PR merge
 			if (terminalCoding.status === 'review') {
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: terminalCoding.id,
 				});

@@ -17,6 +17,7 @@ export interface ConfirmModalProps {
 	cancelText?: string;
 	confirmButtonVariant?: 'danger' | 'primary';
 	isLoading?: boolean;
+	error?: string | null;
 }
 
 export function ConfirmModal({
@@ -29,6 +30,7 @@ export function ConfirmModal({
 	cancelText = 'Cancel',
 	confirmButtonVariant = 'danger',
 	isLoading = false,
+	error = null,
 }: ConfirmModalProps) {
 	const handleConfirm = () => {
 		onConfirm();
@@ -45,6 +47,13 @@ export function ConfirmModal({
 			<div class="space-y-4">
 				{/* Message */}
 				<p class="text-gray-300 text-sm leading-relaxed">{message}</p>
+
+				{/* Error message */}
+				{error && (
+					<p class="text-red-400 text-sm bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
+						{error}
+					</p>
+				)}
 
 				{/* Actions */}
 				<div class="flex items-center justify-end gap-3 pt-2">

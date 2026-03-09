@@ -11,12 +11,110 @@ describe('RoomRuntime flow', () => {
 	let ctx: RuntimeTestContext;
 
 	beforeEach(() => {
-		ctx = createRuntimeTestContext();
+		ctx = createRuntimeTestContext({ maxFeedbackIterations: 5 });
 	});
 
 	afterEach(() => {
 		ctx.runtime.stop();
 		ctx.db.close();
+	});
+
+	describe('agent model resolution', () => {
+		it('should use planner model from room.config.agentModels for planning task spawn', async () => {
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					defaultModel: 'room-default-model',
+					config: {
+						agentModels: {
+							planner: 'planner-model',
+							leader: 'leader-model',
+						},
+					},
+				}),
+			});
+
+			await ctx.goalManager.createGoal({
+				title: 'Planning goal',
+				description: 'Needs a plan',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			expect(createCalls).toHaveLength(1);
+			expect(createCalls[0].args[1]).toBe('planner');
+			expect((createCalls[0].args[0] as { model?: string }).model).toBe('planner-model');
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			expect(group.workerRole).toBe('planner');
+		});
+
+		it('should use role-specific worker model for coder and general tasks', async () => {
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					defaultModel: 'room-default-model',
+					config: {
+						agentModels: {
+							coder: 'coder-model',
+							general: 'general-model',
+							leader: 'leader-model',
+						},
+					},
+				}),
+			});
+
+			await createGoalAndTask(ctx, { assignedAgent: 'coder' });
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			let createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			expect(createCalls[0].args[1]).toBe('coder');
+			expect((createCalls[0].args[0] as { model?: string }).model).toBe('coder-model');
+
+			// Force lazy leader creation path in test harness (mock hasSession() defaults to true).
+			(ctx.sessionFactory as unknown as { hasSession: (sessionId: string) => boolean }).hasSession =
+				(sessionId: string) => sessionId.includes('coder');
+
+			const coderGroup = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.onWorkerTerminalState(coderGroup.id, {
+				sessionId: coderGroup.workerSessionId,
+				kind: 'idle',
+			});
+			const leaderCall = ctx.sessionFactory.calls
+				.filter((c) => c.method === 'createAndStartSession')
+				.find((c) => c.args[1] === 'leader');
+			expect(leaderCall).toBeDefined();
+			expect((leaderCall!.args[0] as { model?: string }).model).toBe('leader-model');
+
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({
+				room: makeRoom({
+					defaultModel: 'room-default-model',
+					config: {
+						agentModels: {
+							coder: 'coder-model',
+							general: 'general-model',
+							leader: 'leader-model',
+						},
+					},
+				}),
+			});
+			await createGoalAndTask(ctx, { assignedAgent: 'general' });
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			createCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'createAndStartSession');
+			expect(createCalls[0].args[1]).toBe('general');
+			expect((createCalls[0].args[0] as { model?: string }).model).toBe('general-model');
+		});
 	});
 
 	describe('onWorkerTerminalState', () => {
@@ -64,6 +162,83 @@ describe('RoomRuntime flow', () => {
 		});
 	});
 
+	describe('cancelTask', () => {
+		it('should terminate active group and free slot for pending tasks', async () => {
+			const goal = await ctx.goalManager.createGoal({ title: 'G', description: '' });
+			const task1 = await ctx.taskManager.createTask({
+				title: 'Task 1',
+				description: 'desc',
+				priority: 'high',
+			});
+			const task2 = await ctx.taskManager.createTask({
+				title: 'Task 2',
+				description: 'desc',
+				priority: 'normal',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task1.id);
+			await ctx.goalManager.linkTaskToGoal(goal.id, task2.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const firstGroup = ctx.groupRepo.getGroupByTaskId(task1.id);
+			expect(firstGroup).toBeDefined();
+			expect(firstGroup!.state).toBe('awaiting_worker');
+
+			const cancelResult = await ctx.runtime.cancelTask(task1.id);
+			expect(cancelResult.success).toBe(true);
+
+			const cancelledTask = await ctx.taskManager.getTask(task1.id);
+			expect(cancelledTask!.status).toBe('cancelled');
+
+			const cancelledGroup = ctx.groupRepo.getGroup(firstGroup!.id);
+			expect(cancelledGroup!.state).toBe('failed');
+
+			const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
+			expect(stopCalls).toHaveLength(2);
+			expect(stopCalls.map((c) => c.args[0])).toEqual(
+				expect.arrayContaining([firstGroup!.workerSessionId, firstGroup!.leaderSessionId])
+			);
+
+			// cancelTask() schedules a follow-up tick asynchronously.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const secondGroup = ctx.groupRepo.getGroupByTaskId(task2.id);
+			expect(secondGroup).toBeDefined();
+			expect(secondGroup!.state).toBe('awaiting_worker');
+		});
+
+		it('should terminate orphaned active group even if task is already cancelled', async () => {
+			const goal = await ctx.goalManager.createGoal({ title: 'G', description: '' });
+			const task = await ctx.taskManager.createTask({
+				title: 'Task 1',
+				description: 'desc',
+				priority: 'high',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, task.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.state).toBe('awaiting_worker');
+
+			// Simulate prior bug: task cancelled but group left active.
+			await ctx.taskManager.cancelTask(task.id);
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('cancelled');
+			expect(ctx.groupRepo.getGroup(group!.id)!.state).toBe('awaiting_worker');
+
+			const cancelResult = await ctx.runtime.cancelTask(task.id);
+			expect(cancelResult.success).toBe(true);
+			expect(ctx.groupRepo.getGroup(group!.id)!.state).toBe('failed');
+
+			const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
+			expect(stopCalls.map((c) => c.args[0])).toEqual(
+				expect.arrayContaining([group!.workerSessionId, group!.leaderSessionId])
+			);
+		});
+	});
+
 	describe('autonomous flow integration', () => {
 		it('should complete the full single-iteration cycle: spawn → worker done → leader completes', async () => {
 			const { task } = await createGoalAndTask(ctx);
@@ -83,6 +258,7 @@ describe('RoomRuntime flow', () => {
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
 			// Step 3: Leader reviews and approves
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Endpoint added successfully',
 			});
@@ -118,7 +294,9 @@ describe('RoomRuntime flow', () => {
 
 			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Add error handling to the endpoint',
+				mode: 'queue',
 			});
+			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 
 			// Group is back to awaiting_worker with iteration bumped
 			const afterFeedback = ctx.groupRepo.getGroup(group.id)!;
@@ -141,6 +319,7 @@ describe('RoomRuntime flow', () => {
 			});
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Error handling added',
 			});
@@ -154,10 +333,16 @@ describe('RoomRuntime flow', () => {
 		});
 
 		it('should escalate task to human review (not fail) when max feedback iterations reached', async () => {
-			// maxFeedbackIterations = 3 (default, set by runtime).
+			// Create a new context with maxFeedbackIterations = 5
+			// (default is 3)
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({ maxFeedbackIterations: 5 });
+
 			// feedbackIteration is incremented by routeWorkerToLeader (1-based).
 			// The check fires when feedbackIteration >= maxFeedbackIterations,
-			// i.e., on the 3rd review round when the leader tries send_to_worker.
+			// i.e., on the 5th review round when the leader tries send_to_worker.
+
 			const { task } = await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
@@ -172,8 +357,10 @@ describe('RoomRuntime flow', () => {
 				// send_to_worker succeeds: feedbackIteration i+1 < 3
 				const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
+					mode: 'queue',
 				});
 				expect(JSON.parse(r.content[0].text).success).toBe(true);
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -216,13 +403,18 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback ${i + 1}`,
+					mode: 'queue',
 				});
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Extra' });
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Extra',
+				mode: 'queue',
+			});
 
 			// Task in review, not failed
 			const finalTask = await ctx.taskManager.getTask(task.id);
@@ -249,13 +441,18 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Round ${i + 1}`,
+					mode: 'queue',
 				});
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Trigger' });
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Trigger',
+				mode: 'queue',
+			});
 
 			// Task is in review, group awaiting_human
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
@@ -266,10 +463,14 @@ describe('RoomRuntime flow', () => {
 
 			// feedbackIteration must be reset to 0
 			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(0);
-			// Group should be back in awaiting_worker
-			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			// Group transitions to awaiting_leader (leader receives the human message)
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 			// Task back in in_progress
 			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
+
+			// handoff_to_worker is a no-op compatibility tool
+			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
 			// Worker finishes again → routeWorkerToLeader increments to 1 (not 6!)
 			await ctx.runtime.onWorkerTerminalState(group.id, {
@@ -281,8 +482,10 @@ describe('RoomRuntime flow', () => {
 			// Leader can now send feedback without triggering re-escalation (1 < 5)
 			const r = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 				message: 'Good, keep going',
+				mode: 'queue',
 			});
 			expect(JSON.parse(r.content[0].text).success).toBe(true);
+			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
 		});
 
@@ -300,7 +503,9 @@ describe('RoomRuntime flow', () => {
 				});
 				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
 					message: `Feedback round ${i + 1}`,
+					mode: 'queue',
 				});
+				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -309,19 +514,20 @@ describe('RoomRuntime flow', () => {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
 			});
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'All done' });
 
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('completed');
 			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(3);
 		});
 
-		it('should reset leader contract violations on each new worker→leader round', async () => {
+		it('should keep leader contract violations at 0 when leader reaches terminal without a tool', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 
-			// Worker done → Leader violates contract once
+			// Worker done -> Leader reaches terminal without any tool call.
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
@@ -330,21 +536,11 @@ describe('RoomRuntime flow', () => {
 				sessionId: group.leaderSessionId,
 				kind: 'idle',
 			});
-			expect(ctx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(1);
-
-			// Leader sends feedback — group goes back to awaiting_worker
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', { message: 'Redo this' });
-			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
-
-			// Iteration 2: Worker done → routeWorkerToLeader resets violations to 0
-			await ctx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
-			});
 			expect(ctx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(0);
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
-			// Leader finishes cleanly
+			// Leader can still complete after review submission.
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'Done' });
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('completed');
 		});
@@ -385,7 +581,7 @@ describe('RoomRuntime flow', () => {
 	});
 
 	describe('onLeaderTerminalState (contract validation)', () => {
-		it('should nudge on first contract violation', async () => {
+		it('should not inject nudge messages when leader reaches terminal without a tool', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			// Leader reaches terminal without calling a tool
@@ -394,21 +590,21 @@ describe('RoomRuntime flow', () => {
 				kind: 'idle',
 			});
 
-			// Should inject nudge message
+			// No nudge is injected in the simplified model.
 			const nudgeCalls = ctx.sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
 					c.args[0] === group.leaderSessionId &&
 					(c.args[1] as string).includes('must call exactly one')
 			);
-			expect(nudgeCalls).toHaveLength(1);
+			expect(nudgeCalls).toHaveLength(0);
 
-			// Violations should be 1
+			// Violations stay at 0.
 			const updated = ctx.groupRepo.getGroup(group.id);
-			expect(updated!.leaderContractViolations).toBe(1);
+			expect(updated!.leaderContractViolations).toBe(0);
 		});
 
-		it('should fail group on second contract violation', async () => {
+		it('should keep group active even after repeated leader terminal states without tools', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			// First violation
@@ -423,13 +619,14 @@ describe('RoomRuntime flow', () => {
 				kind: 'idle',
 			});
 
-			// Group should be failed after second contract violation
+			// Group remains active; no contract-failure transition.
 			const updated = ctx.groupRepo.getGroup(group.id);
-			expect(updated!.state).toBe('failed');
+			expect(updated!.state).toBe('awaiting_leader');
 		});
 
 		it('should not fire if Leader called a tool', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 
 			// Leader calls complete_task (which persists leaderCalledTool in DB)
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'Done' });
@@ -605,6 +802,7 @@ describe('RoomRuntime flow', () => {
 			});
 
 			const { group } = await spawnAndRouteToLeader(hookCtx);
+			hookCtx.groupRepo.setSubmittedForReview(group.id, true);
 
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'done',
@@ -706,6 +904,7 @@ describe('RoomRuntime flow', () => {
 
 			// Leader completes the task
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Task done',
 			});
@@ -890,24 +1089,18 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
 			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(true);
 
-			// Step 2: human approves → routes to worker for PR merge
+			// Step 2: human approves → routes directly to leader (not worker)
 			const resumed = await hookCtx.runtime.resumeWorkerFromHuman(
 				group.taskId,
 				'PR approved. Merge it.',
 				{ approved: true }
 			);
 			expect(resumed).toBe(true);
-			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
 
-			// Step 3: worker merges PR → exits → routes to leader
-			await hookCtx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
-			});
-			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
-
-			// Step 4: complete_task succeeds (approved bypasses submit_for_review gate)
+			// Step 3: complete_task succeeds (approved bypasses submit_for_review gate)
+			// Leader merges PR and completes directly
 			const completeResult = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Implemented, reviewed, and merged',
 			});
@@ -915,16 +1108,16 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('completed');
 		});
 
-		test('complete_task is allowed for non-coder tasks without submit_for_review', async () => {
-			// general tasks skip the submit_for_review gate
-			const { group } = await spawnAndRouteToLeader(ctx);
+		test('complete_task is rejected for general tasks without prior submit_for_review', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'General task done',
 			});
 			const parsed = JSON.parse(result.content[0].text);
-			expect(parsed.success).toBe(true);
-			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('completed');
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('submit_for_review');
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 		});
 
 		test('submit_for_review sets group state to awaiting_human', async () => {
@@ -1194,7 +1387,7 @@ describe('RoomRuntime flow', () => {
 
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
 
-			// Human approves → resumeWorkerFromHuman
+			// Human approves → routes to leader (not worker)
 			const result = await hookCtx.runtime.resumeWorkerFromHuman(
 				group.taskId,
 				'Plan approved. Merge the PR and create tasks.'
@@ -1207,11 +1400,11 @@ describe('RoomRuntime flow', () => {
 			).length;
 			expect(sessionCountAfter).toBe(sessionCountBefore);
 
-			// Approval message should be injected into existing worker session
+			// Approval message should be injected into existing LEADER session (not worker)
 			const injectCalls = hookCtx.sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === group.workerSessionId &&
+					c.args[0] === group.leaderSessionId &&
 					(c.args[1] as string).includes('Merge the PR')
 			);
 			expect(injectCalls).toHaveLength(1);
@@ -1243,7 +1436,7 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
 		});
 
-		test('resumeWorkerFromHuman transitions group to awaiting_worker', async () => {
+		test('resumeWorkerFromHuman transitions group to awaiting_leader', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => ({
@@ -1264,11 +1457,11 @@ describe('RoomRuntime flow', () => {
 
 			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'Plan approved.');
 
-			// Group should transition back to awaiting_worker for phase 2
+			// Group should transition to awaiting_leader (leader handles merge and complete)
 			const updated = hookCtx.groupRepo.getGroup(group.id)!;
-			expect(updated.state).toBe('awaiting_worker');
-			// submittedForReview should be reset
-			expect(updated.submittedForReview).toBe(false);
+			expect(updated.state).toBe('awaiting_leader');
+			// approved flag should be set
+			expect(updated.approved).toBe(true);
 
 			// Task should be back to in_progress
 			const updatedTask = await hookCtx.taskManager.getTask(planTask.id);
@@ -1306,7 +1499,7 @@ describe('RoomRuntime flow', () => {
 			expect(result).toBe(false);
 		});
 
-		test('full two-phase cycle: plan → review → approve → create tasks → complete', async () => {
+		test('full two-phase cycle: plan → review → approve → leader merges and completes', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => ({
@@ -1324,15 +1517,16 @@ describe('RoomRuntime flow', () => {
 			const { group, planTask, sessionCountBefore } =
 				await setupPlanningGroupInAwaitingHuman(hookCtx);
 
-			// *** Phase 2: Human approves ***
+			// *** Phase 2: Human approves → routes to leader ***
 			await hookCtx.runtime.resumeWorkerFromHuman(
 				group.taskId,
 				'Plan approved. Merge the PR and create tasks.'
 			);
-			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			// Group is now in awaiting_leader (leader handles merge + complete)
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
 
-			// Create draft tasks (simulating what the planner MCP tools do)
+			// Leader creates draft tasks (simulating what the planner would have done via MCP tools)
 			await hookCtx.taskManager.createTask({
 				title: 'Implement auth module',
 				description: 'Create auth module',
@@ -1346,14 +1540,7 @@ describe('RoomRuntime flow', () => {
 				createdByTaskId: planTask.id,
 			});
 
-			// Worker finishes phase 2 → routes to leader
-			await hookCtx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
-			});
-			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
-
-			// Leader completes the planning task
+			// Leader completes the planning task directly
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Plan executed: 2 tasks created',
 			});
@@ -1400,12 +1587,12 @@ describe('RoomRuntime flow', () => {
 			const afterSubmit = hookCtx.groupRepo.getGroup(group.id)!;
 			expect(afterSubmit.state).toBe('awaiting_human');
 
-			// Resume without errors
+			// Resume without errors - routes to leader now
 			const resumed = await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'Approved.');
 			expect(resumed).toBe(true);
 
-			// Group transitions cleanly back to awaiting_worker
-			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			// Group transitions cleanly to awaiting_leader (leader handles merge + complete)
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 		});
 
 		test('resumeWorkerFromHuman resets leader contract violations', async () => {
@@ -1436,6 +1623,9 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(1);
 
 			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'Approved.');
+
+			// Group should now be in awaiting_leader (leader handles approval)
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
 			// Contract violations should be reset after resuming
 			expect(hookCtx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(0);
@@ -1483,7 +1673,7 @@ describe('RoomRuntime flow', () => {
 			return { goal, group, task, sessionCountBefore };
 		}
 
-		test('approve routes to worker for PR merge', async () => {
+		test('approve routes to leader for PR merge', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => ({
@@ -1502,7 +1692,7 @@ describe('RoomRuntime flow', () => {
 
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_human');
 
-			// Human approves → routes to worker
+			// Human approves → routes to leader (not worker)
 			const result = await hookCtx.runtime.resumeWorkerFromHuman(
 				group.taskId,
 				'PR approved. Merge it.',
@@ -1510,16 +1700,16 @@ describe('RoomRuntime flow', () => {
 			);
 			expect(result).toBe(true);
 
-			// Group transitions to awaiting_worker (not awaiting_leader)
+			// Group transitions to awaiting_leader (not awaiting_worker)
 			const updated = hookCtx.groupRepo.getGroup(group.id)!;
-			expect(updated.state).toBe('awaiting_worker');
+			expect(updated.state).toBe('awaiting_leader');
 			expect(updated.approved).toBe(true);
 
-			// Message injected into worker session (not leader)
+			// Message injected into leader session (not worker)
 			const injectCalls = hookCtx.sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === group.workerSessionId &&
+					c.args[0] === group.leaderSessionId &&
 					(c.args[1] as string).includes('Merge it')
 			);
 			expect(injectCalls).toHaveLength(1);
@@ -1552,7 +1742,7 @@ describe('RoomRuntime flow', () => {
 			expect(sessionCountAfter).toBe(sessionCountBefore);
 		});
 
-		test('approve: worker exit gate bypassed after merge', async () => {
+		test('approve: leader receives approval message for merge', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => ({
@@ -1572,19 +1762,11 @@ describe('RoomRuntime flow', () => {
 			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'PR approved.', {
 				approved: true,
 			});
-			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
-
-			// Worker exits after merge → should pass exit gate (approved bypasses)
-			await hookCtx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
-			});
-
-			// Should route to leader (not bounce back to worker)
+			// Approval now routes directly to leader (not worker)
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 		});
 
-		test('approve: leader can complete_task directly', async () => {
+		test('approve: leader can complete_task directly after merge', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => ({
@@ -1601,13 +1783,9 @@ describe('RoomRuntime flow', () => {
 
 			const { group } = await setupCodingGroupInAwaitingHuman(hookCtx);
 
-			// Approve → worker → leader
-			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'PR approved.', {
+			// Approve → routes directly to leader (not worker)
+			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'PR approved. Merge it.', {
 				approved: true,
-			});
-			await hookCtx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
 			});
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
@@ -1619,7 +1797,50 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('completed');
 		});
 
-		test('reject routes to worker with feedback and resets submittedForReview', async () => {
+		test('approve: leader handles merge failure gracefully', async () => {
+			// This test simulates what happens when gh pr merge fails after approval.
+			// The leader receives the approval message but the merge command fails.
+			// The group stays in awaiting_leader state so the leader can retry.
+			const hookCtx = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (_args: string[], _cwd: string) => ({
+						stdout: '',
+						exitCode: 1,
+					}),
+				},
+			});
+
+			afterEach(() => {
+				hookCtx.runtime.stop();
+				hookCtx.db.close();
+			});
+
+			const { group } = await setupCodingGroupInAwaitingHuman(hookCtx);
+
+			// Human approves → routes to leader
+			await hookCtx.runtime.resumeWorkerFromHuman(group.taskId, 'PR approved. Merge it.', {
+				approved: true,
+			});
+
+			// Group is now in awaiting_leader state
+			expect(hookCtx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
+			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
+
+			// Leader attempts complete_task without merging (simulating merge failure)
+			// In a real scenario, the leader would try gh pr merge first and report the error.
+			// Here we test that the system remains in a consistent state.
+			// The leader can still call complete_task (approved bypasses gate),
+			// but in practice the leader would report the merge failure in its response.
+			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Merge failed - needs manual intervention',
+			});
+
+			// Complete succeeds (approved bypasses the gate) - the leader is responsible
+			// for accurately reporting what happened in the summary
+			expect(JSON.parse(result.content[0].text).success).toBe(true);
+		});
+
+		test('reject routes to leader for feedback forwarding', async () => {
 			const hookCtx = createRuntimeTestContext({
 				hookOptions: {
 					runCommand: async (_args: string[], _cwd: string) => ({
@@ -1638,7 +1859,7 @@ describe('RoomRuntime flow', () => {
 
 			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(true);
 
-			// Human rejects → routes to worker (no approved)
+			// Human rejects → routes to leader (not worker)
 			const result = await hookCtx.runtime.resumeWorkerFromHuman(
 				group.taskId,
 				'Fix the error handling.'
@@ -1646,8 +1867,9 @@ describe('RoomRuntime flow', () => {
 			expect(result).toBe(true);
 
 			const updated = hookCtx.groupRepo.getGroup(group.id)!;
-			expect(updated.state).toBe('awaiting_worker');
-			// Key assertion: submittedForReview reset to false
+			// Group transitions to awaiting_leader (leader receives rejection)
+			expect(updated.state).toBe('awaiting_leader');
+			// submittedForReview is reset to false (worker will need to re-submit after addressing feedback)
 			expect(updated.submittedForReview).toBe(false);
 			// approved should NOT be set
 			expect(updated.approved).toBe(false);
@@ -1656,11 +1878,11 @@ describe('RoomRuntime flow', () => {
 			const updatedTask = await hookCtx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('in_progress');
 
-			// Feedback injected into worker session
+			// Feedback injected into LEADER session (not worker)
 			const injectCalls = hookCtx.sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
-					c.args[0] === group.workerSessionId &&
+					c.args[0] === group.leaderSessionId &&
 					(c.args[1] as string).includes('error handling')
 			);
 			expect(injectCalls).toHaveLength(1);

@@ -3,7 +3,9 @@
  *
  * Dashboard showing room overview with:
  * - Runtime state indicator and pause/resume/stop/start controls
- * - Confirmation dialogs for pause and stop actions
+ * - Model indicator showing current leader/worker model
+ * - Archive button to archive the room
+ * - Confirmation dialogs for pause, stop, and archive actions
  * - Stats overview (sessions, pending, active, completed, failed tasks)
  * - Sessions list
  * - Tasks list grouped by status
@@ -12,7 +14,7 @@
 import { useState } from 'preact/hooks';
 import type { RuntimeState } from '@neokai/shared';
 import { roomStore } from '../../lib/room-store';
-import { navigateToRoomTask } from '../../lib/router';
+import { navigateToRooms, navigateToRoomTask } from '../../lib/router';
 import { RoomSessions } from './RoomSessions';
 import { RoomTasks } from './RoomTasks';
 import { ConfirmModal } from '../ui/ConfirmModal';
@@ -36,11 +38,16 @@ export function RoomDashboard() {
 	const sessions = roomStore.sessions.value;
 	const roomId = roomStore.roomId.value;
 	const runtimeState = roomStore.runtimeState.value;
+	const runtimeModels = roomStore.runtimeModels.value;
 	const [actionLoading, setActionLoading] = useState(false);
 	const [showPauseConfirm, setShowPauseConfirm] = useState(false);
 	const [showStopConfirm, setShowStopConfirm] = useState(false);
 	const [showApproveConfirm, setShowApproveConfirm] = useState<string | null>(null);
+	const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
 	const [approvalLoading, setApprovalLoading] = useState(false);
+
+	// Get the resolved models (leader and worker)
+	const { leaderModel, workerModel } = runtimeModels;
 
 	const handlePause = async () => {
 		setActionLoading(true);
@@ -102,6 +109,20 @@ export function RoomDashboard() {
 		}
 	};
 
+	const handleArchive = async () => {
+		setActionLoading(true);
+		try {
+			await roomStore.archiveRoom();
+			// Navigate back to rooms list after archiving
+			navigateToRooms();
+		} catch {
+			// Error handled by store
+		} finally {
+			setActionLoading(false);
+			setShowArchiveConfirm(false);
+		}
+	};
+
 	return (
 		<div class="p-4 space-y-6">
 			{/* Runtime state + controls */}
@@ -152,6 +173,45 @@ export function RoomDashboard() {
 					</div>
 				</div>
 			)}
+
+			{/* Model indicator and archive button */}
+			<div class="flex items-center justify-between">
+				{(leaderModel || workerModel) && (
+					<div class="flex items-center gap-3 px-3 py-1.5 bg-dark-800 rounded-md">
+						<svg
+							class="w-4 h-4 text-gray-400"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width={2}
+								d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+							/>
+						</svg>
+						<div class="flex items-center gap-3 text-xs">
+							{leaderModel && (
+								<span class="text-gray-400">
+									Leader: <span class="text-gray-300 font-medium">{leaderModel}</span>
+								</span>
+							)}
+							{workerModel && (
+								<span class="text-gray-400">
+									Worker: <span class="text-gray-300 font-medium">{workerModel}</span>
+								</span>
+							)}
+						</div>
+					</div>
+				)}
+				<button
+					onClick={() => setShowArchiveConfirm(true)}
+					class="px-3 py-1.5 text-xs font-medium text-gray-400 bg-dark-800 hover:bg-dark-700 border border-dark-600 rounded transition-colors"
+				>
+					Archive
+				</button>
+			</div>
 
 			{/* Tasks list */}
 			<div class="space-y-2">
@@ -204,6 +264,18 @@ export function RoomDashboard() {
 				confirmText="Approve"
 				confirmButtonVariant="primary"
 				isLoading={approvalLoading}
+			/>
+
+			{/* Archive Confirmation */}
+			<ConfirmModal
+				isOpen={showArchiveConfirm}
+				onClose={() => setShowArchiveConfirm(false)}
+				onConfirm={handleArchive}
+				title="Archive Room"
+				message="Archiving will hide this room from the active list. You can still access it later by showing archived rooms."
+				confirmText="Archive"
+				confirmButtonVariant="primary"
+				isLoading={actionLoading}
 			/>
 		</div>
 	);

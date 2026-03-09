@@ -11,6 +11,10 @@
  * Key insight: Recovery is proactive - checks current state before subscribing
  * to future events, so groups that completed right before crash are processed
  * immediately rather than waiting for the safety net timer.
+ *
+ * Simplified model: No group state machine. Both worker and leader sessions
+ * are restored and observed. If submittedForReview is true, the group is
+ * awaiting human action.
  */
 
 import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
@@ -69,43 +73,7 @@ export async function recoverRuntime(
 	for (const group of activeGroups) {
 		result.recoveredGroups++;
 
-		switch (group.state) {
-			case 'awaiting_worker':
-				await recoverAwaitingWorker(
-					group,
-					groupRepo,
-					taskManager,
-					observer,
-					sessionChecker,
-					runtime,
-					result
-				);
-				break;
-
-			case 'awaiting_leader':
-				await recoverAwaitingLeader(
-					group,
-					groupRepo,
-					taskManager,
-					observer,
-					sessionChecker,
-					runtime,
-					result
-				);
-				break;
-
-			case 'awaiting_human':
-				await recoverAwaitingHuman(
-					group,
-					groupRepo,
-					taskManager,
-					observer,
-					sessionChecker,
-					runtime,
-					result
-				);
-				break;
-		}
+		await recoverGroup(group, groupRepo, taskManager, observer, sessionChecker, runtime, result);
 	}
 
 	return result;
@@ -130,7 +98,14 @@ async function ensureLive(
 	return restored;
 }
 
-async function recoverAwaitingWorker(
+/**
+ * Recover a group by restoring both worker and leader sessions.
+ *
+ * Simplified recovery: No state machine. Both sessions are restored if they exist.
+ * If submittedForReview is true, the group is awaiting human action but sessions
+ * are still kept live for message injection.
+ */
+async function recoverGroup(
 	group: SessionGroup,
 	groupRepo: SessionGroupRepository,
 	taskManager: TaskManager,
@@ -147,6 +122,7 @@ async function recoverAwaitingWorker(
 		return;
 	}
 
+	// Check if worker is already in terminal state
 	if (sessionChecker.isTerminalState(group.workerSessionId)) {
 		// Already terminal - process immediately
 		result.immediateTerminals++;
@@ -162,93 +138,26 @@ async function recoverAwaitingWorker(
 		result.reattachedObservers++;
 	}
 
-	// Also restore and observe Leader for when it becomes active
+	// Restore and observe leader if it exists
+	// Leader may be lazily created, so session might not exist yet
 	if (sessionChecker.sessionExists(group.leaderSessionId)) {
-		await ensureLive(group.leaderSessionId, sessionChecker, result);
-		observer.observe(group.leaderSessionId, (state: TerminalState) => {
-			runtime.onLeaderTerminalState(group.id, state);
-		});
-	}
-}
-
-async function recoverAwaitingLeader(
-	group: SessionGroup,
-	groupRepo: SessionGroupRepository,
-	taskManager: TaskManager,
-	observer: SessionObserver,
-	sessionChecker: SessionStateChecker,
-	runtime: RoomRuntime,
-	result: RecoveryResult
-): Promise<void> {
-	// Restore leader into memory if not live
-	const leaderLive = await ensureLive(group.leaderSessionId, sessionChecker, result);
-	if (!leaderLive) {
-		await failGroupAndTask(group, groupRepo, taskManager, 'Leader session lost during restart');
-		result.failedGroups++;
-		return;
-	}
-
-	if (sessionChecker.isTerminalState(group.leaderSessionId)) {
-		// Already terminal - process immediately
-		result.immediateTerminals++;
-		await runtime.onLeaderTerminalState(group.id, {
-			sessionId: group.leaderSessionId,
-			kind: 'idle',
-		});
+		const leaderLive = await ensureLive(group.leaderSessionId, sessionChecker, result);
+		if (leaderLive) {
+			if (sessionChecker.isTerminalState(group.leaderSessionId)) {
+				result.immediateTerminals++;
+				await runtime.onLeaderTerminalState(group.id, {
+					sessionId: group.leaderSessionId,
+					kind: 'idle',
+				});
+			} else {
+				observer.observe(group.leaderSessionId, (state: TerminalState) => {
+					runtime.onLeaderTerminalState(group.id, state);
+				});
+				result.reattachedObservers++;
+			}
+		}
 	} else {
-		// Still active - observe for future terminal state
-		observer.observe(group.leaderSessionId, (state: TerminalState) => {
-			runtime.onLeaderTerminalState(group.id, state);
-		});
-		result.reattachedObservers++;
-	}
-
-	// Also restore and observe Worker for if it becomes active again
-	if (sessionChecker.sessionExists(group.workerSessionId)) {
-		await ensureLive(group.workerSessionId, sessionChecker, result);
-		observer.observe(group.workerSessionId, (state: TerminalState) => {
-			runtime.onWorkerTerminalState(group.id, state);
-		});
-	}
-}
-
-/**
- * Recover awaiting_human groups by restoring sessions into memory.
- *
- * The worker session must be live so that when the human approves,
- * injectMessage can deliver the approval to the worker.
- */
-async function recoverAwaitingHuman(
-	group: SessionGroup,
-	groupRepo: SessionGroupRepository,
-	taskManager: TaskManager,
-	observer: SessionObserver,
-	sessionChecker: SessionStateChecker,
-	runtime: RoomRuntime,
-	result: RecoveryResult
-): Promise<void> {
-	// Restore worker into memory so injectMessage works on human approval
-	const workerLive = await ensureLive(group.workerSessionId, sessionChecker, result);
-	if (!workerLive) {
-		await failGroupAndTask(
-			group,
-			groupRepo,
-			taskManager,
-			'Worker session lost during restart (awaiting human)'
-		);
-		result.failedGroups++;
-		return;
-	}
-
-	// Attach observer so worker terminal state fires after human approval
-	observer.observe(group.workerSessionId, (state: TerminalState) => {
-		runtime.onWorkerTerminalState(group.id, state);
-	});
-	result.reattachedObservers++;
-
-	// Also restore leader if it exists (best-effort)
-	if (sessionChecker.sessionExists(group.leaderSessionId)) {
-		await ensureLive(group.leaderSessionId, sessionChecker, result);
+		// Leader session doesn't exist yet - observe anyway for lazy creation
 		observer.observe(group.leaderSessionId, (state: TerminalState) => {
 			runtime.onLeaderTerminalState(group.id, state);
 		});

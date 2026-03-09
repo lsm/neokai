@@ -2,7 +2,7 @@
  * Tests for TaskView Component
  *
  * Tests the "Awaiting your review" pulsing badge in the header
- * when group.state === 'awaiting_human', and its absence otherwise.
+ * when group.submittedForReview is true, and its absence otherwise.
  *
  * Also covers the shared autoscroll/ScrollToBottomButton integration and
  * InputTextarea usage in HumanInputArea.
@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, act } from '@testing-library/preact';
+import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
 // Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
@@ -100,6 +101,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 		disabled,
 		placeholder,
 		maxChars,
+		leadingElement,
 	}: {
 		content: string;
 		onContentChange: (v: string) => void;
@@ -107,8 +109,10 @@ vi.mock('../InputTextarea.tsx', () => ({
 		disabled?: boolean;
 		placeholder?: string;
 		maxChars?: number;
+		leadingElement?: ComponentChildren;
 	}) => (
 		<div data-testid="input-textarea">
+			{leadingElement}
 			<textarea
 				data-testid="input-textarea-field"
 				value={content}
@@ -149,6 +153,8 @@ function makeGroup(state: string, feedbackIteration = 0) {
 		workerRole: 'worker',
 		state,
 		feedbackIteration,
+		submittedForReview: state === 'awaiting_human',
+		approved: false,
 		createdAt: Date.now(),
 		completedAt: null,
 	};
@@ -226,7 +232,7 @@ describe('TaskView — awaiting_human badge', () => {
 		expect(container.textContent).not.toContain('Awaiting your review');
 	});
 
-	it('shows group state label in header', async () => {
+	it('does not show review bar when group is not submitted for review', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_leader') };
@@ -236,8 +242,9 @@ describe('TaskView — awaiting_human badge', () => {
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
 		await waitFor(() => {
-			expect(container.textContent).toContain('Leader reviewing');
+			expect(container.textContent).not.toContain('Loading task');
 		});
+		expect(container.querySelector('.bg-amber-900\\/20')).toBeNull();
 	});
 });
 
@@ -351,7 +358,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		});
 	});
 
-	it('does NOT render InputTextarea in awaiting_worker state (disabled raw textarea)', async () => {
+	it('renders InputTextarea in awaiting_worker state', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -364,10 +371,8 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 			expect(container.textContent).not.toContain('Loading task');
 		});
 
-		// awaiting_worker uses a raw disabled textarea, not InputTextarea
-		expect(queryByTestId('input-textarea')).toBeNull();
-		const rawTextarea = container.querySelector('textarea[disabled]');
-		expect(rawTextarea).not.toBeNull();
+		expect(queryByTestId('input-textarea')).not.toBeNull();
+		expect(queryByTestId('task-target-button')).not.toBeNull();
 	});
 
 	it('sends feedback via task.sendHumanMessage in awaiting_human state', async () => {
@@ -394,34 +399,61 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				message: 'Nice work!',
+				target: 'worker',
 			});
 		});
 	});
 
-	it('approves task via goal.approveTask in awaiting_human state', async () => {
+	it('approves task via task.approve in awaiting_human state', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
-			if (method === 'goal.approveTask') return {};
+			if (method === 'task.approve') return {};
 			return {};
 		});
 
 		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
 
+		// Verify approve button is in the HeaderReviewBar (amber-900/20 background)
 		await waitFor(() => {
-			const approveBtn = container.querySelector('button.bg-green-700');
+			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
+			expect(headerReviewBar).not.toBeNull();
+			const approveBtn = headerReviewBar?.querySelector('button.bg-green-700');
 			expect(approveBtn).not.toBeNull();
 		});
 
-		const approveBtn = container.querySelector('button.bg-green-700') as HTMLButtonElement;
+		const approveBtn = container.querySelector(
+			'.bg-amber-900\\/20 button.bg-green-700'
+		) as HTMLButtonElement;
 		fireEvent.click(approveBtn);
 
 		await waitFor(() => {
-			expect(mockRequest).toHaveBeenCalledWith('goal.approveTask', {
+			expect(mockRequest).toHaveBeenCalledWith('task.approve', {
 				roomId: 'room-1',
 				taskId: 'task-1',
 			});
 		});
+	});
+
+	it('shows feedback textarea in bottom area (not in header) when awaiting_human', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { container, getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		// Verify the feedback textarea is in the bottom area (border-t, not in amber header)
+		const inputWrapper = getByTestId('input-textarea').closest('.border-t');
+		expect(inputWrapper).not.toBeNull();
+		// Verify it's NOT in the amber header bar
+		const amberBar = container.querySelector('.bg-amber-900\\/20');
+		expect(amberBar?.contains(getByTestId('input-textarea'))).toBe(false);
 	});
 
 	it('sends message to leader via task.sendHumanMessage in awaiting_leader state', async () => {
@@ -441,6 +473,9 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Please focus on auth first' } });
 
+		// Explicitly target leader in the dropdown.
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-leader'));
 		fireEvent.click(getByTestId('input-textarea-send'));
 
 		await waitFor(() => {
@@ -448,8 +483,57 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				message: 'Please focus on auth first',
+				target: 'leader',
 			});
 		});
+	});
+
+	it('sends message to worker in awaiting_worker state', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Add benchmarks too' } });
+		fireEvent.click(getByTestId('input-textarea-send'));
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Add benchmarks too',
+				target: 'worker',
+			});
+		});
+	});
+
+	it('shows target dropdown with both options always available', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('task-target-button')).toBeTruthy();
+		});
+
+		fireEvent.click(getByTestId('task-target-button'));
+		const workerOption = getByTestId('task-target-option-worker') as HTMLButtonElement;
+		const leaderOption = getByTestId('task-target-option-leader') as HTMLButtonElement;
+		expect(workerOption.disabled).toBe(false);
+		expect(leaderOption.disabled).toBe(false);
 	});
 });
 
@@ -609,7 +693,7 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 		cleanup();
 	});
 
-	it('passes bottomClass="bottom-4" to ScrollToBottomButton', async () => {
+	it('passes bottomClass="bottom-0" to ScrollToBottomButton', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -622,7 +706,7 @@ describe('TaskView — ScrollToBottomButton bottomClass', () => {
 			expect(getByTestId('scroll-to-bottom')).toBeTruthy();
 		});
 
-		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-4');
+		expect(getByTestId('scroll-to-bottom').getAttribute('data-bottom-class')).toBe('bottom-0');
 	});
 });
 
@@ -706,5 +790,228 @@ describe('TaskView — cancelled flag prevents post-unmount state updates', () =
 
 		// The event fired after unmount must not trigger a task.getGroup request
 		expect(mockRequest).not.toHaveBeenCalledWith('task.getGroup', expect.anything());
+	});
+});
+
+// ─── Cancel Button Tests ───
+
+describe('TaskView — Cancel button', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows cancel button for pending tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const cancelButton = container.querySelector('button[title="Cancel task"]');
+		expect(cancelButton).not.toBeNull();
+	});
+
+	it('shows cancel button for in_progress tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const cancelButton = container.querySelector('button[title="Cancel task"]');
+		expect(cancelButton).not.toBeNull();
+	});
+
+	it('shows cancel button for review tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const cancelButton = container.querySelector('button[title="Cancel task"]');
+		expect(cancelButton).not.toBeNull();
+	});
+
+	it('does NOT show cancel button for completed tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'completed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const cancelButton = container.querySelector('button[title="Cancel task"]');
+		expect(cancelButton).toBeNull();
+	});
+
+	it('does NOT show cancel button for failed tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'failed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const cancelButton = container.querySelector('button[title="Cancel task"]');
+		expect(cancelButton).toBeNull();
+	});
+
+	it('does NOT show cancel button for cancelled tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const cancelButton = container.querySelector('button[title="Cancel task"]');
+		expect(cancelButton).toBeNull();
+	});
+});
+
+// ─── Reject Button Tests ───
+
+describe('TaskView — Reject button in HeaderReviewBar', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows reject button when group.state === awaiting_human', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
+			expect(headerReviewBar).not.toBeNull();
+			const rejectBtn = headerReviewBar?.querySelector('button.bg-red-700');
+			expect(rejectBtn).not.toBeNull();
+		});
+	});
+
+	it('does NOT show reject button when group.state is not awaiting_human', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// No header review bar should be shown
+		const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
+		expect(headerReviewBar).toBeNull();
+	});
+
+	it('calls task.reject RPC when reject button is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			if (method === 'task.reject') return { success: true };
+			return {};
+		});
+
+		const { container, getByRole, getByPlaceholderText } = render(
+			<TaskView roomId="room-1" taskId="task-1" />
+		);
+
+		// Wait for the header review bar to appear
+		await waitFor(() => {
+			const headerReviewBar = container.querySelector('.bg-amber-900\\/20');
+			expect(headerReviewBar).not.toBeNull();
+		});
+
+		// Click reject button (opens modal)
+		const rejectBtn = container.querySelector(
+			'.bg-amber-900\\/20 button.bg-red-700'
+		) as HTMLButtonElement;
+		fireEvent.click(rejectBtn);
+
+		// Wait for modal to appear (using role="dialog")
+		await waitFor(() => {
+			expect(getByRole('dialog')).toBeTruthy();
+		});
+
+		// Find textarea in modal and type feedback
+		const textarea = getByPlaceholderText(
+			'Please provide feedback explaining why this work was rejected...'
+		) as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Needs more work on error handling' } });
+
+		// Click confirm button in modal (the one with "Reject" text)
+		const confirmBtn = getByRole('dialog').querySelector('button.bg-red-600') as HTMLButtonElement;
+		fireEvent.click(confirmBtn);
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.reject', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				feedback: 'Needs more work on error handling',
+			});
+		});
 	});
 });

@@ -74,8 +74,12 @@ function makeCallbacks(): LeaderToolCallbacks & {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	return {
 		calls,
-		async sendToWorker(groupId: string, message: string) {
-			calls.push({ method: 'sendToWorker', args: [groupId, message] });
+		async sendToWorker(groupId: string, message: string, mode?: 'steer' | 'queue') {
+			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
+			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
+		},
+		async handoffToWorker(groupId: string) {
+			calls.push({ method: 'handoffToWorker', args: [groupId] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
 		async completeTask(groupId: string, summary: string) {
@@ -101,8 +105,9 @@ describe('Leader Agent', () => {
 	describe('buildLeaderSystemPrompt', () => {
 		it('should include tool contract instructions', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			expect(prompt).toContain('MUST call exactly one tool per turn');
+			expect(prompt).toContain('Tool Contract (CRITICAL)');
 			expect(prompt).toContain('send_to_worker');
+			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
@@ -128,6 +133,32 @@ describe('Leader Agent', () => {
 		it('should include code review guidelines by default', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Review Guidelines');
+		});
+
+		it('should require leader to post direct PR feedback in simple code review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('honest, critical, and actionable feedback');
+			expect(prompt).toContain('gh pr review');
+		});
+
+		it('should use severity + review-url routing in simple code review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('ONLY your review URL(s)');
+			expect(prompt).toContain('Every iteration follows the same workflow');
+		});
+
+		it('should require leader to post direct PR feedback in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('honest, critical, and actionable feedback');
+			expect(prompt).toContain('gh pr review');
+		});
+
+		it('should use severity + review-url routing in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('P0/P1/P2 issues');
+			expect(prompt).toContain('ONLY your review URL(s)');
+			expect(prompt).toContain('Every iteration follows the same workflow');
 		});
 
 		it('should include plan review guidelines when reviewContext is plan_review', () => {
@@ -192,7 +223,7 @@ describe('Leader Agent', () => {
 		it('recommends submit_for_review in simple review path', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('submit_for_review');
-			expect(prompt).toContain('non-coding tasks');
+			expect(prompt).toContain('If no PR exists yet');
 		});
 	});
 
@@ -238,7 +269,29 @@ describe('Leader Agent', () => {
 
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling']);
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Fix the error handling', undefined]);
+		});
+
+		it('should route send_to_worker mode to callback', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.send_to_worker({ message: 'Queue this', mode: 'queue' });
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('sendToWorker');
+			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
+		});
+
+		it('should route handoff_to_worker to callback with groupId', async () => {
+			const callbacks = makeCallbacks();
+			const handlers = createLeaderToolHandlers('group-1', callbacks);
+
+			await handlers.handoff_to_worker();
+
+			expect(callbacks.calls).toHaveLength(1);
+			expect(callbacks.calls[0].method).toBe('handoffToWorker');
+			expect(callbacks.calls[0].args).toEqual(['group-1']);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {
@@ -470,15 +523,33 @@ describe('Leader Agent', () => {
 		});
 
 		it('should create CLI reviewer with review-posted output format in prompt', () => {
-			const agents = buildReviewerAgents([
-				{ model: 'custom-cli', type: 'cli', driver_model: 'haiku' },
-			]);
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
 			const agent = agents['reviewer-custom-cli'];
 			expect(agent).toBeDefined();
-			expect(agent.model).toBe('haiku');
+			expect(agent.model).toBe('inherit');
 			expect(agent.prompt).toContain('custom-cli');
 			expect(agent.prompt).toContain('---REVIEW_POSTED---');
 			expect(agent.prompt).toContain('---END_REVIEW_POSTED---');
+		});
+
+		it('should include deterministic own-PR event check in SDK reviewer prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6' }]);
+			const agent = agents['reviewer-opus'];
+			expect(agent.prompt).toContain('ME="$(gh api user --jq .login)"');
+			expect(agent.prompt).toContain(
+				'PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"'
+			);
+			expect(agent.prompt).toContain('EVENT="COMMENT"');
+		});
+
+		it('should include deterministic own-PR event check in CLI reviewer prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent.prompt).toContain('ME="$(gh api user --jq .login)"');
+			expect(agent.prompt).toContain(
+				'PR_AUTHOR="$(gh pr view {pr} --json author --jq .author.login)"'
+			);
+			expect(agent.prompt).toContain('EVENT="COMMENT"');
 		});
 
 		it('should include read-only tools for reviewers', () => {
@@ -492,26 +563,31 @@ describe('Leader Agent', () => {
 			expect(agent.tools).not.toContain('Write');
 		});
 
-		it('should map full model ID to valid AgentModel for SDK-native reviewer', () => {
+		it('should detect GLM provider label for SDK reviewers', () => {
+			const agents = buildReviewerAgents([{ model: 'glm-5' }]);
+			const agent = agents['reviewer-glm-5'];
+			expect(agent).toBeDefined();
+			expect(agent.prompt).toContain('- **Provider:** GLM');
+		});
+
+		it('should set SDK-native reviewer runtime model to mapped SDK tier', () => {
 			const agents = buildReviewerAgents([{ model: 'claude-opus-4-6-20250929' }]);
 			const agent = agents['reviewer-opus'];
 			expect(agent).toBeDefined();
 			expect(agent.model).toBe('opus');
 		});
 
-		it('should map full model ID to valid AgentModel for CLI reviewer', () => {
-			const agents = buildReviewerAgents([
-				{ model: 'custom-cli', type: 'cli', driver_model: 'claude-sonnet-4-5-20250929' },
-			]);
-			const agent = agents['reviewer-custom-cli'];
-			expect(agent).toBeDefined();
-			expect(agent.model).toBe('sonnet');
-		});
-
-		it('should default CLI reviewer to sonnet when no driver_model given', () => {
+		it('should set CLI reviewer runtime model to inherit', () => {
 			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
 			const agent = agents['reviewer-custom-cli'];
-			expect(agent.model).toBe('sonnet');
+			expect(agent).toBeDefined();
+			expect(agent.model).toBe('inherit');
+		});
+
+		it('should default CLI reviewer runtime model to inherit', () => {
+			const agents = buildReviewerAgents([{ model: 'custom-cli', type: 'cli' }]);
+			const agent = agents['reviewer-custom-cli'];
+			expect(agent.model).toBe('inherit');
 		});
 	});
 
@@ -530,6 +606,14 @@ describe('Leader Agent', () => {
 
 		it('should default unknown model to sonnet', () => {
 			expect(toAgentModel('some-unknown-model-xyz')).toBe('sonnet');
+		});
+
+		it('should map GLM model IDs to sonnet tier fallback', () => {
+			expect(toAgentModel('glm-5')).toBe('sonnet');
+		});
+
+		it('should map MiniMax model IDs to sonnet tier fallback', () => {
+			expect(toAgentModel('MiniMax-M2.5')).toBe('sonnet');
 		});
 
 		it('should map short name opus to opus', () => {
@@ -597,25 +681,22 @@ describe('Leader Agent', () => {
 	});
 
 	describe('buildReviewerAgents — CLI enhancements', () => {
-		it('should use leaderModel as default driver when no driver_model specified', () => {
+		it('should use inherit reviewer runtime model', () => {
 			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }], 'claude-opus-4-6');
 			const agent = agents['reviewer-copilot'];
-			expect(agent.model).toBe('opus');
+			expect(agent.model).toBe('inherit');
 		});
 
-		it('should fall back to sonnet when neither driver_model nor leaderModel given', () => {
+		it('should still use inherit when leaderModel is absent', () => {
 			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }]);
 			const agent = agents['reviewer-copilot'];
-			expect(agent.model).toBe('sonnet');
+			expect(agent.model).toBe('inherit');
 		});
 
-		it('should prefer explicit driver_model over leaderModel', () => {
-			const agents = buildReviewerAgents(
-				[{ model: 'copilot', type: 'cli', driver_model: 'haiku' }],
-				'claude-opus-4-6'
-			);
+		it('should ignore leaderModel for reviewer runtime model and keep inherit', () => {
+			const agents = buildReviewerAgents([{ model: 'copilot', type: 'cli' }], 'claude-opus-4-6');
 			const agent = agents['reviewer-copilot'];
-			expect(agent.model).toBe('haiku');
+			expect(agent.model).toBe('inherit');
 		});
 
 		it('should pass cliModel to CLI reviewer prompt', () => {
@@ -667,6 +748,21 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('-s');
 			expect(agent.prompt).toContain('--no-ask-user');
 			expect(agent.prompt).toContain('--autopilot');
+		});
+
+		it('should use one-shot pi command with github-copilot provider', () => {
+			const agents = buildReviewerAgents([{ model: 'pi', type: 'cli' }]);
+			const agent = agents['reviewer-pi'];
+			expect(agent.prompt).toContain('pi -p --no-session --provider github-copilot');
+			expect(agent.prompt).toContain('--tools read,bash,grep,find,ls');
+			expect(agent.prompt).toContain('Do NOT pass `--model`');
+		});
+
+		it('should pass selected model to pi cli reviewer prompt', () => {
+			const agents = buildReviewerAgents([{ model: 'pi', type: 'cli', cliModel: 'gpt-5.3-codex' }]);
+			const agent = agents['reviewer-pi'];
+			expect(agent.prompt).toContain('--provider github-copilot --model gpt-5.3-codex');
+			expect(agent.prompt).toContain('**Model:** gpt-5.3-codex');
 		});
 
 		it('should display cliModel in reviewer identity block', () => {
@@ -721,8 +817,8 @@ describe('Leader Agent', () => {
 		});
 	});
 
-	describe('createLeaderAgentInit — leaderModel passed to reviewers', () => {
-		it('should pass leader model to buildReviewerAgents as default driver', () => {
+	describe('createLeaderAgentInit — reviewer runtime model inheritance', () => {
+		it('should set reviewer runtime model to inherit by default', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(
 				makeConfig({
@@ -738,8 +834,7 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			const reviewerAgent = init.agents!['reviewer-copilot'];
-			// Driver model should be opus (inherited from leader model)
-			expect(reviewerAgent.model).toBe('opus');
+			expect(reviewerAgent.model).toBe('inherit');
 		});
 	});
 });

@@ -15,13 +15,17 @@
 		"typecheck": "tsc --build --noEmit",
 		"knip": "knip --include files,dependencies,exports --no-config-hints",
 		"knip:all": "knip",
-		"check": "bun run lint && bun run typecheck && bun run knip"
+		"check": "bun run lint && bun run typecheck && bun run knip",
+		"test:proxy:start": "./scripts/dev-proxy.sh start",
+		"test:proxy:stop": "./scripts/dev-proxy.sh stop",
+		"test:proxy:status": "./scripts/dev-proxy.sh status",
+		"test:proxy:restart": "./scripts/dev-proxy.sh restart"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.4.4",
+		"@biomejs/biome": "2.4.6",
 		"@testing-library/preact": "3.2.4",
-		"knip": "5.85.0",
-		"oxlint": "1.50.0",
+		"knip": "5.86.0",
+		"oxlint": "1.51.0",
 		"typescript": "5.9.3"
 	}
 }

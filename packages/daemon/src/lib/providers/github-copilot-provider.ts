@@ -28,7 +28,7 @@ import type {
 	ProviderQueryContext,
 } from '@neokai/shared/provider/query-types';
 import { piMonoQueryGenerator } from './pimono-adapter.js';
-import { refreshGitHubCopilotToken } from '@mariozechner/pi-ai';
+import { refreshGitHubCopilotToken } from '@mariozechner/pi-ai/oauth';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';

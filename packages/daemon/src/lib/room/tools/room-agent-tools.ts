@@ -12,7 +12,8 @@
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import type { TaskStatus } from '@neokai/shared';
+import type { TaskStatus, TaskType, AgentType } from '@neokai/shared';
+import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
@@ -98,12 +99,24 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			description: string;
 			goal_id?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			depends_on?: string[];
+			task_type?: TaskType;
+			assigned_agent?: AgentType;
 		}): Promise<ToolResult> {
-			const task = await taskManager.createTask({
-				title: args.title,
-				description: args.description,
-				priority: args.priority,
-			});
+			let task;
+			try {
+				task = await taskManager.createTask({
+					title: args.title,
+					description: args.description,
+					priority: args.priority,
+					dependsOn: args.depends_on,
+					taskType: args.task_type,
+					assignedAgent: args.assigned_agent,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return jsonResult({ success: false, error: message });
+			}
 			if (args.goal_id) {
 				await goalManager.linkTaskToGoal(args.goal_id, task.id);
 			}
@@ -147,6 +160,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			title?: string;
 			description?: string;
 			priority?: 'low' | 'normal' | 'high' | 'urgent';
+			depends_on?: string[];
 		}): Promise<ToolResult> {
 			const task = await taskManager.getTask(args.task_id);
 			if (!task) {
@@ -156,15 +170,23 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				title?: string;
 				description?: string;
 				priority?: 'low' | 'normal' | 'high' | 'urgent';
+				dependsOn?: string[];
 			} = {};
 			if (args.title !== undefined) updates.title = args.title;
 			if (args.description !== undefined) updates.description = args.description;
 			if (args.priority !== undefined) updates.priority = args.priority;
+			if (args.depends_on !== undefined) updates.dependsOn = args.depends_on;
 			// Apply updates if any fields were provided; otherwise return existing task unchanged
-			const updated =
-				Object.keys(updates).length > 0
-					? await taskManager.updateTaskFields(args.task_id, updates)
-					: task;
+			let updated;
+			try {
+				updated =
+					Object.keys(updates).length > 0
+						? await taskManager.updateTaskFields(args.task_id, updates)
+						: task;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return jsonResult({ success: false, error: message });
+			}
 			// Notify UI of the update
 			if (daemonHub) {
 				void daemonHub.emit('room.task.update', {
@@ -181,19 +203,133 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!task) {
 				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
 			}
-			// cancelTaskCascade returns root + all cascade-cancelled dependents
-			const cancelledTasks = await taskManager.cancelTaskCascade(args.task_id);
-			// Notify UI of status change for every affected task
-			if (daemonHub) {
-				for (const cancelledTask of cancelledTasks) {
-					void daemonHub.emit('room.task.update', {
-						sessionId: `room:${roomId}`,
-						roomId,
-						task: cancelledTask,
-					});
+
+			let cancelledTaskIds: string[] = [];
+			let usedRuntimeCancellation = false;
+			if (runtimeService) {
+				const runtime = runtimeService.getRuntime(roomId);
+				if (runtime) {
+					const result = await runtime.cancelTask(args.task_id);
+					if (!result.success) {
+						return jsonResult({
+							success: false,
+							error: `Failed to cancel task: ${args.task_id}`,
+						});
+					}
+					cancelledTaskIds = result.cancelledTaskIds;
+					usedRuntimeCancellation = true;
+				}
+			}
+
+			// Fallback when runtime service is unavailable: status-only cancellation.
+			if (!usedRuntimeCancellation) {
+				const cancelledTasks = await taskManager.cancelTaskCascade(args.task_id);
+				cancelledTaskIds = cancelledTasks.map((cancelledTask) => cancelledTask.id);
+
+				// Notify UI of status change for every affected task in fallback mode.
+				if (daemonHub) {
+					for (const cancelledTaskId of cancelledTaskIds) {
+						const cancelledTask = await taskManager.getTask(cancelledTaskId);
+						if (!cancelledTask) continue;
+						void daemonHub.emit('room.task.update', {
+							sessionId: `room:${roomId}`,
+							roomId,
+							task: cancelledTask,
+						});
+					}
 				}
 			}
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
+		},
+
+		async set_task_status(args: {
+			task_id: string;
+			status: TaskStatus;
+			result?: string;
+			error?: string;
+		}): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+
+			// Validate status transition
+			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
+			if (!allowedTransitions.includes(args.status)) {
+				return jsonResult({
+					success: false,
+					error: `Invalid status transition from '${task.status}' to '${args.status}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
+				});
+			}
+
+			// Check for active group when transitioning from in_progress or review
+			if (task.status === 'in_progress' || task.status === 'review') {
+				if (runtimeService) {
+					const runtime = runtimeService.getRuntime(roomId);
+					if (runtime) {
+						const group = groupRepo.getGroupByTaskId(args.task_id);
+						if (group && group.completedAt === null) {
+							// There's an active group - cancel it first if moving to terminal state
+							if (
+								args.status === 'completed' ||
+								args.status === 'failed' ||
+								args.status === 'cancelled'
+							) {
+								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
+								if (!cancelledGroup) {
+									return jsonResult({
+										success: false,
+										error: `Failed to cancel active group for task ${args.task_id} — group may have been modified concurrently`,
+									});
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// Handle restart: reset failed/cancelled group so runtime picks it up fresh
+			if (task.status === 'failed' || task.status === 'cancelled') {
+				if (args.status === 'pending' || args.status === 'in_progress') {
+					const group = groupRepo.getGroupByTaskId(args.task_id);
+					if (group) {
+						const reset = groupRepo.resetGroupForRestart(group.id);
+						if (!reset) {
+							return jsonResult({
+								success: false,
+								error: `Failed to reset group for task ${args.task_id} — group may have been modified concurrently`,
+							});
+						}
+					}
+				}
+			}
+
+			// Apply status change
+			let updatedTask: typeof task;
+			try {
+				updatedTask = await taskManager.setTaskStatus(args.task_id, args.status, {
+					result: args.result,
+					error: args.error,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return jsonResult({ success: false, error: message });
+			}
+
+			// Notify UI of the status change
+			if (daemonHub) {
+				void daemonHub.emit('room.task.update', {
+					sessionId: `room:${roomId}`,
+					roomId,
+					task: updatedTask,
+				});
+			}
+
+			return jsonResult({
+				success: true,
+				message: `Task ${args.task_id} status changed from '${task.status}' to '${args.status}'`,
+				task: updatedTask,
+			});
 		},
 
 		async approve_task(args: { task_id: string }): Promise<ToolResult> {
@@ -279,11 +415,11 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				group: group
 					? {
 							id: group.id,
-							state: group.state,
+							completedAt: group.completedAt,
 							workerSessionId: group.workerSessionId,
 							leaderSessionId: group.leaderSessionId,
 							feedbackIteration: group.feedbackIteration,
-							awaitingHumanReview: group.state === 'awaiting_human',
+							awaitingHumanReview: group.submittedForReview,
 						}
 					: null,
 			});
@@ -295,12 +431,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			const activeGroups = groupRepo.getActiveGroups(roomId);
 
 			// Collect task IDs that need human review:
-			// either the task is in 'review' status OR the group is in 'awaiting_human' state
+			// either the task is in 'review' status OR the group has submittedForReview flag
 			const needsReviewIds = new Set<string>();
 			tasks.filter((t) => t.status === 'review').forEach((t) => needsReviewIds.add(t.id));
-			activeGroups
-				.filter((g) => g.state === 'awaiting_human')
-				.forEach((g) => needsReviewIds.add(g.taskId));
+			activeGroups.filter((g) => g.submittedForReview).forEach((g) => needsReviewIds.add(g.taskId));
 
 			const tasksNeedingReview = [...needsReviewIds].map((taskId) => {
 				const task = tasks.find((t) => t.id === taskId);
@@ -329,7 +463,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					groups: activeGroups.map((g) => ({
 						id: g.id,
 						taskId: g.taskId,
-						state: g.state,
+						submittedForReview: g.submittedForReview,
 						iteration: g.feedbackIteration,
 					})),
 					tasksNeedingReview,
@@ -383,6 +517,18 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.default('normal')
 					.describe('Task priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('IDs of tasks this task depends on (must complete first)'),
+				task_type: z
+					.enum(['planning', 'coding', 'research', 'design', 'goal_review'])
+					.optional()
+					.describe('Task type - determines agent preset (default: coding)'),
+				assigned_agent: z
+					.enum(['coder', 'general'])
+					.optional()
+					.describe('Agent type to execute this task (default: coder)'),
 			},
 			(args) => handlers.create_task(args)
 		),
@@ -400,12 +546,16 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'update_task',
-			'Update an existing task (title, description, and/or priority). Only provided fields are changed; omitted fields keep their current values.',
+			'Update an existing task (title, description, priority, and/or dependencies). Only provided fields are changed; omitted fields keep their current values.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
 				title: z.string().trim().min(1).optional().describe('New title for the task'),
 				description: z.string().trim().min(1).optional().describe('New description for the task'),
 				priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('New priority'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('New list of task IDs this task depends on (replaces existing)'),
 			},
 			(args) => handlers.update_task(args)
 		),
@@ -414,6 +564,19 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Cancel a task (marks as cancelled — distinct from failed — and cleans up agent sessions)',
 			{ task_id: z.string().describe('ID of the task to cancel') },
 			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'set_task_status',
+			'Set task status to any valid status. Use this to complete, fail, restart, or change status of any task. Validates that the status transition is allowed.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				status: z
+					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'])
+					.describe('New status for the task'),
+				result: z.string().optional().describe('Result description (for completed status)'),
+				error: z.string().optional().describe('Error message (for failed status)'),
+			},
+			(args) => handlers.set_task_status(args)
 		),
 		tool(
 			'approve_task',

@@ -10,7 +10,7 @@
  * - goal.reactivate - Reactivate a goal (return to active)
  * - goal.linkTask - Link a task to a goal
  * - goal.delete - Delete a goal
- * - goal.approveTask - Human approves a task PR (resumes worker for phase 2)
+ * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
 import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
@@ -302,8 +302,8 @@ export function setupGoalHandlers(
 		return { success: result.deleted };
 	});
 
-	// goal.approveTask - Human approves the PR; resume leader to call complete_task
-	messageHub.onRequest('goal.approveTask', async (data) => {
+	// task.approve - Human approves the PR; resume leader to complete task flow
+	const approveTaskHandler = async (data: unknown) => {
 		const params = data as { roomId: string; taskId: string };
 
 		if (!params.roomId) {
@@ -313,7 +313,9 @@ export function setupGoalHandlers(
 			throw new Error('Task ID is required');
 		}
 		if (!taskManagerFactory || !runtimeService) {
-			throw new Error('Task manager factory and runtime service are required for goal.approveTask');
+			throw new Error(
+				'Task manager factory and runtime service are required for task approval handlers'
+			);
 		}
 
 		const taskManager = taskManagerFactory(params.roomId);
@@ -349,5 +351,8 @@ export function setupGoalHandlers(
 
 		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);
 		return { success: true };
-	});
+	};
+
+	// task.approve - Task-scoped RPC name
+	messageHub.onRequest('task.approve', approveTaskHandler);
 }

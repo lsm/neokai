@@ -6,13 +6,11 @@
  * - message.sdkMessages (pagination)
  * - message.count
  * - message.send error handling
+ *
+ * MODES:
+ * - Dev Proxy (default in CI): Set NEOKAI_USE_DEV_PROXY=1 for mocked responses
+ * - Real API: Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  */
-
-// This test requires mock SDK — set before any imports that read the env
-process.env.NEOKAI_AGENT_SDK_MOCK = 'true';
-// Ensure mock SDK path is used regardless of CI provider config
-process.env.ANTHROPIC_API_KEY = 'mock-key';
-delete process.env.DEFAULT_PROVIDER;
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
@@ -20,6 +18,7 @@ import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daem
 
 // Tests that send messages to mock SDK need longer timeout on CI
 const TIMEOUT = 15000;
+const IS_DEV_PROXY = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 describe('Message RPC Handlers', () => {
 	let daemon: DaemonServerContext;
@@ -182,7 +181,7 @@ describe('Message RPC Handlers', () => {
 			TIMEOUT
 		);
 
-		test(
+		(IS_DEV_PROXY ? test.skip : test)(
 			'should include assistant response in markdown export',
 			async () => {
 				const sessionId = await createSessionWithMessages();
@@ -192,9 +191,8 @@ describe('Message RPC Handlers', () => {
 					format: 'markdown',
 				})) as { markdown: string };
 
-				// Mock SDK responds with 'mock response' by default
+				// Should have assistant section with content
 				expect(result.markdown).toContain('## Assistant');
-				expect(result.markdown).toContain('mock response');
 			},
 			TIMEOUT
 		);

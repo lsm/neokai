@@ -90,6 +90,7 @@ export function AgentSettingsPopover({
 					id: m.id,
 					name: m.display_name ?? m.name ?? m.id,
 					family: detectFamily(m.id),
+					provider: 'anthropic',
 				}));
 				cliAgents.value = cliRes.agents ?? [];
 			} catch {

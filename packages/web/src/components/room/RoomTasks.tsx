@@ -1,19 +1,41 @@
 /**
  * RoomTasks Component
  *
- * Displays tasks grouped by status:
- * - In Progress
- * - Review (with Approve button)
- * - Pending (with "Blocked" badge for unmet dependencies)
- * - Draft
- * - Completed
- * - Failed
- * - Cancelled
+ * Displays tasks with filter tabs for organization:
+ * - Active: pending + in_progress
+ * - Review: review status (awaiting human action)
+ * - Done: completed
+ * - Failed: failed + cancelled
  */
 
+import { signal, effect } from '@preact/signals';
 import type { TaskSummary } from '@neokai/shared';
 import { CheckIcon } from '../icons/index.tsx';
 import { t } from '../../lib/i18n';
+
+/** Tab filter types */
+export type TaskFilterTab = 'active' | 'review' | 'done' | 'failed';
+
+/** Get initial tab from localStorage */
+function getInitialTab(): TaskFilterTab {
+	if (typeof window === 'undefined') return 'active';
+	const stored = localStorage.getItem('neokai:room:taskFilterTab');
+	if (stored === 'active' || stored === 'review' || stored === 'done' || stored === 'failed') {
+		return stored;
+	}
+	return 'active';
+}
+
+/** Persisted tab selection signal with localStorage sync - exported for testing */
+export const selectedTabSignal = signal<TaskFilterTab>(getInitialTab());
+
+// Sync signal changes to localStorage
+if (typeof window !== 'undefined') {
+	effect(() => {
+		const tab = selectedTabSignal.value;
+		localStorage.setItem('neokai:room:taskFilterTab', tab);
+	});
+}
 
 interface RoomTasksProps {
 	tasks: TaskSummary[];
@@ -23,7 +45,39 @@ interface RoomTasksProps {
 	onRetry?: (taskId: string) => void;
 }
 
+/** Get count of tasks for each filter tab */
+function getTabCounts(tasks: TaskSummary[]) {
+	return {
+		active: tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length,
+		review: tasks.filter((t) => t.status === 'review').length,
+		done: tasks.filter((t) => t.status === 'completed').length,
+		failed: tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled').length,
+	};
+}
+
+/** Filter tasks based on selected tab */
+function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary[] {
+	switch (tab) {
+		case 'active':
+			return tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress');
+		case 'review':
+			return tasks.filter((t) => t.status === 'review');
+		case 'done':
+			return tasks.filter((t) => t.status === 'completed');
+		case 'failed':
+			return tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled');
+	}
+}
+
 export function RoomTasks({ tasks, onTaskClick, onApprove, onView, onRetry }: RoomTasksProps) {
+	const selectedTab = selectedTabSignal.value;
+	const tabCounts = getTabCounts(tasks);
+	const filteredTasks = getFilteredTasks(tasks, selectedTab);
+
+	const handleTabClick = (tab: TaskFilterTab) => {
+		selectedTabSignal.value = tab;
+	};
+
 	if (tasks.length === 0) {
 		return (
 			<div class="bg-dark-850 border border-dark-700 rounded-lg p-8 text-center">
@@ -34,154 +88,340 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView, onRetry }: Ro
 		);
 	}
 
-	// Group by status
-	const inProgress = tasks.filter((t) => t.status === 'in_progress');
-	const review = tasks.filter((t) => t.status === 'review');
-	const pending = tasks.filter((t) => t.status === 'pending');
-	const draft = tasks.filter((t) => t.status === 'draft');
-	const completed = tasks.filter((t) => t.status === 'completed');
+	return (
+		<div class="space-y-4">
+			{/* Tab Bar */}
+			<div class="flex border-b border-dark-700">
+				<TabButton
+					label="Active"
+					count={tabCounts.active}
+					isActive={selectedTab === 'active'}
+					onClick={() => handleTabClick('active')}
+				/>
+				<TabButton
+					label="Review"
+					count={tabCounts.review}
+					isActive={selectedTab === 'review'}
+					onClick={() => handleTabClick('review')}
+					variant="purple"
+				/>
+				<TabButton
+					label="Done"
+					count={tabCounts.done}
+					isActive={selectedTab === 'done'}
+					onClick={() => handleTabClick('done')}
+					variant="green"
+				/>
+				<TabButton
+					label="Failed"
+					count={tabCounts.failed}
+					isActive={selectedTab === 'failed'}
+					onClick={() => handleTabClick('failed')}
+					variant="red"
+				/>
+			</div>
+
+			{/* Task List */}
+			{filteredTasks.length === 0 ? (
+				<EmptyTabState tab={selectedTab} />
+			) : (
+				<TaskList
+					tasks={filteredTasks}
+					allTasks={tasks}
+					tab={selectedTab}
+					onTaskClick={onTaskClick}
+					onApprove={onApprove}
+					onView={onView}
+				/>
+			)}
+		</div>
+	);
+}
+
+/** Tab button component */
+function TabButton({
+	label,
+	count,
+	isActive,
+	onClick,
+	variant = 'default',
+}: {
+	label: string;
+	count: number;
+	isActive: boolean;
+	onClick: () => void;
+	variant?: 'default' | 'purple' | 'green' | 'red';
+}) {
+	const baseClasses =
+		'px-4 py-2 text-sm font-medium transition-colors relative flex items-center gap-1.5';
+
+	const variantClasses: Record<string, string> = {
+		default: isActive
+			? 'text-blue-400 border-b-2 border-blue-400'
+			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
+		purple: isActive
+			? 'text-purple-400 border-b-2 border-purple-400'
+			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
+		green: isActive
+			? 'text-green-400 border-b-2 border-green-400'
+			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
+		red: isActive
+			? 'text-red-400 border-b-2 border-red-400'
+			: 'text-gray-400 hover:text-gray-300 border-b-2 border-transparent',
+	};
+
+	return (
+		<button class={`${baseClasses} ${variantClasses[variant]}`} onClick={onClick}>
+			{label}
+			{count > 0 && (
+				<span
+					class={`text-xs px-1.5 py-0.5 rounded ${
+						variant === 'purple'
+							? 'bg-purple-900/30'
+							: variant === 'green'
+								? 'bg-green-900/30'
+								: variant === 'red'
+									? 'bg-red-900/30'
+									: 'bg-dark-700'
+					}`}
+				>
+					{count}
+				</span>
+			)}
+		</button>
+	);
+}
+
+/** Empty state for each tab */
+function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
+	const messages: Record<TaskFilterTab, { title: string; description: string }> = {
+		active: {
+			title: 'No active tasks',
+			description: 'Active tasks will appear here',
+		},
+		review: {
+			title: 'No tasks to review',
+			description: 'Tasks needing review will appear here',
+		},
+		done: {
+			title: 'No completed tasks',
+			description: 'Completed tasks will appear here',
+		},
+		failed: {
+			title: 'No failed tasks',
+			description: 'Failed and cancelled tasks will appear here',
+		},
+	};
+
+	const { title, description } = messages[tab];
+
+	return (
+		<div class="bg-dark-850 border border-dark-700 rounded-lg p-6 text-center">
+			<p class="text-gray-400">{title}</p>
+			<p class="text-sm text-gray-500 mt-1">{description}</p>
+		</div>
+	);
+}
+
+/** Task list renderer - groups tasks by status within the filtered view */
+function TaskList({
+	tasks,
+	allTasks,
+	tab,
+	onTaskClick,
+	onApprove,
+	onView,
+}: {
+	tasks: TaskSummary[];
+	allTasks: TaskSummary[];
+	tab: TaskFilterTab;
+	onTaskClick?: (taskId: string) => void;
+	onApprove?: (taskId: string) => void;
+	onView?: (taskId: string) => void;
+}) {
+	// For Active tab, group by in_progress and pending
+	// For Review tab - all are review status
+	// For Done tab - all are completed
+	// For Failed tab - group by failed and cancelled
+
+	if (tab === 'active') {
+		const inProgress = tasks.filter((t) => t.status === 'in_progress');
+		const pending = tasks.filter((t) => t.status === 'pending');
+
+		return (
+			<div class="space-y-4">
+				{inProgress.length > 0 && (
+					<TaskGroup
+						title="In Progress"
+						count={inProgress.length}
+						variant="yellow"
+						tasks={inProgress}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+					/>
+				)}
+				{pending.length > 0 && (
+					<TaskGroup
+						title="Pending"
+						count={pending.length}
+						variant="default"
+						tasks={pending}
+						allTasks={allTasks}
+						onTaskClick={onTaskClick}
+					/>
+				)}
+			</div>
+		);
+	}
+
+	if (tab === 'review') {
+		return (
+			<div class="space-y-4">
+				<TaskGroup
+					title="Awaiting Review"
+					count={tasks.length}
+					variant="purple"
+					tasks={tasks}
+					allTasks={allTasks}
+					onTaskClick={onTaskClick}
+					onApprove={onApprove}
+					onView={onView}
+				/>
+			</div>
+		);
+	}
+
+	if (tab === 'done') {
+		return (
+			<div class="space-y-4">
+				<TaskGroup
+					title="Completed"
+					count={tasks.length}
+					variant="green"
+					tasks={tasks}
+					allTasks={allTasks}
+					onTaskClick={onTaskClick}
+				/>
+			</div>
+		);
+	}
+
+	// Failed tab
 	const failed = tasks.filter((t) => t.status === 'failed');
 	const cancelled = tasks.filter((t) => t.status === 'cancelled');
 
 	return (
 		<div class="space-y-4">
-			{/* Failed — shown first so failures are immediately visible */}
 			{failed.length > 0 && (
-				<div class="bg-dark-850 border border-red-800/60 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-red-800/60 bg-red-900/20 flex items-center gap-2">
-						<svg
-							class="w-4 h-4 text-red-400 flex-shrink-0"
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
-						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width={2}
-								d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-							/>
-						</svg>
-						<h3 class="font-semibold text-red-400">
-							{t('tasks.status.failed')} ({failed.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{failed.map((task) => (
-							<TaskItem
-								key={task.id}
-								task={task}
-								allTasks={tasks}
-								onClick={onTaskClick}
-								onRetry={onRetry}
-							/>
-						))}
-					</div>
-				</div>
+				<TaskGroup
+					title="Failed"
+					count={failed.length}
+					variant="red"
+					tasks={failed}
+					allTasks={allTasks}
+					onTaskClick={onTaskClick}
+					showAlert
+				/>
 			)}
-
-			{/* In Progress */}
-			{inProgress.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-yellow-900/20">
-						<h3 class="font-semibold text-yellow-400">
-							{t('tasks.status.inProgress')} ({inProgress.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{inProgress.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* Review */}
-			{review.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-purple-900/20">
-						<h3 class="font-semibold text-purple-400">
-							{t('tasks.status.review')} ({review.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{review.map((task) => (
-							<TaskItem
-								key={task.id}
-								task={task}
-								allTasks={tasks}
-								onClick={onTaskClick}
-								onApprove={onApprove}
-								onView={onView}
-							/>
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* Pending */}
-			{pending.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700">
-						<h3 class="font-semibold text-gray-100">
-							{t('tasks.status.pending')} ({pending.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{pending.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* Draft */}
-			{draft.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
-						<h3 class="font-semibold text-gray-400">
-							{t('tasks.status.draft')} ({draft.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{draft.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* Completed */}
-			{completed.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-green-900/20">
-						<h3 class="font-semibold text-green-400">
-							{t('tasks.status.completed')} ({completed.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{completed.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
-						))}
-					</div>
-				</div>
-			)}
-
-			{/* Cancelled */}
 			{cancelled.length > 0 && (
-				<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
-					<div class="px-4 py-3 border-b border-dark-700 bg-dark-800">
-						<h3 class="font-semibold text-gray-500">
-							{t('tasks.status.cancelled')} ({cancelled.length})
-						</h3>
-					</div>
-					<div class="divide-y divide-dark-700">
-						{cancelled.map((task) => (
-							<TaskItem key={task.id} task={task} allTasks={tasks} onClick={onTaskClick} />
-						))}
-					</div>
-				</div>
+				<TaskGroup
+					title="Cancelled"
+					count={cancelled.length}
+					variant="gray"
+					tasks={cancelled}
+					allTasks={allTasks}
+					onTaskClick={onTaskClick}
+				/>
 			)}
+		</div>
+	);
+}
+
+/** Task group component */
+function TaskGroup({
+	title,
+	count,
+	variant,
+	tasks,
+	allTasks,
+	onTaskClick,
+	onApprove,
+	onView,
+	showAlert = false,
+}: {
+	title: string;
+	count: number;
+	variant: 'default' | 'yellow' | 'purple' | 'green' | 'red' | 'gray';
+	tasks: TaskSummary[];
+	allTasks: TaskSummary[];
+	onTaskClick?: (taskId: string) => void;
+	onApprove?: (taskId: string) => void;
+	onView?: (taskId: string) => void;
+	showAlert?: boolean;
+}) {
+	const headerStyles: Record<string, string> = {
+		default: '',
+		yellow: 'bg-yellow-900/20',
+		purple: 'bg-purple-900/20',
+		green: 'bg-green-900/20',
+		red: 'bg-red-900/20',
+		gray: 'bg-dark-800',
+	};
+
+	const titleStyles: Record<string, string> = {
+		default: 'text-gray-100',
+		yellow: 'text-yellow-400',
+		purple: 'text-purple-400',
+		green: 'text-green-400',
+		red: 'text-red-400',
+		gray: 'text-gray-500',
+	};
+
+	const borderStyles: Record<string, string> = {
+		default: 'border-dark-700',
+		yellow: 'border-dark-700',
+		purple: 'border-dark-700',
+		green: 'border-dark-700',
+		red: 'border-red-800/60',
+		gray: 'border-dark-700',
+	};
+
+	return (
+		<div class={`bg-dark-850 border rounded-lg overflow-hidden ${borderStyles[variant]}`}>
+			<div
+				class={`px-4 py-3 border-b ${borderStyles[variant]} ${headerStyles[variant]} flex items-center gap-1`}
+			>
+				{showAlert && (
+					<svg
+						class="w-4 h-4 text-red-400 flex-shrink-0"
+						fill="none"
+						viewBox="0 0 24 24"
+						stroke="currentColor"
+					>
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={1.5}
+							d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+						/>
+					</svg>
+				)}
+				<h3 class={`font-semibold ${titleStyles[variant]}`}>
+					{title} ({count})
+				</h3>
+			</div>
+			<div class="divide-y divide-dark-700">
+				{tasks.map((task) => (
+					<TaskItem
+						key={task.id}
+						task={task}
+						allTasks={allTasks}
+						onClick={onTaskClick}
+						onApprove={onApprove}
+						onView={onView}
+					/>
+				))}
+			</div>
 		</div>
 	);
 }

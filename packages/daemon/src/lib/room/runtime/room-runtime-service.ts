@@ -66,6 +66,32 @@ export class RoomRuntimeService {
 		return this.runtimes.get(roomId) ?? null;
 	}
 
+	/**
+	 * Get the resolved leader model for a room.
+	 * Returns agentModels.leader > room.defaultModel > global default.
+	 */
+	getLeaderModel(roomId: string): string | null {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return null;
+
+		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
+		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
+		return agentModels?.leader ?? room.defaultModel ?? this.ctx.defaultModel;
+	}
+
+	/**
+	 * Get the resolved worker model for a room.
+	 * Returns agentModels.worker > room.defaultModel > global default.
+	 */
+	getWorkerModel(roomId: string): string | null {
+		const room = this.ctx.roomManager.getRoom(roomId);
+		if (!room) return null;
+
+		const roomConfig = (room.config ?? {}) as Record<string, unknown>;
+		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
+		return agentModels?.worker ?? room.defaultModel ?? this.ctx.defaultModel;
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
@@ -143,19 +169,16 @@ export class RoomRuntimeService {
 				agentSessions.set(init.sessionId, session);
 				await session.startStreamingQuery();
 			},
-			injectMessage: async (sessionId, message) => {
+			injectMessage: async (sessionId, message, opts) => {
 				const session = agentSessions.get(sessionId);
 				if (!session) {
 					throw new Error(`Session not in service cache: ${sessionId}`);
 				}
-				// Ensure the SDK query is running before enqueuing. After daemon
-				// restart, restored sessions are in cache but haven't started
-				// their query yet (lazy start to avoid startup timeout).
-				await session.ensureQueryStarted();
-				// Pre-persist to DB with 'queued' status before enqueuing,
-				// exactly like the normal UI send flow. This ensures
-				// acknowledgePersistedUserMessage() finds the message by UUID
-				// and treats it as a normal user message (not synthetic).
+
+				const deliveryMode = opts?.deliveryMode ?? 'current_turn';
+				const state = session.getProcessingState();
+				const isBusy = state.status === 'processing' || state.status === 'queued';
+
 				const messageId = generateUUID();
 				const sdkUserMessage: SDKUserMessage = {
 					type: 'user' as const,
@@ -167,11 +190,28 @@ export class RoomRuntimeService {
 						content: [{ type: 'text' as const, text: message }],
 					},
 				};
+
+				// Queue-mode semantics:
+				// - next_turn + busy => persist as 'saved' (replayed after current turn)
+				// - otherwise => enqueue now ('queued') so worker can start ASAP when idle
+				if (deliveryMode === 'next_turn' && isBusy) {
+					ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'saved');
+					return;
+				}
+
+				// Ensure the SDK query is running before enqueuing. After daemon
+				// restart, restored sessions are in cache but haven't started
+				// their query yet (lazy start to avoid startup timeout).
+				await session.ensureQueryStarted();
 				ctx.db.saveUserMessage(sessionId, sdkUserMessage, 'queued');
 				await session.messageQueue.enqueueWithId(messageId, message);
 			},
 			hasSession: (sessionId) => {
 				return agentSessions.has(sessionId);
+			},
+			getProcessingState: (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				return session?.getProcessingState().status;
 			},
 			answerQuestion: async (sessionId, answer) => {
 				const session = agentSessions.get(sessionId);
@@ -229,6 +269,24 @@ export class RoomRuntimeService {
 					return null;
 				}
 			},
+			stopSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return;
+
+				try {
+					await session.handleInterrupt();
+				} catch (error) {
+					log.warn(`Failed to interrupt session ${sessionId}:`, error);
+				}
+
+				try {
+					await session.cleanup();
+				} catch (error) {
+					log.warn(`Failed to cleanup session ${sessionId}:`, error);
+				} finally {
+					agentSessions.delete(sessionId);
+				}
+			},
 		};
 	}
 
@@ -260,8 +318,16 @@ export class RoomRuntimeService {
 				: undefined;
 
 		// Resolve leader model: agentModels.leader > room.defaultModel > global default
+		// Filter out empty strings as they're not valid model identifiers
 		const agentModels = roomConfig.agentModels as Record<string, string> | undefined;
-		const leaderModel = agentModels?.leader ?? room.defaultModel ?? this.ctx.defaultModel;
+		const leaderModel =
+			(agentModels?.leader && agentModels.leader.trim() !== '' ? agentModels.leader : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.ctx.defaultModel;
+		const workerModel =
+			(agentModels?.worker && agentModels.worker.trim() !== '' ? agentModels.worker : undefined) ??
+			(room.defaultModel && room.defaultModel.trim() !== '' ? room.defaultModel : undefined) ??
+			this.ctx.defaultModel;
 
 		const runtime = new RoomRuntime({
 			room,
@@ -272,12 +338,17 @@ export class RoomRuntimeService {
 			sessionFactory,
 			workspacePath,
 			model: leaderModel,
+			workerModel,
+			defaultModel: this.ctx.defaultModel,
 			maxFeedbackIterations: maxReviewRounds,
 			maxConcurrentGroups,
 			getWorkerMessages: (sessionId, afterMessageId) =>
 				sdkMessageRepo.getAssistantMessagesSince(sessionId, afterMessageId),
 			daemonHub: this.ctx.daemonHub,
 			messageHub: this.ctx.messageHub,
+			getRoom: (roomId) => this.ctx.roomManager.getRoom(roomId),
+			getTask: (taskId) => taskManager.getTask(taskId),
+			getGoal: (goalId) => goalManager.getGoal(goalId),
 		});
 
 		this.runtimes.set(room.id, runtime);
@@ -424,23 +495,15 @@ export class RoomRuntimeService {
 						await runtime.restoreMcpServersForGroup(group);
 
 						// Inject continuation message to resume work
-						if (group.state === 'awaiting_worker') {
+						// Groups awaiting human review don't need a message — human will provide one
+						if (!group.submittedForReview) {
 							await sessionFactory.injectMessage(
 								group.workerSessionId,
 								'The system was restarted. Continue working on the task.'
 							);
-						} else if (group.state === 'awaiting_leader') {
-							await sessionFactory.injectMessage(
-								group.leaderSessionId,
-								'The system was restarted. Continue reviewing from where you left off.'
-							);
 						}
-						// awaiting_human: no message needed — human will provide one
 					} catch (error) {
-						log.error(
-							`Failed to restore/inject continuation for group ${group.id} (${group.state}):`,
-							error
-						);
+						log.error(`Failed to restore/inject continuation for group ${group.id}:`, error);
 					}
 				}
 			}
