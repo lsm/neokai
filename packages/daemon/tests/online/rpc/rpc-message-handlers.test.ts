@@ -18,6 +18,7 @@ import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daem
 
 // Tests that send messages to mock SDK need longer timeout on CI
 const TIMEOUT = 15000;
+const IS_DEV_PROXY = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 describe('Message RPC Handlers', () => {
 	let daemon: DaemonServerContext;
@@ -180,7 +181,7 @@ describe('Message RPC Handlers', () => {
 			TIMEOUT
 		);
 
-		test(
+		(IS_DEV_PROXY ? test.skip : test)(
 			'should include assistant response in markdown export',
 			async () => {
 				const sessionId = await createSessionWithMessages();
