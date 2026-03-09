@@ -330,6 +330,946 @@
 					}
 				}
 			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Reply with exactly: room ok"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json (room)"
+					}
+				],
+				"body": {
+					"id": "msg_room_ok",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "room ok"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 10,
+						"output_tokens": 5,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 5 + 7? Just reply with the number."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_math_57",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "12"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 20,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Now add 3 to that result. Just reply with the number."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_math_add3",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "15"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 25,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "First message: Say \"One\"."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_one",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "One"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Second message: Say \"Two\"."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_two",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Two"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Third message: Say \"Three\"."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_three",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Three"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Say \"Done\". Just that word."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_done",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Done"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 2+2? Reply with just the number."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_22a",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "4"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 20,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 3+3? Reply with just the number."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_33a",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "6"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 20,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 1+1?"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_11",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "2"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 2+2?"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_22b",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "4"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 3+3?"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_33b",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "6"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 4+4?"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_44",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "8"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 15,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "What is 5+5? Just the number."
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_basic_55",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "10"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 18,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Count to 1"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_count_1",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "1"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 10,
+						"output_tokens": 2,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Count to 2"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_count_2",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "1, 2"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 10,
+						"output_tokens": 4,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Hello"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_hello",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "Hello! How can I help you?"
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 5,
+						"output_tokens": 10,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "First message"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_first",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "I received your first message."
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 10,
+						"output_tokens": 10,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Second message"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_second",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "I received your second message."
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 10,
+						"output_tokens": 10,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
+		},
+		{
+			"request": {
+				"url": "https://api.anthropic.com/v1/messages",
+				"method": "POST",
+				"bodyFragment": {
+					"messages": [
+						{
+							"content": "Third message"
+						}
+					]
+				}
+			},
+			"response": {
+				"statusCode": 200,
+				"headers": [
+					{
+						"name": "content-type",
+						"value": "application/json"
+					},
+					{
+						"name": "x-mocked-by",
+						"value": "Dev Proxy MockResponsePlugin - mocks-basic.json"
+					}
+				],
+				"body": {
+					"id": "msg_third",
+					"type": "message",
+					"role": "assistant",
+					"content": [
+						{
+							"type": "text",
+							"text": "I received your third message."
+						}
+					],
+					"model": "claude-sonnet-4-20250514",
+					"stop_reason": "end_turn",
+					"stop_sequence": null,
+					"usage": {
+						"input_tokens": 10,
+						"output_tokens": 10,
+						"cache_creation_input_tokens": 0,
+						"cache_read_input_tokens": 0,
+						"service_tier": "standard"
+					}
+				}
+			}
 		}
 	]
 }
