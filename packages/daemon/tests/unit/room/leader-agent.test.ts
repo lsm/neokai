@@ -401,6 +401,61 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers!['room-agent-tools']).toBeDefined();
 		});
 
+		it('should NOT include room-agent-tools when dependencies are missing', () => {
+			const callbacks = makeCallbacks();
+			// Create config without goalManager, taskManager, groupRepo
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'leader:room-1:task-1',
+					workspacePath: '/workspace',
+					groupId: 'group-1',
+				},
+				callbacks
+			);
+			expect(init.mcpServers).toBeDefined();
+			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+		});
+
+		it('should NOT include room-agent-tools when only partial dependencies provided', () => {
+			const callbacks = makeCallbacks();
+			// Provide only goalManager, but not taskManager and groupRepo
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'leader:room-1:task-1',
+					workspacePath: '/workspace',
+					groupId: 'group-1',
+					goalManager: mockGoalManager,
+				},
+				callbacks
+			);
+			expect(init.mcpServers).toBeDefined();
+			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+		});
+
+		it('should still include leader-agent-tools regardless of room-agent-tools availability', () => {
+			const callbacks = makeCallbacks();
+			// Config without room-agent-tools dependencies
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'leader:room-1:task-1',
+					workspacePath: '/workspace',
+					groupId: 'group-1',
+				},
+				callbacks
+			);
+			// leader-agent-tools should always be present
+			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
+		});
+
 		it('should use provided session ID and workspace path', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(
