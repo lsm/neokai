@@ -78,6 +78,15 @@ describe('Context Command Online Tests', () => {
 				console.log('Skipping - no Anthropic API credentials');
 				return;
 			}
+
+			// With Dev Proxy, the /context command response isn't mocked
+			// so we can't verify the full context parsing
+			if (IS_MOCK) {
+				console.log(
+					'Skipping context validation with Dev Proxy - mock does not include /context response'
+				);
+			}
+
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
@@ -89,6 +98,11 @@ describe('Context Command Online Tests', () => {
 
 			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+
+			// Skip full context validation with Dev Proxy - mock doesn't include /context response
+			if (IS_MOCK) {
+				return;
+			}
 
 			const session = await getSession(daemon, sessionId);
 			const metadata = session.metadata as {
