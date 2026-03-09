@@ -17,10 +17,6 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-
-// Detect mock mode for Dev Proxy
-const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
-const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
 import { createDaemonServer, type DaemonServerContext } from '../../helpers/daemon-server';
 import {
 	createWebSocket,
@@ -29,6 +25,11 @@ import {
 	waitForWebSocketMessage,
 	sendRPCCall,
 } from '../../helpers/websocket-helpers';
+
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 15000 : 30000;
 
 describe('WebSocket Protocol', () => {
 	let daemon: DaemonServerContext;
@@ -109,7 +110,7 @@ describe('WebSocket Protocol', () => {
 			ws1.close();
 			ws2.close();
 			ws3.close();
-		}, 15000);
+		}, TEST_TIMEOUT);
 
 		test('should handle client disconnection without affecting other clients', async () => {
 			const ws1 = createWebSocket(daemon.baseUrl);
@@ -237,26 +238,30 @@ describe('WebSocket Protocol', () => {
 			ws.close();
 		});
 
-		test('should handle many concurrent calls', async () => {
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise;
+		test(
+			'should handle many concurrent calls',
+			async () => {
+				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+				await waitForWebSocketState(ws, WebSocket.OPEN);
+				await firstMessagePromise;
 
-			const count = 50;
-			for (let i = 0; i < count; i++) {
-				sendRPCCall(ws, 'session.list');
-			}
+				const count = 50;
+				for (let i = 0; i < count; i++) {
+					sendRPCCall(ws, 'session.list');
+				}
 
-			const responses = [];
-			for (let i = 0; i < count; i++) {
-				responses.push(await waitForWebSocketMessage(ws, 30000));
-			}
+				const responses = [];
+				for (let i = 0; i < count; i++) {
+					responses.push(await waitForWebSocketMessage(ws, TEST_TIMEOUT));
+				}
 
-			const successCount = responses.filter((r) => r.type === 'RSP').length;
-			expect(successCount).toBe(count);
+				const successCount = responses.filter((r) => r.type === 'RSP').length;
+				expect(successCount).toBe(count);
 
-			ws.close();
-		});
+				ws.close();
+			},
+			TEST_TIMEOUT
+		);
 	});
 
 	describe('Error Handling', () => {
