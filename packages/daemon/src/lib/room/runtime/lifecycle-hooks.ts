@@ -436,6 +436,86 @@ export async function checkPrHasReviews(
 }
 
 /**
+ * Check that the PR is mergeable before submitting for human review.
+ * Validates: no conflicts, mergeable state, CI passing.
+ */
+export async function checkPrIsMergeable(
+	ctx: LeaderCompleteHookContext,
+	opts?: HookOptions
+): Promise<HookResult> {
+	const run = getRunner(opts);
+
+	// Get current branch
+	const { stdout: branch, exitCode: branchExit } = await run(
+		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+		ctx.workspacePath
+	);
+	if (branchExit !== 0) {
+		log.debug(`checkPrIsMergeable: git command failed, skipping check`);
+		return { pass: true }; // Can't check, allow to proceed
+	}
+
+	// Get PR details with mergeable status and CI status
+	const { stdout: prJson, exitCode: ghExit } = await run(
+		['gh', 'pr', 'view', branch, '--json', 'mergeable,mergeableState,statusCheckRollup'],
+		ctx.workspacePath
+	);
+	if (ghExit !== 0) {
+		log.debug(`checkPrIsMergeable: gh command failed, skipping check`);
+		return { pass: true }; // Can't check, allow to proceed
+	}
+
+	try {
+		const pr = JSON.parse(prJson);
+
+		// Check if PR has conflicts (mergeable === false means conflicts)
+		if (pr.mergeable === false) {
+			return {
+				pass: false,
+				reason: 'PR has merge conflicts. Please resolve conflicts before submitting for review.',
+				bounceMessage:
+					'Fix merge conflicts: `git fetch && git rebase origin/main` (or base branch), ' +
+					'resolve conflicts, force push, then try again.',
+			};
+		}
+
+		// Check mergeableState for CONFLICTING status
+		if (pr.mergeableState === 'CONFLICTING') {
+			return {
+				pass: false,
+				reason: 'PR has merge conflicts. Please resolve conflicts before submitting for review.',
+				bounceMessage:
+					'Fix merge conflicts: `git fetch && git rebase origin/main` (or base branch), ' +
+					'resolve conflicts, force push, then try again.',
+			};
+		}
+
+		// Check CI status (if available)
+		if (pr.statusCheckRollup && Array.isArray(pr.statusCheckRollup)) {
+			// Check for failed checks
+			const failedChecks = pr.statusCheckRollup.filter(
+				(check: { conclusion?: string }) =>
+					check.conclusion === 'FAILURE' || check.conclusion === 'TIMED_OUT'
+			);
+			if (failedChecks.length > 0) {
+				const checkNames = failedChecks.map((c: { name: string }) => c.name).join(', ');
+				return {
+					pass: false,
+					reason: `CI checks failing: ${checkNames}. Please fix failing checks before submitting for review.`,
+					bounceMessage: 'View CI status: `gh pr checks`. Fix failures, push, then try again.',
+				};
+			}
+		}
+
+		return { pass: true };
+	} catch (error) {
+		log.debug(`checkPrIsMergeable: failed to parse PR data, skipping check: ${error}`);
+		// Failed to parse PR data, allow to proceed (fail open)
+		return { pass: true };
+	}
+}
+
+/**
  * Check that draft tasks exist before leader can complete a planning task.
  */
 export async function checkLeaderDraftsExist(
@@ -507,6 +587,10 @@ export async function runLeaderSubmitGate(
 	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
 		if (!prResult.pass) return prResult;
+
+		// Check PR is mergeable before submitting for human review
+		const mergeableResult = await checkPrIsMergeable(ctx, opts);
+		if (!mergeableResult.pass) return mergeableResult;
 
 		// If reviewers are configured, reviews must be posted before submitting
 		if (ctx.hasReviewers) {
