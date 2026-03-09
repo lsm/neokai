@@ -256,7 +256,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					const runtime = runtimeService.getRuntime(roomId);
 					if (runtime) {
 						const group = groupRepo.getGroupByTaskId(args.task_id);
-						if (group && group.state !== 'completed' && group.state !== 'failed') {
+						if (group && group.completedAt === null) {
 							// There's an active group - cancel it first if moving to terminal state
 							if (
 								args.status === 'completed' ||
@@ -403,11 +403,11 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				group: group
 					? {
 							id: group.id,
-							state: group.state,
+							completedAt: group.completedAt,
 							workerSessionId: group.workerSessionId,
 							leaderSessionId: group.leaderSessionId,
 							feedbackIteration: group.feedbackIteration,
-							awaitingHumanReview: group.state === 'awaiting_human',
+							awaitingHumanReview: group.submittedForReview,
 						}
 					: null,
 			});
@@ -419,12 +419,10 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			const activeGroups = groupRepo.getActiveGroups(roomId);
 
 			// Collect task IDs that need human review:
-			// either the task is in 'review' status OR the group is in 'awaiting_human' state
+			// either the task is in 'review' status OR the group has submittedForReview flag
 			const needsReviewIds = new Set<string>();
 			tasks.filter((t) => t.status === 'review').forEach((t) => needsReviewIds.add(t.id));
-			activeGroups
-				.filter((g) => g.state === 'awaiting_human')
-				.forEach((g) => needsReviewIds.add(g.taskId));
+			activeGroups.filter((g) => g.submittedForReview).forEach((g) => needsReviewIds.add(g.taskId));
 
 			const tasksNeedingReview = [...needsReviewIds].map((taskId) => {
 				const task = tasks.find((t) => t.id === taskId);
@@ -453,7 +451,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					groups: activeGroups.map((g) => ({
 						id: g.id,
 						taskId: g.taskId,
-						state: g.state,
+						submittedForReview: g.submittedForReview,
 						iteration: g.feedbackIteration,
 					})),
 					tasksNeedingReview,

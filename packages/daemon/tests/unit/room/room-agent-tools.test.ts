@@ -888,7 +888,7 @@ describe('Room Agent Tools', () => {
 
 			const group = result.group as {
 				id: string;
-				state: string;
+				completedAt: number | null;
 				workerSessionId: string;
 				leaderSessionId: string;
 				feedbackIteration: number;
@@ -896,21 +896,21 @@ describe('Room Agent Tools', () => {
 			};
 			expect(group).not.toBeNull();
 			expect(group.id).toBe(`group-${taskId}`);
-			expect(group.state).toBe('awaiting_human');
+			expect(group.completedAt).toBeNull();
 			expect(group.workerSessionId).toBe('worker-session-1');
 			expect(group.leaderSessionId).toBe('leader-session-1');
 			expect(group.feedbackIteration).toBe(0);
 			expect(group.awaitingHumanReview).toBe(true);
 		});
 
-		it('should report awaitingHumanReview as false for non-awaiting_human states', async () => {
+		it('should report awaitingHumanReview as false for non-awaiting_human groups', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
-			insertGroup(taskId, 'awaiting_leader');
+			insertGroup(taskId, false /* submittedForReview */);
 
 			const result = parseResult(await handlers.get_task_detail({ task_id: taskId }));
-			const group = result.group as { state: string; awaitingHumanReview: boolean };
-			expect(group.state).toBe('awaiting_leader');
+			const group = result.group as { completedAt: number | null; awaitingHumanReview: boolean };
+			expect(group.completedAt).toBeNull();
 			expect(group.awaitingHumanReview).toBe(false);
 		});
 	});
