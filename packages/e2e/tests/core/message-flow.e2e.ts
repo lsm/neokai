@@ -18,6 +18,8 @@ import {
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
 test.describe('Message Send and Receive', () => {
 	test.beforeEach(async ({ page }) => {
 		await setupMessageHubTesting(page);
@@ -60,9 +62,16 @@ test.describe('Message Send and Receive', () => {
 		});
 
 		// Wait for assistant response (with generous timeout for API call)
-		await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({
-			timeout: 60000,
-		});
+		// In mock mode, accept any assistant message; otherwise expect TEST_OK
+		if (IS_MOCK) {
+			await expect(page.locator('[data-message-role="assistant"]').first()).toBeVisible({
+				timeout: 60000,
+			});
+		} else {
+			await expect(page.locator('text=/TEST_OK|test_ok/i')).toBeVisible({
+				timeout: 60000,
+			});
+		}
 
 		// Wait for processing to complete (send button should return)
 		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({

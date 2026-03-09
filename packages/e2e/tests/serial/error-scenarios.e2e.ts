@@ -132,8 +132,8 @@ test.describe('Error Scenarios', () => {
 		// Restore network connection
 		await restoreWebSocket(page);
 
-		// Wait for online indicator to return
-		await expect(page.locator('.text-green-400:has-text("Online")').first()).toBeVisible({
+		// Wait for connection to be restored - look for Daemon: Connected button
+		await expect(page.locator('button[aria-label="Daemon: Connected"]').first()).toBeVisible({
 			timeout: 10000,
 		});
 

@@ -423,11 +423,9 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Debug logging
+	 * Debug logging - disabled, only errors are logged
 	 */
-	private log(message: string, ...args: unknown[]): void {
-		if (this.debug) {
-			this.logger.log(`[MessageHubRouter] ${message}`, ...args);
-		}
+	private log(_message: string, ..._args: unknown[]): void {
+		// Debug logging disabled - only errors are logged
 	}
 }
