@@ -297,7 +297,7 @@ describe('checkPrIsMergeable', () => {
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: [],
 				}),
@@ -308,12 +308,12 @@ describe('checkPrIsMergeable', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('fails when PR has mergeable === false', async () => {
+	test('fails when PR has mergeable === CONFLICTING (string)', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: false,
+					mergeable: 'CONFLICTING',
 					mergeStateStatus: 'CONFLICTING',
 					statusCheckRollup: [],
 				}),
@@ -365,7 +365,7 @@ describe('checkPrIsMergeable', () => {
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: [
 						{ name: 'build', conclusion: 'FAILURE' },
@@ -386,7 +386,7 @@ describe('checkPrIsMergeable', () => {
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: [{ name: 'lint', conclusion: 'TIMED_OUT' }],
 				}),
@@ -436,7 +436,7 @@ describe('checkPrIsMergeable', () => {
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: null,
 				}),
@@ -1026,7 +1026,7 @@ describe('runLeaderSubmitGate', () => {
 			},
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: [],
 				}),
@@ -1049,7 +1049,7 @@ describe('runLeaderSubmitGate', () => {
 			},
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: false,
+					mergeable: 'CONFLICTING',
 					mergeStateStatus: 'CONFLICTING',
 					statusCheckRollup: [],
 				}),
@@ -1073,7 +1073,7 @@ describe('runLeaderSubmitGate', () => {
 			},
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: [{ name: 'build', conclusion: 'FAILURE' }],
 				}),
@@ -1098,7 +1098,7 @@ describe('runLeaderSubmitGate', () => {
 			},
 			'gh pr view feat/add-alerts --json mergeable,mergeStateStatus,statusCheckRollup': {
 				stdout: JSON.stringify({
-					mergeable: true,
+					mergeable: 'MERGEABLE',
 					mergeStateStatus: 'CLEAN',
 					statusCheckRollup: [],
 				}),

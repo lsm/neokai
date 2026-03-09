@@ -468,18 +468,8 @@ export async function checkPrIsMergeable(
 	try {
 		const pr = JSON.parse(prJson);
 
-		// Check if PR has conflicts (mergeable === false means conflicts)
-		if (pr.mergeable === false) {
-			return {
-				pass: false,
-				reason: 'PR has merge conflicts. Please resolve conflicts before submitting for review.',
-				bounceMessage:
-					'Fix merge conflicts: `git fetch && git rebase origin/main` (or base branch), ' +
-					'resolve conflicts, force push, then try again.',
-			};
-		}
-
 		// Check mergeStateStatus for DIRTY or CONFLICTING (both indicate conflicts)
+		// Note: mergeable field is deprecated and returns a string enum, but mergeStateStatus is more reliable
 		if (pr.mergeStateStatus === 'DIRTY' || pr.mergeStateStatus === 'CONFLICTING') {
 			return {
 				pass: false,
