@@ -80,8 +80,8 @@ interface TaskGroupInfo {
 	workerSessionId: string;
 	leaderSessionId: string;
 	workerRole: string;
-	state: string;
 	feedbackIteration: number;
+	submittedForReview: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -90,17 +90,6 @@ interface TaskViewProps {
 	roomId: string;
 	taskId: string;
 }
-
-const GROUP_STATE_LABELS: Record<string, string> = {
-	awaiting_worker: 'Worker active…',
-	awaiting_leader: 'Leader reviewing…',
-	awaiting_human: 'Needs human review',
-	completed: 'Completed',
-	failed: 'Failed',
-	// Backward compat
-	awaiting_craft: 'Worker active…',
-	awaiting_lead: 'Leader reviewing…',
-};
 
 const TASK_STATUS_COLORS: Record<string, string> = {
 	pending: 'text-gray-400',
@@ -244,7 +233,6 @@ function HeaderReviewBar({ roomId, taskId, onApproved, onRejected }: HeaderRevie
 type HumanMessageTarget = 'worker' | 'leader';
 
 interface HumanInputAreaProps {
-	groupState: string | null;
 	hasGroup: boolean;
 	roomId: string;
 	taskId: string;
@@ -257,12 +245,7 @@ const TARGET_LABELS: Record<HumanMessageTarget, string> = {
 	leader: 'Leader',
 };
 
-function defaultTargetForState(state: string | null): HumanMessageTarget {
-	return state === 'awaiting_leader' ? 'leader' : 'worker';
-}
-
 function HumanInputArea({
-	groupState,
 	hasGroup,
 	roomId,
 	taskId,
@@ -272,13 +255,9 @@ function HumanInputArea({
 	const [messageText, setMessageText] = useState('');
 	const [sending, setSending] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
-	const [target, setTarget] = useState<HumanMessageTarget>(() => defaultTargetForState(groupState));
+	const [target, setTarget] = useState<HumanMessageTarget>('worker');
 	const [menuOpen, setMenuOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		setTarget(defaultTargetForState(groupState));
-	}, [groupState]);
 
 	useEffect(() => {
 		if (!menuOpen) return;
@@ -306,10 +285,7 @@ function HumanInputArea({
 				target,
 			});
 			setMessageText('');
-			// Rejection feedback changes group state; re-fetch conversation to pick up the human message
-			if (groupState === 'awaiting_human' && target === 'worker') {
-				onMessageSentWithReload();
-			}
+			onMessageSentWithReload();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
 		} finally {
@@ -617,10 +593,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 					{group && (
 						<div class="flex items-center gap-2 mt-0.5">
 							<p class="text-xs text-gray-500">
-								{GROUP_STATE_LABELS[group.state] ?? group.state}
-								{group.feedbackIteration > 0 && ` · iteration ${group.feedbackIteration}`}
+								{group.feedbackIteration > 0 && `iteration ${group.feedbackIteration}`}
 							</p>
-							{group.state === 'awaiting_human' && (
+							{group.submittedForReview && (
 								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
 									Awaiting your review
 								</span>
@@ -679,7 +654,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 			</div>
 
 			{/* Header Review Bar - shown when awaiting human approval */}
-			{group?.state === 'awaiting_human' && (
+			{group?.submittedForReview && (
 				<HeaderReviewBar
 					roomId={roomId}
 					taskId={taskId}
@@ -837,7 +812,6 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 			{/* Human input area (always visible) */}
 			<HumanInputArea
-				groupState={group?.state ?? null}
 				hasGroup={group !== null}
 				roomId={roomId}
 				taskId={taskId}

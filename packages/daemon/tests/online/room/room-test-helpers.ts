@@ -219,15 +219,24 @@ export async function waitForGroupState(
 	taskId: string,
 	targetStates: string[],
 	timeout = 120_000
-): Promise<{ id: string; state: string; feedbackIteration: number }> {
+): Promise<{ id: string; submittedForReview: boolean; feedbackIteration: number }> {
 	const start = Date.now();
 
 	while (Date.now() - start < timeout) {
 		const result = (await daemon.messageHub.request('task.getGroup', { roomId, taskId })) as {
-			group: { id: string; state: string; feedbackIteration: number } | null;
+			group: { id: string; submittedForReview: boolean; feedbackIteration: number } | null;
 		};
-		if (result.group && targetStates.includes(result.group.state)) {
-			return result.group;
+		// Map old state names to new submittedForReview flag
+		if (result.group) {
+			const isAwaitingHuman = result.group.submittedForReview;
+			const matchesTarget =
+				(targetStates.includes('awaiting_human') && isAwaitingHuman) ||
+				(targetStates.includes('awaiting_worker') && !isAwaitingHuman) ||
+				(targetStates.includes('awaiting_leader') && !isAwaitingHuman);
+
+			if (matchesTarget) {
+				return result.group;
+			}
 		}
 		await new Promise((r) => setTimeout(r, 1000));
 	}

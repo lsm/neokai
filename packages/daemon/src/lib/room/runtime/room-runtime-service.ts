@@ -494,23 +494,15 @@ export class RoomRuntimeService {
 						await runtime.restoreMcpServersForGroup(group);
 
 						// Inject continuation message to resume work
-						if (group.state === 'awaiting_worker') {
+						// Groups awaiting human review don't need a message — human will provide one
+						if (!group.submittedForReview) {
 							await sessionFactory.injectMessage(
 								group.workerSessionId,
 								'The system was restarted. Continue working on the task.'
 							);
-						} else if (group.state === 'awaiting_leader') {
-							await sessionFactory.injectMessage(
-								group.leaderSessionId,
-								'The system was restarted. Continue reviewing from where you left off.'
-							);
 						}
-						// awaiting_human: no message needed — human will provide one
 					} catch (error) {
-						log.error(
-							`Failed to restore/inject continuation for group ${group.id} (${group.state}):`,
-							error
-						);
+						log.error(`Failed to restore/inject continuation for group ${group.id}:`, error);
 					}
 				}
 			}

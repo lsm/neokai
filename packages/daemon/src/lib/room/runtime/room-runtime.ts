@@ -47,7 +47,6 @@ import {
 	formatWorkerToLeaderEnvelope,
 	formatPlanEnvelope,
 	formatLeaderToWorkerFeedback,
-	formatLeaderContractNudge,
 	sortTasksByPriority,
 } from './message-routing';
 import { isRateLimitError, createRateLimitBackoff } from './rate-limit-utils';
@@ -370,7 +369,7 @@ export class RoomRuntime {
 	 */
 	async onWorkerTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_worker') return;
+		if (!group) return;
 
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
@@ -525,48 +524,21 @@ export class RoomRuntime {
 
 	/**
 	 * Called when Leader reaches a terminal state.
-	 * Validates Leader tool contract (retry-then-fail).
+	 * No state checks - leader can finish without calling a tool.
 	 */
 	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group || group.state !== 'awaiting_leader') return;
+		if (!group) return;
 
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {
-			log.info(`Leader reached terminal state while rate limited - pausing nudge`);
+			log.info(`Leader reached terminal state while rate limited - pausing`);
 			this.scheduleTickAfterRateLimitReset(groupId);
 			return;
 		}
 
-		// Check if Leader called a tool (persisted in DB metadata)
-		const calledTool = group.leaderCalledTool;
-
-		if (calledTool) {
-			// Leader called a tool → success, no action needed
-			// (The tool handler already processed the action)
-			return;
-		}
-
-		// Contract violation: Leader reached terminal without calling a tool
-		const violations = group.leaderContractViolations;
-
-		if (violations === 0) {
-			// First violation: nudge
-			const nudge = formatLeaderContractNudge();
-			await this.sessionFactory.injectMessage(group.leaderSessionId, nudge);
-			this.groupRepo.updateLeaderContractViolations(
-				groupId,
-				1,
-				'', // turn ID placeholder - MVP doesn't track turn IDs
-				group.version
-			);
-		} else {
-			// Second+ violation: fail the group
-			await this.taskGroupManager.fail(groupId, 'Leader failed to call required tool after nudge');
-			this.cleanupMirroring(groupId, 'Leader contract violation — task failed.');
-			await this.emitTaskUpdateById(group.taskId);
-			this.scheduleTick();
-		}
+		// Leader can finish without calling a tool - that's fine.
+		// No contract violation logic needed.
 	}
 
 	// =========================================================================
@@ -593,21 +565,11 @@ export class RoomRuntime {
 			return jsonResult({ success: false, error: `Group not found: ${groupId}` });
 		}
 
-		if (group.state !== 'awaiting_leader') {
-			return jsonResult({
-				success: false,
-				error: `Group not in awaiting_leader state (current: ${group.state})`,
-			});
-		}
-
-		// Mark that Leader called a tool (persisted immediately for restart safety)
-		this.groupRepo.setLeaderCalledTool(groupId, true);
+		// No state guard - tools always available
 
 		switch (toolName) {
 			case 'send_to_worker': {
 				// Enforce max feedback iterations — runtime escalates to human review.
-				// Like submit_for_review, this transitions to awaiting_human so we deliberately
-				// do NOT call cleanupMirroring (keeps mirroring running, consistent behaviour).
 				// The reason is persisted in the group timeline by escalateToHumanReview().
 				if (group.feedbackIteration >= this.maxFeedbackIterations) {
 					const reason = `Max feedback iterations (${this.maxFeedbackIterations}) reached`;
@@ -644,42 +606,18 @@ export class RoomRuntime {
 				});
 				return jsonResult({
 					success: true,
-					message:
-						mode === 'queue'
-							? 'Feedback queued for worker. Leader still owns the turn — call handoff_to_worker when ready.'
-							: 'Feedback steered to worker. Leader still owns the turn — call handoff_to_worker when ready.',
+					message: 'Feedback sent to worker.',
 				});
 			}
 
 			case 'handoff_to_worker': {
-				const updated = this.groupRepo.updateGroupState(groupId, 'awaiting_worker', group.version);
-				if (!updated) {
-					return jsonResult({
-						success: false,
-						error: 'Failed to hand off to worker due to concurrent state update.',
-					});
-				}
-
+				// No-op: no state to transition. Kept for backward compatibility.
 				this.appendGroupEvent(groupId, 'status', {
-					text: 'Leader handed off control to Worker.',
+					text: 'Leader signaled handoff to Worker (no-op).',
 				});
-
-				const workerState = this.sessionFactory.getProcessingState?.(updated.workerSessionId);
-				if (workerState === 'idle' || workerState === 'interrupted') {
-					const unforwarded = this.getWorkerMessages
-						? this.getWorkerMessages(updated.workerSessionId, updated.lastForwardedMessageId)
-						: [];
-					if (unforwarded.length > 0) {
-						await this.onWorkerTerminalState(groupId, {
-							sessionId: updated.workerSessionId,
-							kind: 'idle',
-						});
-					}
-				}
-
 				return jsonResult({
 					success: true,
-					message: 'Ownership returned to Worker.',
+					message: 'Handoff acknowledged. Use send_to_worker to send messages.',
 				});
 			}
 
@@ -872,7 +810,8 @@ export class RoomRuntime {
 		opts?: { approved?: boolean }
 	): Promise<boolean> {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		if (!group || group.state !== 'awaiting_human') return false;
+		// Check group exists and is not completed/failed
+		if (!group || group.completedAt !== null) return false;
 
 		// Verify the task belongs to this runtime's room
 		const task = await this.taskManager.getTask(taskId);
@@ -931,10 +870,10 @@ export class RoomRuntime {
 		}
 
 		// 2) Clean up session group resources if a group exists.
-		// State transition (-> failed) is only needed for active groups, but session/
-		// mirroring cleanup is safe and idempotent for any group state.
+		// Terminate is only needed for active groups, but session/
+		// mirroring cleanup is safe and idempotent for any group.
 		const group = this.groupRepo.getGroupByTaskId(taskId);
-		const isActiveGroup = !!group && group.state !== 'completed' && group.state !== 'failed';
+		const isActiveGroup = !!group && group.completedAt === null;
 		if (group) {
 			if (isActiveGroup) {
 				await this.taskGroupManager.terminateGroup(group.id);
@@ -1274,8 +1213,7 @@ export class RoomRuntime {
 
 		for (const group of allActiveGroups) {
 			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
-			const leaderMissing =
-				group.state === 'awaiting_leader' && !this.sessionFactory.hasSession(group.leaderSessionId);
+			const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
 
 			if (workerMissing || leaderMissing) {
 				zombies.push(group);
@@ -1295,7 +1233,7 @@ export class RoomRuntime {
 			let workerRestored = false;
 			if (!this.sessionFactory.hasSession(group.workerSessionId)) {
 				log.warn(
-					`Zombie detected: group ${group.id} (state=${group.state}) ` +
+					`Zombie detected: group ${group.id} ` +
 						`worker ${group.workerSessionId} not in cache. Attempting restore.`
 				);
 				const restored = await this.sessionFactory.restoreSession(group.workerSessionId);
@@ -1319,14 +1257,11 @@ export class RoomRuntime {
 				}
 			}
 
-			// Check leader session liveness (only when leader is the active actor)
+			// Check leader session liveness
 			let leaderRestored = false;
-			if (
-				group.state === 'awaiting_leader' &&
-				!this.sessionFactory.hasSession(group.leaderSessionId)
-			) {
+			if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
 				log.warn(
-					`Zombie detected: group ${group.id} (state=awaiting_leader) ` +
+					`Zombie detected: group ${group.id} ` +
 						`leader ${group.leaderSessionId} not in cache. Attempting restore.`
 				);
 				const restored = await this.sessionFactory.restoreSession(group.leaderSessionId);
@@ -1337,29 +1272,28 @@ export class RoomRuntime {
 					});
 					leaderRestored = true;
 				} else {
-					log.error(
-						`Failed to restore leader ${group.leaderSessionId}. Failing group ${group.id}.`
+					// Leader restoration failure is not fatal - leader may be lazily created
+					log.warn(
+						`Could not restore leader ${group.leaderSessionId} for group ${group.id} - may be lazily created later.`
 					);
-					await this.taskGroupManager.fail(
-						group.id,
-						'Leader session lost and could not be restored'
-					);
-					this.cleanupMirroring(group.id, 'Leader session lost — could not be restored.');
-					await this.emitTaskUpdateById(group.taskId);
 				}
 			}
 
-			// Inject continuation message for restored sessions that need to resume work.
+			// Inject continuation message for restored sessions.
 			// The SDK query is started lazily by injectMessage → ensureQueryStarted().
-			// Sessions in awaiting_human don't need a message — human will provide one.
+			// Groups awaiting human review don't need a message — human will provide one.
+			if (group.submittedForReview) {
+				continue; // Awaiting human - no continuation message needed
+			}
+
 			try {
-				if (workerRestored && group.state === 'awaiting_worker') {
+				if (workerRestored) {
 					await this.sessionFactory.injectMessage(
 						group.workerSessionId,
 						'The system was restarted. Continue working on the task from where you left off.'
 					);
 				}
-				if (leaderRestored && group.state === 'awaiting_leader') {
+				if (leaderRestored) {
 					await this.sessionFactory.injectMessage(
 						group.leaderSessionId,
 						'The system was restarted. Continue reviewing from where you left off.'
@@ -1379,10 +1313,10 @@ export class RoomRuntime {
 			await this.recoverZombieGroups(zombies);
 		}
 
-		// Check capacity — awaiting_human groups are paused and don't consume slots
+		// Check capacity — groups awaiting human review don't consume slots
 		const activeGroups = this.groupRepo
 			.getActiveGroups(this.roomId)
-			.filter((g) => g.state !== 'awaiting_human');
+			.filter((g) => !g.submittedForReview);
 		const availableSlots = this.maxConcurrentGroups - activeGroups.length;
 
 		if (availableSlots <= 0) return;

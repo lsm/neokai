@@ -4,7 +4,6 @@
  * Generic multi-agent collaboration groups. For (Worker, Leader) task groups:
  *   group_type = 'task', ref_id = task_id
  *   members: role='worker' + role='leader'
- *   state: awaiting_worker | awaiting_leader | awaiting_human | hibernated | completed | failed
  *
  * The actual worker type (planner, coder, general) is stored in metadata.workerRole.
  *
@@ -12,17 +11,14 @@
  * as JSON in the metadata column — no schema change needed for new fields.
  *
  * All update methods use version-based optimistic locking.
+ *
+ * NOTE: The `state` DB column is legacy and no longer used for routing decisions.
+ * Use `completedAt` to check if a group is terminal, and `submittedForReview` to
+ * check if a group is awaiting human review.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
-
-export type GroupState =
-	| 'awaiting_worker'
-	| 'awaiting_leader'
-	| 'awaiting_human'
-	| 'completed'
-	| 'failed';
 
 /** Rate limit backoff state stored in group metadata */
 export interface RateLimitBackoff {
@@ -96,7 +92,6 @@ export interface SessionGroup {
 	leaderSessionId: string;
 	/** The specific worker agent type: 'planner', 'coder', 'general' */
 	workerRole: string;
-	state: GroupState;
 	feedbackIteration: number;
 	leaderContractViolations: number;
 	leaderCalledTool: boolean;
@@ -166,7 +161,7 @@ export class SessionGroupRepository {
 		const row = this.db
 			.prepare(
 				`SELECT
-					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
 					worker.session_id AS worker_session_id,
 					leader.session_id AS leader_session_id
@@ -184,7 +179,7 @@ export class SessionGroupRepository {
 		const row = this.db
 			.prepare(
 				`SELECT
-					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
 					worker.session_id AS worker_session_id,
 					leader.session_id AS leader_session_id
@@ -203,7 +198,7 @@ export class SessionGroupRepository {
 		const rows = this.db
 			.prepare(
 				`SELECT
-					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
 					worker.session_id AS worker_session_id,
 					leader.session_id AS leader_session_id
@@ -211,25 +206,10 @@ export class SessionGroupRepository {
 				JOIN tasks t ON sg.ref_id = t.id
 				LEFT JOIN session_group_members worker ON worker.group_id = sg.id AND worker.role = 'worker'
 				LEFT JOIN session_group_members leader ON leader.group_id = sg.id AND leader.role = 'leader'
-				WHERE t.room_id = ? AND sg.state NOT IN ('completed', 'failed')`
+				WHERE t.room_id = ? AND sg.completed_at IS NULL`
 			)
 			.all(roomId) as Record<string, unknown>[];
 		return rows.map((r) => this.rowToGroup(r));
-	}
-
-	updateGroupState(
-		groupId: string,
-		newState: GroupState,
-		expectedVersion: number
-	): SessionGroup | null {
-		const result = this.db
-			.prepare(
-				`UPDATE session_groups SET state = ?, version = version + 1
-			 WHERE id = ? AND version = ?`
-			)
-			.run(newState, groupId, expectedVersion);
-		if (result.changes === 0) return null;
-		return this.getGroup(groupId);
 	}
 
 	completeGroup(groupId: string, expectedVersion: number): SessionGroup | null {
@@ -268,8 +248,8 @@ export class SessionGroupRepository {
 
 	/**
 	 * Reset a failed/completed group for task restart.
-	 * Sets state back to 'awaiting_worker', clears completed_at, and resets
-	 * metadata fields to allow the task to be picked up fresh by the runtime.
+	 * Clears completed_at and resets metadata fields to allow the task to be
+	 * picked up fresh by the runtime.
 	 */
 	resetGroupForRestart(groupId: string): SessionGroup | null {
 		const current = this.getGroup(groupId);
@@ -286,8 +266,7 @@ export class SessionGroupRepository {
 		const result = this.db
 			.prepare(
 				`UPDATE session_groups
-				 SET state = 'awaiting_worker',
-				     completed_at = NULL,
+				 SET completed_at = NULL,
 				     metadata = ?,
 				     version = version + 1
 				 WHERE id = ?`
@@ -596,7 +575,6 @@ export class SessionGroupRepository {
 			workerSessionId: (row.worker_session_id as string) ?? '',
 			leaderSessionId: (row.leader_session_id as string) ?? '',
 			workerRole: meta.workerRole ?? 'coder',
-			state: row.state as GroupState,
 			feedbackIteration: meta.feedbackIteration,
 			leaderContractViolations: meta.leaderContractViolations,
 			leaderCalledTool: meta.leaderCalledTool ?? false,

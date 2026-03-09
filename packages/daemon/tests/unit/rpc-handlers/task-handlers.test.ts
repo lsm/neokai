@@ -92,12 +92,12 @@ function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
  * Build a mock SQLite row that SessionGroupRepository.rowToGroup() can parse.
  * All fields that rowToGroup() reads are included.
  */
-function makeGroupRow(state: string): Record<string, unknown> {
+function makeGroupRow(submittedForReview = false): Record<string, unknown> {
 	return {
 		id: 'group-1',
 		group_type: 'task',
 		ref_id: 'task-1',
-		state,
+		state: submittedForReview ? 'awaiting_human' : 'awaiting_worker', // DB column kept for compat
 		version: 1,
 		metadata: JSON.stringify({
 			workerRole: 'coder',
@@ -110,7 +110,7 @@ function makeGroupRow(state: string): Record<string, unknown> {
 			activeWorkElapsed: 0,
 			hibernatedAt: null,
 			tokensUsed: 0,
-			submittedForReview: false,
+			submittedForReview,
 			approved: false,
 		}),
 		created_at: Date.now(),
@@ -138,7 +138,8 @@ function makeDb(groupRow: Record<string, unknown> | null): Database {
 function makeRuntimeService(resumeResult = true, injectResult = true) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
-	const runtime = { resumeWorkerFromHuman, injectMessageToLeader };
+	const injectMessageToWorker = mock(async () => injectResult);
+	const runtime = { resumeWorkerFromHuman, injectMessageToLeader, injectMessageToWorker };
 	const service = {
 		getRuntime: mock(() => runtime),
 	} as unknown as RoomRuntimeService;
@@ -165,10 +166,10 @@ describe('task.sendHumanMessage RPC Handler', () => {
 	 */
 	function setup(opts: {
 		task?: NeoTask | null;
-		groupState?: string;
+		submittedForReview?: boolean;
 		runtimeService?: RoomRuntimeService;
 	}) {
-		const { task = mockTask, groupState = 'awaiting_human', runtimeService } = opts;
+		const { task = mockTask, submittedForReview = false, runtimeService } = opts;
 
 		const mh = createMockMessageHub();
 		hub = mh.hub;
@@ -178,7 +179,7 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			hub,
 			mockRoomManager,
 			createMockDaemonHub(),
-			makeDb(makeGroupRow(groupState)),
+			makeDb(makeGroupRow(submittedForReview)),
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -262,9 +263,9 @@ describe('task.sendHumanMessage RPC Handler', () => {
 	// ─── Routing behaviour ───
 
 	describe('routing', () => {
-		it('returns { success: true } when group is in awaiting_human state', async () => {
+		it('returns { success: true } when group is active (submittedForReview)', async () => {
 			const { service } = makeRuntimeService(true);
-			setup({ groupState: 'awaiting_human', runtimeService: service });
+			setup({ submittedForReview: true, runtimeService: service });
 
 			const result = await getHandler()(
 				{ roomId: 'room-1', taskId: 'task-1', message: 'please continue' },
@@ -273,13 +274,15 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			expect(result).toEqual({ success: true });
 		});
 
-		it('throws when group is in awaiting_worker state', async () => {
-			const { service } = makeRuntimeService();
-			setup({ groupState: 'awaiting_worker', runtimeService: service });
+		it('returns { success: true } when group is active (not submittedForReview)', async () => {
+			const { service } = makeRuntimeService(true);
+			setup({ submittedForReview: false, runtimeService: service });
 
-			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
-			).rejects.toThrow('Worker is running');
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'hello' },
+				{}
+			);
+			expect(result).toEqual({ success: true });
 		});
 
 		it('throws when no active group exists for the task', async () => {
@@ -313,10 +316,10 @@ describe('task.cancel RPC Handler', () => {
 
 	function setup(opts: {
 		task?: NeoTask | null;
-		groupState?: string;
+		submittedForReview?: boolean;
 		runtimeService?: RoomRuntimeService;
 	}) {
-		const { task = mockTask, groupState = 'awaiting_human', runtimeService } = opts;
+		const { task = mockTask, submittedForReview = false, runtimeService } = opts;
 
 		const mh = createMockMessageHub();
 		hub = mh.hub;
@@ -326,7 +329,7 @@ describe('task.cancel RPC Handler', () => {
 			hub,
 			mockRoomManager,
 			createMockDaemonHub(),
-			makeDb(makeGroupRow(groupState)),
+			makeDb(makeGroupRow(submittedForReview)),
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -417,10 +420,10 @@ describe('task.reject RPC Handler', () => {
 
 	function setup(opts: {
 		task?: NeoTask | null;
-		groupState?: string;
+		submittedForReview?: boolean;
 		runtimeService?: RoomRuntimeService;
 	}) {
-		const { task = mockTask, groupState = 'awaiting_human', runtimeService } = opts;
+		const { task = mockTask, submittedForReview = false, runtimeService } = opts;
 
 		const mh = createMockMessageHub();
 		hub = mh.hub;
@@ -430,7 +433,7 @@ describe('task.reject RPC Handler', () => {
 			hub,
 			mockRoomManager,
 			createMockDaemonHub(),
-			makeDb(makeGroupRow(groupState)),
+			makeDb(makeGroupRow(submittedForReview)),
 			makeTaskManagerFactory(task),
 			runtimeService
 		);
@@ -515,16 +518,7 @@ describe('task.reject RPC Handler', () => {
 		});
 	});
 
-	describe('group state validation', () => {
-		it('throws when group is not in awaiting_human state', async () => {
-			const reviewTask = { ...mockTask, status: 'review' as const };
-			const { service } = makeRuntimeService();
-			setup({ task: reviewTask, groupState: 'awaiting_worker', runtimeService: service });
-			await expect(
-				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
-			).rejects.toThrow('Task is not awaiting human review');
-		});
-
+	describe('group validation', () => {
 		it('throws when no active group exists', async () => {
 			const reviewTask = { ...mockTask, status: 'review' as const };
 			const { service } = makeRuntimeService();
@@ -545,15 +539,15 @@ describe('task.reject RPC Handler', () => {
 
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', feedback: 'not good' }, {})
-			).rejects.toThrow('Task is not awaiting human review');
+			).rejects.toThrow('No active session group for this task');
 		});
 	});
 
 	describe('happy path', () => {
-		it('rejects a task in review with awaiting_human group state', async () => {
+		it('rejects a task in review with active group', async () => {
 			const reviewTask = { ...mockTask, status: 'review' as const };
 			const { service } = makeRuntimeService(true);
-			setup({ task: reviewTask, groupState: 'awaiting_human', runtimeService: service });
+			setup({ task: reviewTask, submittedForReview: true, runtimeService: service });
 
 			const result = await getHandler()(
 				{ roomId: 'room-1', taskId: 'task-1', feedback: 'please fix the bug' },
@@ -606,13 +600,13 @@ describe('task.setStatus RPC Handler', () => {
 
 	function setup(opts: {
 		task?: NeoTask | null;
-		groupState?: string;
+		submittedForReview?: boolean;
 		runtimeService?: RoomRuntimeService;
 		taskManagerFactory?: TaskManagerFactory;
 	}) {
 		const {
 			task = mockTask,
-			groupState = 'awaiting_human',
+			submittedForReview = false,
 			runtimeService,
 			taskManagerFactory,
 		} = opts;
@@ -625,7 +619,7 @@ describe('task.setStatus RPC Handler', () => {
 			hub,
 			mockRoomManager,
 			createMockDaemonHub(),
-			makeDb(makeGroupRow(groupState)),
+			makeDb(makeGroupRow(submittedForReview)),
 			taskManagerFactory ?? makeSetStatusTaskManagerFactory(task),
 			runtimeService
 		);
@@ -695,7 +689,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			setup({
 				task: mockTask, // in_progress status
-				groupState: 'awaiting_human',
+				submittedForReview: true,
 				runtimeService: service,
 			});
 
@@ -708,12 +702,12 @@ describe('task.setStatus RPC Handler', () => {
 			// Create runtime service where cancel returns a valid group
 			const { service, cancel } = makeRuntimeServiceWithGroupManager({
 				id: 'group-1',
-				state: 'cancelled',
+				completedAt: Date.now(),
 			});
 
 			setup({
 				task: mockTask, // in_progress status
-				groupState: 'awaiting_human',
+				submittedForReview: true,
 				runtimeService: service,
 			});
 
@@ -730,7 +724,7 @@ describe('task.setStatus RPC Handler', () => {
 
 			setup({
 				task: mockTask, // in_progress status
-				groupState: 'awaiting_human',
+				submittedForReview: true,
 				runtimeService: service,
 			});
 
@@ -743,7 +737,7 @@ describe('task.setStatus RPC Handler', () => {
 			// Without runtime service, the group cancellation code path is not entered
 			setup({
 				task: mockTask,
-				groupState: 'awaiting_human',
+				submittedForReview: true,
 				runtimeService: undefined,
 			});
 
