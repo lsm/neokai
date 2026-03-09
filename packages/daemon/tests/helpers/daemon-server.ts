@@ -112,13 +112,13 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	} = options;
 
 	// Start Dev Proxy if requested
-	// Use proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY) for SDK to route through Dev Proxy
+	// Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 	if (shouldUseDevProxy) {
 		devProxy = createDevProxyController({
-			setEnvVars: true, // Set proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY)
+			setEnvVars: true, // Sets ANTHROPIC_BASE_URL to proxy URL
 			...devProxyOptions,
 		});
 		try {
@@ -276,13 +276,13 @@ async function createInProcessDaemonServer(
 	} = options;
 
 	// Start Dev Proxy if requested
-	// Use proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY) for SDK to route through Dev Proxy
+	// Sets ANTHROPIC_BASE_URL to Dev Proxy URL for SDK to use mocked responses
 	let devProxy: DevProxyController | null = null;
 	const shouldUseDevProxy = useDevProxy || process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 	if (shouldUseDevProxy) {
 		devProxy = createDevProxyController({
-			setEnvVars: true, // Set proxy env vars (HTTPS_PROXY, HTTP_PROXY, NODE_USE_ENV_PROXY)
+			setEnvVars: true, // Sets ANTHROPIC_BASE_URL to proxy URL
 			...devProxyOptions,
 		});
 		try {

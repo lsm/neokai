@@ -22,10 +22,7 @@
  *   });
  *
  *   it('should mock API response', async () => {
- *     // Set environment for tests
- *     process.env.HTTPS_PROXY = proxy.proxyUrl;
- *     process.env.HTTP_PROXY = proxy.proxyUrl;
- *     process.env.NODE_USE_ENV_PROXY = '1';
+ *     // ANTHROPIC_BASE_URL is automatically set to proxy URL
  *     // ... test code
  *   });
  * });
@@ -33,11 +30,13 @@
  *
  * ## Environment Variables
  *
- * The helper automatically sets these env vars on start:
- * - HTTPS_PROXY: The proxy URL for HTTPS requests
- * - HTTP_PROXY: The proxy URL for HTTP requests
- * - NODE_USE_ENV_PROXY: Enables Node.js to use proxy env vars
- * - NODE_EXTRA_CA_CERTS: Path to Dev Proxy's CA certificate
+ * The helper automatically sets ANTHROPIC_BASE_URL on start:
+ * - ANTHROPIC_BASE_URL: The proxy URL (http://127.0.0.1:8000)
+ *
+ * This approach is more reliable than proxy environment variables because:
+ * - SDK subprocesses properly inherit ANTHROPIC_BASE_URL
+ * - No TLS interception issues (Dev Proxy uses HTTP, not HTTPS)
+ * - No need for NODE_TLS_REJECT_UNAUTHORIZED or certificate handling
  *
  * ## Prerequisites
  *
@@ -343,27 +342,16 @@ export function createDevProxyController(options: DevProxyOptions = {}): DevProx
 	};
 
 	// Set environment variables for proxy
+	// Use ANTHROPIC_BASE_URL instead of proxy env vars - this is more reliable
+	// because SDK subprocesses properly inherit it without TLS issues
 	const setProxyEnvVars = () => {
 		const proxyUrl = `http://127.0.0.1:${port}`;
-		const caCertPath = getCaCertPath();
 
-		saveEnvVar('HTTPS_PROXY');
-		saveEnvVar('HTTP_PROXY');
-		saveEnvVar('NODE_USE_ENV_PROXY');
-		saveEnvVar('NODE_EXTRA_CA_CERTS');
-		saveEnvVar('NODE_TLS_REJECT_UNAUTHORIZED');
-		saveEnvVar('NO_PROXY');
+		saveEnvVar('ANTHROPIC_BASE_URL');
 
-		globalThis.process.env.HTTPS_PROXY = proxyUrl;
-		globalThis.process.env.HTTP_PROXY = proxyUrl;
-		globalThis.process.env.NODE_USE_ENV_PROXY = '1';
-		globalThis.process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; // Required for Dev Proxy HTTPS interception
-		globalThis.process.env.NO_PROXY = 'localhost,127.0.0.1';
-
-		// Set CA cert path if it exists (optional, fallback to TLS reject disabled)
-		if (fs.existsSync(caCertPath)) {
-			globalThis.process.env.NODE_EXTRA_CA_CERTS = caCertPath;
-		}
+		// Set ANTHROPIC_BASE_URL to Dev Proxy - SDK will use this URL for API calls
+		// Dev Proxy will intercept and return mocked responses
+		globalThis.process.env.ANTHROPIC_BASE_URL = proxyUrl;
 	};
 
 	const controller: DevProxyController = {
