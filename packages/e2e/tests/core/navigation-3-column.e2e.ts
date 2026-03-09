@@ -35,8 +35,8 @@ test.describe('Desktop 3-Column Layout (>=768px)', () => {
 	});
 
 	test('should display NavRail with correct width and structure', async ({ page }) => {
-		// NavRail should be visible on desktop (uses slide-in animation: -translate-x-full md:translate-x-0)
-		const navRail = page.locator('.-translate-x-full.md\\:translate-x-0').first();
+		// NavRail should be visible on desktop (has w-16 class, 64px width)
+		const navRail = page.locator('.w-16').first();
 		await expect(navRail).toBeVisible();
 
 		// Verify NavRail has w-16 class (64px width)

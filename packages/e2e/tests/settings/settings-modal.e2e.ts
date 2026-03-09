@@ -157,11 +157,11 @@ test.describe('Settings Modal - Global Settings', () => {
 	});
 
 	test('should show Thinking Level selection dropdown', async ({ page }) => {
-		// Thinking Level has been removed from the current settings UI.
+		// Thinking Level is present in the settings UI.
 		await openSettingsModal(page);
 
-		// Thinking Level is no longer present
-		await expect(page.locator('text=Thinking Level')).toBeHidden();
+		// Thinking Level is present
+		await expect(page.locator('text=Thinking Level')).toBeVisible();
 
 		// Permission Mode is the second dropdown in the General settings
 		await expect(page.locator('text=Permission Mode')).toBeVisible();
@@ -176,7 +176,7 @@ test.describe('Settings Modal - Global Settings', () => {
 		await expect(page.getByText('Auto-scroll', { exact: true })).toBeVisible();
 
 		// Should have a toggle switch (role="switch" button, not a checkbox)
-		await expect(page.locator('button[role="switch"]')).toBeVisible();
+		await expect(page.locator('button[role="switch"]').first()).toBeVisible();
 	});
 
 	test('should show Permission Mode selection', async ({ page }) => {
@@ -269,7 +269,7 @@ test.describe('Settings Modal - Global Tools Settings', () => {
 		// Verify the auto-scroll toggle has proper aria attributes.
 		await openSettingsModal(page);
 
-		const autoScrollToggle = page.locator('button[role="switch"]');
+		const autoScrollToggle = page.locator('button[role="switch"]').first();
 		await expect(autoScrollToggle).toBeVisible();
 
 		// Toggle should have aria-checked attribute (value is "true" or "false")
@@ -324,7 +324,7 @@ test.describe('Settings Modal - Settings Persistence', () => {
 		await openSettingsModal(page);
 
 		// Get the auto-scroll toggle switch
-		const autoScrollToggle = page.locator('button[role="switch"]');
+		const autoScrollToggle = page.locator('button[role="switch"]').first();
 		const initialChecked = await autoScrollToggle.getAttribute('aria-checked');
 
 		// Toggle the setting

@@ -8,7 +8,7 @@ test.describe('Home Page', () => {
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 
 		// Check for lobby subtitle (desktop only)
-		await expect(page.locator('text=Manage your AI-powered workspaces')).toBeVisible();
+		await expect(page.locator('text=Your agent command center')).toBeVisible();
 	});
 
 	test('should have a sidebar visible', async ({ page }) => {

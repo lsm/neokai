@@ -65,7 +65,7 @@ test.describe('UI Components', () => {
 
 			// All main elements should be visible
 			await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-			await expect(page.locator('text=Manage your AI-powered workspaces')).toBeVisible();
+			await expect(page.locator('text=Your agent command center')).toBeVisible();
 		});
 	});
 
