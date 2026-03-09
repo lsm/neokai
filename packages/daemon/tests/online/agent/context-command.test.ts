@@ -91,6 +91,10 @@ describe('Context Command Online Tests', () => {
 			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
+			// Give extra time for /context to be processed and metadata to be persisted
+			// In mock mode, there may be a slight delay
+			await new Promise((resolve) => setTimeout(resolve, IS_MOCK ? 2000 : 500));
+
 			const session = await getSession(daemon, sessionId);
 			const metadata = session.metadata as {
 				lastContextInfo?: ContextInfo;
