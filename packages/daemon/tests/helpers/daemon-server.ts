@@ -141,6 +141,10 @@ async function spawnDaemonServer(options: DaemonServerOptions = {}): Promise<Dae
 	// Build environment for daemon process
 	const daemonEnv: Record<string, string> = {
 		...process.env,
+		NEOKAI_USE_DEV_PROXY: shouldUseDevProxy ? '1' : process.env.NEOKAI_USE_DEV_PROXY,
+		ANTHROPIC_BASE_URL: shouldUseDevProxy
+			? 'http://127.0.0.1:8000'
+			: process.env.ANTHROPIC_BASE_URL,
 		PORT: userPort.toString(),
 		NODE_ENV: 'test',
 		NEOKAI_SDK_STARTUP_TIMEOUT_MS: process.env.NEOKAI_SDK_STARTUP_TIMEOUT_MS || '30000',
