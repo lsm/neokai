@@ -150,6 +150,7 @@ jobs:
           # Run `bash scripts/validate-online-test-matrix.sh` to verify all files are covered.
           - module: agent
             test_path: tests/online/agent
+            mock_sdk: true
           - module: components
             test_path: tests/online/components
             mock_sdk: true
@@ -158,6 +159,7 @@ jobs:
           #   test_path: tests/online/glm
           - module: convo
             test_path: tests/online/convo
+            mock_sdk: true
           - module: coordinator
             test_path: tests/online/coordinator
             timeout: 10
@@ -190,12 +192,15 @@ jobs:
             test_path: tests/online/providers/github-copilot-provider.test.ts
           - module: rewind
             test_path: tests/online/rewind
+            mock_sdk: true
           - module: room-1
             test_path: >-
               tests/online/room/room-advanced-scenarios.test.ts
               tests/online/room/room-chat-agent-tools.test.ts
-              tests/online/room/room-chat-constraints.test.ts
             timeout: 10
+          - module: room-chat-constraints
+            test_path: tests/online/room/room-chat-constraints.test.ts
+            mock_sdk: true
           - module: room-multi-agent
             test_path: tests/online/room/room-multi-agent-flow.test.ts
             timeout: 10
