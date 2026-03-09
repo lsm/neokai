@@ -217,7 +217,7 @@ test.describe('Thinking Level Selector', () => {
 		await page.reload();
 
 		// Wait for daemon connection to be established
-		await expect(page.locator('[aria-label="Daemon: Connected"]')).toBeVisible({
+		await expect(page.locator('[aria-label="Daemon: Connected"]').first()).toBeVisible({
 			timeout: 15000,
 		});
 
