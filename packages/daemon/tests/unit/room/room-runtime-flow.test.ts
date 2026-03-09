@@ -20,7 +20,7 @@ describe('RoomRuntime flow', () => {
 	});
 
 	describe('agent model resolution', () => {
-		it('should use planner and leader models from room.config.agentModels', async () => {
+		it('should use planner model from room.config.agentModels for planning task spawn', async () => {
 			ctx.runtime.stop();
 			ctx.db.close();
 			ctx = createRuntimeTestContext({
@@ -51,16 +51,7 @@ describe('RoomRuntime flow', () => {
 			expect((createCalls[0].args[0] as { model?: string }).model).toBe('planner-model');
 
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
-			await ctx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
-			});
-
-			const leaderCall = ctx.sessionFactory.calls
-				.filter((c) => c.method === 'createAndStartSession')
-				.find((c) => c.args[1] === 'leader');
-			expect(leaderCall).toBeDefined();
-			expect((leaderCall!.args[0] as { model?: string }).model).toBe('leader-model');
+			expect(group.workerRole).toBe('planner');
 		});
 
 		it('should use role-specific worker model for coder and general tasks', async () => {
@@ -87,6 +78,21 @@ describe('RoomRuntime flow', () => {
 			);
 			expect(createCalls[0].args[1]).toBe('coder');
 			expect((createCalls[0].args[0] as { model?: string }).model).toBe('coder-model');
+
+			// Force lazy leader creation path in test harness (mock hasSession() defaults to true).
+			(ctx.sessionFactory as unknown as { hasSession: (sessionId: string) => boolean }).hasSession =
+				(sessionId: string) => sessionId.includes('coder');
+
+			const coderGroup = ctx.groupRepo.getActiveGroups('room-1')[0];
+			await ctx.runtime.onWorkerTerminalState(coderGroup.id, {
+				sessionId: coderGroup.workerSessionId,
+				kind: 'idle',
+			});
+			const leaderCall = ctx.sessionFactory.calls
+				.filter((c) => c.method === 'createAndStartSession')
+				.find((c) => c.args[1] === 'leader');
+			expect(leaderCall).toBeDefined();
+			expect((leaderCall!.args[0] as { model?: string }).model).toBe('leader-model');
 
 			ctx.runtime.stop();
 			ctx.db.close();
@@ -462,9 +468,9 @@ describe('RoomRuntime flow', () => {
 			// Task back in in_progress
 			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
 
-			// Leader hands off to worker so the work cycle can continue
+			// handoff_to_worker is a no-op compatibility tool
 			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
-			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
+			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
 			// Worker finishes again → routeWorkerToLeader increments to 1 (not 6!)
 			await ctx.runtime.onWorkerTerminalState(group.id, {
@@ -515,13 +521,13 @@ describe('RoomRuntime flow', () => {
 			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(3);
 		});
 
-		it('should reset leader contract violations on each new worker→leader round', async () => {
+		it('should keep leader contract violations at 0 when leader reaches terminal without a tool', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 
-			// Worker done → Leader violates contract once
+			// Worker done -> Leader reaches terminal without any tool call.
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',
@@ -530,25 +536,10 @@ describe('RoomRuntime flow', () => {
 				sessionId: group.leaderSessionId,
 				kind: 'idle',
 			});
-			expect(ctx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(1);
-
-			// Leader sends feedback, then explicitly hands off to worker
-			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
-				message: 'Redo this',
-				mode: 'queue',
-			});
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
-			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_worker');
-
-			// Iteration 2: Worker done → routeWorkerToLeader resets violations to 0
-			await ctx.runtime.onWorkerTerminalState(group.id, {
-				sessionId: group.workerSessionId,
-				kind: 'idle',
-			});
 			expect(ctx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(0);
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('awaiting_leader');
 
-			// Leader finishes cleanly
+			// Leader can still complete after review submission.
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'Done' });
 			expect(ctx.groupRepo.getGroup(group.id)!.state).toBe('completed');
@@ -590,7 +581,7 @@ describe('RoomRuntime flow', () => {
 	});
 
 	describe('onLeaderTerminalState (contract validation)', () => {
-		it('should nudge on first contract violation', async () => {
+		it('should not inject nudge messages when leader reaches terminal without a tool', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			// Leader reaches terminal without calling a tool
@@ -599,21 +590,21 @@ describe('RoomRuntime flow', () => {
 				kind: 'idle',
 			});
 
-			// Should inject nudge message
+			// No nudge is injected in the simplified model.
 			const nudgeCalls = ctx.sessionFactory.calls.filter(
 				(c) =>
 					c.method === 'injectMessage' &&
 					c.args[0] === group.leaderSessionId &&
 					(c.args[1] as string).includes('must call exactly one')
 			);
-			expect(nudgeCalls).toHaveLength(1);
+			expect(nudgeCalls).toHaveLength(0);
 
-			// Violations should be 1
+			// Violations stay at 0.
 			const updated = ctx.groupRepo.getGroup(group.id);
-			expect(updated!.leaderContractViolations).toBe(1);
+			expect(updated!.leaderContractViolations).toBe(0);
 		});
 
-		it('should fail group on second contract violation', async () => {
+		it('should keep group active even after repeated leader terminal states without tools', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 
 			// First violation
@@ -628,9 +619,9 @@ describe('RoomRuntime flow', () => {
 				kind: 'idle',
 			});
 
-			// Group should be failed after second contract violation
+			// Group remains active; no contract-failure transition.
 			const updated = ctx.groupRepo.getGroup(group.id);
-			expect(updated!.state).toBe('failed');
+			expect(updated!.state).toBe('awaiting_leader');
 		});
 
 		it('should not fire if Leader called a tool', async () => {

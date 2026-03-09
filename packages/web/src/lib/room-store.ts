@@ -444,7 +444,7 @@ class RoomStore {
 			throw new Error('Not connected');
 		}
 
-		await hub.request<{ success: boolean }>('goal.approveTask', {
+		await hub.request<{ success: boolean }>('task.approve', {
 			roomId,
 			taskId,
 		});

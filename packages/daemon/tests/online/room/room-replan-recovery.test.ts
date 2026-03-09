@@ -82,10 +82,10 @@ describe('Room Replan Recovery (API-dependent)', () => {
 					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
-			// If planning is in 'review', approve via goal.approveTask to trigger phase 2
+			// If planning is in 'review', approve via task.approve to trigger phase 2
 			// (worker resumes with approved=true, creates draft tasks, leader completes)
 			if (terminalPlanning.status === 'review') {
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: terminalPlanning.id,
 				});
@@ -108,7 +108,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				);
 			}
 			if (terminalCoding.status === 'review') {
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: terminalCoding.id,
 				});
@@ -168,7 +168,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				120_000
 			);
 			if (newTerminalPlanning.status === 'review') {
-				await daemon.messageHub.request('goal.approveTask', {
+				await daemon.messageHub.request('task.approve', {
 					roomId,
 					taskId: newTerminalPlanning.id,
 				});

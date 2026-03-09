@@ -101,7 +101,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		deps.sessionManager
 	);
 
-	// Room Runtime Service (must be created before task/goal handlers — sendHumanMessage/approveTask need it)
+	// Room Runtime Service (must be created before task/goal handlers — messaging + task approval need it)
 	const roomRuntimeService = new RoomRuntimeService({
 		db: deps.db,
 		messageHub: deps.messageHub,
@@ -125,7 +125,7 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		roomRuntimeService
 	);
 
-	// Goal handlers (after runtime service — approveTask/rejectTask need runtimeService)
+	// Goal handlers (after runtime service — task.approve/task.reject need runtimeService)
 	setupGoalHandlers(
 		deps.messageHub,
 		deps.daemonHub,
