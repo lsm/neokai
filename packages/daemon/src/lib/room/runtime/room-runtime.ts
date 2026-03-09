@@ -835,9 +835,6 @@ export class RoomRuntime {
 			try {
 				await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
 			} catch (error) {
-				if (isApproval && !previousApproved) {
-					this.groupRepo.setApproved(group.id, previousApproved);
-				}
 				log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
 				return false;
 			}
