@@ -827,15 +827,20 @@ export class RoomRuntime {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
-		// Move task back to in_progress
-		try {
-			await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
-		} catch (error) {
-			if (isApproval && !previousApproved) {
-				this.groupRepo.setApproved(group.id, previousApproved);
+		// For approvals, keep task in review status and let leader's complete_task
+		// handle the final transition to completed. This prevents the task from
+		// getting stuck in in_progress if the leader's complete_task fails.
+		// For rejections, move task back to in_progress so worker can address feedback.
+		if (!isApproval) {
+			try {
+				await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
+			} catch (error) {
+				if (isApproval && !previousApproved) {
+					this.groupRepo.setApproved(group.id, previousApproved);
+				}
+				log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
+				return false;
 			}
-			log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
-			return false;
 		}
 
 		// Route ALL messages (approval and rejection) to leader

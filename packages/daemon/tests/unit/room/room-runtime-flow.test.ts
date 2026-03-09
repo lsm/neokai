@@ -1463,9 +1463,10 @@ describe('RoomRuntime flow', () => {
 			// approved flag should be set
 			expect(updated.approved).toBe(true);
 
-			// Task should be back to in_progress
+			// Task should remain in review status for approvals - leader's complete_task
+			// will transition it to completed after merging
 			const updatedTask = await hookCtx.taskManager.getTask(planTask.id);
-			expect(updatedTask!.status).toBe('in_progress');
+			expect(updatedTask!.status).toBe('review');
 		});
 
 		test('resumeWorkerFromHuman returns false when not in awaiting_human', async () => {

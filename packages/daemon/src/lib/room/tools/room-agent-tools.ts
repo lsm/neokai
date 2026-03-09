@@ -304,6 +304,14 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 
+			// When transitioning to review, mark group as awaiting human to release slot
+			if (args.status === 'review') {
+				const group = groupRepo.getGroupByTaskId(args.task_id);
+				if (group && group.completedAt === null) {
+					groupRepo.setCompatibilityState(group.id, 'awaiting_human');
+				}
+			}
+
 			// Notify UI of the status change
 			if (daemonHub) {
 				void daemonHub.emit('room.task.update', {

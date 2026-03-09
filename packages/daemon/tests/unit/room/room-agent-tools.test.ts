@@ -1095,6 +1095,33 @@ describe('Room Agent Tools', () => {
 			expect(result.task.status).toBe('review');
 		});
 
+		it('should update group state to awaiting_human when transitioning to review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+			// Create an active group in awaiting_worker state
+			const groupId = insertGroup(taskId, 'awaiting_worker');
+
+			// Verify initial group state
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.state).toBe('awaiting_worker');
+
+			// Transition to review
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+
+			// Group state should be updated to awaiting_human to release the slot
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.state).toBe('awaiting_human');
+		});
+
 		it('should allow transition: in_progress -> completed with result', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
