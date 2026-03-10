@@ -472,19 +472,23 @@ export class RoomRuntimeService {
 
 	private async initializeExistingRooms(): Promise<void> {
 		const rooms = this.ctx.roomManager.listRooms();
-		for (const room of rooms) {
-			try {
-				// Don't auto-start - wait until after recovery completes to prevent
-				// zombie detection from injecting duplicate continuation messages
-				const runtime = this.createOrGetRuntime(room, /* autoStart */ false);
-				const observer = this.observers.get(room.id)!;
-				await this.recoverRoomRuntime(room.id, runtime, observer);
-				// Start the runtime tick loop after recovery is complete
-				runtime.start();
-			} catch (error) {
-				log.error(`Failed to initialize runtime for room ${room.id}:`, error);
-			}
-		}
+
+		// Recover all rooms in parallel for faster startup
+		await Promise.all(
+			rooms.map(async (room) => {
+				try {
+					// Don't auto-start - wait until after recovery completes to prevent
+					// zombie detection from injecting duplicate continuation messages
+					const runtime = this.createOrGetRuntime(room, /* autoStart */ false);
+					const observer = this.observers.get(room.id)!;
+					await this.recoverRoomRuntime(room.id, runtime, observer);
+					// Start the runtime tick loop after recovery is complete
+					runtime.start();
+				} catch (error) {
+					log.error(`Failed to initialize runtime for room ${room.id}:`, error);
+				}
+			})
+		);
 	}
 
 	private async recoverRoomRuntime(
