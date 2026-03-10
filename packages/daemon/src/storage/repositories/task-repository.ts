@@ -67,11 +67,18 @@ export class TaskRepository {
 	}
 
 	/**
-	 * List tasks for a room, optionally filtered
+	 * List tasks for a room, optionally filtered.
+	 * By default, archived tasks (archived_at IS NOT NULL) are excluded.
+	 * Use filter.includeArchived = true to include archived tasks.
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
 		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
+
+		// Exclude archived tasks by default
+		if (!filter?.includeArchived) {
+			query += ` AND archived_at IS NULL`;
+		}
 
 		if (filter?.status) {
 			query += ` AND status = ?`;

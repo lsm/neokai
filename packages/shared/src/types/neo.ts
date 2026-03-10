@@ -221,6 +221,8 @@ export interface NeoTask {
 export interface TaskFilter {
 	status?: TaskStatus;
 	priority?: TaskPriority;
+	/** Include archived tasks in results (default: false - archived tasks are hidden) */
+	includeArchived?: boolean;
 }
 
 /**

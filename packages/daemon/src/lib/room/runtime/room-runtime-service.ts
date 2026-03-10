@@ -289,10 +289,10 @@ export class RoomRuntimeService {
 			},
 			removeWorktree: async (workspacePath: string): Promise<boolean> => {
 				try {
-					// Find the git root for this workspace path
-					const gitRoot = await worktreeManager.findGitRoot(workspacePath);
-					if (!gitRoot) {
-						log.warn(`removeWorktree: no git root found for ${workspacePath}`);
+					// Resolve the main repo path correctly (handles linked worktrees)
+					const mainRepoPath = await worktreeManager.resolveMainRepoPath(workspacePath);
+					if (!mainRepoPath) {
+						log.warn(`removeWorktree: no main repo found for ${workspacePath}`);
 						return false;
 					}
 
@@ -308,7 +308,7 @@ export class RoomRuntimeService {
 						{
 							isWorktree: true,
 							worktreePath: workspacePath,
-							mainRepoPath: gitRoot,
+							mainRepoPath,
 							branch,
 						},
 						true // Delete branch as well

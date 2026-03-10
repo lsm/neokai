@@ -100,6 +100,47 @@ export class WorktreeManager {
 	}
 
 	/**
+	 * Resolve the main repository path from a worktree path.
+	 *
+	 * For linked worktrees (created via `git worktree add`), the .git inside
+	 * the worktree is a file (not a directory) that points to the main repo's
+	 * git directory. This method correctly resolves the main repo root.
+	 *
+	 * @param worktreePath - Path inside a worktree
+	 * @returns The main repository root path, or null if not a worktree
+	 */
+	async resolveMainRepoPath(worktreePath: string): Promise<string | null> {
+		try {
+			const git = this.getGit(worktreePath);
+
+			// Get the absolute path to the .git directory
+			// For main repo: /path/to/repo/.git
+			// For worktree: /path/to/main/repo/.git/worktrees/<name>
+			const gitCommonDir = await git.revparse(['--path-format=absolute', '--git-common-dir']);
+
+			if (!gitCommonDir) {
+				return null;
+			}
+
+			// Check if this is a worktree by looking for /worktrees/ in the path
+			const worktreesMatch = gitCommonDir.match(/^(.+?\.git)[/\\]worktrees[/\\]/);
+
+			if (worktreesMatch) {
+				// This is a linked worktree - the main repo is the parent of .git
+				const gitDir = worktreesMatch[1];
+				return dirname(gitDir);
+			}
+
+			// This might be the main repo itself or not a worktree
+			// Return the git root from findGitRoot
+			return this.findGitRoot(worktreePath);
+		} catch (error) {
+			this.logger.warn(`resolveMainRepoPath failed for ${worktreePath}:`, error);
+			return null;
+		}
+	}
+
+	/**
 	 * Encode an absolute path to a filesystem-safe directory name
 	 * Uses the same approach as Claude Code (~/.claude/projects/)
 	 *

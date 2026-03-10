@@ -29,7 +29,13 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus' | 'archiveTask'
+	| 'createTask'
+	| 'getTask'
+	| 'listTasks'
+	| 'failTask'
+	| 'cancelTask'
+	| 'setTaskStatus'
+	| 'archiveTask'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
