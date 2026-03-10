@@ -16,14 +16,19 @@ import {
 	waitForWebSocketConnected,
 } from '../helpers/wait-helpers';
 
+// Detect mock mode (devproxy) - devproxy mock includes usage data so tests should pass
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
 /**
  * Helper to wait for context data to become available after a message exchange.
  * Some providers (e.g., GLM) don't report context usage data, so this may not
  * resolve. Returns true if context data is available, false otherwise.
  */
 async function waitForContextData(page: import('@playwright/test').Page): Promise<boolean> {
+	// In mock mode, devproxy returns usage data so tests should pass quickly
+	const timeout = IS_MOCK ? 100 : 15000;
 	const contextIndicator = page.locator('[title="Click for context details"]');
-	return contextIndicator.isVisible({ timeout: 15000 }).catch(() => false);
+	return contextIndicator.isVisible({ timeout }).catch(() => false);
 }
 
 test.describe('Context Usage - Display', () => {
@@ -51,7 +56,8 @@ test.describe('Context Usage - Display', () => {
 		// Context usage bar should be visible (the clickable indicator area)
 		// Title is "Context data loading..." initially
 		const contextIndicator = page.locator('[title="Context data loading..."]');
-		await expect(contextIndicator).toBeVisible({ timeout: 10000 });
+		const timeout = IS_MOCK ? 100 : 10000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 	});
 
 	test('should show context loading state initially', async ({ page }) => {
@@ -60,7 +66,8 @@ test.describe('Context Usage - Display', () => {
 
 		// Initial state should show loading message
 		const loadingIndicator = page.locator('[title="Context data loading..."]');
-		await expect(loadingIndicator).toBeVisible({ timeout: 10000 });
+		const timeout = IS_MOCK ? 100 : 10000;
+		await expect(loadingIndicator).toBeVisible({ timeout });
 	});
 
 	test('should show non-zero context percentage after message exchange', async ({ page }) => {
@@ -80,13 +87,14 @@ test.describe('Context Usage - Display', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 
 		// Get the context percentage element by data-testid
 		const contextPercentage = page.getByTestId('context-percentage');
 
 		// Should be visible
-		await expect(contextPercentage).toBeVisible({ timeout: 5000 });
+		await expect(contextPercentage).toBeVisible({ timeout });
 
 		// Get the text content and verify it's NOT "0.0%"
 		const percentageText = await contextPercentage.textContent();
@@ -116,12 +124,13 @@ test.describe('Context Usage - Display', () => {
 
 		// Open context dropdown
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Wait for dropdown to appear
 		await expect(page.locator('text=Context Usage')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 
 		// Click indicator again to close
@@ -129,7 +138,7 @@ test.describe('Context Usage - Display', () => {
 
 		// Dropdown should close
 		await expect(page.locator('text=Context Usage')).not.toBeVisible({
-			timeout: 3000,
+			timeout: IS_MOCK ? 100 : 3000,
 		});
 	});
 
@@ -150,11 +159,12 @@ test.describe('Context Usage - Display', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout5000 = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout: timeout5000 });
 
 		// Get the context percentage element by data-testid
 		const contextPercentage = page.getByTestId('context-percentage');
-		await expect(contextPercentage).toBeVisible({ timeout: 5000 });
+		await expect(contextPercentage).toBeVisible({ timeout: timeout5000 });
 
 		// Get the percentage value before refresh
 		const percentageBeforeRefresh = await contextPercentage.textContent();
@@ -169,23 +179,26 @@ test.describe('Context Usage - Display', () => {
 		await waitForWebSocketConnected(page);
 
 		// Wait for session to load
+		const timeout10000 = IS_MOCK ? 100 : 10000;
 		await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeVisible({
-			timeout: 10000,
+			timeout: timeout10000,
 		});
 
 		// Context indicator should still show data (not "Context data loading...")
 		const contextIndicatorAfterRefresh = page.locator('[title="Click for context details"]');
-		await expect(contextIndicatorAfterRefresh).toBeVisible({ timeout: 15000 });
+		const timeout15000 = IS_MOCK ? 100 : 15000;
+		await expect(contextIndicatorAfterRefresh).toBeVisible({ timeout: timeout15000 });
 
 		// Context percentage should still be visible and non-zero
 		const contextPercentageAfterRefresh = page.getByTestId('context-percentage');
-		await expect(contextPercentageAfterRefresh).toBeVisible({ timeout: 5000 });
+		await expect(contextPercentageAfterRefresh).toBeVisible({ timeout: timeout5000 });
 
 		const percentageAfterRefresh = await contextPercentageAfterRefresh.textContent();
 		const percentageValueAfter = parseFloat(percentageAfterRefresh?.replace('%', '') || '0');
 
 		// CRITICAL: Context data should persist after refresh
 		// This is the bug - currently context usage goes back to 0 after refresh
+		// In mock mode, usage data is consistently returned so this test should pass
 		expect(percentageValueAfter).toBeGreaterThan(0);
 	});
 });
@@ -227,12 +240,13 @@ test.describe('Context Usage - Dropdown Content', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Dropdown should appear with "Context Usage" header
 		await expect(page.locator('text=Context Usage')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 	});
 
@@ -253,12 +267,13 @@ test.describe('Context Usage - Dropdown Content', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Should show "Context Window" label
 		await expect(page.locator('text=Context Window')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 	});
 
@@ -279,11 +294,12 @@ test.describe('Context Usage - Dropdown Content', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Should show "Breakdown" section header
-		await expect(page.locator('text=Breakdown')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=Breakdown')).toBeVisible({ timeout });
 	});
 
 	test('should show model information in dropdown', async ({ page }) => {
@@ -303,11 +319,12 @@ test.describe('Context Usage - Dropdown Content', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Should show "Model:" label
-		await expect(page.locator('text=Model:')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=Model:')).toBeVisible({ timeout });
 	});
 
 	test('should display token counts in breakdown', async ({ page }) => {
@@ -327,11 +344,12 @@ test.describe('Context Usage - Dropdown Content', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Wait for breakdown section
-		await expect(page.locator('text=Breakdown')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('text=Breakdown')).toBeVisible({ timeout });
 
 		// Check that percentage values are displayed (format: X.X%)
 		const percentagePattern = page.locator('text=/%$/');
@@ -355,12 +373,13 @@ test.describe('Context Usage - Dropdown Content', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Wait for dropdown
 		await expect(page.locator('text=Context Usage')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 
 		// The dropdown should have a progress bar (div with rounded-full and overflow-hidden)
@@ -404,12 +423,13 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Wait for dropdown to appear
 		await expect(page.locator('text=Context Usage')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 
 		// Click close button (X button in dropdown header)
@@ -421,7 +441,7 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 
 		// Dropdown should close
 		await expect(page.locator('text=Context Usage')).not.toBeVisible({
-			timeout: 3000,
+			timeout: IS_MOCK ? 100 : 3000,
 		});
 	});
 
@@ -442,23 +462,24 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Wait for dropdown to appear
 		await expect(page.locator('text=Context Usage')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 
 		// Wait for useEffect to register keydown handler (runs async after render)
-		await page.waitForTimeout(200);
+		await page.waitForTimeout(IS_MOCK ? 100 : 200);
 
 		// Press Escape
 		await page.keyboard.press('Escape');
 
 		// Dropdown should close
 		await expect(page.locator('text=Context Usage')).not.toBeVisible({
-			timeout: 3000,
+			timeout: IS_MOCK ? 100 : 3000,
 		});
 	});
 
@@ -479,23 +500,24 @@ test.describe('Context Usage - Dropdown Close Behavior', () => {
 		test.skip(!hasContextData, 'Provider does not report context usage data');
 
 		const contextIndicator = page.locator('[title="Click for context details"]');
-		await expect(contextIndicator).toBeVisible({ timeout: 5000 });
+		const timeout = IS_MOCK ? 100 : 5000;
+		await expect(contextIndicator).toBeVisible({ timeout });
 		await contextIndicator.click();
 
 		// Wait for dropdown to appear
 		await expect(page.locator('text=Context Usage')).toBeVisible({
-			timeout: 5000,
+			timeout,
 		});
 
 		// Wait for useEffect to register click-outside handler (runs async after render)
-		await page.waitForTimeout(200);
+		await page.waitForTimeout(IS_MOCK ? 100 : 200);
 
 		// Click outside the dropdown (on the chat area background)
 		await page.locator('textarea[placeholder*="Ask"]').first().click();
 
 		// Dropdown should close
 		await expect(page.locator('text=Context Usage')).not.toBeVisible({
-			timeout: 3000,
+			timeout: IS_MOCK ? 100 : 3000,
 		});
 	});
 });
