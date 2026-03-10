@@ -183,7 +183,8 @@ test.describe('Rewind Mode', () => {
 
 		// Send a message that triggers tool use
 		await sendMessage(page, 'What files are in the current directory?');
-		// In mock mode, tool execution is instant; in real mode, wait for actual tool execution
+		// In mock mode, tool execution is instant; in real mode, wait for actual tool execution.
+		// Increased from 5000ms to 15000ms because directory listing can take longer with real API.
 		await page.waitForTimeout(IS_MOCK ? 1000 : 15000);
 
 		// Wait for the "More options" button to be visible
