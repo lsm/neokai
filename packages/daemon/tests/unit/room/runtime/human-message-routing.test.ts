@@ -99,10 +99,15 @@ function makeGroupRepo(
 	getGroupByTaskId: ReturnType<typeof mock>;
 	resetGroupForRestart: ReturnType<typeof mock>;
 	failGroup: ReturnType<typeof mock>;
+	failGroupCalls: { groupId: string; version: number }[];
 } {
 	const getGroupByTaskId = mock(() => group);
 	const resetGroupForRestart = mock(() => (resetGroupForRestartResult ? group : null));
-	const failGroup = mock(() => group);
+	const failGroupCalls: { groupId: string; version: number }[] = [];
+	const failGroup = mock((groupId: string, version: number) => {
+		failGroupCalls.push({ groupId, version });
+		return group;
+	});
 
 	const groupRepo = {
 		getGroupByTaskId,
@@ -110,7 +115,7 @@ function makeGroupRepo(
 		failGroup,
 	} as unknown as SessionGroupRepository;
 
-	return { groupRepo, getGroupByTaskId, resetGroupForRestart, failGroup };
+	return { groupRepo, getGroupByTaskId, resetGroupForRestart, failGroup, failGroupCalls };
 }
 
 describe('routeHumanMessageToGroup', () => {
@@ -207,23 +212,30 @@ describe('routeHumanMessageToGroup', () => {
 			taskManager.updateTaskStatus = mock(async () => {
 				throw new Error('Status update failed');
 			});
-			const { groupRepo, failGroup } = makeGroupRepo(makeGroup(Date.now()), true);
+			// Group version is 1, so rollback should use version 2 (previousVersion + 1)
+			const group = makeGroup(Date.now());
+			group.version = 1;
+			const { groupRepo, failGroup, failGroupCalls } = makeGroupRepo(group, true);
 
 			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to transition task to in_progress');
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
-			// Should have rolled back the group state
+			// Should have rolled back the group state with correct version (1 + 1 = 2)
 			expect(failGroup).toHaveBeenCalled();
+			expect(failGroupCalls).toEqual([{ groupId: 'group-1', version: 2 }]);
 		});
 
 		it('rolls back status and group when message injection fails', async () => {
 			const failedTask = makeTask('failed');
 			// injectResult = false to simulate injection failure
 			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(false, failedTask);
-			const { groupRepo, resetGroupForRestart, failGroup } = makeGroupRepo(
-				makeGroup(Date.now()),
+			// Group version is 1, so rollback should use version 2 (previousVersion + 1)
+			const group = makeGroup(Date.now());
+			group.version = 1;
+			const { groupRepo, resetGroupForRestart, failGroup, failGroupCalls } = makeGroupRepo(
+				group,
 				true
 			);
 
@@ -237,8 +249,9 @@ describe('routeHumanMessageToGroup', () => {
 			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
 			// Tried to inject
 			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
-			// Rolled back to failed
+			// Rolled back to failed with correct version (1 + 1 = 2)
 			expect(failGroup).toHaveBeenCalled();
+			expect(failGroupCalls).toEqual([{ groupId: 'group-1', version: 2 }]);
 			// Status rolled back to failed
 			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'failed');
 		});

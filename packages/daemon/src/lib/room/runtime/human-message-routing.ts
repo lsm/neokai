@@ -69,8 +69,8 @@ export async function routeHumanMessageToGroup(
 			try {
 				await runtime.taskManager.updateTaskStatus(taskId, 'in_progress');
 			} catch (error) {
-				// Rollback group state on failure
-				groupRepo.failGroup(group.id, previousVersion);
+				// Rollback group state on failure (group was already reset, so use previousVersion + 1)
+				groupRepo.failGroup(group.id, previousVersion + 1);
 				return { success: false, error: `Failed to transition task to in_progress: ${error}` };
 			}
 
