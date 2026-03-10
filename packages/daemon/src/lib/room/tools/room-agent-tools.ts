@@ -385,6 +385,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			const { success, error } = await routeHumanMessageToGroup(
 				runtime,
 				groupRepo,
+				taskManager,
 				args.task_id,
 				args.message
 			);
