@@ -1,14 +1,13 @@
 # CI - Build, test, and quality checks
 #
-# On PRs to dev:
-# 1. Code quality checks + unit/online tests (parallel)
-# 2. Build, binary compilation, and E2E tests are SKIPPED for faster feedback
+# Test execution is flattened based on trigger:
 #
-# On push to dev (after merge) and all main branch activity:
-# 1. Code quality checks + unit/online tests (parallel)
-# 2. Build linux-x64 binary + smoke test (after tests pass)
-# 3. Run full E2E test matrix against the binary
-# 4. "All Tests Pass" gate (used by release.yml to verify CI status)
+# | Trigger               | Tests Run                                      | Rationale                      |
+# |-----------------------|-----------------------------------------------|--------------------------------|
+# | PR to dev             | check + unit + online                         | Fast feedback for PRs          |
+# | Push to dev           | e2e only                                      | Already passed unit/online    |
+# | PR to main            | all tests (check + unit + online + e2e + web + CLI) | Full gate              |
+# | Push to main          | all tests                                     | Full gate for main branch     |
 #
 # Release is handled separately in release.yml (triggered by version tags).
 # Test coverage (unit, online, web) is uploaded to Coveralls.
@@ -52,12 +51,14 @@ jobs:
 
   # ============================================
   # CODE QUALITY CHECKS
+  # Run on: PR to dev, PR to main, push to main (skip on push to dev)
   # ============================================
 
   check:
     name: Lint, Knip, Format & Type Check
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev'
 
     steps:
       - uses: actions/checkout@v4
@@ -105,12 +106,13 @@ jobs:
 
   # ============================================
   # DAEMON ONLINE TESTS (Require API credentials)
+  # Run on: PR to dev, PR to main, push to main (skip on push to dev)
   # ============================================
 
   test-daemon-online:
     name: Daemon Online (${{ matrix.module }})
     runs-on: ubuntu-latest
-    if: github.ref_type != 'tag'
+    if: github.ref_type != 'tag' && (github.event_name != 'push' || github.ref != 'refs/heads/dev')
     timeout-minutes: ${{ matrix.timeout || 5 }}
 
     strategy:
@@ -338,12 +340,14 @@ jobs:
 
   # ============================================
   # DAEMON + SHARED UNIT TESTS (For coverage measurement)
+  # Run on: PR to dev, PR to main, push to main (skip on push to dev)
   # ============================================
 
   test-daemon-shared-unit:
     name: Daemon + Shared Unit Tests (Coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev'
 
     steps:
       - uses: actions/checkout@v4
@@ -384,12 +388,14 @@ jobs:
 
   # ============================================
   # WEB TESTS
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
   # ============================================
 
   test-web:
     name: Web Tests
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4
@@ -431,12 +437,14 @@ jobs:
 
   # ============================================
   # CLI TESTS
+  # Run on: PR to main, push to main, workflow_dispatch (skip on PR to dev and push to dev)
   # ============================================
 
   test-cli:
     name: CLI Tests
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4
@@ -462,6 +470,7 @@ jobs:
   # ============================================
   # COVERALLS FINALIZATION
   # Merges all parallel coverage uploads
+  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
   # ============================================
 
   coveralls-finalize:
@@ -469,6 +478,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-daemon-shared-unit, test-web, test-daemon-online]
     timeout-minutes: 1
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Finalize Coveralls parallel build
@@ -481,7 +491,7 @@ jobs:
   # ============================================
   # COVERAGE QUALITY GATE
   # Verifies minimum coverage and regression thresholds via Coveralls API.
-  # Queries Coveralls API to verify coverage thresholds.
+  # Run on: PR to dev, PR to main, push to main, workflow_dispatch (skip on push to dev)
   # ============================================
 
   coverage-gate:
@@ -489,6 +499,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [coveralls-finalize]
     timeout-minutes: 3
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Check coverage thresholds via Coveralls API
@@ -565,15 +576,40 @@ jobs:
           echo "✅ Coverage quality gate passed!"
 
   # ============================================
+  # BUILD TRIGGER - Coordinates dependencies for build job
+  # On push to dev: runs immediately (no test dependencies needed)
+  # On PR to main / push to main: waits for tests to pass
+  # ============================================
+
+  build-trigger:
+    name: Build Trigger
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    steps:
+      - name: Trigger build
+        run: echo "Build triggered for push to dev (tests already passed in PR)"
+
+  build-wait-tests:
+    name: Build Wait for Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev'
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
+    steps:
+      - name: Tests passed
+        run: echo "All tests passed, proceeding to build"
+
+  # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
-  # Runs after all unit/online tests pass
+  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
   # ============================================
 
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
+    needs: [build-trigger, build-wait-tests]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
 
     steps:
@@ -619,12 +655,13 @@ jobs:
   # Tests are split into two groups:
   #   - no-llm: UI-only tests (run fully parallel)
   #   - llm: Tests requiring LLM round-trips (max 4 parallel)
+  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
   # ============================================
 
   discover:
     name: Discover Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main'
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     outputs:
       tests_no_llm: ${{ steps.categorize.outputs.tests_no_llm }}
       tests_llm: ${{ steps.categorize.outputs.tests_llm }}
@@ -686,6 +723,7 @@ jobs:
   # ============================================
   # E2E TESTS - No LLM (Matrix, fully parallel)
   # UI-only tests that don't require LLM API calls
+  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
   # ============================================
 
   e2e-no-llm:
@@ -693,7 +731,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, discover]
     # Skip E2E tests for release PRs to avoid blocking releases with flaky tests
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main') && !contains(github.event.pull_request.title, 'release')
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')) && !contains(github.event.pull_request.title, 'release') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -782,6 +820,7 @@ jobs:
   # ============================================
   # E2E TESTS - LLM Required (Matrix, max 4 parallel)
   # Tests that send messages and wait for LLM responses
+  # Run on: PR to main, push to dev, push to main (skip on PR to dev)
   # ============================================
 
   e2e-llm:
@@ -789,7 +828,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build, discover]
     # Skip E2E tests for release PRs to avoid blocking releases with flaky tests
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.base_ref == 'main') && !contains(github.event.pull_request.title, 'release')
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')) && !contains(github.event.pull_request.title, 'release') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -909,7 +948,7 @@ jobs:
           retention-days: 7
 
   # ============================================
-  # GATE - All tests (unit, online, E2E) must pass
+  # GATE - All tests must pass (handles conditional job results)
   # ============================================
 
   all-tests-pass:
@@ -918,33 +957,117 @@ jobs:
     timeout-minutes: 1
     if: always()
     needs:
+      - enforce-merge-policy
       - check
       - test-daemon-online
       - test-daemon-shared-unit
       - test-web
       - test-cli
       - coverage-gate
+      - build-trigger
+      - build-wait-tests
+      - build
+      - discover
       - e2e-no-llm
       - e2e-llm
 
     steps:
       - name: Check all jobs passed
         run: |
-          if [[ "${{ needs.check.result }}" != "success" ]] || \
-             [[ "${{ needs.test-daemon-online.result }}" != "success" ]] || \
-             [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]] || \
-             [[ "${{ needs.test-web.result }}" != "success" ]] || \
-             [[ "${{ needs.test-cli.result }}" != "success" ]] || \
-             [[ "${{ needs.coverage-gate.result }}" != "success" && "${{ needs.coverage-gate.result }}" != "skipped" ]] || \
-             [[ "${{ needs.e2e-no-llm.result }}" != "success" && "${{ needs.e2e-no-llm.result }}" != "skipped" ]] || \
-             [[ "${{ needs.e2e-llm.result }}" != "success" && "${{ needs.e2e-llm.result }}" != "skipped" ]]; then
-            echo "One or more jobs failed:"
+          FAILED=0
+
+          # Merge policy check (only for PRs to main)
+          if [[ "${{ needs.enforce-merge-policy.result }}" == "failure" ]]; then
+            echo "❌ Merge policy failed"
+            FAILED=1
+          fi
+
+          # Check job: PR to dev, PR to main, push to main (skip on push to dev)
+          if [[ "${{ needs.check.result }}" == "failure" ]]; then
+            echo "❌ check failed"
+            FAILED=1
+          fi
+
+          # test-daemon-online: PR to dev, PR to main, push to main (skip on push to dev)
+          if [[ "${{ needs.test-daemon-online.result }}" == "failure" ]]; then
+            echo "❌ test-daemon-online failed"
+            FAILED=1
+          fi
+
+          # test-daemon-shared-unit: PR to dev, PR to main, push to main (skip on push to dev)
+          if [[ "${{ needs.test-daemon-shared-unit.result }}" == "failure" ]]; then
+            echo "❌ test-daemon-shared-unit failed"
+            FAILED=1
+          fi
+
+          # test-web: PR to main, push to main (skip on PR to dev and push to dev)
+          if [[ "${{ needs.test-web.result }}" == "failure" ]]; then
+            echo "❌ test-web failed"
+            FAILED=1
+          fi
+
+          # test-cli: PR to main, push to main (skip on PR to dev and push to dev)
+          if [[ "${{ needs.test-cli.result }}" == "failure" ]]; then
+            echo "❌ test-cli failed"
+            FAILED=1
+          fi
+
+          # coverage-gate: PR to dev, PR to main, push to main (skip on push to dev)
+          if [[ "${{ needs.coverage-gate.result }}" == "failure" ]]; then
+            echo "❌ coverage-gate failed"
+            FAILED=1
+          fi
+
+          # build-trigger: push to dev only
+          if [[ "${{ needs.build-trigger.result }}" == "failure" ]]; then
+            echo "❌ build-trigger failed"
+            FAILED=1
+          fi
+
+          # build-wait-tests: PR to main, push to main (skip on push to dev)
+          if [[ "${{ needs.build-wait-tests.result }}" == "failure" ]]; then
+            echo "❌ build-wait-tests failed"
+            FAILED=1
+          fi
+
+          # build: PR to main, push to dev, push to main (skip on PR to dev)
+          if [[ "${{ needs.build.result }}" == "failure" ]]; then
+            echo "❌ build failed"
+            FAILED=1
+          fi
+
+          # discover: PR to main, push to dev, push to main (skip on PR to dev)
+          if [[ "${{ needs.discover.result }}" == "failure" ]]; then
+            echo "❌ discover failed"
+            FAILED=1
+          fi
+
+          # e2e-no-llm: PR to main, push to dev, push to main (skip on PR to dev)
+          if [[ "${{ needs.e2e-no-llm.result }}" == "failure" ]]; then
+            echo "❌ e2e-no-llm failed"
+            FAILED=1
+          fi
+
+          # e2e-llm: PR to main, push to dev, push to main (skip on PR to dev)
+          if [[ "${{ needs.e2e-llm.result }}" == "failure" ]]; then
+            echo "❌ e2e-llm failed"
+            FAILED=1
+          fi
+
+          if [ $FAILED -eq 1 ]; then
+            echo ""
+            echo "One or more required jobs failed:"
+            echo "  enforce-merge-policy: ${{ needs.enforce-merge-policy.result }}"
             echo "  check: ${{ needs.check.result }}"
             echo "  test-daemon-online: ${{ needs.test-daemon-online.result }}"
             echo "  test-daemon-shared-unit: ${{ needs.test-daemon-shared-unit.result }}"
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  test-cli: ${{ needs.test-cli.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
+            echo "  build-trigger: ${{ needs.build-trigger.result }}"
+            echo "  build-wait-tests: ${{ needs.build-wait-tests.result }}"
+            echo "  build: ${{ needs.build.result }}"
+            echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
             echo "  e2e-llm: ${{ needs.e2e-llm.result }}"
             exit 1
