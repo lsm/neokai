@@ -180,6 +180,7 @@ jobs:
           - module: git
             test_path: tests/online/git
             timeout: 10
+            default_provider: minimax
           - module: lifecycle
             test_path: tests/online/lifecycle
             mock_sdk: true
