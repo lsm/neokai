@@ -1,8 +1,10 @@
 /**
  * Database Migrations
  *
- * All 13 migrations for schema changes.
- * CRITICAL: Preserve the order of migrations.
+ * Migrations 1–13 handle incremental schema changes to core tables.
+ * runMigrationRoomCleanup consolidates former migrations 25–36 (room feature
+ * experiments that never shipped to production) into a single drop-and-recreate
+ * cleanup. CRITICAL: Preserve the order of migrations.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -56,12 +58,48 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 13: Update CHECK constraint to include 'pending_worktree_choice' status
 	runMigration13(db);
+
+	// Room cleanup: drop all room experiment tables and fix sessions schema if outdated
+	// (consolidates former migrations 25–36, which covered features never shipped to production)
+	runMigrationRoomCleanup(db);
+
+	// Migration 14: Drop events table and unused session columns (labels, sub_session_order)
+	runMigration14(db);
+
+	// Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
+	runMigration15(db);
+
+	// Migration 16: Replace 'escalated' with 'review' in tasks, remove 'hibernated' from session_groups,
+	// add config column to rooms table
+	runMigration16(db);
+
+	// Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
+	runMigration17(db);
+
+	// Migration 18: Add 'cancelled' to tasks status CHECK constraint
+	runMigration18(db);
+
+	// Migration 19: Remove legacy mirrored session_group_messages table
+	runMigration19(db);
+
+	// Migration 20: Add archived_at column to tasks table
+	runMigration20(db);
+
+	// Migration 21: Backfill submittedForReview metadata for active awaiting_human groups
+	runMigration21(db);
+
+	// Migration 22: Drop legacy session_groups.state column and index
+	runMigration22(db);
 }
 
 /**
  * Migration 1: Add oauth_token_encrypted column if it doesn't exist
  */
 function runMigration1(db: BunDatabase): void {
+	// First check if auth_config table exists (fresh database)
+	if (!tableExists(db, 'auth_config')) {
+		return;
+	}
 	try {
 		// Check if column exists by trying to query it
 		db.prepare(`SELECT oauth_token_encrypted FROM auth_config LIMIT 1`).all();
@@ -92,6 +130,10 @@ function runMigration2(db: BunDatabase): void {
  * Migration 3: Add worktree columns to sessions table
  */
 function runMigration3(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT is_worktree FROM sessions LIMIT 1`).all();
 	} catch {
@@ -106,6 +148,10 @@ function runMigration3(db: BunDatabase): void {
  * Migration 4: Add git_branch column for non-worktree git sessions
  */
 function runMigration4(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT git_branch FROM sessions LIMIT 1`).all();
 	} catch {
@@ -117,6 +163,10 @@ function runMigration4(db: BunDatabase): void {
  * Migration 5: Add sdk_session_id column for session resumption
  */
 function runMigration5(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT sdk_session_id FROM sessions LIMIT 1`).all();
 	} catch {
@@ -128,6 +178,10 @@ function runMigration5(db: BunDatabase): void {
  * Migration 6: Add available_commands column for slash commands persistence
  */
 function runMigration6(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT available_commands FROM sessions LIMIT 1`).all();
 	} catch {
@@ -139,6 +193,10 @@ function runMigration6(db: BunDatabase): void {
  * Migration 7: Add processing_state column for agent state persistence
  */
 function runMigration7(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT processing_state FROM sessions LIMIT 1`).all();
 	} catch {
@@ -150,6 +208,10 @@ function runMigration7(db: BunDatabase): void {
  * Migration 8: Add archived_at column for archive session feature
  */
 function runMigration8(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT archived_at FROM sessions LIMIT 1`).all();
 	} catch {
@@ -167,6 +229,10 @@ function runMigration8(db: BunDatabase): void {
  * which would delete all messages. This was a data-loss bug.
  */
 function runMigration9(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		// Check if the CHECK constraint already includes 'archived'
 		// We do this by trying to insert a test row with status='archived'
@@ -253,6 +319,10 @@ function runMigration9(db: BunDatabase): void {
  * send_status tracks whether a message has been saved, queued, or sent to SDK
  */
 function runMigration10(db: BunDatabase): void {
+	// Skip if sdk_messages table doesn't exist (fresh database)
+	if (!tableExists(db, 'sdk_messages')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT send_status FROM sdk_messages LIMIT 1`).all();
 	} catch {
@@ -274,6 +344,10 @@ function runMigration10(db: BunDatabase): void {
  * - sub_session_order: Integer for ordering siblings in UI
  */
 function runMigration11(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		db.prepare(`SELECT parent_id FROM sessions LIMIT 1`).all();
 	} catch {
@@ -294,6 +368,10 @@ function runMigration11(db: BunDatabase): void {
  * This migration ensures all existing settings have autoScroll: true as default.
  */
 export function runMigration12(db: BunDatabase): void {
+	// Skip if global_settings table doesn't exist (fresh database)
+	if (!tableExists(db, 'global_settings')) {
+		return;
+	}
 	try {
 		const row = db.prepare(`SELECT settings FROM global_settings WHERE id = 1`).get() as
 			| { settings: string }
@@ -334,13 +412,17 @@ export function runMigration12(db: BunDatabase): void {
  * which would delete all messages. This was a data-loss bug.
  */
 function runMigration13(db: BunDatabase): void {
+	// Skip if sessions table doesn't exist (fresh database)
+	if (!tableExists(db, 'sessions')) {
+		return;
+	}
 	try {
 		// Check if the CHECK constraint already includes 'pending_worktree_choice'
 		// We do this by trying to insert a test row with status='pending_worktree_choice'
 		const testId = '__migration_test_pending_worktree_choice_status__';
 		db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id, labels, sub_session_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, parent_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		).run(
 			testId,
 			'Test',
@@ -359,9 +441,7 @@ function runMigration13(db: BunDatabase): void {
 			null,
 			null,
 			null,
-			null,
-			null,
-			0
+			null
 		);
 		// If we got here, the constraint already includes 'pending_worktree_choice', clean up and skip migration
 		db.prepare(`DELETE FROM sessions WHERE id = ?`).run(testId);
@@ -375,6 +455,11 @@ function runMigration13(db: BunDatabase): void {
 		db.exec('PRAGMA foreign_keys = OFF');
 
 		try {
+			// Determine which optional columns exist before rebuild (they may or may not be present
+			// depending on which migrations ran before this one)
+			const hasLabels = tableHasColumn(db, 'sessions', 'labels');
+			const hasSubOrder = tableHasColumn(db, 'sessions', 'sub_session_order');
+
 			// SQLite table recreation pattern for modifying constraints
 			db.exec(`
 				-- Create new table with updated CHECK constraint
@@ -396,17 +481,14 @@ function runMigration13(db: BunDatabase): void {
 					available_commands TEXT,
 					processing_state TEXT,
 					archived_at TEXT,
-					parent_id TEXT,
-					labels TEXT,
-					sub_session_order INTEGER DEFAULT 0
+					parent_id TEXT
 				);
 
 				-- Copy all data from old table to new table
 				INSERT INTO sessions_new
 				SELECT id, title, workspace_path, created_at, last_active_at, status, config, metadata,
 					   is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch,
-					   sdk_session_id, available_commands, processing_state, archived_at,
-					   parent_id, labels, sub_session_order
+					   sdk_session_id, available_commands, processing_state, archived_at, parent_id
 				FROM sessions;
 
 				-- Drop old table (safe now that foreign_keys is OFF)
@@ -415,9 +497,645 @@ function runMigration13(db: BunDatabase): void {
 				-- Rename new table to original name
 				ALTER TABLE sessions_new RENAME TO sessions;
 			`);
+
+			// Re-add labels and sub_session_order if they existed in the old table
+			// (Migration 14 will drop them, but we preserve them here so M14 can do it cleanly)
+			if (hasLabels) {
+				db.exec(`ALTER TABLE sessions ADD COLUMN labels TEXT`);
+			}
+			if (hasSubOrder) {
+				db.exec(`ALTER TABLE sessions ADD COLUMN sub_session_order INTEGER DEFAULT 0`);
+			}
 		} finally {
 			// Re-enable foreign keys
 			db.exec('PRAGMA foreign_keys = ON');
 		}
+	}
+}
+
+/**
+ * Migration 14: Drop events table and unused session columns
+ *
+ * - events table was never used (EventBus handles events in-memory)
+ * - labels and sub_session_order columns were added in Migration 11 but never used
+ *
+ * ALTER TABLE DROP COLUMN requires SQLite 3.35+; Bun ships SQLite 3.46+.
+ */
+function runMigration14(db: BunDatabase): void {
+	db.exec(`DROP TABLE IF EXISTS events`);
+	db.exec(`DROP INDEX IF EXISTS idx_events_session`);
+
+	if (!tableExists(db, 'sessions')) return;
+	if (tableHasColumn(db, 'sessions', 'labels')) {
+		db.exec(`ALTER TABLE sessions DROP COLUMN labels`);
+	}
+	if (tableHasColumn(db, 'sessions', 'sub_session_order')) {
+		db.exec(`ALTER TABLE sessions DROP COLUMN sub_session_order`);
+	}
+}
+
+/**
+ * Migration 15: Add 'failed' to send_status CHECK constraint in sdk_messages
+ *
+ * Orphaned messages are now marked 'failed' instead of 'saved', so they appear
+ * in the UI as undelivered rather than being silently re-dispatched on startup.
+ *
+ * Requires rebuilding the table because SQLite does not support modifying
+ * existing CHECK constraints via ALTER TABLE.
+ */
+function runMigration15(db: BunDatabase): void {
+	if (!tableExists(db, 'sdk_messages')) {
+		return;
+	}
+	// Check if the constraint already includes 'failed' by inspecting the schema SQL
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='sdk_messages'`)
+		.get() as { sql: string } | null;
+	if (tableInfo?.sql?.includes("'failed'")) {
+		return; // Already migrated
+	}
+
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		db.exec(`
+			CREATE TABLE sdk_messages_new (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				message_type TEXT NOT NULL,
+				message_subtype TEXT,
+				sdk_message TEXT NOT NULL,
+				timestamp TEXT NOT NULL,
+				send_status TEXT DEFAULT 'sent' CHECK(send_status IN ('saved', 'queued', 'sent', 'failed')),
+				FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+			)
+		`);
+		db.exec(`INSERT INTO sdk_messages_new SELECT * FROM sdk_messages`);
+		db.exec(`DROP TABLE sdk_messages`);
+		db.exec(`ALTER TABLE sdk_messages_new RENAME TO sdk_messages`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_sdk_messages_session_id ON sdk_messages(session_id)`);
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_sdk_messages_send_status ON sdk_messages(session_id, send_status)`
+		);
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
+	}
+}
+
+/**
+ * Migration 16: Replace 'escalated' with 'review' in tasks CHECK constraint,
+ * remove 'hibernated' from session_groups CHECK constraint,
+ * add config column to rooms table.
+ *
+ * - Tasks: 'escalated' → 'review' (existing escalated rows mapped to 'failed')
+ * - Session groups: remove 'hibernated' (existing hibernated rows mapped to 'failed')
+ * - Rooms: add config TEXT column for agent sub-agents and other room config
+ */
+function runMigration16(db: BunDatabase): void {
+	// --- Tasks table: replace 'escalated' with 'review' ---
+	if (tableExists(db, 'tasks')) {
+		// Inspect CHECK constraint text instead of probe INSERT.
+		// Probe inserts can fail due to FK constraints (tasks.room_id -> rooms.id)
+		// even when the status CHECK is already migrated.
+		const tableInfo = db
+			.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+			.get() as { sql: string } | null;
+		const needsTaskMigration =
+			tableInfo !== null &&
+			(tableInfo.sql.includes("'escalated'") || !tableInfo.sql.includes("'review'"));
+
+		if (needsTaskMigration) {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				// Map any existing 'escalated' tasks to 'failed'
+				db.exec(`PRAGMA ignore_check_constraints = 1`);
+				db.exec(`UPDATE tasks SET status = 'failed' WHERE status = 'escalated'`);
+				db.exec(`PRAGMA ignore_check_constraints = 0`);
+
+				// Drop leftover temp table from a previous crashed migration attempt
+				db.exec(`DROP TABLE IF EXISTS tasks_new`);
+
+				db.exec(`
+					CREATE TABLE tasks_new (
+						id TEXT PRIMARY KEY,
+						room_id TEXT NOT NULL,
+						title TEXT NOT NULL,
+						description TEXT NOT NULL,
+						status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled')),
+						priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+						progress INTEGER,
+						current_step TEXT,
+						result TEXT,
+						error TEXT,
+						depends_on TEXT DEFAULT '[]',
+						created_at INTEGER NOT NULL,
+						started_at INTEGER,
+						completed_at INTEGER,
+						task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+						assigned_agent TEXT DEFAULT 'coder',
+						created_by_task_id TEXT,
+						FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+					)
+				`);
+				// Build column list dynamically — old schemas may not have all columns
+				const cols = [
+					'id',
+					'room_id',
+					'title',
+					'description',
+					'status',
+					'priority',
+					'progress',
+					'current_step',
+					'result',
+					'error',
+					'depends_on',
+					'created_at',
+					'started_at',
+					'completed_at',
+				];
+				const optionalCols = ['task_type', 'assigned_agent', 'created_by_task_id'];
+				for (const col of optionalCols) {
+					if (tableHasColumn(db, 'tasks', col)) cols.push(col);
+				}
+				const selectCols = cols.join(', ');
+				db.exec(`INSERT INTO tasks_new (${selectCols}) SELECT ${selectCols} FROM tasks`);
+				db.exec(`DROP TABLE tasks`);
+				db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
+
+	// --- Session groups table: remove 'hibernated' ---
+	if (tableExists(db, 'session_groups')) {
+		const testId = '__migration15_sg_test__';
+		let needsGroupMigration = false;
+		try {
+			// Try inserting 'hibernated' — if it succeeds, the constraint still allows it
+			db.prepare(
+				`INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at)
+				 VALUES (?, 'task', 'test', 'hibernated', 0, '{}', 0)`
+			).run(testId);
+			db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(testId);
+			needsGroupMigration = true; // 'hibernated' is still allowed, need to remove it
+		} catch {
+			// 'hibernated' already not allowed — migration done
+		}
+
+		if (needsGroupMigration) {
+			db.exec('PRAGMA foreign_keys = OFF');
+			try {
+				// Map any existing 'hibernated' groups to 'failed'
+				db.exec(`UPDATE session_groups SET state = 'failed' WHERE state = 'hibernated'`);
+
+				// Drop leftover temp table from a previous crashed migration attempt
+				db.exec(`DROP TABLE IF EXISTS session_groups_new`);
+
+				db.exec(`
+					CREATE TABLE session_groups_new (
+						id TEXT PRIMARY KEY,
+						group_type TEXT NOT NULL DEFAULT 'task',
+						ref_id TEXT NOT NULL,
+						state TEXT NOT NULL DEFAULT 'awaiting_worker'
+							CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'completed', 'failed')),
+						version INTEGER NOT NULL DEFAULT 0,
+						metadata TEXT NOT NULL DEFAULT '{}',
+						created_at INTEGER NOT NULL,
+						completed_at INTEGER
+					)
+				`);
+				db.exec(`
+					INSERT INTO session_groups_new
+					SELECT id, group_type, ref_id, state, version, metadata, created_at, completed_at
+					FROM session_groups
+				`);
+				db.exec(`DROP TABLE session_groups`);
+				db.exec(`ALTER TABLE session_groups_new RENAME TO session_groups`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
+				db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
+			} finally {
+				db.exec('PRAGMA foreign_keys = ON');
+			}
+		}
+	}
+
+	// --- Rooms table: add config column ---
+	if (tableExists(db, 'rooms') && !tableHasColumn(db, 'rooms', 'config')) {
+		db.exec(`ALTER TABLE rooms ADD COLUMN config TEXT`);
+	}
+}
+
+/**
+ * Migration 17: Fix goals table CHECK constraint and add goal_review_attempts column
+ *
+ * The goals table was created with an old CHECK constraint:
+ *   CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked'))
+ * The correct constraint (matching GoalStatus type) is:
+ *   CHECK(status IN ('active', 'needs_human', 'completed', 'archived'))
+ *
+ * Also adds the goal_review_attempts column defined in the RoomGoal interface
+ * but missing from the original table schema.
+ *
+ * Status mapping: pending → active, in_progress → active, blocked → needs_human
+ *
+ * CRITICAL: Must disable foreign_keys during table recreation to prevent
+ * CASCADE delete from wiping related data when we DROP TABLE goals.
+ */
+function runMigration17(db: BunDatabase): void {
+	if (!tableExists(db, 'goals')) {
+		return;
+	}
+
+	// Check if migration is needed: try inserting a row with status='active'
+	// If it fails, the old CHECK constraint is in place and we need to recreate the table.
+	// Also check if goal_review_attempts column is already present.
+	const testId = '__migration16_goals_test__';
+	let needsConstraintFix = false;
+	try {
+		db.prepare(
+			`INSERT INTO goals (id, room_id, title, description, status, priority, created_at, updated_at)
+			 VALUES (?, 'test', 'test', '', 'active', 'normal', 0, 0)`
+		).run(testId);
+		db.prepare(`DELETE FROM goals WHERE id = ?`).run(testId);
+	} catch {
+		needsConstraintFix = true;
+	}
+
+	const needsColumn = !tableHasColumn(db, 'goals', 'goal_review_attempts');
+
+	if (!needsConstraintFix && !needsColumn) {
+		return; // Already up to date
+	}
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		if (needsConstraintFix) {
+			// Map old status values to new ones before recreating the table
+			db.exec(`PRAGMA ignore_check_constraints = 1`);
+			db.exec(`UPDATE goals SET status = 'active' WHERE status IN ('pending', 'in_progress')`);
+			db.exec(`UPDATE goals SET status = 'needs_human' WHERE status = 'blocked'`);
+			db.exec(`PRAGMA ignore_check_constraints = 0`);
+		}
+
+		// Drop leftover temp table from a previous crashed migration attempt
+		db.exec(`DROP TABLE IF EXISTS goals_new`);
+
+		// Determine which optional columns exist so we can carry them over
+		const hasGoalReviewAttempts = tableHasColumn(db, 'goals', 'goal_review_attempts');
+		const hasPlanningAttempts = tableHasColumn(db, 'goals', 'planning_attempts');
+
+		db.exec(`
+			CREATE TABLE goals_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK(status IN ('active', 'needs_human', 'completed', 'archived')),
+				priority TEXT NOT NULL DEFAULT 'normal'
+					CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER DEFAULT 0,
+				linked_task_ids TEXT DEFAULT '[]',
+				metrics TEXT DEFAULT '{}',
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0,
+				goal_review_attempts INTEGER DEFAULT 0,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
+		// Build column list — only include goal_review_attempts if it existed before
+		const cols = [
+			'id',
+			'room_id',
+			'title',
+			'description',
+			'status',
+			'priority',
+			'progress',
+			'linked_task_ids',
+			'metrics',
+			'created_at',
+			'updated_at',
+			'completed_at',
+		];
+		if (hasPlanningAttempts) {
+			cols.push('planning_attempts');
+		}
+		if (hasGoalReviewAttempts) {
+			cols.push('goal_review_attempts');
+		}
+		const selectCols = cols.join(', ');
+		db.exec(`INSERT INTO goals_new (${selectCols}) SELECT ${selectCols} FROM goals`);
+
+		db.exec(`DROP TABLE goals`);
+		db.exec(`ALTER TABLE goals_new RENAME TO goals`);
+
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 18: Add 'cancelled' to tasks status CHECK constraint
+ *
+ * Cancelled tasks are intentionally stopped by the user — semantically distinct from failed.
+ * Uses the same table-rebuild pattern required by SQLite's lack of ALTER CONSTRAINT support.
+ */
+function runMigration18(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Test if migration is needed by inspecting the CHECK constraint in the schema text.
+	// We use sqlite_master instead of a probe INSERT to avoid triggering a FK violation:
+	// tasks.room_id references rooms(id), and inserting with a fake room_id would fail
+	// when foreign_keys=ON (which the app enables at startup), spuriously triggering a
+	// full table-rebuild on every startup even for already-migrated databases.
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+		.get() as { sql: string } | null;
+	const needsMigration = tableInfo !== null && !tableInfo.sql.includes("'cancelled'");
+
+	if (!needsMigration) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		db.exec(`DROP TABLE IF EXISTS tasks_new`);
+
+		db.exec(`
+			CREATE TABLE tasks_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled')),
+				priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT DEFAULT '[]',
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+				assigned_agent TEXT DEFAULT 'coder',
+				created_by_task_id TEXT,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
+		const cols = [
+			'id',
+			'room_id',
+			'title',
+			'description',
+			'status',
+			'priority',
+			'progress',
+			'current_step',
+			'result',
+			'error',
+			'depends_on',
+			'created_at',
+			'started_at',
+			'completed_at',
+		];
+		const optionalCols = ['task_type', 'assigned_agent', 'created_by_task_id'];
+		for (const col of optionalCols) {
+			if (tableHasColumn(db, 'tasks', col)) cols.push(col);
+		}
+		const selectCols = cols.join(', ');
+		db.exec(`INSERT INTO tasks_new (${selectCols}) SELECT ${selectCols} FROM tasks`);
+		db.exec(`DROP TABLE tasks`);
+		db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Helper function to check if a table exists in the database
+ */
+function tableExists(db: BunDatabase, tableName: string): boolean {
+	const result = db
+		.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+		.get(tableName);
+	return !!result;
+}
+
+/**
+ * Helper to check whether a table has a specific column
+ */
+function tableHasColumn(db: BunDatabase, tableName: string, columnName: string): boolean {
+	const result = db
+		.prepare(`SELECT name FROM pragma_table_info('${tableName}') WHERE name = ?`)
+		.get(columnName);
+	return !!result;
+}
+
+/**
+ * Room cleanup migration (consolidates former migrations 25–36)
+ *
+ * Room features were never shipped to production, so all room-related tables are
+ * dropped unconditionally — createTables() recreates them with the correct schema.
+ *
+ * For the sessions table (which contains real user data):
+ * - Adds type/session_context columns if missing
+ * - Rebuilds the table if the type CHECK constraint is outdated, mapping any
+ *   dev-only type values to their production equivalents before the rebuild.
+ */
+function runMigration19(db: BunDatabase): void {
+	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
+	db.exec(`DROP INDEX IF EXISTS idx_sgmsg_group`);
+}
+
+/**
+ * Migration 20: Add archived_at column to tasks table
+ *
+ * archived_at is orthogonal to status - a task can be completed+archived, failed+archived, etc.
+ * This supports the worktree cleanup strategy where:
+ * - completed/cancelled tasks cleanup worktree immediately
+ * - failed tasks keep worktree for debugging
+ * - archived tasks cleanup worktree when user explicitly archives
+ */
+function runMigration20(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Check if archived_at column already exists
+	if (tableHasColumn(db, 'tasks', 'archived_at')) {
+		return;
+	}
+
+	db.exec(`ALTER TABLE tasks ADD COLUMN archived_at INTEGER`);
+}
+
+/**
+ * Migration 21: Backfill submittedForReview metadata from legacy state column.
+ *
+ * For pre-existing databases, active groups may rely on `state='awaiting_human'`
+ * without metadata.submittedForReview set. Runtime behavior now relies on metadata,
+ * so this migration copies that semantic flag into metadata once.
+ */
+function runMigration21(db: BunDatabase): void {
+	if (!tableExists(db, 'session_groups')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'session_groups', 'state')) {
+		return;
+	}
+
+	const rows = db
+		.prepare(
+			`SELECT id, metadata
+			 FROM session_groups
+			 WHERE completed_at IS NULL AND state = 'awaiting_human'`
+		)
+		.all() as Array<{ id: string; metadata: string | null }>;
+
+	const update = db.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`);
+	for (const row of rows) {
+		let meta: Record<string, unknown> = {};
+		if (row.metadata) {
+			try {
+				meta = JSON.parse(row.metadata) as Record<string, unknown>;
+			} catch {
+				meta = {};
+			}
+		}
+		if (meta.submittedForReview === true) {
+			continue;
+		}
+		meta.submittedForReview = true;
+		update.run(JSON.stringify(meta), row.id);
+	}
+}
+
+/**
+ * Migration 22: Drop legacy `session_groups.state` and its index.
+ *
+ * Routing semantics now rely on completed_at + metadata.submittedForReview.
+ */
+function runMigration22(db: BunDatabase): void {
+	db.exec(`DROP INDEX IF EXISTS idx_session_groups_state`);
+
+	if (!tableExists(db, 'session_groups')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'session_groups', 'state')) {
+		return;
+	}
+
+	db.exec(`ALTER TABLE session_groups DROP COLUMN state`);
+}
+
+function runMigrationRoomCleanup(db: BunDatabase): void {
+	db.exec(`PRAGMA foreign_keys = OFF`);
+	try {
+		// Drop all old experiment and orchestration tables
+		db.exec(`DROP TABLE IF EXISTS neo_context_messages`);
+		db.exec(`DROP TABLE IF EXISTS neo_contexts`);
+		db.exec(`DROP TABLE IF EXISTS neo_tasks`);
+		db.exec(`DROP TABLE IF EXISTS neo_memories`);
+		db.exec(`DROP TABLE IF EXISTS neo_rooms`);
+		db.exec(`DROP TABLE IF EXISTS room_agent_states`);
+		db.exec(`DROP TABLE IF EXISTS worker_sessions`);
+		db.exec(`DROP TABLE IF EXISTS worker_sessions_orphaned`);
+		db.exec(`DROP TABLE IF EXISTS recurring_jobs`);
+		db.exec(`DROP TABLE IF EXISTS room_context_versions`);
+		db.exec(`DROP TABLE IF EXISTS context_messages`);
+		db.exec(`DROP TABLE IF EXISTS contexts`);
+		db.exec(`DROP TABLE IF EXISTS memories`);
+		db.exec(`DROP TABLE IF EXISTS session_pairs`);
+		db.exec(`DROP TABLE IF EXISTS task_pairs`);
+		db.exec(`DROP TABLE IF EXISTS rendered_prompts`);
+		db.exec(`DROP TABLE IF EXISTS prompt_templates`);
+
+		// Room runtime tables (rooms, tasks, goals, session_groups, etc.) are now
+		// production tables with real data — do NOT drop them here.
+		// createTables() uses CREATE TABLE IF NOT EXISTS, so they will be created
+		// on first run and preserved on subsequent runs.
+
+		if (!tableExists(db, 'sessions')) return;
+
+		// Ensure sessions has the new columns
+		if (!tableHasColumn(db, 'sessions', 'type')) {
+			db.exec(`ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'worker'`);
+		}
+		if (!tableHasColumn(db, 'sessions', 'session_context')) {
+			db.exec(`ALTER TABLE sessions ADD COLUMN session_context TEXT`);
+		}
+
+		// Test whether the type CHECK constraint already includes the final set of types
+		const testId = '__migration_room_cleanup_test__';
+		try {
+			db.exec(
+				`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, type)
+				 VALUES ('${testId}', 'test', '/', datetime('now'), datetime('now'), 'active', '{}', '{}', 'planner')`
+			);
+			db.exec(`DELETE FROM sessions WHERE id = '${testId}'`);
+			return; // Constraint is already correct — nothing more to do
+		} catch {
+			// Constraint is outdated — rebuild sessions below
+		}
+
+		// Remap dev-only type values before the rebuild
+		db.exec(`PRAGMA ignore_check_constraints = 1`);
+		db.exec(`UPDATE sessions SET type = 'coder' WHERE type IN ('craft', 'room_self')`);
+		db.exec(`UPDATE sessions SET type = 'leader' WHERE type IN ('lead', 'manager')`);
+		db.exec(`PRAGMA ignore_check_constraints = 0`);
+		// Delete any remaining room-only session types (dev data, not present in production)
+		db.exec(
+			`DELETE FROM sessions WHERE type NOT IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')`
+		);
+
+		db.exec(`
+			CREATE TABLE sessions_new (
+				id TEXT PRIMARY KEY,
+				title TEXT NOT NULL,
+				workspace_path TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				last_active_at TEXT NOT NULL,
+				status TEXT NOT NULL CHECK(status IN ('active', 'paused', 'ended', 'archived', 'pending_worktree_choice')),
+				config TEXT NOT NULL,
+				metadata TEXT NOT NULL,
+				is_worktree INTEGER DEFAULT 0,
+				worktree_path TEXT,
+				main_repo_path TEXT,
+				worktree_branch TEXT,
+				git_branch TEXT,
+				sdk_session_id TEXT,
+				available_commands TEXT,
+				processing_state TEXT,
+				archived_at TEXT,
+				parent_id TEXT,
+				type TEXT DEFAULT 'worker' CHECK(type IN ('worker', 'room_chat', 'planner', 'coder', 'leader', 'general', 'lobby')),
+				session_context TEXT
+			)
+		`);
+		db.exec(`
+			INSERT INTO sessions_new
+			SELECT id, title, workspace_path, created_at, last_active_at,
+				status, config, metadata, is_worktree, worktree_path, main_repo_path,
+				worktree_branch, git_branch, sdk_session_id, available_commands,
+				processing_state, archived_at, parent_id, type, session_context
+			FROM sessions
+		`);
+		db.exec(`DROP TABLE sessions`);
+		db.exec(`ALTER TABLE sessions_new RENAME TO sessions`);
+	} finally {
+		db.exec(`PRAGMA foreign_keys = ON`);
 	}
 }

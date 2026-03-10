@@ -17,7 +17,7 @@ import {
 	waitForSlashCommandsLoaded,
 } from '../helpers/slash-command-helpers';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForWebSocketConnected,
 	waitForAssistantResponse,
 	cleanupTestSession,
@@ -31,12 +31,7 @@ test.describe('Slash Command Autocomplete - Basic Functionality', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Wait for commands to load
 		await waitForSlashCommandsLoaded(page);
@@ -116,12 +111,8 @@ test.describe('Slash Command Autocomplete - Navigation', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session
+		sessionId = await createSessionViaUI(page);
 
 		await waitForSlashCommandsLoaded(page);
 	});
@@ -214,12 +205,8 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session
+		sessionId = await createSessionViaUI(page);
 
 		await waitForSlashCommandsLoaded(page);
 	});
@@ -272,11 +259,13 @@ test.describe('Slash Command Autocomplete - Command Selection', () => {
 	test('should close dropdown when clicking outside', async ({ page }) => {
 		await typeInMessageInput(page, '/');
 
-		// Wait for dropdown
+		// Wait for dropdown to be fully visible and event listeners mounted
 		await expect(getAutocompleteDropdown(page)).toBeVisible();
 
-		// Click outside the dropdown (on the page body)
-		await page.locator('body').click({ position: { x: 10, y: 10 } });
+		// Click on the session heading in the chat header (outside the dropdown).
+		// Using Playwright's native click generates real mousedown events that trigger
+		// the handleClickOutside handler in CommandAutocomplete.
+		await page.getByRole('heading', { level: 2 }).last().click({ force: true });
 
 		// Dropdown should close
 		await page.waitForTimeout(500);
@@ -291,12 +280,8 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session
+		sessionId = await createSessionViaUI(page);
 
 		await waitForSlashCommandsLoaded(page);
 
@@ -328,7 +313,7 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await typeInMessageInput(page, '/h');
 
 		// Should show help command
-		await expect(page.locator('button:has-text("help")')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'help', exact: true })).toBeVisible();
 	});
 
 	test('should show /context command', async ({ page }) => {
@@ -338,11 +323,11 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		await expect(page.locator('button:has-text("context")')).toBeVisible();
 	});
 
-	test('should show /clear command', async ({ page }) => {
-		await typeInMessageInput(page, '/cl');
+	test('should show /init command', async ({ page }) => {
+		await typeInMessageInput(page, '/ini');
 
-		// Should show clear command
-		await expect(page.locator('button:has-text("clear")')).toBeVisible();
+		// Should show init command
+		await expect(page.locator('button:has-text("init")')).toBeVisible();
 	});
 
 	test('should show multiple commands matching filter', async ({ page }) => {
@@ -351,8 +336,8 @@ test.describe('Slash Command Autocomplete - Built-in Commands', () => {
 		// Wait for dropdown
 		await expect(getAutocompleteDropdown(page)).toBeVisible();
 
-		// Should show at least the clear command
-		await expect(page.locator('button:has-text("clear")')).toBeVisible();
+		// Should show at least the context command
+		await expect(page.locator('button:has-text("context")')).toBeVisible();
 	});
 });
 
@@ -363,12 +348,8 @@ test.describe('Slash Command Autocomplete - Edge Cases', () => {
 		await page.goto('/');
 		await waitForWebSocketConnected(page);
 
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		// Create a new session
+		sessionId = await createSessionViaUI(page);
 
 		await waitForSlashCommandsLoaded(page);
 	});
@@ -441,5 +422,116 @@ test.describe('Slash Command Autocomplete - Edge Cases', () => {
 		// Should have the full message
 		inputValue = await textarea.inputValue();
 		expect(inputValue).toBe('/merge-session with some additional context');
+	});
+});
+
+test.describe('Slash Command Autocomplete - SDK Commands from system:init', () => {
+	/**
+	 * Regression tests for: slash commands not showing in autocomplete even though
+	 * the SDK system:init message has 10+ commands (visible in "Slash Commands (N)"
+	 * panel). Root cause: state.session fallback broadcast sent commandsData: []
+	 * which overwrote valid commands. Fix: sync commandsData from system:init SDK
+	 * message as the authoritative source.
+	 */
+
+	let sessionId: string | null = null;
+
+	test.beforeEach(async ({ page }) => {
+		await page.goto('/');
+		await waitForWebSocketConnected(page);
+
+		// Create a new session
+		sessionId = await createSessionViaUI(page);
+
+		await waitForSlashCommandsLoaded(page);
+	});
+
+	test.afterEach(async ({ page }) => {
+		if (sessionId) {
+			try {
+				await cleanupTestSession(page, sessionId);
+			} catch (error) {
+				console.warn(`Failed to cleanup session ${sessionId}:`, error);
+			}
+			sessionId = null;
+		}
+	});
+
+	test('should show SDK commands in autocomplete after assistant response', async ({ page }) => {
+		// Send a message to trigger SDK query and receive system:init
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		// Wait for assistant to respond (system:init has arrived by this point)
+		await waitForAssistantResponse(page);
+
+		// SDK commands should now be in autocomplete via system:init sync
+		// (no artificial delay needed with the fix)
+		await typeInMessageInput(page, '/h');
+		await expect(page.getByRole('button', { name: 'help', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
+	});
+
+	test('should show /context command after assistant response', async ({ page }) => {
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		await waitForAssistantResponse(page);
+
+		await typeInMessageInput(page, '/con');
+		await expect(page.locator('button:has-text("context")')).toBeVisible({ timeout: 5000 });
+	});
+
+	test('should show all commands matching / after assistant response', async ({ page }) => {
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		await waitForAssistantResponse(page);
+
+		// Type just / to see all commands — should have more than just /merge-session
+		await typeInMessageInput(page, '/');
+		const dropdown = getAutocompleteDropdown(page);
+		await expect(dropdown).toBeVisible({ timeout: 5000 });
+
+		// Should have multiple commands from SDK system:init (not just the built-in /merge-session)
+		const commandButtons = page.locator(
+			'[data-testid="command-autocomplete"] button, text=Slash Commands ~ button'
+		);
+		// Verify at least /help is present (from SDK, not from NeoKai built-ins)
+		await expect(page.getByRole('button', { name: 'help', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
+	});
+
+	test('should restore SDK commands after state.session event with empty commandsData', async ({
+		page,
+	}) => {
+		// This test verifies the core bug fix:
+		// When state.session arrives with commandsData: [], commands are restored from system:init.
+		const textarea = getMessageInput(page);
+		await textarea.waitFor({ state: 'visible', timeout: 5000 });
+		await textarea.fill('hello');
+		await page.keyboard.press('Enter');
+
+		await waitForAssistantResponse(page);
+
+		// Send a second message — this triggers more state.session events including
+		// potential fallback broadcasts with empty commandsData.
+		await textarea.fill('what is 2+2');
+		await page.keyboard.press('Enter');
+		await waitForAssistantResponse(page);
+
+		// Commands should still be available after multiple state.session events
+		await typeInMessageInput(page, '/h');
+		await expect(page.getByRole('button', { name: 'help', exact: true })).toBeVisible({
+			timeout: 5000,
+		});
 	});
 });

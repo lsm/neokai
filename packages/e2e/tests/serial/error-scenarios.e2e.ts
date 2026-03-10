@@ -10,7 +10,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	waitForWebSocketConnected,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -22,7 +22,7 @@ test.describe('Error Scenarios', () => {
 		await page.goto('/');
 
 		// Wait for app to initialize
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible({
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible({
 			timeout: 10000,
 		});
 
@@ -32,8 +32,7 @@ test.describe('Error Scenarios', () => {
 
 	test('should prevent message send when connection is lost', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Verify session is loaded and working
 		const messageInput = await waitForElement(page, 'textarea');
@@ -47,25 +46,18 @@ test.describe('Error Scenarios', () => {
 			timeout: 5000,
 		});
 
-		// Try to send a message while disconnected
-		await messageInput.fill('This message should not send');
-		await page.click('[data-testid="send-button"]');
+		// Input should be disabled when disconnected (preventing message send)
+		await expect(messageInput).toBeDisabled({ timeout: 5000 });
 
-		// Wait a moment to verify nothing happens
-		await page.waitForTimeout(1000);
-
-		// Message should not have been sent - verify by checking no "Sending..." status appears
-		const hasSendingStatus = await page
-			.locator('text=/Sending/i')
-			.isVisible({ timeout: 1000 })
-			.catch(() => false);
-		expect(hasSendingStatus).toBe(false);
-
-		// Input should still be enabled (message was blocked before sending)
-		await expect(messageInput).toBeEnabled();
+		// Send button should also be disabled
+		const sendButton = page.locator('button[aria-label="Send message"]');
+		await expect(sendButton).toBeDisabled();
 
 		// Restore network
 		await restoreWebSocket(page);
+
+		// After reconnection, input should be enabled again
+		await expect(messageInput).toBeEnabled({ timeout: 10000 });
 
 		await cleanupTestSession(page, sessionId);
 	});
@@ -73,8 +65,7 @@ test.describe('Error Scenarios', () => {
 	test.skip('should handle network disconnection during message send', async ({ page }) => {
 		// TODO: Flaky test - network simulation and recovery is unreliable
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		const messageInput = await waitForElement(page, 'textarea');
 		await messageInput.fill('Test network failure');
@@ -117,9 +108,7 @@ test.describe('Error Scenarios', () => {
 		await page.waitForTimeout(3000);
 
 		// Should see error toast or be redirected to home
-		const isOnHome = await page
-			.locator('h2:has-text("Welcome to NeoKai")')
-			.isVisible({ timeout: 5000 });
+		const isOnHome = await page.locator('h2:has-text("Neo Lobby")').isVisible({ timeout: 5000 });
 		const hasErrorToast = await page
 			.locator('text=/session not found/i')
 			.isVisible({ timeout: 2000 })
@@ -130,8 +119,7 @@ test.describe('Error Scenarios', () => {
 
 	test('should recover from temporary WebSocket disconnection', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Simulate WebSocket disconnection by going offline
 		await closeWebSocket(page);
@@ -144,8 +132,8 @@ test.describe('Error Scenarios', () => {
 		// Restore network connection
 		await restoreWebSocket(page);
 
-		// Wait for online indicator to return
-		await expect(page.locator('.text-green-400:has-text("Online")').first()).toBeVisible({
+		// Wait for connection to be restored - look for Daemon: Connected button
+		await expect(page.locator('button[aria-label="Daemon: Connected"]').first()).toBeVisible({
 			timeout: 10000,
 		});
 
@@ -154,8 +142,7 @@ test.describe('Error Scenarios', () => {
 
 	test('should handle rate limiting gracefully', async ({ page }) => {
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send many messages rapidly
 		const messageInput = await waitForElement(page, 'textarea');

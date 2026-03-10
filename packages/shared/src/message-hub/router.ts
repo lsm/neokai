@@ -19,7 +19,7 @@
 
 import type { HubMessage } from './protocol.ts';
 import { isEventMessage } from './protocol.ts';
-import { RoomManager } from './room-manager.ts';
+import { ChannelManager } from './channel-manager.ts';
 
 /**
  * Abstract connection interface
@@ -80,12 +80,12 @@ export interface RouteResult {
  *
  * Responsibilities:
  * - Route messages by sessionId
- * - Manage room-based event routing
- * - Broadcast events to clients in rooms
+ * - Manage channel-based event routing
+ * - Broadcast events to clients in channels
  */
 export class MessageHubRouter {
 	private clients: Map<string, ClientInfo> = new Map(); // Now keyed by clientId
-	private roomManager: RoomManager = new RoomManager();
+	private channelManager: ChannelManager = new ChannelManager();
 
 	private logger: RouterLogger;
 	private debug: boolean;
@@ -93,6 +93,52 @@ export class MessageHubRouter {
 	constructor(options: MessageHubRouterOptions = {}) {
 		this.logger = options.logger || console;
 		this.debug = options.debug || false;
+	}
+
+	/**
+	 * Safely stringify an object, handling circular references.
+	 *
+	 * Uses plain JSON.stringify first (which correctly serializes shared object
+	 * references). Only falls back to circular-reference handling when needed.
+	 *
+	 * The previous WeakSet-based approach incorrectly replaced shared (non-circular)
+	 * references with "[Circular]". For example, the same contextInfo object appears
+	 * in both sessionInfo.metadata.lastContextInfo and the top-level contextInfo
+	 * field — this is a shared reference, not circular, and must be serialized twice.
+	 */
+	private safeStringify(obj: unknown): string {
+		try {
+			return JSON.stringify(obj);
+		} catch {
+			// JSON.stringify throws on actual circular references or BigInt values.
+			// Fall back to a replacer that strips only true circular references
+			// by tracking the current ancestor chain (not all visited objects).
+			const ancestors: unknown[] = [];
+			return JSON.stringify(obj, function (_key, value) {
+				if (typeof value !== 'object' || value === null) {
+					return value;
+				}
+
+				// Handle specific types that may contain non-serializable data
+				if (value.constructor?.name === 'AgentSession') {
+					return '[AgentSession]';
+				}
+
+				// Pop ancestors that are no longer on the current path.
+				// `this` is the holder object containing the current key.
+				while (ancestors.length > 0 && ancestors.at(-1) !== this) {
+					ancestors.pop();
+				}
+
+				// True circular reference: this object is an ancestor of itself
+				if (ancestors.includes(value)) {
+					return '[Circular]';
+				}
+
+				ancestors.push(value);
+				return value;
+			});
+		}
 	}
 
 	/**
@@ -114,8 +160,8 @@ export class MessageHubRouter {
 		};
 
 		this.clients.set(connection.id, info);
-		// Auto-join global room
-		this.roomManager.joinRoom(connection.id, 'global');
+		// Auto-join global channel
+		this.channelManager.joinChannel(connection.id, 'global');
 		this.log(`Client registered: ${connection.id}`);
 
 		return connection.id;
@@ -123,7 +169,7 @@ export class MessageHubRouter {
 
 	/**
 	 * Unregister a client by clientId
-	 * Cleans up room memberships
+	 * Cleans up channel memberships
 	 */
 	unregisterConnection(clientId: string): void {
 		const info = this.clients.get(clientId);
@@ -131,15 +177,15 @@ export class MessageHubRouter {
 			return;
 		}
 
-		// Clean up room membership
-		this.roomManager.removeClient(clientId);
+		// Clean up channel membership
+		this.channelManager.removeClient(clientId);
 
 		this.clients.delete(clientId);
 		this.log(`Client unregistered: ${info.clientId}`);
 	}
 
 	/**
-	 * Route an EVENT message to room members (legacy method, delegates to routeEventToRoom)
+	 * Route an EVENT message to channel members (legacy method, delegates to routeEventToChannel)
 	 * Returns delivery statistics for observability
 	 */
 	routeEvent(message: HubMessage): RouteResult {
@@ -154,13 +200,13 @@ export class MessageHubRouter {
 			};
 		}
 
-		// Delegate to room-based routing
-		return this.routeEventToRoom(message);
+		// Delegate to channel-based routing
+		return this.routeEventToChannel(message);
 	}
 
 	/**
 	 * Send a message to a specific client
-	 * FIX P2.1: Handle serialization errors
+	 * FIX P2.1: Handle serialization errors and circular references
 	 */
 	sendToClient(clientId: string, message: HubMessage): boolean {
 		const client = this.getClientById(clientId);
@@ -174,14 +220,20 @@ export class MessageHubRouter {
 			return false;
 		}
 
-		// FIX P2.1: Handle serialization errors
+		// FIX P2.1: Handle serialization errors with circular reference detection
 		let json: string;
 		try {
-			json = JSON.stringify(message);
+			json = this.safeStringify(message);
 		} catch (error) {
 			this.logger.error(
 				`[MessageHubRouter] Failed to serialize message for client ${clientId}:`,
 				error
+			);
+			// Log message type for debugging
+			const messageType = message?.type ?? 'unknown';
+			const messageId = message?.id ?? 'unknown';
+			this.logger.error(
+				`[MessageHubRouter] Failed message details - type: ${messageType}, id: ${messageId}`
 			);
 			return false;
 		}
@@ -205,12 +257,18 @@ export class MessageHubRouter {
 		failed: number;
 		skipped?: number;
 	} {
-		// FIX P2.1: Handle serialization errors
+		// FIX P2.1: Handle serialization errors with circular reference detection
 		let json: string;
 		try {
-			json = JSON.stringify(message);
+			json = this.safeStringify(message);
 		} catch (error) {
 			this.logger.error(`[MessageHubRouter] Failed to serialize broadcast message:`, error);
+			// Log message type for debugging
+			const messageType = message?.type ?? 'unknown';
+			const messageId = message?.id ?? 'unknown';
+			this.logger.error(
+				`[MessageHubRouter] Failed broadcast message details - type: ${messageType}, id: ${messageId}`
+			);
 			return { sent: 0, failed: this.clients.size, skipped: 0 };
 		}
 
@@ -271,38 +329,38 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Join a client to a room
+	 * Join a client to a channel
 	 */
-	joinRoom(clientId: string, room: string): void {
+	joinChannel(clientId: string, channel: string): void {
 		const client = this.getClientById(clientId);
 		if (!client) {
-			this.logger.warn(`[MessageHubRouter] Cannot join room - client not found: ${clientId}`);
+			this.logger.warn(`[MessageHubRouter] Cannot join channel - client not found: ${clientId}`);
 			return;
 		}
-		this.roomManager.joinRoom(clientId, room);
-		this.log(`Client ${clientId} joined room: ${room}`);
+		this.channelManager.joinChannel(clientId, channel);
+		this.log(`Client ${clientId} joined channel: ${channel}`);
 	}
 
 	/**
-	 * Remove a client from a room
+	 * Remove a client from a channel
 	 */
-	leaveRoom(clientId: string, room: string): void {
-		this.roomManager.leaveRoom(clientId, room);
-		this.log(`Client ${clientId} left room: ${room}`);
+	leaveChannel(clientId: string, channel: string): void {
+		this.channelManager.leaveChannel(clientId, channel);
+		this.log(`Client ${clientId} left channel: ${channel}`);
 	}
 
 	/**
-	 * Route an EVENT message to all clients in the message's room
+	 * Route an EVENT message to all clients in the message's channel
 	 */
-	routeEventToRoom(message: HubMessage): RouteResult {
-		const room = message.room || 'global';
-		const members = this.roomManager.getRoomMembers(room);
+	routeEventToChannel(message: HubMessage): RouteResult {
+		const channel = message.channel || 'global';
+		const members = this.channelManager.getChannelMembers(channel);
 
-		// Only include members of the specific room (no global cross-pollution)
+		// Only include members of the specific channel (no global cross-pollution)
 		const allRecipients = new Set(members);
 
 		if (allRecipients.size === 0) {
-			this.log(`No room members for room ${room}, method ${message.method}`);
+			this.log(`No channel members for channel ${channel}, method ${message.method}`);
 			return {
 				sent: 0,
 				failed: 0,
@@ -312,12 +370,12 @@ export class MessageHubRouter {
 			};
 		}
 
-		// Serialize once
+		// Serialize once with circular reference handling
 		let json: string;
 		try {
-			json = JSON.stringify(message);
+			json = this.safeStringify(message);
 		} catch (error) {
-			this.logger.error(`[MessageHubRouter] Failed to serialize room event:`, error);
+			this.logger.error(`[MessageHubRouter] Failed to serialize channel event:`, error);
 			return {
 				sent: 0,
 				failed: allRecipients.size,
@@ -336,7 +394,7 @@ export class MessageHubRouter {
 					client.connection.send(json);
 					sent++;
 				} catch (error) {
-					this.logger.error(`Failed to send room event to client ${clientId}:`, error);
+					this.logger.error(`Failed to send channel event to client ${clientId}:`, error);
 					failed++;
 				}
 			} else {
@@ -345,7 +403,7 @@ export class MessageHubRouter {
 		}
 
 		this.log(
-			`Routed room event ${room}:${message.method} to ${sent}/${allRecipients.size} clients`
+			`Routed channel event ${channel}:${message.method} to ${sent}/${allRecipients.size} clients`
 		);
 
 		return {
@@ -358,18 +416,16 @@ export class MessageHubRouter {
 	}
 
 	/**
-	 * Get the room manager for inspection
+	 * Get the channel manager for inspection
 	 */
-	getRoomManager(): RoomManager {
-		return this.roomManager;
+	getChannelManager(): ChannelManager {
+		return this.channelManager;
 	}
 
 	/**
-	 * Debug logging
+	 * Debug logging - disabled, only errors are logged
 	 */
-	private log(message: string, ...args: unknown[]): void {
-		if (this.debug) {
-			this.logger.log(`[MessageHubRouter] ${message}`, ...args);
-		}
+	private log(_message: string, ..._args: unknown[]): void {
+		// Debug logging disabled - only errors are logged
 	}
 }

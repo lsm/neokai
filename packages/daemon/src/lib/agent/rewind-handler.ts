@@ -514,7 +514,7 @@ export class RewindHandler {
 		}
 
 		// Get the earliest selected message (smallest timestamp)
-		const allMessages = db.getSDKMessages(session.id, 10000);
+		const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
 		const selectedMessages = allMessages.filter((m) => m.uuid && messageIds.includes(m.uuid));
 
 		if (selectedMessages.length === 0) {
@@ -607,7 +607,7 @@ export class RewindHandler {
 		}
 
 		// Get the earliest selected message (smallest timestamp)
-		const allMessages = db.getSDKMessages(session.id, 10000);
+		const { messages: allMessages } = db.getSDKMessages(session.id, 10000);
 		const selectedMessages = allMessages.filter((m) => m.uuid && messageIds.includes(m.uuid));
 
 		if (selectedMessages.length === 0) {

@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { waitForSessionCreated, cleanupTestSession } from '../helpers/wait-helpers';
+import { createSessionViaUI, cleanupTestSession } from '../helpers/wait-helpers';
 
 test.describe('Smoke: Message Send', () => {
 	let sessionId: string | null = null;
@@ -26,9 +26,7 @@ test.describe('Smoke: Message Send', () => {
 		await page.goto('/');
 		await page.waitForSelector('text=New Session', { timeout: 10000 });
 
-		const newSessionButton = page.getByRole('button', { name: 'New Session', exact: true });
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 15000 });

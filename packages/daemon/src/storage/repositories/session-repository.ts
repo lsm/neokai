@@ -8,7 +8,7 @@
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
-import type { Session } from '@neokai/shared';
+import type { Session, SessionType, SessionContext } from '@neokai/shared';
 import type { SQLiteValue } from '../types';
 
 export class SessionRepository {
@@ -19,8 +19,8 @@ export class SessionRepository {
 	 */
 	createSession(session: Session): void {
 		const stmt = this.db.prepare(
-			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO sessions (id, title, workspace_path, created_at, last_active_at, status, config, metadata, is_worktree, worktree_path, main_repo_path, worktree_branch, git_branch, sdk_session_id, available_commands, processing_state, archived_at, type, session_context)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 		stmt.run(
 			session.id,
@@ -39,7 +39,9 @@ export class SessionRepository {
 			session.sdkSessionId ?? null,
 			session.availableCommands ? JSON.stringify(session.availableCommands) : null,
 			session.processingState ?? null,
-			session.archivedAt ?? null
+			session.archivedAt ?? null,
+			session.type ?? 'worker',
+			session.context ? JSON.stringify(session.context) : null
 		);
 	}
 
@@ -56,11 +58,26 @@ export class SessionRepository {
 	}
 
 	/**
-	 * List all sessions ordered by last active time (most recent first)
+	 * List sessions ordered by last active time (most recent first)
+	 *
+	 * @param options.status - Filter by status ('active', 'archived'). If omitted, excludes archived.
+	 * @param options.includeArchived - If true, returns all sessions regardless of status.
 	 */
-	listSessions(): Session[] {
-		const stmt = this.db.prepare(`SELECT * FROM sessions ORDER BY last_active_at DESC`);
-		const rows = stmt.all() as Record<string, unknown>[];
+	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+		let sql = `SELECT * FROM sessions WHERE type != 'lobby'`;
+		const params: string[] = [];
+
+		if (options?.status) {
+			sql += ` AND status = ?`;
+			params.push(options.status);
+		} else if (!options?.includeArchived) {
+			sql += ` AND status != 'archived'`;
+		}
+
+		sql += ` ORDER BY last_active_at DESC`;
+
+		const stmt = this.db.prepare(sql);
+		const rows = stmt.all(...params) as Record<string, unknown>[];
 
 		return rows.map((r) => this.rowToSession(r));
 	}
@@ -109,10 +126,24 @@ export class SessionRepository {
 			// Merge partial config updates with existing config
 			const existing = this.getSession(id);
 			const mergedConfig = existing ? { ...existing.config, ...updates.config } : updates.config;
+			// Strip function values (runtime-only fields like spawnClaudeCodeProcess)
+			// and let JSON.stringify's native cycle detection handle circular refs.
+			// Using a flat WeakSet would false-positive on valid shared-reference
+			// ("diamond") structures, so we rely on the native implementation instead.
+			let serializedConfig: string;
+			try {
+				serializedConfig = JSON.stringify(mergedConfig, (_key, val) =>
+					typeof val === 'function' ? undefined : val
+				);
+			} catch (err) {
+				throw new Error(
+					`updateSession: failed to serialize config for session "${id}": ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
 			fields.push('config = ?');
-			values.push(JSON.stringify(mergedConfig));
+			values.push(serializedConfig);
 		}
-		if (updates.sdkSessionId !== undefined) {
+		if ('sdkSessionId' in updates) {
 			fields.push('sdk_session_id = ?');
 			values.push(updates.sdkSessionId ?? null);
 		}
@@ -156,6 +187,18 @@ export class SessionRepository {
 			}
 		}
 
+		// Handle type update (for unified session architecture)
+		if (updates.type !== undefined) {
+			fields.push('type = ?');
+			values.push(updates.type);
+		}
+
+		// Handle context update (for unified session architecture)
+		if ('context' in updates) {
+			fields.push('session_context = ?');
+			values.push(updates.context ? JSON.stringify(updates.context) : null);
+		}
+
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`);
@@ -168,6 +211,14 @@ export class SessionRepository {
 	 */
 	deleteSession(id: string): void {
 		const stmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
+		stmt.run(id);
+	}
+
+	/**
+	 * Archive a session by ID (soft delete)
+	 */
+	archiveSession(id: string): void {
+		const stmt = this.db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`);
 		stmt.run(id);
 	}
 
@@ -191,6 +242,12 @@ export class SessionRepository {
 				? (JSON.parse(row.available_commands) as string[])
 				: undefined;
 
+		// Parse session_context JSON if present
+		const sessionContext =
+			row.session_context && typeof row.session_context === 'string'
+				? (JSON.parse(row.session_context) as SessionContext)
+				: undefined;
+
 		return {
 			id: row.id as string,
 			title: row.title as string,
@@ -206,6 +263,48 @@ export class SessionRepository {
 			availableCommands,
 			processingState: (row.processing_state as string | null) ?? undefined,
 			archivedAt: (row.archived_at as string | null) ?? undefined,
+			type: (row.type as SessionType) ?? 'worker',
+			context: sessionContext,
 		};
+	}
+
+	/**
+	 * Find a room session by room ID
+	 * Returns the room's session if it exists
+	 */
+	findByRoomId(roomId: string): Session | null {
+		const stmt = this.db.prepare(
+			`SELECT * FROM sessions WHERE type = 'room' AND json_extract(session_context, '$.roomId') = ?`
+		);
+		const row = stmt.get(roomId) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+
+		return this.rowToSession(row);
+	}
+
+	/**
+	 * Find the lobby session
+	 * Returns the lobby session if it exists
+	 */
+	findLobbySession(): Session | null {
+		const stmt = this.db.prepare(`SELECT * FROM sessions WHERE type = 'lobby' LIMIT 1`);
+		const row = stmt.get() as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+
+		return this.rowToSession(row);
+	}
+
+	/**
+	 * List sessions by type
+	 */
+	listSessionsByType(type: SessionType): Session[] {
+		const stmt = this.db.prepare(
+			`SELECT * FROM sessions WHERE type = ? ORDER BY last_active_at DESC`
+		);
+		const rows = stmt.all(type) as Record<string, unknown>[];
+
+		return rows.map((r) => this.rowToSession(r));
 	}
 }

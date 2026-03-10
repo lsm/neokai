@@ -280,7 +280,7 @@ describe('QueryRunner', () => {
 						}),
 					]),
 				}),
-				{ room: 'session:test-session-id' }
+				{ channel: 'session:test-session-id' }
 			);
 		});
 
@@ -392,6 +392,32 @@ describe('QueryRunner', () => {
 			expect(setProcessingSpy).toHaveBeenCalledWith('msg-1', 'initializing');
 		});
 
+		it('does not publish or transition status at generator-yield time', async () => {
+			async function* mockMessageGenerator() {
+				yield {
+					message: { uuid: 'msg-1', content: 'Hello', internal: false },
+					onSent: () => {},
+				};
+			}
+
+			const mockQueue = {
+				...mockMessageQueue,
+				messageGenerator: mock(() => mockMessageGenerator()),
+			};
+
+			runner = createRunner({
+				messageQueue: mockQueue as unknown as MessageQueue,
+			});
+
+			const generator = runner.createMessageGeneratorWrapper();
+			for await (const _msg of generator) {
+				// Consume generator
+			}
+
+			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+			expect(publishSpy).not.toHaveBeenCalled();
+		});
+
 		it('should skip processing state for internal messages', async () => {
 			async function* mockMessageGenerator() {
 				yield {
@@ -416,35 +442,13 @@ describe('QueryRunner', () => {
 			}
 
 			expect(setProcessingSpy).not.toHaveBeenCalled();
+			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+			expect(publishSpy).not.toHaveBeenCalled();
 		});
 	});
 
 	describe('handleSDKMessage', () => {
-		it('should mark queued messages as sent on system:init', async () => {
-			const queuedMessages = [
-				{ dbId: 1, uuid: 'msg-1' },
-				{ dbId: 2, uuid: 'msg-2' },
-			];
-			getMessagesByStatusSpy.mockReturnValue(queuedMessages);
-
-			runner = createRunner();
-
-			const systemInitMessage = {
-				type: 'system',
-				subtype: 'init',
-				uuid: 'init-uuid',
-				session_id: 'sdk-session-123',
-			};
-
-			await runner.handleSDKMessage(systemInitMessage as unknown as SDKMessage);
-
-			expect(getMessagesByStatusSpy).toHaveBeenCalledWith('test-session-id', 'queued');
-			expect(updateMessageStatusSpy).toHaveBeenCalledWith([1, 2], 'sent');
-		});
-
-		it('should not update status if no queued messages', async () => {
-			getMessagesByStatusSpy.mockReturnValue([]);
-
+		it('should delegate system:init without queue status side effects', async () => {
 			runner = createRunner();
 
 			const systemInitMessage = {
@@ -457,6 +461,8 @@ describe('QueryRunner', () => {
 			await runner.handleSDKMessage(systemInitMessage as unknown as SDKMessage);
 
 			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+			expect(publishSpy).not.toHaveBeenCalled();
+			expect(onSDKMessageSpy).toHaveBeenCalledWith(systemInitMessage);
 		});
 
 		it('should delegate to onSDKMessage callback', async () => {
@@ -1052,7 +1058,7 @@ describe('QueryRunner message generator wrapper', () => {
 });
 
 describe('QueryRunner SDK message handling', () => {
-	it('should mark queued messages as sent on system:init', () => {
+	it('should mark only consumed queued message as sent', () => {
 		const queuedMessages = [
 			{ dbId: 1, uuid: 'msg-1' },
 			{ dbId: 2, uuid: 'msg-2' },
@@ -1060,25 +1066,27 @@ describe('QueryRunner SDK message handling', () => {
 		];
 
 		const updateCalls: { dbIds: number[]; status: string }[] = [];
+		const consumedUuid = 'msg-2';
 
-		// Simulate the logic
-		if (queuedMessages.length > 0) {
-			const dbIds = queuedMessages.map((m) => m.dbId);
-			updateCalls.push({ dbIds, status: 'sent' });
+		const matched = queuedMessages.find((m) => m.uuid === consumedUuid);
+		if (matched) {
+			updateCalls.push({ dbIds: [matched.dbId], status: 'sent' });
 		}
 
 		expect(updateCalls).toHaveLength(1);
-		expect(updateCalls[0].dbIds).toEqual([1, 2, 3]);
+		expect(updateCalls[0].dbIds).toEqual([2]);
 		expect(updateCalls[0].status).toBe('sent');
 	});
 
-	it('should skip update when no queued messages', () => {
+	it('should skip update when consumed message is not in queued status', () => {
 		const queuedMessages: { dbId: number }[] = [];
+		const consumedUuid = 'msg-2';
 
 		const updateCalls: unknown[] = [];
 
-		if (queuedMessages.length > 0) {
-			updateCalls.push({ dbIds: [], status: 'sent' });
+		const matched = queuedMessages.find((m) => String(m.dbId) === consumedUuid);
+		if (matched) {
+			updateCalls.push({ dbIds: [matched.dbId], status: 'sent' });
 		}
 
 		expect(updateCalls).toHaveLength(0);

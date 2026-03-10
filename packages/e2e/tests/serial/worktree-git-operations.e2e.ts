@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../../fixtures';
+import { createSessionViaUI, waitForWebSocketConnected } from '../helpers/wait-helpers';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { mkdirSync, rmSync, existsSync } from 'fs';
@@ -69,19 +70,18 @@ test.describe
 			// The default workspace in test mode is tmp/workspace which is not a git repo
 
 			await page.goto('/');
+			await waitForWebSocketConnected(page);
 
-			// Create session (should use default workspace which is not a git repo)
-			await page.click('button:has-text("New Session")');
-			await page.waitForTimeout(1000);
-
-			// Find the newly created session
-			const sessionButton = page.locator('button[data-session-id]').first();
-			const sessionId = await sessionButton.getAttribute('data-session-id');
-
+			// Create session via RPC (default workspace is not a git repo)
+			const sessionId = await createSessionViaUI(page);
 			expect(sessionId).toBeTruthy();
 
+			// Navigate to the Chats panel to see session list
+			await page.getByRole('button', { name: 'Chats' }).click();
+			await page.waitForTimeout(500);
+
 			// Verify NO worktree badge is shown (since it's not a git repo)
-			const worktreeBadge = sessionButton.locator('span[title*="Worktree:"]');
+			const worktreeBadge = page.locator('span[title*="Worktree:"]');
 			await expect(worktreeBadge).not.toBeVisible();
 
 			// Note: Cleanup will be handled by global test teardown
@@ -138,7 +138,7 @@ test.describe
 
 			// Navigate to app
 			await page.goto('/');
-			await page.waitForSelector('button:has-text("New Session")');
+			await page.getByRole('heading', { name: 'Neo Lobby' }).first().waitFor({ state: 'visible' });
 
 			// Note: We cannot directly call RPC from browser in this context
 			// This test verifies that the worktree cleanup mechanism exists

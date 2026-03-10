@@ -32,6 +32,7 @@ import { MessageHub, WebSocketClientTransport } from '@neokai/shared';
 import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';
+import { roomStore } from './room-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
@@ -96,6 +97,10 @@ export class ConnectionManager {
 	private connectionPromise: Promise<MessageHub> | null = null;
 	private visibilityHandler: (() => void) | null = null;
 	private pageHideHandler: (() => void) | null = null;
+
+	// FIX P5: Periodic state validation for proactive connection health monitoring
+	private stateValidationInterval: ReturnType<typeof setInterval> | null = null;
+	private readonly stateValidationPeriod: number = 60000; // 1 minute
 
 	// Event-driven connection handlers
 	private connectionHandlers: Set<ConnectionHandler> = new Set();
@@ -335,7 +340,10 @@ export class ConnectionManager {
 		await this.waitForConnectionEventDriven(5000);
 
 		// Join global room after connection is established
-		this.messageHub.joinRoom('global');
+		this.messageHub.joinChannel('global');
+
+		// FIX P5: Start periodic state validation
+		this.startPeriodicStateValidation();
 
 		// Mark ready for testing
 		if (typeof window !== 'undefined' && window.__messageHub) {
@@ -393,6 +401,9 @@ export class ConnectionManager {
 	 * Disconnect from WebSocket
 	 */
 	async disconnect(): Promise<void> {
+		// FIX P5: Stop periodic state validation
+		this.stopPeriodicStateValidation();
+
 		// Update connection state
 		connectionState.value = 'disconnected';
 
@@ -476,23 +487,76 @@ export class ConnectionManager {
 			// If this fails, the connection is dead and needs reconnect
 			await this.messageHub.request('system.health', {}, { timeout: 3000 });
 
-			// CRITICAL FIX: Re-join global room on resume
+			// CRITICAL FIX: Re-join channels on resume
 			// Safari may pause WebSocket without closing it, causing server-side
-			// room memberships to expire while client thinks it's still connected.
-			// This ensures room membership is re-established on the server.
-			this.messageHub.joinRoom('global');
+			// channel memberships to expire while client thinks it's still connected.
+			await this.messageHub.joinChannel('global');
+			const activeRoomId = roomStore.roomId.value;
+			if (activeRoomId) {
+				await this.messageHub.joinChannel(`room:${activeRoomId}`);
+			}
 
 			// CRITICAL: Refresh ALL state (session store, app state, and global state)
 			// This ensures UI is in sync even if events were missed during background
 			// FIX: Added sessionStore.refresh() to sync agent state for status bar
 			// Without this, status bar would show "Online" instead of actual state
-			await Promise.all([sessionStore.refresh(), appState.refreshAll(), globalStore.refresh()]);
+			await Promise.all([
+				sessionStore.refresh(),
+				appState.refreshAll(),
+				globalStore.refresh(),
+				roomStore.refresh(),
+			]);
 		} catch {
 			// FIX: Use forceReconnect() instead of close()
 			// close() sets closed=true which prevents auto-reconnect
 			if (this.transport) {
 				this.transport.forceReconnect();
 			}
+		}
+	}
+
+	/**
+	 * Start periodic state validation
+	 * FIX P5: Proactively detects and recovers from stale connections
+	 */
+	private startPeriodicStateValidation(): void {
+		if (this.stateValidationInterval) return;
+
+		this.stateValidationInterval = setInterval(async () => {
+			// Only validate if connected and page is visible
+			if (this.isConnected() && !document.hidden) {
+				await this.validateConnectionState();
+			}
+		}, this.stateValidationPeriod);
+	}
+
+	/**
+	 * Stop periodic state validation
+	 */
+	private stopPeriodicStateValidation(): void {
+		if (this.stateValidationInterval) {
+			clearInterval(this.stateValidationInterval);
+			this.stateValidationInterval = null;
+		}
+	}
+
+	/**
+	 * Lightweight connection state validation
+	 * FIX P5: Uses health check to verify connection is alive
+	 */
+	private async validateConnectionState(): Promise<boolean> {
+		if (!this.messageHub || !this.transport) {
+			return false;
+		}
+
+		try {
+			// Quick health check with short timeout
+			await this.messageHub.request('system.health', {}, { timeout: 3000 });
+			return true;
+		} catch {
+			// Health check failed - trigger reconnect
+			this.transport.forceReconnect();
+			return false;
 		}
 	}
 

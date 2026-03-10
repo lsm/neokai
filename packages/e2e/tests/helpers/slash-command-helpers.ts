@@ -5,7 +5,7 @@
  */
 
 import type { Page } from '@playwright/test';
-import { waitForSessionCreated, waitForWebSocketConnected } from './wait-helpers';
+import { createSessionViaUI, waitForWebSocketConnected } from './wait-helpers';
 
 /**
  * Wait for slash commands to be loaded for a session.
@@ -60,12 +60,7 @@ export async function setupSlashCommandSession(page: Page): Promise<string> {
 	await waitForWebSocketConnected(page);
 
 	// Create a new session
-	const newSessionButton = page.getByRole('button', {
-		name: 'New Session',
-		exact: true,
-	});
-	await newSessionButton.click();
-	const sessionId = await waitForSessionCreated(page);
+	const sessionId = await createSessionViaUI(page);
 
 	// Wait for commands to load
 	await waitForSlashCommandsLoaded(page);

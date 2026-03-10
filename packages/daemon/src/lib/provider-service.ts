@@ -161,6 +161,9 @@ export class ProviderService {
 		if (providerId === 'glm') {
 			return process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 		}
+		if (providerId === 'minimax') {
+			return process.env.MINIMAX_API_KEY;
+		}
 
 		return undefined;
 	}
@@ -356,6 +359,10 @@ export class ProviderService {
 		const provider = registry.detectProvider(modelId);
 
 		if (!provider || provider.id === 'anthropic') {
+			// When Dev Proxy is enabled, route Anthropic API calls through the proxy
+			if (process.env.NEOKAI_USE_DEV_PROXY === '1') {
+				return { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000' };
+			}
 			return {};
 		}
 
@@ -374,6 +381,10 @@ export class ProviderService {
 		const provider = registry.get(providerId);
 
 		if (!provider || providerId === 'anthropic') {
+			// When Dev Proxy is enabled, route Anthropic API calls through the proxy
+			if (process.env.NEOKAI_USE_DEV_PROXY === '1') {
+				return { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8000' };
+			}
 			return {};
 		}
 
@@ -404,9 +415,10 @@ export class ProviderService {
 	applyEnvVarsToProcess(modelId: string): OriginalEnvVars {
 		const envVars = this.getEnvVarsForModel(modelId);
 
-		// No env vars needed for Anthropic
+		// For Anthropic (or any non-overriding provider), explicitly clear routing
+		// overrides that may have leaked from a previous GLM query.
 		if (Object.keys(envVars).length === 0) {
-			return {};
+			return this.clearProviderRoutingEnvVars();
 		}
 
 		return this.applyEnvVars(envVars);
@@ -426,8 +438,11 @@ export class ProviderService {
 		const registry = this.getRegistry();
 		const provider = registry.get(providerId);
 
-		if (!provider || providerId === 'anthropic') {
+		if (!provider) {
 			return {};
+		}
+		if (providerId === 'anthropic') {
+			return this.clearProviderRoutingEnvVars();
 		}
 
 		const sessionConfig = modelId ? { apiKey: undefined } : undefined;
@@ -484,6 +499,35 @@ export class ProviderService {
 	}
 
 	/**
+	 * Clear provider routing overrides from process.env and return originals.
+	 *
+	 * These vars force Anthropic-compatible traffic to a non-default provider.
+	 * If they leak across queries, model selection can appear "stuck" (e.g., glm-5).
+	 */
+	private clearProviderRoutingEnvVars(): OriginalEnvVars {
+		const original: OriginalEnvVars = {};
+		let changed = false;
+
+		const clear = (key: keyof OriginalEnvVars): void => {
+			original[key] = process.env[key];
+			if (process.env[key] !== undefined) {
+				delete process.env[key];
+				changed = true;
+			}
+		};
+
+		clear('ANTHROPIC_AUTH_TOKEN');
+		clear('ANTHROPIC_BASE_URL');
+		clear('API_TIMEOUT_MS');
+		clear('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');
+		clear('ANTHROPIC_DEFAULT_SONNET_MODEL');
+		clear('ANTHROPIC_DEFAULT_HAIKU_MODEL');
+		clear('ANTHROPIC_DEFAULT_OPUS_MODEL');
+
+		return changed ? original : {};
+	}
+
+	/**
 	 * Restore original environment variables after SDK query completes
 	 *
 	 * @param original - The original env vars returned by applyEnvVarsToProcess
@@ -493,47 +537,66 @@ export class ProviderService {
 			return;
 		}
 
-		// Restore each env var or delete if it wasn't originally set
-		if (original.ANTHROPIC_AUTH_TOKEN !== undefined) {
-			process.env.ANTHROPIC_AUTH_TOKEN = original.ANTHROPIC_AUTH_TOKEN;
-		} else {
-			delete process.env.ANTHROPIC_AUTH_TOKEN;
+		// Restore only keys captured in `original`.
+		// This prevents unrelated vars from being cleared when a caller only changed a subset.
+		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_AUTH_TOKEN')) {
+			if (original.ANTHROPIC_AUTH_TOKEN !== undefined) {
+				process.env.ANTHROPIC_AUTH_TOKEN = original.ANTHROPIC_AUTH_TOKEN;
+			} else {
+				delete process.env.ANTHROPIC_AUTH_TOKEN;
+			}
 		}
-		if (original.ANTHROPIC_BASE_URL !== undefined) {
-			process.env.ANTHROPIC_BASE_URL = original.ANTHROPIC_BASE_URL;
-		} else {
-			delete process.env.ANTHROPIC_BASE_URL;
+		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_BASE_URL')) {
+			if (original.ANTHROPIC_BASE_URL !== undefined) {
+				process.env.ANTHROPIC_BASE_URL = original.ANTHROPIC_BASE_URL;
+			} else {
+				delete process.env.ANTHROPIC_BASE_URL;
+			}
 		}
-		if (original.API_TIMEOUT_MS !== undefined) {
-			process.env.API_TIMEOUT_MS = original.API_TIMEOUT_MS;
-		} else {
-			delete process.env.API_TIMEOUT_MS;
+		if (Object.prototype.hasOwnProperty.call(original, 'API_TIMEOUT_MS')) {
+			if (original.API_TIMEOUT_MS !== undefined) {
+				process.env.API_TIMEOUT_MS = original.API_TIMEOUT_MS;
+			} else {
+				delete process.env.API_TIMEOUT_MS;
+			}
 		}
-		if (original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
-			process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
-				original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-		} else {
-			delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+		if (
+			Object.prototype.hasOwnProperty.call(original, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')
+		) {
+			if (original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+					original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			} else {
+				delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			}
 		}
-		if (original.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
-			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = original.ANTHROPIC_DEFAULT_SONNET_MODEL;
-		} else {
-			delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_SONNET_MODEL')) {
+			if (original.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+				process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = original.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			} else {
+				delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			}
 		}
-		if (original.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
-			process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = original.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-		} else {
-			delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_HAIKU_MODEL')) {
+			if (original.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+				process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = original.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			} else {
+				delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			}
 		}
-		if (original.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
-			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = original.ANTHROPIC_DEFAULT_OPUS_MODEL;
-		} else {
-			delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_DEFAULT_OPUS_MODEL')) {
+			if (original.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+				process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = original.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			} else {
+				delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			}
 		}
-		if (original.CLAUDE_AGENT_SDK_CLIENT_APP !== undefined) {
-			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = original.CLAUDE_AGENT_SDK_CLIENT_APP;
-		} else {
-			delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+		if (Object.prototype.hasOwnProperty.call(original, 'CLAUDE_AGENT_SDK_CLIENT_APP')) {
+			if (original.CLAUDE_AGENT_SDK_CLIENT_APP !== undefined) {
+				process.env.CLAUDE_AGENT_SDK_CLIENT_APP = original.CLAUDE_AGENT_SDK_CLIENT_APP;
+			} else {
+				delete process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
+			}
 		}
 	}
 

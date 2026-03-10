@@ -14,13 +14,15 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect } from 'preact/hooks';
-import type { ContextInfo, ModelInfo, ThinkingLevel } from '@neokai/shared';
+import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import { useModal, MODEL_FAMILY_ICONS, useMessageHub } from '../hooks';
+import { useModal, getModelFamilyIcon, getProviderLabel, useMessageHub } from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
+import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 
 /**
@@ -134,6 +136,8 @@ interface SessionStatusBarProps {
 	streamingPhase?: 'initializing' | 'thinking' | 'streaming' | 'finalizing' | null;
 	contextUsage?: ContextInfo;
 	maxContextTokens?: number;
+	// Feature flags (for unified session architecture)
+	features?: SessionFeatures;
 	// Model switcher
 	currentModel: string;
 	currentModelInfo: ModelInfo | null;
@@ -163,6 +167,7 @@ export default function SessionStatusBar({
 	streamingPhase,
 	contextUsage,
 	maxContextTokens = 200000,
+	features = DEFAULT_WORKER_FEATURES,
 	currentModel: _currentModel,
 	currentModelInfo,
 	availableModels,
@@ -261,7 +266,7 @@ export default function SessionStatusBar({
 	);
 
 	// Get current model icon
-	const currentModelIcon = currentModelInfo ? MODEL_FAMILY_ICONS[currentModelInfo.family] : '💎';
+	const currentModelIcon = currentModelInfo ? getModelFamilyIcon(currentModelInfo.family) : '💎';
 
 	return (
 		<ContentContainer className="pb-2 flex items-center gap-4 justify-between">
@@ -275,72 +280,94 @@ export default function SessionStatusBar({
 
 			{/* Right: Interactive controls and context usage */}
 			<div class="flex items-center gap-3 sm:gap-4">
-				{/* Coordinator Mode Toggle */}
-				<button
-					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-						coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
-					}`}
-					onClick={handleCoordinatorModeToggle}
-					disabled={coordinatorSwitching || modelSwitching}
-					title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
-				>
-					{coordinatorSwitching ? (
-						<Spinner size="sm" />
-					) : (
-						<svg
-							class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
+				{/* Coordinator Mode Toggle - only show if feature is enabled */}
+				{features.coordinator && (
+					<Tooltip
+						content={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
+						position="top"
+						delay={300}
+					>
+						<button
+							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+								coordinatorMode ? 'border-2 border-purple-500' : 'border border-gray-600'
+							}`}
+							onClick={handleCoordinatorModeToggle}
+							disabled={coordinatorSwitching || modelSwitching}
+							title={`Coordinator Mode (${coordinatorMode ? 'enabled' : 'disabled'})`}
 						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
-							/>
-						</svg>
-					)}
-				</button>
+							{coordinatorSwitching ? (
+								<Spinner size="sm" />
+							) : (
+								<svg
+									class={`w-4 h-4 transition-colors ${coordinatorMode ? 'text-purple-400' : 'text-gray-500'}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"
+									/>
+								</svg>
+							)}
+						</button>
+					</Tooltip>
+				)}
 
-				{/* Sandbox Mode Toggle */}
-				<button
-					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-						sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
-					}`}
-					onClick={handleSandboxModeToggle}
-					disabled={sandboxSwitching || modelSwitching}
-					title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
-				>
-					{sandboxSwitching ? (
-						<Spinner size="sm" />
-					) : (
-						<svg
-							class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
-							fill="none"
-							viewBox="0 0 24 24"
-							stroke="currentColor"
+				{/* Sandbox Mode Toggle - only show if feature is enabled */}
+				{features.worktree && (
+					<Tooltip
+						content={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
+						position="top"
+						delay={300}
+					>
+						<button
+							class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+								sandboxEnabled ? 'border-2 border-green-500' : 'border border-gray-600'
+							}`}
+							onClick={handleSandboxModeToggle}
+							disabled={sandboxSwitching || modelSwitching}
+							title={`Sandbox Mode (${sandboxEnabled ? 'enabled' : 'disabled'})`}
 						>
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-							/>
-						</svg>
-					)}
-				</button>
+							{sandboxSwitching ? (
+								<Spinner size="sm" />
+							) : (
+								<svg
+									class={`w-4 h-4 transition-colors ${sandboxEnabled ? 'text-green-400' : 'text-gray-500'}`}
+									fill="none"
+									viewBox="0 0 24 24"
+									stroke="currentColor"
+								>
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+									/>
+								</svg>
+							)}
+						</button>
+					</Tooltip>
+				)}
 
 				{/* Model Switcher */}
 				<div class="relative">
-					<button
-						class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-						onClick={toggleModelDropdown}
-						disabled={modelLoading || modelSwitching || coordinatorSwitching}
-						title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+					<Tooltip
+						content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
+						position="top"
+						delay={300}
 					>
-						{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
-					</button>
+						<button
+							class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+							onClick={toggleModelDropdown}
+							disabled={modelLoading || modelSwitching || coordinatorSwitching}
+							title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+						>
+							{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
+						</button>
+					</Tooltip>
 
 					{/* Model Dropdown */}
 					{modelDropdown.isOpen && (
@@ -354,12 +381,19 @@ export default function SessionStatusBar({
 									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
 										model.id === currentModelInfo?.id ? 'text-blue-400' : 'text-gray-200'
 									}`}
-									onClick={() => handleModelSwitch(model.id)}
+									onClick={() => handleModelSwitch(model.alias)}
 									disabled={modelSwitching}
 								>
-									<span class="text-base">{MODEL_FAMILY_ICONS[model.family]}</span>
-									{model.name}
-									{model.id === currentModelInfo?.id && ' (current)'}
+									<span class="text-base">{getModelFamilyIcon(model.family)}</span>
+									<span class="flex-1 truncate">{model.name}</span>
+									{model.provider !== 'anthropic' && (
+										<span class="text-gray-500 text-[10px]">
+											{getProviderLabel(model.provider)}
+										</span>
+									)}
+									{model.id === currentModelInfo?.id && (
+										<span class="text-blue-400 text-[10px]">(current)</span>
+									)}
 								</button>
 							))}
 						</div>
@@ -368,16 +402,22 @@ export default function SessionStatusBar({
 
 				{/* Thinking Level */}
 				<div class="relative">
-					<button
-						class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
-							thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
-						}`}
-						onClick={toggleThinkingDropdown}
-						title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+					<Tooltip
+						content={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+						position="top"
+						delay={300}
 					>
-						<ThinkingBorderRing level={thinkingLevel} />
-						<ThinkingLevelIcon level={thinkingLevel} />
-					</button>
+						<button
+							class={`control-btn relative w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border rounded-full transition-colors ${
+								thinkingLevel === 'auto' ? 'border-gray-600' : 'border-transparent'
+							}`}
+							onClick={toggleThinkingDropdown}
+							title={`Thinking: ${THINKING_LEVEL_LABELS[thinkingLevel]}`}
+						>
+							<ThinkingBorderRing level={thinkingLevel} />
+							<ThinkingLevelIcon level={thinkingLevel} />
+						</button>
+					</Tooltip>
 
 					{/* Thinking Dropdown */}
 					{thinkingDropdown.isOpen && (
@@ -403,27 +443,33 @@ export default function SessionStatusBar({
 				</div>
 
 				{/* Auto-scroll Toggle - Highlighted border and icon when active */}
-				<button
-					class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
-						autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
-					}`}
-					onClick={handleAutoScrollToggle}
-					title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
+				<Tooltip
+					content={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
+					position="top"
+					delay={300}
 				>
-					<svg
-						class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}
-						fill="none"
-						viewBox="0 0 24 24"
-						stroke="currentColor"
+					<button
+						class={`control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 rounded-full transition-all ${
+							autoScroll ? 'border-2 border-emerald-500' : 'border border-gray-600'
+						}`}
+						onClick={handleAutoScrollToggle}
+						title={`Auto-scroll (${autoScroll ? 'enabled' : 'disabled'})`}
 					>
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width="2"
-							d="M19 14l-7 7m0 0l-7-7m7 7V3"
-						/>
-					</svg>
-				</button>
+						<svg
+							class={`w-4 h-4 transition-colors ${autoScroll ? 'text-emerald-400' : 'text-gray-500'}`}
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke="currentColor"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								stroke-width="2"
+								d="M19 14l-7 7m0 0l-7-7m7 7V3"
+							/>
+						</svg>
+					</button>
+				</Tooltip>
 
 				{/* Separator */}
 				<div class="h-6 w-px bg-gray-600" />

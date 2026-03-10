@@ -5,6 +5,18 @@ import type { Session } from '@neokai/shared';
 // Refreshing the page will return to recent conversations view
 export const currentSessionIdSignal = signal<string | null>(null);
 
+// Shared signal for the current room ID - always starts as null
+// When set, takes priority over session signal
+export const currentRoomIdSignal = signal<string | null>(null);
+
+// Shared signal for the current room's inner session ID
+// When viewing a room and clicking a session, this shows that session within the room layout
+export const currentRoomSessionIdSignal = signal<string | null>(null);
+
+// Shared signal for the current room's task detail view
+// When set, shows the TaskView (Craft + Lead sessions) for the selected task
+export const currentRoomTaskIdSignal = signal<string | null>(null);
+
 // Shared signal for sidebar open/closed state on mobile
 export const sidebarOpenSignal = signal<boolean>(false);
 
@@ -18,3 +30,17 @@ export const sessionsSignal = signal<Session[]>([]);
 // Shared signal for available slash commands from SDK
 // TODO: Migrate to state channels when slash commands are added to state management
 export const slashCommandsSignal = signal<string[]>([]);
+
+// Navigation section signal - which nav item is active
+export type NavSection = 'home' | 'chats' | 'rooms' | 'projects' | 'settings';
+export const navSectionSignal = signal<NavSection>('home');
+
+// Mobile drawer signals
+export const contextPanelOpenSignal = signal<boolean>(false);
+
+// Create Room modal open state - shared between ContextPanel and Lobby
+export const createRoomModalSignal = signal<boolean>(false);
+
+// Settings section signal - which settings section is active
+export type SettingsSection = 'general' | 'providers' | 'mcp-servers' | 'usage' | 'about';
+export const settingsSectionSignal = signal<SettingsSection>('general');

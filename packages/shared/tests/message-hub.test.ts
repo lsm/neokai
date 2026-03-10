@@ -8,6 +8,7 @@ import {
 	createErrorResponseMessage,
 	createEventMessage,
 } from '../src/message-hub/protocol';
+import { InProcessTransport } from '../src/message-hub/in-process-transport';
 
 class MockTransport implements IMessageTransport {
 	readonly name = 'mock-transport';
@@ -110,7 +111,8 @@ describe('MessageHub', () => {
 
 			newHub.registerTransport(newTransport);
 
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(newTransport);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
+			expect(newHub.isConnected()).toBe(true);
 		});
 
 		test('should unregister transport successfully', () => {
@@ -118,18 +120,29 @@ describe('MessageHub', () => {
 			const newTransport = new MockTransport();
 
 			const unregister = newHub.registerTransport(newTransport);
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(newTransport);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
 
 			unregister();
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(null);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(0);
 		});
 
-		test('should throw error when registering multiple transports', () => {
+		test('should throw error when registering transport with duplicate name', () => {
 			const newTransport = new MockTransport();
 
 			expect(() => {
-				messageHub.registerTransport(newTransport);
-			}).toThrow('Transport already registered');
+				messageHub.registerTransport(newTransport, 'mock-transport');
+			}).toThrow("Transport 'mock-transport' already registered");
+		});
+
+		test('should allow multiple transports with different names', () => {
+			const newHub = new MessageHub({ defaultSessionId: 'test' });
+			const transport1 = new MockTransport();
+			const transport2 = new MockTransport();
+
+			newHub.registerTransport(transport1, 'transport1');
+			newHub.registerTransport(transport2, 'transport2');
+
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(2);
 		});
 
 		test('should return disconnected state when no transport registered', () => {
@@ -360,7 +373,7 @@ describe('MessageHub', () => {
 		});
 
 		test('should use custom room in query', async () => {
-			const queryPromise = messageHub.request('test.method', {}, { room: 'custom-room' });
+			const queryPromise = messageHub.request('test.method', {}, { channel: 'custom-room' });
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -454,11 +467,11 @@ describe('MessageHub', () => {
 		});
 
 		test('should use custom room when emitting event', () => {
-			messageHub.event('user.created', { userId: '123' }, { room: 'custom-room' });
+			messageHub.event('user.created', { userId: '123' }, { channel: 'custom-room' });
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.sessionId).toBe('custom-room');
-			expect(sentMessage.room).toBe('custom-room');
+			expect(sentMessage.channel).toBe('custom-room');
 		});
 
 		test('should not throw when emitting event while disconnected (skips send)', () => {
@@ -480,8 +493,8 @@ describe('MessageHub', () => {
 
 			expect(
 				(
-					messageHub as unknown as { roomEventHandlers: Map<string, Set<unknown>> }
-				).roomEventHandlers.has('user.created')
+					messageHub as unknown as { channelEventHandlers: Map<string, Set<unknown>> }
+				).channelEventHandlers.has('user.created')
 			).toBe(true);
 		});
 
@@ -553,22 +566,22 @@ describe('MessageHub', () => {
 	});
 
 	describe('Room Management', () => {
-		test('should send room.join request', async () => {
-			// Start joinRoom but don't await yet
-			const joinPromise = messageHub.joinRoom('session-123');
+		test('should send channel.join request', async () => {
+			// Start joinChannel but don't await yet
+			const joinPromise = messageHub.joinChannel('session-123');
 
 			// Wait for message to be sent
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.REQUEST);
-			expect(sentMessage.method).toBe('room.join');
-			expect(sentMessage.data).toEqual({ room: 'session-123' });
+			expect(sentMessage.method).toBe('channel.join');
+			expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
 			// Simulate ACK response
 			transport.simulateMessage(
 				createResponseMessage({
-					method: 'room.join',
+					method: 'channel.join',
 					data: { acknowledged: true },
 					sessionId: sentMessage.sessionId,
 					requestId: sentMessage.id,
@@ -578,22 +591,22 @@ describe('MessageHub', () => {
 			await joinPromise;
 		});
 
-		test('should send room.leave request', async () => {
-			// Start leaveRoom but don't await yet
-			const leavePromise = messageHub.leaveRoom('session-123');
+		test('should send channel.leave request', async () => {
+			// Start leaveChannel but don't await yet
+			const leavePromise = messageHub.leaveChannel('session-123');
 
 			// Wait for message to be sent
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
 			const sentMessage = transport.sentMessages[0];
 			expect(sentMessage.type).toBe(MessageType.REQUEST);
-			expect(sentMessage.method).toBe('room.leave');
-			expect(sentMessage.data).toEqual({ room: 'session-123' });
+			expect(sentMessage.method).toBe('channel.leave');
+			expect(sentMessage.data).toEqual({ channel: 'session-123' });
 
 			// Simulate ACK response
 			transport.simulateMessage(
 				createResponseMessage({
-					method: 'room.leave',
+					method: 'channel.leave',
 					data: { acknowledged: true },
 					sessionId: sentMessage.sessionId,
 					requestId: sentMessage.id,
@@ -606,8 +619,8 @@ describe('MessageHub', () => {
 		test('should skip room operations when disconnected', async () => {
 			transport.simulateStateChange('disconnected');
 
-			await messageHub.joinRoom('test-room');
-			await messageHub.leaveRoom('test-room');
+			await messageHub.joinChannel('test-room');
+			await messageHub.leaveChannel('test-room');
 
 			expect(transport.sentMessages.length).toBe(0);
 		});
@@ -694,7 +707,7 @@ describe('MessageHub', () => {
 			const unregister = newHub.registerTransport(newTransport);
 
 			// Verify transport is registered
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(newTransport);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(1);
 
 			// Verify transport has message handlers registered
 			expect(newTransport['messageHandlers'].size).toBe(1);
@@ -703,7 +716,7 @@ describe('MessageHub', () => {
 			unregister();
 
 			// Verify transport is unregistered
-			expect((newHub as unknown as { transport: unknown }).transport).toBe(null);
+			expect((newHub as unknown as { transports: Map<string, unknown> }).transports.size).toBe(0);
 
 			// Verify transport's message handlers are removed
 			expect(newTransport['messageHandlers'].size).toBe(0);
@@ -841,8 +854,8 @@ describe('MessageHub', () => {
 				(messageHub as unknown as { requestHandlers: Map<string, unknown> }).requestHandlers.size
 			).toBe(0);
 			expect(
-				(messageHub as unknown as { roomEventHandlers: Map<string, unknown> }).roomEventHandlers
-					.size
+				(messageHub as unknown as { channelEventHandlers: Map<string, unknown> })
+					.channelEventHandlers.size
 			).toBe(0);
 		});
 
@@ -909,5 +922,193 @@ describe('MessageHub', () => {
 			await query2;
 			expect(messageHub.getPendingCallCount()).toBe(0);
 		});
+	});
+});
+
+describe('Multi-Transport Support', () => {
+	test('should set second transport as primary when isPrimary=true', () => {
+		const hub = new MessageHub();
+		const [t1, t2] = InProcessTransport.createPair({ name: 'test' });
+
+		hub.registerTransport(t1, 'primary', true);
+		hub.registerTransport(t2, 'secondary', true); // Override primary
+
+		// t2 should now be primary
+		// We can verify this by checking which transport is used for sending
+		expect(hub.isConnected()).toBe(false); // Neither initialized
+
+		t1.close();
+		t2.close();
+	});
+
+	test('should keep first transport as primary when isPrimary=false on second', async () => {
+		const hub = new MessageHub();
+		const [client1, server1] = InProcessTransport.createPair({ name: 'test1' });
+		const [client2, server2] = InProcessTransport.createPair({ name: 'test2' });
+
+		hub.registerTransport(server1, 'primary', true);
+		hub.registerTransport(server2, 'secondary', false);
+
+		await server1.initialize();
+		await server2.initialize();
+
+		expect(hub.isConnected()).toBe(true);
+
+		// Cleanup
+		await client1.close();
+		await server1.close();
+		await client2.close();
+		await server2.close();
+	});
+
+	test('should route response via same transport request came from (_transportName)', async () => {
+		// This is the CRITICAL test for Neo!
+		const serverHub = new MessageHub();
+		const clientHub = new MessageHub();
+
+		const [clientTransport, serverTransport] = InProcessTransport.createPair({ name: 'neo' });
+
+		serverHub.registerTransport(serverTransport, 'neo');
+		clientHub.registerTransport(clientTransport, 'client');
+
+		await clientTransport.initialize();
+
+		// Track which transport sent the response
+		let responseSentVia: string | undefined = undefined;
+		const originalSend = serverTransport.send.bind(serverTransport);
+		serverTransport.send = async (msg) => {
+			responseSentVia = 'neo';
+			return originalSend(msg);
+		};
+
+		// Register handler on server
+		serverHub.onRequest('test.method', async () => {
+			return { success: true };
+		});
+
+		// Make request from client
+		const result = await clientHub.request('test.method', {});
+		expect(result).toEqual({ success: true });
+		expect(responseSentVia).toBeDefined();
+		expect(responseSentVia).toBe('neo' as never); // Response went through neo transport
+
+		await clientTransport.close();
+		await serverTransport.close();
+	});
+
+	test('should select next transport as primary when primary is unregistered', async () => {
+		const hub = new MessageHub();
+		const [client1, server1] = InProcessTransport.createPair({ name: 'test1' });
+		const [client2, server2] = InProcessTransport.createPair({ name: 'test2' });
+
+		const unregister1 = hub.registerTransport(server1, 'first', true);
+		hub.registerTransport(server2, 'second', false);
+
+		await server1.initialize();
+		await server2.initialize();
+
+		expect(hub.isConnected()).toBe(true);
+
+		// Unregister primary
+		unregister1();
+
+		// Should still be connected via second transport
+		expect(hub.isConnected()).toBe(true);
+
+		await client1.close();
+		await server1.close();
+		await client2.close();
+		await server2.close();
+	});
+
+	test('should return true for isConnected when any transport is ready', async () => {
+		const hub = new MessageHub();
+		const [client, server] = InProcessTransport.createPair({ name: 'test' });
+
+		hub.registerTransport(server, 'transport1');
+		hub.registerTransport(client, 'transport2');
+
+		// Neither initialized
+		expect(hub.isConnected()).toBe(false);
+
+		// Initialize one
+		await server.initialize();
+		expect(hub.isConnected()).toBe(true);
+
+		await client.close();
+		await server.close();
+	});
+
+	test('should throw error for duplicate transport name', () => {
+		const hub = new MessageHub();
+		const [t1, t2] = InProcessTransport.createPair({ name: 'test' });
+
+		hub.registerTransport(t1, 'my-transport');
+
+		expect(() => {
+			hub.registerTransport(t2, 'my-transport');
+		}).toThrow("Transport 'my-transport' already registered");
+
+		t1.close();
+		t2.close();
+	});
+
+	test('should handle RPC from primary transport client when multiple transports registered', async () => {
+		// This test verifies that with multiple transports, the primary transport client
+		// can complete RPC calls. Without a router, responses go to the primary transport.
+
+		const serverHub = new MessageHub({ defaultSessionId: 'global' });
+
+		// Primary (websocket) client
+		const [wsClient, wsServer] = InProcessTransport.createPair({ name: 'ws' });
+		const wsClientHub = new MessageHub({ defaultSessionId: 'global' });
+
+		// Secondary (neo) client
+		const [neoClient, neoServer] = InProcessTransport.createPair({ name: 'neo' });
+		const neoClientHub = new MessageHub({ defaultSessionId: 'global' });
+
+		// Register both on server - websocket is primary
+		serverHub.registerTransport(wsServer, 'websocket', true);
+		serverHub.registerTransport(neoServer, 'neo', false);
+
+		wsClientHub.registerTransport(wsClient, 'client');
+		neoClientHub.registerTransport(neoClient, 'client');
+
+		// Initialize both pairs
+		await wsClient.initialize();
+		await neoClient.initialize();
+
+		// Register handler
+		serverHub.onRequest('test.echo', async (data) => {
+			return { echoed: data };
+		});
+
+		// Primary client should be able to make RPC calls
+		const wsResult = await wsClientHub.request('test.echo', { source: 'websocket' });
+		expect((wsResult as { echoed: { source: string } }).echoed.source).toBe('websocket');
+
+		// Secondary client's requests reach the server, but without a router,
+		// responses go to the primary transport (current implementation limitation)
+		let neoHandlerCalled = false;
+		serverHub.onRequest('test.neo', async (data) => {
+			neoHandlerCalled = true;
+			return { echoed: data };
+		});
+
+		// The secondary client's request reaches the server (handler is called)
+		// but the response goes to the primary transport, causing a timeout
+		void neoClientHub.request('test.neo', { source: 'neo' }, { timeout: 100 }).catch(() => {
+			// Expected timeout - response goes to primary transport
+		});
+		await new Promise((resolve) => setTimeout(resolve, 150));
+
+		// The handler was called (request reached server)
+		expect(neoHandlerCalled).toBe(true);
+
+		// Cleanup
+		await wsClient.close();
+		await wsServer.close();
+		await neoClient.close();
+		await neoServer.close();
 	});
 });

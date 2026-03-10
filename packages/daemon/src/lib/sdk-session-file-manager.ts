@@ -398,7 +398,7 @@ export function repairSDKSessionFile(
 		for (const orphan of validation.orphanedToolResults) {
 			// Look up the tool_use message from NeoKai DB by searching for the tool_use_id
 			// Note: db.getSDKMessages returns up to 100 messages by default, increase limit to search more
-			const dbMessages = db.getSDKMessages(kaiSessionId, 10000);
+			const { messages: dbMessages } = db.getSDKMessages(kaiSessionId, 10000);
 
 			let missingAssistantMsg: SDKFileMessage | null = null;
 			let missingMsgTimestamp: string | null = null;

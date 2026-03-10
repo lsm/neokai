@@ -77,6 +77,8 @@ export async function startProdServer(config: Config) {
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
 
+	log.info('Room orchestration is handled by RoomAgentService');
+
 	// Get path to web dist folder
 	const distPath = resolve(import.meta.dir, '../../web/dist');
 	log.info(`📦 Serving static files from: ${distPath}`);

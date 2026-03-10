@@ -2,7 +2,7 @@
  * InputTextarea Component
  *
  * iOS 26-style floating textarea input pill with auto-resize,
- * character counter, and send/stop buttons.
+ * character counter, and send button.
  * Extracted from MessageInput.tsx for better separation of concerns.
  *
  * CURSOR PRESERVATION FIX:
@@ -24,6 +24,7 @@
  * so we skip the DOM write and cursor position is preserved.
  */
 
+import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { cn } from '../lib/utils.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -36,6 +37,7 @@ export interface InputTextareaProps {
 	onSubmit: () => void;
 	disabled?: boolean;
 	maxChars?: number;
+	placeholder?: string;
 	// Command autocomplete
 	showCommandAutocomplete?: boolean;
 	filteredCommands?: string[];
@@ -44,10 +46,12 @@ export interface InputTextareaProps {
 	onCommandClose?: () => void;
 	// Agent state - passed as prop to avoid direct signal reads that cause re-renders
 	isAgentWorking?: boolean;
-	// Interrupt
-	interrupting?: boolean;
-	onInterrupt?: () => void;
+	onStop?: () => void;
 	onPaste?: (e: ClipboardEvent) => void;
+	/** Optional control rendered inside the input, on the left side */
+	leadingElement?: ComponentChildren;
+	/** Left padding class used when leadingElement is present */
+	leadingPaddingClass?: string;
 }
 
 /**
@@ -60,15 +64,17 @@ export function InputTextarea({
 	onSubmit,
 	disabled,
 	maxChars = 10000,
+	placeholder = 'Ask or make anything...',
 	showCommandAutocomplete = false,
 	filteredCommands = [],
 	selectedCommandIndex = 0,
 	onCommandSelect,
 	onCommandClose,
 	isAgentWorking = false,
-	interrupting = false,
-	onInterrupt,
+	onStop,
 	onPaste,
+	leadingElement,
+	leadingPaddingClass,
 }: InputTextareaProps) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const [isMultiline, setIsMultiline] = useState(false);
@@ -131,6 +137,8 @@ export function InputTextarea({
 	const charCount = content.length;
 	const showCharCount = charCount > maxChars * 0.8;
 	const hasContent = content.trim().length > 0;
+	const showStop = isAgentWorking && !hasContent && !!onStop;
+	const textareaLeftPadding = leadingElement ? (leadingPaddingClass ?? 'pl-28') : 'pl-5';
 
 	return (
 		<div class="relative flex-1">
@@ -153,6 +161,16 @@ export function InputTextarea({
 						: `${borderColors.ui.input} focus-within:bg-dark-800/80`
 				)}
 			>
+				{leadingElement && (
+					<div
+						class={cn(
+							'absolute left-1.5 z-10',
+							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2'
+						)}
+					>
+						{leadingElement}
+					</div>
+				)}
 				{/* Textarea - Uncontrolled with sync pattern
 				    We DON'T use value={content} here because controlled inputs cause
 				    cursor position reset on every re-render. Instead, we sync content
@@ -163,11 +181,12 @@ export function InputTextarea({
 					onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
 					onKeyDown={onKeyDown}
 					onPaste={onPaste}
-					placeholder="Ask or make anything..."
+					disabled={disabled}
+					placeholder={placeholder}
 					maxLength={maxChars}
 					rows={1}
 					class={cn(
-						'block w-full pl-5 pr-14 py-2.5 text-gray-100 resize-none bg-transparent',
+						`block w-full ${textareaLeftPadding} pr-14 py-2.5 text-gray-100 resize-none bg-transparent`,
 						'placeholder:text-gray-500 text-base leading-normal',
 						'focus:outline-none'
 					)}
@@ -189,38 +208,40 @@ export function InputTextarea({
 					</div>
 				)}
 
-				{/* Send/Stop Button */}
-				{isAgentWorking || interrupting ? (
+				{/* Send or Stop Button */}
+				{showStop ? (
 					<button
 						type="button"
-						onClick={onInterrupt}
-						disabled={interrupting}
-						title="Stop generation"
+						onClick={onStop}
+						disabled={disabled}
+						title="Stop generation (Esc)"
 						aria-label="Stop generation"
 						data-testid="stop-button"
 						class={cn(
 							'absolute right-1.5',
 							isMultiline ? 'bottom-1.5' : 'top-1/2 -translate-y-1/2',
 							'w-9 h-9 rounded-full flex items-center justify-center transition-all duration-200',
-							interrupting
-								? 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
-								: 'bg-red-500 text-white hover:bg-red-600 active:scale-95'
+							!disabled
+								? 'bg-red-500/90 text-white hover:bg-red-600 active:scale-95'
+								: 'bg-dark-700/50 text-gray-500 cursor-not-allowed'
 						)}
 					>
-						{interrupting ? (
-							<div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-						) : (
-							<svg class="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 24 24">
-								<rect x="5" y="5" width="14" height="14" rx="1.5" />
-							</svg>
-						)}
+						<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+							<rect x="6" y="6" width="12" height="12" rx="2" />
+						</svg>
 					</button>
 				) : (
 					<button
 						type="button"
 						onClick={onSubmit}
-						disabled={isAgentWorking || !hasContent}
-						title={isMobileDevice.current ? 'Send message' : 'Send message (Enter or Cmd+Enter)'}
+						disabled={disabled || !hasContent}
+						title={
+							isMobileDevice.current
+								? 'Send message'
+								: isAgentWorking
+									? 'Send message now (Tab queues next turn)'
+									: 'Send message (Enter or Cmd+Enter)'
+						}
 						aria-label="Send message"
 						data-testid="send-button"
 						class={cn(

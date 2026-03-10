@@ -7,7 +7,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/preact';
-import { useModelSwitcher, MODEL_FAMILY_ICONS } from '../useModelSwitcher.ts';
+import {
+	useModelSwitcher,
+	MODEL_FAMILY_ICONS,
+	getModelFamilyIcon,
+	getProviderLabel,
+} from '../useModelSwitcher.ts';
 
 // Mock the connection manager
 const mockGetHubIfConnected = vi.fn();
@@ -105,6 +110,47 @@ describe('useModelSwitcher', () => {
 			const uniqueIcons = new Set(icons);
 			expect(uniqueIcons.size).toBe(4);
 		});
+
+		it('should have gpt icon for OpenAI models', () => {
+			expect(MODEL_FAMILY_ICONS.gpt).toBeDefined();
+			expect(typeof MODEL_FAMILY_ICONS.gpt).toBe('string');
+		});
+
+		it('should have gemini icon for Gemini models', () => {
+			expect(MODEL_FAMILY_ICONS.gemini).toBeDefined();
+			expect(typeof MODEL_FAMILY_ICONS.gemini).toBe('string');
+		});
+	});
+
+	describe('getModelFamilyIcon', () => {
+		it('should return correct icon for known families', () => {
+			expect(getModelFamilyIcon('opus')).toBe(MODEL_FAMILY_ICONS.opus);
+			expect(getModelFamilyIcon('sonnet')).toBe(MODEL_FAMILY_ICONS.sonnet);
+			expect(getModelFamilyIcon('haiku')).toBe(MODEL_FAMILY_ICONS.haiku);
+			expect(getModelFamilyIcon('glm')).toBe(MODEL_FAMILY_ICONS.glm);
+			expect(getModelFamilyIcon('gpt')).toBe(MODEL_FAMILY_ICONS.gpt);
+			expect(getModelFamilyIcon('gemini')).toBe(MODEL_FAMILY_ICONS.gemini);
+		});
+
+		it('should return default icon for unknown families', () => {
+			expect(getModelFamilyIcon('unknown')).toBe(MODEL_FAMILY_ICONS.__default__);
+			expect(getModelFamilyIcon('random-family')).toBe(MODEL_FAMILY_ICONS.__default__);
+		});
+	});
+
+	describe('getProviderLabel', () => {
+		it('should return correct label for known providers', () => {
+			expect(getProviderLabel('anthropic')).toBe('Anthropic');
+			expect(getProviderLabel('glm')).toBe('GLM');
+			expect(getProviderLabel('openai')).toBe('OpenAI');
+			expect(getProviderLabel('github-copilot')).toBe('Copilot');
+			expect(getProviderLabel('google')).toBe('Google');
+		});
+
+		it('should return the provider string for unknown providers', () => {
+			expect(getProviderLabel('unknown')).toBe('unknown');
+			expect(getProviderLabel('some-provider')).toBe('some-provider');
+		});
 	});
 
 	describe('loadModelInfo with mocked hub', () => {
@@ -198,7 +244,9 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'glm-4-plus', display_name: 'GLM 4 Plus', description: '' }],
+						models: [
+							{ id: 'glm-4-plus', display_name: 'GLM 4 Plus', description: '', provider: 'glm' },
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -212,6 +260,138 @@ describe('useModelSwitcher', () => {
 			const glmModel = result.current.availableModels.find((m) => m.id === 'glm-4-plus');
 			expect(glmModel?.provider).toBe('glm');
 			expect(glmModel?.family).toBe('glm');
+		});
+
+		it('should detect gpt family and openai provider for OpenAI models', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'gpt-5.3-codex',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'gpt-5.3-codex',
+								display_name: 'GPT-5.3 Codex',
+								description: '',
+								provider: 'openai',
+							},
+							{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', description: '', provider: 'openai' },
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
+			expect(gptModel?.provider).toBe('openai');
+			expect(gptModel?.family).toBe('gpt');
+		});
+
+		it('should detect gpt family and github-copilot provider for Copilot GPT models', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'gpt-5.3-codex',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'gpt-5.3-codex',
+								display_name: 'GPT-5.3 Codex (Copilot)',
+								description: '',
+								provider: 'github-copilot',
+							},
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
+			expect(gptModel?.provider).toBe('github-copilot');
+			expect(gptModel?.family).toBe('gpt');
+		});
+
+		it('should detect gemini family and github-copilot provider for Copilot Gemini models', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'gemini-3.1-pro-preview',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'gemini-3.1-pro-preview',
+								display_name: 'Gemini 3.1 Pro (Copilot)',
+								description: '',
+								provider: 'github-copilot',
+							},
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			const geminiModel = result.current.availableModels.find(
+				(m) => m.id === 'gemini-3.1-pro-preview'
+			);
+			expect(geminiModel?.provider).toBe('github-copilot');
+			expect(geminiModel?.family).toBe('gemini');
+		});
+
+		it('should detect claude family via copilot provider', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'claude-opus-4.6',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'claude-opus-4.6',
+								display_name: 'Claude Opus 4.6 (Copilot)',
+								description: '',
+								provider: 'github-copilot',
+								alias: 'copilot-opus',
+							},
+						],
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			const claudeModel = result.current.availableModels.find((m) => m.id === 'claude-opus-4.6');
+			expect(claudeModel?.provider).toBe('github-copilot');
+			expect(claudeModel?.family).toBe('opus');
 		});
 
 		it('should sort models by family order', async () => {
@@ -648,7 +828,15 @@ describe('useModelSwitcher', () => {
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
-						models: [{ id: 'claude-opus-4-5-20251101', display_name: 'Opus', description: '' }],
+						models: [
+							{
+								id: 'claude-opus-4-5-20251101',
+								display_name: 'Opus',
+								description: '',
+								alias: 'copilot-opus',
+								provider: 'github-copilot',
+							},
+						],
 					}),
 			};
 			mockGetHubIfConnected.mockReturnValue(mockHub);
@@ -659,7 +847,8 @@ describe('useModelSwitcher', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			expect(result.current.availableModels[0].alias).toBe('20251101');
+			// Server-provided alias is used directly
+			expect(result.current.availableModels[0].alias).toBe('copilot-opus');
 		});
 	});
 });

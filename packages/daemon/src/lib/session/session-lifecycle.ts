@@ -35,6 +35,22 @@ export interface CreateSessionParams {
 	config?: Partial<Session['config']>;
 	worktreeBaseBranch?: string;
 	title?: string; // Optional title - if provided, skips auto-title generation
+	sessionId?: string; // Optional custom session ID (for room chat/self sessions)
+	roomId?: string; // Optional room ID to assign session to
+	lobbyId?: string; // Optional lobby ID to assign session to
+	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
+	// Session types:
+	// - 'worker': Standard coding session with Claude Code system prompt
+	// - 'room_chat': User-facing room chat interface (room:chat:${roomId})
+	// - 'planner': Planner agent session (Room Runtime)
+	// - 'coder': Coder agent session (Room Runtime)
+	// - 'leader': Leader agent session (Room Runtime)
+	// - 'general': General agent session (Room Runtime)
+	// - 'lobby': Instance-level agent session
+	sessionType?: 'room_chat' | 'planner' | 'coder' | 'leader' | 'general' | 'worker' | 'lobby';
+	pairedSessionId?: string;
+	parentSessionId?: string;
+	currentTaskId?: string;
 }
 
 export class SessionLifecycle {
@@ -57,7 +73,9 @@ export class SessionLifecycle {
 	 * Create a new session
 	 */
 	async create(params: CreateSessionParams): Promise<string> {
-		const sessionId = generateUUID();
+		// Use provided sessionId or generate a new one (for room chat sessions)
+		const sessionId = params.sessionId || generateUUID();
+		const sessionType = params.sessionType ?? 'worker';
 
 		const baseWorkspacePath = params.workspacePath || this.config.workspaceRoot;
 
@@ -65,12 +83,16 @@ export class SessionLifecycle {
 		const gitSupport = await this.worktreeManager.detectGitSupport(baseWorkspacePath);
 		const isGitRepo = gitSupport.isGitRepo;
 
+		// Worktree choice is only for worker sessions.
+		const supportsWorktreeChoice = sessionType === 'worker';
+
 		// Determine if worktree choice should be shown
-		const shouldShowChoice = isGitRepo && !this.config.disableWorktrees;
+		const shouldShowChoice = supportsWorktreeChoice && isGitRepo && !this.config.disableWorktrees;
 
 		// Determine if worktree should be created immediately
 		// Only for non-git repos (git repos go through choice flow)
-		const shouldCreateWorktree = !this.config.disableWorktrees && !isGitRepo;
+		const shouldCreateWorktree =
+			supportsWorktreeChoice && !this.config.disableWorktrees && !isGitRepo;
 
 		// Read global settings for defaults (model, thinkingLevel, autoScroll)
 		const globalSettings = this.db.getGlobalSettings();
@@ -78,7 +100,8 @@ export class SessionLifecycle {
 		// Validate and resolve model ID using cached models
 		// Priority: params.config.model > globalSettings.model > server default
 		const requestedModel = params.config?.model || globalSettings.model;
-		const modelId = await this.getValidatedModelId(requestedModel);
+		const { id: modelId, provider: resolvedProvider } =
+			await this.getValidatedModelId(requestedModel);
 
 		// Determine if title should be auto-generated
 		// If title is provided, mark as generated to skip auto-title generation
@@ -141,6 +164,8 @@ export class SessionLifecycle {
 			createdAt: new Date().toISOString(),
 			lastActiveAt: new Date().toISOString(),
 			status: sessionStatus,
+			// Session type: defaults to 'worker', can be set to 'room_chat', 'planner', 'coder', 'leader', 'general', or 'lobby'
+			type: sessionType,
 			config: {
 				model: modelId, // Use validated model ID
 				maxTokens: params.config?.maxTokens || this.config.maxTokens,
@@ -150,8 +175,11 @@ export class SessionLifecycle {
 				thinkingLevel: params.config?.thinkingLevel ?? globalSettings.thinkingLevel,
 				coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
 				permissionMode: params.config?.permissionMode,
-				// Provider: Allow explicit override, otherwise default to 'anthropic'
-				provider: params.config?.provider,
+				// Provider: Allow explicit override; fall back to resolved provider from model alias.
+				// Critical for pi-mono providers (GitHub Copilot, OpenAI) whose models may share
+				// canonical IDs with Anthropic (e.g., copilot-sonnet → claude-sonnet-4.6).
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				provider: (params.config?.provider ?? resolvedProvider) as any,
 				// Tools config: Use global defaults for new sessions
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and NeoKai tools are configurable based on global settings
@@ -160,6 +188,8 @@ export class SessionLifecycle {
 				// Global settings provide balanced security: filesystem isolation + dev domains allowed
 				// If user provides partial sandbox config (e.g., just enabled: false), respect that
 				sandbox: params.config?.sandbox ?? globalSettings.sandbox,
+				// MCP servers: Allow room chat sessions to include room-agent-tools
+				mcpServers: params.config?.mcpServers,
 			},
 			metadata: {
 				messageCount: 0,
@@ -179,10 +209,23 @@ export class SessionLifecycle {
 							createdAt: new Date().toISOString(),
 						}
 					: undefined,
+				// Dual-session architecture fields
+				...(params.sessionType && { sessionType: params.sessionType }),
+				...(params.pairedSessionId && { pairedSessionId: params.pairedSessionId }),
+				...(params.parentSessionId && { parentSessionId: params.parentSessionId }),
+				...(params.currentTaskId && { currentTaskId: params.currentTaskId }),
 			},
 			// Worktree set during creation (if enabled)
 			worktree: worktreeMetadata,
 			gitBranch: currentBranch ?? undefined,
+			// Context for room/lobby sessions (includes links between chat and self sessions)
+			context:
+				params.roomId || params.lobbyId
+					? {
+							...(params.roomId && { roomId: params.roomId }),
+							...(params.lobbyId && { lobbyId: params.lobbyId }),
+						}
+					: undefined,
 		};
 
 		// Save to database
@@ -254,6 +297,7 @@ export class SessionLifecycle {
 		}
 
 		const session = agentSession.getSessionData();
+		const sessionType = session.type ?? 'worker';
 
 		// Verify session is in pending state
 		if (session.status !== 'pending_worktree_choice') {
@@ -264,8 +308,9 @@ export class SessionLifecycle {
 
 		let worktreeMetadata: WorktreeMetadata | undefined;
 		const baseWorkspacePath = session.workspacePath;
+		const effectiveChoice: 'worktree' | 'direct' = sessionType === 'worker' ? choice : 'direct';
 
-		if (choice === 'worktree') {
+		if (effectiveChoice === 'worktree') {
 			// Create worktree now
 			// Generate branch name (use session ID based name since title should be generated by now)
 			const branchName = `session/${sessionId}`;
@@ -289,7 +334,7 @@ export class SessionLifecycle {
 
 		// Detect current branch for direct mode (non-worktree)
 		let currentBranch: string | undefined = worktreeMetadata?.branch;
-		if (!currentBranch && choice === 'direct') {
+		if (!currentBranch && effectiveChoice === 'direct') {
 			try {
 				const branch = await this.worktreeManager.getCurrentBranch(baseWorkspacePath);
 				currentBranch = branch ?? undefined;
@@ -309,7 +354,7 @@ export class SessionLifecycle {
 				...session.metadata,
 				worktreeChoice: {
 					status: 'completed',
-					choice,
+					choice: effectiveChoice,
 					createdAt: session.metadata.worktreeChoice?.createdAt,
 					completedAt: new Date().toISOString(),
 				},
@@ -454,7 +499,7 @@ export class SessionLifecycle {
 				this.messageHub.event(
 					'session.deleted',
 					{ sessionId, reason: 'deleted' },
-					{ room: 'global' }
+					{ channel: 'global' }
 				);
 				await this.eventBus.emit('session.deleted', { sessionId });
 				completedPhases.push('broadcast');
@@ -489,6 +534,23 @@ export class SessionLifecycle {
 	 */
 	getFromDB(sessionId: string): Session | null {
 		return this.db.getSession(sessionId);
+	}
+
+	/**
+	 * Get the in-memory AgentSession for a session ID.
+	 * Returns null if the session is not cached (e.g., not yet created or already deleted).
+	 */
+	getAgentSession(sessionId: string): import('../agent/agent-session').AgentSession | null {
+		return this.sessionCache.has(sessionId) ? this.sessionCache.get(sessionId) : null;
+	}
+
+	/**
+	 * Get AgentSession for a session ID, loading it from DB-backed cache if needed.
+	 */
+	async getAgentSessionAsync(
+		sessionId: string
+	): Promise<import('../agent/agent-session').AgentSession | null> {
+		return this.sessionCache.getAsync(sessionId);
 	}
 
 	/**
@@ -545,10 +607,11 @@ export class SessionLifecycle {
 		}
 
 		try {
-			// Step 1: Generate title from user message using Haiku model
+			// Step 1: Generate title from user message using session's model
 			const { title, isFallback } = await this.generateTitleFromMessage(
 				userMessageText,
-				session.workspacePath
+				session.workspacePath,
+				session.config.model
 			);
 
 			// Step 2: Rename branch if we have a worktree
@@ -637,11 +700,13 @@ export class SessionLifecycle {
 	 * Generate title from first user message using direct API call
 	 * This bypasses the SDK subprocess and calls the Anthropic-like API directly
 	 *
+	 * @param sessionModel - The model to use for title generation (from session config)
 	 * @returns Object with title and isFallback flag
 	 */
 	private async generateTitleFromMessage(
 		messageText: string,
-		_sessionWorkspacePath: string
+		_sessionWorkspacePath: string,
+		sessionModel?: string
 	): Promise<{ title: string; isFallback: boolean }> {
 		// Get provider service to detect provider and get API configuration
 		const providerService = getProviderService();
@@ -658,8 +723,14 @@ export class SessionLifecycle {
 			};
 		}
 
-		// Get title generation configuration from provider service
-		const { modelId } = await providerService.getTitleGenerationConfig(provider);
+		// Use session model if provided, otherwise fall back to title generation config
+		let modelId: string;
+		if (sessionModel) {
+			modelId = sessionModel;
+		} else {
+			const config = await providerService.getTitleGenerationConfig(provider);
+			modelId = config.modelId;
+		}
 
 		try {
 			const title = await this.generateTitleWithSdk(provider, modelId, messageText);
@@ -780,8 +851,14 @@ ${messageText.slice(0, 2000)}`;
 	/**
 	 * Get a validated model ID by using cached dynamic models
 	 * Falls back to static model if dynamic loading failed or is unavailable
+	 *
+	 * Returns both the canonical model ID and the provider that owns it.
+	 * The provider is needed to correctly route pi-mono providers (GitHub Copilot, OpenAI)
+	 * whose models may share canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
 	 */
-	private async getValidatedModelId(requestedModel?: string): Promise<string> {
+	private async getValidatedModelId(
+		requestedModel?: string
+	): Promise<{ id: string; provider?: string }> {
 		// Get available models from cache (already loaded on app startup)
 		try {
 			const { getAvailableModels } = await import('../model-service');
@@ -794,7 +871,7 @@ ${messageText.slice(0, 2000)}`;
 						(m) => m.id === requestedModel || m.alias === requestedModel
 					);
 					if (found) {
-						return found.id;
+						return { id: found.id, provider: found.provider };
 					}
 				}
 
@@ -806,7 +883,7 @@ ${messageText.slice(0, 2000)}`;
 				);
 
 				if (defaultByConfig) {
-					return defaultByConfig.id;
+					return { id: defaultByConfig.id, provider: defaultByConfig.provider };
 				}
 
 				// Fallback: prefer Sonnet family if no configured default found
@@ -814,7 +891,7 @@ ${messageText.slice(0, 2000)}`;
 					availableModels.find((m) => m.family === 'sonnet') || availableModels[0];
 
 				if (defaultModel) {
-					return defaultModel.id;
+					return { id: defaultModel.id, provider: defaultModel.provider };
 				}
 			}
 		} catch (error) {
@@ -824,7 +901,7 @@ ${messageText.slice(0, 2000)}`;
 		// Fallback to config default model or requested model
 		// IMPORTANT: Always return full model ID, never aliases
 		const fallbackModel = requestedModel || this.config.defaultModel;
-		return fallbackModel;
+		return { id: fallbackModel };
 	}
 }
 

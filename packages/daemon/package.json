@@ -1,6 +1,6 @@
 {
 	"name": "@neokai/daemon",
-	"version": "0.5.2",
+	"version": "0.6.0",
 	"type": "module",
 	"license": "Apache-2.0",
 	"main": "main.ts",
@@ -14,15 +14,17 @@
 	"scripts": {
 		"dev": "bun run --watch main.ts",
 		"start": "NODE_ENV=production bun run main.ts",
-		"test": "bun test tests/unit tests/integration tests/providers tests/online",
+		"test": "bun test tests/unit tests/providers tests/online",
 		"test:unit": "bun test --preload=./tests/unit/setup.ts --coverage --coverage-reporter=text ./tests/unit",
-		"test:integration": "bun test --preload=./tests/unit/setup.ts --coverage --coverage-reporter=text ./tests/integration",
 		"test:online": "bun test --coverage --coverage-reporter=text ./tests/online"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "^0.2.39",
+		"@anthropic-ai/claude-agent-sdk": "0.2.55",
+		"@mariozechner/pi-ai": "^0.57.1",
+		"@mariozechner/pi-agent-core": "^0.57.1",
 		"@neokai/shared": "workspace:*",
-		"simple-git": "3.30.0"
+		"simple-git": "3.32.3",
+		"zod": "4.3.6"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"

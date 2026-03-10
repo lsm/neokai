@@ -14,8 +14,8 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 const mockHub = {
 	request: vi.fn().mockResolvedValue({ acknowledged: true }),
 	onEvent: vi.fn(() => vi.fn()),
-	joinRoom: vi.fn(),
-	leaveRoom: vi.fn(),
+	joinChannel: vi.fn(),
+	leaveChannel: vi.fn(),
 	isConnected: vi.fn(() => true),
 	getHubIfConnected: vi.fn(() => mockHub),
 };
@@ -264,9 +264,15 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					createdAt: '',
 					lastActiveAt: '',
 					workspacePath: '/test',
+					metadata: {
+						lastContextInfo: {
+							totalTokens: 1000,
+							inputTokens: 500,
+							outputTokens: 500,
+						} as ContextInfo,
+					},
 				} as Session,
 				agentState: { status: 'processing' },
-				contextInfo: { totalTokens: 1000, inputTokens: 500, outputTokens: 500 } as ContextInfo,
 				commandsData: { availableCommands: ['/test', '/help'] },
 			};
 		});
@@ -769,7 +775,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					return Promise.resolve({ sessionInfo: { id: 'session-1' } });
 				}
 				if (method === 'state.sdkMessages') {
-					return Promise.resolve({ sdkMessages: messages });
+					return Promise.resolve({ sdkMessages: messages, hasMore: true });
 				}
 				return Promise.resolve(undefined);
 			});
@@ -849,7 +855,7 @@ describe('SessionStore - Comprehensive Coverage', () => {
 					content: [{ type: 'text', text: `Message ${i}` }],
 				}));
 
-			mockHub.request.mockResolvedValue({ sdkMessages: messages });
+			mockHub.request.mockResolvedValue({ sdkMessages: messages, hasMore: true });
 
 			await sessionStore.select('session-1');
 

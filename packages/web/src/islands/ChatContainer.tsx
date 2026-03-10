@@ -16,7 +16,17 @@
  * agent state from state.session channel.
  */
 
-import type { MessageImage, ResolvedQuestion } from '@neokai/shared';
+import type {
+	MessageDeliveryMode,
+	MessageImage,
+	ResolvedQuestion,
+	SessionFeatures,
+} from '@neokai/shared';
+import {
+	DEFAULT_WORKER_FEATURES,
+	DEFAULT_ROOM_CHAT_FEATURES,
+	DEFAULT_LOBBY_FEATURES,
+} from '@neokai/shared';
 import type { SDKMessage, SDKSystemMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useSignalEffect } from '@preact/signals';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -47,22 +57,32 @@ import { useSessionActions } from '../hooks/useSessionActions.ts';
 import { switchCoordinatorMode, switchSandboxMode, updateSession } from '../lib/api-helpers.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { borderColors } from '../lib/design-tokens.ts';
+import {
+	getMessagesBottomPaddingPx,
+	MIN_MESSAGES_BOTTOM_PADDING_PX,
+} from '../lib/layout-metrics.ts';
 import { sessionStore } from '../lib/session-store.ts';
 import { connectionState } from '../lib/state.ts';
 import { getCurrentAction } from '../lib/status-actions.ts';
 import { toast } from '../lib/toast.ts';
 import { cn } from '../lib/utils.ts';
+import { lobbyStore } from '../lib/lobby-store.ts';
+import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
+import type { RoomContext } from '../components/ChatHeader.tsx';
 
 interface ChatContainerProps {
 	sessionId: string;
+	readonly?: boolean;
 }
 
-export default function ChatContainer({ sessionId }: ChatContainerProps) {
+export default function ChatContainer({ sessionId, readonly = false }: ChatContainerProps) {
 	// ========================================
 	// Refs
 	// ========================================
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const footerContainerRef = useRef<HTMLDivElement>(null);
+	const previousMessagesBottomPaddingRef = useRef<number>(MIN_MESSAGES_BOTTOM_PADDING_PX);
 	// Store scroll position info to restore after older messages are loaded
 	const scrollPositionRestoreRef = useRef<{
 		oldScrollHeight: number;
@@ -83,6 +103,9 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const [isInitialLoad, setIsInitialLoad] = useState(true);
 	const [localError, setLocalError] = useState<string | null>(null);
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [messagesBottomPadding, setMessagesBottomPadding] = useState(
+		MIN_MESSAGES_BOTTOM_PADDING_PX
+	);
 	const [coordinatorMode, setCoordinatorMode] = useState(true);
 	const [coordinatorSwitching, setCoordinatorSwitching] = useState(false);
 	const [sandboxEnabled, setSandboxEnabled] = useState(true);
@@ -271,6 +294,31 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		}
 	});
 
+	// Get feature flags from session config (for unified session architecture)
+	// Falls back to appropriate defaults based on session type
+	const features: SessionFeatures = useMemo(() => {
+		if (session?.config?.features) {
+			return session.config.features;
+		}
+		// Determine default features based on session ID format
+		if (sessionId.startsWith('room:chat:')) {
+			return DEFAULT_ROOM_CHAT_FEATURES;
+		}
+		if (sessionId.startsWith('lobby:')) {
+			return DEFAULT_LOBBY_FEATURES;
+		}
+		return DEFAULT_WORKER_FEATURES;
+	}, [session?.config?.features, sessionId]);
+
+	// Compute room context breadcrumb for sessions inside a room
+	const roomContext: RoomContext | undefined = useMemo(() => {
+		const roomId = session?.context?.roomId;
+		if (!roomId) return undefined;
+		const room = lobbyStore.rooms.value.find((r) => r.id === roomId);
+		if (!room) return undefined;
+		return { roomName: room.name, roomId: room.id };
+	}, [session?.context?.roomId]);
+
 	// Sync context from sessionStore
 	useSignalEffect(() => {
 		setContextUsage(sessionStore.contextInfo.value);
@@ -292,10 +340,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		setHasMoreMessages(sessionStore.hasMoreMessages.value);
 	});
 
-	// Track initial load state - set to false once messages have loaded
+	// Track initial load state - set to false once session state RPC has returned
 	useSignalEffect(() => {
 		const hasMessages = sessionStore.sdkMessages.value.length > 0;
-		if (hasMessages) {
+		const sessionStateLoaded = sessionStore.sessionState.value !== null;
+		if (hasMessages || sessionStateLoaded) {
 			setIsInitialLoad(false);
 		}
 	});
@@ -337,10 +386,6 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 
 	// Derived processing state
 	const isProcessing = agentState.status === 'processing' || agentState.status === 'queued';
-	const isCompacting =
-		agentState.status === 'processing' &&
-		'isCompacting' in agentState &&
-		agentState.isCompacting === true;
 	const isWaitingForInput = agentState.status === 'waiting_for_input';
 	const pendingQuestion = isWaitingForInput ? agentState.pendingQuestion : null;
 
@@ -440,6 +485,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		sessionId,
 		session,
 		isSending: isProcessing,
+		allowQueueWhileProcessing: true,
 		onSendStart: useCallback(() => {
 			setLocalError(null);
 			sessionStore.clearError();
@@ -455,6 +501,25 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// ========================================
 	// Effects
 	// ========================================
+
+	// Select session on mount or when sessionId changes
+	// This is needed when ChatContainer is used outside the main navigation flow
+	// (e.g., in Room.tsx for room chat with sessionId="room:{roomId}")
+	useEffect(() => {
+		// Only select if this sessionId is different from the current active session
+		if (sessionId && sessionId !== sessionStore.activeSessionId.value) {
+			sessionStore.select(sessionId);
+		}
+		// Cleanup: deselect session when component unmounts
+		return () => {
+			// Defer cleanup so a newly-mounted ChatContainer can claim selection first.
+			setTimeout(() => {
+				if (sessionStore.activeSessionId.value === sessionId) {
+					sessionStore.select(null);
+				}
+			}, 0);
+		};
+	}, [sessionId]);
 
 	// Restore scroll position after older messages are loaded and DOM has updated
 	useEffect(() => {
@@ -481,10 +546,37 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		});
 	}, [messages.length, loadingOlder]);
 
+	useEffect(() => {
+		const footer = footerContainerRef.current;
+		if (!footer) return;
+
+		const updatePadding = () => {
+			const queueOverlay = footer.querySelector('[data-testid="queue-overlay"]');
+			const queueOverlayRows =
+				queueOverlay instanceof HTMLElement ? queueOverlay.children.length : 0;
+			setMessagesBottomPadding(
+				getMessagesBottomPaddingPx(footer.getBoundingClientRect().height, queueOverlayRows)
+			);
+		};
+
+		updatePadding();
+
+		if (typeof ResizeObserver !== 'undefined') {
+			const observer = new ResizeObserver(() => {
+				updatePadding();
+			});
+			observer.observe(footer);
+			return () => observer.disconnect();
+		}
+
+		window.addEventListener('resize', updatePadding);
+		return () => window.removeEventListener('resize', updatePadding);
+	}, []);
+
 	// ========================================
 	// Auto-scroll
 	// ========================================
-	const { showScrollButton, scrollToBottom } = useAutoScroll({
+	const { showScrollButton, scrollToBottom, isNearBottom } = useAutoScroll({
 		containerRef: messagesContainerRef,
 		endRef: messagesEndRef,
 		enabled: autoScroll,
@@ -492,6 +584,28 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 		isInitialLoad,
 		loadingOlder,
 	});
+
+	useEffect(() => {
+		const previousPadding = previousMessagesBottomPaddingRef.current;
+		if (
+			messagesBottomPadding > previousPadding &&
+			autoScroll &&
+			!loadingOlder &&
+			(isNearBottom || !showScrollButton)
+		) {
+			requestAnimationFrame(() => {
+				scrollToBottom();
+			});
+		}
+		previousMessagesBottomPaddingRef.current = messagesBottomPadding;
+	}, [
+		messagesBottomPadding,
+		autoScroll,
+		loadingOlder,
+		isNearBottom,
+		showScrollButton,
+		scrollToBottom,
+	]);
 
 	// ========================================
 	// Message Maps (for tool results/inputs)
@@ -518,7 +632,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Handlers
 	// ========================================
 	const handleSendMessage = useCallback(
-		async (content: string, images?: MessageImage[]) => {
+		async (
+			content: string,
+			images?: MessageImage[],
+			deliveryMode: MessageDeliveryMode = 'current_turn'
+		) => {
 			// If session is pending worktree choice, set the mode first
 			if (session?.status === 'pending_worktree_choice' && showWorktreeChoice) {
 				try {
@@ -538,7 +656,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				}
 			}
 
-			await sendMessage(content, images);
+			await sendMessage(content, images, deliveryMode);
 		},
 		[sendMessage, session, showWorktreeChoice, pendingWorktreeMode, sessionId]
 	);
@@ -622,7 +740,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	const { currentAction, streamingPhase } = useMemo(() => {
 		// Handle queued state
 		if (agentState.status === 'queued') {
-			return { currentAction: 'Queued...', streamingPhase: null };
+			return { currentAction: 'Message queued...', streamingPhase: null };
 		}
 
 		// Handle interrupted state
@@ -653,16 +771,23 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 	// Combined error (local + store)
 	const error = localError || storeError?.message || null;
 
-	// Derive loading state from sessionStore (session is null means still loading)
-	const loading = session === null && !error;
+	// Derive loading state from sessionStore
+	// sessionState being null means the RPC hasn't returned yet (truly loading)
+	// session (sessionInfo) can be null even after RPC returns for room sessions
+	const loading = sessionStore.sessionState.value === null && !error;
 
 	// Render loading state
 	if (loading) {
 		return (
 			<div class="flex-1 flex flex-col bg-dark-900">
 				<div class={`bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4`}>
-					<Skeleton width="200px" height={24} class="mb-2" />
-					<Skeleton width="150px" height={16} />
+					<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
+						<MobileMenuButton />
+						<div class="flex-1 min-w-0">
+							<Skeleton width="200px" height={24} class="mb-2" />
+							<Skeleton width="150px" height={16} />
+						</div>
+					</div>
 				</div>
 				<div class="flex-1 overflow-y-auto">
 					{Array.from({ length: 3 }).map((_, i) => (
@@ -705,6 +830,8 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			<ChatHeader
 				session={session}
 				displayStats={displayStats}
+				features={features}
+				roomContext={roomContext}
 				onToolsClick={toolsModal.open}
 				onInfoClick={infoModal.open}
 				onExportClick={sessionActions.handleExportChat}
@@ -713,12 +840,13 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				onDeleteClick={deleteModal.open}
 				archiving={sessionActions.archiving}
 				resettingAgent={sessionActions.resettingAgent}
+				readonly={readonly}
 			/>
 
 			{/* Messages */}
 			<div class="flex-1 relative min-h-0">
-				{/* Rewind Mode Banner */}
-				{rewindMode && (
+				{/* Rewind Mode Banner - only show if feature is enabled */}
+				{features.rewind && rewindMode && (
 					<div class="absolute top-0 left-0 right-0 z-20 bg-amber-500/10 backdrop-blur-sm border-b border-amber-500/30 px-4 py-3">
 						<div class="max-w-4xl mx-auto flex items-center justify-between">
 							<div class="flex items-center gap-3">
@@ -766,8 +894,11 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 				<div
 					ref={messagesContainerRef}
 					data-messages-container
-					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y pb-32"
-					style={{ WebkitOverflowScrolling: 'touch' }}
+					class="absolute inset-0 overflow-y-scroll overscroll-contain touch-pan-y"
+					style={{
+						WebkitOverflowScrolling: 'touch',
+						paddingBottom: `${messagesBottomPadding}px`,
+					}}
 				>
 					{/* Worktree Choice Inline */}
 					{showWorktreeChoice && session && (
@@ -897,6 +1028,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 			{/* Footer - Floating Status Bar */}
 			<div class="absolute bottom-0 left-0 right-0 z-10 pointer-events-none">
 				<div
+					ref={footerContainerRef}
 					class="pointer-events-auto pt-4 bg-gradient-to-t from-dark-900 from-[calc(100%-32px)] to-dark-900/0"
 					style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
 				>
@@ -907,6 +1039,7 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 						streamingPhase={streamingPhase}
 						contextUsage={contextUsage ?? undefined}
 						maxContextTokens={200000}
+						features={features}
 						currentModel={currentModel}
 						currentModelInfo={currentModelInfo}
 						availableModels={availableModels}
@@ -949,17 +1082,20 @@ export default function ChatContainer({ sessionId }: ChatContainerProps) {
 							</div>
 						</div>
 					) : (
-						<MessageInput
-							sessionId={sessionId}
-							onSend={handleSendMessage}
-							disabled={isProcessing || isCompacting || isWaitingForInput || !isConnected}
-							autoScroll={autoScroll}
-							onAutoScrollChange={handleAutoScrollChange}
-							onOpenTools={toolsModal.open}
-							onEnterRewindMode={handleEnterRewindMode}
-							rewindMode={rewindMode}
-							onExitRewindMode={handleExitRewindMode}
-						/>
+						!readonly && (
+							<MessageInput
+								sessionId={sessionId}
+								sessionType={session?.type}
+								onSend={handleSendMessage}
+								disabled={isWaitingForInput || !isConnected}
+								autoScroll={autoScroll}
+								onAutoScrollChange={handleAutoScrollChange}
+								onOpenTools={toolsModal.open}
+								onEnterRewindMode={handleEnterRewindMode}
+								rewindMode={rewindMode}
+								onExitRewindMode={handleExitRewindMode}
+							/>
+						)
 					)}
 				</div>
 			</div>

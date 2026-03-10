@@ -1,22 +1,21 @@
 /**
- * Selective Rewind Feature Online Tests
+ * Selective Rewind Feature Tests
  *
- * These tests verify the selective rewind feature with real SDK calls:
+ * These tests verify the selective rewind feature:
  * 1. Selective rewind can delete specific messages and all messages after
  * 2. Mode selection (conversation, both) works correctly
  * 3. Error handling for invalid inputs (empty/nonexistent messageIds)
  * 4. Message count verification after rewind
  *
- * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
- * MODEL:
- * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/rewind/selective-rewind.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-// Bun automatically loads .env from project root when running tests
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle } from '../../helpers/daemon-actions';
@@ -45,22 +44,28 @@ interface SelectiveRewindResult {
 	rewindCase?: string;
 }
 
-// Use temp directory for test database
 const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
+const IDLE_TIMEOUT = IS_MOCK ? 10000 : 90000;
+const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 180000;
 
 describe('Selective Rewind Feature', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	}, 30000);
+	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
 		if (daemon) {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
 		}
-	}, 20000);
+	}, SETUP_TIMEOUT);
 
 	/**
 	 * Helper to list messages for a session
@@ -151,12 +156,13 @@ describe('Selective Rewind Feature', () => {
 			expect(result.success).toBe(true);
 			expect(result.messagesDeleted).toBeGreaterThan(0);
 
-			// Verify messages were deleted
+			// Verify selected conversation messages were deleted.
+			// Total message count is not stable because query restart can add fresh system messages.
 			const messagesAfterRewind = await listMessages(sessionId);
-			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
 
 			// Verify the second user message and all after it are gone
 			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			expect(userMessagesAfter.length).toBeLessThan(userMessages.length);
 			const hasSecondMessage = userMessagesAfter.some((m) => getMessageText(m).includes('2+2'));
 			const hasThirdMessage = userMessagesAfter.some((m) => getMessageText(m).includes('3+3'));
 			expect(hasSecondMessage).toBe(false);
@@ -214,9 +220,13 @@ describe('Selective Rewind Feature', () => {
 				expect(typeof result.rewindCase).toBe('string');
 			}
 
-			// Verify messages were deleted
+			// Verify selected conversation messages were deleted.
+			// Total message count is not stable because query restart can add fresh system messages.
 			const messagesAfterRewind = await listMessages(sessionId);
-			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
+			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			expect(userMessagesAfter.length).toBeLessThan(userMessages.length);
+			const hasSecondMessage = userMessagesAfter.some((m) => getMessageText(m).includes('2+2'));
+			expect(hasSecondMessage).toBe(false);
 		}, 300000);
 	});
 
@@ -360,12 +370,13 @@ describe('Selective Rewind Feature', () => {
 			expect(result.success).toBe(true);
 			expect(result.messagesDeleted).toBeGreaterThan(0);
 
-			// Verify messages were deleted from the earliest selected message onward
+			// Verify selected conversation messages were deleted from the earliest selected message onward.
+			// Total message count is not stable because query restart can add fresh system messages.
 			const messagesAfterRewind = await listMessages(sessionId);
-			expect(messagesAfterRewind.length).toBeLessThan(messages.length);
 
 			// First message should still be there
 			const userMessagesAfter = messagesAfterRewind.filter((m) => m.type === 'user');
+			expect(userMessagesAfter.length).toBeLessThan(userMessages.length);
 			const hasFirstMessage = userMessagesAfter.some((m) => getMessageText(m).includes('1+1'));
 			expect(hasFirstMessage).toBe(true);
 

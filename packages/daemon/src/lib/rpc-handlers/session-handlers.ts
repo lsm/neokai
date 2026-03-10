@@ -7,11 +7,12 @@
  * - State updates are broadcast via State Channels
  */
 
-import type { MessageHub, MessageImage, Session } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageHub, MessageImage, Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import { generateUUID } from '@neokai/shared';
 import type { SessionManager } from '../session-manager';
 import type { CreateSessionRequest, UpdateSessionRequest } from '@neokai/shared';
+import { isSDKUserMessage } from '@neokai/shared/sdk/type-guards';
 import { clearModelsCache } from '../model-service';
 import {
 	archiveSDKSessionFiles,
@@ -19,11 +20,38 @@ import {
 	scanSDKSessionFiles,
 	identifyOrphanedSDKFiles,
 } from '../sdk-session-file-manager';
+import type { RoomManager } from '../room';
+import { Logger } from '../logger';
+
+const log = new Logger('session-handlers');
+
+function extractMessageText(content: unknown): string {
+	if (typeof content === 'string') {
+		return content;
+	}
+
+	if (!Array.isArray(content)) {
+		return '';
+	}
+
+	return content
+		.map((block) => {
+			if (typeof block !== 'object' || block === null) return '';
+			const record = block as Record<string, unknown>;
+			if (record.type === 'text' && typeof record.text === 'string') {
+				return record.text;
+			}
+			return '';
+		})
+		.filter(Boolean)
+		.join('\n');
+}
 
 export function setupSessionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	daemonHub: DaemonHub
+	daemonHub: DaemonHub,
+	roomManager: RoomManager
 ): void {
 	messageHub.onRequest('session.create', async (data) => {
 		const req = data as CreateSessionRequest;
@@ -33,7 +61,14 @@ export function setupSessionHandlers(
 			config: req.config,
 			worktreeBaseBranch: req.worktreeBaseBranch,
 			title: req.title,
+			roomId: req.roomId,
+			createdBy: req.createdBy ?? 'human',
 		});
+
+		// Add session to room if roomId is provided
+		if (req.roomId) {
+			roomManager.assignSession(req.roomId, sessionId);
+		}
 
 		// Return the full session object so client can optimistically update
 		const agentSession = sessionManager.getSession(sessionId);
@@ -66,16 +101,22 @@ export function setupSessionHandlers(
 
 		// Broadcast update to all clients
 		messageHub.event('session.updated', updatedSession, {
-			room: `session:${sessionId}`,
+			channel: `session:${sessionId}`,
 		});
 
 		return { success: true, session: updatedSession };
 	});
 
-	messageHub.onRequest('session.list', async () => {
-		const sessions = sessionManager.listSessions();
-		return { sessions };
-	});
+	messageHub.onRequest(
+		'session.list',
+		async (data: { status?: string; includeArchived?: boolean } | undefined) => {
+			const sessions = sessionManager.listSessions({
+				status: data?.status,
+				includeArchived: data?.includeArchived,
+			});
+			return { sessions };
+		}
+	);
 
 	messageHub.onRequest('session.get', async (data) => {
 		const { sessionId: targetSessionId } = data as { sessionId: string };
@@ -86,7 +127,6 @@ export function setupSessionHandlers(
 		}
 
 		const session = agentSession.getSessionData();
-		const contextInfo = agentSession.getContextInfo();
 
 		return {
 			session,
@@ -96,8 +136,7 @@ export function setupSessionHandlers(
 				files: [],
 				workingDirectory: session.workspacePath,
 			},
-			// Token usage context info (for StatusIndicator)
-			contextInfo,
+			// Context info is in session.metadata.lastContextInfo
 		};
 	});
 
@@ -129,7 +168,7 @@ export function setupSessionHandlers(
 
 		// Broadcast update event to all clients
 		messageHub.event('session.updated', updates, {
-			room: `session:${targetSessionId}`,
+			channel: `session:${targetSessionId}`,
 		});
 
 		return { success: true };
@@ -144,7 +183,7 @@ export function setupSessionHandlers(
 			'session.deleted',
 			{ sessionId: targetSessionId },
 			{
-				room: 'global',
+				channel: 'global',
 			}
 		);
 
@@ -254,11 +293,17 @@ export function setupSessionHandlers(
 			sessionId: targetSessionId,
 			content,
 			images,
+			deliveryMode = 'current_turn',
 		} = data as {
 			sessionId: string;
 			content: string;
 			images?: MessageImage[];
+			deliveryMode?: MessageDeliveryMode;
 		};
+
+		if (deliveryMode !== 'current_turn' && deliveryMode !== 'next_turn') {
+			throw new Error('Invalid deliveryMode');
+		}
 
 		// Verify session exists before emitting event
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -269,21 +314,15 @@ export function setupSessionHandlers(
 		// Generate messageId immediately for return
 		const messageId = generateUUID();
 
-		// Fire-and-forget: emit event, SessionManager handles persistence
-		// All heavy operations (message persistence, title gen, SDK query) handled by DaemonHub subscribers
-		daemonHub
-			.emit('message.sendRequest', {
-				sessionId: targetSessionId,
-				messageId,
-				content,
-				images,
-			})
-			.catch(() => {
-				// Event emission error - non-critical, continue
-			});
+		// Persist-before-ack for durable queue semantics
+		await daemonHub.emit('message.sendRequest', {
+			sessionId: targetSessionId,
+			messageId,
+			content,
+			images,
+			deliveryMode,
+		});
 
-		// Return immediately with messageId
-		// Client gets instant feedback, heavy processing continues async
 		return { messageId };
 	});
 
@@ -299,8 +338,8 @@ export function setupSessionHandlers(
 		}
 
 		// Fire-and-forget: emit event, AgentSession handles it
-		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch(() => {
-			// Interrupt event emission error - non-critical, continue
+		daemonHub.emit('agent.interruptRequest', { sessionId: targetSessionId }).catch((error) => {
+			log.warn(`Failed to emit agent.interruptRequest for session ${targetSessionId}:`, error);
 		});
 
 		return { accepted: true };
@@ -350,7 +389,7 @@ export function setupSessionHandlers(
 			messageHub.event(
 				'session.updated',
 				{ model: result.model },
-				{ room: `session:${targetSessionId}` }
+				{ channel: `session:${targetSessionId}` }
 			);
 		}
 
@@ -389,7 +428,7 @@ export function setupSessionHandlers(
 		messageHub.event(
 			'session.updated',
 			{ config: { coordinatorMode } },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: result.success, coordinatorMode, error: result.error };
@@ -432,7 +471,7 @@ export function setupSessionHandlers(
 		messageHub.event(
 			'session.updated',
 			{ config: { sandbox: updatedSandbox } },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: result.success, sandboxEnabled, error: result.error };
@@ -470,7 +509,7 @@ export function setupSessionHandlers(
 		messageHub.event(
 			'session.updated',
 			{ config: { thinkingLevel } },
-			{ room: `session:${targetSessionId}` }
+			{ channel: `session:${targetSessionId}` }
 		);
 
 		return { success: true, thinkingLevel };
@@ -500,6 +539,8 @@ export function setupSessionHandlers(
 					id: m.id,
 					display_name: m.name,
 					description: m.description,
+					alias: m.alias,
+					provider: m.provider,
 					type: 'model' as const,
 				})),
 				// If forceRefresh is true, indicate that this is a fresh fetch
@@ -553,8 +594,8 @@ export function setupSessionHandlers(
 		// Scan SDK project directory
 		const files = scanSDKSessionFiles(workspacePath);
 
-		// Get session categories from database
-		const sessions = sessionManager.listSessions();
+		// Get session categories from database (need all sessions for orphan detection)
+		const sessions = sessionManager.listSessions({ includeArchived: true });
 		const activeIds = new Set(sessions.filter((s) => s.status === 'active').map((s) => s.id));
 		const archivedIds = new Set(sessions.filter((s) => s.status === 'archived').map((s) => s.id));
 
@@ -694,5 +735,42 @@ export function setupSessionHandlers(
 		const count = db.getMessageCountByStatus(session.id, status);
 
 		return { count };
+	});
+
+	// List user messages by send status for queue UX
+	messageHub.onRequest('session.messages.byStatus', async (data) => {
+		const {
+			sessionId: targetSessionId,
+			status,
+			limit = 20,
+		} = data as {
+			sessionId: string;
+			status: 'saved' | 'queued' | 'sent';
+			limit?: number;
+		};
+
+		if (!['saved', 'queued', 'sent'].includes(status)) {
+			throw new Error('Invalid status');
+		}
+
+		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
+		if (!agentSession) {
+			throw new Error('Session not found');
+		}
+
+		const db = sessionManager.getDatabase();
+		const messages = db
+			.getMessagesByStatus(targetSessionId, status)
+			.filter((message) => isSDKUserMessage(message))
+			.slice(0, limit)
+			.map((message) => ({
+				dbId: message.dbId,
+				uuid: message.uuid ?? '',
+				timestamp: message.timestamp,
+				status,
+				text: extractMessageText(message.message.content),
+			}));
+
+		return { messages };
 	});
 }

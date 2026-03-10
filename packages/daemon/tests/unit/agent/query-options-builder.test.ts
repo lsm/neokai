@@ -185,6 +185,24 @@ describe('QueryOptionsBuilder', () => {
 			expect(result.resume).toBeUndefined();
 		});
 
+		it('should add resume for room sessions when SDK session ID exists', async () => {
+			mockSession.type = 'room';
+			mockSession.sdkSessionId = 'sdk-session-123';
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.resume).toBe('sdk-session-123');
+		});
+
+		it('should add resume for manager/worker orchestration sessions', async () => {
+			mockSession.sdkSessionId = 'sdk-session-123';
+			mockSession.metadata.sessionType = 'manager';
+			const options = await builder.build();
+			const result = builder.addSessionStateOptions(options);
+
+			expect(result.resume).toBe('sdk-session-123');
+		});
+
 		it('should add thinking tokens based on thinkingLevel', async () => {
 			// Use 'ultrathink' which is a known valid thinking level
 			mockSession.config.thinkingLevel = 'ultrathink';
@@ -345,6 +363,56 @@ describe('QueryOptionsBuilder', () => {
 		});
 	});
 
+	describe('room session restrictions', () => {
+		it('should preserve room MCP servers while enforcing strict MCP config', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.mcpServers = {
+				'room-agent-tools': { command: 'test-command' },
+			};
+
+			const options = await builder.build();
+			expect(options.mcpServers).toEqual({
+				'room-agent-tools': { command: 'test-command' },
+			});
+			expect(options.strictMcpConfig).toBe(true);
+			expect(options.settingSources).toEqual([]);
+		});
+
+		it('should enforce room built-in tool allowlist', async () => {
+			mockSession.type = 'room_chat';
+			const options = await builder.build();
+			expect(options.tools).toEqual([
+				'Read',
+				'Glob',
+				'Grep',
+				'WebFetch',
+				'WebSearch',
+				'ToolSearch',
+				'AskUserQuestion',
+				'Skill',
+			]);
+			expect(options.allowedTools).toEqual(
+				expect.arrayContaining([
+					'Read',
+					'Glob',
+					'Grep',
+					'WebFetch',
+					'WebSearch',
+					'ToolSearch',
+					'AskUserQuestion',
+					'Skill',
+					'room-agent-tools__*',
+				])
+			);
+		});
+
+		it('should disable Claude Code preset system prompt for room sessions', async () => {
+			mockSession.type = 'room_chat';
+			const options = await builder.build();
+			expect(options.systemPrompt).toBeUndefined();
+		});
+	});
+
 	describe('additional directories configuration', () => {
 		it('should allow temp directories for shell operations when worktree exists', async () => {
 			mockSession.worktree = {
@@ -482,8 +550,7 @@ describe('QueryOptionsBuilder', () => {
 			expect(agentNames).toContain('Reviewer');
 			expect(agentNames).toContain('VCS');
 			expect(agentNames).toContain('Verifier');
-			expect(agentNames).toContain('Executor');
-			expect(agentNames).toHaveLength(8);
+			expect(agentNames).toHaveLength(7);
 		});
 
 		it('should NOT set agent or specialist agents when coordinatorMode is false', async () => {
@@ -516,7 +583,7 @@ describe('QueryOptionsBuilder', () => {
 			const builderOn = new QueryOptionsBuilder(mockContext);
 			const optionsOn = await builderOn.build();
 			expect(optionsOn.agent).toBe('Coordinator');
-			expect(Object.keys(optionsOn.agents!)).toHaveLength(8);
+			expect(Object.keys(optionsOn.agents!)).toHaveLength(7);
 		});
 
 		it('should transition ON -> OFF -> ON correctly', async () => {
@@ -534,7 +601,7 @@ describe('QueryOptionsBuilder', () => {
 			mockSession.config.coordinatorMode = true;
 			options = await new QueryOptionsBuilder(mockContext).build();
 			expect(options.agent).toBe('Coordinator');
-			expect(Object.keys(options.agents!)).toHaveLength(8);
+			expect(Object.keys(options.agents!)).toHaveLength(7);
 		});
 
 		it('should preserve user-defined agents alongside coordinator agents', async () => {

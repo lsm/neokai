@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 import * as fs from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -25,7 +25,7 @@ test.describe('File Attachment - UI', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -43,8 +43,7 @@ test.describe('File Attachment - UI', () => {
 
 	test('should show "Attach image" button in plus menu', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Click the plus button to open menu
 		const plusButton = page.locator('button[title="More options"]');
@@ -58,8 +57,7 @@ test.describe('File Attachment - UI', () => {
 
 	test('should open file picker when clicking attach image', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Click the plus button
 		const plusButton = page.locator('button[title="More options"]');
@@ -85,8 +83,7 @@ test.describe('File Attachment - UI', () => {
 		// by checking the accept attribute
 
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Click the plus button
 		const plusButton = page.locator('button[title="More options"]');
@@ -189,7 +186,7 @@ test.describe('File Attachment - Preview', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -207,8 +204,7 @@ test.describe('File Attachment - Preview', () => {
 
 	test('should preview attached image before sending', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Click the plus button
 		const plusButton = page.locator('button[title="More options"]');
@@ -234,8 +230,7 @@ test.describe('File Attachment - Preview', () => {
 
 	test('should allow removing attached image', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Attach an image
 		const plusButton = page.locator('button[title="More options"]');
@@ -344,7 +339,7 @@ test.describe('File Attachment - Send', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -362,8 +357,7 @@ test.describe('File Attachment - Send', () => {
 
 	test('should send message with attached image', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Attach an image
 		const plusButton = page.locator('button[title="More options"]');
@@ -398,8 +392,7 @@ test.describe('File Attachment - Send', () => {
 
 	test('should support multiple image attachments', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Attach multiple images at once
 		const plusButton = page.locator('button[title="More options"]');
@@ -421,8 +414,7 @@ test.describe('File Attachment - Send', () => {
 
 	test('should clear attachments after sending message', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Attach an image
 		const plusButton = page.locator('button[title="More options"]');
@@ -540,7 +532,7 @@ test.describe('File Attachment - Validation', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -558,8 +550,7 @@ test.describe('File Attachment - Validation', () => {
 
 	test('should validate file size (reject > 5MB)', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Try to attach a large file
 		const plusButton = page.locator('button[title="More options"]');

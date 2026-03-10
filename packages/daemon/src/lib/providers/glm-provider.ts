@@ -39,8 +39,6 @@ export class GlmProvider implements Provider {
 	/**
 	 * Static model definitions for GLM
 	 * These cannot be loaded dynamically from SDK
-	 *
-	 * GLM-5 has 200K context window
 	 */
 	static readonly MODELS: ModelInfo[] = [
 		{
@@ -52,6 +50,17 @@ export class GlmProvider implements Provider {
 			contextWindow: 200000,
 			description: "GLM-5 · Zhipu AI's Next-Generation Frontier Model",
 			releaseDate: '2026-02-11',
+			available: true,
+		},
+		{
+			id: 'glm-4.7',
+			name: 'GLM-4.7',
+			alias: 'glm-4.7',
+			family: 'glm',
+			provider: 'glm',
+			contextWindow: 200000,
+			description: 'GLM-4.7 · Zhipu AI high-performance model',
+			releaseDate: '2025-12-01',
 			available: true,
 		},
 	];
@@ -121,6 +130,9 @@ export class GlmProvider implements Provider {
 		// Get base URL: session override > default
 		const baseUrl = sessionConfig?.baseUrl || GlmProvider.BASE_URL;
 
+		// If modelId is not a GLM model ID (e.g. 'default'), fall back to glm-5.
+		const routingModelId = modelId.toLowerCase().startsWith('glm-') ? modelId : 'glm-5';
+
 		// Build environment variables
 		const envVars: Record<string, string> = {
 			ANTHROPIC_BASE_URL: baseUrl,
@@ -129,9 +141,9 @@ export class GlmProvider implements Provider {
 			API_TIMEOUT_MS: '3000000',
 			// Disable non-essential traffic (telemetry, etc.)
 			CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-			// Map all Anthropic tiers to glm-5
-			ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5',
-			ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5',
+			// Route Sonnet/Haiku to selected model, keep Opus on flagship glm-5
+			ANTHROPIC_DEFAULT_HAIKU_MODEL: routingModelId,
+			ANTHROPIC_DEFAULT_SONNET_MODEL: routingModelId,
 			ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5',
 		};
 
@@ -145,14 +157,11 @@ export class GlmProvider implements Provider {
 	/**
 	 * Translate GLM model ID to SDK-compatible ID
 	 *
-	 * GLM model IDs (glm-5) are not recognized by the SDK.
+	 * GLM model IDs (e.g. glm-5, glm-4.7) are not recognized by the SDK.
 	 * The SDK only knows Anthropic model IDs: default, opus, haiku.
-	 *
-	 * Translation:
-	 * - glm-5 → default (flagship, balanced)
 	 */
 	translateModelIdForSdk(_modelId: string): string {
-		return 'default'; // glm-5 uses 'default' (Sonnet tier)
+		return 'default';
 	}
 
 	/**

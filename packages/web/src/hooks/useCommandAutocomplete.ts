@@ -5,8 +5,8 @@
  * Extracted from MessageInput.tsx for better separation of concerns.
  */
 
-import { useState, useEffect, useCallback } from 'preact/hooks';
-import { slashCommandsSignal } from '../lib/signals.ts';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'preact/hooks';
+import { sessionStore } from '../lib/session-store.ts';
 
 export interface UseCommandAutocompleteOptions {
 	content: string;
@@ -34,13 +34,34 @@ export function useCommandAutocomplete({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [filteredCommands, setFilteredCommands] = useState<string[]>([]);
 
+	// Read per-session commands signal in render scope to subscribe to changes.
+	// Uses sessionStore.commandsData (computed from sessionState) rather than the
+	// global slashCommandsSignal, so it always reflects the active session's commands.
+	// Guard with Array.isArray: corrupted sessions may have a string stored in DB.
+	const rawCommands = sessionStore.commandsData.value;
+
+	// Stabilize the array reference: only return a new reference when command values
+	// actually change. This prevents the useEffect below from re-running (and
+	// re-showing a closed dropdown) when the server sends a new array object with
+	// identical command names (e.g. periodic state syncs that JSON-parse the same data).
+	const prevCmdsRef = useRef<string[]>([]);
+	const availableCommands = useMemo(() => {
+		const cmds = Array.isArray(rawCommands) ? rawCommands : [];
+		const prev = prevCmdsRef.current;
+		if (cmds.length === prev.length && cmds.every((c, i) => c === prev[i])) {
+			return prev;
+		}
+		prevCmdsRef.current = cmds;
+		return cmds;
+	}, [rawCommands]);
+
 	// Detect slash commands
 	useEffect(() => {
 		const trimmedContent = content.trimStart();
 
-		if (trimmedContent.startsWith('/') && slashCommandsSignal.value.length > 0) {
+		if (trimmedContent.startsWith('/') && availableCommands.length > 0) {
 			const query = trimmedContent.slice(1).toLowerCase();
-			const filtered = slashCommandsSignal.value.filter((cmd) => cmd.toLowerCase().includes(query));
+			const filtered = availableCommands.filter((cmd) => cmd.toLowerCase().includes(query));
 
 			setFilteredCommands(filtered);
 			setShowAutocomplete(filtered.length > 0);
@@ -49,7 +70,7 @@ export function useCommandAutocomplete({
 			setShowAutocomplete(false);
 			setFilteredCommands([]);
 		}
-	}, [content]);
+	}, [content, availableCommands]);
 
 	const close = useCallback(() => {
 		setShowAutocomplete(false);

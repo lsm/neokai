@@ -9,6 +9,9 @@
 
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
+import { MinimaxProvider } from './minimax-provider.js';
+import { OpenAiProvider } from './openai-provider.js';
+import { GitHubCopilotProvider } from './github-copilot-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -27,8 +30,15 @@ let initialized = false;
  * @returns The global provider registry
  */
 export function initializeProviders(): ProviderRegistry {
+	// If already initialized, return the existing registry
+	// This handles the case where getProviderRegistry() was called but no providers were registered
 	if (initialized) {
-		return getProviderRegistry();
+		const registry = getProviderRegistry();
+		// Check if registry has any providers - if not, we need to reinitialize
+		if (registry.size > 0) {
+			return registry;
+		}
+		// Registry was reset but initialized flag wasn't - need to reinitialize
 	}
 
 	const registry = getProviderRegistry();
@@ -38,6 +48,15 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GLM provider (will be available if API key is set)
 	registry.register(new GlmProvider());
+
+	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
+	registry.register(new MinimaxProvider());
+
+	// Register OpenAI provider (will be available if OPENAI_API_KEY is set)
+	registry.register(new OpenAiProvider());
+
+	// Register GitHub Copilot provider (will be available if OAuth token is configured)
+	registry.register(new GitHubCopilotProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
@@ -65,6 +84,8 @@ export function getProviderContextManager(): ProviderContextManager {
  *
  * MUST be called alongside resetProviderRegistry() to fully reset
  * the provider system. This is typically only needed in tests.
+ *
+ * @public Exported for testing purposes
  */
 export function resetProviderFactory(): void {
 	initialized = false;

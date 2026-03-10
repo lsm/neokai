@@ -52,7 +52,7 @@ test.describe('UI Components', () => {
 			await page.waitForTimeout(500);
 
 			// Main elements should still be visible
-			await expect(page.locator("h1:has-text('NeoKai')")).toBeVisible();
+			await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 			await expect(page.getByRole('button', { name: 'New Session', exact: true })).toBeVisible();
 		});
 
@@ -64,21 +64,21 @@ test.describe('UI Components', () => {
 			await page.waitForTimeout(500);
 
 			// All main elements should be visible
-			await expect(page.locator("h1:has-text('NeoKai')")).toBeVisible();
-			await expect(page.locator("h2:has-text('Welcome to NeoKai')")).toBeVisible();
+			await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+			await expect(page.locator('text=Your agent command center')).toBeVisible();
 		});
 	});
 
 	test.describe('Accessibility', () => {
 		test('should have proper heading hierarchy', async ({ page }) => {
-			// Check for h1
-			const h1 = page.locator('h1');
-			await expect(h1).toBeVisible();
+			// Check for h2 (the main heading level used in the app)
+			const h2 = page.locator('h2').first();
+			await expect(h2).toBeVisible();
 
 			// Verify it contains meaningful text
-			const h1Text = await h1.textContent();
-			expect(h1Text).toBeTruthy();
-			expect(h1Text?.length).toBeGreaterThan(0);
+			const h2Text = await h2.textContent();
+			expect(h2Text).toBeTruthy();
+			expect(h2Text?.length).toBeGreaterThan(0);
 		});
 
 		test('should have focusable interactive elements', async ({ page }) => {

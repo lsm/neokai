@@ -11,7 +11,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 
@@ -35,8 +35,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should display thinking level button with default Auto level', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Find the thinking level button (has title starting with "Thinking:")
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -48,8 +47,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should open dropdown when clicking thinking level button', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Click the thinking level button
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -68,8 +66,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should select Think 8k level and persist', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open thinking level dropdown
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -92,8 +89,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should select Think 16k level and persist', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open thinking level dropdown
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -111,8 +107,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should select Think 32k level and persist', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open thinking level dropdown
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -130,8 +125,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should return to Auto level', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
 
@@ -152,8 +146,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should show current level indicator in dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
 
@@ -172,8 +165,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should close dropdown when clicking button again', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open thinking level dropdown
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -191,8 +183,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should close model dropdown when opening thinking dropdown', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Open model switcher dropdown first
 		const modelButton = page.locator('button[title^="Switch Model"]');
@@ -214,8 +205,7 @@ test.describe('Thinking Level Selector', () => {
 
 	test('should persist thinking level after page refresh', async ({ page }) => {
 		// Create a new session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Set to Think 32k
 		const thinkingButton = page.locator('button[title^="Thinking:"]');
@@ -226,8 +216,8 @@ test.describe('Thinking Level Selector', () => {
 		// Refresh the page
 		await page.reload();
 
-		// Wait for connection (Daemon status shows "Connected")
-		await expect(page.locator('text=Connected').first()).toBeVisible({
+		// Wait for daemon connection to be established
+		await expect(page.locator('[aria-label="Daemon: Connected"]').first()).toBeVisible({
 			timeout: 15000,
 		});
 

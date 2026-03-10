@@ -35,12 +35,13 @@ describe('SDKMessageHandler', () => {
 	// Spy functions
 	let saveSDKMessageSpy: ReturnType<typeof mock>;
 	let updateSessionSpy: ReturnType<typeof mock>;
+	let getMessagesByStatusSpy: ReturnType<typeof mock>;
+	let updateMessageStatusSpy: ReturnType<typeof mock>;
 	let publishSpy: ReturnType<typeof mock>;
 	let emitSpy: ReturnType<typeof mock>;
 	let detectPhaseFromMessageSpy: ReturnType<typeof mock>;
 	let setIdleSpy: ReturnType<typeof mock>;
 	let setCompactingSpy: ReturnType<typeof mock>;
-	let handleResultUsageSpy: ReturnType<typeof mock>;
 	let getContextInfoSpy: ReturnType<typeof mock>;
 	let updateWithDetailedBreakdownSpy: ReturnType<typeof mock>;
 	let enqueueMessageSpy: ReturnType<typeof mock>;
@@ -75,9 +76,14 @@ describe('SDKMessageHandler', () => {
 		// Database spies
 		saveSDKMessageSpy = mock(() => true);
 		updateSessionSpy = mock(() => {});
+		getMessagesByStatusSpy = mock(() => []);
+		updateMessageStatusSpy = mock(() => {});
 		mockDb = {
 			saveSDKMessage: saveSDKMessageSpy,
 			updateSession: updateSessionSpy,
+			getMessagesByStatus: getMessagesByStatusSpy,
+			updateMessageStatus: updateMessageStatusSpy,
+			updateMessageTimestamp: mock(() => {}),
 		} as unknown as Database;
 
 		// MessageHub spies
@@ -108,11 +114,9 @@ describe('SDKMessageHandler', () => {
 		} as unknown as ProcessingStateManager;
 
 		// ContextTracker spies
-		handleResultUsageSpy = mock(async () => {});
 		getContextInfoSpy = mock(() => ({ totalTokens: 1000, maxTokens: 128000 }));
 		updateWithDetailedBreakdownSpy = mock(() => {});
 		mockContextTracker = {
-			handleResultUsage: handleResultUsageSpy,
 			getContextInfo: getContextInfoSpy,
 			updateWithDetailedBreakdown: updateWithDetailedBreakdownSpy,
 		} as unknown as ContextTracker;
@@ -122,6 +126,7 @@ describe('SDKMessageHandler', () => {
 		messageQueueClearSpy = mock(() => {});
 		mockMessageQueue = {
 			enqueue: enqueueMessageSpy,
+			enqueueWithId: mock(async () => {}),
 			clear: messageQueueClearSpy,
 		} as unknown as MessageQueue;
 
@@ -150,6 +155,8 @@ describe('SDKMessageHandler', () => {
 			lifecycleManager: mockLifecycleManager,
 			queryObject: null,
 			queryPromise: null,
+			isCustomQueryProvider: false,
+			contextAutoQueueEnabled: true,
 		};
 
 		handler = new SDKMessageHandler(mockContext);
@@ -218,7 +225,7 @@ describe('SDKMessageHandler', () => {
 					timestamp: expect.any(Number),
 					version: expect.any(Number),
 				}),
-				{ room: 'session:test-session-id' }
+				{ channel: 'session:test-session-id' }
 			);
 		});
 
@@ -246,6 +253,91 @@ describe('SDKMessageHandler', () => {
 			await handler.handleMessage(message);
 
 			expect((message as unknown as { isSynthetic: boolean }).isSynthetic).toBe(true);
+		});
+
+		it('should acknowledge persisted queued user messages without duplicate save', async () => {
+			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
+				status === 'queued' ? [{ dbId: 'db-msg-1', uuid: 'test-uuid' }] : []
+			);
+
+			const message: SDKMessage = {
+				type: 'user',
+				uuid: 'test-uuid',
+				message: { role: 'user', content: 'Hello' },
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
+			// Bug fix: timestamp must be updated so message appears at correct position
+			// after page refresh (not at original queue time)
+			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-msg-1');
+			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+				sessionId: 'test-session-id',
+				messageIds: ['db-msg-1'],
+				status: 'sent',
+			});
+			expect(publishSpy).toHaveBeenCalledWith(
+				'state.sdkMessages.delta',
+				expect.objectContaining({
+					added: [message],
+					timestamp: expect.any(Number),
+					version: expect.any(Number),
+				}),
+				{ channel: 'session:test-session-id' }
+			);
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+			expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
+		});
+
+		it('should acknowledge persisted saved user messages and update timestamp', async () => {
+			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
+				status === 'saved' ? [{ dbId: 'db-saved-1', uuid: 'saved-uuid' }] : []
+			);
+
+			const message: SDKMessage = {
+				type: 'user',
+				uuid: 'saved-uuid',
+				message: { role: 'user', content: 'Saved message' },
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-saved-1'], 'sent');
+			expect(mockDb.updateMessageTimestamp).toHaveBeenCalledWith('db-saved-1');
+			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+				sessionId: 'test-session-id',
+				messageIds: ['db-saved-1'],
+				status: 'sent',
+			});
+			expect(publishSpy).toHaveBeenCalledWith(
+				'state.sdkMessages.delta',
+				expect.objectContaining({
+					added: [message],
+					timestamp: expect.any(Number),
+					version: expect.any(Number),
+				}),
+				{ channel: 'session:test-session-id' }
+			);
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+		});
+
+		it('should suppress duplicate SDK replay for already-sent persisted user message', async () => {
+			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) =>
+				status === 'sent' ? [{ dbId: 'db-msg-1', uuid: 'sent-user-uuid' }] : []
+			);
+			const message: SDKMessage = {
+				type: 'user',
+				uuid: 'sent-user-uuid',
+				message: { role: 'user', content: 'Already shown' },
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(updateMessageStatusSpy).not.toHaveBeenCalled();
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+			expect(publishSpy).not.toHaveBeenCalled();
+			expect((message as unknown as { isSynthetic?: boolean }).isSynthetic).toBeUndefined();
 		});
 	});
 
@@ -335,7 +427,7 @@ describe('SDKMessageHandler', () => {
 			);
 		});
 
-		it('should call context tracker handleResultUsage', async () => {
+		it('should defer detailed context tracking to /context response', async () => {
 			const message: SDKMessage = {
 				type: 'result',
 				subtype: 'success',
@@ -352,9 +444,8 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(handleResultUsageSpy).toHaveBeenCalled();
+			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
 		});
-
 		it('should queue /context command', async () => {
 			const message: SDKMessage = {
 				type: 'result',
@@ -370,7 +461,120 @@ describe('SDKMessageHandler', () => {
 
 			await handler.handleMessage(message);
 
-			expect(enqueueMessageSpy).toHaveBeenCalledWith('/context', true);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledWith(
+				expect.any(String),
+				'/context',
+				true
+			);
+		});
+
+		it('should not block handleResultMessage when /context enqueue fails', async () => {
+			// Bug fix: /context enqueue is fire-and-forget. If it rejects,
+			// handleResultMessage must still complete (set idle, ack queued, etc.)
+			(mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mockImplementation(async () => {
+				throw new Error('Queue timeout');
+			});
+
+			const message: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'test-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			// Should not throw even when enqueueWithId rejects
+			await handler.handleMessage(message);
+
+			// State should still transition to idle despite /context failure
+			expect(setIdleSpy).toHaveBeenCalled();
+			// Let the microtask queue flush so the .catch() runs
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		it('should fallback-ack oldest queued user on turn end when replay is absent', async () => {
+			getMessagesByStatusSpy.mockImplementation((_sessionId: string, status: string) => {
+				if (status === 'queued') {
+					return [
+						{
+							dbId: 'db-msg-1',
+							uuid: 'queued-user-uuid',
+							type: 'user',
+							timestamp: 1700000000000,
+							message: { role: 'user', content: 'Queued message' },
+						},
+					];
+				}
+				return [];
+			});
+
+			const message: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(updateMessageStatusSpy).toHaveBeenCalledWith(['db-msg-1'], 'sent');
+			// Fallback-ack preserves original timestamp (T1) instead of updating
+			// to turn-end time — the message was already positioned at yield time
+			// by handleMessageYielded, or if that didn't fire, T1 is a better
+			// approximation than T_end.
+			expect(mockDb.updateMessageTimestamp).not.toHaveBeenCalledWith('db-msg-1');
+			expect(emitSpy).toHaveBeenCalledWith('messages.statusChanged', {
+				sessionId: 'test-session-id',
+				messageIds: ['db-msg-1'],
+				status: 'sent',
+			});
+			expect(publishSpy).toHaveBeenCalledWith(
+				'state.sdkMessages.delta',
+				expect.objectContaining({
+					added: expect.arrayContaining([
+						expect.objectContaining({
+							type: 'user',
+							uuid: 'queued-user-uuid',
+						}),
+					]),
+					timestamp: expect.any(Number),
+					version: expect.any(Number),
+				}),
+				{ channel: 'session:test-session-id' }
+			);
+		});
+
+		it('should not queue /context for zero-token result', async () => {
+			const message: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'zero-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(mockMessageQueue.enqueueWithId).not.toHaveBeenCalled();
 		});
 
 		it('should set state to idle', async () => {
@@ -857,6 +1061,116 @@ describe('SDKMessageHandler', () => {
 
 			// Context tracker should NOT be updated (parsing failed)
 			expect(updateWithDetailedBreakdownSpy).not.toHaveBeenCalled();
+		});
+
+		it('should suppress internal /context replay and paired result even if replay format changes', async () => {
+			const normalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'normal-result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			// First normal result queues internal /context via fire-and-forget enqueueWithId
+			await handler.handleMessage(normalResult);
+
+			// Capture the generated UUID that was passed to enqueueWithId
+			const contextMessageId = (mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mock
+				.calls[0][0] as string;
+
+			// Simulate SDK replay for that internal /context with changed/unexpected output format
+			const changedFormatReplay: SDKMessage = {
+				type: 'user',
+				uuid: contextMessageId,
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '<local-command-stdout>Context: format changed</local-command-stdout>',
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(changedFormatReplay);
+
+			// Paired /context result should be suppressed and must NOT enqueue another /context
+			const internalContextResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'context-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(internalContextResult);
+
+			// Only the first real result should persist/broadcast and queue /context once
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
+			expect(publishSpy).toHaveBeenCalledTimes(1);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledWith(
+				expect.any(String),
+				'/context',
+				true
+			);
+		});
+
+		it('should suppress zero-token internal result when replay correlation fails', async () => {
+			const normalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'normal-result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(normalResult);
+
+			// Replay UUID doesn't match tracked internal command ID ("context-id")
+			const mismatchedReplay: SDKMessage = {
+				type: 'user',
+				uuid: 'different-replay-uuid',
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '<local-command-stdout>Context: unexpected shape</local-command-stdout>',
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(mismatchedReplay);
+
+			const internalContextResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'context-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(internalContextResult);
+
+			// normal result + replay persisted, but internal zero-token result suppressed
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(2);
+			expect(publishSpy).toHaveBeenCalledTimes(2);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
 		});
 	});
 

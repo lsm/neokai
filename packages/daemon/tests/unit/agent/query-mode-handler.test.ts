@@ -280,6 +280,7 @@ describe('QueryModeHandler', () => {
 			await handler.sendQueuedMessagesOnTurnEnd();
 
 			expect(enqueueWithIdSpy).not.toHaveBeenCalled();
+			expect(ensureQueryStartedSpy).not.toHaveBeenCalled();
 		});
 
 		it('should enqueue queued messages', async () => {
@@ -296,6 +297,7 @@ describe('QueryModeHandler', () => {
 
 			await handler.sendQueuedMessagesOnTurnEnd();
 
+			expect(ensureQueryStartedSpy).toHaveBeenCalled();
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'Queued message');
 		});
 
@@ -349,6 +351,37 @@ describe('QueryModeHandler', () => {
 			expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-1', 'First');
 			expect(enqueueWithIdSpy).toHaveBeenCalledWith('uuid-2', 'Second');
+		});
+	});
+
+	describe('replayPendingMessagesForImmediateMode', () => {
+		it('should replay queued messages before saved messages', async () => {
+			const queuedMessages: SDKMessage[] = [
+				{
+					dbId: 'db-queued-1',
+					uuid: 'uuid-queued-1',
+					type: 'user',
+					message: { role: 'user', content: 'Current turn (queued)' },
+				} as unknown as SDKMessage,
+			];
+			const savedMessages: SDKMessage[] = [
+				{
+					dbId: 'db-saved-1',
+					uuid: 'uuid-saved-1',
+					type: 'user',
+					message: { role: 'user', content: 'Next turn (saved)' },
+				} as unknown as SDKMessage,
+			];
+			getMessagesByStatusSpy.mockImplementation((_: string, status: string) =>
+				status === 'queued' ? queuedMessages : savedMessages
+			);
+			handler = createHandler();
+
+			await handler.replayPendingMessagesForImmediateMode();
+
+			expect(enqueueWithIdSpy).toHaveBeenCalledTimes(2);
+			expect(enqueueWithIdSpy.mock.calls[0]).toEqual(['uuid-queued-1', 'Current turn (queued)']);
+			expect(enqueueWithIdSpy.mock.calls[1]).toEqual(['uuid-saved-1', 'Next turn (saved)']);
 		});
 	});
 });

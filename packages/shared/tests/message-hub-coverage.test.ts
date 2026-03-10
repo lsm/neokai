@@ -394,7 +394,7 @@ describe('MessageHub - Coverage Tests', () => {
 
 			const joinMsg = createRequestMessage({
 				method: 'room.join',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 			(joinMsg as unknown as { clientId: string }).clientId = 'client-1';
@@ -421,7 +421,7 @@ describe('MessageHub - Coverage Tests', () => {
 			// First join
 			const joinMsg = createRequestMessage({
 				method: 'room.join',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 			(joinMsg as unknown as { clientId: string }).clientId = 'client-1';
@@ -431,7 +431,7 @@ describe('MessageHub - Coverage Tests', () => {
 			// Then leave
 			const leaveMsg = createRequestMessage({
 				method: 'room.leave',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 			(leaveMsg as unknown as { clientId: string }).clientId = 'client-1';
@@ -442,7 +442,7 @@ describe('MessageHub - Coverage Tests', () => {
 		test('should ignore room commands when no router registered', async () => {
 			const joinMsg = createRequestMessage({
 				method: 'room.join',
-				data: { room: 'test-room' },
+				data: { channel: 'test-room' },
 				sessionId: 'test-session',
 			});
 
@@ -531,75 +531,6 @@ describe('MessageHub - Coverage Tests', () => {
 
 			// Should eventually timeout
 			await expect(queryPromise).rejects.toThrow('Request timeout');
-		});
-	});
-
-	describe('Sequence Number Tracking', () => {
-		test('should add sequence numbers to outgoing messages', async () => {
-			hub.event('test.cmd1', {});
-			hub.event('test.cmd2', {});
-			hub.event('test.event', {});
-
-			const sequences = transport.sentMessages.map((m) => m.sequence);
-
-			// All should have sequence numbers
-			expect(sequences.every((s) => typeof s === 'number')).toBe(true);
-
-			// Should be monotonically increasing
-			for (let i = 1; i < sequences.length; i++) {
-				expect(sequences[i]!).toBeGreaterThan(sequences[i - 1]!);
-			}
-		});
-
-		test('should reset sequence tracking on cleanup', () => {
-			// Use valid method names with dots
-			hub.event('test.method1', {});
-			const seq1 = transport.sentMessages[0].sequence;
-
-			hub.cleanup();
-
-			// Create new hub with same transport
-			const hub2 = new MessageHub();
-			const transport2 = new MockTransport();
-			hub2.registerTransport(transport2);
-			hub2.event('test.method2', {});
-			const seq2 = transport2.sentMessages[0].sequence;
-
-			// Sequence should start from 0 again
-			expect(seq2).toBe(0);
-			// Both sequences start at 0, so just verify seq1 exists
-			expect(seq1).toBeDefined();
-
-			hub2.cleanup();
-		});
-	});
-
-	describe('Client Sequence Cleanup', () => {
-		test('should cleanup client sequence on disconnect', () => {
-			const router = new MessageHubRouter();
-			hub.registerRouter(router);
-
-			// Simulate client sending message with valid method name
-			const msg = createRequestMessage({
-				method: 'test.method',
-				data: {},
-				sessionId: 'test',
-			});
-			msg.sequence = 1;
-			(msg as unknown as { clientId: string }).clientId = 'client-1';
-
-			// Mock console.error to suppress validation error
-			const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-			transport.simulateMessage(msg);
-
-			// Manually cleanup client sequence
-			hub.cleanupClientSequence('client-1');
-
-			// Should not throw
-			expect(hub['expectedSequencePerClient'].has('client-1')).toBe(false);
-
-			consoleErrorSpy.mockRestore();
 		});
 	});
 });

@@ -1,6 +1,6 @@
 {
 	"name": "@neokai/web",
-	"version": "0.5.2",
+	"version": "0.6.0",
 	"type": "module",
 	"license": "Apache-2.0",
 	"scripts": {
@@ -19,21 +19,21 @@
 		"coverage": "vitest run --reporter dot --coverage"
 	},
 	"dependencies": {
-		"@preact/signals": "2.7.1",
+		"@preact/signals": "2.8.1",
 		"clsx": "2.1.1",
 		"highlight.js": "11.11.1",
-		"marked": "17.0.1",
-		"preact": "10.28.3"
+		"marked": "17.0.4",
+		"preact": "10.28.4"
 	},
 	"devDependencies": {
 		"@preact/preset-vite": "2.10.3",
-		"@tailwindcss/vite": "4.1.18",
+		"@tailwindcss/vite": "4.2.1",
 		"@testing-library/preact": "3.2.4",
-		"@types/bun": "1.3.9",
+		"@types/bun": "1.3.10",
 		"@vitest/coverage-v8": "4.0.18",
 		"@vitest/ui": "4.0.18",
-		"happy-dom": "20.6.1",
-		"tailwindcss": "4.1.18",
+		"happy-dom": "20.8.3",
+		"tailwindcss": "4.2.1",
 		"typescript": "5.9.3",
 		"vite": "7.3.1",
 		"vitest": "4.0.18"

@@ -36,7 +36,7 @@ import type {
 	IMessageTransport,
 	CallContext,
 	ConnectionState,
-	RoomEventHandler,
+	ChannelEventHandler,
 	QueryOptions,
 	EventOptions,
 	RequestHandler,
@@ -58,7 +58,8 @@ type UnsubscribeFn = () => void;
  * Flow: MessageHub → Router (if server-side) → Transport → Wire
  */
 export class MessageHub {
-	private transport: IMessageTransport | null = null;
+	private transports: Map<string, IMessageTransport> = new Map();
+	private primaryTransportName: string | null = null;
 	private router: MessageHubRouter | null = null; // Server-side only
 	private readonly defaultSessionId: string;
 	private readonly defaultTimeout: number;
@@ -72,21 +73,11 @@ export class MessageHub {
 
 	// Unified request handlers (new API - replaces commandHandlers and queryHandlers)
 	private requestHandlers: Map<string, RequestHandler> = new Map();
-	// Room event handlers (client-side - keyed by method)
-	private roomEventHandlers: Map<string, Set<RoomEventHandler>> = new Map();
+	// Channel event handlers (client-side - keyed by method)
+	private channelEventHandlers: Map<string, Set<ChannelEventHandler>> = new Map();
 
 	// Event handler recursion tracking (prevents infinite loops)
 	private eventDepthMap = new Map<string, number>(); // messageId -> depth
-
-	// Message sequencing for ordering guarantees
-	private messageSequence = 0;
-
-	// FIX P1.3: Message sequence tracking
-	// Client-side: tracks server's global sequence (all messages from server use one counter)
-	// Server-side: tracks per-client sequences (each client has its own counter)
-	private expectedSequence: number | null = null; // For client-side global tracking
-	private expectedSequencePerClient = new Map<string, number>(); // For server-side per-client tracking
-	private readonly warnOnSequenceGap: boolean;
 
 	// FIX P1.4: Event handler error handling mode
 	private readonly stopOnEventHandlerError: boolean;
@@ -102,7 +93,6 @@ export class MessageHub {
 		this.defaultTimeout = options.timeout || 10000;
 		this.maxPendingCalls = options.maxPendingCalls || 1000;
 		this.maxEventDepth = options.maxEventDepth || 10;
-		this.warnOnSequenceGap = options.warnOnSequenceGap ?? true; // FIX P1.3: Enable sequence gap warnings by default
 		this.stopOnEventHandlerError = options.stopOnEventHandlerError ?? false; // FIX P1.4: Continue on handler errors by default
 	}
 
@@ -111,44 +101,56 @@ export class MessageHub {
 	// ========================================
 
 	/**
-	 * Register a transport
+	 * Register a transport with a unique name
+	 * @param transport The transport to register
+	 * @param name Unique name for this transport (e.g., 'websocket', 'neo')
+	 * @param isPrimary Whether this is the primary transport for outgoing messages (default: first transport is primary)
 	 */
-	registerTransport(transport: IMessageTransport): UnsubscribeFn {
-		if (this.transport) {
-			throw new Error('Transport already registered. Call unregisterTransport() first.');
+	registerTransport(
+		transport: IMessageTransport,
+		name?: string,
+		isPrimary?: boolean
+	): UnsubscribeFn {
+		const transportName = name || transport.name || `transport-${Date.now()}`;
+
+		if (this.transports.has(transportName)) {
+			throw new Error(`Transport '${transportName}' already registered. Unregister it first.`);
 		}
 
-		this.transport = transport;
-		this.logDebug(`Transport registered: ${transport.name}`);
+		this.transports.set(transportName, transport);
+
+		// First transport becomes primary by default
+		if (this.transports.size === 1 || isPrimary) {
+			this.primaryTransportName = transportName;
+		}
+
+		this.logDebug(
+			`Transport registered: ${transportName} (primary: ${this.primaryTransportName === transportName})`
+		);
 
 		// Subscribe to incoming messages
 		const unsubMessage = transport.onMessage((message) => {
+			// Tag message with transport name for response routing
+			message._transportName = transportName;
 			this.handleIncomingMessage(message);
 		});
 
 		// Subscribe to connection state changes
 		const unsubConnection = transport.onConnectionChange((state, error) => {
-			this.logDebug(`Connection state: ${state}`, error);
-
-			// Notify handlers (e.g., StateChannel.hybridRefresh)
+			this.logDebug(`Connection state: ${state} on ${transportName}`, error);
 			this.notifyConnectionStateHandlers(state, error);
 		});
 
-		// Subscribe to client disconnect events (server-side only, for per-client cleanup)
-		let unsubClientDisconnect: (() => void) | undefined;
-		if (transport.onClientDisconnect) {
-			unsubClientDisconnect = transport.onClientDisconnect((clientId) => {
-				this.cleanupClientSequence(clientId);
-			});
-		}
-
 		// Return unregister function
 		return () => {
-			this.transport = null;
+			this.transports.delete(transportName);
+			if (this.primaryTransportName === transportName) {
+				// Pick new primary if available
+				this.primaryTransportName = this.transports.keys().next().value || null;
+			}
 			unsubMessage();
 			unsubConnection();
-			unsubClientDisconnect?.();
-			this.logDebug(`Transport unregistered: ${transport.name}`);
+			this.logDebug(`Transport unregistered: ${transportName}`);
 		};
 	}
 
@@ -156,14 +158,22 @@ export class MessageHub {
 	 * Get current connection state
 	 */
 	getState(): ConnectionState {
-		return this.transport?.getState() || 'disconnected';
+		// Return state of primary transport
+		const primary = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		return primary?.getState() || 'disconnected';
 	}
 
 	/**
 	 * Check if connected
 	 */
 	isConnected(): boolean {
-		return this.transport?.isReady() || false;
+		// Check if any transport is ready
+		for (const transport of this.transports.values()) {
+			if (transport.isReady()) return true;
+		}
+		return false;
 	}
 
 	/**
@@ -231,7 +241,7 @@ export class MessageHub {
 		if (!this.isConnected()) {
 			throw new Error('Not connected to transport');
 		}
-		const sessionId = options.room || this.defaultSessionId;
+		const sessionId = options.channel || this.defaultSessionId;
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
@@ -268,8 +278,8 @@ export class MessageHub {
 	}
 
 	/**
-	 * Broadcast an event to a room (server-side)
-	 * If no room specified, broadcasts globally
+	 * Broadcast an event to a channel (server-side)
+	 * If no channel specified, broadcasts globally
 	 */
 	event(method: string, data?: unknown, options: EventOptions = {}): void {
 		if (!this.isConnected()) {
@@ -279,10 +289,10 @@ export class MessageHub {
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
-		const sessionId = options.room || this.defaultSessionId;
+		const sessionId = options.channel || this.defaultSessionId;
 		const message = createEventMessage({ method, data, sessionId });
-		// Set room field for room-based routing
-		message.room = options.room;
+		// Set channel field for channel-based routing
+		message.channel = options.channel;
 		this.sendMessage(message).catch((error) => {
 			log.error(`Failed to send event ${method}:`, error);
 		});
@@ -316,54 +326,84 @@ export class MessageHub {
 	 * Listen for events (client-side)
 	 * No subscription ceremony - just register handler locally
 	 */
-	onEvent<TData = unknown>(method: string, handler: RoomEventHandler<TData>): UnsubscribeFn {
+	onEvent<TData = unknown>(method: string, handler: ChannelEventHandler<TData>): UnsubscribeFn {
 		if (!validateMethod(method)) {
 			throw new Error(`Invalid method name: ${method}`);
 		}
-		if (!this.roomEventHandlers.has(method)) {
-			this.roomEventHandlers.set(method, new Set());
+		if (!this.channelEventHandlers.has(method)) {
+			this.channelEventHandlers.set(method, new Set());
 		}
-		this.roomEventHandlers.get(method)!.add(handler as RoomEventHandler);
+		this.channelEventHandlers.get(method)!.add(handler as ChannelEventHandler);
 		this.logDebug(`Event handler registered: ${method}`);
 		return () => {
-			this.roomEventHandlers.get(method)?.delete(handler as RoomEventHandler);
+			this.channelEventHandlers.get(method)?.delete(handler as ChannelEventHandler);
 			this.logDebug(`Event handler unregistered: ${method}`);
 		};
 	}
 
 	/**
-	 * Join a room (client → server)
-	 * Sends a request that the router handles
+	 * Join a channel with retry logic for reliability
+	 *
+	 * @param channel Channel to join
+	 * @param maxRetries Maximum retry attempts (default: 3)
+	 * @param retryDelay Base delay between retries in ms (default: 1000)
 	 */
-	async joinRoom(room: string): Promise<void> {
+	async joinChannel(
+		channel: string,
+		maxRetries: number = 3,
+		retryDelay: number = 1000
+	): Promise<void> {
 		if (!this.isConnected()) {
-			this.logDebug(`joinRoom skipped (not connected): ${room}`);
+			this.logDebug(`joinChannel skipped (not connected): ${channel}`);
 			return;
 		}
-		try {
-			await this.request('room.join', { room });
-		} catch (error) {
-			// Room join is optional - log but don't throw
-			// This prevents crashes when room join times out or fails
-			this.logDebug(`joinRoom failed for ${room}:`, error);
+
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				await this.request('channel.join', { channel }, { timeout: 5000 });
+				if (attempt > 1) {
+					this.logDebug(`joinChannel succeeded for ${channel} on attempt ${attempt}`);
+				}
+				return; // Success
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this.logDebug(
+					`joinChannel attempt ${attempt}/${maxRetries} failed for ${channel}: ${errorMessage}`
+				);
+
+				if (attempt < maxRetries) {
+					// Check if still connected before retry
+					if (!this.isConnected()) {
+						log.error(`joinChannel aborted for ${channel} - disconnected during retry`);
+						return;
+					}
+
+					// Exponential backoff with jitter
+					const baseDelay = retryDelay * Math.pow(2, attempt - 1);
+					const jitter = Math.random() * baseDelay * 0.3;
+					await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter));
+				}
+			}
 		}
+
+		log.error(`joinChannel failed after ${maxRetries} attempts for ${channel}`);
 	}
 
 	/**
-	 * Leave a room (client → server)
+	 * Leave a channel (client → server)
 	 * Sends a request that the router handles
 	 */
-	async leaveRoom(room: string): Promise<void> {
+	async leaveChannel(channel: string): Promise<void> {
 		if (!this.isConnected()) {
-			this.logDebug(`leaveRoom skipped (not connected): ${room}`);
+			this.logDebug(`leaveChannel skipped (not connected): ${channel}`);
 			return;
 		}
 		try {
-			await this.request('room.leave', { room });
+			await this.request('channel.leave', { channel });
 		} catch (error) {
-			// Room leave is optional - log but don't throw
-			// This prevents crashes when room leave times out or fails
-			this.logDebug(`leaveRoom failed for ${room}:`, error);
+			// Channel leave is optional - log but don't throw
+			// This prevents crashes when channel leave times out or fails
+			this.logDebug(`leaveChannel failed for ${channel}:`, error);
 		}
 	}
 
@@ -392,7 +432,6 @@ export class MessageHub {
 
 	/**
 	 * Handle incoming message from transport
-	 * FIX P1.3: Validate message sequence to detect out-of-order or missing messages
 	 */
 	private async handleIncomingMessage(message: HubMessage): Promise<void> {
 		// Validate message structure
@@ -402,52 +441,6 @@ export class MessageHub {
 		}
 
 		this.logDebug(`← Incoming: ${message.type} ${message.method}`, message);
-
-		// FIX P1.3: Validate message sequence (if present)
-		// Server-side: track per-client (each client has its own sequence counter)
-		// Client-side: track globally (server uses one global counter for all outgoing messages)
-		if (typeof message.sequence === 'number' && this.warnOnSequenceGap) {
-			const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
-
-			if (this.router && clientId) {
-				// Server-side: use per-client tracking
-				const expectedSeq = this.expectedSequencePerClient.get(clientId);
-				if (expectedSeq !== undefined) {
-					if (message.sequence < expectedSeq) {
-						log.warn(
-							`Out-of-order message from client ${clientId}: ` +
-								`received sequence ${message.sequence}, expected >= ${expectedSeq}`
-						);
-					} else if (message.sequence > expectedSeq) {
-						const gap = message.sequence - expectedSeq;
-						log.warn(
-							`Message sequence gap from client ${clientId}: ` +
-								`received sequence ${message.sequence}, expected ${expectedSeq} (gap: ${gap} messages)`
-						);
-					}
-				}
-				// Update expected sequence for this client
-				this.expectedSequencePerClient.set(clientId, message.sequence + 1);
-			} else {
-				// Client-side: use global tracking (server uses single counter)
-				if (this.expectedSequence !== null) {
-					if (message.sequence < this.expectedSequence) {
-						log.warn(
-							`Out-of-order message detected: ` +
-								`received sequence ${message.sequence}, expected >= ${this.expectedSequence}`
-						);
-					} else if (message.sequence > this.expectedSequence) {
-						const gap = message.sequence - this.expectedSequence;
-						log.warn(
-							`Message sequence gap detected: ` +
-								`received sequence ${message.sequence}, expected ${this.expectedSequence} (gap: ${gap} messages)`
-						);
-					}
-				}
-				// Update expected sequence for next message (global)
-				this.expectedSequence = message.sequence + 1;
-			}
-		}
 
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'in');
@@ -476,29 +469,30 @@ export class MessageHub {
 	private async handleIncomingRequest(message: HubMessage): Promise<void> {
 		const clientId = (message as import('./protocol').HubMessageWithMetadata).clientId;
 
-		// Handle reserved room commands
-		if (message.method === 'room.join' || message.method === 'room.leave') {
+		// Handle reserved channel commands
+		if (message.method === 'channel.join' || message.method === 'channel.leave') {
 			if (this.router) {
 				if (
 					clientId &&
 					message.data &&
-					typeof (message.data as Record<string, unknown>).room === 'string'
+					typeof (message.data as Record<string, unknown>).channel === 'string'
 				) {
-					const room = (message.data as Record<string, unknown>).room as string;
-					if (message.method === 'room.join') {
-						this.router.joinRoom(clientId, room);
+					const channel = (message.data as Record<string, unknown>).channel as string;
+					if (message.method === 'channel.join') {
+						this.router.joinChannel(clientId, channel);
 					} else {
-						this.router.leaveRoom(clientId, room);
+						this.router.leaveChannel(clientId, channel);
 					}
 				}
 			}
-			// Send ACK response for room commands
+			// Send ACK response for channel commands
 			const ackMsg = createResponseMessage({
 				method: message.method,
 				data: { acknowledged: true },
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			ackMsg._transportName = message._transportName;
 			await this.sendResponseToClient(ackMsg, clientId);
 			return;
 		}
@@ -515,6 +509,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			errorMsg._transportName = message._transportName;
 			await this.sendResponseToClient(errorMsg, clientId);
 			return;
 		}
@@ -537,6 +532,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			resultMsg._transportName = message._transportName;
 			await this.sendResponseToClient(resultMsg, clientId);
 		} catch (error) {
 			const errorMsg = createErrorResponseMessage({
@@ -548,6 +544,7 @@ export class MessageHub {
 				sessionId: message.sessionId,
 				requestId: message.id,
 			});
+			errorMsg._transportName = message._transportName;
 			await this.sendResponseToClient(errorMsg, clientId);
 		}
 	}
@@ -601,8 +598,8 @@ export class MessageHub {
 		this.eventDepthMap.set(message.id, currentDepth + 1);
 
 		try {
-			// Dispatch to room event handlers (new API)
-			this.dispatchToRoomEventHandlers(message);
+			// Dispatch to channel event handlers (new API)
+			this.dispatchToChannelEventHandlers(message);
 		} finally {
 			// Clean up depth tracking immediately after handlers complete
 			this.eventDepthMap.delete(message.id);
@@ -610,11 +607,11 @@ export class MessageHub {
 	}
 
 	/**
-	 * Dispatch event to room event handlers (new API)
+	 * Dispatch event to channel event handlers (new API)
 	 * Called from handleEvent alongside existing subscription dispatch
 	 */
-	private dispatchToRoomEventHandlers(message: HubMessage): void {
-		const handlers = this.roomEventHandlers.get(message.method);
+	private dispatchToChannelEventHandlers(message: HubMessage): void {
+		const handlers = this.channelEventHandlers.get(message.method);
 		if (!handlers || handlers.size === 0) return;
 
 		const context = {
@@ -622,16 +619,16 @@ export class MessageHub {
 			sessionId: message.sessionId,
 			method: message.method,
 			timestamp: message.timestamp,
-			room: message.room,
+			channel: message.channel,
 		};
 
 		for (const handler of handlers) {
 			try {
 				Promise.resolve(handler(message.data, context)).catch((error) => {
-					log.error(`Room event handler error for ${message.method}:`, error);
+					log.error(`Channel event handler error for ${message.method}:`, error);
 				});
 			} catch (error) {
-				log.error(`Room event handler sync error for ${message.method}:`, error);
+				log.error(`Channel event handler sync error for ${message.method}:`, error);
 			}
 		}
 	}
@@ -676,26 +673,16 @@ export class MessageHub {
 	 *   Transport broadcasts directly
 	 */
 	private async sendMessage(message: HubMessage): Promise<void> {
-		if (!this.transport || !this.transport.isReady()) {
-			throw new Error('Transport not ready');
-		}
-
-		// Add sequence number for ordering guarantees
-		message.sequence = this.messageSequence++;
-
-		this.logDebug(
-			`→ Outgoing: ${message.type} ${message.method} [seq=${message.sequence}]`,
-			message
-		);
+		this.logDebug(`→ Outgoing: ${message.type} ${message.method}`, message);
 
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'out');
 
 		// Server-side routing for EVENT messages
 		if (this.router && message.type === MessageType.EVENT) {
-			// Room-based routing if room is set
-			if (message.room && this.router) {
-				this.router.routeEventToRoom(message);
+			// Channel-based routing if channel is set
+			if (message.channel && this.router) {
+				this.router.routeEventToChannel(message);
 			} else {
 				// Use router to route EVENT to subscribed clients
 				const result = this.router.routeEvent(message);
@@ -704,12 +691,30 @@ export class MessageHub {
 			// Self-delivery: also invoke local event handlers on the same hub
 			// This ensures server-side onEvent() listeners receive events
 			// (e.g., test helpers, server-side state observers)
-			this.dispatchToRoomEventHandlers(message);
+			this.dispatchToChannelEventHandlers(message);
 			return;
 		}
 
-		// Client-side or non-EVENT messages: send via transport
-		await this.transport.send(message);
+		// Check if message has a specific transport to use (for responses)
+		const targetTransport = message._transportName
+			? this.transports.get(message._transportName)
+			: null;
+
+		if (targetTransport && targetTransport.isReady()) {
+			await targetTransport.send(message);
+			return;
+		}
+
+		// Send via primary transport (or all transports for broadcast)
+		const primary = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+		if (primary && primary.isReady()) {
+			await primary.send(message);
+			return;
+		}
+
+		throw new Error('No transport ready');
 	}
 
 	/**
@@ -717,9 +722,6 @@ export class MessageHub {
 	 * Server-side only - routes the response to the client that made the request
 	 */
 	private async sendResponseToClient(message: HubMessage, clientId?: string): Promise<void> {
-		// Add sequence number for ordering guarantees
-		message.sequence = this.messageSequence++;
-
 		// Notify message handlers
 		this.notifyMessageHandlers(message, 'out');
 
@@ -728,17 +730,32 @@ export class MessageHub {
 			const success = this.router.sendToClient(clientId, message);
 			if (!success) {
 				log.warn(`Failed to send response to client ${clientId}, falling back to broadcast`);
-				// Fallback to broadcast if client not found
 				this.router.broadcast(message);
 			}
 			return;
 		}
 
-		// Fallback: send via transport (will broadcast on server-side)
-		if (!this.transport || !this.transport.isReady()) {
-			throw new Error('Transport not ready');
+		// Use the transport the request came from
+		const targetTransport = message._transportName
+			? this.transports.get(message._transportName)
+			: null;
+
+		if (targetTransport && targetTransport.isReady()) {
+			await targetTransport.send(message);
+			return;
 		}
-		await this.transport.send(message);
+
+		// Fallback to primary transport
+		const primary = this.primaryTransportName
+			? this.transports.get(this.primaryTransportName)
+			: null;
+
+		if (primary && primary.isReady()) {
+			await primary.send(message);
+			return;
+		}
+
+		throw new Error('No transport ready for response');
 	}
 
 	/**
@@ -773,7 +790,6 @@ export class MessageHub {
 
 	/**
 	 * Cleanup all state
-	 * FIX P1.3: Clear sequence tracking map
 	 */
 	cleanup(): void {
 		// Reject all pending calls
@@ -785,14 +801,14 @@ export class MessageHub {
 
 		// Clear handlers
 		this.requestHandlers.clear();
-		this.roomEventHandlers.clear();
+		this.channelEventHandlers.clear();
 		this.messageHandlers.clear();
 		this.connectionStateHandlers.clear();
 		this.eventDepthMap.clear();
 
-		// FIX P1.3: Clear sequence tracking
-		this.expectedSequence = null;
-		this.expectedSequencePerClient.clear();
+		// Clear transports
+		this.transports.clear();
+		this.primaryTransportName = null;
 
 		this.logDebug('MessageHub cleaned up');
 	}
@@ -800,14 +816,6 @@ export class MessageHub {
 	// ========================================
 	// Utilities
 	// ========================================
-
-	/**
-	 * Clean up sequence tracking for a disconnected client (server-side only)
-	 * Call this when a client disconnects to free up memory
-	 */
-	cleanupClientSequence(clientId: string): void {
-		this.expectedSequencePerClient.delete(clientId);
-	}
 
 	/**
 	 * Debug logging - uses unified logger

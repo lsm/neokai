@@ -11,6 +11,9 @@ import { createDaemonHub } from './lib/daemon-hub';
 import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
+import { createGitHubService, type GitHubService } from './lib/github/github-service';
+import { createReactiveDatabase } from './storage/reactive-database';
+import { LiveQueryEngine } from './storage/live-query';
 
 export interface CreateDaemonAppOptions {
 	config: Config;
@@ -37,6 +40,15 @@ export interface DaemonAppContext {
 	settingsManager: SettingsManager;
 	stateManager: StateManager;
 	transport: WebSocketServerTransport;
+	eventBus: Awaited<ReturnType<typeof createDaemonHub>>;
+	/**
+	 * GitHub service instance (null if not configured)
+	 */
+	gitHubService: GitHubService | null;
+	/** Phase 2: Reactive database wrapper for change event emission */
+	reactiveDb: ReturnType<typeof createReactiveDatabase>;
+	/** Phase 2: Live query engine for reactive SQL queries */
+	liveQueries: LiveQueryEngine;
 	/**
 	 * Cleanup function for graceful shutdown.
 	 * Closes all connections, stops sessions, and closes database.
@@ -63,9 +75,16 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 	const logInfo = verbose ? console.log : () => {};
 	const logError = verbose ? console.error : () => {};
 
+	// Clear CLAUDECODE env var so SDK subprocesses don't refuse to start.
+	// The daemon may run inside a Claude Code session (e.g., during development),
+	// but its spawned agent sessions are independent and must not be blocked.
+	delete process.env.CLAUDECODE;
+
 	// Initialize database
 	const db = new Database(config.dbPath);
 	await db.initialize();
+	const reactiveDb = createReactiveDatabase(db);
+	const liveQueries = new LiveQueryEngine(db.getDatabase(), reactiveDb);
 
 	// Initialize authentication manager
 	const authManager = new AuthManager(db, config);
@@ -138,11 +157,43 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		authManager,
 		settingsManager,
 		config,
-		eventBus // FIX: Listens to events instead of being called directly
+		eventBus, // FIX: Listens to events instead of being called directly
+		db
 	);
 
-	// Setup RPC handlers
-	setupRPCHandlers({
+	// Initialize GitHub service if configured
+	let gitHubService: GitHubService | null = null;
+	const shouldEnableGitHub =
+		config.githubWebhookSecret ||
+		(config.githubPollingInterval && config.githubPollingInterval > 0);
+
+	if (shouldEnableGitHub && authStatus.isAuthenticated) {
+		// Get API key for AI agents (security + routing)
+		const apiKey =
+			config.anthropicApiKey || config.claudeCodeOAuthToken || config.anthropicAuthToken;
+
+		if (apiKey) {
+			gitHubService = createGitHubService({
+				db,
+				daemonHub: eventBus,
+				config,
+				apiKey,
+				githubToken: process.env.GITHUB_TOKEN, // Optional GitHub token for polling
+			});
+
+			logInfo('[Daemon] GitHub integration enabled', {
+				webhook: !!config.githubWebhookSecret,
+				polling: !!(config.githubPollingInterval && config.githubPollingInterval > 0),
+			});
+		} else {
+			logInfo('[Daemon] GitHub integration disabled - no API key available for AI agents');
+		}
+	} else if (shouldEnableGitHub) {
+		logInfo('[Daemon] GitHub integration disabled - authentication required');
+	}
+
+	// Setup RPC handlers (returns cleanup function)
+	const rpcHandlerCleanup = setupRPCHandlers({
 		messageHub,
 		sessionManager,
 		authManager,
@@ -150,6 +201,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		config,
 		daemonHub: eventBus,
 		db,
+		gitHubService: gitHubService ?? undefined,
 	});
 
 	// Create WebSocket handlers
@@ -209,6 +261,28 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				);
 			}
 
+			// GitHub webhook endpoint
+			if (url.pathname === '/webhook/github' && req.method === 'POST') {
+				if (gitHubService?.hasWebhookHandler()) {
+					return gitHubService.handleWebhook(req);
+				}
+				return new Response(JSON.stringify({ error: 'GitHub webhook not configured' }), {
+					status: 404,
+					headers: {
+						'Content-Type': 'application/json',
+						'Access-Control-Allow-Origin': '*',
+					},
+				});
+			}
+
+			// Hello world endpoint
+			if (url.pathname === '/hello' && req.method === 'GET') {
+				return new Response('Hello World', {
+					status: 200,
+					headers: { 'Access-Control-Allow-Origin': '*' },
+				});
+			}
+
 			// 404 for unknown routes
 			return new Response('Not found', {
 				status: 404,
@@ -235,6 +309,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			);
 		},
 	});
+
+	// Start GitHub service after server is ready
+	if (gitHubService) {
+		gitHubService.start();
+		logInfo('[Daemon] GitHub service started');
+	}
 
 	// Cleanup function for graceful shutdown
 	let isCleanedUp = false;
@@ -288,6 +368,18 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			// Cleanup MessageHub (rejects remaining calls)
 			messageHub.cleanup();
 
+			// Dispose live query engine
+			liveQueries.dispose();
+
+			// Cleanup RPC handlers
+			rpcHandlerCleanup();
+
+			// Stop GitHub service
+			if (gitHubService) {
+				gitHubService.stop();
+				logInfo('[Daemon] GitHub service stopped');
+			}
+
 			// Stop all agent sessions
 			await sessionManager.cleanup();
 
@@ -310,6 +402,10 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		settingsManager,
 		stateManager,
 		transport,
+		eventBus,
+		gitHubService,
+		reactiveDb,
+		liveQueries,
 		cleanup,
 	};
 }

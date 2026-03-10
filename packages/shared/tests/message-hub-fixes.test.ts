@@ -3,7 +3,6 @@
  *
  * Tests for features in the new simplified API:
  * - Runtime message validation
- * - Message sequence numbers
  * - PING/PONG handlers
  * - Method name validation
  */
@@ -168,69 +167,6 @@ describe('MessageHub Critical Fixes', () => {
 			};
 
 			expect(isValidMessage(invalidMessage)).toBe(false);
-		});
-	});
-
-	describe('Message Sequence Numbers', () => {
-		test('should add sequence numbers to outgoing messages', async () => {
-			messageHub.event('test.event', { data: 'test' });
-			messageHub.event('test.event2', { data: 'test2' });
-
-			const events = transport.sentMessages.filter((m) => m.type === MessageType.EVENT);
-
-			// All messages should have sequence numbers
-			expect(events[0].sequence).toBeDefined();
-			expect(events[1].sequence).toBeDefined();
-
-			// Sequence numbers should be monotonically increasing
-			expect(events[1].sequence!).toBeGreaterThan(events[0].sequence!);
-		});
-
-		test('should maintain sequence across different message types', async () => {
-			const query1 = messageHub.request('test.method1', {});
-			await new Promise((resolve) => setTimeout(resolve, 5));
-			messageHub.event('test.event', {});
-			await new Promise((resolve) => setTimeout(resolve, 5));
-			const query2 = messageHub.request('test.method2', {});
-
-			await new Promise((resolve) => setTimeout(resolve, 10));
-
-			const sequences = transport.sentMessages.map((m) => m.sequence!);
-
-			// All should have sequences
-			expect(sequences.every((seq) => seq !== undefined)).toBe(true);
-
-			// Should be strictly increasing
-			for (let i = 1; i < sequences.length; i++) {
-				expect(sequences[i]).toBeGreaterThan(sequences[i - 1]);
-			}
-
-			// Cleanup
-			query1.catch(() => {});
-			query2.catch(() => {});
-		});
-
-		test('should reset sequence on cleanup', () => {
-			// Use valid method names with dots
-			messageHub.event('test.method1', {});
-			const seq1 = transport.sentMessages[0].sequence;
-
-			messageHub.cleanup();
-
-			// Create new hub
-			const hub2 = new MessageHub();
-			const transport2 = new MockTransport();
-			hub2.registerTransport(transport2);
-
-			hub2.event('test.method2', {});
-			const seq2 = transport2.sentMessages[0].sequence;
-
-			// Sequence should start from 0 again
-			expect(seq2).toBe(0);
-			// Both sequences start at 0, so just verify seq1 exists
-			expect(seq1).toBeDefined();
-
-			hub2.cleanup();
 		});
 	});
 

@@ -45,9 +45,19 @@ export const MODEL_FAMILY_ICONS: Record<string, string> = {
 	sonnet: '💎',
 	haiku: '⚡',
 	glm: '🌐',
+	minimax: '🔥',
+	gpt: '🔮',
+	gemini: '✨',
 	// Default icon for unknown families
 	__default__: '💎',
 };
+
+/**
+ * Get the icon for a model family with fallback to default
+ */
+export function getModelFamilyIcon(family: string): string {
+	return MODEL_FAMILY_ICONS[family] || MODEL_FAMILY_ICONS.__default__;
+}
 
 /** Model family sort order */
 const FAMILY_ORDER: Record<string, number> = {
@@ -55,7 +65,27 @@ const FAMILY_ORDER: Record<string, number> = {
 	sonnet: 1,
 	haiku: 2,
 	glm: 3,
+	minimax: 4,
+	gpt: 5,
+	gemini: 6,
 };
+
+/** Provider display labels for UI */
+export const PROVIDER_LABELS: Record<string, string> = {
+	anthropic: 'Anthropic',
+	glm: 'GLM',
+	minimax: 'MiniMax',
+	openai: 'OpenAI',
+	'github-copilot': 'Copilot',
+	google: 'Google',
+};
+
+/**
+ * Get the display label for a provider
+ */
+export function getProviderLabel(provider: string): string {
+	return PROVIDER_LABELS[provider] || provider;
+}
 
 /**
  * Hook for managing model switching
@@ -94,26 +124,37 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 					id: string;
 					display_name: string;
 					description: string;
+					alias?: string;
+					provider?: string;
 				}>;
 			};
 
 			const modelInfos: ModelInfo[] = models.map((m) => {
-				let family: 'opus' | 'sonnet' | 'haiku' | 'glm' = 'sonnet';
-				let provider: 'anthropic' | 'glm' = 'anthropic';
-
-				if (m.id.includes('opus')) family = 'opus';
-				else if (m.id.includes('haiku')) family = 'haiku';
-				else if (m.id.toLowerCase().startsWith('glm-')) {
+				// Determine family from model ID
+				let family: string = 'sonnet';
+				const modelId = m.id.toLowerCase();
+				if (modelId.includes('opus')) {
+					family = 'opus';
+				} else if (modelId.includes('haiku')) {
+					family = 'haiku';
+				} else if (modelId.startsWith('glm-')) {
 					family = 'glm';
-					provider = 'glm';
+				} else if (modelId.startsWith('minimax-')) {
+					family = 'minimax';
+				} else if (modelId.startsWith('gpt-')) {
+					family = 'gpt';
+				} else if (modelId.startsWith('gemini-')) {
+					family = 'gemini';
 				}
 
 				return {
 					id: m.id,
 					name: m.display_name,
-					alias: m.id.split('-').pop() || m.id,
+					// Use server-provided alias (unique per provider, e.g. 'copilot-sonnet' for GitHub Copilot)
+					alias: m.alias || m.id,
 					family,
-					provider,
+					// Use server-provided provider for correct routing
+					provider: m.provider || 'anthropic',
 					contextWindow: 200000,
 					description: m.description || '',
 					releaseDate: '',

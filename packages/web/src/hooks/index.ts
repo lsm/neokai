@@ -15,6 +15,9 @@ export {
 	useModelSwitcher,
 	type UseModelSwitcherResult,
 	MODEL_FAMILY_ICONS,
+	getModelFamilyIcon,
+	PROVIDER_LABELS,
+	getProviderLabel,
 } from './useModelSwitcher';
 export {
 	useMessageHub,
@@ -36,3 +39,8 @@ export {
 	type AttachmentWithMetadata,
 	type UseFileAttachmentsResult,
 } from './useFileAttachments';
+export {
+	useAutoScroll,
+	type UseAutoScrollOptions,
+	type UseAutoScrollResult,
+} from './useAutoScroll';

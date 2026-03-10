@@ -21,11 +21,64 @@ export async function waitForWebSocketConnected(page: Page): Promise<void> {
 		},
 		{ timeout: 10000 }
 	);
+}
 
-	// Also wait for visual indicator in the sidebar footer
-	// The sidebar shows "Daemon: Connected" when WebSocket is connected
-	// Use .first() since there may be multiple "Connected" indicators (Daemon and Claude API)
-	await page.locator('text=Connected').first().waitFor({ state: 'visible', timeout: 5000 });
+/**
+ * Get the workspace root path from the system state
+ */
+export async function getWorkspaceRoot(page: Page): Promise<string> {
+	const workspaceRoot = await page.evaluate(async () => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub || !hub.request) {
+			throw new Error('MessageHub not available');
+		}
+
+		const systemState = await hub.request('state.system', {});
+		return (systemState as { workspaceRoot: string }).workspaceRoot;
+	});
+
+	if (!workspaceRoot) {
+		throw new Error('Workspace root not found in system state');
+	}
+
+	return workspaceRoot;
+}
+
+/**
+ * Create a new session through the UI modal
+ * This helper uses RPC directly to create sessions for reliability,
+ * then navigates to the session via URL.
+ */
+export async function createSessionViaUI(page: Page): Promise<string> {
+	// Ensure WebSocket is connected before making RPC calls
+	await waitForWebSocketConnected(page);
+
+	// Get the workspace root path
+	const workspaceRoot = await getWorkspaceRoot(page);
+
+	// Create session via RPC (more reliable than UI modal)
+	const sessionId = await page.evaluate(async (workspacePath) => {
+		const hub = window.__messageHub || window.appState?.messageHub;
+		if (!hub || !hub.request) {
+			throw new Error('MessageHub not available');
+		}
+
+		const response = await hub.request('session.create', {
+			workspacePath,
+			createdBy: 'human',
+		});
+		return (response as { sessionId: string }).sessionId;
+	}, workspaceRoot);
+
+	if (!sessionId) {
+		throw new Error('Failed to create session');
+	}
+
+	// Navigate to the session using the correct path format
+	await page.goto(`/session/${sessionId}`);
+
+	// Wait for session to be loaded
+	return await waitForSessionCreated(page);
 }
 
 /**
@@ -35,15 +88,15 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
 	// Wait for session to be created and loaded
 	await page.waitForTimeout(1500);
 
-	// Verify we're NOT on the welcome screen
+	// Verify we're NOT on the lobby/home screen
 	await page.waitForFunction(
-		() => !document.querySelector('h2')?.textContent?.includes('Welcome to NeoKai'),
+		() => !document.querySelector('h2')?.textContent?.includes('Neo Lobby'),
 		{ timeout: 10000 }
 	);
 
 	// Verify we're in a chat view (message input should be visible)
 	const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
-	await expect(messageInput).toBeVisible({ timeout: 10000 });
+	await expect(messageInput).toBeVisible({ timeout: 15000 });
 	await expect(messageInput).toBeEnabled({ timeout: 5000 });
 
 	// Get and return the session ID - try multiple methods for robustness

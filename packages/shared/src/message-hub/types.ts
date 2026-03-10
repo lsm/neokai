@@ -33,12 +33,12 @@ export type RequestHandler<TData = unknown, TResult = unknown> = (
 ) => TResult | Promise<TResult> | void | Promise<void>;
 
 /**
- * Room event handler function
- * Handles room-scoped EVENT messages
+ * Channel event handler function
+ * Handles channel-scoped EVENT messages
  */
-export type RoomEventHandler<TData = unknown> = (
+export type ChannelEventHandler<TData = unknown> = (
 	data: TData,
-	context: EventContext & { room?: string }
+	context: EventContext & { channel?: string }
 ) => void | Promise<void>;
 
 /**
@@ -123,19 +123,19 @@ export interface QueryOptions {
 	timeout?: number;
 
 	/**
-	 * Optional room identifier
+	 * Optional channel identifier
 	 */
-	room?: string;
+	channel?: string;
 }
 
 /**
- * Options for event operations with room support
+ * Options for event operations with channel support
  */
 export interface EventOptions {
 	/**
-	 * Optional room identifier
+	 * Optional channel identifier
 	 */
-	room?: string;
+	channel?: string;
 }
 
 /**
@@ -214,12 +214,6 @@ export interface MessageHubOptions {
 	 * @default 10
 	 */
 	maxEventDepth?: number;
-
-	/**
-	 * FIX P1.3: Warn on message sequence gaps (out-of-order or missing messages)
-	 * @default true
-	 */
-	warnOnSequenceGap?: boolean;
 
 	/**
 	 * FIX P1.4: Stop on first event handler error (strict mode)
@@ -301,7 +295,7 @@ export interface IMessageTransport {
 
 	/**
 	 * Register handler for client disconnect events (server-side only)
-	 * Used for per-client cleanup like sequence tracking
+	 * Used for per-client cleanup
 	 */
 	onClientDisconnect?(handler: (clientId: string) => void): () => void;
 }

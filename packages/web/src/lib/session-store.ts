@@ -58,15 +58,19 @@ class SessionStore {
 		() => this.sessionState.value?.agentState || { status: 'idle' }
 	);
 
-	/** Context info (token usage) */
+	/** Context info (token usage) - uses direct signal to avoid race condition */
 	readonly contextInfo = computed<ContextInfo | null>(
-		() => this.sessionState.value?.contextInfo || null
+		() =>
+			this._contextInfo.value ||
+			this.sessionState.value?.sessionInfo?.metadata?.lastContextInfo ||
+			null
 	);
 
 	/** Available slash commands */
-	readonly commandsData = computed<string[]>(
-		() => this.sessionState.value?.commandsData?.availableCommands || []
-	);
+	readonly commandsData = computed<string[]>(() => {
+		const cmds = this.sessionState.value?.commandsData?.availableCommands;
+		return Array.isArray(cmds) ? cmds : [];
+	});
 
 	/** Session error state */
 	readonly error = computed<{
@@ -89,14 +93,9 @@ class SessionStore {
 
 	/**
 	 * Whether there are more messages to load (pagination)
-	 * Inferred from initial message load: if we got exactly 100, there might be more
+	 * Set from server response - determined by checking if we got exactly `limit` top-level messages
 	 */
-	readonly hasMoreMessages = computed<boolean>(() => {
-		// If initial load returned exactly 100 messages, there might be more
-		// Once we've loaded older messages, this inference becomes less accurate,
-		// but it's still a reasonable default that avoids an expensive COUNT query
-		return this._initialMessageCount.value === 100;
-	});
+	readonly hasMoreMessages = computed<boolean>(() => this._hasMoreMessages.value);
 
 	// ========================================
 	// Private State
@@ -113,6 +112,16 @@ class SessionStore {
 
 	/** Track initial message load count for pagination inference */
 	private readonly _initialMessageCount = signal(0);
+
+	/** Track whether there are more messages to load (from server response) */
+	private readonly _hasMoreMessages = signal(false);
+
+	/**
+	 * Direct context info signal - updated independently via context.updated events.
+	 * This fixes a race condition where context.updated events arriving before
+	 * sessionState is loaded would be silently dropped.
+	 */
+	private readonly _contextInfo = signal<ContextInfo | null>(null);
 
 	// ========================================
 	// Session Selection (with Promise-Chain Lock)
@@ -148,7 +157,7 @@ class SessionStore {
 		if (oldSessionId) {
 			const hub = connectionManager.getHubIfConnected();
 			if (hub) {
-				hub.leaveRoom(`session:${oldSessionId}`);
+				hub.leaveChannel(`session:${oldSessionId}`);
 			}
 		}
 
@@ -156,6 +165,8 @@ class SessionStore {
 		this.sessionState.value = null;
 		this.sdkMessages.value = [];
 		this._initialMessageCount.value = 0;
+		this._hasMoreMessages.value = false;
+		this._contextInfo.value = null; // Clear context info on session switch
 		// Record session switch time to only show errors that occur AFTER this point
 		// This prevents showing stale errors that were already in the session state
 		this.sessionSwitchTime = Date.now();
@@ -191,15 +202,32 @@ class SessionStore {
 			const hub = await connectionManager.getHub();
 
 			// Join the session room first - this subscribes to all session-scoped events
-			hub.joinRoom(`session:${sessionId}`);
+			hub.joinChannel(`session:${sessionId}`);
 
-			// 1. Session state subscription (unified: metadata + agent + commands + context + error)
+			// 1. Session state subscription (unified: metadata + agent + commands + error)
 			const unsubSessionState = hub.onEvent<SessionState>('state.session', (state) => {
 				this.sessionState.value = state;
 
+				// Sync contextInfo from metadata to direct signal for fast access.
+				// The metadata.lastContextInfo is the persisted source of truth.
+				if (state.sessionInfo?.metadata?.lastContextInfo) {
+					this._contextInfo.value = state.sessionInfo.metadata.lastContextInfo;
+				}
+
 				// Sync slash commands signal (for autocomplete)
-				if (state.commandsData?.availableCommands) {
-					slashCommandsSignal.value = state.commandsData.availableCommands;
+				// Guard with Array.isArray: corrupted sessions may have a string stored in DB
+				// instead of an array, which would break the filter call in the hook.
+				const cmds = state.commandsData?.availableCommands;
+				if (Array.isArray(cmds) && cmds.length > 0) {
+					slashCommandsSignal.value = cmds;
+				}
+
+				// If state.session provided empty commands, restore from system:init SDK message.
+				// The daemon fallback broadcasts commandsData: [] which overwrites valid commands.
+				// The system:init message in sdkMessages is the authoritative source —
+				// same one SDKSystemMessage.tsx uses to show "Slash Commands (N)".
+				if (!Array.isArray(cmds) || cmds.length === 0) {
+					this._syncCommandsFromSDKMessages(this.sdkMessages.value);
 				}
 
 				// Handle error (show toast only for NEW errors that occurred after session was opened)
@@ -210,7 +238,17 @@ class SessionStore {
 			});
 			this.cleanupFunctions.push(unsubSessionState);
 
-			// 2. SDK messages delta (for incremental updates)
+			// 2. Context updates (fast path - bypasses full state.session round-trip)
+			// The daemon also sends context via state.session, but subscribing directly here
+			// ensures the UI updates as soon as context.updated fires on the session channel.
+			// FIX: Use direct signal to avoid race condition where events are dropped
+			// when sessionState.value is null (during initial load)
+			const unsubContextUpdated = hub.onEvent<ContextInfo>('context.updated', (contextInfo) => {
+				this._contextInfo.value = contextInfo;
+			});
+			this.cleanupFunctions.push(unsubContextUpdated);
+
+			// 3. SDK messages delta (for incremental updates)
 			// Set up BEFORE fetching initial state to avoid race conditions
 			// FIX: Add deduplication to prevent double messages after Safari reconnection
 			// This can happen when events are queued during reconnection and replayed,
@@ -225,6 +263,8 @@ class SessionStore {
 					const newMessages = delta.added.filter((m) => !existingIds.has(m.uuid));
 					if (newMessages.length > 0) {
 						this.sdkMessages.value = [...this.sdkMessages.value, ...newMessages];
+						// Sync commands from any system:init message that just arrived
+						this._syncCommandsFromSDKMessages(newMessages);
 					}
 				}
 			});
@@ -251,7 +291,7 @@ class SessionStore {
 			// Fetch session state and messages in parallel
 			const [sessionState, messagesState] = await Promise.all([
 				hub.request<SessionState>('state.session', { sessionId }),
-				hub.request<{ sdkMessages: SDKMessage[] }>('state.sdkMessages', {
+				hub.request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>('state.sdkMessages', {
 					sessionId,
 				}),
 			]);
@@ -259,9 +299,33 @@ class SessionStore {
 			// Update signals with initial state
 			if (sessionState) {
 				this.sessionState.value = sessionState;
-				if (sessionState.commandsData?.availableCommands) {
-					slashCommandsSignal.value = sessionState.commandsData.availableCommands;
+
+				// Persist contextInfo from metadata to direct signal so it survives page refresh.
+				// Without this, _contextInfo stays null until the next context.updated event
+				// (which only fires after a new agent turn).
+				if (sessionState.sessionInfo?.metadata?.lastContextInfo) {
+					this._contextInfo.value = sessionState.sessionInfo.metadata.lastContextInfo;
 				}
+
+				const initialCmds = sessionState.commandsData?.availableCommands;
+				if (Array.isArray(initialCmds) && initialCmds.length > 0) {
+					slashCommandsSignal.value = initialCmds;
+				}
+			} else {
+				// sessionState RPC returned null - set error state so UI shows error instead of infinite loading
+				logger.error('Session state RPC returned null for session:', sessionId);
+				this.sessionState.value = {
+					sessionInfo: null,
+					agentState: { status: 'idle' },
+					commandsData: { availableCommands: [] },
+					error: {
+						message: 'Session not found',
+						details: { sessionId },
+						occurredAt: Date.now(),
+					},
+					timestamp: Date.now(),
+				};
+				return;
 			}
 
 			if (messagesState?.sdkMessages) {
@@ -281,9 +345,9 @@ class SessionStore {
 				const currentMessages = this.sdkMessages.value;
 				const initialSnapshot = messagesState.sdkMessages;
 
-				// Track initial message count for pagination inference
-				// If we got exactly 100 messages, there might be more
+				// Track initial message count and hasMore from server response
 				this._initialMessageCount.value = initialSnapshot.length;
+				this._hasMoreMessages.value = messagesState.hasMore ?? false;
 
 				if (snapshotTimestamp && currentMessages.length > 0) {
 					// Preserve newer messages that arrived via delta during reconnection
@@ -325,10 +389,53 @@ class SessionStore {
 					// No timestamp in response or first load, use snapshot directly
 					this.sdkMessages.value = initialSnapshot;
 				}
+
+				// Sync slash commands from system:init message in initial load.
+				// Handles sessions that already have messages (e.g., after page reload).
+				this._syncCommandsFromSDKMessages(this.sdkMessages.value);
 			}
 		} catch (err) {
 			logger.error('Failed to fetch initial state:', err);
-			// Don't show toast here - subscriptions are still active and will receive updates
+			// Set error state so UI shows error instead of infinite loading
+			this.sessionState.value = {
+				sessionInfo: null,
+				agentState: { status: 'idle' },
+				commandsData: { availableCommands: [] },
+				error: {
+					message: 'Failed to load session',
+					details: err,
+					occurredAt: Date.now(),
+				},
+				timestamp: Date.now(),
+			};
+		}
+	}
+
+	/**
+	 * Sync slash commands from the system:init SDK message.
+	 *
+	 * The system:init message carries the authoritative slash commands list —
+	 * the same one SDKSystemMessage.tsx renders as "Slash Commands (N)".
+	 * When state.session events arrive with empty commandsData (e.g. from the
+	 * daemon fallback broadcast), this restores commands from the SDK message.
+	 */
+	private _syncCommandsFromSDKMessages(messages: SDKMessage[]): void {
+		for (const msg of messages) {
+			const m = msg as unknown as { type?: string; subtype?: string; slash_commands?: string[] };
+			if (
+				m.type === 'system' &&
+				m.subtype === 'init' &&
+				Array.isArray(m.slash_commands) &&
+				m.slash_commands.length > 0
+			) {
+				if (this.sessionState.value) {
+					this.sessionState.value = {
+						...this.sessionState.value,
+						commandsData: { availableCommands: m.slash_commands },
+					};
+				}
+				break;
+			}
 		}
 	}
 
@@ -451,16 +558,24 @@ class SessionStore {
 
 		try {
 			const hub = await connectionManager.getHub();
-			const result = await hub.request<{ sdkMessages: SDKMessage[] }>('message.sdkMessages', {
-				sessionId,
-				before: beforeTimestamp,
-				limit,
-			});
+			const result = await hub.request<{ sdkMessages: SDKMessage[]; hasMore: boolean }>(
+				'message.sdkMessages',
+				{
+					sessionId,
+					before: beforeTimestamp,
+					limit,
+				}
+			);
 
 			const messages = result?.sdkMessages ?? [];
+			const hasMore = result?.hasMore ?? false;
+
+			// Update hasMore signal from server response
+			this._hasMoreMessages.value = hasMore;
+
 			return {
 				messages,
-				hasMore: messages.length === limit,
+				hasMore,
 			};
 		} catch (err) {
 			logger.error('Failed to load older messages:', err);

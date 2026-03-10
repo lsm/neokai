@@ -83,6 +83,8 @@ export async function startProdServer(config: Config) {
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
 
+	log.info('Room orchestration is handled by RoomAgentService');
+
 	// Get WebSocket handlers from daemon
 	const { createWebSocketHandlers } = await import('@neokai/daemon/routes/setup-websocket');
 	const wsHandlers = createWebSocketHandlers(daemonContext.transport, daemonContext.sessionManager);

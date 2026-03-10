@@ -33,31 +33,22 @@ describe('ContextUsageBar', () => {
 	});
 
 	describe('Basic Rendering', () => {
-		it('should render percentage text', () => {
+		it('should render circle indicator with percentage', () => {
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
-			expect(container.textContent).toContain('25.0%');
-		});
-
-		it('should render progress bar', () => {
-			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
-
-			const progressBar = container.querySelector('.bg-dark-700.rounded-full');
-			expect(progressBar).toBeTruthy();
-		});
-
-		it('should render mobile pie chart', () => {
-			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
-
-			const pieChart = container.querySelector('svg');
-			expect(pieChart).toBeTruthy();
-		});
-
-		it('should render percentage in pie chart center', () => {
-			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+			const svg = container.querySelector('svg');
+			expect(svg).toBeTruthy();
 
 			const svgText = container.querySelector('svg text');
 			expect(svgText?.textContent).toBe('25');
+		});
+
+		it('should render progress arc in circle', () => {
+			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			const circles = container.querySelectorAll('svg circle');
+			// Background circle + progress arc
+			expect(circles.length).toBe(2);
 		});
 	});
 
@@ -99,17 +90,25 @@ describe('ContextUsageBar', () => {
 	});
 
 	describe('Progress Bar Width', () => {
-		it('should set progress bar width based on percentage', () => {
+		it('should set progress bar width in dropdown based on percentage', () => {
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
+
+			// Open dropdown to see the bar
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
 
 			const progressFill = container.querySelector('.bg-green-500');
 			const style = progressFill?.getAttribute('style');
 			expect(style).toContain('width: 25%');
 		});
 
-		it('should cap progress bar at 100%', () => {
+		it('should cap progress bar at 100% in dropdown', () => {
 			const overUsage: ContextInfo = { ...mockContextUsage, percentUsed: 150 };
 			const { container } = render(<ContextUsageBar contextUsage={overUsage} />);
+
+			// Open dropdown
+			const clickable = container.querySelector('[title="Click for context details"]')!;
+			fireEvent.click(clickable);
 
 			const progressFill = container.querySelector('.bg-red-500');
 			const style = progressFill?.getAttribute('style');
@@ -205,15 +204,15 @@ describe('ContextUsageBar', () => {
 			expect(container.textContent).toContain('Free Space');
 		});
 
-		it('should show category token counts', () => {
+		it('should show category token counts in k-notation', () => {
 			const { container } = render(<ContextUsageBar contextUsage={mockContextUsage} />);
 
 			const clickable = container.querySelector('[title="Click for context details"]')!;
 			fireEvent.click(clickable);
 
-			expect(container.textContent).toContain('5,000');
-			expect(container.textContent).toContain('40,000');
-			expect(container.textContent).toContain('155,000');
+			expect(container.textContent).toContain('5.0k');
+			expect(container.textContent).toContain('40.0k');
+			expect(container.textContent).toContain('155.0k');
 		});
 
 		it('should show category percentages', () => {
@@ -286,7 +285,8 @@ describe('ContextUsageBar', () => {
 				<ContextUsageBar contextUsage={usageWithoutCapacity} maxContextTokens={200000} />
 			);
 
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 
 		it('should use custom max context when provided', () => {
@@ -294,8 +294,8 @@ describe('ContextUsageBar', () => {
 				<ContextUsageBar contextUsage={mockContextUsage} maxContextTokens={100000} />
 			);
 
-			// Should still render properly
-			expect(container.textContent).toContain('25.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('25');
 		});
 	});
 
@@ -303,11 +303,12 @@ describe('ContextUsageBar', () => {
 		it('should handle undefined contextUsage', () => {
 			const { container } = render(<ContextUsageBar contextUsage={undefined} />);
 
-			// Should render without crashing
-			expect(container.textContent).toContain('0.0%');
+			// Should render without crashing, circle shows 0
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('0');
 		});
 
-		it('should show 0% when totalUsed is 0', () => {
+		it('should show 0 when totalUsed is 0', () => {
 			const emptyUsage: ContextInfo = {
 				totalUsed: 0,
 				totalCapacity: 200000,
@@ -315,7 +316,8 @@ describe('ContextUsageBar', () => {
 			};
 			const { container } = render(<ContextUsageBar contextUsage={emptyUsage} />);
 
-			expect(container.textContent).toContain('0.0%');
+			const svgText = container.querySelector('svg text');
+			expect(svgText?.textContent).toBe('0');
 		});
 	});
 

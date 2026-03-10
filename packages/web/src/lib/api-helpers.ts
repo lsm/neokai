@@ -30,6 +30,7 @@ import type {
 	ArchiveSessionResponse,
 	GetAuthStatusResponse,
 } from '@neokai/shared';
+import type { ProviderAuthResponse, ListProviderAuthStatusResponse } from '@neokai/shared/provider';
 import { connectionManager } from './connection-manager.ts';
 import { ConnectionNotReadyError } from './errors.ts';
 
@@ -116,6 +117,25 @@ export async function archiveSession(
 export async function getAuthStatus(): Promise<GetAuthStatusResponse> {
 	const hub = getHubOrThrow();
 	return await hub.request<GetAuthStatusResponse>('auth.status');
+}
+
+// ==================== Provider Authentication ====================
+
+export async function listProviderAuthStatus(): Promise<ListProviderAuthStatusResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<ListProviderAuthStatusResponse>('auth.providers', {});
+}
+
+export async function loginProvider(providerId: string): Promise<ProviderAuthResponse> {
+	const hub = getHubOrThrow();
+	return await hub.request<ProviderAuthResponse>('auth.login', { providerId });
+}
+
+export async function logoutProvider(
+	providerId: string
+): Promise<{ success: boolean; error?: string }> {
+	const hub = getHubOrThrow();
+	return await hub.request<{ success: boolean; error?: string }>('auth.logout', { providerId });
 }
 
 // ==================== Settings Operations ====================

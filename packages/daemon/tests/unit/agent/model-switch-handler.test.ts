@@ -61,6 +61,17 @@ const TEST_MODELS: ModelInfo[] = [
 		releaseDate: '2025-01-01',
 		available: true,
 	},
+	{
+		id: 'glm-5',
+		name: 'GLM-5',
+		alias: 'glm',
+		family: 'glm',
+		provider: 'glm',
+		contextWindow: 200000,
+		description: 'GLM model',
+		releaseDate: '2026-01-01',
+		available: true,
+	},
 ];
 
 describe('ModelSwitchHandler', () => {
@@ -259,9 +270,31 @@ describe('ModelSwitchHandler', () => {
 				const result = await handler.switchModel(VALID_MODEL);
 
 				expect(result.success).toBe(true);
-				expect(updateSessionSpy).toHaveBeenCalled();
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						config: expect.objectContaining({ model: 'opus', provider: expect.any(String) }),
+					})
+				);
 				expect(setModelTrackerSpy).toHaveBeenCalled();
 				expect(restartSpy).not.toHaveBeenCalled();
+			});
+
+			it('should pass only serializable config fields (no closures or cyclic refs)', async () => {
+				// Simulate a room agent session config with runtime-only non-serializable fields
+				const mockCallback = () => {};
+				const liveObj = { handler: mockCallback };
+				(mockSession.config as Record<string, unknown>)['mcpServers'] = { 'room-tools': liveObj };
+
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel(VALID_MODEL);
+
+				expect(result.success).toBe(true);
+				// The spy should have been called with only plain serializable fields
+				const callArg = updateSessionSpy.mock.calls[0][1] as { config: Record<string, unknown> };
+				expect(callArg.config).toHaveProperty('model', 'opus');
+				// mcpServers must NOT be in the persisted config — it's a runtime-only field
+				expect(callArg.config).not.toHaveProperty('mcpServers');
 			});
 
 			it('should emit session.updated event', async () => {
@@ -286,7 +319,7 @@ describe('ModelSwitchHandler', () => {
 					expect.objectContaining({
 						from: 'default',
 					}),
-					{ room: 'session:' + mockSession.id }
+					{ channel: 'session:' + mockSession.id }
 				);
 			});
 
@@ -299,8 +332,19 @@ describe('ModelSwitchHandler', () => {
 					expect.objectContaining({
 						from: 'default',
 					}),
-					{ room: 'session:' + mockSession.id }
+					{ channel: 'session:' + mockSession.id }
 				);
+			});
+
+			it('should align provider with model for pre-query cross-provider switches', async () => {
+				mockSession.config.model = 'glm-5';
+				mockSession.config.provider = 'glm';
+
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel(VALID_MODEL);
+
+				expect(result.success).toBe(true);
+				expect(mockSession.config.provider).toBe('anthropic');
 			});
 		});
 
@@ -328,7 +372,12 @@ describe('ModelSwitchHandler', () => {
 				handler = createHandler();
 				await handler.switchModel(VALID_MODEL);
 
-				expect(updateSessionSpy).toHaveBeenCalled();
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						config: expect.objectContaining({ model: 'opus', provider: expect.any(String) }),
+					})
+				);
 			});
 		});
 

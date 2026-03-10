@@ -1,5 +1,34 @@
 import { defineConfig, devices } from '@playwright/test';
 import type { CoverageReportOptions } from 'monocart-reporter';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
+import { randomUUID } from 'crypto';
+
+// Create isolated temp directories for this test run
+// This ensures e2e tests NEVER affect production databases or workspaces
+const testRunId = `e2e-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const e2eTempDir = join(tmpdir(), 'neokai-e2e', testRunId);
+const e2eWorkspaceDir = join(e2eTempDir, 'workspace');
+const e2eDatabaseDir = join(e2eTempDir, 'database');
+
+// Ensure directories exist
+mkdirSync(e2eWorkspaceDir, { recursive: true });
+mkdirSync(e2eDatabaseDir, { recursive: true });
+
+console.log(`\n📁 E2E Test Isolation:
+   Temp Dir: ${e2eTempDir}
+   Workspace: ${e2eWorkspaceDir}
+   Database: ${e2eDatabaseDir}/daemon.db
+\n`);
+
+// E2E_PORT: when set, tests start their own server on this specific port (random port mode).
+// PLAYWRIGHT_BASE_URL: when set, reuse an external already-running server.
+// Neither set: default standalone mode on port 9283.
+const e2ePort = process.env.E2E_PORT;
+const baseURL = e2ePort
+	? `http://localhost:${e2ePort}`
+	: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283';
 
 /**
  * Monocart Coverage Reporter Configuration
@@ -121,8 +150,7 @@ export default defineConfig({
 	/* Shared settings for all the projects below */
 	use: {
 		/* Base URL to use in actions like `await page.goto('/')` */
-		/* Can be overridden via PLAYWRIGHT_BASE_URL for in-process server testing */
-		baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
+		baseURL: baseURL,
 
 		/* Collect trace when retrying the failed test */
 		trace: 'on-first-retry',
@@ -208,21 +236,25 @@ export default defineConfig({
 
 	/* Run your local test server before starting the tests */
 	webServer: {
-		// Build web package first, then start production-like server for E2E tests
-		// This avoids HMR overhead and tests against production-like environment
-		command: 'cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts',
-		url: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:9283',
-		// In CI, we start the server separately to get better logging
-		// Use PW_TEST_REUSE_CONTEXT=1 to skip server startup in CI
-		// Also skip when PLAYWRIGHT_BASE_URL is set (in-process server mode)
-		reuseExistingServer:
-			!!process.env.PW_TEST_REUSE_CONTEXT || !!process.env.PLAYWRIGHT_BASE_URL || !process.env.CI,
+		// Build web package first, then start production-like server for E2E tests.
+		// When E2E_PORT is set (random port mode), the port is passed via NEOKAI_PORT.
+		// This avoids HMR overhead and tests against production-like environment.
+		command: `cd ../web && bun run build && cd ../cli && NODE_ENV=test bun run main.ts${e2ePort ? ` --port ${e2ePort}` : ''}`,
+		url: baseURL,
+		// Reuse an external server only when PLAYWRIGHT_BASE_URL is set (self-test / CI).
+		// In random port mode (E2E_PORT) or default mode, Playwright starts the server itself.
+		reuseExistingServer: !e2ePort && !!process.env.PLAYWRIGHT_BASE_URL,
 		stdout: 'ignore',
 		stderr: 'pipe',
 		timeout: 120 * 1000,
 		env: {
 			NODE_ENV: 'test',
 			DEFAULT_MODEL: 'sonnet', // Maps to GLM-4.7 for E2E tests
+			// Isolated paths for this test run
+			NEOKAI_WORKSPACE_PATH: e2eWorkspaceDir,
+			DB_PATH: join(e2eDatabaseDir, 'daemon.db'),
+			// Pass random port to CLI when in E2E_PORT mode
+			...(e2ePort ? { NEOKAI_PORT: e2ePort } : {}),
 		},
 	},
 });

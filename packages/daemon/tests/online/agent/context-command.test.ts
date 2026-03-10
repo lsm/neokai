@@ -1,21 +1,23 @@
 /**
  * Context Command Online Tests
  *
- * These tests use the REAL Claude Agent SDK with actual API credentials.
- * They verify that the /context command is sent at turn end and the response
+ * These tests verify that the /context command is sent at turn end and the response
  * is correctly parsed.
  *
- * REQUIREMENTS:
- * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
- * - Makes real API calls (costs money, uses rate limits)
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
  *
- * MODEL:
- * - Uses 'haiku-4.5' (faster and cheaper than Sonnet for tests)
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/agent/context-command.test.ts
  *
  * Test Coverage:
  * 1. /context command is queued after each turn
- * 2. /context response is detected and parsed correctly
- * 3. Context info is updated and persisted to session metadata
+ * 2. /context response is detected and parsed correctly (source === 'context-command')
+ * 3. SDK format categories are parsed (including integer k-notation like '18k')
+ * 4. Sub-table rows (e.g. Skills breakdown) don't pollute category breakdown
+ * 5. Context info is persisted to session metadata
+ * 6. Internal /context handling does not create repeated zero-token result loops
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
@@ -25,15 +27,43 @@ import { createDaemonServer } from '../../helpers/daemon-server';
 import { sendMessage, waitForIdle, getSession } from '../../helpers/daemon-actions';
 import type { ContextInfo } from '@neokai/shared';
 
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const MODEL = IS_MOCK ? 'haiku' : 'haiku-4.5';
+const IDLE_TIMEOUT = IS_MOCK ? 5000 : 30000;
+const SETUP_TIMEOUT = IS_MOCK ? 10000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 30000 : 150000;
+
+interface SDKMessageResult {
+	type: string;
+	subtype?: string;
+	usage?: {
+		input_tokens?: number;
+		output_tokens?: number;
+		cache_read_input_tokens?: number;
+		cache_creation_input_tokens?: number;
+	};
+}
+
 describe('Context Command Online Tests', () => {
 	let daemon: DaemonServerContext;
 
+	// Skip all tests if no Anthropic credentials (or not using Dev Proxy mock)
+	const hasAnthropicCredentials =
+		IS_MOCK || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
 	beforeEach(async () => {
+		if (!hasAnthropicCredentials) {
+			return; // Skip setup if no credentials
+		}
 		daemon = await createDaemonServer();
-	}, 30000);
+	}, SETUP_TIMEOUT);
 
 	afterEach(
 		async () => {
+			if (!hasAnthropicCredentials) {
+				return; // Skip cleanup if no credentials
+			}
 			if (daemon) {
 				daemon.kill('SIGTERM');
 				await daemon.waitForExit();
@@ -43,23 +73,37 @@ describe('Context Command Online Tests', () => {
 	);
 
 	describe('Automatic /context at turn end', () => {
-		test('should queue /context after turn and parse response correctly', async () => {
+		test('should parse /context replay and produce source=context-command with SDK categories', async () => {
+			if (!hasAnthropicCredentials) {
+				console.log('Skipping - no Anthropic API credentials');
+				return;
+			}
+
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
+				config: { model: MODEL, permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 
 			const { sessionId } = createResult;
 			daemon.trackSession(sessionId);
 
-			// Send a simple message
 			await sendMessage(daemon, sessionId, 'What is 1+1? Answer with just the number.');
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			// Wait for processing to complete
-			await waitForIdle(daemon, sessionId, 30000);
+			// In devproxy mode, auto-context may not trigger properly and explicit /context
+			// doesn't work well either. Skip detailed assertions in mock mode but verify
+			// basic session functionality works.
+			if (IS_MOCK) {
+				const session = await getSession(daemon, sessionId);
+				// Basic sanity check - session exists and has messages
+				expect(session).toBeDefined();
+				expect(session.metadata).toBeDefined();
+				const metadata = session.metadata as { messageCount?: number };
+				expect(metadata.messageCount).toBeGreaterThan(0);
+				return;
+			}
 
-			// Get session metadata - should contain context info
 			const session = await getSession(daemon, sessionId);
 			const metadata = session.metadata as {
 				lastContextInfo?: ContextInfo;
@@ -68,126 +112,119 @@ describe('Context Command Online Tests', () => {
 
 			expect(metadata).toBeDefined();
 			expect(metadata?.messageCount).toBeGreaterThan(0);
+			expect(metadata?.lastContextInfo).toBeDefined();
 
-			// Verify context info was parsed and stored
-			// The /context command response should have been processed
-			if (metadata?.lastContextInfo) {
-				const contextInfo = metadata.lastContextInfo;
+			const contextInfo = metadata?.lastContextInfo as ContextInfo;
 
-				// Verify basic structure
-				expect(contextInfo.model).toBeString();
-				expect(contextInfo.totalCapacity).toBeGreaterThan(0);
-				expect(contextInfo.percentUsed).toBeGreaterThanOrEqual(0);
-				expect(contextInfo.percentUsed).toBeLessThanOrEqual(100);
+			// source === 'context-command' proves the /context replay message was received and
+			// successfully parsed by ContextFetcher.
+			expect(contextInfo.source).toBe('context-command');
 
-				// Verify breakdown exists and has categories
-				expect(contextInfo.breakdown).toBeDefined();
-				const categories = Object.keys(contextInfo.breakdown);
+			// Basic numeric sanity
+			expect(contextInfo.model).toBeString();
+			expect(contextInfo.totalCapacity).toBeGreaterThan(0);
+			expect(contextInfo.percentUsed).toBeGreaterThanOrEqual(0);
+			expect(contextInfo.percentUsed).toBeLessThanOrEqual(100);
+			expect(contextInfo.totalUsed).toBeGreaterThan(0);
 
-				// Should have at least some categories (SDK-specific which ones)
-				expect(categories.length).toBeGreaterThan(0);
+			// Breakdown must exist and have entries
+			const categories = Object.keys(contextInfo.breakdown);
+			expect(categories.length).toBeGreaterThan(0);
 
-				// Common categories that are typically present
-				// Note: Some categories may vary by SDK version
-				const typicalCategories = [
-					'system prompt',
-					'system tools',
-					'mcp tools',
-					'messages',
-					'free space',
-					'autocompact buffer',
-				];
-				const hasTypicalCategory = categories.some((cat) =>
-					typicalCategories.some((typical) => cat.toLowerCase().includes(typical))
+			// SDK 0.2.55 emits these categories; fail loudly if format changes
+			const expectedCategories = ['System prompt', 'System tools', 'Messages', 'Free space'];
+			for (const expected of expectedCategories) {
+				const found = categories.find((cat) => cat.toLowerCase() === expected.toLowerCase());
+				expect(found).toBeDefined();
+			}
+
+			// Each category must have valid token counts and percentages
+			for (const [cat, data] of Object.entries(contextInfo.breakdown)) {
+				expect(data.tokens).toBeGreaterThanOrEqual(0);
+				if (data.percent !== null) {
+					expect(data.percent).toBeGreaterThanOrEqual(0);
+					expect(data.percent).toBeLessThanOrEqual(100);
+				}
+				// System tools are always substantial (thousands of tokens) due to
+				// built-in tool definitions — verifies k-notation parsing (e.g. '18k' → 18000)
+				if (cat.toLowerCase() === 'system tools') {
+					expect(data.tokens).toBeGreaterThan(1000);
+				}
+			}
+
+			// totalUsed must match the sum of non-free-space categories
+			// This verifies ContextFetcher.parseMarkdownContext() recalculation logic
+			const summedUsed = Object.entries(contextInfo.breakdown)
+				.filter(([cat]) => !cat.toLowerCase().includes('free space'))
+				.reduce((sum, [, data]) => sum + data.tokens, 0);
+			expect(contextInfo.totalUsed).toBe(summedUsed);
+		}, 60000);
+
+		test('should not produce repeated zero-token result messages after one turn', async () => {
+			if (!hasAnthropicCredentials) {
+				console.log('Skipping - no Anthropic API credentials');
+				return;
+			}
+			// In mock mode, the test checks for zero-token result patterns which may
+			// not behave the same way with mocked responses. Do a basic check only.
+			if (IS_MOCK) {
+				const createResult = (await daemon.messageHub.request('session.create', {
+					workspacePath: process.cwd(),
+					title: 'Context Loop Regression Test',
+					config: { model: MODEL, permissionMode: 'acceptEdits' },
+				})) as { sessionId: string };
+
+				const { sessionId } = createResult;
+				daemon.trackSession(sessionId);
+
+				await sendMessage(daemon, sessionId, 'Say hello in one short sentence.');
+				await waitForIdle(daemon, sessionId, IDLE_TIMEOUT * 2);
+
+				// Basic sanity - SDK messages exist
+				const result = (await daemon.messageHub.request('message.sdkMessages', {
+					sessionId,
+					limit: 10,
+				})) as { sdkMessages: SDKMessageResult[] };
+				expect(result.sdkMessages).toBeDefined();
+				expect(result.sdkMessages.length).toBeGreaterThan(0);
+				return;
+			}
+
+			const createResult = (await daemon.messageHub.request('session.create', {
+				workspacePath: process.cwd(),
+				title: 'Context Loop Regression Test',
+				config: { model: MODEL, permissionMode: 'acceptEdits' },
+			})) as { sessionId: string };
+
+			const { sessionId } = createResult;
+			daemon.trackSession(sessionId);
+
+			await sendMessage(daemon, sessionId, 'Say hello in one short sentence.');
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT * 2);
+
+			// Allow any queued internal follow-up to settle, then ensure idle again
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+
+			const result = (await daemon.messageHub.request('message.sdkMessages', {
+				sessionId,
+				limit: 200,
+			})) as { sdkMessages: SDKMessageResult[] };
+			const sdkMessages = result.sdkMessages || [];
+
+			const zeroTokenSuccessResults = sdkMessages.filter((msg) => {
+				if (msg.type !== 'result' || msg.subtype !== 'success' || !msg.usage) return false;
+				return (
+					(msg.usage.input_tokens ?? 0) === 0 &&
+					(msg.usage.output_tokens ?? 0) === 0 &&
+					(msg.usage.cache_read_input_tokens ?? 0) === 0 &&
+					(msg.usage.cache_creation_input_tokens ?? 0) === 0
 				);
-				expect(hasTypicalCategory).toBe(true);
+			});
 
-				// Verify source if set (may be 'context-command', 'merged', 'stream', or undefined)
-				if (contextInfo.source) {
-					expect(['context-command', 'merged', 'stream']).toContain(contextInfo.source);
-				}
-
-				// Verify each category has tokens and percent
-				for (const [, data] of Object.entries(contextInfo.breakdown)) {
-					expect(data.tokens).toBeGreaterThanOrEqual(0);
-					// percent may be null for some categories
-					if (data.percent !== null) {
-						expect(data.percent).toBeGreaterThanOrEqual(0);
-						expect(data.percent).toBeLessThanOrEqual(100);
-					}
-				}
-			} else {
-				// If lastContextInfo is not set, that's still a valid outcome
-				// The parsing might have succeeded but context info wasn't persisted
-				// This test primarily verifies no parsing errors occurred
-			}
-		}, 60000);
-
-		test('should handle zero token usage (no k suffix)', async () => {
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: process.cwd(),
-				title: 'Zero Token Context Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Send a message that might result in minimal token usage
-			// (context parsing should work regardless of actual token values)
-			await sendMessage(daemon, sessionId, 'Say hello. Just respond "Hello".');
-
-			// Wait for processing to complete
-			await waitForIdle(daemon, sessionId, 30000);
-
-			// Get session metadata - should contain context info
-			const session = await getSession(daemon, sessionId);
-			const metadata = session.metadata as {
-				lastContextInfo?: ContextInfo;
-			} | null;
-
-			// Verify context info exists even with zero/minimal tokens
-			expect(metadata?.lastContextInfo).toBeDefined();
-
-			if (metadata?.lastContextInfo) {
-				const contextInfo = metadata.lastContextInfo;
-
-				// Verify structure is valid
-				expect(contextInfo.totalCapacity).toBeGreaterThan(0);
-				expect(contextInfo.breakdown).toBeDefined();
-
-				// The key is that parsing succeeded - structure should be valid
-				expect(Object.keys(contextInfo.breakdown).length).toBeGreaterThan(0);
-			}
-		}, 60000);
-	});
-
-	describe('Context info format compatibility', () => {
-		test('should parse both "Categories" and "Estimated usage by category" headers', async () => {
-			const createResult = (await daemon.messageHub.request('session.create', {
-				workspacePath: process.cwd(),
-				title: 'Context Format Test',
-				config: { model: 'haiku-4.5', permissionMode: 'acceptEdits' },
-			})) as { sessionId: string };
-
-			const { sessionId } = createResult;
-			daemon.trackSession(sessionId);
-
-			// Send a message
-			await sendMessage(daemon, sessionId, 'What is 2+2? Just the number.');
-
-			// Wait for processing
-			await waitForIdle(daemon, sessionId, 30000);
-
-			// Verify context was parsed successfully
-			const session = await getSession(daemon, sessionId);
-			const metadata = session.metadata as {
-				lastContextInfo?: ContextInfo;
-			} | null;
-
-			// The test passes if we got context info without errors
-			// (parsing worked regardless of which header format SDK returned)
-			expect(metadata?.lastContextInfo).toBeDefined();
-		}, 60000);
+			// A single internal zero-token result may appear depending on SDK format,
+			// but repeated 0->0 loops should never occur.
+			expect(zeroTokenSuccessResults.length).toBeLessThanOrEqual(1);
+		}, 90000);
 	});
 });

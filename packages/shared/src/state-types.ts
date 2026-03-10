@@ -4,7 +4,7 @@
  * Fine-grained state channels - each property has its own channel
  */
 
-import type { AuthStatus, SessionInfo, HealthStatus, ContextInfo } from './types.ts';
+import type { AuthStatus, SessionInfo, HealthStatus } from './types.ts';
 import type { SDKMessage } from './sdk/sdk.d.ts';
 import type { GlobalSettings } from './types/settings.ts';
 
@@ -48,6 +48,9 @@ export interface SystemState {
 	defaultModel: string;
 	maxSessions: number;
 	storageLocation: string;
+
+	// Workspace
+	workspaceRoot: string;
 
 	// Authentication
 	auth: AuthStatus;
@@ -178,17 +181,14 @@ export interface SessionError {
  * - state.context (context info)
  */
 export interface SessionState {
-	// Session metadata
-	sessionInfo: SessionInfo;
+	// Session metadata (null in error states when session doesn't exist)
+	sessionInfo: SessionInfo | null;
 
 	// Agent processing state
 	agentState: AgentProcessingState;
 
 	// Available slash commands
 	commandsData: CommandsData;
-
-	// Context information
-	contextInfo: ContextInfo | null;
 
 	// Error state (folded from session.error event)
 	error: SessionError | null;
@@ -199,6 +199,7 @@ export interface SessionState {
 // State channel: {sessionId}:state.sdkMessages
 export interface SDKMessagesState {
 	sdkMessages: SDKMessage[];
+	hasMore: boolean;
 	timestamp: number;
 }
 

@@ -18,20 +18,17 @@
  */
 
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 test.describe('Model Selection Persistence', () => {
 	test('should use Opus when selected before first message', async ({ page }) => {
 		// Navigate to the app
 		await page.goto('/');
 
-		// Wait for connection
-		await page.waitForSelector('text=New Session', { timeout: 10000 });
-
 		// Create a new session
-		await page.click('text=New Session');
+		await createSessionViaUI(page);
 
-		// Wait for session to be created and chat interface to load
+		// Wait for chat interface to load
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
 		await expect(messageInput).toBeVisible({ timeout: 15000 });
 
@@ -85,21 +82,22 @@ test.describe('Model Selection Persistence', () => {
 		await messageInput.fill('Hello, test message');
 		await messageInput.press('Enter');
 
-		// Wait for system init message to appear
-		// System messages are typically shown in a specific container/style
-		// Look for message containing "You are powered by"
-		const systemInitLocator = page.locator('text=/You are powered by.*model/i').first();
+		// Wait for assistant response
+		await page.locator('[data-message-role="assistant"]').first().waitFor({
+			state: 'visible',
+			timeout: 30000,
+		});
 
-		// Wait up to 10 seconds for system init message
-		await expect(systemInitLocator).toBeVisible({ timeout: 10000 });
+		// Wait for input to be enabled again (processing complete)
+		await expect(messageInput).toBeEnabled({ timeout: 20000 });
 
-		// Get the full text of the system init message
-		const systemInitText = await systemInitLocator.textContent();
-		console.log('System init message:', systemInitText);
+		// Verify model switcher STILL shows the selected model after the message round-trip
+		// This is the critical regression: model used to reset to default after first message
+		const postMessageTitle = await modelSwitcher.getAttribute('title');
+		console.log('Post-message model title:', postMessageTitle);
 
-		// Assert: System init should mention the selected model family
 		if (selectedFamily) {
-			expect(systemInitText?.toLowerCase()).toContain(selectedFamily.toLowerCase());
+			expect(postMessageTitle?.toLowerCase()).toContain(selectedFamily.toLowerCase());
 		}
 	});
 
@@ -107,17 +105,8 @@ test.describe('Model Selection Persistence', () => {
 		// Navigate to the app
 		await page.goto('/');
 
-		// Wait for connection
-		await page.waitForSelector('text=New Session', { timeout: 10000 });
-
 		// Create a new session
-		await page.click('text=New Session');
-
-		// Wait for session to be created and chat interface to load
-		await page.waitForSelector(
-			'[data-testid="message-input"], textarea[placeholder*="Ask"], input[placeholder*="Ask"]',
-			{ timeout: 15000 }
-		);
+		await createSessionViaUI(page);
 
 		// Don't change model - just send a message with default model
 
@@ -176,10 +165,8 @@ test.describe('Model List Duplicates', () => {
 		// Navigate to the app
 		await page.goto('/');
 
-		// Wait for connection and create new session
-		await page.waitForSelector('text=New Session', { timeout: 10000 });
-		await page.click('text=New Session');
-		sessionId = await waitForSessionCreated(page);
+		// Create new session
+		sessionId = await createSessionViaUI(page);
 
 		// Wait for chat interface to load
 		const messageInput = page.locator('textarea[placeholder*="Ask"]').first();
@@ -236,7 +223,7 @@ test.describe('Default Model Configuration', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -260,14 +247,7 @@ test.describe('Default Model Configuration', () => {
 		// by setting the alias from LEGACY_MODEL_MAPPINGS.
 
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-
-		// Wait for session to be created
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 		expect(sessionId).toBeTruthy();
 
 		// Get the session data via RPC to check the model

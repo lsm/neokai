@@ -1,20 +1,32 @@
 import { useEffect } from 'preact/hooks';
 import { effect, batch } from '@preact/signals';
-import Sidebar from './islands/Sidebar.tsx';
+import { NavRail } from './islands/NavRail.tsx';
+import { ContextPanel } from './islands/ContextPanel.tsx';
 import MainContent from './islands/MainContent.tsx';
 import ToastContainer from './islands/ToastContainer.tsx';
 import { ConnectionOverlay } from './components/ConnectionOverlay.tsx';
 import { connectionManager } from './lib/connection-manager.ts';
 import { initializeApplicationState } from './lib/state.ts';
-import { currentSessionIdSignal } from './lib/signals.ts';
+import {
+	currentSessionIdSignal,
+	currentRoomIdSignal,
+	currentRoomSessionIdSignal,
+	currentRoomTaskIdSignal,
+} from './lib/signals.ts';
 import { initSessionStatusTracking } from './lib/session-status.ts';
 import { globalStore } from './lib/global-store.ts';
 import { sessionStore } from './lib/session-store.ts';
 import {
 	initializeRouter,
 	navigateToSession,
+	navigateToRoom,
+	navigateToRoomSession,
+	navigateToRoomTask,
 	navigateToHome,
 	createSessionPath,
+	createRoomPath,
+	createRoomSessionPath,
+	createRoomTaskPath,
 } from './lib/router.ts';
 
 export function App() {
@@ -61,19 +73,36 @@ export function App() {
 
 		init();
 
-		// STEP 4: Sync URL when session changes from external sources
+		// STEP 4: Sync URL when session/room changes from external sources
 		// (e.g., session created/deleted in another tab)
 		// This effect watches for signal changes and updates the URL
 		return effect(() => {
 			const sessionId = currentSessionIdSignal.value;
+			const roomId = currentRoomIdSignal.value;
+			const roomSessionId = currentRoomSessionIdSignal.value;
+			const roomTaskId = currentRoomTaskIdSignal.value;
 			const currentPath = window.location.pathname;
-			const expectedPath = sessionId ? createSessionPath(sessionId) : '/';
+			const expectedPath = sessionId
+				? createSessionPath(sessionId)
+				: roomTaskId && roomId
+					? createRoomTaskPath(roomId, roomTaskId)
+					: roomSessionId && roomId
+						? createRoomSessionPath(roomId, roomSessionId)
+						: roomId
+							? createRoomPath(roomId)
+							: '/';
 
 			// Only update URL if it's out of sync
 			// This prevents unnecessary history updates and loops
 			if (currentPath !== expectedPath) {
 				if (sessionId) {
 					navigateToSession(sessionId, true); // replace=true to avoid polluting history
+				} else if (roomTaskId && roomId) {
+					navigateToRoomTask(roomId, roomTaskId, true);
+				} else if (roomSessionId && roomId) {
+					navigateToRoomSession(roomId, roomSessionId, true);
+				} else if (roomId) {
+					navigateToRoom(roomId, true);
 				} else {
 					navigateToHome(true);
 				}
@@ -84,8 +113,11 @@ export function App() {
 	return (
 		<>
 			<div class="flex h-dvh overflow-hidden bg-dark-950 relative" style={{ height: '100dvh' }}>
-				{/* Sidebar */}
-				<Sidebar />
+				{/* Navigation Rail (desktop only) */}
+				<NavRail />
+
+				{/* Context Panel */}
+				<ContextPanel />
 
 				{/* Main Content */}
 				<MainContent />

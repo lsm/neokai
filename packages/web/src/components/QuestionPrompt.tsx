@@ -408,7 +408,7 @@ export function QuestionPrompt({
 
 						{/* Options grid layout */}
 						<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-							{question.options.map((option) => {
+							{(question.options || []).map((option) => {
 								const isSelected = selections.get(qIndex)?.has(option.label);
 								return (
 									<button

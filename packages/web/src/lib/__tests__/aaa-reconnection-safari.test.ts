@@ -41,8 +41,8 @@ describe('Safari Background Tab - Integration Tests', () => {
 				}),
 				publish: vi.fn(async () => {}),
 				isConnected: vi.fn(() => true),
-				joinRoom: vi.fn(() => {}),
-				leaveRoom: vi.fn(() => {}),
+				joinChannel: vi.fn(() => {}),
+				leaveChannel: vi.fn(() => {}),
 			} as unknown as MessageHub;
 
 			stateChannel = new StateChannel(mockHub, 'test.channel', {
@@ -249,11 +249,11 @@ describe('Safari Background Tab - Integration Tests', () => {
 					}
 					return {};
 				}),
-				joinRoom: vi.fn(() => {
-					subscriptionCalls.push('joinRoom');
+				joinChannel: vi.fn(() => {
+					subscriptionCalls.push('joinChannel');
 				}),
 				isConnected: vi.fn(() => true),
-				leaveRoom: vi.fn(() => {}),
+				leaveChannel: vi.fn(() => {}),
 			};
 
 			connectionManager = new ConnectionManager();
@@ -279,8 +279,8 @@ describe('Safari Background Tab - Integration Tests', () => {
 				return {};
 			});
 
-			mockMessageHub.joinRoom = vi.fn((room: string) => {
-				executionOrder.push(`joinRoom:${room}`);
+			mockMessageHub.joinChannel = vi.fn((room: string) => {
+				executionOrder.push(`joinChannel:${room}`);
 			});
 
 			// Trigger visibility change (which calls validateConnectionOnResume)
@@ -298,17 +298,17 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			// Verify basic order:
 			// 1. Health check happens first
-			// 2. joinRoom happens after health check
+			// 2. joinChannel happens after health check
 			expect(executionOrder[0]).toBe('request:system.health');
-			expect(executionOrder).toContain('joinRoom:global');
+			expect(executionOrder).toContain('joinChannel:global');
 
-			// Verify joinRoom comes after health check
+			// Verify joinChannel comes after health check
 			const healthIndex = executionOrder.indexOf('request:system.health');
-			const joinRoomIndex = executionOrder.indexOf('joinRoom:global');
-			expect(joinRoomIndex).toBeGreaterThan(healthIndex);
+			const joinChannelIndex = executionOrder.indexOf('joinChannel:global');
+			expect(joinChannelIndex).toBeGreaterThan(healthIndex);
 		});
 
-		it('should call joinRoom even when health check succeeds', async () => {
+		it('should call joinChannel even when health check succeeds', async () => {
 			// This is the critical fix - resubscribe even when connection appears healthy
 			mockMessageHub.request = vi.fn(async () => ({ status: 'ok' }));
 
@@ -323,11 +323,11 @@ describe('Safari Background Tab - Integration Tests', () => {
 
 			await new Promise((resolve) => setTimeout(resolve, 150));
 
-			expect(mockMessageHub.joinRoom).toHaveBeenCalled();
+			expect(mockMessageHub.joinChannel).toHaveBeenCalled();
 		});
 
-		it('should NOT call joinRoom when health check fails', async () => {
-			// Clear previous joinRoom calls from setup
+		it('should NOT call joinChannel when health check fails', async () => {
+			// Clear previous joinChannel calls from setup
 			vi.clearAllMocks();
 			mockMessageHub.request = vi.fn(() => Promise.reject(new Error('Health check failed')));
 
@@ -343,7 +343,7 @@ describe('Safari Background Tab - Integration Tests', () => {
 			await new Promise((resolve) => setTimeout(resolve, 150));
 
 			// Should call forceReconnect instead
-			expect(mockMessageHub.joinRoom).not.toHaveBeenCalled();
+			expect(mockMessageHub.joinChannel).not.toHaveBeenCalled();
 			expect(mockTransport.forceReconnect).toHaveBeenCalled();
 		});
 	});

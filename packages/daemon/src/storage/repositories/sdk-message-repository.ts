@@ -13,7 +13,7 @@ import type { SDKMessage } from '@neokai/shared/sdk';
 import { Logger } from '../../lib/logger';
 import type { SQLiteValue } from '../types';
 
-export type SendStatus = 'saved' | 'queued' | 'sent';
+export type SendStatus = 'saved' | 'queued' | 'sent' | 'failed';
 
 export class SDKMessageRepository {
 	private logger = new Logger('Database');
@@ -65,10 +65,33 @@ export class SDKMessageRepository {
 	 * @param limit - Maximum number of top-level messages to return (default: 100)
 	 * @param before - Cursor: get messages older than this timestamp (milliseconds)
 	 * @param since - Get messages newer than this timestamp (milliseconds)
+	 * @returns Object with messages array and hasMore boolean
 	 */
-	getSDKMessages(sessionId: string, limit = 100, before?: number, since?: number): SDKMessage[] {
+	getSDKMessages(
+		sessionId: string,
+		limit?: number,
+		before?: number,
+		since?: number
+	): { messages: SDKMessage[]; hasMore: boolean } {
+		return this._getSDKMessagesImpl(sessionId, limit ?? 100, before, since);
+	}
+
+	/**
+	 * Internal implementation for getSDKMessages
+	 * @private
+	 */
+	private _getSDKMessagesImpl(
+		sessionId: string,
+		limit: number,
+		before?: number,
+		since?: number
+	): { messages: SDKMessage[]; hasMore: boolean } {
 		// Step 1: Get top-level messages (excluding subagent messages)
-		let query = `SELECT sdk_message, timestamp FROM sdk_messages WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`;
+		// Show user messages that were sent to SDK, plus any that failed to deliver.
+		let query = `SELECT sdk_message, timestamp, send_status FROM sdk_messages
+      WHERE session_id = ?
+        AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+        AND (message_type != 'user' OR COALESCE(send_status, 'sent') IN ('sent', 'failed'))`;
 		const params: SQLiteValue[] = [sessionId];
 
 		// Cursor-based pagination: get messages BEFORE a timestamp (for loading older)
@@ -90,16 +113,22 @@ export class SDKMessageRepository {
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
 
-		// Parse SDK message and inject the timestamp from the database row
+		// Parse SDK message and inject the timestamp and sendStatus from the database row
 		const messages = rows.map((r) => {
 			const sdkMessage = JSON.parse(r.sdk_message as string) as SDKMessage;
 			const timestamp = new Date(r.timestamp as string).getTime();
-			// Inject timestamp into SDK message object for client-side filtering
-			return { ...sdkMessage, timestamp } as SDKMessage & { timestamp: number };
+			const extra: Record<string, unknown> = { timestamp };
+			if (r.send_status === 'failed') {
+				extra.sendStatus = 'failed';
+			}
+			return { ...sdkMessage, ...extra } as SDKMessage & { timestamp: number };
 		});
 
 		// Reverse to get chronological order (oldest to newest) for display
 		const topLevelMessages = messages.reverse();
+
+		// Determine hasMore: if we got exactly `limit` top-level messages, there might be more
+		const hasMore = topLevelMessages.length === limit;
 
 		// Step 2: Get all subagent messages for the returned top-level messages
 		// Extract tool use IDs from Task blocks in the top-level messages
@@ -122,8 +151,10 @@ export class SDKMessageRepository {
 				.map(() => '?')
 				.join(',');
 			const subagentQuery = `SELECT sdk_message, timestamp FROM sdk_messages
-       WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
-       ORDER BY timestamp ASC`;
+       WHERE session_id = ?
+         AND json_extract(sdk_message, '$.parent_tool_use_id') IN (${placeholders})
+         AND (message_type != 'user' OR COALESCE(send_status, 'sent') IN ('sent', 'failed'))
+        ORDER BY timestamp ASC`;
 			const subagentParams: SQLiteValue[] = [sessionId, ...Array.from(toolUseIds)];
 
 			const subagentStmt = this.db.prepare(subagentQuery);
@@ -137,7 +168,11 @@ export class SDKMessageRepository {
 		}
 
 		// Combine and return: top-level messages + their associated subagent messages
-		return [...topLevelMessages, ...subagentMessages];
+		// hasMore is based on top-level message count only (not including subagent messages)
+		return {
+			messages: [...topLevelMessages, ...subagentMessages],
+			hasMore,
+		};
 	}
 
 	/**
@@ -175,7 +210,9 @@ export class SDKMessageRepository {
 	getSDKMessageCount(sessionId: string): number {
 		const stmt = this.db.prepare(
 			`SELECT COUNT(*) as count FROM sdk_messages
-       WHERE session_id = ? AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL`
+       WHERE session_id = ?
+         AND json_extract(sdk_message, '$.parent_tool_use_id') IS NULL
+         AND (message_type != 'user' OR COALESCE(send_status, 'sent') = 'sent')`
 		);
 		const result = stmt.get(sessionId) as { count: number };
 		return result.count;
@@ -269,6 +306,19 @@ export class SDKMessageRepository {
 			`UPDATE sdk_messages SET send_status = ? WHERE id IN (${placeholders})`
 		);
 		stmt.run(newStatus, ...messageIds);
+	}
+
+	/**
+	 * Update the timestamp of a message.
+	 *
+	 * When timestampMs is provided, sets the timestamp to that value (used to
+	 * record the moment the SDK generator yielded the message — T_consumed).
+	 * Otherwise falls back to the current time.
+	 */
+	updateMessageTimestamp(messageId: string, timestampMs?: number): void {
+		const stmt = this.db.prepare(`UPDATE sdk_messages SET timestamp = ? WHERE id = ?`);
+		const ts = timestampMs !== undefined ? new Date(timestampMs) : new Date();
+		stmt.run(ts.toISOString(), messageId);
 	}
 
 	/**
@@ -417,6 +467,88 @@ export class SDKMessageRepository {
 		}
 
 		return undefined;
+	}
+
+	/**
+	 * Get assistant messages from a session since a specific message (by DB row ID).
+	 *
+	 * Used by Room Runtime to collect Craft output for forwarding to Lead.
+	 * - If afterMessageId is null: returns all assistant messages for the session.
+	 * - Otherwise: returns messages whose timestamp is after the row with afterMessageId.
+	 *
+	 * Returns structured objects ready for envelope formatting.
+	 */
+	getAssistantMessagesSince(
+		sessionId: string,
+		afterMessageId: string | null
+	): Array<{ id: string; text: string; toolCallNames: string[] }> {
+		let query: string;
+		let params: Array<string>;
+
+		if (afterMessageId) {
+			// Get timestamp of the reference message, then fetch messages after it
+			query = `
+				SELECT id, sdk_message FROM sdk_messages
+				WHERE session_id = ?
+				  AND message_type = 'assistant'
+				  AND timestamp > (
+				      SELECT timestamp FROM sdk_messages WHERE id = ?
+				  )
+				ORDER BY timestamp ASC
+			`;
+			params = [sessionId, afterMessageId];
+		} else {
+			query = `
+				SELECT id, sdk_message FROM sdk_messages
+				WHERE session_id = ? AND message_type = 'assistant'
+				ORDER BY timestamp ASC
+			`;
+			params = [sessionId];
+		}
+
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all(...params) as Array<{ id: string; sdk_message: string }>;
+
+		return rows.map((row) => {
+			const msg = JSON.parse(row.sdk_message) as Record<string, unknown>;
+			const text = this.extractAssistantText(msg);
+			const toolCallNames = this.extractToolCallNames(msg);
+			return { id: row.id, text, toolCallNames };
+		});
+	}
+
+	private extractAssistantText(msg: Record<string, unknown>): string {
+		const parts: string[] = [];
+		const message = msg.message as Record<string, unknown> | undefined;
+		const content = message?.content;
+		if (Array.isArray(content)) {
+			for (const block of content as Array<Record<string, unknown>>) {
+				if (block.type === 'text' && typeof block.text === 'string') {
+					parts.push(block.text);
+				}
+			}
+		} else if (typeof content === 'string') {
+			parts.push(content);
+		}
+		// Also capture result text from SDK result messages
+		if (msg.type === 'result' && typeof msg.result === 'string') {
+			parts.push(msg.result);
+		}
+		return parts.join('\n\n').trim();
+	}
+
+	private extractToolCallNames(msg: Record<string, unknown>): string[] {
+		const names: string[] = [];
+		const message = msg.message as Record<string, unknown> | undefined;
+		const content = message?.content;
+		if (Array.isArray(content)) {
+			for (const block of content as Array<Record<string, unknown>>) {
+				if (block.type === 'tool_use' && typeof block.name === 'string') {
+					names.push(block.name);
+				}
+			}
+		}
+		return names;
 	}
 
 	/**

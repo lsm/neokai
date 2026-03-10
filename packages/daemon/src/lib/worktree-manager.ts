@@ -60,9 +60,10 @@ export class WorktreeManager {
 				return root;
 			}
 
+			this.logger.warn(`No .git found traversing from: ${path}`);
 			return null;
-		} catch {
-			// Not a git repository or git command failed
+		} catch (error) {
+			this.logger.warn(`findGitRoot failed for ${path}:`, error);
 			return null;
 		}
 	}
@@ -95,6 +96,49 @@ export class WorktreeManager {
 			return result.trim().length > 0;
 		} catch {
 			return false;
+		}
+	}
+
+	/**
+	 * Resolve the main repository path from a worktree path.
+	 *
+	 * For linked worktrees (created via `git worktree add`), the .git inside
+	 * the worktree is a file (not a directory) that points to the main repo's
+	 * git directory. This method correctly resolves the main repo root.
+	 *
+	 * @param worktreePath - Path inside a worktree
+	 * @returns The main repository root path, or null if not a worktree
+	 */
+	async resolveMainRepoPath(worktreePath: string): Promise<string | null> {
+		try {
+			const git = this.getGit(worktreePath);
+
+			// Get the absolute path to the .git directory
+			// For main repo: /path/to/repo/.git
+			// For worktree: /path/to/main/repo/.git/worktrees/<name>
+			// Use --git-dir (not --git-common-dir) because --git-dir returns the
+			// actual git directory path including worktrees subdirectory
+			const gitDir = await git.revparse(['--path-format=absolute', '--git-dir']);
+
+			if (!gitDir) {
+				return null;
+			}
+
+			// Check if this is a worktree by looking for /worktrees/ in the path
+			const worktreesMatch = gitDir.match(/^(.+?\.git)[/\\]worktrees[/\\]/);
+
+			if (worktreesMatch) {
+				// This is a linked worktree - the main repo is the parent of .git
+				const mainGitDir = worktreesMatch[1];
+				return dirname(mainGitDir);
+			}
+
+			// This might be the main repo itself or not a worktree
+			// Return the git root from findGitRoot
+			return this.findGitRoot(worktreePath);
+		} catch (error) {
+			this.logger.warn(`resolveMainRepoPath failed for ${worktreePath}:`, error);
+			return null;
 		}
 	}
 
@@ -149,6 +193,7 @@ export class WorktreeManager {
 		// Find git root
 		const gitRoot = await this.findGitRoot(repoPath);
 		if (!gitRoot) {
+			this.logger.warn(`createWorktree: no git root found for repoPath=${repoPath}`);
 			return null;
 		}
 
@@ -162,8 +207,12 @@ export class WorktreeManager {
 		}
 
 		// Generate worktree path and branch name
-		const worktreePath = join(worktreesDir, sessionId);
-		let branchName = customBranchName || `session/${sessionId}`;
+		// Colons are invalid in git branch names (git check-ref-format) and can
+		// confuse tools when used in filesystem paths.  Room session IDs use
+		// colons (e.g. planner:roomId:taskId:uuid), so sanitize everywhere.
+		const safeSessionId = sessionId.replace(/:/g, '-');
+		const worktreePath = join(worktreesDir, safeSessionId);
+		let branchName = customBranchName || `session/${safeSessionId}`;
 
 		try {
 			// Check if worktree already exists (shouldn't happen, but safety check)
@@ -175,7 +224,7 @@ export class WorktreeManager {
 			if (customBranchName) {
 				const branchExists = await this.checkBranchExists(gitRoot, customBranchName);
 				if (branchExists) {
-					branchName = `session/${sessionId}`; // Fallback to UUID-based branch
+					branchName = `session/${safeSessionId}`; // Fallback to UUID-based branch
 				}
 			}
 
@@ -406,13 +455,23 @@ export class WorktreeManager {
 	 * Get the current branch name for a worktree
 	 */
 	async getCurrentBranch(worktreePath: string): Promise<string | null> {
+		const git = simpleGit(worktreePath);
+
 		try {
-			const git = simpleGit(worktreePath);
-			const branch = await git.revparse(['--abbrev-ref', 'HEAD']);
-			return branch.trim();
-		} catch (error) {
-			this.logger.error(' Failed to get current branch:', error);
+			// Works for normal repos and returns empty string for unborn HEAD.
+			const branch = (await git.raw(['branch', '--show-current'])).trim();
+			if (branch) {
+				return branch;
+			}
 			return null;
+		} catch {
+			// Fallback for older git variants.
+			try {
+				const branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+				return branch && branch !== 'HEAD' ? branch : null;
+			} catch {
+				return null;
+			}
 		}
 	}
 

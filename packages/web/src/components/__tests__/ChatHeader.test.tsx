@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/preact';
 import type { Session } from '@neokai/shared';
 import { ChatHeader } from '../ChatHeader';
-import { sidebarOpenSignal } from '../../lib/signals';
+import { contextPanelOpenSignal } from '../../lib/signals';
 
 describe('ChatHeader', () => {
 	const mockSession: Session = {
@@ -145,19 +145,19 @@ describe('ChatHeader', () => {
 			expect(svg).toBeTruthy();
 		});
 
-		it('should set sidebarOpenSignal to true when menu button is clicked', () => {
+		it('should set contextPanelOpenSignal to true when menu button is clicked', () => {
 			// Reset signal state
-			sidebarOpenSignal.value = false;
+			contextPanelOpenSignal.value = false;
 
 			const { container } = render(<ChatHeader {...defaultProps} />);
 
 			const menuButton = container.querySelector('button[title="Open menu"]')!;
 			fireEvent.click(menuButton);
 
-			expect(sidebarOpenSignal.value).toBe(true);
+			expect(contextPanelOpenSignal.value).toBe(true);
 
 			// Clean up
-			sidebarOpenSignal.value = false;
+			contextPanelOpenSignal.value = false;
 		});
 	});
 

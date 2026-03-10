@@ -6,10 +6,16 @@
 
 import type { Page } from '@playwright/test';
 import {
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForWebSocketConnected,
 	waitForAssistantResponse,
 } from './wait-helpers';
+
+/**
+ * Dev proxy mode detection - when using devproxy, API responses are instant
+ * so we can use much shorter timeouts
+ */
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 /**
  * Open the Session options dropdown menu
@@ -52,16 +58,13 @@ export async function clickArchiveSession(page: Page): Promise<void> {
 }
 
 /**
- * Create a session with a message to have content
+ * Create a session with a message to have content.
+ * Works in both real API and devproxy (mock) modes - devproxy automatically
+ * returns mock responses, so we just wait for any assistant message.
  */
 export async function createSessionWithMessage(page: Page): Promise<string> {
 	// Create new session
-	const newSessionButton = page.getByRole('button', {
-		name: 'New Session',
-		exact: true,
-	});
-	await newSessionButton.click();
-	const sessionId = await waitForSessionCreated(page);
+	const sessionId = await createSessionViaUI(page);
 
 	// Send a simple message
 	const textarea = page.locator('textarea[placeholder*="Ask"]');
@@ -87,15 +90,23 @@ export async function archiveSession(page: Page, sessionId: string): Promise<voi
 	await clickArchiveSession(page);
 
 	// Wait for archive to complete
-	await page.waitForTimeout(1500);
+	await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 }
 
 /**
- * Navigate to home page and wait for WebSocket connection
+ * Navigate to home page and wait for WebSocket connection.
+ * Clicks "Chats" in NavRail to ensure the session list is visible.
  */
 export async function goToHomePage(page: Page): Promise<void> {
 	await page.goto('/');
 	await waitForWebSocketConnected(page);
+
+	// Click Chats in NavRail to show session list (Lobby shows RoomList by default)
+	const chatsButton = page.getByRole('button', { name: 'Chats', exact: true });
+	if (await chatsButton.isVisible().catch(() => false)) {
+		await chatsButton.click();
+		await page.waitForTimeout(300);
+	}
 }
 
 /**

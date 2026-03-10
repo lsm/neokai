@@ -19,7 +19,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	waitForWebSocketConnected,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 import { closeWebSocket, restoreWebSocket } from '../helpers/connection-helpers';
@@ -46,12 +46,7 @@ test.describe('Reconnection - Basic Message Sync', () => {
 
 	test('should sync messages generated during disconnection', async ({ page }) => {
 		// 1. Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// 2. Send a message that will take some time to process
 		const messageInput = page.locator('textarea[placeholder*="Ask"]');
@@ -72,7 +67,7 @@ test.describe('Reconnection - Basic Message Sync', () => {
 		await closeWebSocket(page);
 
 		// 6. Verify offline status
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -131,12 +126,7 @@ test.describe('Reconnection - Multiple Cycles', () => {
 
 	test('should handle multiple disconnect/reconnect cycles', async ({ page }) => {
 		// 1. Create session and send message
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		const messageInput = page.locator('textarea[placeholder*="Ask"]');
 		await messageInput.click();
@@ -150,7 +140,7 @@ test.describe('Reconnection - Multiple Cycles', () => {
 
 		// 3. First disconnect cycle
 		await closeWebSocket(page);
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(2000);
@@ -163,7 +153,7 @@ test.describe('Reconnection - Multiple Cycles', () => {
 
 		// 4. Second disconnect cycle
 		await closeWebSocket(page);
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(2000);
@@ -215,12 +205,7 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 
 	test('should handle reconnection with long disconnection period', async ({ page }) => {
 		// 1. Create session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// 2. Send message
 		const messageInput = page.locator('textarea[placeholder*="Ask"]');
@@ -235,7 +220,7 @@ test.describe('Reconnection - Long Disconnection Period', () => {
 
 		// 4. Go offline for extended period
 		await closeWebSocket(page);
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(5000);
@@ -286,12 +271,7 @@ test.describe('Reconnection - Message Order', () => {
 
 	test('should preserve message order after reconnection', async ({ page }) => {
 		// 1. Create session and send message
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		const messageInput = page.locator('textarea[placeholder*="Ask"]');
 		await messageInput.click();
@@ -314,7 +294,7 @@ test.describe('Reconnection - Message Order', () => {
 
 		// 4. Go offline
 		await closeWebSocket(page);
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 		await page.waitForTimeout(2000);
@@ -369,12 +349,7 @@ test.describe('Connection - Input Blocking', () => {
 
 	test('should block input during disconnection', async ({ page }) => {
 		// Create a session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Get textarea and verify it's enabled
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -384,7 +359,7 @@ test.describe('Connection - Input Blocking', () => {
 
 		// Go offline
 		await closeWebSocket(page);
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 
@@ -422,12 +397,7 @@ test.describe('Connection - State Transitions', () => {
 
 	test('should maintain session data after reconnection', async ({ page }) => {
 		// Create session and send message
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		const messageInput = page.locator('textarea[placeholder*="Ask"]');
 		await messageInput.click();
@@ -444,7 +414,7 @@ test.describe('Connection - State Transitions', () => {
 
 		// Go offline
 		await closeWebSocket(page);
-		await expect(page.locator('text=Offline').first()).toBeVisible({
+		await expect(page.locator('button[aria-label="Daemon: Offline"]').first()).toBeVisible({
 			timeout: 5000,
 		});
 

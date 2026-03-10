@@ -375,6 +375,335 @@ describe('MessageQueue', () => {
 		});
 	});
 
+	describe('parent_tool_use_id extraction', () => {
+		it('should extract parent_tool_use_id from tool_result content', async () => {
+			queue.start();
+
+			const content = [
+				{ type: 'tool_result' as const, tool_use_id: 'tool-abc-123', content: 'Result text' },
+			];
+
+			const messagePromise = queue.enqueue(content);
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.parent_tool_use_id).toBe('tool-abc-123');
+
+			result.value.onSent();
+			await messagePromise;
+
+			queue.stop();
+		});
+
+		it('should return null parent_tool_use_id for string content', async () => {
+			queue.start();
+
+			const messagePromise = queue.enqueue('Plain text message');
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.parent_tool_use_id).toBeNull();
+
+			result.value.onSent();
+			await messagePromise;
+
+			queue.stop();
+		});
+
+		it('should return null parent_tool_use_id for content array without tool_result', async () => {
+			queue.start();
+
+			const content = [
+				{ type: 'text' as const, text: 'Hello' },
+				{ type: 'text' as const, text: 'World' },
+			];
+
+			const messagePromise = queue.enqueue(content);
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.parent_tool_use_id).toBeNull();
+
+			result.value.onSent();
+			await messagePromise;
+
+			queue.stop();
+		});
+
+		it('should handle mixed content with tool_result', async () => {
+			queue.start();
+
+			const content = [
+				{ type: 'text' as const, text: 'Here is the result:' },
+				{ type: 'tool_result' as const, tool_use_id: 'mixed-tool-id', content: 'Result' },
+			];
+
+			const messagePromise = queue.enqueue(content);
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.parent_tool_use_id).toBe('mixed-tool-id');
+
+			result.value.onSent();
+			await messagePromise;
+
+			queue.stop();
+		});
+	});
+
+	describe('stale generator handling', () => {
+		it(
+			'should exit when generation changes while waiting for message',
+			async () => {
+				queue.start();
+
+				const generator = queue.messageGenerator(testSessionId);
+
+				// Schedule generation change while generator is waiting
+				// The generator waits for up to 1000ms at a time, then rechecks
+				setTimeout(() => {
+					queue.stop();
+				}, 100);
+
+				// The generator waits in waitForNextMessage
+				// When stopped, running becomes false, so waitForNextMessage returns null
+				const result = await generator.next();
+				expect(result.done).toBe(true);
+			},
+			{ timeout: 2000 }
+		);
+
+		it('should check generation before yielding message', async () => {
+			queue.start();
+
+			// Enqueue message first
+			const promise1 = queue.enqueue('Message 1');
+
+			// Create generator that will capture current generation
+			const generator = queue.messageGenerator(testSessionId);
+
+			// Consume the message
+			const result = await generator.next();
+			expect(result.done).toBe(false);
+			expect(result.value.message.message.content[0].text).toBe('Message 1');
+			result.value.onSent();
+			await promise1;
+
+			queue.stop();
+		});
+
+		it('should allow new generator after restart to consume messages', async () => {
+			queue.start();
+
+			// Create generator
+			const generator1 = queue.messageGenerator(testSessionId);
+
+			// Stop queue
+			queue.stop();
+
+			// Start again (increments generation)
+			queue.start();
+
+			// Enqueue a message
+			const promise1 = queue.enqueue('Message for new gen');
+
+			// Create new generator with new generation
+			const generator2 = queue.messageGenerator(testSessionId);
+
+			// New generator should be able to consume it
+			const result = await generator2.next();
+			expect(result.done).toBe(false);
+			expect(result.value.message.message.content[0].text).toBe('Message for new gen');
+			result.value.onSent();
+			await promise1;
+
+			queue.stop();
+		});
+	});
+
+	describe('enqueueWithId', () => {
+		it('should enqueue message with pre-generated ID', async () => {
+			queue.start();
+
+			const customId = 'custom-message-id-123';
+			const promise = queue.enqueueWithId(customId, 'Test message');
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.uuid).toBe(customId);
+
+			result.value.onSent();
+			await promise;
+
+			queue.stop();
+		});
+
+		it('should work with internal flag', async () => {
+			queue.start();
+
+			const promise = queue.enqueueWithId('msg-id', 'Internal', true);
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.internal).toBe(true);
+
+			result.value.onSent();
+			await promise;
+
+			queue.stop();
+		});
+	});
+
+	describe('waiters cleanup', () => {
+		it(
+			'should clear waiters when message is enqueued',
+			async () => {
+				queue.start();
+
+				const generator = queue.messageGenerator(testSessionId);
+
+				// Wait a bit then enqueue
+				setTimeout(() => {
+					queue.enqueue('Delayed message');
+				}, 50);
+
+				const result = await generator.next();
+				expect(result.done).toBe(false);
+
+				result.value.onSent();
+				queue.stop();
+			},
+			{ timeout: 1000 }
+		);
+
+		it(
+			'should clear waiters when queue is stopped',
+			async () => {
+				queue.start();
+
+				const generator = queue.messageGenerator(testSessionId);
+
+				// Stop queue while generator is waiting
+				setTimeout(() => {
+					queue.stop();
+				}, 50);
+
+				const result = await generator.next();
+				expect(result.done).toBe(true);
+			},
+			{ timeout: 1000 }
+		);
+	});
+
+	describe('concurrent operations', () => {
+		it(
+			'should handle concurrent enqueue operations',
+			async () => {
+				queue.start();
+
+				// Enqueue multiple messages - don't await, they will be consumed by generator
+				const promise1 = queue.enqueue('Message 1');
+				const promise2 = queue.enqueue('Message 2');
+				const promise3 = queue.enqueue('Message 3');
+
+				expect(queue.size()).toBe(3);
+
+				const generator = queue.messageGenerator(testSessionId);
+
+				// Consume all messages
+				const result1 = await generator.next();
+				expect(result1.done).toBe(false);
+				expect(result1.value.message.message.content[0].text).toBe('Message 1');
+				result1.value.onSent();
+
+				const result2 = await generator.next();
+				expect(result2.done).toBe(false);
+				expect(result2.value.message.message.content[0].text).toBe('Message 2');
+				result2.value.onSent();
+
+				const result3 = await generator.next();
+				expect(result3.done).toBe(false);
+				expect(result3.value.message.message.content[0].text).toBe('Message 3');
+				result3.value.onSent();
+
+				// Now all promises should resolve
+				await Promise.all([promise1, promise2, promise3]);
+
+				queue.stop();
+			},
+			{ timeout: 2000 }
+		);
+
+		it('should handle enqueue while generator is processing', async () => {
+			queue.start();
+
+			const promise1 = queue.enqueue('First message');
+
+			const generator = queue.messageGenerator(testSessionId);
+
+			// Get first message
+			const result1 = await generator.next();
+			expect(result1.value.message.message.content[0].text).toBe('First message');
+
+			// Enqueue another while processing
+			const promise2 = queue.enqueue('Second message');
+
+			result1.value.onSent();
+			await promise1;
+
+			// Get second message
+			const result2 = await generator.next();
+			expect(result2.value.message.message.content[0].text).toBe('Second message');
+			result2.value.onSent();
+			await promise2;
+
+			queue.stop();
+		});
+	});
+
+	describe('edge cases', () => {
+		it('should handle empty string message', async () => {
+			queue.start();
+
+			const promise = queue.enqueue('');
+
+			const generator = queue.messageGenerator(testSessionId);
+			const result = await generator.next();
+
+			expect(result.value.message.message.content).toEqual([{ type: 'text', text: '' }]);
+
+			result.value.onSent();
+			await promise;
+
+			queue.stop();
+		});
+
+		it('should handle clear on empty queue', () => {
+			expect(queue.size()).toBe(0);
+			queue.clear(); // Should not throw
+			expect(queue.size()).toBe(0);
+		});
+
+		it('should handle multiple stops', () => {
+			queue.start();
+			queue.stop();
+			queue.stop(); // Should not throw
+			expect(queue.isRunning()).toBe(false);
+		});
+
+		it('should handle multiple starts', () => {
+			queue.start();
+			queue.start(); // Should increment generation
+			expect(queue.getGeneration()).toBe(2);
+		});
+	});
+
 	describe('internal flag propagation', () => {
 		it('should propagate internal flag from queued message to SDK message', async () => {
 			queue.start();

@@ -28,21 +28,31 @@ packages/
 
 Packages use `workspace:*` for interdependencies. The `shared` package is imported by both `daemon` and `web`.
 
+Each package's `tsconfig.json` defines path aliases that resolve to source files directly (no build step needed):
+- `@neokai/shared` → `packages/shared/src/mod.ts`
+- `@neokai/shared/*` → `packages/shared/src/*`
+- `@neokai/daemon` → `packages/daemon/main.ts`
+- `@neokai/daemon/*` → `packages/daemon/src/*`
+- `@/*` → package-local `./src/*`
+
 ## Commands
 
 ```bash
 # Development
-make dev                  # Start dev server on port 9283 (workspace: tmp/workspace)
-make dev-random           # Start dev server on random available port
+make dev WORKSPACE=/path/to/workspace    # Start dev server on random available port
+
+# Production
+make serve-random WORKSPACE=/path/to/workspace   # Production server on random port
+make run WORKSPACE=/path/to/workspace [PORT=8080] # Production server (PORT optional)
 
 # Testing
-make test:daemon       # Daemon tests only (bun test) with coverage
-make test:web          # Web tests only (vitest run) with coverage
+make test-daemon       # Daemon tests only (bun test) with coverage
+make test-web          # Web tests only (vitest run) with coverage
 
 # Run a single test file
 cd packages/daemon && bun test tests/unit/some-test.test.ts
 cd packages/web && bunx vitest run src/some-test.test.ts
-cd packages/e2e && bunx playwright test tests/some-test.e2e.ts
+make run-e2e TEST=tests/features/some-test.e2e.ts
 
 # Quality checks
 bun run check             # All checks: lint + typecheck + knip
@@ -60,9 +70,27 @@ make compile              # Compile binary for current platform
 ## Code Style
 
 - **Formatter**: Biome — tab indentation, single quotes, semicolons always, trailing commas (ES5), line width 100
-- **Linter**: Oxlint — `no-explicit-any` (error), `no-unused-vars` (error)
+- **JSX quotes**: Double quotes in JSX (`jsxQuoteStyle: "double"`), single quotes in JS
+- **Linter**: Oxlint — `no-explicit-any` (error), `no-unused-vars` (error), `no-console` (error)
 - **Unused exports**: Knip checks for dead exports
 - **JSX**: Preact automatic runtime (not React)
+- **Console calls are forbidden** in application code. For startup output in entry points, use conditional logging:
+  ```ts
+  const logInfo = verbose ? console.log : () => {};
+  ```
+  Test files, setup files, entry points (`main.ts`, `app.ts`), and CLI are exempt (see `.oxlintrc.json` ignorePatterns).
+
+## Environment Configuration
+
+Bun automatically loads `.env` and `.env.local` files at startup (no dotenv package needed). See `packages/daemon/.env.example` for all options.
+
+Credential discovery order (in `packages/daemon/src/lib/config.ts`):
+1. Environment variables (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`)
+2. `~/.claude/.credentials.json` (Claude Code login)
+3. macOS Keychain (Claude Code login)
+4. `~/.claude/settings.json` env block (third-party providers)
+
+**Gotcha**: The daemon deletes `process.env.CLAUDECODE` at startup so SDK subprocesses don't refuse to start when the daemon itself runs inside a Claude Code session.
 
 ## Architecture
 
@@ -92,12 +120,52 @@ Preact with Signals for reactivity. Key patterns:
 
 MessageHub protocol provides unified RPC + pub/sub over WebSocket between web client and daemon. Defined in `packages/shared/src/message-hub/`.
 
+Three-layer architecture:
+1. **MessageHubRouter** — Pure routing layer (no app logic)
+2. **MessageHub** — Protocol layer (owns Router and Transport)
+3. **WebSocketServerTransport** — I/O layer (uses Router for client management)
+
+Initialization order matters: Router → MessageHub, then Transport → MessageHub.
+
 ### Test Organization
 
 - `packages/daemon/tests/unit/` — Unit tests
-- `packages/daemon/tests/integration/` — Integration tests (matrixized by module: agent, session, rpc, database, filesystem, websocket, git, components, mcp)
-- `packages/daemon/tests/online/` — Tests requiring API credentials
+- `packages/daemon/tests/online/` — Online tests (matrixized by module, mock SDK by default, real API with NEOKAI_TEST_ONLINE=true)
 - `packages/e2e/tests/` — Browser automation tests
+
+Unit tests preload `packages/daemon/tests/unit/setup.ts` which sets `NODE_ENV='test'`, clears all API keys (ANTHROPIC_API_KEY, CLAUDE_CODE_OAUTH_TOKEN, GLM_API_KEY, ZHIPU_API_KEY), and suppresses console output. This ensures unit tests never make real API calls.
+
+#### Dev Proxy Mode for Online Tests
+
+Use `NEOKAI_USE_DEV_PROXY=1` for mocked online tests:
+
+```bash
+NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+```
+
+Behavior when this flag is enabled in `createDaemonServer()`:
+- Dev Proxy is required; if unavailable, tests fail fast (no silent fallback)
+- `CLAUDE_CODE_OAUTH_TOKEN` is cleared
+- `ANTHROPIC_AUTH_TOKEN` is cleared
+- `ANTHROPIC_API_KEY` is replaced with a dummy test key
+- Dev Proxy is reused across tests in the same process by default (`NEOKAI_DEV_PROXY_REUSE=1`)
+
+This prevents accidental use of real Anthropic credentials in dev-proxy test runs.
+
+To verify requests are mocked, inspect:
+
+```bash
+# Optional: persist helper-collected logs
+NEOKAI_DEV_PROXY_CAPTURE_LOGS=1 NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/convo/multiturn-conversation.test.ts
+tail -n 120 .devproxy/devproxy.log
+
+# Or query live logs from devproxy
+devproxy logs --lines 120 --output text
+```
+
+Expected lines include:
+- `req ... POST http://127.0.0.1:8000/v1/messages?beta=true`
+- `mock ... MockResponsePlugin: 200 ...`
 
 #### E2E Test Rules
 
@@ -122,15 +190,43 @@ E2E tests are **pure browser-based Playwright tests** simulating real end-user i
 - `waitForWebSocketConnected()` — may check hub state as fallback alongside UI indicator
 - Global teardown (`global-teardown.ts`) — RPC-based session/worktree cleanup
 
+---
+
+### Running E2E Tests
+
+**Standard usage — self-contained, starts its own server on a random port:**
+```bash
+make run-e2e TEST=tests/features/slash-cmd.e2e.ts
+make run-e2e                                        # run all tests
+```
+
+`make run-e2e` builds the web bundle, picks a random available port, starts the server, runs the tests, then shuts everything down. No pre-running server needed.
+
+**If using `make self` (port 9983) and want to run against that server:**
+```bash
+make self-test TEST=tests/core/navigation-3-column.e2e.ts
+```
+
+**How the lock file works:**
+- `make self` and `make run` write the port to `tmp/.dev-server-running`
+- If that lock file exists and you run tests without `E2E_PORT` or `PLAYWRIGHT_BASE_URL`, tests abort with instructions — this prevents accidentally starting a second server on a conflicting port
+- `make run-e2e` sets `E2E_PORT` internally, so the lock file check is skipped
+
 **Other notes:**
 - Always run a single E2E test file at a time — too slow to run all together
 - If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
 
-## Branching Strategy
+## Branching Strategy & CI
 
 - **`dev`** (default): Active development. PRs target `dev`. E2E tests run after merge.
-- **`main`**: Production-ready. Only accepts PRs from `dev`. Full test suite on PR.
+- **`main`**: Production-ready. Only accepts PRs from `dev` (enforced by CI). Full test suite on PR.
 - Feature branches are created from `dev`.
+
+| Event | Tests Run |
+|-------|-----------|
+| PR → `dev` | Lint, type check, unit tests, integration tests (fast) |
+| Merge to `dev` | All tests including E2E |
+| PR → `main` | All tests including E2E |
 
 ## Commit Convention
 

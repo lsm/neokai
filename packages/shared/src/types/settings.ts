@@ -10,13 +10,7 @@ import type { ThinkingLevel } from '../types.ts';
 
 export type SettingSource = 'user' | 'project' | 'local';
 
-export type PermissionMode =
-	| 'default'
-	| 'acceptEdits'
-	| 'bypassPermissions'
-	| 'plan'
-	| 'delegate'
-	| 'dontAsk';
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk';
 
 /**
  * Settings that can be passed to the SDK via query options
@@ -138,6 +132,10 @@ export interface GlobalSettings extends SDKSupportedSettings, FileOnlySettings {
 
 	// Default coordinator mode for new sessions
 	coordinatorMode?: boolean;
+
+	// Room agent settings
+	/** Maximum number of concurrent worker sessions per room agent (default: 3) */
+	maxConcurrentWorkers?: number;
 }
 
 /**
@@ -161,6 +159,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
 	autoScroll: true,
 	// Default coordinator mode to false (user opts in when needed)
 	coordinatorMode: false,
+	// Room agent: default to 3 concurrent workers
+	maxConcurrentWorkers: 3,
 	// Sandbox: Enable with balanced network permissions for development
 	// Provides filesystem isolation while allowing common development operations
 	sandbox: {

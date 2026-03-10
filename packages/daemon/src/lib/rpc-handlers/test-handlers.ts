@@ -35,7 +35,7 @@ export function setupTestHandlers(messageHub: MessageHub, db: Database): void {
 				added: [messageWithTimestamp],
 				timestamp: messageWithTimestamp.timestamp,
 			},
-			{ room: `session:${sessionId}` }
+			{ channel: `session:${sessionId}` }
 		);
 
 		return { success: true, uuid: message.uuid };
@@ -54,6 +54,6 @@ export function setupTestHandlers(messageHub: MessageHub, db: Database): void {
 			data: unknown;
 		};
 
-		messageHub.event(channel, deltaData, { room: `session:${sessionId}` });
+		messageHub.event(channel, deltaData, { channel: `session:${sessionId}` });
 	});
 }

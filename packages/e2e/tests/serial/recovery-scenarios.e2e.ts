@@ -9,7 +9,7 @@
 import { test, expect } from '../../fixtures';
 import {
 	setupMessageHubTesting,
-	waitForSessionCreated,
+	createSessionViaUI,
 	waitForElement,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
@@ -19,16 +19,15 @@ test.describe('Recovery Mechanisms', () => {
 		await setupMessageHubTesting(page);
 
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Type a message but don't send
 		const messageInput = await waitForElement(page, 'textarea');
 		const draftMessage = 'This is a draft message that should be preserved';
 		await messageInput.fill(draftMessage);
 
-		// Navigate away
-		await page.click('h1:has-text("NeoKai")');
+		// Navigate away (click Home button in NavRail)
+		await page.click('button[aria-label="Home"]');
 		await page.waitForTimeout(1000);
 
 		// Navigate back to session
@@ -50,8 +49,7 @@ test.describe('Recovery Mechanisms', () => {
 		await setupMessageHubTesting(page);
 
 		// Create a session
-		await page.getByRole('button', { name: 'New Session', exact: true }).click();
-		const sessionId = await waitForSessionCreated(page);
+		const sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		await page.locator('textarea').first().fill('Message before refresh');

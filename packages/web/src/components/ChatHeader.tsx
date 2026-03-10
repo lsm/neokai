@@ -3,17 +3,28 @@
  *
  * Header section for the chat container with session title, stats, and action menu.
  * Extracted from ChatContainer.tsx for better separation of concerns.
+ *
+ * Unified Session Architecture:
+ * - Features prop controls visibility of UI elements (sessionInfo, archive, etc.)
+ * - Room/lobby sessions hide features that aren't applicable
  */
 
-import type { Session } from '@neokai/shared';
+import type { Session, SessionFeatures } from '@neokai/shared';
+import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { borderColors } from '../lib/design-tokens';
 import { formatTokens } from '../lib/utils';
-import { sidebarOpenSignal } from '../lib/signals';
 import { connectionState } from '../lib/state';
+import { navigateToRoom } from '../lib/router';
 import { IconButton } from './ui/IconButton';
 import { Dropdown } from './ui/Dropdown';
 import { Tooltip } from './ui/Tooltip';
 import { GitBranchIcon } from './icons/GitBranchIcon';
+import { MobileMenuButton } from './ui/MobileMenuButton';
+
+export interface RoomContext {
+	roomName: string;
+	roomId: string;
+}
 
 export interface ChatHeaderProps {
 	session: Session | null;
@@ -21,6 +32,8 @@ export interface ChatHeaderProps {
 		totalTokens: number;
 		totalCost: number;
 	};
+	features?: SessionFeatures;
+	roomContext?: RoomContext;
 	onToolsClick: () => void;
 	onInfoClick: () => void;
 	onExportClick: () => void;
@@ -29,11 +42,14 @@ export interface ChatHeaderProps {
 	onDeleteClick: () => void;
 	archiving?: boolean;
 	resettingAgent?: boolean;
+	readonly?: boolean;
 }
 
 export function ChatHeader({
 	session,
 	displayStats,
+	features = DEFAULT_WORKER_FEATURES,
+	roomContext,
 	onToolsClick,
 	onInfoClick,
 	onExportClick,
@@ -42,43 +58,60 @@ export function ChatHeader({
 	onDeleteClick,
 	archiving = false,
 	resettingAgent = false,
+	readonly = false,
 }: ChatHeaderProps) {
 	const isConnected = connectionState.value === 'connected';
 
-	const handleMenuClick = () => {
-		sidebarOpenSignal.value = true;
-	};
+	const getHeaderActions = () => {
+		const actions: Array<
+			| {
+					label: string;
+					onClick: () => void;
+					icon: preact.JSX.Element;
+					disabled?: boolean;
+					danger?: boolean;
+			  }
+			| { type: 'divider' }
+		> = [];
 
-	const getHeaderActions = () => [
-		{
-			label: 'Tools',
-			onClick: onToolsClick,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-					/>
-				</svg>
-			),
-		},
-		{
-			label: 'Session Info',
-			onClick: onInfoClick,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-					/>
-				</svg>
-			),
-		},
-		{
+		// Tools - available unless readonly
+		if (!readonly) {
+			actions.push({
+				label: 'Tools',
+				onClick: onToolsClick,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+						/>
+					</svg>
+				),
+			});
+		}
+
+		// Session Info - conditional based on features
+		if (features.sessionInfo) {
+			actions.push({
+				label: 'Session Info',
+				onClick: onInfoClick,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+						/>
+					</svg>
+				),
+			});
+		}
+
+		// Export - always available
+		actions.push({
 			label: 'Export Chat',
 			onClick: onExportClick,
 			disabled: !isConnected,
@@ -92,8 +125,10 @@ export function ChatHeader({
 					/>
 				</svg>
 			),
-		},
-		{
+		});
+
+		// Reset Agent - always available
+		actions.push({
 			label: resettingAgent ? 'Resetting...' : 'Reset Agent',
 			onClick: onResetClick,
 			disabled: resettingAgent || !isConnected,
@@ -107,64 +142,79 @@ export function ChatHeader({
 					/>
 				</svg>
 			),
-		},
-		{ type: 'divider' as const },
-		{
-			label: 'Archive Session',
-			onClick: onArchiveClick,
-			disabled: archiving || session?.status === 'archived' || !isConnected,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
-					/>
-				</svg>
-			),
-		},
-		{
-			label: 'Delete Chat',
-			onClick: onDeleteClick,
-			danger: true,
-			disabled: !isConnected,
-			icon: (
-				<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-					/>
-				</svg>
-			),
-		},
-	];
+		});
+
+		// Archive/Delete section - conditional based on features
+		if (features.archive) {
+			actions.push({ type: 'divider' as const });
+			actions.push({
+				label: 'Archive Session',
+				onClick: onArchiveClick,
+				disabled: archiving || session?.status === 'archived' || !isConnected,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+						/>
+					</svg>
+				),
+			});
+			actions.push({
+				label: 'Delete Chat',
+				onClick: onDeleteClick,
+				danger: true,
+				disabled: !isConnected,
+				icon: (
+					<svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							stroke-width={2}
+							d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+						/>
+					</svg>
+				),
+			});
+		}
+
+		return actions;
+	};
 
 	return (
 		<div
 			class={`flex-shrink-0 bg-dark-850/50 backdrop-blur-sm border-b ${borderColors.ui.default} p-4 relative z-10`}
 		>
 			<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center gap-3">
-				{/* Hamburger menu button - visible only on mobile */}
-				<button
-					onClick={handleMenuClick}
-					class={`md:hidden p-2 -ml-2 bg-dark-850 border ${borderColors.ui.default} rounded-lg hover:bg-dark-800 transition-colors text-gray-400 hover:text-gray-100 flex-shrink-0`}
-					title="Open menu"
-				>
-					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							stroke-width={2}
-							d="M4 6h16M4 12h16M4 18h16"
-						/>
-					</svg>
-				</button>
+				<MobileMenuButton />
 
 				{/* Session title and stats */}
 				<div class="flex-1 min-w-0">
+					{roomContext && (
+						<div class="flex items-center gap-1.5 text-xs text-gray-400 mb-0.5">
+							<button
+								onClick={() => navigateToRoom(roomContext.roomId)}
+								class="hover:text-gray-200 transition-colors truncate max-w-[12rem]"
+							>
+								{roomContext.roomName}
+							</button>
+							<svg
+								class="w-3 h-3 flex-shrink-0"
+								fill="none"
+								viewBox="0 0 24 24"
+								stroke="currentColor"
+							>
+								<path
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									stroke-width={2}
+									d="M9 5l7 7-7 7"
+								/>
+							</svg>
+						</div>
+					)}
 					<h2 class="text-lg font-semibold text-gray-100 truncate">
 						{session?.title || 'New Session'}
 					</h2>

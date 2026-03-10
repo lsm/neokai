@@ -217,12 +217,29 @@ export function SDKResultMessage({ message }: Props) {
 											{modelName}
 										</div>
 										<div class="grid grid-cols-2 gap-2 text-xs text-gray-600 dark:text-gray-400">
-											<div>Input: {usage.inputTokens.toLocaleString()}</div>
-											<div>Output: {usage.outputTokens.toLocaleString()}</div>
-											<div>Cache Read: {usage.cacheReadInputTokens.toLocaleString()}</div>
-											<div>Cache Created: {usage.cacheCreationInputTokens.toLocaleString()}</div>
-											<div>Cost: ${usage.costUSD.toFixed(4)}</div>
-											<div>Context: {usage.contextWindow.toLocaleString()}</div>
+											<div>
+												Input: {(usage as { inputTokens: number }).inputTokens.toLocaleString()}
+											</div>
+											<div>
+												Output: {(usage as { outputTokens: number }).outputTokens.toLocaleString()}
+											</div>
+											<div>
+												Cache Read:{' '}
+												{(
+													usage as { cacheReadInputTokens: number }
+												).cacheReadInputTokens.toLocaleString()}
+											</div>
+											<div>
+												Cache Created:{' '}
+												{(
+													usage as { cacheCreationInputTokens: number }
+												).cacheCreationInputTokens.toLocaleString()}
+											</div>
+											<div>Cost: ${(usage as { costUSD: number }).costUSD.toFixed(4)}</div>
+											<div>
+												Context:{' '}
+												{(usage as { contextWindow: number }).contextWindow.toLocaleString()}
+											</div>
 										</div>
 									</div>
 								))}
@@ -245,19 +262,21 @@ export function SDKResultMessage({ message }: Props) {
 								Permissions Denied ({message.permission_denials.length})
 							</h4>
 							<div class="space-y-2">
-								{message.permission_denials.map((denial, idx) => (
-									<div
-										key={idx}
-										class="bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded border border-yellow-200 dark:border-yellow-800 text-sm"
-									>
-										<div class="font-medium text-yellow-900 dark:text-yellow-100">
-											{denial.tool_name}
+								{message.permission_denials.map(
+									(denial: { tool_name: string; tool_use_id: string }, idx: number) => (
+										<div
+											key={idx}
+											class="bg-yellow-50 dark:bg-yellow-900/20 p-3 rounded border border-yellow-200 dark:border-yellow-800 text-sm"
+										>
+											<div class="font-medium text-yellow-900 dark:text-yellow-100">
+												{denial.tool_name}
+											</div>
+											<div class="text-yellow-700 dark:text-yellow-300 mt-1 text-xs font-mono">
+												{denial.tool_use_id}
+											</div>
 										</div>
-										<div class="text-yellow-700 dark:text-yellow-300 mt-1 text-xs font-mono">
-											{denial.tool_use_id}
-										</div>
-									</div>
-								))}
+									)
+								)}
 							</div>
 						</div>
 					)}
@@ -287,7 +306,7 @@ export function SDKResultMessage({ message }: Props) {
 						<div>
 							<h4 class="text-sm font-semibold text-red-700 dark:text-red-300 mb-2">Errors</h4>
 							<div class="space-y-2">
-								{message.errors.map((error, idx) => (
+								{message.errors.map((error: string, idx: number) => (
 									<div
 										key={idx}
 										class="bg-red-50 dark:bg-red-900/20 p-3 rounded border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300"

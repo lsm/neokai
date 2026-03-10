@@ -87,6 +87,8 @@ export async function startDevServer(config: Config) {
 		standalone: false, // Skip root info route in embedded mode
 	});
 
+	log.info('Room orchestration is handled by RoomAgentService');
+
 	// Stop the daemon's internal server (we'll create a unified one)
 	daemonContext.server.stop();
 

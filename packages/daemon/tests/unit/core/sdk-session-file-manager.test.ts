@@ -308,11 +308,13 @@ describe('SDK Session File Manager', () => {
 		// Mock database for testing
 		const createMockDb = (messages: Array<{ type: string; uuid: string; message: unknown }>) => {
 			return {
-				getSDKMessages: () =>
-					messages.map((m) => ({
+				getSDKMessages: () => ({
+					messages: messages.map((m) => ({
 						...m,
 						timestamp: Date.now(),
 					})),
+					hasMore: false,
+				}),
 			} as unknown as Database;
 		};
 
@@ -494,7 +496,7 @@ describe('SDK Session File Manager', () => {
 			writeFileSync(testSessionFile, messages.join('\n') + '\n', 'utf-8');
 
 			const mockDb = {
-				getSDKMessages: () => [],
+				getSDKMessages: () => ({ messages: [], hasMore: false }),
 			} as unknown as Database;
 
 			const result = validateAndRepairSDKSession(
@@ -524,16 +526,19 @@ describe('SDK Session File Manager', () => {
 
 			// Mock DB with the missing tool_use message
 			const mockDb = {
-				getSDKMessages: () => [
-					{
-						type: 'assistant',
-						uuid: 'recovered-uuid',
-						message: {
-							content: [{ type: 'tool_use', id: 'orphan_t1', name: 'TaskOutput' }],
+				getSDKMessages: () => ({
+					messages: [
+						{
+							type: 'assistant',
+							uuid: 'recovered-uuid',
+							message: {
+								content: [{ type: 'tool_use', id: 'orphan_t1', name: 'TaskOutput' }],
+							},
+							timestamp: Date.now(),
 						},
-						timestamp: Date.now(),
-					},
-				],
+					],
+					hasMore: false,
+				}),
 			} as unknown as Database;
 
 			const result = validateAndRepairSDKSession(
@@ -561,7 +566,7 @@ describe('SDK Session File Manager', () => {
 
 			// Mock DB with NO matching tool_use
 			const mockDb = {
-				getSDKMessages: () => [],
+				getSDKMessages: () => ({ messages: [], hasMore: false }),
 			} as unknown as Database;
 
 			const result = validateAndRepairSDKSession(

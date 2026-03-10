@@ -43,6 +43,91 @@ export type {
 	ModelTier,
 } from './provider/types';
 
+// ============================================================================
+// Unified Session Architecture Types
+// ============================================================================
+
+/**
+ * Session type for unified session architecture
+ * - 'worker': Standard coding session with full Claude Code system prompt
+ * - 'room_chat': User-facing room chat interface (room:chat:${roomId})
+ * - 'planner': Planner agent session (Room Runtime)
+ * - 'coder': Coder agent session (Room Runtime)
+ * - 'leader': Leader agent session (Room Runtime)
+ * - 'general': General-purpose agent session (Room Runtime)
+ * - 'lobby': Instance-level agent session
+ */
+export type SessionType =
+	| 'worker'
+	| 'room_chat'
+	| 'planner'
+	| 'coder'
+	| 'leader'
+	| 'general'
+	| 'lobby';
+
+/**
+ * Context for room/lobby sessions
+ */
+export interface SessionContext {
+	roomId?: string;
+	lobbyId?: string;
+}
+
+/**
+ * Feature flags for session UI
+ * Controls which features are available in ChatContainer
+ */
+export interface SessionFeatures {
+	/** Enable rewind/checkpoint functionality */
+	rewind: boolean;
+	/** Enable worktree mode toggle */
+	worktree: boolean;
+	/** Enable coordinator mode toggle */
+	coordinator: boolean;
+	/** Enable archive/delete buttons */
+	archive: boolean;
+	/** Enable session info panel */
+	sessionInfo: boolean;
+}
+
+/**
+ * Default features for worker sessions (all enabled)
+ * Workers use full Claude Code system prompt for coding tasks
+ */
+export const DEFAULT_WORKER_FEATURES: SessionFeatures = {
+	rewind: true,
+	worktree: true,
+	coordinator: true,
+	archive: true,
+	sessionInfo: true,
+};
+
+/**
+ * Default features for room chat sessions (all disabled).
+ * Room chat sessions do NOT use Claude Code system prompt - they are for user interaction.
+ * @public
+ */
+export const DEFAULT_ROOM_CHAT_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
+/**
+ * Default features for lobby sessions (all disabled).
+ * @public
+ */
+export const DEFAULT_LOBBY_FEATURES: SessionFeatures = {
+	rewind: false,
+	worktree: false,
+	coordinator: false,
+	archive: false,
+	sessionInfo: false,
+};
+
 // Core session types
 export interface SessionInfo {
 	id: string;
@@ -59,6 +144,10 @@ export interface SessionInfo {
 	availableCommands?: string[]; // Available slash commands for this session (persisted)
 	processingState?: string; // Persisted agent processing state (JSON serialized AgentProcessingState)
 	archivedAt?: string; // ISO timestamp when session was archived
+	/** Session type - defaults to 'worker' for existing sessions */
+	type?: SessionType;
+	/** Context for room/lobby sessions */
+	context?: SessionContext;
 }
 
 // Backward compatibility alias (use SessionInfo in new code)
@@ -94,8 +183,9 @@ export type SessionStatus = 'active' | 'pending_worktree_choice' | 'paused' | 'e
  * Supported AI providers
  * - 'anthropic': Default Claude API provider
  * - 'glm': GLM (智谱AI) via Anthropic-compatible API
+ * - 'minimax': MiniMax via Anthropic-compatible API
  */
-export type Provider = 'anthropic' | 'glm';
+export type Provider = 'anthropic' | 'glm' | 'minimax';
 
 /**
  * Provider-specific configuration
@@ -274,6 +364,29 @@ export interface SessionConfig extends Omit<SDKConfig, 'tools'> {
 	// - maxBudgetUsd: Cost limit
 	// - fallbackModel: Fallback model ID
 	// - permissionMode: Permission mode for SDK operations
+
+	// ============================================================================
+	// Unified Session Architecture Fields
+	// ============================================================================
+
+	/**
+	 * Session type for unified architecture
+	 * @default 'worker'
+	 */
+	type?: SessionType;
+
+	/**
+	 * Context for room/lobby sessions
+	 */
+	context?: SessionContext;
+
+	/**
+	 * Feature flags controlling UI capabilities
+	 * Defaults based on session type:
+	 * - worker: all features enabled
+	 * - room/lobby: all features disabled
+	 */
+	features?: SessionFeatures;
 }
 
 /**
@@ -411,6 +524,23 @@ export interface SessionMetadata {
 		createdAt?: string;
 		completedAt?: string;
 	};
+	// Session architecture fields
+	/** Type of session in architecture context */
+	sessionType?: 'room_chat' | 'planner' | 'coder' | 'leader' | 'general' | 'worker' | 'lobby';
+	/** For manager/worker: ID of the paired session */
+	pairedSessionId?: string;
+	/** For manager/worker: ID of the parent RoomSession */
+	parentSessionId?: string;
+	/** Current task being managed/executed */
+	currentTaskId?: string;
+	/** Crash recovery context */
+	recoveryContext?: {
+		lastKnownState: string;
+		pendingInstruction?: string;
+		retryCount: number;
+	};
+	/** Runtime init fingerprint for non-worker sessions (used to invalidate stale SDK resume state) */
+	runtimeInitFingerprint?: string;
 }
 
 // Message content types for streaming input (supports images and tool results)
@@ -455,6 +585,8 @@ export interface MessageImage {
 	 */
 	media_type: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
 }
+
+export type MessageDeliveryMode = 'current_turn' | 'next_turn';
 
 // Tool types
 export interface Tool {
@@ -663,14 +795,6 @@ export interface ContextCategoryBreakdown {
 }
 
 /**
- * SlashCommand tool statistics
- */
-export interface ContextSlashCommandTool {
-	commands: number;
-	totalTokens: number;
-}
-
-/**
  * API usage statistics from Claude response
  */
 export interface ContextAPIUsage {
@@ -694,7 +818,6 @@ export interface ContextInfo {
 	// Category breakdown
 	breakdown: Record<string, ContextCategoryBreakdown>;
 	// Optional additional info
-	slashCommandTool?: ContextSlashCommandTool;
 	apiUsage?: ContextAPIUsage;
 	// Metadata
 	lastUpdated?: number; // Timestamp of last update

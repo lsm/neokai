@@ -9,12 +9,31 @@ import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
+// Room agent tools are registered as an in-process MCP server which connects after the
+// system:init message is emitted, so they never appear in sessionInfo.tools. We detect
+// room sessions via session_id and display the known tool set statically.
+const ROOM_AGENT_TOOLS = [
+	'room_complete_goal',
+	'room_create_task',
+	'room_spawn_worker',
+	'room_wait_for_review',
+	'room_escalate',
+	'room_update_goal_progress',
+	'room_list_goals',
+	'room_list_jobs',
+	'room_list_tasks',
+	'room_update_prompts',
+];
+
 interface Props {
 	sessionInfo: SystemInitMessage;
 }
 
 export function MessageInfoDropdown({ sessionInfo }: Props) {
 	const simplifiedModel = sessionInfo.model.replace('claude-', '').replace('anthropic.', '');
+
+	const isRoomSession = sessionInfo.session_id?.startsWith('room:');
+	const displayTools = isRoomSession ? ROOM_AGENT_TOOLS : (sessionInfo.tools ?? []);
 
 	return (
 		<div class="w-80 max-h-[70vh] overflow-y-auto bg-indigo-50 dark:bg-indigo-900/70 rounded-lg border border-indigo-200 dark:border-indigo-800 p-3 space-y-3 shadow-2xl backdrop-blur-sm">
@@ -54,13 +73,13 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 			)}
 
 			{/* Tools */}
-			{sessionInfo.tools && sessionInfo.tools.length > 0 && (
+			{displayTools.length > 0 && (
 				<div>
 					<div class="text-xs font-medium text-indigo-900 dark:text-indigo-100 mb-1">
-						Tools ({sessionInfo.tools.length})
+						Tools ({displayTools.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
-						{sessionInfo.tools.map((tool) => (
+						{displayTools.map((tool: string) => (
 							<span
 								key={tool}
 								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs"
@@ -79,7 +98,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						MCP Servers ({sessionInfo.mcp_servers.length})
 					</div>
 					<div class="space-y-1">
-						{sessionInfo.mcp_servers.map((server) => (
+						{sessionInfo.mcp_servers.map((server: { name: string; status: string }) => (
 							<div key={server.name} class="flex items-center gap-2">
 								<div
 									class={`w-1.5 h-1.5 rounded-full ${
@@ -102,7 +121,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						Slash Commands ({sessionInfo.slash_commands.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
-						{sessionInfo.slash_commands.map((cmd) => (
+						{sessionInfo.slash_commands.map((cmd: string) => (
 							<span
 								key={cmd}
 								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs font-mono"
@@ -121,7 +140,7 @@ export function MessageInfoDropdown({ sessionInfo }: Props) {
 						Agents ({sessionInfo.agents.length})
 					</div>
 					<div class="flex flex-wrap gap-1">
-						{sessionInfo.agents.map((agent) => (
+						{sessionInfo.agents.map((agent: string) => (
 							<span
 								key={agent}
 								class="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded text-xs"

@@ -119,13 +119,14 @@ export class SessionManager {
 		// Subscribe to message send requests (from RPC handler)
 		// Handles message persistence: expand commands → build content → save DB → publish UI
 		const unsubMessageSendRequest = this.eventBus.on('message.sendRequest', async (data) => {
-			const { sessionId, messageId, content, images } = data;
+			const { sessionId, messageId, content, images, deliveryMode } = data;
 
 			await this.messagePersistence.persist({
 				sessionId,
 				messageId,
 				content,
 				images,
+				deliveryMode,
 			});
 		});
 		this.eventBusUnsubscribers.push(unsubMessageSendRequest);
@@ -233,8 +234,8 @@ export class SessionManager {
 		return this.sessionCache.getAsync(sessionId);
 	}
 
-	listSessions(): Session[] {
-		return this.db.listSessions();
+	listSessions(options?: { status?: string; includeArchived?: boolean }): Session[] {
+		return this.db.listSessions(options);
 	}
 
 	async updateSession(sessionId: string, updates: Partial<Session>): Promise<void> {
@@ -266,7 +267,7 @@ export class SessionManager {
 	}
 
 	getTotalSessions(): number {
-		return this.db.listSessions().length;
+		return this.db.listSessions({ includeArchived: true }).length;
 	}
 
 	// ==================== Tools Configuration ====================

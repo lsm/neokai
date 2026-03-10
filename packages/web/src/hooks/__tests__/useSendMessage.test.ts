@@ -163,6 +163,33 @@ describe('useSendMessage', () => {
 
 			expect(onSendStart).not.toHaveBeenCalled();
 		});
+
+		it('should send while processing when queueing is enabled', async () => {
+			const onSendStart = vi.fn();
+
+			const { result } = renderHook(() =>
+				useSendMessage({
+					sessionId: 'session-1',
+					session: defaultSession,
+					isSending: true,
+					allowQueueWhileProcessing: true,
+					onSendStart,
+					onSendComplete: vi.fn(),
+					onError: vi.fn(),
+				})
+			);
+
+			await act(async () => {
+				await result.current.sendMessage('Queued message');
+			});
+
+			expect(onSendStart).toHaveBeenCalled();
+			expect(mockRequest).toHaveBeenCalledWith('message.send', {
+				sessionId: 'session-1',
+				content: 'Queued message',
+				images: undefined,
+			});
+		});
 	});
 
 	describe('archived session handling', () => {
@@ -296,6 +323,30 @@ describe('useSendMessage', () => {
 				sessionId: 'session-1',
 				content: 'Hello with image',
 				images,
+			});
+		});
+
+		it('should include deliveryMode when sending next-turn message', async () => {
+			const { result } = renderHook(() =>
+				useSendMessage({
+					sessionId: 'session-1',
+					session: defaultSession,
+					isSending: false,
+					onSendStart: vi.fn(),
+					onSendComplete: vi.fn(),
+					onError: vi.fn(),
+				})
+			);
+
+			await act(async () => {
+				await result.current.sendMessage('Queue this', undefined, 'next_turn');
+			});
+
+			expect(mockRequest).toHaveBeenCalledWith('message.send', {
+				sessionId: 'session-1',
+				content: 'Queue this',
+				images: undefined,
+				deliveryMode: 'next_turn',
 			});
 		});
 	});

@@ -31,7 +31,6 @@ import { getCoordinatorAgents } from './coordinator-agents';
 import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
-import { Logger } from '../logger';
 import { getProviderContextManager } from '../providers/factory.js';
 import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
@@ -47,12 +46,9 @@ export interface QueryOptionsBuilderContext {
 }
 
 export class QueryOptionsBuilder {
-	private logger: Logger;
 	private canUseTool?: CanUseTool;
 
-	constructor(private ctx: QueryOptionsBuilderContext) {
-		this.logger = new Logger(`QueryOptionsBuilder ${ctx.session.id}`);
-	}
+	constructor(private ctx: QueryOptionsBuilderContext) {}
 
 	/**
 	 * Set the canUseTool callback for handling tool permissions
@@ -69,7 +65,6 @@ export class QueryOptionsBuilder {
 	 */
 	async build(): Promise<Options> {
 		const config = this.ctx.session.config;
-		const _legacyToolsConfig = config.tools; // Legacy NeoKai-specific tools config
 
 		// Get settings-derived options (from global settings)
 		const sdkSettingsOptions = await this.getSettingsOptions();
@@ -186,6 +181,59 @@ export class QueryOptionsBuilder {
 			// ============ Callbacks ============
 			canUseTool: this.canUseTool,
 		};
+
+		// ============ Room Session Restrictions ============
+		// Room chat sessions are orchestrators only — they must not
+		// have access to built-in file/shell tools or user-configured MCP servers.
+		if (this.ctx.session.type === 'room_chat') {
+			const roomAllowedBuiltinTools = [
+				'Read',
+				'Glob',
+				'Grep',
+				'WebFetch',
+				'WebSearch',
+				'ToolSearch',
+				'AskUserQuestion',
+				'Skill',
+			];
+			const restrictedBuiltinTools = [
+				'Task',
+				'TaskOutput',
+				'TaskStop',
+				'Bash',
+				'Edit',
+				'Write',
+				'NotebookEdit',
+			];
+			// Room chat must not use Claude Code preset prompt by default.
+			const systemPrompt = queryOptions.systemPrompt;
+			if (
+				typeof systemPrompt === 'object' &&
+				systemPrompt !== null &&
+				(systemPrompt as ClaudeCodePreset).type === 'preset' &&
+				(systemPrompt as ClaudeCodePreset).preset === 'claude_code'
+			) {
+				queryOptions.systemPrompt = undefined;
+			}
+
+			// Restrict room chat to a safe, read-oriented built-in tool set.
+			queryOptions.tools = roomAllowedBuiltinTools;
+			queryOptions.allowedTools = [
+				...new Set([
+					...(queryOptions.allowedTools ?? []),
+					...roomAllowedBuiltinTools,
+					'room-agent-tools__*',
+				]),
+			];
+
+			queryOptions.disallowedTools = [
+				...new Set([...(queryOptions.disallowedTools ?? []), ...restrictedBuiltinTools]),
+			];
+			// Prevent user-configured MCP servers from being merged in.
+			queryOptions.strictMcpConfig = true;
+			// Skip settings file loading so user's settings.json doesn't inject extra tools.
+			queryOptions.settingSources = [];
+		}
 
 		// ============ Coordinator Mode ============
 		// When coordinator mode is enabled, apply the coordinator agent to the main thread
@@ -485,13 +533,12 @@ CRITICAL RULES:
 	 * Priority:
 	 * 1. SDKConfig mcpServers (programmatic configuration)
 	 * 2. Undefined to let SDK auto-load from settings files
-	 *
 	 */
 	private getMcpServers(): Record<string, unknown> | undefined {
 		// Use SDKConfig mcpServers if explicitly set
 		const config = this.ctx.session.config;
 		if (config.mcpServers !== undefined) {
-			return config.mcpServers;
+			return config.mcpServers as Record<string, unknown>;
 		}
 
 		// Let SDK auto-load from settings files
@@ -594,6 +641,24 @@ CRITICAL RULES:
 			}
 		}
 
+		// 3. Explicitly include proxy environment variables for Dev Proxy support
+		// These are set by the dev-proxy test helper and need to be passed to the SDK subprocess
+		// See: https://github.com/dotnet/dev-proxy/issues/169
+		const proxyEnvVars = [
+			'HTTPS_PROXY',
+			'HTTP_PROXY',
+			'NODE_USE_ENV_PROXY',
+			'NODE_EXTRA_CA_CERTS',
+		] as const;
+		for (const key of proxyEnvVars) {
+			const value = process.env[key];
+			if (value !== undefined) {
+				mergedEnv[key] = value;
+			}
+		}
+
+		// Always return mergedEnv (not undefined) when proxy vars are present
+		// This ensures SDK subprocess receives proxy environment variables
 		return Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined;
 	}
 

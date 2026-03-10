@@ -17,6 +17,7 @@ import type { SessionManager } from './session-manager';
 import type { AuthManager } from './auth-manager';
 import type { SettingsManager } from './settings-manager';
 import type { Config } from '../config';
+import type { Database } from '../storage/database';
 import { Logger } from './logger';
 import type {
 	SessionsState,
@@ -31,6 +32,7 @@ import type {
 } from '@neokai/shared';
 import type { Session, ContextInfo } from '@neokai/shared';
 import { STATE_CHANNELS } from '@neokai/shared';
+import { SDKMessageRepository } from '../storage/repositories/sdk-message-repository';
 
 const VERSION = '0.1.1';
 const CLAUDE_SDK_VERSION = '0.1.37';
@@ -52,7 +54,6 @@ export class StateManager {
 	private sessionCache = new Map<string, Session>();
 	private processingStateCache = new Map<string, AgentProcessingState>();
 	private commandsCache = new Map<string, string[]>();
-	private contextCache = new Map<string, ContextInfo>();
 	private errorCache = new Map<
 		string,
 		{ message: string; details?: unknown; occurredAt: number } | null
@@ -64,7 +65,8 @@ export class StateManager {
 		private authManager: AuthManager,
 		private settingsManager: SettingsManager,
 		private config: Config,
-		private eventBus: DaemonHub
+		private eventBus: DaemonHub,
+		private db?: Database
 	) {
 		this.setupHandlers();
 		this.setupEventListeners();
@@ -102,7 +104,7 @@ export class StateManager {
 			});
 
 			// Publish session.created event
-			this.messageHub.event('session.created', { sessionId: session.id }, { room: 'global' });
+			this.messageHub.event('session.created', { sessionId: session.id }, { channel: 'global' });
 		});
 
 		// Session updated - update cache from event data and broadcast immediately
@@ -137,14 +139,13 @@ export class StateManager {
 			this.sessionCache.delete(sessionId);
 			this.processingStateCache.delete(sessionId);
 			this.commandsCache.delete(sessionId);
-			this.contextCache.delete(sessionId);
 
 			// Broadcast
 			await this.broadcastSessionsDelta({
 				removed: [sessionId],
 				timestamp: Date.now(),
 			});
-			this.messageHub.event('session.deleted', { sessionId }, { room: 'global' });
+			this.messageHub.event('session.deleted', { sessionId }, { channel: 'global' });
 		});
 
 		// Auth events
@@ -171,18 +172,19 @@ export class StateManager {
 			}
 		);
 
-		// Context updated - cache and broadcast
+		// Context updated - broadcast dedicated event and full session state
+		// Context data is persisted in session.metadata.lastContextInfo (by ContextTracker),
+		// so no separate cache needed here. The dedicated event provides a fast path
+		// for the frontend to update the context bar immediately.
 		this.eventBus.on(
 			'context.updated',
 			async (data: { sessionId: string; contextInfo: ContextInfo }) => {
-				this.contextCache.set(data.sessionId, data.contextInfo);
-
-				// Publish dedicated context.updated event
+				// Publish dedicated context.updated event (fast path for UI)
 				this.messageHub.event('context.updated', data.contextInfo, {
-					room: `session:${data.sessionId}`,
+					channel: `session:${data.sessionId}`,
 				});
 
-				// Also update unified session state
+				// Also update unified session state (includes metadata.lastContextInfo)
 				await this.broadcastSessionStateChange(data.sessionId);
 			}
 		);
@@ -380,6 +382,9 @@ export class StateManager {
 			maxSessions: this.config.maxSessions,
 			storageLocation: this.config.dbPath,
 
+			// Workspace
+			workspaceRoot: this.config.workspaceRoot,
+
 			// Authentication
 			auth: authStatus,
 
@@ -412,16 +417,14 @@ export class StateManager {
 	}
 
 	private async getSessionsState(): Promise<SessionsState> {
-		const allSessions = this.sessionManager.listSessions();
 		const settings = this.settingsManager.getGlobalSettings();
 
 		// Check if there are any archived sessions in the database
+		const allSessions = this.sessionManager.listSessions({ includeArchived: true });
 		const hasArchivedSessions = allSessions.some((s) => s.status === 'archived');
 
-		// Filter out archived sessions unless showArchived is enabled
-		const sessions = settings.showArchived
-			? allSessions
-			: allSessions.filter((s) => s.status !== 'archived');
+		// Server-side filtering: only include archived when setting is enabled
+		const sessions = settings.showArchived ? allSessions : this.sessionManager.listSessions();
 
 		return {
 			sessions,
@@ -465,6 +468,18 @@ export class StateManager {
 	private async getSessionState(sessionId: string): Promise<SessionState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
+			// Special handling for DB-only sessions (no AgentSession):
+			// - Room sessions (ID format: "room:{roomId}") — created when room agent starts
+			// - Conversation sessions (ID format: "conv:{roomId}:...") — task group timelines
+			if (sessionId.startsWith('room:') || sessionId.startsWith('conv:')) {
+				return {
+					sessionInfo: null,
+					agentState: { status: 'idle' },
+					commandsData: { availableCommands: [] },
+					error: null,
+					timestamp: Date.now(),
+				};
+			}
 			throw new Error('Session not found');
 		}
 
@@ -473,11 +488,12 @@ export class StateManager {
 		const agentState = agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
 
-		// Get context info (populated during streaming, null before first message)
-		const contextInfo = agentSession.getContextInfo();
-
 		// Get error from cache (null if no error or error has been cleared)
 		const error = this.errorCache.get(sessionId) || null;
+
+		// Context info lives in sessionData.metadata.lastContextInfo
+		// (persisted by ContextTracker, restored on session load)
+		// No separate top-level field needed.
 
 		return {
 			sessionInfo: sessionData,
@@ -485,7 +501,6 @@ export class StateManager {
 			commandsData: {
 				availableCommands: commands,
 			},
-			contextInfo: contextInfo,
 			error: error,
 			timestamp: Date.now(),
 		};
@@ -494,14 +509,28 @@ export class StateManager {
 	private async getSDKMessagesState(sessionId: string, since?: number): Promise<SDKMessagesState> {
 		const agentSession = await this.sessionManager.getSessionAsync(sessionId);
 		if (!agentSession) {
+			// DB-only sessions: read directly from sdk_messages table
+			// - Room sessions (room:*) may have no messages yet
+			// - Conversation sessions (conv:*) have mirrored messages
+			if ((sessionId.startsWith('room:') || sessionId.startsWith('conv:')) && this.db) {
+				const sdkMessageRepo = new SDKMessageRepository(this.db.getDatabase());
+				const { messages: sdkMessages, hasMore } = sdkMessageRepo.getSDKMessages(
+					sessionId,
+					100,
+					undefined,
+					since
+				);
+				return { sdkMessages, hasMore, timestamp: Date.now() };
+			}
 			throw new Error('Session not found');
 		}
 
 		// Use 'since' for incremental sync on reconnection
-		const sdkMessages = agentSession.getSDKMessages(100, undefined, since);
+		const { messages: sdkMessages, hasMore } = agentSession.getSDKMessages(100, undefined, since);
 
 		return {
 			sdkMessages,
+			hasMore,
 			timestamp: Date.now(),
 		};
 	}
@@ -521,7 +550,7 @@ export class StateManager {
 			: { ...(await this.getSessionsState()), version };
 
 		this.messageHub.event(STATE_CHANNELS.GLOBAL_SESSIONS, state, {
-			room: 'global',
+			channel: 'global',
 		});
 	}
 
@@ -533,7 +562,7 @@ export class StateManager {
 	async broadcastSessionsDelta(update: SessionsUpdate): Promise<void> {
 		const version = this.incrementVersion(`${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`);
 		const channel = `${STATE_CHANNELS.GLOBAL_SESSIONS}.delta`;
-		this.messageHub.event(channel, { ...update, version }, { room: 'global' });
+		this.messageHub.event(channel, { ...update, version }, { channel: 'global' });
 	}
 
 	/**
@@ -545,7 +574,7 @@ export class StateManager {
 		const state = { ...(await this.getSystemState()), version };
 
 		this.messageHub.event(STATE_CHANNELS.GLOBAL_SYSTEM, state, {
-			room: 'global',
+			channel: 'global',
 		});
 	}
 
@@ -557,7 +586,7 @@ export class StateManager {
 		const state = { ...(await this.getSettingsState()), version };
 
 		this.messageHub.event(STATE_CHANNELS.GLOBAL_SETTINGS, state, {
-			room: 'global',
+			channel: 'global',
 		});
 	}
 
@@ -573,7 +602,7 @@ export class StateManager {
 			const state = { ...(await this.getSessionState(sessionId)), version };
 
 			this.messageHub.event(STATE_CHANNELS.SESSION, state, {
-				room: `session:${sessionId}`,
+				channel: `session:${sessionId}`,
 			});
 		} catch (error) {
 			// Session may have been deleted or database may be closed during cleanup
@@ -593,14 +622,13 @@ export class StateManager {
 					const fallbackState = {
 						sessionInfo: cachedSession,
 						agentState: cachedProcessingState,
-						commandsData: { availableCommands: [] },
-						contextInfo: null,
+						commandsData: { availableCommands: this.commandsCache.get(sessionId) || [] },
 						error: null,
 						timestamp: Date.now(),
 						version,
 					};
 					this.messageHub.event(STATE_CHANNELS.SESSION, fallbackState, {
-						room: `session:${sessionId}`,
+						channel: `session:${sessionId}`,
 					});
 				} catch (fallbackError) {
 					this.logger.error(
@@ -621,7 +649,7 @@ export class StateManager {
 		const state = { ...(await this.getSDKMessagesState(sessionId)), version };
 
 		this.messageHub.event(STATE_CHANNELS.SESSION_SDK_MESSAGES, state, {
-			room: `session:${sessionId}`,
+			channel: `session:${sessionId}`,
 		});
 	}
 
@@ -637,7 +665,7 @@ export class StateManager {
 		this.messageHub.event(
 			`${STATE_CHANNELS.SESSION_SDK_MESSAGES}.delta`,
 			{ ...update, version },
-			{ room: `session:${sessionId}` }
+			{ channel: `session:${sessionId}` }
 		);
 	}
 }

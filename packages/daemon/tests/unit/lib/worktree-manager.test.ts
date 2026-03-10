@@ -378,6 +378,44 @@ describe('WorktreeManager', () => {
 		});
 	});
 
+	describe('getCurrentBranch', () => {
+		it('should return current branch from branch --show-current', async () => {
+			mockGitRaw.mockResolvedValueOnce('feature/test\n');
+
+			const result = await manager.getCurrentBranch('/test/repo');
+
+			expect(result).toBe('feature/test');
+			expect(mockGitRaw).toHaveBeenCalledWith(['branch', '--show-current']);
+		});
+
+		it('should return null for unborn HEAD', async () => {
+			mockGitRaw.mockResolvedValueOnce('\n');
+
+			const result = await manager.getCurrentBranch('/test/repo');
+
+			expect(result).toBeNull();
+		});
+
+		it('should fallback to revparse when show-current fails', async () => {
+			mockGitRaw.mockRejectedValueOnce(new Error('show-current failed'));
+			mockGitRevparse.mockResolvedValueOnce('main\n');
+
+			const result = await manager.getCurrentBranch('/test/repo');
+
+			expect(result).toBe('main');
+			expect(mockGitRevparse).toHaveBeenCalledWith(['--abbrev-ref', 'HEAD']);
+		});
+
+		it('should return null when revparse resolves to HEAD', async () => {
+			mockGitRaw.mockRejectedValueOnce(new Error('show-current failed'));
+			mockGitRevparse.mockResolvedValueOnce('HEAD\n');
+
+			const result = await manager.getCurrentBranch('/test/repo');
+
+			expect(result).toBeNull();
+		});
+	});
+
 	describe('renameBranch', () => {
 		it('should return false if new branch already exists', async () => {
 			mockGitRaw.mockResolvedValue('  new-branch\n'); // Branch exists

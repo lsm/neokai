@@ -405,7 +405,7 @@ export const currentAgentState = computed<AgentProcessingState>(() => {
 
 /** @public - Preact signal accessed via .value in components */
 export const currentContextInfo = computed<ContextInfo | null>(() => {
-	return currentSessionState.value?.contextInfo || null;
+	return currentSessionState.value?.sessionInfo?.metadata?.lastContextInfo || null;
 });
 
 /**

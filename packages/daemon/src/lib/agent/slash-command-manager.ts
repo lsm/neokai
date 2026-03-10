@@ -40,9 +40,12 @@ export class SlashCommandManager {
 	private commandsFetchedFromSDK = false;
 
 	constructor(private ctx: SlashCommandManagerContext) {
-		// Restore from session if available
-		if (ctx.session.availableCommands && ctx.session.availableCommands.length > 0) {
-			this.slashCommands = ctx.session.availableCommands;
+		// Restore from session if available — validate it's a real array, not a
+		// corrupted string (old sessions may have "merge-session" stored as a
+		// JSON-encoded string rather than a JSON-encoded array).
+		const stored = ctx.session.availableCommands;
+		if (Array.isArray(stored) && stored.length > 0) {
+			this.slashCommands = stored;
 		}
 	}
 
@@ -72,6 +75,31 @@ export class SlashCommandManager {
 		}
 
 		return this.slashCommands;
+	}
+
+	/**
+	 * Update commands from the SDK system init message.
+	 * This is the most reliable source — fires immediately on every query start
+	 * and contains all built-in commands plus custom skills.
+	 */
+	async updateFromInit(sdkCommands: string[]): Promise<void> {
+		if (this.commandsFetchedFromSDK) return;
+
+		const { session, db, daemonHub } = this.ctx;
+
+		const kaiBuiltInCommands = getBuiltInCommandNames();
+		const allCommands = [...new Set([...sdkCommands, ...kaiBuiltInCommands])];
+
+		this.slashCommands = allCommands;
+		this.commandsFetchedFromSDK = true;
+
+		session.availableCommands = this.slashCommands;
+		db.updateSession(session.id, { availableCommands: this.slashCommands });
+
+		await daemonHub.emit('commands.updated', {
+			sessionId: session.id,
+			commands: this.slashCommands,
+		});
 	}
 
 	/**

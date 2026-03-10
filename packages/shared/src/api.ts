@@ -33,6 +33,8 @@ export interface CreateSessionRequest {
 	config?: Partial<SessionConfig>;
 	worktreeBaseBranch?: string; // Base branch for worktree (default: HEAD)
 	title?: string; // Optional title - if provided, skips auto-title generation
+	roomId?: string; // Optional room ID to assign session to
+	createdBy?: 'human' | 'neo'; // Creator type (defaults to 'human')
 }
 
 export interface CreateSessionResponse {

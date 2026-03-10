@@ -21,9 +21,15 @@ import {
 import {
 	waitForWebSocketConnected,
 	waitForAssistantResponse,
-	waitForSessionCreated,
+	createSessionViaUI,
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
+
+/**
+ * Dev proxy mode detection - when using devproxy, API responses are instant
+ * so we can use much shorter timeouts
+ */
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
 test.describe('Session Archive - Menu Option', () => {
 	let sessionId: string | null = null;
@@ -33,12 +39,7 @@ test.describe('Session Archive - Menu Option', () => {
 		await waitForWebSocketConnected(page);
 
 		// Create a session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -98,7 +99,7 @@ test.describe('Session Archive - Archiving Flow', () => {
 		await clickArchiveSession(page);
 
 		// Wait for success toast or UI update
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Should show success toast with "successfully" or the archived label
 		await expect(page.locator('text=Session archived').first()).toBeVisible({
@@ -115,7 +116,7 @@ test.describe('Session Archive - Archiving Flow', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Should show "Session archived" label in the chat area
 		await expect(page.locator('text=Session archived').first()).toBeVisible({
@@ -132,7 +133,7 @@ test.describe('Session Archive - Archiving Flow', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Re-select the session in the sidebar (view may have changed after archiving)
 		await selectSessionInSidebar(page, sessionId);
@@ -180,7 +181,7 @@ test.describe('Session Archive - Archived Session Behavior', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// The message input should be replaced with an archived label
 		// Check that textarea is not visible or is disabled
@@ -203,7 +204,7 @@ test.describe('Session Archive - Archived Session Behavior', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Should show archived text
 		await expect(page.locator('text=Session archived').first()).toBeVisible();
@@ -236,12 +237,7 @@ test.describe('Session Archive - Edge Cases', () => {
 
 	test('should preserve messages after archiving', async ({ page }) => {
 		// Create session with a specific message
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Send a message
 		const textarea = page.locator('textarea[placeholder*="Ask"]');
@@ -256,7 +252,7 @@ test.describe('Session Archive - Edge Cases', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Re-select the session in the sidebar (view may have changed after archiving)
 		await selectSessionInSidebar(page, sessionId!);
@@ -274,7 +270,7 @@ test.describe('Session Archive - Edge Cases', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Re-select the session in the sidebar (view may have changed after archiving)
 		await selectSessionInSidebar(page, sessionId!);
@@ -292,7 +288,7 @@ test.describe('Session Archive - Edge Cases', () => {
 		await confirmButton.click();
 
 		// Wait for deletion
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Session should be deleted (navigated away)
 		sessionId = null; // Already deleted, don't try to cleanup
@@ -330,7 +326,7 @@ test.describe('Session Archive - Sidebar Toggle', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// The "Show archived" toggle should appear since we now have an archived session
 		const showArchivedToggle = page.locator('text=Show archived');
@@ -350,7 +346,7 @@ test.describe('Session Archive - Sidebar Toggle', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Navigate away from the archived session
 		await goToHomePage(page);
@@ -371,7 +367,7 @@ test.describe('Session Archive - Sidebar Toggle', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Navigate home
 		await goToHomePage(page);
@@ -402,7 +398,7 @@ test.describe('Session Archive - Sidebar Toggle', () => {
 		await clickArchiveSession(page);
 
 		// Wait for archive to complete
-		await page.waitForTimeout(1500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 
 		// Navigate home to see the list
 		await goToHomePage(page);

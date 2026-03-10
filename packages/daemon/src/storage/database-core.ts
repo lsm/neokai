@@ -51,11 +51,14 @@ export class DatabaseCore {
 		// Enable foreign key constraints (required for CASCADE deletes)
 		this.db.exec('PRAGMA foreign_keys = ON');
 
-		// Create tables
-		createTables(this.db);
-
-		// Run migrations (with automatic backup)
+		// Run migrations FIRST (with automatic backup) - this handles neo_* -> new tables
+		// CRITICAL: Must run before createTables() to avoid data loss!
+		// If createTables() runs first, it creates empty tables that cause
+		// renameTableIfExists() to drop populated legacy tables.
 		runMigrations(this.db, () => this.createBackup());
+
+		// Create any missing tables (will be no-ops if migrations already created them)
+		createTables(this.db);
 	}
 
 	/**

@@ -10,11 +10,21 @@ import { borderColors } from '../lib/design-tokens';
 
 export interface ScrollToBottomButtonProps {
 	onClick: () => void;
+	/** Tailwind bottom-* class controlling vertical offset. Defaults to 'bottom-36'
+	 *  (sized for ChatContainer's large floating footer). Pass a smaller value like
+	 *  'bottom-4' when there is no large footer below the scroll container. */
+	bottomClass?: string;
 }
 
-export function ScrollToBottomButton({ onClick }: ScrollToBottomButtonProps) {
+export function ScrollToBottomButton({
+	onClick,
+	bottomClass = 'bottom-36',
+}: ScrollToBottomButtonProps) {
 	return (
-		<div class="absolute bottom-36 left-1/2 -translate-x-1/2 z-20">
+		<div
+			class={`absolute ${bottomClass} left-1/2 -translate-x-1/2 z-20`}
+			data-bottom-class={bottomClass}
+		>
 			<button
 				onClick={onClick}
 				class={`w-10 h-10 rounded-full bg-dark-800 hover:bg-dark-700 text-gray-300 hover:text-gray-100 shadow-lg border ${borderColors.ui.secondary} flex items-center justify-center transition-all duration-150 animate-slideIn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}

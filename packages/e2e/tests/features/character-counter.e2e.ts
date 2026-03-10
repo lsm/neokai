@@ -1,5 +1,5 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, waitForSessionCreated } from '../helpers/wait-helpers';
+import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
 
 /**
  * Character Counter E2E Tests
@@ -16,7 +16,7 @@ test.describe('Character Counter', () => {
 
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
-		await expect(page.getByRole('heading', { name: 'NeoKai', exact: true }).first()).toBeVisible();
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
 		await page.waitForTimeout(1000);
 		sessionId = null;
 	});
@@ -34,12 +34,7 @@ test.describe('Character Counter', () => {
 
 	test('should display character count when typing', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Find the textarea
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -66,12 +61,7 @@ test.describe('Character Counter', () => {
 
 	test('should accept text up to maximum limit', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Find the textarea
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -88,12 +78,7 @@ test.describe('Character Counter', () => {
 
 	test('should prevent exceeding character limit', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Find the textarea
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -119,12 +104,7 @@ test.describe('Character Counter', () => {
 
 	test('should show visual feedback near character limit', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Find the textarea
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
@@ -159,12 +139,7 @@ test.describe('Character Counter', () => {
 
 	test('should clear counter when text is deleted', async ({ page }) => {
 		// Create a new session
-		const newSessionButton = page.getByRole('button', {
-			name: 'New Session',
-			exact: true,
-		});
-		await newSessionButton.click();
-		sessionId = await waitForSessionCreated(page);
+		sessionId = await createSessionViaUI(page);
 
 		// Find the textarea
 		const textarea = page.locator('textarea[placeholder*="Ask"]').first();
