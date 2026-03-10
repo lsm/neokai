@@ -46,9 +46,11 @@ function createMockDaemonHub() {
 function createMockSessionFactory(initialLiveSessions: string[] = []) {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	const liveSessions = new Set<string>(initialLiveSessions);
+	const removedWorktrees: string[] = [];
 	return {
 		calls,
 		liveSessions,
+		removedWorktrees,
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 			const sessionId =
@@ -74,9 +76,15 @@ function createMockSessionFactory(initialLiveSessions: string[] = []) {
 			// Return a synthetic worktree path so isolation enforcement passes in tests
 			return `/tmp/worktrees/${sessionId}`;
 		},
+		async removeWorktree(workspacePath: string) {
+			calls.push({ method: 'removeWorktree', args: [workspacePath] });
+			removedWorktrees.push(workspacePath);
+			return true;
+		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
 		liveSessions: Set<string>;
+		removedWorktrees: string[];
 	};
 }
 
@@ -195,7 +203,8 @@ describe('TaskGroupManager', () => {
 				task_type TEXT DEFAULT 'coding',
 				created_by_task_id TEXT,
 				assigned_agent TEXT DEFAULT 'coder',
-				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
+				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
+				archived_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
@@ -774,6 +783,201 @@ describe('TaskGroupManager', () => {
 			expect(updated!.state).toBe('failed');
 			const cancelledTask = await taskManager.getTask(task.id);
 			expect(cancelledTask?.status).toBe('cancelled');
+		});
+	});
+
+	describe('worktree cleanup', () => {
+		it('should cleanup worktree on task completion', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			await manager.complete(group.id, 'All done');
+
+			// Should have called removeWorktree with the group's workspace path
+			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+		});
+
+		it('should NOT cleanup worktree on task failure (kept for debugging)', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			await manager.fail(group.id, 'Task failed');
+
+			// Worktree should NOT be cleaned up on failure - kept for debugging
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
+		});
+
+		it('should cleanup worktree on archiveGroup (even for failed tasks)', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First fail the group
+			await manager.fail(group.id, 'Task failed');
+
+			// Worktree should still exist
+			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
+
+			// Now archive the group
+			await manager.archiveGroup(group.id);
+
+			// Now worktree should be cleaned up
+			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+		});
+
+		it('should cleanup worktree on task cancellation', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			await manager.cancel(group.id);
+
+			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+		});
+
+		it('should cleanup worktree when terminating a non-terminal group', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+			const group = await manager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			await manager.terminateGroup(group.id);
+
+			expect(sessionFactory.removedWorktrees).toContain(group.workspacePath);
+		});
+
+		it('should not cleanup worktree if workspace is main repo', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a manager where workspace path matches the worktree path
+			// This simulates a scenario where no worktree was created (non-git repo)
+			const mainRepoFactory = {
+				...createMockSessionFactory(),
+				async createWorktree() {
+					// Return null to simulate non-git repo (no worktree created)
+					return null;
+				},
+			} satisfies SessionFactory & { removedWorktrees: string[] };
+
+			const mainRepoManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: mainRepoFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			// spawn() will throw because worktree creation failed
+			// So we need to test the cleanup logic directly via a manually created group
+			// Create group directly with main repo path
+			const rawGroup = groupRepo.createGroup(
+				task.id,
+				'worker:room-1:task:test',
+				'leader:room-1:task:test',
+				'coder',
+				'/workspace' // Same as main workspace - simulates no worktree
+			);
+			await taskManager.startTask(task.id);
+
+			await mainRepoManager.complete(rawGroup.id, 'Done');
+
+			// Should NOT have called removeWorktree since workspace is main repo
+			expect(mainRepoFactory.removedWorktrees).not.toContain('/workspace');
+		});
+
+		it('should not fail operation when worktree cleanup fails', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory that fails on removeWorktree
+			const failingFactory = {
+				...createMockSessionFactory(),
+				async removeWorktree(_workspacePath: string) {
+					throw new Error('Worktree cleanup failed');
+				},
+			} satisfies SessionFactory & { removedWorktrees: string[] };
+
+			const failingManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: failingFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await failingManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Should not throw even though cleanup fails
+			const result = await failingManager.complete(group.id, 'Done');
+
+			expect(result!.state).toBe('completed');
+			const taskResult = await taskManager.getTask(task.id);
+			expect(taskResult!.status).toBe('completed');
 		});
 	});
 });

@@ -211,6 +211,8 @@ export interface NeoTask {
 	startedAt?: number;
 	/** Completion timestamp (milliseconds since epoch) */
 	completedAt?: number;
+	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
+	archivedAt?: number | null;
 }
 
 /**
@@ -219,6 +221,8 @@ export interface NeoTask {
 export interface TaskFilter {
 	status?: TaskStatus;
 	priority?: TaskPriority;
+	/** Include archived tasks in results (default: false - archived tasks are hidden) */
+	includeArchived?: boolean;
 }
 
 /**

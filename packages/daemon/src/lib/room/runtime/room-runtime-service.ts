@@ -287,6 +287,38 @@ export class RoomRuntimeService {
 					agentSessions.delete(sessionId);
 				}
 			},
+			removeWorktree: async (workspacePath: string): Promise<boolean> => {
+				try {
+					// Resolve the main repo path correctly (handles linked worktrees)
+					const mainRepoPath = await worktreeManager.resolveMainRepoPath(workspacePath);
+					if (!mainRepoPath) {
+						log.warn(`removeWorktree: no main repo found for ${workspacePath}`);
+						return false;
+					}
+
+					// Get the current branch from the worktree
+					const branch = await worktreeManager.getCurrentBranch(workspacePath);
+					if (!branch) {
+						log.warn(`removeWorktree: no branch found for ${workspacePath}`);
+						return false;
+					}
+
+					// Construct WorktreeMetadata and remove
+					await worktreeManager.removeWorktree(
+						{
+							isWorktree: true,
+							worktreePath: workspacePath,
+							mainRepoPath,
+							branch,
+						},
+						true // Delete branch as well
+					);
+					return true;
+				} catch (error) {
+					log.warn(`Failed to remove worktree ${workspacePath}:`, error);
+					return false;
+				}
+			},
 		};
 	}
 

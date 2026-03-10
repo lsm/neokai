@@ -29,7 +29,13 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus'
+	| 'createTask'
+	| 'getTask'
+	| 'listTasks'
+	| 'failTask'
+	| 'cancelTask'
+	| 'setTaskStatus'
+	| 'archiveTask'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -225,6 +231,50 @@ export function setupTaskHandlers(
 		emitRoomOverview(params.roomId);
 
 		return { task: cancelledTask };
+	});
+
+	// task.archive - Archive a task (cleanup worktree, hide from UI)
+	messageHub.onRequest('task.archive', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Validate task is in a terminal state before archiving
+		const TERMINAL_STATES: TaskStatus[] = ['completed', 'failed', 'cancelled'];
+		if (!TERMINAL_STATES.includes(task.status)) {
+			throw new Error(
+				`Cannot archive task in '${task.status}' state. Only tasks in terminal states (completed, failed, cancelled) can be archived.`
+			);
+		}
+
+		// If there's an active group with runtime, cleanup worktree
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				await runtime.archiveTaskGroup(params.taskId);
+			}
+		}
+
+		// Get the archived task (archiveTaskGroup already sets archivedAt)
+		const archivedTask = await taskManager.getTask(params.taskId);
+		if (archivedTask) {
+			emitTaskUpdate(params.roomId, archivedTask);
+			emitRoomOverview(params.roomId);
+		}
+
+		log.info(`Task ${params.taskId} archived in room ${params.roomId}`);
+		return { task: archivedTask };
 	});
 
 	// task.setStatus - Set task status with validation (human-initiated)

@@ -67,11 +67,18 @@ export class TaskRepository {
 	}
 
 	/**
-	 * List tasks for a room, optionally filtered
+	 * List tasks for a room, optionally filtered.
+	 * By default, archived tasks (archived_at IS NOT NULL) are excluded.
+	 * Use filter.includeArchived = true to include archived tasks.
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
 		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
+
+		// Exclude archived tasks by default
+		if (!filter?.includeArchived) {
+			query += ` AND archived_at IS NULL`;
+		}
 
 		if (filter?.status) {
 			query += ` AND status = ?`;
@@ -162,6 +169,17 @@ export class TaskRepository {
 	}
 
 	/**
+	 * Archive a task by setting archived_at timestamp.
+	 * Archived tasks are hidden from UI by default.
+	 * Returns the updated task or null if not found.
+	 */
+	archiveTask(id: string): NeoTask | null {
+		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getTask(id);
+	}
+
+	/**
 	 * Delete all tasks for a room
 	 */
 	deleteTasksForRoom(roomId: string): void {
@@ -225,6 +243,7 @@ export class TaskRepository {
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
+			archivedAt: (row.archived_at as number | null) ?? undefined,
 		};
 	}
 }

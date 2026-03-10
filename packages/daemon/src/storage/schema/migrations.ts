@@ -81,6 +81,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 19: Remove legacy mirrored session_group_messages table
 	runMigration19(db);
+
+	// Migration 20: Add archived_at column to tasks table
+	runMigration20(db);
 }
 
 /**
@@ -949,6 +952,28 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
 function runMigration19(db: BunDatabase): void {
 	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
 	db.exec(`DROP INDEX IF EXISTS idx_sgmsg_group`);
+}
+
+/**
+ * Migration 20: Add archived_at column to tasks table
+ *
+ * archived_at is orthogonal to status — a task can be completed+archived, failed+archived, etc.
+ * This supports the worktree cleanup strategy where:
+ * - completed/cancelled tasks cleanup worktree immediately
+ * - failed tasks keep worktree for debugging
+ * - archived tasks cleanup worktree when user explicitly archives
+ */
+function runMigration20(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Check if archived_at column already exists
+	if (tableHasColumn(db, 'tasks', 'archived_at')) {
+		return;
+	}
+
+	db.exec(`ALTER TABLE tasks ADD COLUMN archived_at INTEGER`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {
