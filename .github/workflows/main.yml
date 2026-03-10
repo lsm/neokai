@@ -178,7 +178,6 @@ jobs:
           - module: git
             test_path: tests/online/git
             timeout: 10
-            mock_sdk: true
           - module: lifecycle
             test_path: tests/online/lifecycle
             mock_sdk: true
