@@ -389,6 +389,17 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				args.task_id,
 				args.message
 			);
+			// Emit task update after successful message routing (may have changed status)
+			if (success) {
+				const updatedTask = await taskManager.getTask(args.task_id);
+				if (updatedTask && daemonHub) {
+					void daemonHub.emit('room.task.update', {
+						sessionId: `room:${roomId}`,
+						roomId,
+						task: updatedTask,
+					});
+				}
+			}
 			return jsonResult(error !== undefined ? { success, error } : { success });
 		},
 

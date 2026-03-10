@@ -680,6 +680,12 @@ export function setupTaskHandlers(
 			throw new Error(result.error ?? 'Failed to send human message');
 		}
 
+		// Emit task update after successful message routing (may have changed status)
+		const updatedTask = await taskManager.getTask(params.taskId);
+		if (updatedTask) {
+			emitTaskUpdate(params.roomId, updatedTask);
+		}
+
 		return { success: true };
 	});
 }

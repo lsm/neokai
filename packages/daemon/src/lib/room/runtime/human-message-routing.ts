@@ -13,7 +13,7 @@ import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 
 export interface TaskOperator {
 	getTask(taskId: string): Promise<{ status: TaskStatus } | null>;
-	updateTaskStatus(taskId: string, status: TaskStatus, updates?: Partial<{ status: TaskStatus }>): Promise<unknown>;
+	setTaskStatus(taskId: string, status: TaskStatus, options?: { result?: string; error?: string }): Promise<unknown>;
 }
 
 export interface HumanMessageResult {
@@ -74,7 +74,7 @@ export async function routeHumanMessageToGroup(
 
 			// Transition task to in_progress
 			try {
-				await taskManager.updateTaskStatus(taskId, 'in_progress');
+				await taskManager.setTaskStatus(taskId, 'in_progress');
 			} catch (error) {
 				// Rollback group state on failure (group was already reset, so use previousVersion + 1)
 				groupRepo.failGroup(group.id, previousVersion + 1);
@@ -94,7 +94,7 @@ export async function routeHumanMessageToGroup(
 				// Rollback: restore group to failed state and revert task status
 				groupRepo.failGroup(group.id, previousVersion + 1);
 				try {
-					await taskManager.updateTaskStatus(taskId, previousStatus);
+					await taskManager.setTaskStatus(taskId, previousStatus);
 				} catch {
 					// Rollback failure is logged but the main error is the injection failure
 				}

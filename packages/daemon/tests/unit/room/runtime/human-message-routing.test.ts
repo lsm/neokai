@@ -69,17 +69,17 @@ function makeRuntime(
 	injectMessageToWorker: ReturnType<typeof mock>;
 	taskManager: {
 		getTask: ReturnType<typeof mock>;
-		updateTaskStatus: ReturnType<typeof mock>;
+		setTaskStatus: ReturnType<typeof mock>;
 	};
 } {
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
 	const getTask = mock(async () => task ?? null);
-	const updateTaskStatus = mock(async () => undefined);
+	const setTaskStatus = mock(async () => undefined);
 
 	const taskManager = {
 		getTask,
-		updateTaskStatus,
+		setTaskStatus,
 	};
 
 	const runtime = {
@@ -192,7 +192,7 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(true);
 			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
-			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
 			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
 		});
 
@@ -205,13 +205,13 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to reset task group');
-			expect(taskManager.updateTaskStatus).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 		});
 
 		it('returns error when updateTaskStatus fails', async () => {
 			const failedTask = makeTask('failed');
 			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, failedTask);
-			taskManager.updateTaskStatus = mock(async () => {
+			taskManager.setTaskStatus = mock(async () => {
 				throw new Error('Status update failed');
 			});
 			// Group version is 1, so rollback should use version 2 (previousVersion + 1)
@@ -248,14 +248,14 @@ describe('routeHumanMessageToGroup', () => {
 			// Group was reset
 			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
 			// Status was changed to in_progress
-			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
 			// Tried to inject
 			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
 			// Rolled back to failed with correct version (1 + 1 = 2)
 			expect(failGroup).toHaveBeenCalled();
 			expect(failGroupCalls).toEqual([{ groupId: 'group-1', version: 2 }]);
 			// Status rolled back to failed
-			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'failed');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'failed');
 		});
 	});
 
@@ -269,7 +269,7 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(true);
 			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
-			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
+			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
 			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
 		});
 	});
@@ -284,7 +284,7 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Task is already completed');
-			expect(taskManager.updateTaskStatus).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
 		});
 	});
@@ -298,7 +298,7 @@ describe('routeHumanMessageToGroup', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Task not found');
-			expect(taskManager.updateTaskStatus).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
 		});
 	});
