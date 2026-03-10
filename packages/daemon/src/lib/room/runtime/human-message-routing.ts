@@ -6,10 +6,15 @@
  * - Failed tasks: group is reset and task transitions to in_progress before injecting
  */
 
+import type { TaskStatus } from '@neokai/shared';
 import type { RoomRuntime } from './room-runtime';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
-import type { TaskStatus } from '@neokai/shared';
+
+export interface TaskOperator {
+	getTask(taskId: string): Promise<{ status: TaskStatus } | null>;
+	updateTaskStatus(taskId: string, status: TaskStatus, updates?: Partial<{ status: TaskStatus }>): Promise<unknown>;
+}
 
 export interface HumanMessageResult {
 	success: boolean;
@@ -23,6 +28,7 @@ export type HumanMessageTarget = 'worker' | 'leader';
  *
  * @param runtime       The RoomRuntime instance for the room
  * @param groupRepo     The SessionGroupRepository for DB access
+ * @param taskManager   The TaskManager for task operations
  * @param taskId        The task ID to route the message to
  * @param message       The human message content
  * @param target        Target agent ('worker' | 'leader'), defaults to 'worker'
@@ -30,6 +36,7 @@ export type HumanMessageTarget = 'worker' | 'leader';
 export async function routeHumanMessageToGroup(
 	runtime: RoomRuntime,
 	groupRepo: SessionGroupRepository,
+	taskManager: TaskOperator,
 	taskId: string,
 	message: string,
 	target: HumanMessageTarget = 'worker'
@@ -43,7 +50,7 @@ export async function routeHumanMessageToGroup(
 	// Check if group is terminated using completedAt timestamp
 	if (group.completedAt !== null) {
 		// Get the task to check its status - we may be able to restart a failed task
-		const task = await runtime.taskManager.getTask(taskId);
+		const task = await taskManager.getTask(taskId);
 		if (!task) {
 			return { success: false, error: 'Task not found' };
 		}
@@ -67,7 +74,7 @@ export async function routeHumanMessageToGroup(
 
 			// Transition task to in_progress
 			try {
-				await runtime.taskManager.updateTaskStatus(taskId, 'in_progress');
+				await taskManager.updateTaskStatus(taskId, 'in_progress');
 			} catch (error) {
 				// Rollback group state on failure (group was already reset, so use previousVersion + 1)
 				groupRepo.failGroup(group.id, previousVersion + 1);
@@ -87,7 +94,7 @@ export async function routeHumanMessageToGroup(
 				// Rollback: restore group to failed state and revert task status
 				groupRepo.failGroup(group.id, previousVersion + 1);
 				try {
-					await runtime.taskManager.updateTaskStatus(taskId, previousStatus);
+					await taskManager.updateTaskStatus(taskId, previousStatus);
 				} catch {
 					// Rollback failure is logged but the main error is the injection failure
 				}

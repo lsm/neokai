@@ -125,20 +125,20 @@ describe('routeHumanMessageToGroup', () => {
 	describe('active group (completedAt = null)', () => {
 		describe('target=worker (default)', () => {
 			it('injects to worker and returns success', async () => {
-				const { runtime, injectMessageToWorker } = makeRuntime(true, makeTask('in_progress'));
+				const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
-				const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+				const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 				expect(result.success).toBe(true);
 				expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
 			});
 
 			it('returns error when injectMessageToWorker fails', async () => {
-				const { runtime } = makeRuntime(false, makeTask('in_progress'));
+				const { runtime, taskManager } = makeRuntime(false, makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
-				const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+				const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Failed to inject message into worker session');
@@ -147,12 +147,13 @@ describe('routeHumanMessageToGroup', () => {
 
 		describe('target=leader', () => {
 			it('injects to leader and returns success', async () => {
-				const { runtime, injectMessageToLeader } = makeRuntime(true, makeTask('in_progress'));
+				const { runtime, injectMessageToLeader, taskManager } = makeRuntime(true, makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
 				const result = await routeHumanMessageToGroup(
 					runtime,
 					groupRepo,
+					taskManager,
 					taskId,
 					message,
 					'leader'
@@ -163,12 +164,13 @@ describe('routeHumanMessageToGroup', () => {
 			});
 
 			it('returns error when injectMessageToLeader fails', async () => {
-				const { runtime } = makeRuntime(false, makeTask('in_progress'));
+				const { runtime, taskManager } = makeRuntime(false, makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
 				const result = await routeHumanMessageToGroup(
 					runtime,
 					groupRepo,
+					taskManager,
 					taskId,
 					message,
 					'leader'
@@ -186,7 +188,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, failedTask);
 			const { groupRepo, resetGroupForRestart } = makeGroupRepo(makeGroup(Date.now()), true);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(true);
 			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
@@ -199,7 +201,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, taskManager } = makeRuntime(true, failedTask);
 			const { groupRepo, resetGroupForRestart } = makeGroupRepo(makeGroup(Date.now()), false);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to reset task group');
@@ -217,7 +219,7 @@ describe('routeHumanMessageToGroup', () => {
 			group.version = 1;
 			const { groupRepo, failGroup, failGroupCalls } = makeGroupRepo(group, true);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to transition task to in_progress');
@@ -239,7 +241,7 @@ describe('routeHumanMessageToGroup', () => {
 				true
 			);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to inject message');
@@ -263,7 +265,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, cancelledTask);
 			const { groupRepo, resetGroupForRestart } = makeGroupRepo(makeGroup(Date.now()), true);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(true);
 			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
@@ -278,7 +280,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, completedTask);
 			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()), true);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Task is already completed');
@@ -292,7 +294,7 @@ describe('routeHumanMessageToGroup', () => {
 			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, null);
 			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()), true);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Task not found');
@@ -303,10 +305,10 @@ describe('routeHumanMessageToGroup', () => {
 
 	describe('no group', () => {
 		it('returns failure when no group is found', async () => {
-			const { runtime } = makeRuntime(true, makeTask('in_progress'));
+			const { runtime, taskManager } = makeRuntime(true, makeTask('in_progress'));
 			const { groupRepo } = makeGroupRepo(null);
 
-			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskManager, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('No active session group');

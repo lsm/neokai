@@ -29,7 +29,7 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus'
+	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus' | 'updateTaskStatus'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -670,6 +670,7 @@ export function setupTaskHandlers(
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
+			taskManager,
 			params.taskId,
 			params.message.trim(),
 			target
