@@ -12,6 +12,12 @@ import {
 } from './wait-helpers';
 
 /**
+ * Dev proxy mode detection - when using devproxy, API responses are instant
+ * so we can use much shorter timeouts
+ */
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
+/**
  * Open the Session options dropdown menu
  */
 export async function openSessionOptionsMenu(page: Page): Promise<void> {
@@ -52,7 +58,9 @@ export async function clickArchiveSession(page: Page): Promise<void> {
 }
 
 /**
- * Create a session with a message to have content
+ * Create a session with a message to have content.
+ * Works in both real API and devproxy (mock) modes - devproxy automatically
+ * returns mock responses, so we just wait for any assistant message.
  */
 export async function createSessionWithMessage(page: Page): Promise<string> {
 	// Create new session
@@ -82,7 +90,7 @@ export async function archiveSession(page: Page, sessionId: string): Promise<voi
 	await clickArchiveSession(page);
 
 	// Wait for archive to complete
-	await page.waitForTimeout(1500);
+	await page.waitForTimeout(IS_MOCK ? 100 : 1500);
 }
 
 /**
