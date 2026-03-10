@@ -189,7 +189,7 @@ export class TaskGroupManager {
 	 * 1. Create worktree for task isolation (ALL roles get an isolated worktree)
 	 * 2. Create worker session via workerConfig and start it immediately
 	 * 3. Build leader init but DEFER creation until first review round
-	 * 4. Create session_groups DB record (state: awaiting_worker)
+	 * 4. Create session_groups DB record (active group with submittedForReview=false)
 	 * 5. Set task status to in_progress
 	 * 6. Observe worker session for terminal state
 	 * 7. Kick off worker (inject initial message)
@@ -363,9 +363,6 @@ export class TaskGroupManager {
 		if (afterIncrement) {
 			this.groupRepo.resetLeaderContractViolations(groupId, afterIncrement.version);
 		}
-		// Keep legacy state column in sync for compatibility.
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_leader');
-
 		return this.groupRepo.getGroup(groupId);
 	}
 
@@ -395,9 +392,6 @@ export class TaskGroupManager {
 				deliveryMode: opts?.deliveryMode,
 			});
 		}
-
-		// Keep legacy state column in sync for compatibility.
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_worker');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -461,7 +455,6 @@ export class TaskGroupManager {
 
 		// Move task to review status with PR URL
 		await this.taskManager.reviewTask(group.taskId, prUrl);
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_human');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -480,7 +473,7 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group || !group.submittedForReview) return false;
 
-		// Reset state for the new review round.
+		// Reset group metadata for the new review round.
 		// feedbackIteration is reset to 0 so the resumed task gets a fresh iteration budget —
 		// without this the task would immediately re-escalate on the very next leader cycle.
 		this.groupRepo.resetLeaderContractViolations(groupId, group.version);
@@ -490,15 +483,14 @@ export class TaskGroupManager {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
 
-		// Inject approval message into existing worker session.
+		// Inject message into existing worker session.
 		await this.sessionFactory.injectMessage(group.workerSessionId, message);
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_worker');
 
 		return true;
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the existing leader.
+	 * Resume a submitted-for-review group by injecting a message into the existing leader.
 	 *
 	 * Used for ALL human resumptions (both approval and rejection):
 	 * - Approval: leader merges PR and calls complete_task
@@ -520,7 +512,7 @@ export class TaskGroupManager {
 		// task status/approval without restoring group metadata.
 		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 
-		// Reset state for the new cycle (same as resumeWorkerFromHuman).
+		// Reset group metadata for the new cycle (same as resumeWorkerFromHuman).
 		// feedbackIteration is reset to 0 so the worker gets a fresh iteration budget.
 		// submittedForReview is reset so the worker must re-submit for review after addressing feedback.
 		// For approval path, these resets are harmless since leader will complete the task.
@@ -531,7 +523,6 @@ export class TaskGroupManager {
 		if (afterReset) {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_leader');
 
 		return true;
 	}
@@ -552,7 +543,6 @@ export class TaskGroupManager {
 
 		// Set submittedForReview flag to indicate awaiting human action
 		this.groupRepo.setSubmittedForReview(groupId, true);
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_human');
 
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);

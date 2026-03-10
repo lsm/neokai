@@ -397,7 +397,7 @@ export class RoomRuntime {
 						'Make logical commits for changes you want to keep and clean up unused files. ' +
 						'Run `git status` to see what needs attention, then commit or remove files as appropriate.'
 				);
-				return; // Stay in awaiting_worker state
+				return; // Keep worker turn active
 			}
 		}
 
@@ -427,7 +427,7 @@ export class RoomRuntime {
 					group.workerSessionId,
 					gateResult.bounceMessage ?? gateResult.reason ?? 'Gate check failed'
 				);
-				return; // Stay in awaiting_worker state
+				return; // Keep worker turn active
 			}
 		}
 
@@ -756,7 +756,7 @@ export class RoomRuntime {
 				await this.taskGroupManager.submitForReview(groupId, prUrl);
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
-				// Do NOT call scheduleTick() — the group stays alive in awaiting_human.
+				// Do NOT call scheduleTick() — the group stays alive in submitted-for-review mode.
 				// The slot is excluded from the active count in executeTick().
 				return jsonResult({
 					success: true,
@@ -796,7 +796,7 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the appropriate session.
+	 * Resume a submitted-for-review group by injecting a message into the appropriate session.
 	 *
 	 * Routing logic:
 	 * - ALL approvals (planner, coder, general) → leader (merges PR + calls complete_task)

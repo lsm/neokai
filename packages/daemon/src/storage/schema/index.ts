@@ -228,8 +228,6 @@ export function createTables(db: BunDatabase): void {
         id TEXT PRIMARY KEY,
         group_type TEXT NOT NULL DEFAULT 'task',
         ref_id TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'awaiting_worker'
-          CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'completed', 'failed')),
         version INTEGER NOT NULL DEFAULT 0,
         metadata TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
@@ -307,7 +305,6 @@ function createIndexes(db: BunDatabase): void {
 	);
 	// Room Runtime indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
 	// Job queue indexes

@@ -330,7 +330,9 @@ export function setupGoalHandlers(
 			approved: true,
 		});
 		if (!resumed) {
-			throw new Error(`Failed to resume task ${params.taskId} — no awaiting_human group found`);
+			throw new Error(
+				`Failed to resume task ${params.taskId} — no submitted-for-review group found`
+			);
 		}
 
 		log.info(`Task ${params.taskId} approved by human in room ${params.roomId}`);

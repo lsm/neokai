@@ -12,7 +12,6 @@
  *
  * All update methods use version-based optimistic locking.
  *
- * NOTE: The `state` DB column is legacy and no longer used for routing decisions.
  * Use `completedAt` to check if a group is terminal, and `submittedForReview` to
  * check if a group is awaiting human review.
  */
@@ -37,17 +36,6 @@ export interface DeferredLeaderConfig {
 	reviewContext?: 'plan_review' | 'code_review';
 	leaderTaskContext?: string;
 }
-
-/**
- * Compatibility state persisted in session_groups.state.
- * Runtime routing should prefer submittedForReview/completedAt.
- */
-export type GroupState =
-	| 'awaiting_worker'
-	| 'awaiting_leader'
-	| 'awaiting_human'
-	| 'completed'
-	| 'failed';
 
 /** Type-specific metadata for task groups */
 interface TaskGroupMetadata {
@@ -99,8 +87,6 @@ export interface SessionGroup {
 	/** ref_id — the task_id for task groups */
 	taskId: string;
 	groupType: string;
-	/** Compatibility mirror only; not authoritative for routing. */
-	state: GroupState;
 	workerSessionId: string;
 	leaderSessionId: string;
 	/** The specific worker agent type: 'planner', 'coder', 'general' */
@@ -155,8 +141,8 @@ export class SessionGroupRepository {
 
 		this.db
 			.prepare(
-				`INSERT INTO session_groups (id, group_type, ref_id, state, version, metadata, created_at)
-			 VALUES (?, 'task', ?, 'awaiting_worker', 0, ?, ?)`
+				`INSERT INTO session_groups (id, group_type, ref_id, version, metadata, created_at)
+			 VALUES (?, 'task', ?, 0, ?, ?)`
 			)
 			.run(id, taskId, JSON.stringify(metadata), now);
 
@@ -174,7 +160,7 @@ export class SessionGroupRepository {
 		const row = this.db
 			.prepare(
 				`SELECT
-					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
 					worker.session_id AS worker_session_id,
 					leader.session_id AS leader_session_id
@@ -192,7 +178,7 @@ export class SessionGroupRepository {
 		const row = this.db
 			.prepare(
 				`SELECT
-					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
 					worker.session_id AS worker_session_id,
 					leader.session_id AS leader_session_id
@@ -211,7 +197,7 @@ export class SessionGroupRepository {
 		const rows = this.db
 			.prepare(
 				`SELECT
-					sg.id, sg.group_type, sg.ref_id, sg.state, sg.version, sg.metadata,
+					sg.id, sg.group_type, sg.ref_id, sg.version, sg.metadata,
 					sg.created_at, sg.completed_at,
 					worker.session_id AS worker_session_id,
 					leader.session_id AS leader_session_id
@@ -229,7 +215,7 @@ export class SessionGroupRepository {
 		const now = Date.now();
 		const result = this.db
 			.prepare(
-				`UPDATE session_groups SET state = 'completed', completed_at = ?, version = version + 1
+				`UPDATE session_groups SET completed_at = ?, version = version + 1
 			 WHERE id = ? AND version = ?`
 			)
 			.run(now, groupId, expectedVersion);
@@ -241,7 +227,7 @@ export class SessionGroupRepository {
 		const now = Date.now();
 		const result = this.db
 			.prepare(
-				`UPDATE session_groups SET state = 'failed', completed_at = ?, version = version + 1
+				`UPDATE session_groups SET completed_at = ?, version = version + 1
 			 WHERE id = ? AND version = ?`
 			)
 			.run(now, groupId, expectedVersion);
@@ -279,8 +265,7 @@ export class SessionGroupRepository {
 		const result = this.db
 			.prepare(
 				`UPDATE session_groups
-				 SET state = 'awaiting_worker',
-				     completed_at = NULL,
+				 SET completed_at = NULL,
 				     metadata = ?,
 				     version = version + 1
 				 WHERE id = ?`
@@ -425,14 +410,6 @@ export class SessionGroupRepository {
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
-	}
-
-	/**
-	 * Update legacy state column for compatibility/observability.
-	 * Runtime routing should not depend on this value.
-	 */
-	setCompatibilityState(groupId: string, state: GroupState): void {
-		this.db.prepare(`UPDATE session_groups SET state = ? WHERE id = ?`).run(state, groupId);
 	}
 
 	/**
@@ -590,12 +567,10 @@ export class SessionGroupRepository {
 
 	private rowToGroup(row: Record<string, unknown>): SessionGroup {
 		const meta = this.parseMetadata(row.metadata as string | null);
-		const state = ((row.state as string | null) ?? 'awaiting_worker') as GroupState;
 		return {
 			id: row.id as string,
 			taskId: row.ref_id as string,
 			groupType: row.group_type as string,
-			state,
 			workerSessionId: (row.worker_session_id as string) ?? '',
 			leaderSessionId: (row.leader_session_id as string) ?? '',
 			workerRole: meta.workerRole ?? 'coder',
@@ -610,7 +585,7 @@ export class SessionGroupRepository {
 			version: row.version as number,
 			tokensUsed: meta.tokensUsed,
 			workspacePath: meta.workspacePath,
-			submittedForReview: meta.submittedForReview === true || state === 'awaiting_human',
+			submittedForReview: meta.submittedForReview === true,
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
 			deferredLeader: meta.deferredLeader ?? null,

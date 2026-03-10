@@ -996,7 +996,7 @@ describe('Room Agent Tools', () => {
 			// Verify the group exists in failed state
 			const groupBefore = groupRepo.getGroup(groupId);
 			expect(groupBefore).not.toBeNull();
-			expect(groupBefore!.state).toBe('failed');
+			expect(groupBefore!.taskId).toBe(taskId);
 
 			// Restart the task
 			const result = parseResult(
@@ -1005,11 +1005,11 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('pending');
 
-			// The old failed group should be reset to awaiting_worker
+			// The old failed group should be reset and active again
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
-			expect(groupAfter!.state).toBe('awaiting_worker');
 			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
 			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
@@ -1025,7 +1025,7 @@ describe('Room Agent Tools', () => {
 			// Verify the group exists
 			const groupBefore = groupRepo.getGroup(groupId);
 			expect(groupBefore).not.toBeNull();
-			expect(groupBefore!.state).toBe('failed');
+			expect(groupBefore!.taskId).toBe(taskId);
 
 			// Restart the task
 			const result = parseResult(
@@ -1034,10 +1034,11 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('in_progress');
 
-			// The old failed group should be reset to awaiting_worker
+			// The old failed group should be reset and active again
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
-			expect(groupAfter!.state).toBe('awaiting_worker');
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
 		});
 
 		it('should succeed when group is already gone', async () => {
@@ -1104,10 +1105,10 @@ describe('Room Agent Tools', () => {
 			// Create an active group in awaiting_worker state
 			const groupId = insertGroup(taskId, 'awaiting_worker');
 
-			// Verify initial group state
+			// Verify initial group flags
 			const groupBefore = groupRepo.getGroup(groupId);
 			expect(groupBefore).not.toBeNull();
-			expect(groupBefore!.state).toBe('awaiting_worker');
+			expect(groupBefore!.submittedForReview).toBe(false);
 
 			// Transition to review
 			const result = parseResult(
@@ -1116,10 +1117,10 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('review');
 
-			// Group state should be updated to awaiting_human to release the slot
+			// Group should be marked as awaiting human review in metadata
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
-			expect(groupAfter!.state).toBe('awaiting_human');
+			expect(groupAfter!.submittedForReview).toBe(true);
 		});
 
 		it('should allow transition: in_progress -> completed with result', async () => {
@@ -1165,15 +1166,23 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to in_progress and then to review
+			// Move to in_progress and create active group
 			await taskManager.startTask(taskId);
-			await taskManager.reviewTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_worker');
 
+			// Transition into review first (sets submittedForReview=true)
+			await handlers.set_task_status({ task_id: taskId, status: 'review' });
 			const result = parseResult(
 				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
 			);
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('in_progress');
+
+			// Leaving review should clear awaiting-human semantics
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
+			expect(groupAfter!.completedAt).toBeNull();
 		});
 
 		it('should deny transition: completed -> pending (terminal state)', async () => {

@@ -81,6 +81,12 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 19: Remove legacy mirrored session_group_messages table
 	runMigration19(db);
+
+	// Migration 20: Backfill submittedForReview metadata for active awaiting_human groups
+	runMigration20(db);
+
+	// Migration 21: Drop legacy session_groups.state column and index
+	runMigration21(db);
 }
 
 /**
@@ -949,6 +955,65 @@ function tableHasColumn(db: BunDatabase, tableName: string, columnName: string):
 function runMigration19(db: BunDatabase): void {
 	db.exec(`DROP TABLE IF EXISTS session_group_messages`);
 	db.exec(`DROP INDEX IF EXISTS idx_sgmsg_group`);
+}
+
+/**
+ * Migration 20: Backfill submittedForReview metadata from legacy state column.
+ *
+ * For pre-existing databases, active groups may rely on `state='awaiting_human'`
+ * without metadata.submittedForReview set. Runtime behavior now relies on metadata,
+ * so this migration copies that semantic flag into metadata once.
+ */
+function runMigration20(db: BunDatabase): void {
+	if (!tableExists(db, 'session_groups')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'session_groups', 'state')) {
+		return;
+	}
+
+	const rows = db
+		.prepare(
+			`SELECT id, metadata
+			 FROM session_groups
+			 WHERE completed_at IS NULL AND state = 'awaiting_human'`
+		)
+		.all() as Array<{ id: string; metadata: string | null }>;
+
+	const update = db.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`);
+	for (const row of rows) {
+		let meta: Record<string, unknown> = {};
+		if (row.metadata) {
+			try {
+				meta = JSON.parse(row.metadata) as Record<string, unknown>;
+			} catch {
+				meta = {};
+			}
+		}
+		if (meta.submittedForReview === true) {
+			continue;
+		}
+		meta.submittedForReview = true;
+		update.run(JSON.stringify(meta), row.id);
+	}
+}
+
+/**
+ * Migration 21: Drop legacy `session_groups.state` and its index.
+ *
+ * Routing semantics now rely on completed_at + metadata.submittedForReview.
+ */
+function runMigration21(db: BunDatabase): void {
+	db.exec(`DROP INDEX IF EXISTS idx_session_groups_state`);
+
+	if (!tableExists(db, 'session_groups')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'session_groups', 'state')) {
+		return;
+	}
+
+	db.exec(`ALTER TABLE session_groups DROP COLUMN state`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {

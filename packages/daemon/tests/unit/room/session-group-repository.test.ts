@@ -104,6 +104,33 @@ describe('SessionGroupRepository', () => {
 			expect(fetched).not.toBeNull();
 			expect(fetched!.id).toBe(created.id);
 		});
+
+		it('should derive submittedForReview from metadata only', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			db.prepare(`UPDATE session_groups SET state = 'awaiting_human' WHERE id = ?`).run(group.id);
+			// Keep metadata without submittedForReview=true
+			db.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`).run(
+				JSON.stringify({
+					feedbackIteration: 0,
+					leaderContractViolations: 0,
+					leaderCalledTool: false,
+					lastProcessedLeaderTurnId: null,
+					lastForwardedMessageId: null,
+					activeWorkStartedAt: null,
+					activeWorkElapsed: 0,
+					hibernatedAt: null,
+					tokensUsed: 0,
+					workerRole: 'coder',
+					submittedForReview: false,
+					approved: false,
+				}),
+				group.id
+			);
+
+			const fetched = repo.getGroup(group.id);
+			expect(fetched).not.toBeNull();
+			expect(fetched!.submittedForReview).toBe(false);
+		});
 	});
 
 	describe('getGroupByTaskId', () => {
