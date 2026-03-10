@@ -269,9 +269,25 @@ jobs:
       - name: Install Dev Proxy (Linux)
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         run: |
-          curl -sL https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash
+          set -euo pipefail
+
+          for i in 1 2 3 4 5; do
+            echo "Dev Proxy install attempt $i/5"
+            if curl -fL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 180 \
+              https://raw.githubusercontent.com/dotnet/dev-proxy/main/scripts/setup.sh | bash; then
+              break
+            fi
+
+            if [ "$i" -eq 5 ]; then
+              echo "Dev Proxy install failed after 5 attempts"
+              exit 1
+            fi
+
+            sleep $((i * 2))
+          done
+
           # The setup script installs devproxy to ./devproxy in the current directory
-          # Add it to PATH for subsequent steps
+          ./devproxy/devproxy --version
           echo "$PWD/devproxy" >> $GITHUB_PATH
 
       - name: Start Dev Proxy
