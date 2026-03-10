@@ -25,9 +25,8 @@ const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
  * resolve. Returns true if context data is available, false otherwise.
  */
 async function waitForContextData(page: import('@playwright/test').Page): Promise<boolean> {
-	// In mock mode, devproxy returns usage data so tests should pass
-	// Use a longer timeout to allow UI to render context data
-	const timeout = IS_MOCK ? 5000 : 15000;
+	// In mock mode, devproxy returns usage data so tests should pass quickly
+	const timeout = IS_MOCK ? 100 : 15000;
 	const contextIndicator = page.locator('[title="Click for context details"]');
 	return contextIndicator.isVisible({ timeout }).catch(() => false);
 }
