@@ -116,19 +116,21 @@ export class WorktreeManager {
 			// Get the absolute path to the .git directory
 			// For main repo: /path/to/repo/.git
 			// For worktree: /path/to/main/repo/.git/worktrees/<name>
-			const gitCommonDir = await git.revparse(['--path-format=absolute', '--git-common-dir']);
+			// Use --git-dir (not --git-common-dir) because --git-dir returns the
+			// actual git directory path including worktrees subdirectory
+			const gitDir = await git.revparse(['--path-format=absolute', '--git-dir']);
 
-			if (!gitCommonDir) {
+			if (!gitDir) {
 				return null;
 			}
 
 			// Check if this is a worktree by looking for /worktrees/ in the path
-			const worktreesMatch = gitCommonDir.match(/^(.+?\.git)[/\\]worktrees[/\\]/);
+			const worktreesMatch = gitDir.match(/^(.+?\.git)[/\\]worktrees[/\\]/);
 
 			if (worktreesMatch) {
 				// This is a linked worktree - the main repo is the parent of .git
-				const gitDir = worktreesMatch[1];
-				return dirname(gitDir);
+				const mainGitDir = worktreesMatch[1];
+				return dirname(mainGitDir);
 			}
 
 			// This might be the main repo itself or not a worktree

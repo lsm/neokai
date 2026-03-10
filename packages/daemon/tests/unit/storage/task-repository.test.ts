@@ -40,7 +40,8 @@ describe('TaskRepository', () => {
 				depends_on TEXT NOT NULL DEFAULT '[]',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
-				completed_at INTEGER
+				completed_at INTEGER,
+				archived_at INTEGER
 			);
 
 			CREATE INDEX idx_tasks_room ON tasks(room_id);
