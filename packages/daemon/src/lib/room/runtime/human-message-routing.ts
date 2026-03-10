@@ -55,6 +55,10 @@ export async function routeHumanMessageToGroup(
 				return { success: false, error: `Task in '${task.status}' status cannot be restarted` };
 			}
 
+			// Save previous status for potential rollback
+			const previousStatus = task.status;
+			const previousVersion = group.version;
+
 			// Reset the group for restart (clears completedAt, resets state)
 			const reset = groupRepo.resetGroupForRestart(group.id);
 			if (!reset) {
@@ -65,8 +69,35 @@ export async function routeHumanMessageToGroup(
 			try {
 				await runtime.taskManager.updateTaskStatus(taskId, 'in_progress');
 			} catch (error) {
+				// Rollback group state on failure
+				groupRepo.failGroup(group.id, previousVersion);
 				return { success: false, error: `Failed to transition task to in_progress: ${error}` };
 			}
+
+			// Try to inject the message
+			let injected = false;
+			if (target === 'leader') {
+				injected = await runtime.injectMessageToLeader(taskId, message);
+			} else {
+				injected = await runtime.injectMessageToWorker(taskId, message);
+			}
+
+			// If injection failed, rollback the status and group changes
+			if (!injected) {
+				// Rollback: restore group to failed state and revert task status
+				groupRepo.failGroup(group.id, previousVersion + 1);
+				try {
+					await runtime.taskManager.updateTaskStatus(taskId, previousStatus);
+				} catch {
+					// Rollback failure is logged but the main error is the injection failure
+				}
+				return {
+					success: false,
+					error: `Failed to inject message into ${target} session`,
+				};
+			}
+
+			return { success: true };
 		} else {
 			// For other terminated states (completed), still block messages
 			return { success: false, error: 'Task is already completed' };

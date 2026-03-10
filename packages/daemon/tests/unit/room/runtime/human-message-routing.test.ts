@@ -98,16 +98,19 @@ function makeGroupRepo(
 	groupRepo: SessionGroupRepository;
 	getGroupByTaskId: ReturnType<typeof mock>;
 	resetGroupForRestart: ReturnType<typeof mock>;
+	failGroup: ReturnType<typeof mock>;
 } {
 	const getGroupByTaskId = mock(() => group);
 	const resetGroupForRestart = mock(() => (resetGroupForRestartResult ? group : null));
+	const failGroup = mock(() => group);
 
 	const groupRepo = {
 		getGroupByTaskId,
 		resetGroupForRestart,
+		failGroup,
 	} as unknown as SessionGroupRepository;
 
-	return { groupRepo, getGroupByTaskId, resetGroupForRestart };
+	return { groupRepo, getGroupByTaskId, resetGroupForRestart, failGroup };
 }
 
 describe('routeHumanMessageToGroup', () => {
@@ -204,13 +207,40 @@ describe('routeHumanMessageToGroup', () => {
 			taskManager.updateTaskStatus = mock(async () => {
 				throw new Error('Status update failed');
 			});
-			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()), true);
+			const { groupRepo, failGroup } = makeGroupRepo(makeGroup(Date.now()), true);
 
 			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to transition task to in_progress');
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
+			// Should have rolled back the group state
+			expect(failGroup).toHaveBeenCalled();
+		});
+
+		it('rolls back status and group when message injection fails', async () => {
+			const failedTask = makeTask('failed');
+			// injectResult = false to simulate injection failure
+			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(false, failedTask);
+			const { groupRepo, resetGroupForRestart, failGroup } = makeGroupRepo(
+				makeGroup(Date.now()),
+				true
+			);
+
+			const result = await routeHumanMessageToGroup(runtime, groupRepo, taskId, message);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to inject message');
+			// Group was reset
+			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
+			// Status was changed to in_progress
+			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
+			// Tried to inject
+			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
+			// Rolled back to failed
+			expect(failGroup).toHaveBeenCalled();
+			// Status rolled back to failed
+			expect(taskManager.updateTaskStatus).toHaveBeenCalledWith(taskId, 'failed');
 		});
 	});
 
