@@ -146,8 +146,8 @@ describe('Message Persistence', () => {
 				// Interrupt the stream
 				await interrupt(daemon, sessionId);
 
-				// Wait for interrupt to complete
-				await new Promise((resolve) => setTimeout(resolve, interruptDelay / 2));
+				// Wait for session to settle after interrupt before sending next message
+				await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
 				// Session should still be functional after interrupt
 				const state = await getProcessingState(daemon, sessionId);
