@@ -576,6 +576,31 @@ jobs:
           echo "✅ Coverage quality gate passed!"
 
   # ============================================
+  # BUILD TRIGGER - Coordinates dependencies for build job
+  # On push to dev: runs immediately (no test dependencies needed)
+  # On PR to main / push to main: waits for tests to pass
+  # ============================================
+
+  build-trigger:
+    name: Build Trigger
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    steps:
+      - name: Trigger build
+        run: echo "Build triggered for push to dev (tests already passed in PR)"
+
+  build-wait-tests:
+    name: Build Wait for Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event_name != 'push' || github.ref != 'refs/heads/dev'
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
+    steps:
+      - name: Tests passed
+        run: echo "All tests passed, proceeding to build"
+
+  # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
   # Run on: PR to main, push to dev, push to main (skip on PR to dev)
   # ============================================
@@ -583,7 +608,7 @@ jobs:
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
+    needs: [build-trigger, build-wait-tests]
     if: github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
 
@@ -939,6 +964,8 @@ jobs:
       - test-web
       - test-cli
       - coverage-gate
+      - build-trigger
+      - build-wait-tests
       - build
       - discover
       - e2e-no-llm
@@ -991,6 +1018,18 @@ jobs:
             FAILED=1
           fi
 
+          # build-trigger: push to dev only
+          if [[ "${{ needs.build-trigger.result }}" == "failure" ]]; then
+            echo "❌ build-trigger failed"
+            FAILED=1
+          fi
+
+          # build-wait-tests: PR to main, push to main (skip on push to dev)
+          if [[ "${{ needs.build-wait-tests.result }}" == "failure" ]]; then
+            echo "❌ build-wait-tests failed"
+            FAILED=1
+          fi
+
           # build: PR to main, push to dev, push to main (skip on PR to dev)
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
@@ -1025,6 +1064,8 @@ jobs:
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  test-cli: ${{ needs.test-cli.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
+            echo "  build-trigger: ${{ needs.build-trigger.result }}"
+            echo "  build-wait-tests: ${{ needs.build-wait-tests.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"
