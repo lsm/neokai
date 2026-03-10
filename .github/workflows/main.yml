@@ -730,8 +730,9 @@ jobs:
     name: E2E No-LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    # Skip E2E tests for release PRs to avoid blocking releases with flaky tests
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')) && !contains(github.event.pull_request.title, 'release') || github.event_name == 'workflow_dispatch'
+    # Run on: PR to main, push to dev, push to main, workflow_dispatch (skip on PR to dev)
+    # Skip release PRs to main to avoid blocking releases with flaky tests
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -827,8 +828,9 @@ jobs:
     name: E2E LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    # Skip E2E tests for release PRs to avoid blocking releases with flaky tests
-    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')) && !contains(github.event.pull_request.title, 'release') || github.event_name == 'workflow_dispatch'
+    # Run on: PR to main, push to dev, push to main, workflow_dispatch (skip on PR to dev)
+    # Skip release PRs to main to avoid blocking releases with flaky tests
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
     timeout-minutes: 10
     strategy:
       fail-fast: false
