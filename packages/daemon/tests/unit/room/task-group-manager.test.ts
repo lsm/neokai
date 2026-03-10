@@ -280,7 +280,7 @@ describe('TaskGroupManager', () => {
 
 			expect(group).toBeDefined();
 			expect(group.taskId).toBe(task.id);
-			expect(group.state).toBe('awaiting_worker');
+			expect(group.submittedForReview).toBe(false);
 			expect(group.feedbackIteration).toBe(0);
 		});
 
@@ -422,7 +422,7 @@ describe('TaskGroupManager', () => {
 				(_groupId) => callbacks
 			);
 
-			expect(updated!.state).toBe('awaiting_leader');
+			expect(updated!.submittedForReview).toBe(false);
 		});
 
 		it('should reset leader contract violations', async () => {
@@ -499,7 +499,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			expect(updated).not.toBeNull();
-			expect(updated!.state).toBe('awaiting_leader');
+			expect(updated!.submittedForReview).toBe(false);
 
 			const leaderStartCalls = restartedFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
@@ -607,7 +607,7 @@ describe('TaskGroupManager', () => {
 			await manager.routeWorkerToLeader(group.id, 'Output', (_groupId) => callbacks);
 			const updated = await manager.routeLeaderToWorker(group.id, 'Feedback');
 
-			expect(updated!.state).toBe('awaiting_worker');
+			expect(updated!.submittedForReview).toBe(false);
 			expect(updated!.feedbackIteration).toBe(1);
 		});
 	});
@@ -629,7 +629,6 @@ describe('TaskGroupManager', () => {
 
 			const updated = await manager.complete(group.id, 'All done');
 
-			expect(updated!.state).toBe('completed');
 			expect(updated!.completedAt).toBeDefined();
 
 			const taskResult = await taskManager.getTask(task.id);
@@ -680,7 +679,6 @@ describe('TaskGroupManager', () => {
 
 			const updated = await manager.fail(group.id, 'Cannot complete');
 
-			expect(updated!.state).toBe('failed');
 			expect(updated!.completedAt).toBeDefined();
 
 			const taskResult = await taskManager.getTask(task.id);
@@ -725,7 +723,7 @@ describe('TaskGroupManager', () => {
 
 			const updated = await manager.escalateToHumanReview(group.id, 'Max iterations reached');
 
-			expect(updated!.state).toBe('awaiting_human');
+			expect(updated!.submittedForReview).toBe(true);
 
 			const taskResult = await taskManager.getTask(task.id);
 			expect(taskResult!.status).toBe('review');
@@ -778,9 +776,9 @@ describe('TaskGroupManager', () => {
 
 			const updated = await manager.cancel(group.id);
 
-			// Group state is 'failed' (terminal group state) but the underlying
-			// task status must be 'cancelled' (semantically distinct from 'failed').
-			expect(updated!.state).toBe('failed');
+			// Group becomes terminal and the underlying task status is 'cancelled'
+			// (semantically distinct from 'failed').
+			expect(updated!.completedAt).not.toBeNull();
 			const cancelledTask = await taskManager.getTask(task.id);
 			expect(cancelledTask?.status).toBe('cancelled');
 		});
@@ -975,7 +973,7 @@ describe('TaskGroupManager', () => {
 			// Should not throw even though cleanup fails
 			const result = await failingManager.complete(group.id, 'Done');
 
-			expect(result!.state).toBe('completed');
+			expect(result!.completedAt).not.toBeNull();
 			const taskResult = await taskManager.getTask(task.id);
 			expect(taskResult!.status).toBe('completed');
 		});

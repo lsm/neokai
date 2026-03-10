@@ -304,6 +304,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 
+			const group = groupRepo.getGroupByTaskId(args.task_id);
+			if (group && group.completedAt === null) {
+				if (args.status === 'review') {
+					groupRepo.setSubmittedForReview(group.id, true);
+				} else if (task.status === 'review') {
+					groupRepo.setSubmittedForReview(group.id, false);
+				}
+			}
+
 			// Notify UI of the status change
 			if (daemonHub) {
 				void daemonHub.emit('room.task.update', {
@@ -583,7 +592,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'send_message_to_task',
-			'Send a message to the active agent session for a task (routes to worker or leader based on current state)',
+			'Send a message to the active worker session for a task',
 			{
 				task_id: z.string().describe('ID of the task to send the message to'),
 				message: z.string().describe('The message content to send'),
@@ -592,7 +601,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'get_task_detail',
-			'Get full details for a task including current group state, session IDs, and whether it is awaiting human review',
+			'Get full details for a task including group session IDs and whether it is awaiting human review',
 			{ task_id: z.string().describe('ID of the task to get details for') },
 			(args) => handlers.get_task_detail(args)
 		),

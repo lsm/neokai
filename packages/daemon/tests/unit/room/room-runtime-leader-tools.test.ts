@@ -61,7 +61,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.success).toBe(true);
 
 			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
-			expect(updatedGroup.state).toBe('awaiting_worker');
+			expect(updatedGroup.submittedForReview).toBe(false);
 
 			// Should inject feedback into worker session using queue mode
 			const injectCalls = ctx.sessionFactory.calls.filter(
@@ -79,7 +79,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.success).toBe(true);
 
 			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
-			expect(updatedGroup.state).toBe('awaiting_leader');
+			expect(updatedGroup.submittedForReview).toBe(false);
 		});
 
 		it('should reject complete_task until submit_for_review is called', async () => {

@@ -179,7 +179,9 @@ describe('Runtime Recovery', () => {
 
 		const group = groupRepo.createGroup(taskId, `worker:${taskId}`, `leader:${taskId}`);
 		if (groupState !== 'awaiting_worker') {
-			groupRepo.setCompatibilityState(group.id, groupState as never);
+			if (groupState === 'awaiting_human') {
+				groupRepo.setSubmittedForReview(group.id, true);
+			}
 		}
 
 		return { taskId, group: groupRepo.getGroup(group.id) };
@@ -220,7 +222,7 @@ describe('Runtime Recovery', () => {
 
 		expect(result.failedGroups).toBe(1);
 		const updatedGroup = groupRepo.getGroup(group!.id);
-		expect(updatedGroup!.state).toBe('failed');
+		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
 		expect(task!.status).toBe('failed');
@@ -328,9 +330,9 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.immediateTerminals).toBe(1);
-		// Group should transition to awaiting_leader (worker output routed to leader)
+		// Group should remain active and not awaiting human review
 		const updated = groupRepo.getGroup(group!.id);
-		expect(updated!.state).toBe('awaiting_leader');
+		expect(updated!.submittedForReview).toBe(false);
 	});
 
 	it('should restore and observe awaiting_human groups', async () => {
@@ -378,7 +380,7 @@ describe('Runtime Recovery', () => {
 
 		expect(result.failedGroups).toBe(1);
 		const updatedGroup = groupRepo.getGroup(group!.id);
-		expect(updatedGroup!.state).toBe('failed');
+		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
 		expect(task!.status).toBe('failed');

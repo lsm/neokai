@@ -401,7 +401,7 @@ export class RoomRuntime {
 						'Make logical commits for changes you want to keep and clean up unused files. ' +
 						'Run `git status` to see what needs attention, then commit or remove files as appropriate.'
 				);
-				return; // Stay in awaiting_worker state
+				return; // Keep worker turn active
 			}
 		}
 
@@ -431,7 +431,7 @@ export class RoomRuntime {
 					group.workerSessionId,
 					gateResult.bounceMessage ?? gateResult.reason ?? 'Gate check failed'
 				);
-				return; // Stay in awaiting_worker state
+				return; // Keep worker turn active
 			}
 		}
 
@@ -760,7 +760,7 @@ export class RoomRuntime {
 				await this.taskGroupManager.submitForReview(groupId, prUrl);
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
-				// Do NOT call scheduleTick() — the group stays alive in awaiting_human.
+				// Do NOT call scheduleTick() — the group stays alive in submitted-for-review mode.
 				// The slot is excluded from the active count in executeTick().
 				return jsonResult({
 					success: true,
@@ -800,7 +800,7 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the appropriate session.
+	 * Resume a submitted-for-review group by injecting a message into the appropriate session.
 	 *
 	 * Routing logic:
 	 * - ALL approvals (planner, coder, general) → leader (merges PR + calls complete_task)
@@ -831,15 +831,17 @@ export class RoomRuntime {
 			this.groupRepo.setApproved(group.id, true);
 		}
 
-		// Move task back to in_progress
-		try {
-			await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
-		} catch (error) {
-			if (isApproval && !previousApproved) {
-				this.groupRepo.setApproved(group.id, previousApproved);
+		// For approvals, keep task in review status and let leader's complete_task
+		// handle the final transition to completed. This prevents the task from
+		// getting stuck in in_progress if the leader's complete_task fails.
+		// For rejections, move task back to in_progress so worker can address feedback.
+		if (!isApproval) {
+			try {
+				await this.taskManager.updateTaskStatus(group.taskId, 'in_progress');
+			} catch (error) {
+				log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
+				return false;
 			}
-			log.error(`Failed to set task ${taskId} to in_progress before human resume:`, error);
-			return false;
 		}
 
 		// Route ALL messages (approval and rejection) to leader
