@@ -1,5 +1,9 @@
 import { test, expect } from '../../fixtures';
-import { cleanupTestSession, createSessionViaUI } from '../helpers/wait-helpers';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
 
 const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
 
@@ -24,7 +28,7 @@ test.describe('File Operations', () => {
 	test.beforeEach(async ({ page }) => {
 		await page.goto('/');
 		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
-		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
+		await waitForWebSocketConnected(page);
 		sessionId = null;
 	});
 
