@@ -250,6 +250,14 @@ export function setupTaskHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
+		// Validate task is in a terminal state before archiving
+		const TERMINAL_STATES: TaskStatus[] = ['completed', 'failed', 'cancelled'];
+		if (!TERMINAL_STATES.includes(task.status)) {
+			throw new Error(
+				`Cannot archive task in '${task.status}' state. Only tasks in terminal states (completed, failed, cancelled) can be archived.`
+			);
+		}
+
 		// If there's an active group with runtime, cleanup worktree
 		if (runtimeService) {
 			const runtime = runtimeService.getRuntime(params.roomId);
@@ -258,10 +266,12 @@ export function setupTaskHandlers(
 			}
 		}
 
-		// Mark task as archived
-		const archivedTask = await taskManager.archiveTask(params.taskId);
-		emitTaskUpdate(params.roomId, archivedTask);
-		emitRoomOverview(params.roomId);
+		// Get the archived task (archiveTaskGroup already sets archivedAt)
+		const archivedTask = await taskManager.getTask(params.taskId);
+		if (archivedTask) {
+			emitTaskUpdate(params.roomId, archivedTask);
+			emitRoomOverview(params.roomId);
+		}
 
 		log.info(`Task ${params.taskId} archived in room ${params.roomId}`);
 		return { task: archivedTask };
