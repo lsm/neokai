@@ -576,29 +576,76 @@ jobs:
           echo "✅ Coverage quality gate passed!"
 
   # ============================================
-  # BUILD TRIGGER - Coordinates dependencies for build job
-  # On push to dev: runs immediately (no test dependencies needed)
-  # On PR to main / push to main: waits for tests to pass
+  # BUILD PREREQUISITES
+  # Keep build dependencies non-skipped across trigger types.
+  # - push to dev: pass immediately (E2E-only path)
+  # - PR to main / push to main / workflow_dispatch: require tests to pass
+  # - PR to dev: no-op pass (build job is skipped anyway)
   # ============================================
 
   build-trigger:
     name: Build Trigger
     runs-on: ubuntu-latest
     timeout-minutes: 1
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     steps:
       - name: Trigger build
-        run: echo "Build triggered for push to dev (tests already passed in PR)"
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "Build triggered for push to dev (E2E-only path)"
+          else
+            echo "Build trigger no-op for this event"
+          fi
 
   build-wait-tests:
     name: Build Wait for Tests
     runs-on: ubuntu-latest
     timeout-minutes: 1
-    if: github.event_name != 'push' || github.ref != 'refs/heads/dev'
+    if: always()
     needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
     steps:
-      - name: Tests passed
-        run: echo "All tests passed, proceeding to build"
+      - name: Validate test prerequisites for build
+        run: |
+          # push to dev: we intentionally skip check/unit/online to run E2E-only.
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "push to dev: skipping test prerequisites before build"
+            exit 0
+          fi
+
+          # PR to dev: build is not part of this path; keep this job green as a no-op.
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.base_ref }}" == "dev" ]]; then
+            echo "PR to dev: build not required, skipping prerequisite checks"
+            exit 0
+          fi
+
+          FAILED=0
+
+          if [[ "${{ needs.check.result }}" != "success" ]]; then
+            echo "❌ check result: ${{ needs.check.result }}"
+            FAILED=1
+          fi
+          if [[ "${{ needs.test-daemon-online.result }}" != "success" ]]; then
+            echo "❌ test-daemon-online result: ${{ needs.test-daemon-online.result }}"
+            FAILED=1
+          fi
+          if [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]]; then
+            echo "❌ test-daemon-shared-unit result: ${{ needs.test-daemon-shared-unit.result }}"
+            FAILED=1
+          fi
+          if [[ "${{ needs.test-web.result }}" != "success" ]]; then
+            echo "❌ test-web result: ${{ needs.test-web.result }}"
+            FAILED=1
+          fi
+          if [[ "${{ needs.test-cli.result }}" != "success" ]]; then
+            echo "❌ test-cli result: ${{ needs.test-cli.result }}"
+            FAILED=1
+          fi
+
+          if [[ "$FAILED" -eq 1 ]]; then
+            echo "One or more required test jobs failed; blocking build"
+            exit 1
+          fi
+
+          echo "All test prerequisites passed; proceeding to build"
 
   # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
