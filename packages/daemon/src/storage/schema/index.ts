@@ -155,6 +155,7 @@ export function createTables(db: BunDatabase): void {
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
         assigned_agent TEXT DEFAULT 'coder',
         created_by_task_id TEXT,
+        archived_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);

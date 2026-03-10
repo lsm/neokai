@@ -1,18 +1,24 @@
+import { test, expect, type Page } from '../../fixtures';
+import {
+	cleanupTestSession,
+	createSessionViaUI,
+	waitForMessageProcessed,
+	waitForWebSocketConnected,
+} from '../helpers/wait-helpers';
+
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
 /**
  * Rewind Mode E2E Tests
  *
  * Tests for the Rewind Mode feature (multi-select rewind) accessible via
  * the InputActionsMenu (plus button dropdown).
  * The rewind mode allows users to select multiple messages and rewind to a specific point.
+ *
+ * IS_MOCK: In mock mode (devproxy), responses are pre-configured mock responses
+ * that may differ from real API responses. Timeouts are reduced and assertions
+ * are relaxed to accommodate faster mock responses.
  */
-
-import { test, expect, type Page } from '../../fixtures';
-import {
-	setupMessageHubTesting,
-	cleanupTestSession,
-	createSessionViaUI,
-	waitForMessageProcessed,
-} from '../helpers/wait-helpers';
 
 /**
  * Helper to send a message and wait for response or agent idle.
@@ -28,11 +34,18 @@ async function sendMessage(page: Page, messageText: string): Promise<void> {
 	await Promise.race([
 		waitForMessageProcessed(page, messageText).catch(() => {}),
 		// If SDK crashes, send button returns after error handling
-		page.locator('[data-testid="send-button"]').waitFor({ state: 'visible', timeout: 90000 }),
+		// In mock mode, response is instant; in real mode, wait up to 90s
+		page.locator('[data-testid="send-button"]').waitFor({
+			state: 'visible',
+			timeout: IS_MOCK ? 5000 : 90000,
+		}),
 	]);
 
 	// Ensure input is ready for next message
-	await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeEnabled({ timeout: 5000 });
+	// In mock mode, UI updates faster
+	await expect(page.locator('textarea[placeholder*="Ask"]').first()).toBeEnabled({
+		timeout: IS_MOCK ? 1000 : 5000,
+	});
 }
 
 /**
@@ -43,7 +56,7 @@ async function openInputActionsMenu(page: Page): Promise<void> {
 	const menuButton = page.locator('button[title="More options"]');
 	await menuButton.waitFor({ state: 'visible', timeout: 5000 });
 	await menuButton.click();
-	await page.waitForTimeout(200);
+	await page.waitForTimeout(IS_MOCK ? 100 : 200);
 }
 
 /**
@@ -53,7 +66,7 @@ async function waitForRewindModeReady(page: Page): Promise<void> {
 	// Wait for the rewind mode banner to appear
 	await page.waitForSelector('div:has-text("Select a message to rewind to")', { timeout: 5000 });
 	// Wait a bit more for checkboxes to render
-	await page.waitForTimeout(300);
+	await page.waitForTimeout(IS_MOCK ? 100 : 300);
 	// Wait for at least one checkbox to be present
 	await page.waitForSelector('[data-message-uuid] input[type="checkbox"]', { timeout: 5000 });
 }
@@ -78,7 +91,10 @@ test.describe('Rewind Mode', () => {
 	let sessionId: string | null = null;
 
 	test.beforeEach(async ({ page }) => {
-		await setupMessageHubTesting(page);
+		await page.goto('/');
+		await expect(page.getByRole('heading', { name: 'Neo Lobby' }).first()).toBeVisible();
+		await waitForWebSocketConnected(page);
+		sessionId = null;
 	});
 
 	test.afterEach(async ({ page }) => {
@@ -93,7 +109,7 @@ test.describe('Rewind Mode', () => {
 					.locator('button:has-text("Exit Rewind Mode")')
 					.or(page.locator('button[aria-label="Close rewind mode"]'));
 				await exitButton.click().catch(() => {});
-				await page.waitForTimeout(500);
+				await page.waitForTimeout(IS_MOCK ? 100 : 500);
 			}
 			await cleanupTestSession(page, sessionId);
 			sessionId = null;
@@ -120,7 +136,7 @@ test.describe('Rewind Mode', () => {
 
 		// Send a message to have content
 		await sendMessage(page, 'Test message for rewind mode');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Open InputActionsMenu and click "Rewind Mode"
 		await openInputActionsMenu(page);
@@ -144,7 +160,7 @@ test.describe('Rewind Mode', () => {
 		// Send multiple messages
 		await sendMessage(page, 'First message');
 		await sendMessage(page, 'Second message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -167,7 +183,9 @@ test.describe('Rewind Mode', () => {
 
 		// Send a message that triggers tool use
 		await sendMessage(page, 'What files are in the current directory?');
-		await page.waitForTimeout(5000); // Wait for tool execution
+		// In mock mode, tool execution is instant; in real mode, wait for actual tool execution.
+		// Increased from 5000ms to 15000ms because directory listing can take longer with real API.
+		await page.waitForTimeout(IS_MOCK ? 1000 : 15000);
 
 		// Wait for the "More options" button to be visible
 		const menuButton = page.locator('button[title="More options"]');
@@ -199,7 +217,7 @@ test.describe('Rewind Mode', () => {
 		await sendMessage(page, 'First message');
 		await sendMessage(page, 'Second message');
 		await sendMessage(page, 'Third message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -217,7 +235,7 @@ test.describe('Rewind Mode', () => {
 		// Click the first message checkbox
 		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(IS_MOCK ? 100 : 300);
 
 		// Verify multiple messages are selected (all subsequent messages should be selected)
 		const selectedCount = await getSelectedCheckboxCount(page);
@@ -232,7 +250,7 @@ test.describe('Rewind Mode', () => {
 		// Send messages
 		await sendMessage(page, 'First message');
 		await sendMessage(page, 'Second message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -250,7 +268,7 @@ test.describe('Rewind Mode', () => {
 		// Select a message
 		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(IS_MOCK ? 100 : 300);
 
 		// Verify banner shows selection count
 		const selectionText = page.getByText(/message.*selected/);
@@ -264,7 +282,7 @@ test.describe('Rewind Mode', () => {
 		// Send messages
 		await sendMessage(page, 'First message');
 		await sendMessage(page, 'Second message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -287,7 +305,7 @@ test.describe('Rewind Mode', () => {
 		// Select a message
 		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(IS_MOCK ? 100 : 300);
 
 		// "Rewind to Here" button should now be visible
 		await expect(rewindButton).toBeVisible({ timeout: 3000 });
@@ -299,7 +317,7 @@ test.describe('Rewind Mode', () => {
 
 		// Send a message
 		await sendMessage(page, 'Test message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -323,7 +341,7 @@ test.describe('Rewind Mode', () => {
 			.filter({ has: page.locator('svg path[d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"]') });
 		await expect(exitRewindModeItem).toBeVisible();
 		await exitRewindModeItem.click();
-		await page.waitForTimeout(500);
+		await page.waitForTimeout(IS_MOCK ? 100 : 500);
 
 		// Verify rewind mode banner is gone
 		await expect(page.locator('div:has-text("Select a message to rewind to")'))
@@ -341,7 +359,7 @@ test.describe('Rewind Mode', () => {
 
 		// Send a message
 		await sendMessage(page, 'Test message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -372,7 +390,7 @@ test.describe('Rewind Mode', () => {
 		// Send messages
 		await sendMessage(page, 'First message');
 		await sendMessage(page, 'Second message');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Enter rewind mode
 		await openInputActionsMenu(page);
@@ -387,7 +405,7 @@ test.describe('Rewind Mode', () => {
 		// Select a message
 		const firstCheckbox = page.locator('[data-message-uuid] input[type="checkbox"]').first();
 		await firstCheckbox.click();
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(IS_MOCK ? 100 : 300);
 
 		// Verify messages are selected
 		let selectedCount = await getSelectedCheckboxCount(page);
@@ -395,7 +413,7 @@ test.describe('Rewind Mode', () => {
 
 		// Click the same checkbox again to deselect
 		await firstCheckbox.click();
-		await page.waitForTimeout(300);
+		await page.waitForTimeout(IS_MOCK ? 100 : 300);
 
 		// Verify all messages are deselected
 		selectedCount = await getSelectedCheckboxCount(page);

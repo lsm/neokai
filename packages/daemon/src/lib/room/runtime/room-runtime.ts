@@ -219,6 +219,10 @@ export class RoomRuntime {
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
+			daemonHub: config.daemonHub,
+			runtimeService: {
+				getRuntime: (roomId: string) => (roomId === this.room.id ? this : null),
+			},
 		});
 
 		// Keep test and direct-runtime usage predictable: when no explicit leader model
@@ -897,6 +901,27 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Archive a task group - cleanup worktree regardless of state.
+	 *
+	 * Called when user archives a task via UI. This cleans up the worktree
+	 * to free disk space even for failed tasks (kept for debugging initially).
+	 * Also sets the archivedAt timestamp on the task.
+	 */
+	async archiveTaskGroup(taskId: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+
+		// Cleanup worktree via TaskGroupManager (handles both active and completed groups)
+		if (group) {
+			await this.taskGroupManager.archiveGroup(group.id);
+		}
+
+		// Set archivedAt timestamp on task
+		await this.taskManager.archiveTask(taskId);
+
+		return true;
+	}
+
+	/**
 	 * Cancel a task and terminate its active session group (if any).
 	 *
 	 * This is used by the Room Agent `cancel_task` tool. It ensures cancellation
@@ -959,9 +984,8 @@ export class RoomRuntime {
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.workerSessionId)) return false;
 
-		const formattedMessage = `[Human intervention]\n\n${message}`;
 		try {
-			await this.sessionFactory.injectMessage(group.workerSessionId, formattedMessage);
+			await this.sessionFactory.injectMessage(group.workerSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into worker session ${group.workerSessionId}:`, error);
 			return false;
@@ -985,9 +1009,8 @@ export class RoomRuntime {
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.leaderSessionId)) return false;
 
-		const formattedMessage = `[Human intervention]\n\n${message}`;
 		try {
-			await this.sessionFactory.injectMessage(group.leaderSessionId, formattedMessage);
+			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
 			return false;

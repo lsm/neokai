@@ -7,6 +7,13 @@
  * - RPC call/response correlation
  * - Error handling (invalid JSON, non-existent method, session validation)
  * - Large message handling
+ *
+ * MODES:
+ * - Real API (default): Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+ * - Dev Proxy: Set NEOKAI_USE_DEV_PROXY=1 for offline testing with mocked responses
+ *
+ * Run with Dev Proxy:
+ *   NEOKAI_USE_DEV_PROXY=1 bun test packages/daemon/tests/online/websocket/websocket-protocol.test.ts
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -19,18 +26,23 @@ import {
 	sendRPCCall,
 } from '../../helpers/websocket-helpers';
 
+// Detect mock mode for faster timeouts (Dev Proxy)
+const IS_MOCK = !!process.env.NEOKAI_USE_DEV_PROXY;
+const SETUP_TIMEOUT = IS_MOCK ? 15000 : 30000;
+const TEST_TIMEOUT = IS_MOCK ? 15000 : 30000;
+
 describe('WebSocket Protocol', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
-	});
+	}, SETUP_TIMEOUT);
 
 	afterEach(async () => {
 		if (daemon) {
 			await daemon.waitForExit();
 		}
-	});
+	}, SETUP_TIMEOUT);
 
 	describe('Connection Lifecycle', () => {
 		test('should establish WebSocket connection', async () => {
@@ -60,45 +72,49 @@ describe('WebSocket Protocol', () => {
 			ws.close();
 		});
 
-		test('should handle multiple concurrent connections', async () => {
-			const ws1 = createWebSocket(daemon.baseUrl);
-			const ws2 = createWebSocket(daemon.baseUrl);
-			const ws3 = createWebSocket(daemon.baseUrl);
+		test(
+			'should handle multiple concurrent connections',
+			async () => {
+				const ws1 = createWebSocket(daemon.baseUrl);
+				const ws2 = createWebSocket(daemon.baseUrl);
+				const ws3 = createWebSocket(daemon.baseUrl);
 
-			await Promise.all([
-				waitForWebSocketState(ws1, WebSocket.OPEN),
-				waitForWebSocketState(ws2, WebSocket.OPEN),
-				waitForWebSocketState(ws3, WebSocket.OPEN),
-			]);
+				await Promise.all([
+					waitForWebSocketState(ws1, WebSocket.OPEN),
+					waitForWebSocketState(ws2, WebSocket.OPEN),
+					waitForWebSocketState(ws3, WebSocket.OPEN),
+				]);
 
-			expect(ws1.readyState).toBe(WebSocket.OPEN);
-			expect(ws2.readyState).toBe(WebSocket.OPEN);
-			expect(ws3.readyState).toBe(WebSocket.OPEN);
+				expect(ws1.readyState).toBe(WebSocket.OPEN);
+				expect(ws2.readyState).toBe(WebSocket.OPEN);
+				expect(ws3.readyState).toBe(WebSocket.OPEN);
 
-			// All connections should be able to make RPC calls
-			await Bun.sleep(100); // Let connection.established events drain
+				// All connections should be able to make RPC calls
+				await Bun.sleep(100); // Let connection.established events drain
 
-			sendRPCCall(ws1, 'session.list');
-			sendRPCCall(ws2, 'session.list');
-			sendRPCCall(ws3, 'session.list');
+				sendRPCCall(ws1, 'session.list');
+				sendRPCCall(ws2, 'session.list');
+				sendRPCCall(ws3, 'session.list');
 
-			const getResult = async (ws: WebSocket) => {
-				while (true) {
-					const msg = await waitForWebSocketMessage(ws, 10000);
-					if (msg.type === 'RSP') return msg;
-				}
-			};
+				const getResult = async (ws: WebSocket) => {
+					while (true) {
+						const msg = await waitForWebSocketMessage(ws, 10000);
+						if (msg.type === 'RSP') return msg;
+					}
+				};
 
-			const [r1, r2, r3] = await Promise.all([getResult(ws1), getResult(ws2), getResult(ws3)]);
+				const [r1, r2, r3] = await Promise.all([getResult(ws1), getResult(ws2), getResult(ws3)]);
 
-			expect(r1.type).toBe('RSP');
-			expect(r2.type).toBe('RSP');
-			expect(r3.type).toBe('RSP');
+				expect(r1.type).toBe('RSP');
+				expect(r2.type).toBe('RSP');
+				expect(r3.type).toBe('RSP');
 
-			ws1.close();
-			ws2.close();
-			ws3.close();
-		}, 15000);
+				ws1.close();
+				ws2.close();
+				ws3.close();
+			},
+			TEST_TIMEOUT
+		);
 
 		test('should handle client disconnection without affecting other clients', async () => {
 			const ws1 = createWebSocket(daemon.baseUrl);
@@ -226,26 +242,30 @@ describe('WebSocket Protocol', () => {
 			ws.close();
 		});
 
-		test('should handle many concurrent calls', async () => {
-			const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
-			await waitForWebSocketState(ws, WebSocket.OPEN);
-			await firstMessagePromise;
+		test(
+			'should handle many concurrent calls',
+			async () => {
+				const { ws, firstMessagePromise } = createWebSocketWithFirstMessage(daemon.baseUrl);
+				await waitForWebSocketState(ws, WebSocket.OPEN);
+				await firstMessagePromise;
 
-			const count = 50;
-			for (let i = 0; i < count; i++) {
-				sendRPCCall(ws, 'session.list');
-			}
+				const count = 50;
+				for (let i = 0; i < count; i++) {
+					sendRPCCall(ws, 'session.list');
+				}
 
-			const responses = [];
-			for (let i = 0; i < count; i++) {
-				responses.push(await waitForWebSocketMessage(ws, 30000));
-			}
+				const responses = [];
+				for (let i = 0; i < count; i++) {
+					responses.push(await waitForWebSocketMessage(ws, TEST_TIMEOUT));
+				}
 
-			const successCount = responses.filter((r) => r.type === 'RSP').length;
-			expect(successCount).toBe(count);
+				const successCount = responses.filter((r) => r.type === 'RSP').length;
+				expect(successCount).toBe(count);
 
-			ws.close();
-		});
+				ws.close();
+			},
+			TEST_TIMEOUT
+		);
 	});
 
 	describe('Error Handling', () => {

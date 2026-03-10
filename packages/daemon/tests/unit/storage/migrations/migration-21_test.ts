@@ -1,7 +1,7 @@
 /**
- * Migration 20 Tests
+ * Migration 21 Tests
  *
- * Tests for Migration 20: Backfill submittedForReview metadata from legacy state.
+ * Tests for Migration 21: Backfill submittedForReview metadata from legacy state.
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -10,12 +10,12 @@ import { join } from 'node:path';
 import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../../src/storage/schema/index.ts';
 
-describe('Migration 20: submittedForReview backfill', () => {
+describe('Migration 21: submittedForReview backfill', () => {
 	let testDir: string;
 	let db: BunDatabase;
 
 	beforeEach(() => {
-		testDir = join(process.cwd(), 'tmp', 'test-migration-20', `test-${Date.now()}`);
+		testDir = join(process.cwd(), 'tmp', 'test-migration-21', `test-${Date.now()}`);
 		mkdirSync(testDir, { recursive: true });
 
 		const dbPath = join(testDir, 'test.db');

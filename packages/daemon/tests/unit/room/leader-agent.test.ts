@@ -56,6 +56,31 @@ function makeTask(overrides?: Partial<NeoTask>): NeoTask {
 	};
 }
 
+// Mock implementations for required dependencies
+const mockGoalManager = {
+	createGoal: async () => ({ id: 'goal-1' }) as RoomGoal,
+	listGoals: async () => [],
+	getGoal: async () => makeGoal(),
+	updateGoalStatus: async () => makeGoal(),
+	updateGoalPriority: async () => makeGoal(),
+	linkTaskToGoal: async () => {},
+} as unknown as import('../../../src/lib/room/managers/goal-manager').GoalManager;
+
+const mockTaskManager = {
+	createTask: async () => makeTask(),
+	listTasks: async () => [],
+	getTask: async () => makeTask(),
+	updateTaskFields: async () => makeTask(),
+	cancelTaskCascade: async () => [],
+	setTaskStatus: async () => makeTask(),
+} as unknown as import('../../../src/lib/room/managers/task-manager').TaskManager;
+
+const mockGroupRepo = {
+	getGroup: () => null,
+	getGroupsByRoom: () => [],
+	getActiveGroups: () => [],
+} as unknown as import('../../../src/lib/room/state/session-group-repository').SessionGroupRepository;
+
 function makeConfig(overrides?: Partial<LeaderAgentConfig>): LeaderAgentConfig {
 	return {
 		task: makeTask(),
@@ -64,6 +89,9 @@ function makeConfig(overrides?: Partial<LeaderAgentConfig>): LeaderAgentConfig {
 		sessionId: 'leader:room-1:task-1',
 		workspacePath: '/workspace',
 		groupId: 'group-1',
+		goalManager: mockGoalManager,
+		taskManager: mockTaskManager,
+		groupRepo: mockGroupRepo,
 		...overrides,
 	};
 }
@@ -363,6 +391,68 @@ describe('Leader Agent', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.mcpServers).toBeDefined();
+			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
+		});
+
+		it('should include room-agent-tools MCP server for task/goal management', () => {
+			const callbacks = makeCallbacks();
+			const init = createLeaderAgentInit(makeConfig(), callbacks);
+			expect(init.mcpServers).toBeDefined();
+			expect(init.mcpServers!['room-agent-tools']).toBeDefined();
+		});
+
+		it('should NOT include room-agent-tools when dependencies are missing', () => {
+			const callbacks = makeCallbacks();
+			// Create config without goalManager, taskManager, groupRepo
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'leader:room-1:task-1',
+					workspacePath: '/workspace',
+					groupId: 'group-1',
+				},
+				callbacks
+			);
+			expect(init.mcpServers).toBeDefined();
+			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+		});
+
+		it('should NOT include room-agent-tools when only partial dependencies provided', () => {
+			const callbacks = makeCallbacks();
+			// Provide only goalManager, but not taskManager and groupRepo
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'leader:room-1:task-1',
+					workspacePath: '/workspace',
+					groupId: 'group-1',
+					goalManager: mockGoalManager,
+				},
+				callbacks
+			);
+			expect(init.mcpServers).toBeDefined();
+			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+		});
+
+		it('should still include leader-agent-tools regardless of room-agent-tools availability', () => {
+			const callbacks = makeCallbacks();
+			// Config without room-agent-tools dependencies
+			const init = createLeaderAgentInit(
+				{
+					task: makeTask(),
+					goal: makeGoal(),
+					room: makeRoom(),
+					sessionId: 'leader:room-1:task-1',
+					workspacePath: '/workspace',
+					groupId: 'group-1',
+				},
+				callbacks
+			);
+			// leader-agent-tools should always be present
 			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
 		});
 

@@ -23,6 +23,12 @@ import {
 	waitForSDKSystemInitMessage,
 } from '../helpers/wait-helpers';
 
+// IS_MOCK: In mock mode (devproxy), responses are instant, so the race condition bug
+// that this test reproduces will not occur. The bug is that handleInterrupt() returns
+// immediately without awaiting query cleanup - this only manifests when there's actual
+// processing delay from real API calls.
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
 test.describe('Interrupt Error Bug', () => {
 	test.beforeEach(async ({ page }) => {
 		await setupMessageHubTesting(page);
@@ -36,6 +42,8 @@ test.describe('Interrupt Error Bug', () => {
 			// The bug: handleInterrupt() returns immediately without awaiting query cleanup,
 			// so queryPromise still exists when user sends a new message, causing
 			// ensureQueryStarted() to return early without starting a new query.
+			//
+			// In mock mode (devproxy), responses are instant so the race condition won't reproduce.
 
 			// Create a session
 			const sessionId = await createSessionViaUI(page);
@@ -53,7 +61,7 @@ test.describe('Interrupt Error Bug', () => {
 			await page.locator('[data-testid="stop-button"]').click();
 			// Wait for send button to appear (agent back to idle after interrupt)
 			await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
-				timeout: 5000,
+				timeout: IS_MOCK ? 100 : 5000,
 			});
 
 			// STEP 4: Send new message immediately after interrupt
@@ -65,19 +73,19 @@ test.describe('Interrupt Error Bug', () => {
 
 			// Wait for user message to appear
 			await expect(page.locator('text=/Hello after interrupt/i')).toBeVisible({
-				timeout: 5000,
+				timeout: IS_MOCK ? 100 : 5000,
 			});
 
 			// STEP 6: Wait for assistant response
 			await expect(page.locator('[data-testid="assistant-message"]')).toBeVisible({
-				timeout: 20000,
+				timeout: IS_MOCK ? 100 : 20000,
 			});
 
 			// Wait for send button to reappear (agent returns to idle)
 			// If bug exists, agent gets stuck and send button never appears
 			const sendButtonVisible = await page
 				.locator('[data-testid="send-button"]')
-				.isVisible({ timeout: 5000 })
+				.isVisible({ timeout: IS_MOCK ? 100 : 5000 })
 				.catch(() => false);
 
 			// This assertion FAILS when agent is stuck (bug) - send button never reappears

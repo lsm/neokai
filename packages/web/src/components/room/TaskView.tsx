@@ -824,7 +824,7 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				onClose={cancelModal.close}
 				onConfirm={cancelTask}
 				title="Cancel Task"
-				message="Are you sure you want to cancel this task? This action cannot be undone."
+				message="Are you sure you want to cancel this task? The task's isolated worktree and branch will be permanently removed. This action cannot be undone."
 				confirmText="Cancel Task"
 				confirmButtonVariant="danger"
 				isLoading={cancelling}

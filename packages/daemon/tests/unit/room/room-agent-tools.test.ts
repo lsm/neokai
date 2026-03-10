@@ -53,7 +53,8 @@ describe('Room Agent Tools', () => {
 				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
-				completed_at INTEGER
+				completed_at INTEGER,
+				archived_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,

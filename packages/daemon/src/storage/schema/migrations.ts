@@ -82,11 +82,14 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 19: Remove legacy mirrored session_group_messages table
 	runMigration19(db);
 
-	// Migration 20: Backfill submittedForReview metadata for active awaiting_human groups
+	// Migration 20: Add archived_at column to tasks table
 	runMigration20(db);
 
-	// Migration 21: Drop legacy session_groups.state column and index
+	// Migration 21: Backfill submittedForReview metadata for active awaiting_human groups
 	runMigration21(db);
+
+	// Migration 22: Drop legacy session_groups.state column and index
+	runMigration22(db);
 }
 
 /**
@@ -958,13 +961,35 @@ function runMigration19(db: BunDatabase): void {
 }
 
 /**
- * Migration 20: Backfill submittedForReview metadata from legacy state column.
+ * Migration 20: Add archived_at column to tasks table
+ *
+ * archived_at is orthogonal to status - a task can be completed+archived, failed+archived, etc.
+ * This supports the worktree cleanup strategy where:
+ * - completed/cancelled tasks cleanup worktree immediately
+ * - failed tasks keep worktree for debugging
+ * - archived tasks cleanup worktree when user explicitly archives
+ */
+function runMigration20(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Check if archived_at column already exists
+	if (tableHasColumn(db, 'tasks', 'archived_at')) {
+		return;
+	}
+
+	db.exec(`ALTER TABLE tasks ADD COLUMN archived_at INTEGER`);
+}
+
+/**
+ * Migration 21: Backfill submittedForReview metadata from legacy state column.
  *
  * For pre-existing databases, active groups may rely on `state='awaiting_human'`
  * without metadata.submittedForReview set. Runtime behavior now relies on metadata,
  * so this migration copies that semantic flag into metadata once.
  */
-function runMigration20(db: BunDatabase): void {
+function runMigration21(db: BunDatabase): void {
 	if (!tableExists(db, 'session_groups')) {
 		return;
 	}
@@ -999,11 +1024,11 @@ function runMigration20(db: BunDatabase): void {
 }
 
 /**
- * Migration 21: Drop legacy `session_groups.state` and its index.
+ * Migration 22: Drop legacy `session_groups.state` and its index.
  *
  * Routing semantics now rely on completed_at + metadata.submittedForReview.
  */
-function runMigration21(db: BunDatabase): void {
+function runMigration22(db: BunDatabase): void {
 	db.exec(`DROP INDEX IF EXISTS idx_session_groups_state`);
 
 	if (!tableExists(db, 'session_groups')) {
