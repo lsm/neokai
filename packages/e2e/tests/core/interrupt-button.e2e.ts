@@ -16,6 +16,9 @@ import {
 	cleanupTestSession,
 } from '../helpers/wait-helpers';
 
+// Check if devproxy mock mode is enabled
+const IS_MOCK = process.env.NEOKAI_USE_DEV_PROXY === '1';
+
 test.describe('Interrupt Button', () => {
 	test.beforeEach(async ({ page }) => {
 		await setupMessageHubTesting(page);
@@ -35,7 +38,7 @@ test.describe('Interrupt Button', () => {
 		await page.click('[data-testid="send-button"]');
 
 		// Wait for agent to start processing
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Stop button should now be visible, send button hidden
 		await expect(page.locator('[data-testid="stop-button"]')).toBeVisible({
@@ -45,7 +48,7 @@ test.describe('Interrupt Button', () => {
 
 		// Interrupt to clean up
 		await page.click('[data-testid="stop-button"]');
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		await cleanupTestSession(page, sessionId);
 	});
@@ -62,7 +65,7 @@ test.describe('Interrupt Button', () => {
 		await page.click('[data-testid="send-button"]');
 
 		// Wait for processing to start
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		// Stop button should be visible
 		const stopButton = page.locator('[data-testid="stop-button"]');
@@ -87,7 +90,7 @@ test.describe('Interrupt Button', () => {
 
 		// Clean up
 		await stopButton.click();
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 
 		await cleanupTestSession(page, sessionId);
 	});
@@ -175,7 +178,7 @@ test.describe('Interrupt Button', () => {
 		await page.click('[data-testid="send-button"]');
 
 		// Wait for processing: stop button should appear
-		await page.waitForTimeout(1000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 1000);
 		await expect(page.locator('[data-testid="stop-button"]')).toBeVisible({
 			timeout: 5000,
 		});
@@ -185,7 +188,7 @@ test.describe('Interrupt Button', () => {
 		await page.click('[data-testid="stop-button"]');
 
 		// Wait for idle: send button should return
-		await page.waitForTimeout(2000);
+		await page.waitForTimeout(IS_MOCK ? 100 : 2000);
 		await expect(page.locator('[data-testid="send-button"]')).toBeVisible({
 			timeout: 5000,
 		});
