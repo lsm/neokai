@@ -517,7 +517,20 @@ export class ProviderService {
 		};
 
 		clear('ANTHROPIC_AUTH_TOKEN');
-		clear('ANTHROPIC_BASE_URL');
+		// Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
+		// Only clear if it was set by provider code (not the original value)
+		if (process.env.ANTHROPIC_BASE_URL !== undefined) {
+			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+			// Only delete if it's different from the original (provider-leaked value)
+			if (process.env.ANTHROPIC_BASE_URL !== originalBaseUrl) {
+				delete process.env.ANTHROPIC_BASE_URL;
+				changed = true;
+			} else {
+				// It's the original user value - mark as changed so original is returned
+				// This ensures restoreEnvVars can properly restore it after the query
+				changed = true;
+			}
+		}
 		clear('API_TIMEOUT_MS');
 		clear('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');
 		clear('ANTHROPIC_DEFAULT_SONNET_MODEL');
@@ -625,6 +638,13 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 
 // Singleton instance
 let providerServiceInstance: ProviderService | null = null;
+
+/**
+ * Original ANTHROPIC_BASE_URL captured at module initialization.
+ * This preserves user's custom base URL from environment/settings.json
+ * while allowing provider-leaked values to be cleared.
+ */
+const originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
 
 export function getProviderService(): ProviderService {
 	if (!providerServiceInstance) {
