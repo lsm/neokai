@@ -518,31 +518,27 @@ export class ProviderService {
 
 		clear('ANTHROPIC_AUTH_TOKEN');
 
-		// Helper to preserve user-configured values (same logic for all vars)
-		const preserveUserConfig = (
-			currentValue: string | undefined,
-			userConfigured: string | undefined
-		): boolean => userConfigured !== undefined && currentValue === userConfigured;
-
 		// Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
 		if (process.env.ANTHROPIC_BASE_URL !== undefined) {
 			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
-			if (!preserveUserConfig(process.env.ANTHROPIC_BASE_URL, userConfiguredBaseUrl)) {
+			changed = true;
+			if (
+				userConfiguredBaseUrl === undefined ||
+				process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl
+			) {
 				delete process.env.ANTHROPIC_BASE_URL;
-				changed = true;
-			} else {
-				changed = true;
 			}
 		}
 
 		// Preserve user's custom API_TIMEOUT_MS
 		if (process.env.API_TIMEOUT_MS !== undefined) {
 			original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
-			if (!preserveUserConfig(process.env.API_TIMEOUT_MS, userConfiguredApiTimeout)) {
+			changed = true;
+			if (
+				userConfiguredApiTimeout === undefined ||
+				process.env.API_TIMEOUT_MS !== userConfiguredApiTimeout
+			) {
 				delete process.env.API_TIMEOUT_MS;
-				changed = true;
-			} else {
-				changed = true;
 			}
 		}
 
@@ -550,64 +546,49 @@ export class ProviderService {
 		if (process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
 			original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
 				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			changed = true;
 			if (
-				!preserveUserConfig(
-					process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+				userConfiguredDisableNonEssentialTraffic === undefined ||
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !==
 					userConfiguredDisableNonEssentialTraffic
-				)
 			) {
 				delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
-				changed = true;
-			} else {
-				changed = true;
 			}
 		}
 
 		// Preserve user's custom ANTHROPIC_DEFAULT_SONNET_MODEL
 		if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
 			original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			changed = true;
 			if (
-				!preserveUserConfig(
-					process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-					userConfiguredDefaultSonnetModel
-				)
+				userConfiguredDefaultSonnetModel === undefined ||
+				process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
 			) {
 				delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-				changed = true;
-			} else {
-				changed = true;
 			}
 		}
 
 		// Preserve user's custom ANTHROPIC_DEFAULT_HAIKU_MODEL
 		if (process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
 			original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			changed = true;
 			if (
-				!preserveUserConfig(
-					process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-					userConfiguredDefaultHaikuModel
-				)
+				userConfiguredDefaultHaikuModel === undefined ||
+				process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
 			) {
 				delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-				changed = true;
-			} else {
-				changed = true;
 			}
 		}
 
 		// Preserve user's custom ANTHROPIC_DEFAULT_OPUS_MODEL
 		if (process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
 			original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			changed = true;
 			if (
-				!preserveUserConfig(
-					process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
-					userConfiguredDefaultOpusModel
-				)
+				userConfiguredDefaultOpusModel === undefined ||
+				process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
 			) {
 				delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-				changed = true;
-			} else {
-				changed = true;
 			}
 		}
 
