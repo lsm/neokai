@@ -517,12 +517,80 @@ export class ProviderService {
 		};
 
 		clear('ANTHROPIC_AUTH_TOKEN');
-		clear('ANTHROPIC_BASE_URL');
-		clear('API_TIMEOUT_MS');
-		clear('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');
-		clear('ANTHROPIC_DEFAULT_SONNET_MODEL');
-		clear('ANTHROPIC_DEFAULT_HAIKU_MODEL');
-		clear('ANTHROPIC_DEFAULT_OPUS_MODEL');
+
+		// Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
+		if (process.env.ANTHROPIC_BASE_URL !== undefined) {
+			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
+			changed = true;
+			if (
+				userConfiguredBaseUrl === undefined ||
+				process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl
+			) {
+				delete process.env.ANTHROPIC_BASE_URL;
+			}
+		}
+
+		// Preserve user's custom API_TIMEOUT_MS
+		if (process.env.API_TIMEOUT_MS !== undefined) {
+			original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
+			changed = true;
+			if (
+				userConfiguredApiTimeout === undefined ||
+				process.env.API_TIMEOUT_MS !== userConfiguredApiTimeout
+			) {
+				delete process.env.API_TIMEOUT_MS;
+			}
+		}
+
+		// Preserve user's custom CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+		if (process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+			original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			changed = true;
+			if (
+				userConfiguredDisableNonEssentialTraffic === undefined ||
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !==
+					userConfiguredDisableNonEssentialTraffic
+			) {
+				delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			}
+		}
+
+		// Preserve user's custom ANTHROPIC_DEFAULT_SONNET_MODEL
+		if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			changed = true;
+			if (
+				userConfiguredDefaultSonnetModel === undefined ||
+				process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== userConfiguredDefaultSonnetModel
+			) {
+				delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			}
+		}
+
+		// Preserve user's custom ANTHROPIC_DEFAULT_HAIKU_MODEL
+		if (process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			changed = true;
+			if (
+				userConfiguredDefaultHaikuModel === undefined ||
+				process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== userConfiguredDefaultHaikuModel
+			) {
+				delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			}
+		}
+
+		// Preserve user's custom ANTHROPIC_DEFAULT_OPUS_MODEL
+		if (process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			changed = true;
+			if (
+				userConfiguredDefaultOpusModel === undefined ||
+				process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== userConfiguredDefaultOpusModel
+			) {
+				delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			}
+		}
 
 		return changed ? original : {};
 	}
@@ -625,6 +693,23 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 
 // Singleton instance
 let providerServiceInstance: ProviderService | null = null;
+
+/**
+ * User-configured env vars captured at module initialization.
+ * These preserve values from environment/settings.json while allowing
+ * provider-leaked values to be cleared.
+ *
+ * IMPORTANT: These must be captured AFTER credential discovery has run.
+ * The import order in main.ts ensures config.ts (which calls discoverCredentials)
+ * is imported before app.ts (which triggers provider-service.ts loading).
+ */
+const userConfiguredBaseUrl = process.env.ANTHROPIC_BASE_URL;
+const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
+const userConfiguredDisableNonEssentialTraffic =
+	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
 export function getProviderService(): ProviderService {
 	if (!providerServiceInstance) {

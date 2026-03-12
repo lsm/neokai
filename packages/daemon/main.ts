@@ -1,5 +1,7 @@
-import { createDaemonApp } from './src/app';
+// IMPORTANT: Import config first to ensure credential discovery runs
+// before any other modules (like provider-service) that depend on it.
 import { getConfig } from './src/config';
+import { createDaemonApp } from './src/app';
 
 const config = getConfig();
 
