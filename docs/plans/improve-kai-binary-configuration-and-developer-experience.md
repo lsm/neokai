@@ -50,6 +50,7 @@ Improve the kai binary's configuration system to make local development, testing
 - `kai --help` shows new CLI flags
 - `ANTHROPIC_BASE_URL` is readable from `config.anthropicBaseUrl`
 - CLI flags override environment variables via ConfigOverrides
+- Verification: CLI `--base-url` flag takes precedence over `ANTHROPIC_BASE_URL` env var
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Agent Type:** coder
@@ -64,15 +65,17 @@ Improve the kai binary's configuration system to make local development, testing
   - Which config sources are being used (CLI, env, settings.json, defaults)
   - The final configuration values (excluding sensitive values like API keys)
   - Configuration precedence for each value
-- Create a new utility function `logConfigSources()` in `packages/daemon/src/lib/credential-discovery.ts` (more appropriate location than config.ts since it deals with config source discovery)
+- **Implementation approach**: Add debug logging function in `packages/daemon/src/config.ts` that can be called after `getConfig()` resolves the final config. The CLI (`main.ts`) will call this after config is loaded but before server startup.
+- Output format: Human-readable text showing each config key, its value (redacted for sensitive data), and the source (CLI flag, env var, settings.json, default)
 - Ensure API keys are redacted in logs (show only first 4 characters)
-- Output should show: source of each config value (CLI flag, env var, settings.json, default)
+- **Timing**: Since credential-discovery runs at module load time and CLI parsing happens after, the debug output will show the final resolved config from `getConfig()` including all sources
 
 **Dependencies:** Task 1 (uses CLI flags added in Task 1)
 
 **Acceptance Criteria:**
 - Running `kai -d` or `kai --debug-config` shows configuration debug output
 - Sensitive values are redacted in logs
+- Output shows source of each config value (CLI flag, env var, settings.json, default)
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Agent Type:** coder
@@ -82,18 +85,22 @@ Improve the kai binary's configuration system to make local development, testing
 ### Task 3: Fix ANTHROPIC_BASE_URL Configuration for Anthropic Provider
 
 **Description:**
-- The issue is in `provider-service.ts` lines 361-367 where `getEnvVarsForModel()` returns `{}` for Anthropic provider
-- Returning `{}` causes `clearProviderRoutingEnvVars()` to be called (line 421), which **deletes** the user's `ANTHROPIC_BASE_URL` from `process.env`
-- **Implementation approach**: Modify `getEnvVarsForModel()` to return `{ ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL }` if the user has configured it and the provider is Anthropic
+- The issue exists in TWO locations in `provider-service.ts`:
+
+  **Location 1**: `getEnvVarsForModel()` (lines 361-367) - returns `{}` for Anthropic provider which causes `clearProviderRoutingEnvVars()` to delete user's ANTHROPIC_BASE_URL
+
+  **Location 2**: `applyEnvVarsToProcessForProvider()` (lines 444-446) - same issue when called with explicit provider
+
+- **Implementation approach for both methods**: Modify each to return `{ ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL }` if the user has configured it and the provider is Anthropic
 - This preserves user's configured URL instead of clearing it
 - Ensure CLI/env overrides take precedence over settings.json for Anthropic provider
-- The fix should be in `packages/daemon/src/lib/provider-service.ts` in the `getEnvVarsForModel()` method
 
 **Dependencies:** Task 1
 
 **Acceptance Criteria:**
 - Setting `ANTHROPIC_BASE_URL` environment variable or CLI flag uses the custom URL for Anthropic provider
-- The user's ANTHROPIC_BASE_URL is not deleted when making queries with Anthropic provider
+- The user's ANTHROPIC_BASE_URL is not deleted when making queries with Anthropic provider via either method
+- Both `getEnvVarsForModel()` and `applyEnvVarsToProcessForProvider()` preserve user's config
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Agent Type:** coder
@@ -131,24 +138,28 @@ Improve the kai binary's configuration system to make local development, testing
 ### Task 5: Add Unit Tests for Configuration System
 
 **Description:**
-- **Note**: `packages/daemon/tests/unit/config.test.ts` already exists - extend it with new tests
+- **Note**: The existing test file is at `packages/daemon/tests/unit/core/config.test.ts` - extend it with new tests
+- First, clean up unused import: remove `logCredentialDiscovery` from imports in config.test.ts (it doesn't exist in config.ts)
 - Add unit tests:
   - Test `getConfig()` with various overrides (CLI overrides, env vars)
   - Test CLI flag parsing for new flags
   - Test configuration precedence (CLI > env > settings.json > defaults)
   - Test debug logging output
-- Add tests for new ANTHROPIC_BASE_URL handling in provider-service.ts
+- Add tests for provider-service.ts ANTHROPIC_BASE_URL handling:
+  - Test `getEnvVarsForModel()` preserves user's ANTHROPIC_BASE_URL for Anthropic provider
+  - Test `applyEnvVarsToProcessForProvider()` preserves user's ANTHROPIC_BASE_URL for Anthropic provider
 - Ensure tests cover edge cases like:
   - CLI override vs env variable priority
   - Missing required configuration
   - Invalid configuration values
-  - User's ANTHROPIC_BASE_URL being preserved for Anthropic provider
+  - User's ANTHROPIC_BASE_URL being preserved for Anthropic provider in both code paths
 
 **Dependencies:** Task 1, Task 2, Task 3
 
 **Acceptance Criteria:**
 - Unit tests pass for all configuration scenarios
 - Test coverage includes new configuration options
+- All tests in config.test.ts pass (including after removing unused import)
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Agent Type:** coder
@@ -173,11 +184,10 @@ Task 1: Add ANTHROPIC_BASE_URL to Config Interface and CLI Flags
 
 | File | Tasks |
 |------|-------|
-| `packages/daemon/src/config.ts` | 1, 3 |
+| `packages/daemon/src/config.ts` | 1, 2, 5 |
 | `packages/cli/src/cli-utils.ts` | 1, 2, 4 |
 | `packages/cli/main.ts` | 1, 2 |
 | `packages/daemon/src/lib/provider-service.ts` | 3 |
-| `packages/daemon/src/lib/credential-discovery.ts` | 2 |
 | `docs/configuration.md` (new) | 4 |
-| `packages/daemon/tests/unit/config.test.ts` (extend) | 5 |
+| `packages/daemon/tests/unit/core/config.test.ts` (extend) | 5 |
 | `packages/cli/tests/cli-utils.test.ts` (if exists) | 5 |
