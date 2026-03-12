@@ -521,19 +521,18 @@ export class ProviderService {
 		// Only clear if it was set by provider code (not the original value)
 		if (process.env.ANTHROPIC_BASE_URL !== undefined) {
 			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
-			// Only delete if:
-			// 1. userConfiguredBaseUrl was captured (not undefined), AND
-			// 2. current value differs from userConfiguredBaseUrl (provider-leaked)
-			// If userConfiguredBaseUrl is undefined (test scenario), preserve any value
-			const shouldClear =
+			// Clear if:
+			// 1. userConfiguredBaseUrl is NOT defined (test scenario - can't distinguish, clear to be safe), OR
+			// 2. userConfiguredBaseUrl IS defined AND current value differs from it (provider-leaked)
+			// Preserve only if userConfiguredBaseUrl is defined AND matches current value (user's original config)
+			const shouldPreserve =
 				userConfiguredBaseUrl !== undefined &&
-				process.env.ANTHROPIC_BASE_URL !== userConfiguredBaseUrl;
-			if (shouldClear) {
+				process.env.ANTHROPIC_BASE_URL === userConfiguredBaseUrl;
+			if (!shouldPreserve) {
 				delete process.env.ANTHROPIC_BASE_URL;
 				changed = true;
 			} else {
-				// Preserve the value (either matches user config, or we can't tell in tests)
-				// Mark as changed so original is returned for proper restoration
+				// It's the user's original value - preserve and mark for restoration
 				changed = true;
 			}
 		}
