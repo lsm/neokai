@@ -517,30 +517,99 @@ export class ProviderService {
 		};
 
 		clear('ANTHROPIC_AUTH_TOKEN');
+
+		// Helper to preserve user-configured values (same logic for all vars)
+		const preserveUserConfig = (
+			currentValue: string | undefined,
+			userConfigured: string | undefined
+		): boolean => userConfigured !== undefined && currentValue === userConfigured;
+
 		// Preserve user's custom ANTHROPIC_BASE_URL from environment/settings.json
-		// Only clear if it was set by provider code (not the original value)
 		if (process.env.ANTHROPIC_BASE_URL !== undefined) {
 			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
-			// Clear if:
-			// 1. userConfiguredBaseUrl is NOT defined (test scenario - can't distinguish, clear to be safe), OR
-			// 2. userConfiguredBaseUrl IS defined AND current value differs from it (provider-leaked)
-			// Preserve only if userConfiguredBaseUrl is defined AND matches current value (user's original config)
-			const shouldPreserve =
-				userConfiguredBaseUrl !== undefined &&
-				process.env.ANTHROPIC_BASE_URL === userConfiguredBaseUrl;
-			if (!shouldPreserve) {
+			if (!preserveUserConfig(process.env.ANTHROPIC_BASE_URL, userConfiguredBaseUrl)) {
 				delete process.env.ANTHROPIC_BASE_URL;
 				changed = true;
 			} else {
-				// It's the user's original value - preserve and mark for restoration
 				changed = true;
 			}
 		}
-		clear('API_TIMEOUT_MS');
-		clear('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');
-		clear('ANTHROPIC_DEFAULT_SONNET_MODEL');
-		clear('ANTHROPIC_DEFAULT_HAIKU_MODEL');
-		clear('ANTHROPIC_DEFAULT_OPUS_MODEL');
+
+		// Preserve user's custom API_TIMEOUT_MS
+		if (process.env.API_TIMEOUT_MS !== undefined) {
+			original.API_TIMEOUT_MS = process.env.API_TIMEOUT_MS;
+			if (!preserveUserConfig(process.env.API_TIMEOUT_MS, userConfiguredApiTimeout)) {
+				delete process.env.API_TIMEOUT_MS;
+				changed = true;
+			} else {
+				changed = true;
+			}
+		}
+
+		// Preserve user's custom CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+		if (process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC !== undefined) {
+			original.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC =
+				process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+			if (
+				!preserveUserConfig(
+					process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
+					userConfiguredDisableNonEssentialTraffic
+				)
+			) {
+				delete process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+				changed = true;
+			} else {
+				changed = true;
+			}
+		}
+
+		// Preserve user's custom ANTHROPIC_DEFAULT_SONNET_MODEL
+		if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_SONNET_MODEL = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+			if (
+				!preserveUserConfig(
+					process.env.ANTHROPIC_DEFAULT_SONNET_MODEL,
+					userConfiguredDefaultSonnetModel
+				)
+			) {
+				delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+				changed = true;
+			} else {
+				changed = true;
+			}
+		}
+
+		// Preserve user's custom ANTHROPIC_DEFAULT_HAIKU_MODEL
+		if (process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_HAIKU_MODEL = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+			if (
+				!preserveUserConfig(
+					process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+					userConfiguredDefaultHaikuModel
+				)
+			) {
+				delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+				changed = true;
+			} else {
+				changed = true;
+			}
+		}
+
+		// Preserve user's custom ANTHROPIC_DEFAULT_OPUS_MODEL
+		if (process.env.ANTHROPIC_DEFAULT_OPUS_MODEL !== undefined) {
+			original.ANTHROPIC_DEFAULT_OPUS_MODEL = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+			if (
+				!preserveUserConfig(
+					process.env.ANTHROPIC_DEFAULT_OPUS_MODEL,
+					userConfiguredDefaultOpusModel
+				)
+			) {
+				delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
+				changed = true;
+			} else {
+				changed = true;
+			}
+		}
 
 		return changed ? original : {};
 	}
@@ -645,15 +714,21 @@ export function mergeProviderEnvVars(providerEnvVars: ProviderEnvVars): NodeJS.P
 let providerServiceInstance: ProviderService | null = null;
 
 /**
- * User-configured ANTHROPIC_BASE_URL captured at module initialization.
- * This preserves the base URL from environment/settings.json
- * while allowing provider-leaked values to be cleared.
+ * User-configured env vars captured at module initialization.
+ * These preserve values from environment/settings.json while allowing
+ * provider-leaked values to be cleared.
  *
- * IMPORTANT: This must be captured AFTER credential discovery has run.
+ * IMPORTANT: These must be captured AFTER credential discovery has run.
  * The import order in main.ts ensures config.ts (which calls discoverCredentials)
  * is imported before app.ts (which triggers provider-service.ts loading).
  */
 const userConfiguredBaseUrl = process.env.ANTHROPIC_BASE_URL;
+const userConfiguredApiTimeout = process.env.API_TIMEOUT_MS;
+const userConfiguredDisableNonEssentialTraffic =
+	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+const userConfiguredDefaultSonnetModel = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+const userConfiguredDefaultHaikuModel = process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+const userConfiguredDefaultOpusModel = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
 export function getProviderService(): ProviderService {
 	if (!providerServiceInstance) {
