@@ -643,6 +643,10 @@ let providerServiceInstance: ProviderService | null = null;
  * Original ANTHROPIC_BASE_URL captured at module initialization.
  * This preserves user's custom base URL from environment/settings.json
  * while allowing provider-leaked values to be cleared.
+ *
+ * IMPORTANT: This must be captured AFTER credential discovery has run.
+ * The import order in main.ts ensures config.ts (which calls discoverCredentials)
+ * is imported before app.ts (which triggers provider-service.ts loading).
  */
 const originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
 
