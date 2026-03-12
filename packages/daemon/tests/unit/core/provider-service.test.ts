@@ -598,6 +598,24 @@ describe('ProviderService', () => {
 			// Check env vars were updated
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 		});
+
+		it('should clear provider-leaked GLM base URL after GLM query', () => {
+			// First simulate GLM was used (leaving its base URL)
+			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
+
+			// Apply GLM env vars
+			const originalFromGlm = service.applyEnvVarsToProcess('glm-4');
+			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
+
+			// Restore from GLM query
+			service.restoreEnvVars(originalFromGlm);
+
+			// Switch to anthropic - leaked GLM URL should be cleared
+			const originalFromAnthropic = service.applyEnvVarsToProcess('claude-3-opus');
+
+			// The leaked GLM URL should be cleared
+			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
+		});
 	});
 
 	describe('applyEnvVarsToProcessForProvider', () => {
