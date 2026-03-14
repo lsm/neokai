@@ -57,7 +57,7 @@ describe('RoomRuntime - terminal error detection', () => {
 
 			// Task should be failed, NOT routed to leader
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 
 			// Group should be completed (terminated)
 			const updatedGroup = ctx.groupRepo.getGroup(group.id);
@@ -78,7 +78,7 @@ describe('RoomRuntime - terminal error detection', () => {
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 		});
 
 		it('fails task immediately on HTTP 403 error in worker output', async () => {
@@ -89,7 +89,7 @@ describe('RoomRuntime - terminal error detection', () => {
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 		});
 
 		it('fails task immediately on HTTP 404 error in worker output', async () => {
@@ -100,7 +100,7 @@ describe('RoomRuntime - terminal error detection', () => {
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 		});
 
 		it('fails task immediately on HTTP 422 error in worker output', async () => {
@@ -111,7 +111,7 @@ describe('RoomRuntime - terminal error detection', () => {
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 		});
 
 		it('fails task on terminal error embedded in multi-line worker output', async () => {
@@ -129,7 +129,7 @@ describe('RoomRuntime - terminal error detection', () => {
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 		});
 	});
 
@@ -191,7 +191,7 @@ describe('RoomRuntime - terminal error detection', () => {
 
 			// 429 is rate_limit, not terminal — task is NOT failed immediately
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).not.toBe('failed');
+			expect(updatedTask!.status).not.toBe('needs_attention');
 		});
 	});
 

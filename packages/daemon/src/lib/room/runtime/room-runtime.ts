@@ -601,7 +601,6 @@ export class RoomRuntime {
 			}
 		}
 
-
 		// Classify any API errors in worker output.
 		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
 		// rate_limit → pause with timed backoff (429 / usage limit)
