@@ -23,6 +23,7 @@ import type {
 	SessionFeatures,
 	McpServerConfig,
 	AgentDefinition,
+	SubagentConfig,
 } from '@neokai/shared';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
@@ -503,22 +504,6 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 	];
 
 	return createSdkMcpServer({ name: 'leader-agent-tools', tools });
-}
-
-/**
- * Sub-agent configuration (used in room.config.agentSubagents.{role})
- */
-interface SubagentConfig {
-	/** Model ID (e.g., 'claude-opus-4-6', 'gpt-5.3-codex') or CLI agent short name */
-	model: string;
-	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
-	provider?: string;
-	/** Marks this reviewer as CLI-based (external tool orchestrated via Bash) */
-	type?: 'cli';
-	/** Full model ID when different from the short name in 'model' */
-	modelId?: string;
-	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
-	cliModel?: string;
 }
 
 /**

@@ -11,7 +11,14 @@
  */
 
 import type { AgentSessionInit } from '../../agent/agent-session';
-import type { Room, RoomGoal, NeoTask, SessionFeatures, AgentDefinition } from '@neokai/shared';
+import type {
+	Room,
+	RoomGoal,
+	NeoTask,
+	SessionFeatures,
+	AgentDefinition,
+	SubagentConfig,
+} from '@neokai/shared';
 
 const DEFAULT_CODER_MODEL = 'claude-sonnet-4-5-20250929';
 
@@ -22,23 +29,6 @@ const CODER_FEATURES: SessionFeatures = {
 	archive: false,
 	sessionInfo: false,
 };
-
-/**
- * Sub-agent configuration for worker helper agents.
- * Matches the SubagentConfig shape used by the leader reviewer agents.
- */
-interface SubagentConfig {
-	/** Model ID (e.g., 'claude-haiku-4-5', 'claude-sonnet-4-6') */
-	model: string;
-	/** Provider name (e.g., 'anthropic', 'openai') */
-	provider?: string;
-	/** Full model ID when different from the short name in 'model' */
-	modelId?: string;
-	/** Optional display name override for this helper */
-	name?: string;
-	/** Optional description of what this helper specializes in */
-	description?: string;
-}
 
 export interface CoderAgentConfig {
 	task: NeoTask;

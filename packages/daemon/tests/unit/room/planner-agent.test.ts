@@ -2,6 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import {
 	buildPlannerSystemPrompt,
 	buildPlannerTaskMessage,
+	buildPlanWriterAgentDef,
+	buildPlanWriterPrompt,
 	createPlannerAgentInit,
 	toPlanSlug,
 	type PlannerAgentConfig,
@@ -77,12 +79,24 @@ describe('planner-agent', () => {
 			// Phase 1: Planning
 			expect(prompt).toContain('Phase 1: Planning');
 			expect(prompt).toContain('docs/plans/');
-			expect(prompt).toContain('gh pr create');
 
 			// Phase 2: Task Creation
 			expect(prompt).toContain('Phase 2: Task Creation');
 			expect(prompt).toContain('create_task');
 			expect(prompt).toContain('depends_on');
+		});
+
+		it('should instruct to spawn the plan-writer sub-agent in Phase 1', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('plan-writer');
+			expect(prompt).toContain('plan-writer');
+		});
+
+		it('should instruct to parse ---PLAN_RESULT--- from plan-writer response', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('---PLAN_RESULT---');
+			expect(prompt).toContain('pr_number');
+			expect(prompt).toContain('plan_files');
 		});
 
 		it('should include pre-planning git sync setup', () => {
@@ -111,19 +125,6 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('git fetch origin && git rebase origin/$DEFAULT_BRANCH');
 		});
 
-		it('should use subshell with empty-check fallback for gh pr create --base', () => {
-			const prompt = buildPlannerSystemPrompt('Build stock app');
-			expect(prompt).toContain(
-				`gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")`
-			);
-		});
-
-		it('should include fallback for repos where origin/HEAD is not configured', () => {
-			const prompt = buildPlannerSystemPrompt('Build stock app');
-			expect(prompt).toContain('git remote show origin');
-			expect(prompt).toContain("sed -n '/HEAD branch/s/.*: //p'");
-		});
-
 		it('should suppress git symbolic-ref stderr with 2>/dev/null', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
 			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
@@ -138,14 +139,14 @@ describe('planner-agent', () => {
 			expect(syncIdx).toBeLessThan(phase1Idx);
 		});
 
-		it('should use goal title for plan path', () => {
+		it('should reference goal title for plan path', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
-			expect(prompt).toContain('docs/plans/build-stock-app.md');
+			expect(prompt).toContain('docs/plans/build-stock-app');
 		});
 
 		it('should use default plan name when no goal title', () => {
 			const prompt = buildPlannerSystemPrompt();
-			expect(prompt).toContain('docs/plans/plan.md');
+			expect(prompt).toContain('docs/plans/plan');
 		});
 
 		it('should mention tools are disabled during planning phase', () => {
@@ -154,35 +155,135 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('disabled');
 		});
 
-		it('should NOT impose a fixed task count limit', () => {
-			const prompt = buildPlannerSystemPrompt('Build stock app');
-			expect(prompt).not.toContain('3-8');
-			expect(prompt).not.toContain('3 to 8');
+		it('should instruct to merge PR before creating tasks in Phase 2', () => {
+			const prompt = buildPlannerSystemPrompt('Test');
+			expect(prompt).toContain('gh pr merge');
+			expect(prompt).toContain('pr_number');
 		});
 
-		it('should encourage granular tasks for complex goals', () => {
+		it('should describe multi-file plan structure for large goals', () => {
 			const prompt = buildPlannerSystemPrompt('Build stock app');
-			expect(prompt).toContain('granular');
+			expect(prompt).toContain('00-overview.md');
+			expect(prompt).toContain('multi');
+		});
+	});
+
+	describe('buildPlanWriterPrompt', () => {
+		it('should include git sync pre-work', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('git fetch origin && git rebase origin/$DEFAULT_BRANCH');
+			expect(prompt).toContain('git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null');
+		});
+
+		it('should instruct to stop on rebase conflict', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('rebase fails with conflicts, stop immediately');
 		});
 
 		it('should include Explore sub-agent guidance for codebase exploration', () => {
-			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const prompt = buildPlanWriterPrompt();
 			expect(prompt).toContain('Explore');
 			expect(prompt).toContain('subagent_type');
 		});
 
 		it('should recommend spawning multiple Explore agents in parallel', () => {
-			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const prompt = buildPlanWriterPrompt();
 			expect(prompt).toContain('parallel');
 		});
 
-		it('should include Codebase Exploration section before Plan Creation', () => {
-			const prompt = buildPlannerSystemPrompt('Build stock app');
-			const exploreIdx = prompt.indexOf('Codebase Exploration');
-			const planCreationIdx = prompt.indexOf('Plan Creation');
-			expect(exploreIdx).toBeGreaterThanOrEqual(0);
-			expect(planCreationIdx).toBeGreaterThanOrEqual(0);
-			expect(exploreIdx).toBeLessThan(planCreationIdx);
+		it('should define small vs large scope thresholds', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('Small scope');
+			expect(prompt).toContain('Large scope');
+			expect(prompt).toContain('5 milestones');
+		});
+
+		it('should describe single-file path for small scope using placeholder', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('<single_plan_path>');
+		});
+
+		it('should describe multi-file folder structure for large scope', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('<plan_dir>');
+			expect(prompt).toContain('00-overview.md');
+		});
+
+		it('should describe iterative two-pass approach for large scope', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('Two-Pass');
+			expect(prompt).toContain('Pass 1');
+			expect(prompt).toContain('Pass 2');
+		});
+
+		it('should describe numbered file naming convention', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('NN-<milestone-slug>.md');
+			expect(prompt).toContain('01-');
+			expect(prompt).toContain('02-');
+		});
+
+		it('should use subshell with empty-check fallback for gh pr create --base', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain(
+				`gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")`
+			);
+		});
+
+		it('should require ---PLAN_RESULT--- structured output block', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('---PLAN_RESULT---');
+			expect(prompt).toContain('---END_PLAN_RESULT---');
+			expect(prompt).toContain('pr_number');
+			expect(prompt).toContain('plan_files');
+			expect(prompt).toContain('structure: single | multi');
+		});
+
+		it('should instruct to create a feature branch with plan slug', () => {
+			const prompt = buildPlanWriterPrompt();
+			expect(prompt).toContain('git checkout -b plan/<plan_slug>');
+		});
+	});
+
+	describe('buildPlanWriterAgentDef', () => {
+		it('substitutes plan slug placeholders in prompt', () => {
+			const def = buildPlanWriterAgentDef('my-goal');
+			expect(def.prompt).toContain('docs/plans/my-goal.md');
+			expect(def.prompt).toContain('docs/plans/my-goal/');
+			expect(def.prompt).toContain('plan/my-goal');
+		});
+
+		it('does NOT contain raw placeholders after substitution', () => {
+			const def = buildPlanWriterAgentDef('my-goal');
+			expect(def.prompt).not.toContain('<single_plan_path>');
+			expect(def.prompt).not.toContain('<plan_dir>');
+			expect(def.prompt).not.toContain('<plan_slug>');
+		});
+
+		it('has Task tool for spawning Explore sub-agents', () => {
+			const def = buildPlanWriterAgentDef('my-goal');
+			expect(def.tools).toContain('Task');
+			expect(def.tools).toContain('TaskOutput');
+			expect(def.tools).toContain('TaskStop');
+		});
+
+		it('has standard codebase tools', () => {
+			const def = buildPlanWriterAgentDef('my-goal');
+			expect(def.tools).toContain('Read');
+			expect(def.tools).toContain('Write');
+			expect(def.tools).toContain('Edit');
+			expect(def.tools).toContain('Bash');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildPlanWriterAgentDef('my-goal');
+			expect(def.model).toBe('inherit');
+		});
+
+		it('prompt includes iterative multi-file instructions', () => {
+			const def = buildPlanWriterAgentDef('my-goal');
+			expect(def.prompt).toContain('00-overview.md');
+			expect(def.prompt).toContain('Two-Pass');
 		});
 	});
 
@@ -278,7 +379,29 @@ describe('planner-agent', () => {
 			expect(init.agents).toHaveProperty('Planner');
 		});
 
-		it('Planner agent def includes Task tool for spawning Explore sub-agents', () => {
+		it('agents map includes plan-writer sub-agent', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents).toHaveProperty('plan-writer');
+		});
+
+		it('plan-writer agent has Task tool for spawning Explore sub-agents', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const planWriter = init.agents?.['plan-writer'];
+			expect(planWriter?.tools).toContain('Task');
+		});
+
+		it('plan-writer agent uses inherit model', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents?.['plan-writer']?.model).toBe('inherit');
+		});
+
+		it('plan-writer prompt has concrete file paths derived from goal title', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const planWriterPrompt = init.agents?.['plan-writer']?.prompt ?? '';
+			expect(planWriterPrompt).toContain('docs/plans/build-stock-app');
+		});
+
+		it('Planner agent def includes Task tool for spawning plan-writer', () => {
 			const init = createPlannerAgentInit(sharedBaseConfig);
 			expect(init.agents?.['Planner']?.tools).toContain('Task');
 		});
