@@ -558,8 +558,9 @@ export function buildLeaderHelperAgents(
 		}
 		usedNames.add(name);
 
-		const modelId = helper.modelId ?? helper.model;
-		const provider = helper.provider ?? 'anthropic';
+		// Use same resolution logic as reviewers for consistency
+		const provider = resolveProvider(helper);
+		const modelId = resolveModelId(helper);
 		const description = `Leader analysis helper using ${modelId} (${provider}). Performs read-only analysis to keep the main leader context clean.`;
 
 		agents[name] = {
