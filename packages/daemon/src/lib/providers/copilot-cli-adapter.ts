@@ -42,6 +42,7 @@ import type {
 	SDKAssistantMessage,
 	SDKSystemMessage,
 	SDKResultMessage,
+	SDKPartialAssistantMessage,
 } from '@neokai/shared/sdk';
 import type {
 	ProviderQueryOptions,
@@ -71,6 +72,17 @@ export interface CopilotCliAdapterConfig {
 	resumeSessionId?: string;
 	/** Called with the Copilot sessionId from the result event */
 	onSessionId?: (sessionId: string) => void;
+	/**
+	 * Auto-approve all tool executions (default: true for automation).
+	 * Set to false for interactive use where tool permissions should be prompted.
+	 * WARNING: When true, the CLI can execute arbitrary shell commands and file ops.
+	 */
+	allowAll?: boolean;
+	/**
+	 * Enable autonomous multi-step continuation (default: false).
+	 * When true, passes `--autopilot` to the CLI for long multi-step tasks.
+	 */
+	autopilot?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +240,8 @@ export function createCopilotStreamEvent(sessionId: string, delta: string): SDKM
 		uuid: generateUUID() as UUID,
 		session_id: sessionId,
 		parent_tool_use_id: null,
+		// Cast as SDKPartialAssistantMessage['event'] (BetaRawMessageStreamEvent) since
+		// we're constructing a content_block_delta event compatible with the Anthropic SDK type
 		event: {
 			type: 'content_block_delta',
 			index: 0,
@@ -235,7 +249,7 @@ export function createCopilotStreamEvent(sessionId: string, delta: string): SDKM
 				type: 'text_delta',
 				text: delta,
 			},
-		} as unknown as SDKMessage extends { type: 'stream_event' } ? SDKMessage['event'] : never,
+		} as SDKPartialAssistantMessage['event'],
 	};
 }
 
@@ -253,14 +267,17 @@ export function copilotMessageToSdkAssistant(
 ): SDKAssistantMessage {
 	const messageContent: Array<
 		| { type: 'text'; text: string }
+		| { type: 'thinking'; thinking: string }
 		| { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
 	> = [];
 
-	// Prepend reasoning as a text block if present
+	// Prepend reasoning as a 'thinking' block if present.
+	// The Copilot CLI provides reasoningText for models with reasoning mode (e.g., GPT o-series,
+	// Gemini). This maps to the SDK's thinking block type so the UI renders it correctly.
 	if (data.reasoningText) {
 		messageContent.push({
-			type: 'text',
-			text: `<thinking>${data.reasoningText}</thinking>`,
+			type: 'thinking',
+			thinking: data.reasoningText,
 		});
 	}
 
@@ -423,7 +440,11 @@ export async function* copilotCliQueryGenerator(
 		return;
 	}
 
-	// Prepend system prompt if provided
+	// Prepend system prompt if provided.
+	// NOTE: The Copilot CLI has its own built-in system instructions that take precedence.
+	// The system prompt is injected as a prefix in the user prompt, NOT as a formal system
+	// message. It lacks the semantic authority of a real system prompt. If the system prompt
+	// contains `]\n\n` it could disrupt the prefix structure; callers should sanitize first.
 	const fullPrompt = options.systemPrompt
 		? `[Context: ${options.systemPrompt}]\n\n${promptText}`
 		: promptText;
@@ -444,6 +465,10 @@ export async function* copilotCliQueryGenerator(
 		stdio: ['pipe', 'pipe', 'pipe'],
 	});
 
+	// Close stdin immediately — the CLI uses flags only and never reads from stdin.
+	// Leaving stdin open can cause the process to hang waiting for EOF.
+	child.stdin?.end();
+
 	// Set up abort handler
 	const abortHandler = () => {
 		logger.debug('Aborting Copilot CLI subprocess');
@@ -460,95 +485,119 @@ export async function* copilotCliQueryGenerator(
 	// Parse NDJSON from stdout
 	const readline = createInterface({ input: child.stdout!, crlfDelay: Infinity });
 
+	// Register error handler AFTER readline is created so we can close it on spawn
+	// failure (ENOENT, bad cwd, permission denied). Spawn errors fire asynchronously —
+	// since all setup above runs synchronously before the first await, the handler is
+	// always registered before the error event fires.
+	const processErrors: Error[] = [];
+	child.on('error', (err: Error) => {
+		processErrors.push(err);
+		// Close readline to unblock the for-await loop below. Without this, when the
+		// process fails to start, child.stdout never emits EOF and the loop hangs.
+		readline.close();
+	});
+
 	let accumulatedText = '';
 	let numTurns = 0;
 	let resultData: CopilotResultData = {};
-	const processErrors: Error[] = [];
 	let hasAssistantMessage = false;
 
-	// We yield messages as we parse the stream
-	for await (const line of readline) {
-		if (context.signal.aborted) {
-			child.kill('SIGTERM');
-			break;
-		}
-
-		const event = parseCopilotJsonlEvent(line);
-		if (!event) continue;
-
-		switch (event.type) {
-			case 'assistant.turn_start':
-				numTurns++;
-				break;
-
-			case 'assistant.message_delta': {
-				// Streaming text token
-				const deltaData = event.data as CopilotMessageDeltaData;
-				const delta = deltaData.delta ?? '';
-				if (delta) {
-					accumulatedText += delta;
-					yield createCopilotStreamEvent(context.sessionId, delta);
-				}
+	// Wrap loop in try/finally so readline and child are cleaned up if the generator
+	// consumer calls .return() mid-stream (e.g., when the upstream session is cancelled).
+	try {
+		for await (const line of readline) {
+			if (context.signal.aborted) {
+				child.kill('SIGTERM');
 				break;
 			}
 
-			case 'assistant.message': {
-				// Final complete message for this turn
-				const msgData = event.data as CopilotMessageData;
-				hasAssistantMessage = true;
+			const event = parseCopilotJsonlEvent(line);
+			if (!event) continue;
 
-				// Collect text from content blocks for accumulated result
-				if (msgData.content) {
-					for (const block of msgData.content) {
-						if (block.type === 'text' && block.text) {
-							// Text was already accumulated via deltas; just ensure we have something
-							if (!accumulatedText) {
+			switch (event.type) {
+				case 'assistant.turn_start':
+					numTurns++;
+					break;
+
+				case 'assistant.message_delta': {
+					// Streaming text token
+					const deltaData = event.data as CopilotMessageDeltaData;
+					const delta = deltaData.delta ?? '';
+					if (delta) {
+						accumulatedText += delta;
+						yield createCopilotStreamEvent(context.sessionId, delta);
+					}
+					break;
+				}
+
+				case 'assistant.message': {
+					// Final complete message for this turn.
+					// NOTE: In multi-turn scenarios (multiple assistant.message events), only the
+					// first turn's text is accumulated via stream deltas. Subsequent turns update
+					// accumulatedText only if it was empty. The final result message reflects the
+					// first response text. Full multi-turn support requires session resumption.
+					const msgData = event.data as CopilotMessageData;
+					hasAssistantMessage = true;
+
+					if (msgData.content && !accumulatedText) {
+						for (const block of msgData.content) {
+							if (block.type === 'text' && block.text) {
 								accumulatedText = block.text;
+								break;
 							}
 						}
 					}
+
+					yield copilotMessageToSdkAssistant(msgData, context.sessionId);
+					break;
 				}
 
-				yield copilotMessageToSdkAssistant(msgData, context.sessionId);
-				break;
-			}
+				case 'result': {
+					resultData = event.data as CopilotResultData;
 
-			case 'result': {
-				resultData = event.data as CopilotResultData;
-
-				// Notify caller of session ID for potential multi-turn resumption
-				if (resultData.sessionId && config.onSessionId) {
-					config.onSessionId(resultData.sessionId);
+					// Notify caller of session ID for potential multi-turn resumption
+					if (resultData.sessionId && config.onSessionId) {
+						config.onSessionId(resultData.sessionId);
+					}
+					break;
 				}
-				break;
+
+				// These events are informational; no NeoKai equivalent needed
+				case 'user.message':
+				case 'assistant.reasoning_delta':
+				case 'assistant.reasoning':
+				case 'assistant.turn_end':
+					break;
+
+				default:
+					logger.debug(`Unknown Copilot CLI event type: ${event.type}`);
 			}
-
-			// These events are informational; no NeoKai equivalent needed
-			case 'user.message':
-			case 'assistant.reasoning_delta':
-			case 'assistant.reasoning':
-			case 'assistant.turn_end':
-				break;
-
-			default:
-				logger.debug(`Unknown Copilot CLI event type: ${event.type}`);
+		}
+	} finally {
+		readline.close();
+		// Kill process if still running (e.g., generator was abandoned mid-stream)
+		if (child.exitCode === null) {
+			child.kill('SIGTERM');
 		}
 	}
 
-	// Wait for process to exit
-	const exitCode = await new Promise<number>((resolve) => {
-		if (child.exitCode !== null) {
-			resolve(child.exitCode);
-			return;
-		}
-		child.on('exit', (code) => resolve(code ?? 1));
-		child.on('error', (err: Error) => {
-			processErrors.push(err);
-			resolve(1);
+	// Wait for process to exit.
+	// If the process failed to start (e.g., ENOENT, bad cwd), the 'exit' event
+	// never fires — only the 'error' event does. In that case, resolve immediately.
+	let exitCode: number;
+	if (child.exitCode !== null) {
+		exitCode = child.exitCode;
+	} else if (processErrors.length > 0) {
+		// Process never started; no exit event will arrive
+		exitCode = 1;
+	} else {
+		exitCode = await new Promise<number>((resolve) => {
+			child.on('exit', (code) => resolve(code ?? 1));
+			child.on('error', () => resolve(1));
 		});
-	});
+	}
 
-	// Cleanup
+	// Cleanup abort listener
 	context.signal.removeEventListener('abort', abortHandler);
 
 	if (context.signal.aborted) {
@@ -614,10 +663,22 @@ function buildCliArgs(
 		'--output-format',
 		'json',
 		'--silent',
-		'--allow-all',
 		'--no-auto-update',
 		'--no-ask-user',
 	];
+
+	// Auto-approve all tool executions (default: true for automation).
+	// WARNING: This allows the CLI to execute arbitrary shell commands and file ops.
+	const allowAll = config.allowAll ?? true;
+	if (allowAll) {
+		args.push('--allow-all');
+	}
+
+	// Enable autonomous multi-step continuation for complex tasks.
+	// Not enabled by default — single-step is safer for predictable output.
+	if (config.autopilot) {
+		args.push('--autopilot');
+	}
 
 	// Use the configured model; fall back to options.model
 	const model = config.model || options.model;
