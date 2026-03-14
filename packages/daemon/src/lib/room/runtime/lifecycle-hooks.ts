@@ -682,6 +682,9 @@ export async function runLeaderCompleteGate(
 		return { pass: true };
 	}
 
+	// Defense-in-depth: the state machine gate in room-runtime.ts already blocks coder/general/planner
+	// tasks from reaching this point when approved=false. This branch remains as a safeguard in case
+	// the hook is called directly (e.g. unit tests) or the gate logic changes in the future.
 	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
 		if (ctx.workerRole === 'coder' || ctx.workerRole === 'general') {
 			// For coder/general: verify PR is merged, not just exists

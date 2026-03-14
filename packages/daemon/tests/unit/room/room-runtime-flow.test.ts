@@ -1322,7 +1322,6 @@ describe('RoomRuntime flow', () => {
 			// Group is awaiting_human (not completed) and task is in review
 			const updatedGroup = hookCtx.groupRepo.getGroup(group.id);
 			expect(updatedGroup!.submittedForReview).toBe(true);
-			expect(updatedGroup!.submittedForReview).toBe(true);
 			const updatedTask = await hookCtx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('review');
 		});
@@ -1366,7 +1365,6 @@ describe('RoomRuntime flow', () => {
 				pr_url: 'https://github.com/org/repo/pull/1',
 			});
 			expect(JSON.parse(submitResult.content[0].text).success).toBe(true);
-			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(true);
 			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(true);
 
 			// Step 2: human approves → routes directly to leader (not worker)
@@ -1419,7 +1417,6 @@ describe('RoomRuntime flow', () => {
 			});
 
 			const updated = hookCtx.groupRepo.getGroup(group.id);
-			expect(updated!.submittedForReview).toBe(true);
 			expect(updated!.submittedForReview).toBe(true);
 		});
 
