@@ -70,7 +70,7 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
      }
      ```
    - `MetricHistoryEntry`: `{ metricName: string; value: number; recordedAt: number }` -- unix timestamp, matches DB `recorded_at INTEGER`
-   - `CronSchedule`: `{ expression: string; timezone: string; nextRunAt?: string }`
+   - `CronSchedule`: `{ expression: string; timezone: string; nextRunAt?: number }` -- `nextRunAt` is unix timestamp (matches DB INTEGER storage)
    - `MissionExecutionStatus = 'running' | 'completed' | 'failed'`
 
 2. **Rename `RoomGoal` -> `Mission`**:
@@ -85,7 +85,7 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
      - `consecutiveFailures?: number` (default 0)
    - Keep `RoomGoal` as `type RoomGoal = Mission` (deprecated alias)
 
-   **Design decision: `maxPlanningAttempts` precedence**: The room-level `config.maxPlanningRetries` (used in `room-runtime.ts` planning gates, default from `RoomConfig`) and the new mission-level `maxPlanningAttempts` could conflict. **Rule: mission-level overrides room-level when set; otherwise fall back to room-level config.** Implementation: extract a shared helper `getEffectiveMaxPlanningAttempts(mission, roomConfig)` that returns `mission.maxPlanningAttempts ?? roomConfig.maxPlanningRetries ?? 5`. All planning/replanning gate checks (in `getNextGoalForPlanning()`, measurable replan logic, etc.) must use this helper — no direct reads of either config value.
+   **Design decision: `maxPlanningAttempts` precedence**: The room-level `config.maxPlanningRetries` (used in `room-runtime.ts` planning gates) and the new mission-level `maxPlanningAttempts` could conflict. Note the semantic difference: "retries" = N means up to N+1 total attempts, while "attempts" = N means up to N total. **Rule: mission-level `maxPlanningAttempts` takes precedence when set; otherwise fall back to `roomConfig.maxPlanningRetries + 1` (converting retries to attempts); default 5.** Implementation: extract a shared helper `getEffectiveMaxPlanningAttempts(mission, roomConfig)` that returns `mission.maxPlanningAttempts ?? (roomConfig.maxPlanningRetries != null ? roomConfig.maxPlanningRetries + 1 : 5)`. All planning/replanning gate checks (in `getNextGoalForPlanning()`, measurable replan logic, etc.) must use this helper — no direct reads of either config value.
 
    **Design decision: `schedulePaused` vs new GoalStatus value**: Recurring mission pause is a schedule-level boolean flag, NOT a new `GoalStatus` value. Current `GoalStatus` is `'active' | 'needs_human' | 'completed' | 'archived'` with a DB CHECK constraint. Adding `'paused'` would require updating the constraint and modifying `getNextGoalForPlanning()` which only selects `'active'` goals. Instead, `schedulePaused` keeps pause orthogonal to mission status — a recurring mission stays `active` (eligible for tick processing) but the scheduler skips it when `schedulePaused = true`. This mirrors how `RuntimeState.paused` is orthogonal to goal status at the room level.
 
@@ -313,18 +313,18 @@ Implement recurring mission support with cron-based scheduling.
    - **Overlap prevention**: If a recurring mission has an execution cycle still `running`, skip the trigger. Do not start concurrent executions of the same recurring mission. Log a warning.
    - **Room runtime state interaction**: Recurring missions only fire when `RuntimeState === 'running'`. When paused/stopped, `next_run_at` is not recalculated. On resume, recalculate `next_run_at` from current time.
 
-3. **Execution history** (uses `mission_executions` table from Task 2):
+4. **Execution history** (uses `mission_executions` table from Task 2):
    - Each schedule trigger creates a new execution record
    - Store `result_summary` from completed tasks
    - Mission progress shows latest execution status, not aggregate across all executions
 
-4. **Lifecycle management**:
+5. **Lifecycle management**:
    - Recurring missions never auto-complete; only manual archive
    - Pause via `schedule_paused` flag (defined in Task 1, column added in Task 2): setting `schedule_paused = true` causes the scheduler to skip this mission without changing its `active` status
    - Resume sets `schedule_paused = false` and recalculates `next_run_at` from current time
    - `getNextGoalForPlanning()` is modified to skip `mission_type = 'recurring'` (step 2 above) -- recurring missions are planned only through the scheduler path
 
-5. **MCP tools**:
+6. **MCP tools**:
    - `set_schedule(mission_id, cron, timezone)`: Set/update schedule
    - `pause_schedule(mission_id)` / `resume_schedule(mission_id)`: Toggle `schedule_paused` flag
 
