@@ -29,17 +29,19 @@ export const BYPASS_GATES_MARKERS = {
 export type BypassMarker = (typeof BYPASS_GATES_MARKERS)[keyof typeof BYPASS_GATES_MARKERS];
 
 /**
- * Check if worker output contains a bypass marker.
+ * Check if worker output starts with a bypass marker.
+ * Only the first non-empty line of the output is checked to prevent false positives
+ * from markers mentioned inside code blocks, analysis text, or quoted content.
  * Returns the marker if found, null otherwise.
  */
 export function detectBypassMarker(workerOutput: string): BypassMarker | null {
 	const lines = workerOutput.split('\n');
+	const firstNonEmptyLine = lines.find((line) => line.trim().length > 0);
+	if (!firstNonEmptyLine) return null;
 
 	for (const marker of Object.values(BYPASS_GATES_MARKERS)) {
-		for (const line of lines) {
-			if (line.trim().startsWith(marker)) {
-				return marker as BypassMarker;
-			}
+		if (firstNonEmptyLine.trim().startsWith(marker)) {
+			return marker as BypassMarker;
 		}
 	}
 

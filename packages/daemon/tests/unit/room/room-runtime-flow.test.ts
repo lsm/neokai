@@ -2583,3 +2583,87 @@ describe('RoomRuntime flow', () => {
 		});
 	});
 });
+
+describe('bypass markers — worker exit gate and leader gate integration', () => {
+	let bypassCtx: RuntimeTestContext;
+
+	afterEach(() => {
+		bypassCtx?.runtime.stop();
+		bypassCtx?.db.close();
+	});
+
+	it('sets submittedForReview and approved when coder worker exits with RESEARCH_ONLY marker', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'RESEARCH_ONLY:\n\nI analyzed the codebase and found the following...',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.submittedForReview).toBe(true);
+		expect(updatedGroup.approved).toBe(true);
+	});
+
+	it('sets submittedForReview and approved when general worker exits with VERIFICATION_COMPLETE marker', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'VERIFICATION_COMPLETE:\n\nAll assertions verified successfully.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'general' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.submittedForReview).toBe(true);
+		expect(updatedGroup.approved).toBe(true);
+	});
+
+	it('does NOT set approved when marker is NOT on first line', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'I implemented the feature.\n\nRESEARCH_ONLY:\n\nThis is buried.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		// No bypass — gate would run normally (git checks fail-open)
+		expect(updatedGroup.approved).toBe(false);
+	});
+
+	it('allows leader to call complete_task directly after coder bypass (no PR needed)', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'RESEARCH_ONLY:\n\nAnalysis of the codebase completed.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { task, group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		// Leader should be able to call complete_task without submit_for_review
+		// because the bypass pre-set submittedForReview=true and approved=true
+		const result = await bypassCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+			summary: 'Research complete',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		const updatedTask = await bypassCtx.taskManager.getTask(task.id);
+		expect(updatedTask!.status).toBe('completed');
+	});
+});

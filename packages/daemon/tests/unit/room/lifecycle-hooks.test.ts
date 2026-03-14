@@ -1157,9 +1157,22 @@ describe('detectBypassMarker', () => {
 		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.VERIFICATION_COMPLETE);
 	});
 
-	test('detects marker in the middle of output', () => {
+	test('does NOT detect marker in the middle of output — only first non-empty line is checked', () => {
+		// Security: a marker buried in analysis text or a code block should not trigger bypass.
+		// Worker must explicitly start the response with the marker.
 		const output = 'Some preamble text\n\nRESEARCH_ONLY:\n\nResearch findings...';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('detects marker when first line is empty (skips blank lines)', () => {
+		// Leading blank lines are OK — the first *non-empty* line is checked
+		const output = '\n\nRESEARCH_ONLY:\n\nResearch findings...';
 		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.RESEARCH_ONLY);
+	});
+
+	test('does NOT detect marker inside backtick code block on first line', () => {
+		const output = '`RESEARCH_ONLY:` is a marker used for bypass.';
+		expect(detectBypassMarker(output)).toBeNull();
 	});
 
 	test('returns null when no marker present', () => {
