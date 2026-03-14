@@ -103,6 +103,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			task_type?: TaskType;
 			assigned_agent?: AgentType;
 		}): Promise<ToolResult> {
+			// 'planning' is reserved for internal use by the runtime's planning phase.
+			// User-created tasks must use 'coding', 'research', 'design', or 'goal_review'.
+			if (args.task_type === 'planning') {
+				return jsonResult({
+					success: false,
+					error:
+						"Task type 'planning' is reserved for internal use. Use 'coding', 'research', 'design', or 'goal_review' instead.",
+				});
+			}
 			let task;
 			try {
 				task = await taskManager.createTask({
@@ -617,9 +626,11 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.describe('IDs of tasks this task depends on (must complete first)'),
 				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'goal_review'])
+					.enum(['coding', 'research', 'design', 'goal_review'])
 					.optional()
-					.describe('Task type - determines agent preset (default: coding)'),
+					.describe(
+						"Task type - determines agent preset (default: coding). Note: 'planning' is reserved for internal use."
+					),
 				assigned_agent: z
 					.enum(['coder', 'general'])
 					.optional()

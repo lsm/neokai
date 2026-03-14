@@ -292,6 +292,31 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Dependency task not found');
 		});
+
+		it('should reject task_type planning as it is reserved for internal use', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Planning task',
+					description: 'This should be rejected',
+					task_type: 'planning' as never, // cast to bypass TS check
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("'planning' is reserved for internal use");
+		});
+
+		it('should allow task_type coding, research, design, goal_review but not planning', async () => {
+			for (const taskType of ['coding', 'research', 'design', 'goal_review'] as const) {
+				const result = parseResult(
+					await handlers.create_task({
+						title: `${taskType} task`,
+						description: 'Should succeed',
+						task_type: taskType,
+					})
+				);
+				expect(result.success).toBe(true);
+			}
+		});
 	});
 
 	describe('list_tasks', () => {

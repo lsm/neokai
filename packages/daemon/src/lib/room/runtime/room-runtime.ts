@@ -1946,6 +1946,14 @@ export class RoomRuntime {
 
 		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
 		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
+		const planningTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') === 'planning');
+		if (planningTasks.length > 0) {
+			log.warn(
+				`[executeTick] ${planningTasks.length} pending task(s) with reserved 'planning' type will be skipped: ` +
+					planningTasks.map((t) => `${t.id} ("${t.title}")`).join(', ') +
+					`. These tasks were likely created externally — 'planning' type is reserved for internal use.`
+			);
+		}
 		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 		if (executableTasks.length === 0) return;
 
@@ -1954,6 +1962,10 @@ export class RoomRuntime {
 		for (const task of executableTasks) {
 			if (await this.taskManager.areDependenciesMet(task)) {
 				readyTasks.push(task);
+			} else {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — dependencies not yet completed`
+				);
 			}
 		}
 		if (readyTasks.length === 0) return;
@@ -2197,7 +2209,18 @@ export class RoomRuntime {
 		// Find the goal linked to this task
 		const goals = await this.goalManager.getGoalsForTask(task.id);
 		const goal = goals[0] ?? (await this.goalManager.getNextGoal());
-		if (!goal) return;
+		if (!goal) {
+			log.warn(
+				`[spawnGroupForTask] No active goal found for task ${task.id} ("${task.title}"). ` +
+					`Link the task to an active goal or create an active goal first. Marking as needs_attention.`
+			);
+			await this.taskManager.failTask(
+				task.id,
+				'No active goal found for this task. Link the task to an active goal or create an active goal first.'
+			);
+			await this.emitTaskUpdateById(task.id);
+			return;
+		}
 
 		// Get summaries of previously completed tasks for context
 		const completedTasks = await this.taskManager.listTasks({ status: 'completed' });
