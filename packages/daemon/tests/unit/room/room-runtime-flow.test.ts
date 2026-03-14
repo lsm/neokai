@@ -296,7 +296,6 @@ describe('RoomRuntime flow', () => {
 				message: 'Add error handling to the endpoint',
 				mode: 'queue',
 			});
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 
 			// Group is back to awaiting_worker with iteration bumped
 			const afterFeedback = ctx.groupRepo.getGroup(group.id)!;
@@ -360,7 +359,6 @@ describe('RoomRuntime flow', () => {
 					mode: 'queue',
 				});
 				expect(JSON.parse(r.content[0].text).success).toBe(true);
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -405,7 +403,6 @@ describe('RoomRuntime flow', () => {
 					message: `Feedback ${i + 1}`,
 					mode: 'queue',
 				});
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
@@ -443,7 +440,6 @@ describe('RoomRuntime flow', () => {
 					message: `Round ${i + 1}`,
 					mode: 'queue',
 				});
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
@@ -468,8 +464,6 @@ describe('RoomRuntime flow', () => {
 			// Task back in in_progress
 			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
 
-			// handoff_to_worker is a no-op compatibility tool
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 
 			// Worker finishes again → routeWorkerToLeader increments to 1 (not 6!)
@@ -485,7 +479,6 @@ describe('RoomRuntime flow', () => {
 				mode: 'queue',
 			});
 			expect(JSON.parse(r.content[0].text).success).toBe(true);
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 		});
 
@@ -505,7 +498,6 @@ describe('RoomRuntime flow', () => {
 					message: `Feedback round ${i + 1}`,
 					mode: 'queue',
 				});
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 

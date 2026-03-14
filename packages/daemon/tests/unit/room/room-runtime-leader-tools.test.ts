@@ -71,17 +71,6 @@ describe('RoomRuntime leader tools', () => {
 			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
 		});
 
-		it('should handoff_to_worker explicitly (no-op compatibility tool)', async () => {
-			const { group } = await spawnAndRouteToLeader(ctx);
-
-			const result = await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
-			const parsed = JSON.parse(result.content[0].text);
-			expect(parsed.success).toBe(true);
-
-			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
-			expect(updatedGroup.submittedForReview).toBe(false);
-		});
-
 		it('should reject complete_task until submit_for_review is called', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
