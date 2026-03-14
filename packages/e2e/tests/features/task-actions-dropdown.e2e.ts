@@ -186,11 +186,12 @@ test.describe('Task Actions Dropdown', () => {
 		await page.getByRole('menuitem', { name: /Cancel Task/ }).click();
 
 		// Cancel dialog should appear with the task name
+		const cancelDialog = page.locator('[role="dialog"]');
 		await expect(page.locator('[data-testid="cancel-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.getByText(/E2E Test Task/)).toBeVisible();
-		await expect(page.getByText(/cannot be undone/i)).toBeVisible();
+		await expect(cancelDialog.getByText(/E2E Test Task/)).toBeVisible();
+		await expect(cancelDialog.getByText(/cannot be undone/i)).toBeVisible();
 	});
 
 	test('opens complete confirmation dialog on Mark as Complete click', async ({ page }) => {
@@ -203,11 +204,12 @@ test.describe('Task Actions Dropdown', () => {
 		await page.locator('[data-testid="task-options-menu"]').click();
 		await page.getByRole('menuitem', { name: /Mark as Complete/ }).click();
 
-		// Complete dialog should appear
+		// Complete dialog should appear with the task name
+		const completeDialog = page.locator('[role="dialog"]');
 		await expect(page.locator('[data-testid="complete-task-confirm"]')).toBeVisible({
 			timeout: 5000,
 		});
-		await expect(page.getByText(/E2E Test Task/)).toBeVisible();
+		await expect(completeDialog.getByText(/E2E Test Task/)).toBeVisible();
 	});
 
 	test('can dismiss cancel dialog with Keep Task button', async ({ page }) => {
