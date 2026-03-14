@@ -18,6 +18,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
+import type { GateFailureRecord } from '../runtime/dead-loop-detector';
 
 /** Rate limit backoff state stored in group metadata */
 export interface RateLimitBackoff {
@@ -61,6 +62,8 @@ interface TaskGroupMetadata {
 	rateLimit?: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
 	deferredLeader?: DeferredLeaderConfig | null;
+	/** Gate failure history for dead loop detection */
+	gateFailures?: GateFailureRecord[];
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -500,6 +503,46 @@ export class SessionGroupRepository {
 		if (!group?.rateLimit) return 0;
 		const remaining = group.rateLimit.resetsAt - Date.now();
 		return Math.max(0, remaining);
+	}
+
+	// ===== Dead Loop Detection =====
+
+	/**
+	 * Append a gate failure record for dead loop detection.
+	 * Keeps the last 50 records to bound storage size.
+	 */
+	recordGateFailure(groupId: string, gateName: string, reason: string): void {
+		this.db.transaction(() => {
+			const raw = (
+				this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+					string,
+					unknown
+				>
+			)?.metadata as string;
+			const currentMeta = this.parseMetadata(raw);
+			const existing = currentMeta.gateFailures ?? [];
+			const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
+			// Cap at 50 records — old entries are unlikely to matter for detection
+			const updated = [...existing, record].slice(-50);
+			const merged = { ...currentMeta, gateFailures: updated };
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(merged), groupId);
+		})();
+	}
+
+	/**
+	 * Get the full gate failure history for dead loop detection.
+	 */
+	getGateFailureHistory(groupId: string): GateFailureRecord[] {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const meta = this.parseMetadata(raw);
+		return meta.gateFailures ?? [];
 	}
 
 	/**
