@@ -79,6 +79,9 @@ export function createMockSessionFactory() {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
 			return true;
 		},
+		async interruptSession(sessionId: string) {
+			calls.push({ method: 'interruptSession', args: [sessionId] });
+		},
 		async stopSession(sessionId: string) {
 			calls.push({ method: 'stopSession', args: [sessionId] });
 		},

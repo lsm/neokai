@@ -565,6 +565,173 @@ describe('StateManager', () => {
 				expect(systemCall[1].apiConnection).toEqual(connectionData);
 			});
 		});
+
+		describe('room event bridge', () => {
+			it('should register room event handlers on initialization', () => {
+				expect(eventHandlers.has('room.task.update')).toBe(true);
+				expect(eventHandlers.has('room.overview')).toBe(true);
+				expect(eventHandlers.has('room.runtime.stateChanged')).toBe(true);
+				expect(eventHandlers.has('goal.created')).toBe(true);
+				expect(eventHandlers.has('goal.updated')).toBe(true);
+				expect(eventHandlers.has('goal.completed')).toBe(true);
+				expect(eventHandlers.has('goal.progressUpdated')).toBe(true);
+			});
+
+			describe('room.task.update', () => {
+				it('should forward task update to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('room.task.update');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						task: { id: 'task-1', title: 'Task 1', status: 'in_progress' },
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('room.task.update', data, {
+						channel: 'room:room-123',
+					});
+				});
+
+				it('should use sessionId as channel (supports any room)', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('room.task.update');
+					const data = {
+						sessionId: 'room:another-room',
+						roomId: 'another-room',
+						task: { id: 'task-2', title: 'Task 2', status: 'pending' },
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('room.task.update', data, {
+						channel: 'room:another-room',
+					});
+				});
+			});
+
+			describe('room.overview', () => {
+				it('should forward room overview to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('room.overview');
+					const data = {
+						sessionId: 'room:room-123',
+						room: { id: 'room-123', name: 'Test Room' },
+						sessions: [],
+						activeTasks: [],
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('room.overview', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+
+			describe('room.runtime.stateChanged', () => {
+				it('should forward runtime state change to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('room.runtime.stateChanged');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						state: 'running',
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('room.runtime.stateChanged', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+
+			describe('goal.created', () => {
+				it('should forward goal creation to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('goal.created');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						goalId: 'goal-1',
+						goal: { id: 'goal-1', title: 'Goal 1', status: 'active' },
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.created', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+
+			describe('goal.updated', () => {
+				it('should forward goal updates to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('goal.updated');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						goalId: 'goal-1',
+						goal: { title: 'Updated Goal 1' },
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.updated', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+
+			describe('goal.completed', () => {
+				it('should forward goal completion to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('goal.completed');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						goalId: 'goal-1',
+						goal: { id: 'goal-1', title: 'Goal 1', status: 'completed' },
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.completed', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+
+			describe('goal.progressUpdated', () => {
+				it('should forward goal progress updates to room channel', () => {
+					(mockMessageHub.event as ReturnType<typeof mock>).mockClear();
+
+					const handler = eventHandlers.get('goal.progressUpdated');
+					const data = {
+						sessionId: 'room:room-123',
+						roomId: 'room-123',
+						goalId: 'goal-1',
+						progress: 75,
+					};
+
+					handler!(data);
+
+					expect(mockMessageHub.event).toHaveBeenCalledWith('goal.progressUpdated', data, {
+						channel: 'room:room-123',
+					});
+				});
+			});
+		});
 	});
 
 	describe('broadcastSessionsChange', () => {

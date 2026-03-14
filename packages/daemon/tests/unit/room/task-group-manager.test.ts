@@ -93,9 +93,6 @@ function createMockLeaderCallbacks(): LeaderToolCallbacks {
 		async sendToWorker() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
-		async handoffToWorker() {
-			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
-		},
 		async completeTask() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},

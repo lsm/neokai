@@ -211,6 +211,61 @@ export class StateManager {
 			this.errorCache.set(data.sessionId, null);
 			await this.broadcastSessionStateChange(data.sessionId);
 		});
+
+		// =====================================================================
+		// Room event bridge: forward DaemonHub room events → WebSocket clients
+		//
+		// DaemonHub (TypedHub/InProcessTransportBus) is internal-only and never
+		// reaches frontend WebSocket clients directly. Each event below must be
+		// forwarded to messageHub so the router delivers it to the room channel
+		// (clients that called hub.joinChannel(`room:${roomId}`)).
+		// =====================================================================
+
+		// Task status changes — main real-time sync event
+		this.eventBus.on('room.task.update', (data) => {
+			this.messageHub.event('room.task.update', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		// Full room overview (sessions + tasks) — sent on join and after broad changes
+		this.eventBus.on('room.overview', (data) => {
+			this.messageHub.event('room.overview', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		// Runtime state changes (running/paused/stopped)
+		this.eventBus.on('room.runtime.stateChanged', (data) => {
+			this.messageHub.event('room.runtime.stateChanged', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		// Goal lifecycle events
+		this.eventBus.on('goal.created', (data) => {
+			this.messageHub.event('goal.created', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		this.eventBus.on('goal.updated', (data) => {
+			this.messageHub.event('goal.updated', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		this.eventBus.on('goal.completed', (data) => {
+			this.messageHub.event('goal.completed', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
+
+		this.eventBus.on('goal.progressUpdated', (data) => {
+			this.messageHub.event('goal.progressUpdated', data, {
+				channel: data.sessionId, // 'room:${roomId}'
+			});
+		});
 	}
 
 	/**

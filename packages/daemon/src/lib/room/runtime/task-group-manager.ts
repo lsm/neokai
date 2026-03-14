@@ -88,6 +88,12 @@ export interface SessionFactory {
 	 */
 	setSessionMcpServers(sessionId: string, mcpServers: Record<string, unknown>): boolean;
 	/**
+	 * Optional: interrupt a session's current LLM generation without cleanup.
+	 * The session remains in cache and can accept new messages immediately.
+	 * Used for user-initiated interrupts that keep the task alive.
+	 */
+	interruptSession?(sessionId: string): Promise<void>;
+	/**
 	 * Optional: stop and cleanup a session immediately.
 	 * Used for urgent cancellation paths where the group should terminate now.
 	 */
@@ -444,6 +450,12 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
+		// Clear humanInterrupted: the leader is routing a message to the worker,
+		// so the next worker completion should route back to leader normally.
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(groupId, false);
+		}
+
 		// If worker is waiting for input (AskUserQuestion), answer the question.
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
@@ -561,7 +573,7 @@ export class TaskGroupManager {
 	 *
 	 * Used for ALL human resumptions (both approval and rejection):
 	 * - Approval: leader merges PR and calls complete_task
-	 * - Rejection: leader forwards feedback to worker via send_to_worker + handoff_to_worker
+	 * - Rejection: leader forwards feedback to worker via send_to_worker
 	 *
 	 * No new sessions are created. The existing observer will fire
 	 * onLeaderTerminalState again when the leader finishes.

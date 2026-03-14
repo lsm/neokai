@@ -6,7 +6,7 @@
  * these tools are attached to it.
  *
  * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
- *        update_task, cancel_task, get_room_status, approve_task, reject_task,
+ *        update_task, cancel_task, stop_session, get_room_status, approve_task, reject_task,
  *        send_message_to_task, get_task_detail
  */
 
@@ -228,6 +228,39 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
+		},
+
+		async stop_session(args: { task_id: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+
+			if (task.status !== 'in_progress' && task.status !== 'review') {
+				return jsonResult({
+					success: false,
+					error: `Task cannot be interrupted (current status: ${task.status}). Only in_progress or review tasks can be interrupted.`,
+				});
+			}
+
+			if (runtimeService) {
+				const runtime = runtimeService.getRuntime(roomId);
+				if (runtime) {
+					const result = await runtime.interruptTaskSession(args.task_id);
+					if (!result.success) {
+						return jsonResult({
+							success: false,
+							error: `Failed to interrupt session for task ${args.task_id}`,
+						});
+					}
+					return jsonResult({
+						success: true,
+						message: `Generation interrupted for task ${args.task_id}. Task remains active and awaiting input.`,
+					});
+				}
+			}
+
+			return jsonResult({ success: false, error: 'Runtime service unavailable' });
 		},
 
 		async set_task_status(args: {
@@ -626,6 +659,12 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Cancel a task (marks as cancelled — distinct from failed — and cleans up agent sessions)',
 			{ task_id: z.string().describe('ID of the task to cancel') },
 			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'stop_session',
+			'Interrupt the current agent session(s) for a task. Stops LLM generation mid-stream while keeping the task in its current state (in_progress or review). The user can immediately type new instructions without any revive flow.',
+			{ task_id: z.string().describe('ID of the task whose session(s) to stop') },
+			(args) => handlers.stop_session(args)
 		),
 		tool(
 			'set_task_status',
