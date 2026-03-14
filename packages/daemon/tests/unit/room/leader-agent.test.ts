@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import {
+	buildLeaderHelperAgents,
 	buildLeaderSystemPrompt,
 	buildLeaderTaskContext,
 	buildReviewerAgents,
-	createLeaderToolHandlers,
 	createLeaderAgentInit,
+	createLeaderToolHandlers,
+	getLeaderHelperSubagents,
 	toAgentModel,
 	toShortModelName,
 	type LeaderAgentConfig,
@@ -106,10 +108,6 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async handoffToWorker(groupId: string) {
-			calls.push({ method: 'handoffToWorker', args: [groupId] });
-			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
-		},
 		async completeTask(groupId: string, summary: string) {
 			calls.push({ method: 'completeTask', args: [groupId, summary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
@@ -135,7 +133,6 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Tool Contract (CRITICAL)');
 			expect(prompt).toContain('send_to_worker');
-			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
@@ -186,7 +183,7 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			expect(prompt).toContain('P0/P1/P2 issues');
 			expect(prompt).toContain('ONLY your review URL(s)');
-			expect(prompt).toContain('Every iteration follows the same workflow');
+			expect(prompt).toContain('Phase 1 (plan document)');
 		});
 
 		it('should include plan review guidelines when reviewContext is plan_review', () => {
@@ -194,6 +191,28 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('Plan Review Guidelines');
 			expect(prompt).toContain('task breakdown');
 			expect(prompt).toContain('replan_goal');
+		});
+
+		it('should include Phase 2 completion guidance in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('Phase 2 (task creation)');
+			expect(prompt).toContain('complete_task');
+		});
+
+		it('should use planning-specific post-approval workflow for plan_review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			// Should instruct leader to send planner back — NOT merge the PR itself
+			expect(prompt).toContain('send_to_worker');
+			expect(prompt).toContain('create_task');
+			// The "merge PR yourself" instructions should NOT be present
+			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --squash');
+		});
+
+		it('should use direct merge post-approval workflow for code review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			// Leader merges the PR directly for coder/general tasks
+			expect(prompt).toContain('gh pr merge <PR_NUMBER> --squash');
+			expect(prompt).toContain('Do NOT send the worker back to do the merge');
 		});
 
 		it('should include replan_goal guidance in code review guidelines', () => {
@@ -309,17 +328,6 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
 			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
-		});
-
-		it('should route handoff_to_worker to callback with groupId', async () => {
-			const callbacks = makeCallbacks();
-			const handlers = createLeaderToolHandlers('group-1', callbacks);
-
-			await handlers.handoff_to_worker();
-
-			expect(callbacks.calls).toHaveLength(1);
-			expect(callbacks.calls[0].method).toBe('handoffToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1']);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {
@@ -925,6 +933,329 @@ describe('Leader Agent', () => {
 			);
 			const reviewerAgent = init.agents!['reviewer-copilot'];
 			expect(reviewerAgent.model).toBe('inherit');
+		});
+	});
+});
+
+describe('Leader Helper Sub-Agents', () => {
+	function makeRoom(overrides?: Partial<Room>): Room {
+		return {
+			id: 'room-1',
+			name: 'Test Room',
+			allowedPaths: [{ path: '/workspace', label: 'ws' }],
+			defaultPath: '/workspace',
+			sessionIds: [],
+			status: 'active',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			...overrides,
+		};
+	}
+
+	function makeGoal(overrides?: Partial<RoomGoal>): RoomGoal {
+		return {
+			id: 'goal-1',
+			roomId: 'room-1',
+			title: 'Test goal',
+			status: 'active',
+			priority: 'normal',
+			progress: 0,
+			linkedTaskIds: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			...overrides,
+		};
+	}
+
+	function makeTask(overrides?: Partial<NeoTask>): NeoTask {
+		return {
+			id: 'task-1',
+			roomId: 'room-1',
+			goalId: 'goal-1',
+			title: 'Test task',
+			description: 'Test description',
+			status: 'pending',
+			priority: 'normal',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+			...overrides,
+		};
+	}
+
+	function makeCallbacks(): LeaderToolCallbacks {
+		const stub = async () => ({ content: [{ type: 'text' as const, text: 'ok' }] });
+		return {
+			sendToWorker: stub,
+			handoffToWorker: stub,
+			completeTask: stub,
+			failTask: stub,
+			replanGoal: stub,
+			submitForReview: stub,
+		};
+	}
+
+	function makeConfig(overrides?: Partial<LeaderAgentConfig>): LeaderAgentConfig {
+		return {
+			task: makeTask(),
+			goal: makeGoal(),
+			room: makeRoom(),
+			sessionId: 'sess-1',
+			workspacePath: '/workspace',
+			groupId: 'group-1',
+			...overrides,
+		};
+	}
+
+	describe('getLeaderHelperSubagents', () => {
+		it('returns undefined when agentSubagents not set', () => {
+			expect(getLeaderHelperSubagents({})).toBeUndefined();
+		});
+
+		it('returns undefined when leaderHelpers is empty', () => {
+			expect(getLeaderHelperSubagents({ agentSubagents: { leaderHelpers: [] } })).toBeUndefined();
+		});
+
+		it('returns configs when leaderHelpers are configured', () => {
+			const configs = [{ model: 'haiku' }, { model: 'sonnet' }];
+			expect(getLeaderHelperSubagents({ agentSubagents: { leaderHelpers: configs } })).toEqual(
+				configs
+			);
+		});
+
+		it('returns undefined when only non-leaderHelpers keys are set', () => {
+			expect(
+				getLeaderHelperSubagents({ agentSubagents: { leader: [{ model: 'sonnet' }] } })
+			).toBeUndefined();
+		});
+	});
+
+	describe('buildLeaderHelperAgents', () => {
+		it('returns empty map for empty input', () => {
+			expect(buildLeaderHelperAgents([])).toEqual({});
+		});
+
+		it('creates helper with correct name prefix', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+			const keys = Object.keys(agents);
+			expect(keys.length).toBe(1);
+			expect(keys[0]).toMatch(/^leader-helper-/);
+		});
+
+		it('creates multiple helpers for multiple configs', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }, { model: 'sonnet' }]);
+			expect(Object.keys(agents).length).toBe(2);
+		});
+
+		it('deduplicates names when same model used twice', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }, { model: 'haiku' }]);
+			const keys = Object.keys(agents);
+			expect(keys.length).toBe(2);
+			expect(new Set(keys).size).toBe(2);
+		});
+
+		it('helpers do NOT have Task tool (no recursive sub-agents)', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+			const helper = Object.values(agents)[0];
+			expect(helper.tools).not.toContain('Task');
+		});
+
+		it('helpers do NOT have Write tool (read-only analysis)', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+			const helper = Object.values(agents)[0];
+			expect(helper.tools).not.toContain('Write');
+		});
+
+		it('helpers do NOT have Edit tool (read-only analysis)', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+			const helper = Object.values(agents)[0];
+			expect(helper.tools).not.toContain('Edit');
+		});
+
+		it('helpers have read tools', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+			const helper = Object.values(agents)[0];
+			expect(helper.tools).toContain('Read');
+			expect(helper.tools).toContain('Grep');
+			expect(helper.tools).toContain('Glob');
+			expect(helper.tools).toContain('Bash');
+		});
+
+		it('maps opus model to opus tier', () => {
+			const agents = buildLeaderHelperAgents([{ model: 'claude-opus-4-6' }]);
+			expect(Object.values(agents)[0].model).toBe('opus');
+		});
+
+		describe('model field validation — matches buildReviewerAgents behavior', () => {
+			it('maps short name "sonnet" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'sonnet' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-sonnet-4-6');
+			});
+
+			it('maps short name "haiku" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-haiku-4-5');
+			});
+
+			it('maps short name "opus" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'opus' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-opus-4-6');
+			});
+
+			it('maps short name "codex" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'codex' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('gpt-5.3-codex');
+			});
+
+			it('uses modelId field over model when both are provided', () => {
+				const agents = buildLeaderHelperAgents([
+					{ model: 'sonnet', modelId: 'claude-sonnet-4-5-20250929' },
+				]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-sonnet-4-5-20250929');
+				expect(agent.description).not.toContain('claude-sonnet-4-6');
+			});
+
+			it('detects Anthropic provider from short name "sonnet"', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'sonnet' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('Anthropic');
+			});
+
+			it('detects OpenAI provider from model name containing "codex"', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'codex-review' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('OpenAI');
+			});
+
+			it('uses explicit provider field when set', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'sonnet', provider: 'glm' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('GLM');
+			});
+
+			it('passes full model ID through unchanged when no short name mapping exists', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'claude-sonnet-4-5-20250929' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-sonnet-4-5-20250929');
+			});
+		});
+	});
+
+	describe('createLeaderAgentInit with leaderHelpers', () => {
+		function makeConfigWithHelpers(helperConfigs = [{ model: 'haiku' }]): LeaderAgentConfig {
+			return makeConfig({
+				room: makeRoom({
+					config: {
+						agentSubagents: { leaderHelpers: helperConfigs },
+					},
+				}),
+			});
+		}
+
+		it('uses agent/agents pattern when only leaderHelpers are configured', () => {
+			const init = createLeaderAgentInit(makeConfigWithHelpers(), makeCallbacks());
+			expect(init.agent).toBe('Leader');
+			expect(init.agents).toBeDefined();
+		});
+
+		it('includes leader helper agents in agents map', () => {
+			const init = createLeaderAgentInit(makeConfigWithHelpers(), makeCallbacks());
+			const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Leader');
+			expect(keys.some((k) => k.startsWith('leader-helper-'))).toBe(true);
+		});
+
+		it('includes both reviewers and helpers when both configured', () => {
+			const config = makeConfig({
+				room: makeRoom({
+					config: {
+						agentSubagents: {
+							leader: [{ model: 'haiku' }],
+							leaderHelpers: [{ model: 'sonnet' }],
+						},
+					},
+				}),
+			});
+			const init = createLeaderAgentInit(config, makeCallbacks());
+			const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Leader');
+			expect(keys.some((k) => k.startsWith('reviewer-'))).toBe(true);
+			expect(keys.some((k) => k.startsWith('leader-helper-'))).toBe(true);
+		});
+
+		it('uses simple path when neither reviewers nor helpers are configured', () => {
+			const init = createLeaderAgentInit(makeConfig(), makeCallbacks());
+			expect(init.agent).toBeUndefined();
+			expect(init.agents).toBeUndefined();
+		});
+
+		it('Leader agent def includes Task tool when helpers configured', () => {
+			const init = createLeaderAgentInit(makeConfigWithHelpers(), makeCallbacks());
+			const leaderDef = init.agents?.['Leader'];
+			expect(leaderDef?.tools).toContain('Task');
+		});
+	});
+
+	describe('buildLeaderSystemPrompt with leaderHelpers (no reviewers)', () => {
+		function makeConfigWithHelpers(helperConfigs = [{ model: 'haiku' }]): LeaderAgentConfig {
+			return makeConfig({
+				room: makeRoom({
+					config: {
+						agentSubagents: { leaderHelpers: helperConfigs },
+					},
+				}),
+			});
+		}
+
+		it('includes Available Helpers section in code review mode', () => {
+			const config = makeConfigWithHelpers();
+			const prompt = buildLeaderSystemPrompt(config);
+			expect(prompt).toContain('Available Helpers');
+			expect(prompt).toContain('leader-helper-');
+		});
+
+		it('includes Available Helpers section in plan review mode', () => {
+			const config = makeConfigWithHelpers();
+			config.reviewContext = 'plan_review';
+			const prompt = buildLeaderSystemPrompt(config);
+			expect(prompt).toContain('Available Helpers');
+			expect(prompt).toContain('leader-helper-');
+		});
+
+		it('helper names in prompt match keys from buildLeaderHelperAgents (P2: single source of truth)', () => {
+			const helperConfigs = [{ model: 'haiku' }, { model: 'sonnet' }, { model: 'haiku' }];
+			const config = makeConfig({
+				room: makeRoom({
+					config: { agentSubagents: { leaderHelpers: helperConfigs } },
+				}),
+			});
+			// Build agents to get canonical names
+			const agentMap = buildLeaderHelperAgents(helperConfigs);
+			const expectedNames = Object.keys(agentMap);
+			// Check prompt references same names
+			const prompt = buildLeaderSystemPrompt(config);
+			for (const name of expectedNames) {
+				expect(prompt).toContain(name);
+			}
+		});
+
+		it('includes helpers alongside reviewers in Available Specialists section', () => {
+			const config = makeConfig({
+				room: makeRoom({
+					config: {
+						agentSubagents: {
+							leader: [{ model: 'haiku' }],
+							leaderHelpers: [{ model: 'sonnet' }],
+						},
+					},
+				}),
+			});
+			const prompt = buildLeaderSystemPrompt(config);
+			expect(prompt).toContain('Available Specialists');
+			expect(prompt).toContain('reviewer-haiku');
+			expect(prompt).toContain('leader-helper-sonnet');
 		});
 	});
 });

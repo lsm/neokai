@@ -46,7 +46,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.success).toBe(true);
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 		});
 
 		it('should handle send_to_worker and route turn back to worker', async () => {
@@ -69,17 +69,6 @@ describe('RoomRuntime leader tools', () => {
 			);
 			expect(injectCalls.length).toBeGreaterThan(0);
 			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
-		});
-
-		it('should handoff_to_worker explicitly (no-op compatibility tool)', async () => {
-			const { group } = await spawnAndRouteToLeader(ctx);
-
-			const result = await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
-			const parsed = JSON.parse(result.content[0].text);
-			expect(parsed.success).toBe(true);
-
-			const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
-			expect(updatedGroup.submittedForReview).toBe(false);
 		});
 
 		it('should reject complete_task until submit_for_review is called', async () => {
@@ -317,11 +306,11 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.success).toBe(true);
 			expect(parsed.message).toContain('Replanning triggered');
 
-			// The current task should be failed (leader explicitly failed it via replan_goal)
+			// The current task should be needs_attention (leader explicitly failed it via replan_goal)
 			const updatedTask = await ctx.taskManager.getTask(task1.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 
-			// Remaining pending tasks should be cancelled (not failed — intentionally stopped)
+			// Remaining pending tasks should be cancelled (not needs_attention — intentionally stopped)
 			const t2 = await ctx.taskManager.getTask(task2.id);
 			const t3 = await ctx.taskManager.getTask(task3.id);
 			expect(t2!.status).toBe('cancelled');
@@ -397,7 +386,7 @@ describe('RoomRuntime leader tools', () => {
 
 			// Task should still be failed
 			const updatedTask = await ctx.taskManager.getTask(task1.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 
 			// Goal should be escalated to needs_human
 			const updatedGoal = (await ctx.goalManager.listGoals())[0];
@@ -455,7 +444,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(planningTasks[0].title).toStartWith('Replan:');
 		});
 
-		it('should pass completed tasks and failed task in replan context', async () => {
+		it('should pass completed tasks and needs_attention task in replan context', async () => {
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build auth system',
 				description: 'Implement authentication',
@@ -480,7 +469,7 @@ describe('RoomRuntime leader tools', () => {
 			// Mark task1 as completed with a result
 			await ctx.taskManager.completeTask(task1.id, 'Login endpoint implemented with JWT');
 
-			// task2 is the one being worked on (will be failed by replan)
+			// task2 is the one being worked on (will be needs_attention by replan)
 			await ctx.goalManager.incrementPlanningAttempts(goal.id);
 
 			ctx.runtime.start();
@@ -561,7 +550,7 @@ describe('RoomRuntime leader tools', () => {
 			});
 
 			// Task should be failed
-			expect((await ctx.taskManager.getTask(task1.id))!.status).toBe('failed');
+			expect((await ctx.taskManager.getTask(task1.id))!.status).toBe('needs_attention');
 
 			// But sibling tasks should still be pending (NOT cancelled by auto-replan)
 			expect((await ctx.taskManager.getTask(task2.id))!.status).toBe('pending');

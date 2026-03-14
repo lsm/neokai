@@ -18,6 +18,7 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { generateUUID } from '@neokai/shared';
+import type { GateFailureRecord } from '../runtime/dead-loop-detector';
 
 /** Rate limit backoff state stored in group metadata */
 export interface RateLimitBackoff {
@@ -32,7 +33,7 @@ export interface RateLimitBackoff {
 /** Persisted bootstrap context for lazily creating Leader sessions */
 export interface DeferredLeaderConfig {
 	roomId: string;
-	goalId: string;
+	goalId: string | null;
 	reviewContext?: 'plan_review' | 'code_review';
 	leaderTaskContext?: string;
 }
@@ -61,6 +62,14 @@ interface TaskGroupMetadata {
 	rateLimit?: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
 	deferredLeader?: DeferredLeaderConfig | null;
+	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
+	humanInterrupted?: boolean;
+	/** Gate failure history for dead loop detection */
+	gateFailures?: GateFailureRecord[];
+	/** Whether the group is paused waiting for a question to be answered */
+	waitingForQuestion?: boolean;
+	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
+	waitingSession?: 'worker' | 'leader' | null;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -111,6 +120,12 @@ export interface SessionGroup {
 	rateLimit: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
 	deferredLeader: DeferredLeaderConfig | null;
+	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
+	humanInterrupted: boolean;
+	/** Whether the group is paused waiting for a question to be answered */
+	waitingForQuestion: boolean;
+	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
+	waitingSession: 'worker' | 'leader' | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -243,6 +258,29 @@ export class SessionGroupRepository {
 	deleteGroup(groupId: string): boolean {
 		const result = this.db.prepare(`DELETE FROM session_groups WHERE id = ?`).run(groupId);
 		return result.changes > 0;
+	}
+
+	/**
+	 * Revive a failed/cancelled group for human message injection.
+	 * Clears completed_at WITHOUT resetting metadata — preserves conversation
+	 * history, feedback iterations, and other state so the agent can continue
+	 * from where it left off after the human provides guidance.
+	 *
+	 * Unlike resetGroupForRestart() which does a full metadata wipe, this is a
+	 * lightweight revive intended for the "send message to failed task" flow.
+	 */
+	reviveGroup(groupId: string): SessionGroup | null {
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = NULL,
+				     version = version + 1
+				 WHERE id = ?`
+			)
+			.run(groupId);
+
+		if (result.changes === 0) return null;
+		return this.getGroup(groupId);
 	}
 
 	/**
@@ -395,6 +433,24 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set humanInterrupted flag without version check.
+	 * When true, prevents automatic routing to leader when worker reaches idle state.
+	 */
+	setHumanInterrupted(groupId: string, value: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, humanInterrupted: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Set approved flag without version check.
 	 * Records that the human has approved the task (plan or PR).
 	 */
@@ -407,6 +463,28 @@ export class SessionGroupRepository {
 		)?.metadata as string;
 		const currentMeta = this.parseMetadata(raw);
 		const merged = { ...currentMeta, approved: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
+	 * Set waitingForQuestion flag without version check.
+	 * When set, the group is paused waiting for a human answer to an agent question.
+	 */
+	setWaitingForQuestion(
+		groupId: string,
+		waiting: boolean,
+		session: 'worker' | 'leader' | null
+	): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, waitingForQuestion: waiting, waitingSession: session };
 		this.db
 			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
 			.run(JSON.stringify(merged), groupId);
@@ -477,6 +555,46 @@ export class SessionGroupRepository {
 		if (!group?.rateLimit) return 0;
 		const remaining = group.rateLimit.resetsAt - Date.now();
 		return Math.max(0, remaining);
+	}
+
+	// ===== Dead Loop Detection =====
+
+	/**
+	 * Append a gate failure record for dead loop detection.
+	 * Keeps the last 50 records to bound storage size.
+	 */
+	recordGateFailure(groupId: string, gateName: string, reason: string): void {
+		this.db.transaction(() => {
+			const raw = (
+				this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+					string,
+					unknown
+				>
+			)?.metadata as string;
+			const currentMeta = this.parseMetadata(raw);
+			const existing = currentMeta.gateFailures ?? [];
+			const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
+			// Cap at 50 records — old entries are unlikely to matter for detection
+			const updated = [...existing, record].slice(-50);
+			const merged = { ...currentMeta, gateFailures: updated };
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(merged), groupId);
+		})();
+	}
+
+	/**
+	 * Get the full gate failure history for dead loop detection.
+	 */
+	getGateFailureHistory(groupId: string): GateFailureRecord[] {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const meta = this.parseMetadata(raw);
+		return meta.gateFailures ?? [];
 	}
 
 	/**
@@ -589,6 +707,9 @@ export class SessionGroupRepository {
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
 			deferredLeader: meta.deferredLeader ?? null,
+			humanInterrupted: meta.humanInterrupted === true,
+			waitingForQuestion: meta.waitingForQuestion ?? false,
+			waitingSession: meta.waitingSession ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

@@ -1,6 +1,6 @@
 {
 	"name": "@neokai/ui",
-	"version": "0.6.2",
+	"version": "0.7.0",
 	"type": "module",
 	"license": "Apache-2.0",
 	"main": "src/mod.ts",

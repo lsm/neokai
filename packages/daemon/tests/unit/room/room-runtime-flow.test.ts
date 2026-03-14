@@ -160,6 +160,70 @@ describe('RoomRuntime flow', () => {
 			const updated = ctx.groupRepo.getGroup(group.id);
 			expect(updated!.submittedForReview).toBe(false);
 		});
+
+		it('should pause task (not route to leader) when worker is waiting_for_input', async () => {
+			await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Record factory calls before worker terminal state
+			const callsBefore = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			).length;
+
+			// Worker asks a question
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Should NOT have routed to leader
+			const leaderCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(leaderCalls.length).toBe(callsBefore);
+
+			// Group should be marked as waiting for question
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.waitingForQuestion).toBe(true);
+			expect(updated!.waitingSession).toBe('worker');
+
+			// Group should still be active (not completed)
+			expect(updated!.completedAt).toBeNull();
+		});
+
+		it('should resume routing after worker answers question and returns idle', async () => {
+			await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Step 1: Worker asks a question → task pauses
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			const afterQuestion = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterQuestion.waitingForQuestion).toBe(true);
+			expect(afterQuestion.waitingSession).toBe('worker');
+
+			// Step 2: Question answered, worker completes work → idle
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// waiting flag should be cleared
+			const afterResume = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterResume.waitingForQuestion).toBe(false);
+			expect(afterResume.waitingSession).toBeNull();
+		});
 	});
 
 	describe('cancelTask', () => {
@@ -239,6 +303,179 @@ describe('RoomRuntime flow', () => {
 		});
 	});
 
+	describe('interruptTaskSession', () => {
+		it('should interrupt sessions without changing task status', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.completedAt).toBeNull();
+
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// Task should remain in_progress (not failed/cancelled)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+
+			// Group should remain active (not terminal)
+			const updatedGroup = ctx.groupRepo.getGroup(group!.id);
+			expect(updatedGroup!.completedAt).toBeNull();
+
+			// Both sessions should have been interrupted (not stopped/removed)
+			const interruptCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'interruptSession'
+			);
+			expect(interruptCalls).toHaveLength(2);
+			expect(interruptCalls.map((c) => c.args[0])).toEqual(
+				expect.arrayContaining([group!.workerSessionId, group!.leaderSessionId])
+			);
+			// stopSession should NOT be called
+			const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
+			expect(stopCalls).toHaveLength(0);
+		});
+
+		it('should return failure for non-existent task', async () => {
+			const result = await ctx.runtime.interruptTaskSession('non-existent-task-id');
+			expect(result.success).toBe(false);
+		});
+
+		it('should return failure for task not in in_progress or review status', async () => {
+			const task = await ctx.taskManager.createTask({
+				title: 'Pending Task',
+				description: 'Not started yet',
+				priority: 'normal',
+			});
+			// Task is pending by default
+			expect(task.status).toBe('pending');
+
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(false);
+		});
+
+		it('should return failure for task with no active group', async () => {
+			const task = await ctx.taskManager.createTask({
+				title: 'Task without group',
+				description: 'desc',
+				priority: 'normal',
+			});
+			// Manually move to in_progress with no group
+			await ctx.taskManager.setTaskStatus(task.id, 'in_progress');
+
+			// No group exists, so interruptTaskSession should fail gracefully
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(false);
+		});
+
+		it('should set humanInterrupted flag preventing auto-routing to leader', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task
+			await ctx.runtime.interruptTaskSession(task.id);
+
+			// humanInterrupted should be set
+			const updatedGroup = ctx.groupRepo.getGroup(group!.id);
+			expect(updatedGroup!.humanInterrupted).toBe(true);
+
+			// Simulate worker reaching terminal state (would normally route to leader)
+			const initialInjectCount = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage'
+			).length;
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted should be cleared after onWorkerTerminalState
+			const clearedGroup = ctx.groupRepo.getGroup(group!.id);
+			expect(clearedGroup!.humanInterrupted).toBe(false);
+
+			// No leader session should have been created (routing was blocked)
+			const createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			// Only 1 create call (the initial worker), leader was not created
+			expect(createCalls).toHaveLength(1);
+
+			// No new inject messages (routing to leader sends an envelope)
+			const injectCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'injectMessage');
+			expect(injectCalls.length).toBe(initialInjectCount);
+		});
+
+		it('should clear humanInterrupted when routeLeaderToWorker is called (P2 fix)', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task (sets humanInterrupted = true)
+			await ctx.runtime.interruptTaskSession(task.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(true);
+
+			// Leader routes feedback to worker (simulates send_to_worker tool call)
+			await ctx.runtime.taskGroupManager.routeLeaderToWorker(group!.id, 'Here is my feedback');
+
+			// humanInterrupted should be cleared so the next worker completion routes normally
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// Now when worker finishes, onWorkerTerminalState should NOT be blocked
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted remains false after terminal state
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+		});
+
+		it('should clear humanInterrupted when injectMessageToWorker is called (race condition fix)', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task (sets humanInterrupted = true)
+			await ctx.runtime.interruptTaskSession(task.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(true);
+
+			// User injects a new message to the worker (simulates typing after interrupt)
+			const injected = await ctx.runtime.injectMessageToWorker(task.id, 'Please fix the error');
+			expect(injected).toBe(true);
+
+			// humanInterrupted should be cleared so the next worker completion routes normally
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// Now when worker finishes, onWorkerTerminalState should NOT be blocked by humanInterrupted
+			// (it's already false). Verify by checking the flag is NOT re-set after terminal state.
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted remains false — not set again by onWorkerTerminalState
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// The 'humanInterrupted early return' path was NOT taken, so either exit gate
+			// routing or normal routing occurred — at minimum, more than 0 injectMessage
+			// calls were made (from gate checks or leader routing), unlike the interrupt
+			// path which returns before any inject
+			const allCalls = ctx.sessionFactory.calls.map((c) => c.method);
+			// At least interruptSession x2 + injectMessage x1 (human msg) were made
+			expect(allCalls.filter((m) => m === 'interruptSession')).toHaveLength(2);
+		});
+	});
+
 	describe('autonomous flow integration', () => {
 		it('should complete the full single-iteration cycle: spawn → worker done → leader completes', async () => {
 			const { task } = await createGoalAndTask(ctx);
@@ -296,7 +533,6 @@ describe('RoomRuntime flow', () => {
 				message: 'Add error handling to the endpoint',
 				mode: 'queue',
 			});
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 
 			// Group is back to awaiting_worker with iteration bumped
 			const afterFeedback = ctx.groupRepo.getGroup(group.id)!;
@@ -360,7 +596,6 @@ describe('RoomRuntime flow', () => {
 					mode: 'queue',
 				});
 				expect(JSON.parse(r.content[0].text).success).toBe(true);
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -405,7 +640,6 @@ describe('RoomRuntime flow', () => {
 					message: `Feedback ${i + 1}`,
 					mode: 'queue',
 				});
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
@@ -443,7 +677,6 @@ describe('RoomRuntime flow', () => {
 					message: `Round ${i + 1}`,
 					mode: 'queue',
 				});
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			}
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
@@ -468,8 +701,6 @@ describe('RoomRuntime flow', () => {
 			// Task back in in_progress
 			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('in_progress');
 
-			// handoff_to_worker is a no-op compatibility tool
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 
 			// Worker finishes again → routeWorkerToLeader increments to 1 (not 6!)
@@ -485,7 +716,6 @@ describe('RoomRuntime flow', () => {
 				mode: 'queue',
 			});
 			expect(JSON.parse(r.content[0].text).success).toBe(true);
-			await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 		});
 
@@ -505,7 +735,6 @@ describe('RoomRuntime flow', () => {
 					message: `Feedback round ${i + 1}`,
 					mode: 'queue',
 				});
-				await ctx.runtime.handleLeaderTool(group.id, 'handoff_to_worker', {});
 				expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(i + 1);
 			}
 
@@ -634,6 +863,49 @@ describe('RoomRuntime flow', () => {
 			// Leader terminal state should be no-op (tool was called)
 			const updated = ctx.groupRepo.getGroup(group.id);
 			expect(updated!.completedAt).not.toBeNull();
+		});
+
+		it('should pause task (not complete/route) when leader is waiting_for_input', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			// Leader asks a question
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Group should be marked as waiting for question
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.waitingForQuestion).toBe(true);
+			expect(updated!.waitingSession).toBe('leader');
+
+			// Group should still be active (not completed)
+			expect(updated!.completedAt).toBeNull();
+		});
+
+		it('should clear waiting flag when leader resumes and reaches idle', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			// Step 1: Leader asks a question
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			const afterQuestion = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterQuestion.waitingForQuestion).toBe(true);
+			expect(afterQuestion.waitingSession).toBe('leader');
+
+			// Step 2: Question answered, leader resumes → idle
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// waiting flag should be cleared
+			const afterResume = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterResume.waitingForQuestion).toBe(false);
+			expect(afterResume.waitingSession).toBeNull();
 		});
 	});
 
@@ -1233,12 +1505,12 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 
 			// tick() spawns a coder group and spawn() throws on null worktree;
-			// the runtime catches the error and the task is marked failed
+			// the runtime catches the error and the task needs attention
 			await isolCtx.runtime.tick();
 
 			// Task should be failed with a worktree-related error
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 			expect(updatedTask!.error).toContain('worktree');
 		});
 
@@ -1265,8 +1537,8 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// The planning task should have been created by spawnPlanningGroup and then failed
-			const allTasks = await isolCtx.taskManager.listTasks({ status: 'failed' });
+			// The planning task needs attention
+			const allTasks = await isolCtx.taskManager.listTasks({ status: 'needs_attention' });
 			expect(allTasks.length).toBeGreaterThan(0);
 			expect(allTasks[0].error).toContain('worktree');
 		});
@@ -1292,7 +1564,7 @@ describe('RoomRuntime flow', () => {
 
 			// Task should be failed with a worktree-related error
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 			expect(updatedTask!.error).toContain('worktree');
 		});
 
@@ -2171,5 +2443,275 @@ describe('RoomRuntime flow', () => {
 			await ctx.runtime.tick();
 			expect((await ctx.taskManager.getTask(taskC.id))!.status).toBe('in_progress');
 		});
+	});
+
+	describe('activeSession indicator', () => {
+		it('should set activeSession to worker when injecting message to worker', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			expect(group).toBeDefined();
+
+			// Task starts with no activeSession
+			const taskBefore = await ctx.taskManager.getTask(task.id);
+			expect(taskBefore!.activeSession).toBeNull();
+
+			// Inject message to worker
+			const result = await ctx.runtime.injectMessageToWorker(task.id, 'Please add error handling');
+			expect(result).toBe(true);
+
+			// activeSession should now be 'worker'
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBe('worker');
+		});
+
+		it('should set activeSession to leader when injecting message to leader', async () => {
+			const { task } = await spawnAndRouteToLeader(ctx);
+
+			// Inject message to leader
+			const result = await ctx.runtime.injectMessageToLeader(
+				task.id,
+				'Please reconsider the approach'
+			);
+			expect(result).toBe(true);
+
+			// activeSession should now be 'leader'
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBe('leader');
+		});
+
+		it('should clear activeSession when worker reaches terminal state', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Set activeSession to 'worker' manually
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('worker');
+
+			// Worker reaches terminal state
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should clear activeSession when leader reaches terminal state', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+
+			// Set activeSession to 'leader' manually
+			await ctx.taskManager.updateTaskStatus(task.id, task.status, { activeSession: 'leader' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('leader');
+
+			// Leader reaches terminal state
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should not clear activeSession when worker terminal state is for a different session', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Set activeSession to 'leader' (different from the worker that just finished)
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'leader' });
+
+			// Worker reaches terminal state — should NOT clear activeSession (it's 'leader')
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// activeSession should still be 'leader'
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBe('leader');
+		});
+
+		it('should clear activeSession when interruptTaskSession is called', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// Set activeSession to 'worker' (simulating active generation)
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('worker');
+
+			// Interrupt the session
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should be idempotent when interruptTaskSession is called with no active session', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// activeSession starts as null
+			const taskBefore = await ctx.taskManager.getTask(task.id);
+			expect(taskBefore!.activeSession).toBeNull();
+
+			// Interrupt should succeed even when no activeSession is set
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// activeSession stays null
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+	});
+});
+
+describe('bypass markers — worker exit gate and leader gate integration', () => {
+	let bypassCtx: RuntimeTestContext;
+
+	afterEach(() => {
+		bypassCtx?.runtime.stop();
+		bypassCtx?.db.close();
+	});
+
+	it('sets submittedForReview and approved when coder worker exits with RESEARCH_ONLY marker', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'RESEARCH_ONLY:\n\nI analyzed the codebase and found the following...',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.submittedForReview).toBe(true);
+		expect(updatedGroup.approved).toBe(true);
+	});
+
+	it('sets submittedForReview and approved when general worker exits with VERIFICATION_COMPLETE marker', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'VERIFICATION_COMPLETE:\n\nAll assertions verified successfully.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'general' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.submittedForReview).toBe(true);
+		expect(updatedGroup.approved).toBe(true);
+	});
+
+	it('does NOT set approved when marker is NOT on first line', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'I implemented the feature.\n\nRESEARCH_ONLY:\n\nThis is buried.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		// No bypass — gate would run normally (git checks fail-open)
+		expect(updatedGroup.approved).toBe(false);
+	});
+
+	it('detects bypass marker in the LAST message when worker sends multiple messages', async () => {
+		// The bypass marker must be in the final message, not in earlier messages.
+		// With multi-message responses, the joined text would have the marker buried mid-string,
+		// but checking only the last message ensures the first-line rule applies to the right output.
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'I looked at the codebase and gathered context.',
+					toolCallNames: [],
+				},
+				{
+					id: 'msg-2',
+					text: 'RESEARCH_ONLY:\n\nHere are my findings from the analysis.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.submittedForReview).toBe(true);
+		expect(updatedGroup.approved).toBe(true);
+	});
+
+	it('does NOT bypass when marker is in the first message but NOT the last', async () => {
+		// Marker only counts in the last message — earlier messages are preamble.
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'RESEARCH_ONLY:\n\nI started researching...',
+					toolCallNames: [],
+				},
+				{
+					id: 'msg-2',
+					text: 'After further investigation, I created some files.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		// No bypass — last message has no marker, gate runs normally (git checks fail-open)
+		expect(updatedGroup.approved).toBe(false);
+	});
+
+	it('allows leader to call complete_task directly after coder bypass (no PR needed)', async () => {
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'RESEARCH_ONLY:\n\nAnalysis of the codebase completed.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { task, group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		// Leader should be able to call complete_task without submit_for_review
+		// because the bypass pre-set submittedForReview=true and approved=true
+		const result = await bypassCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+			summary: 'Research complete',
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.success).toBe(true);
+
+		const updatedTask = await bypassCtx.taskManager.getTask(task.id);
+		expect(updatedTask!.status).toBe('completed');
 	});
 });

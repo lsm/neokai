@@ -134,14 +134,14 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 			const reviewTask = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['review', 'completed', 'failed'] },
+				{ taskType: 'planning', status: ['review', 'completed', 'needs_attention'] },
 				PLANNING_TIMEOUT
 			);
 			console.log(`Planning task reached: ${reviewTask.status}`);
 
-			if (reviewTask.status === 'failed') {
+			if (reviewTask.status === 'needs_attention') {
 				const error = (reviewTask as { error?: string }).error ?? 'unknown error';
-				console.warn(`Planning task failed: ${error}`);
+				console.warn(`Planning task needs attention: ${error}`);
 				// Don't hard-fail — log and continue checking what we can
 			}
 
@@ -235,7 +235,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 					daemon,
 					roomId,
 					planningTask.id,
-					['completed', 'failed'],
+					['completed', 'needs_attention'],
 					PLANNING_TIMEOUT
 				);
 				console.log(
@@ -246,7 +246,7 @@ describe('Room Two-Phase Planner Flow (API-dependent)', () => {
 				const completedPlanning = await waitForTask(
 					daemon,
 					roomId,
-					{ taskType: 'planning', status: ['completed', 'failed'] },
+					{ taskType: 'planning', status: ['completed', 'needs_attention'] },
 					10_000
 				);
 				console.log(`Planning task final: ${completedPlanning.status}`);

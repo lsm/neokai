@@ -131,8 +131,8 @@ export class RoomRuntimeService {
 			this.observers.delete(roomId);
 		}
 
-		// Create a fresh runtime (which calls start() internally)
-		this.createOrGetRuntime(room);
+		// Create a fresh runtime - autoStart=true starts it immediately
+		this.createOrGetRuntime(room, /* autoStart */ true);
 		return true;
 	}
 
@@ -269,6 +269,16 @@ export class RoomRuntimeService {
 					return null;
 				}
 			},
+			interruptSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return;
+
+				try {
+					await session.handleInterrupt();
+				} catch (error) {
+					log.warn(`Failed to interrupt session ${sessionId}:`, error);
+				}
+			},
 			stopSession: async (sessionId) => {
 				const session = agentSessions.get(sessionId);
 				if (!session) return;
@@ -322,7 +332,7 @@ export class RoomRuntimeService {
 		};
 	}
 
-	private createOrGetRuntime(room: Room): RoomRuntime {
+	private createOrGetRuntime(room: Room, autoStart = true): RoomRuntime {
 		const existing = this.runtimes.get(room.id);
 		if (existing) return existing;
 
@@ -386,7 +396,12 @@ export class RoomRuntimeService {
 		this.observers.set(room.id, observer);
 
 		this.setupRoomAgentSession(room, groupRepo, taskManager, goalManager);
-		runtime.start();
+
+		// Start immediately for new rooms, but delay for existing rooms
+		// until after recovery is complete to prevent duplicate continuation messages
+		if (autoStart) {
+			runtime.start();
+		}
 
 		return runtime;
 	}
@@ -467,15 +482,23 @@ export class RoomRuntimeService {
 
 	private async initializeExistingRooms(): Promise<void> {
 		const rooms = this.ctx.roomManager.listRooms();
-		for (const room of rooms) {
-			try {
-				const runtime = this.createOrGetRuntime(room);
-				const observer = this.observers.get(room.id)!;
-				await this.recoverRoomRuntime(room.id, runtime, observer);
-			} catch (error) {
-				log.error(`Failed to initialize runtime for room ${room.id}:`, error);
-			}
-		}
+
+		// Recover all rooms in parallel for faster startup
+		await Promise.all(
+			rooms.map(async (room) => {
+				try {
+					// Don't auto-start - wait until after recovery completes to prevent
+					// zombie detection from injecting duplicate continuation messages
+					const runtime = this.createOrGetRuntime(room, /* autoStart */ false);
+					const observer = this.observers.get(room.id)!;
+					await this.recoverRoomRuntime(room.id, runtime, observer);
+					// Start the runtime tick loop after recovery is complete
+					runtime.start();
+				} catch (error) {
+					log.error(`Failed to initialize runtime for room ${room.id}:`, error);
+				}
+			})
+		);
 	}
 
 	private async recoverRoomRuntime(

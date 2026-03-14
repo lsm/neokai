@@ -3,12 +3,18 @@
  *
  * Creates AgentSessionInit for Planner sessions that break goals into tasks.
  *
- * The Planner agent:
- * - Examines the codebase to understand scope
- * - Creates concrete, well-scoped tasks via the create_task MCP tool
- * - Can update or remove draft tasks during plan polishing with Leader feedback
- * - Tasks are created as 'draft' and tagged with createdByTaskId
- * - Leader reviews the plan; on complete_task() the runtime promotes drafts to pending
+ * The Planner agent orchestrates two phases:
+ * 1. Plan phase: Spawns the plan-writer sub-agent to explore the codebase and produce
+ *    plan document(s) on a feature branch/PR.
+ * 2. Task creation phase: After human approval, merges the PR and creates tasks.
+ *
+ * The plan-writer sub-agent handles scope assessment and file structure:
+ * - Small goals (≤ 5 milestones): single docs/plans/<slug>.md
+ * - Large goals (> 5 milestones): multi-file docs/plans/<slug>/ with numbered overview
+ *   and per-milestone detail files, produced via an iterative two-pass approach.
+ *
+ * The create_task/update_task/remove_task tools are gated by a dynamic isPlanApproved
+ * check — they become available only after the human approves the plan.
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -22,6 +28,7 @@ import type {
 	McpServerConfig,
 	TaskPriority,
 	AgentType,
+	AgentDefinition,
 } from '@neokai/shared';
 
 const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-5-20250929';
@@ -95,108 +102,207 @@ export function toPlanSlug(goalTitle: string): string {
 }
 
 /**
+ * Build the system prompt for the Plan Writer sub-agent.
+ *
+ * The plan-writer handles all Phase 1 work: codebase exploration, scope assessment,
+ * plan document creation (single file or multi-file), branch/commit/PR.
+ *
+ * For large-scope goals it uses an iterative two-pass approach:
+ * - Pass 1: Create 00-overview.md with milestones list
+ * - Pass 2: Create per-milestone files (NN-<slug>.md) with detailed tasks and subtasks
+ *
+ * Placeholders (substituted at creation time via buildPlanWriterAgentDef):
+ *   <single_plan_path> — e.g., docs/plans/build-stock-app.md
+ *   <plan_dir>         — e.g., docs/plans/build-stock-app
+ *   <plan_slug>        — e.g., build-stock-app
+ */
+export function buildPlanWriterPrompt(): string {
+	return `You are a Plan Writer Agent spawned by the Planner to produce a structured plan for a goal.
+
+## Pre-Work: Git Sync (MANDATORY)
+
+Before exploring, sync with the default branch — run all three lines as a **single bash invocation**:
+\`\`\`bash
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+git fetch origin && git rebase origin/$DEFAULT_BRANCH
+\`\`\`
+**If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase.
+
+## Step 1: Codebase Exploration
+
+Explore the codebase using Explore sub-agents (each has its own context window):
+\`\`\`
+Task(subagent_type: "Explore", prompt: "Explore [area]. I need: [questions]. Return key findings, file paths, patterns.")
+\`\`\`
+Spawn multiple Explore agents **in parallel** to cover different areas. Gather enough context to understand existing patterns, affected areas, dependencies, and overall complexity.
+
+## Step 2: Scope Assessment
+
+Based on your exploration, determine the plan structure:
+- **Small scope** (≤ 5 milestones, ≤ 15 total tasks) → Single file: \`<single_plan_path>\`
+- **Large scope** (> 5 milestones OR > 15 total tasks) → Multi-file folder: \`<plan_dir>/\`
+
+## Step 3: Writing the Plan
+
+### Small Scope — Single File
+
+Write \`<single_plan_path>\` with:
+- Goal summary and approach
+- Ordered tasks with: title, description, subtasks (ordered implementation steps), acceptance criteria, dependencies on other tasks, agent type (coder/general)
+- For coding tasks always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
+
+### Large Scope — Multi-File (Two-Pass Iterative Approach)
+
+**Pass 1 — Create the overview first:**
+Write \`<plan_dir>/00-overview.md\`:
+- Goal summary and high-level approach
+- Numbered milestones list (one line each with brief description)
+- Cross-milestone dependencies and key sequencing decisions
+- Total estimated task count
+
+**Pass 2 — Create per-milestone detail files:**
+For each milestone \`N\`, write \`<plan_dir>/NN-<milestone-slug>.md\` (zero-padded: 01, 02, …):
+- Milestone goal and scope
+- Ordered tasks — each task maps to ONE coder agent session (keep focused, not too broad)
+- Per task: title, description, subtasks (ordered implementation steps within the session), acceptance criteria, depends_on (list of task titles from this or earlier milestones), agent type
+- For coding tasks always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
+
+**File naming rules:**
+- Overview: \`<plan_dir>/00-overview.md\`
+- Milestones: \`<plan_dir>/01-<milestone-slug>.md\`, \`<plan_dir>/02-<milestone-slug>.md\`, …
+- Milestone slug = lowercase, hyphens only (e.g., "User Authentication" → \`user-authentication\`)
+
+## Step 4: Branch, Commit, PR
+
+1. Create a feature branch: \`git checkout -b plan/<plan_slug>\`
+2. Commit all plan files with a clear message
+3. Push and create a PR (detect base branch in subshell):
+   \`\`\`bash
+   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")
+   \`\`\`
+
+## Step 5: Return Result
+
+End your response with:
+\`\`\`
+---PLAN_RESULT---
+pr_number: <number>
+branch: <branch-name>
+plan_files: <comma-separated relative file paths>
+structure: single | multi
+---END_PLAN_RESULT---
+\`\`\``;
+}
+
+/**
+ * Build the AgentDefinition for the plan-writer sub-agent.
+ * The plan slug is embedded into the prompt at creation time so file paths are concrete.
+ */
+export function buildPlanWriterAgentDef(planSlug: string): AgentDefinition {
+	const singlePlanPath = `docs/plans/${planSlug}.md`;
+	const planDir = `docs/plans/${planSlug}`;
+	const prompt = buildPlanWriterPrompt()
+		.replace(/<single_plan_path>/g, singlePlanPath)
+		.replace(/<plan_dir>/g, planDir)
+		.replace(/<plan_slug>/g, planSlug);
+
+	return {
+		description:
+			'Plan writer that explores the codebase and produces structured plan documents. ' +
+			'Supports single-file plans for small goals and multi-file iterative plans for large-scope goals.',
+		tools: [
+			'Task',
+			'TaskOutput',
+			'TaskStop',
+			'Read',
+			'Write',
+			'Edit',
+			'Bash',
+			'Grep',
+			'Glob',
+			'WebFetch',
+			'WebSearch',
+		],
+		model: 'inherit',
+		prompt,
+	};
+}
+
+/**
  * Build the behavioral system prompt for the Planner agent.
  *
- * Single-session lifecycle:
- * 1. Examine codebase, write plan as docs/plans/<slug>.md, commit, create PR
- * 2. (Worker exits → Leader reviews → submit_for_review → Human approves)
- * 3. When resumed with approval message: merge PR, create tasks using create_task tool
- *
- * The create_task/update_task/remove_task tools are gated by a dynamic isPlanApproved
- * check — they become available only after the human approves the plan.
+ * The Planner orchestrates two phases:
+ * 1. Plan phase: Spawns the plan-writer sub-agent to explore and create a plan PR.
+ * 2. Task creation phase: After human approval, merges the PR and creates tasks.
  *
  * Goal-specific context is delivered via the initial user message.
  */
 export function buildPlannerSystemPrompt(goalTitle?: string): string {
-	const sections: string[] = [];
-
 	const planSlug = goalTitle ? toPlanSlug(goalTitle) : 'plan';
+	const planDir = `docs/plans/${planSlug}`;
 	const planPath = `docs/plans/${planSlug}.md`;
 
-	sections.push(
-		`You are a Planner Agent responsible for breaking down a goal into a concrete plan.`
-	);
-	sections.push(`\nYour job has two phases within a single session:`);
-	sections.push(`1. **Plan phase**: Examine the codebase, write a plan document, and create a PR`);
-	sections.push(
-		`2. **Task creation phase**: After the plan is approved, merge the PR and create tasks`
-	);
+	return `\
+You are a Planner Agent responsible for breaking down a goal into a concrete plan.
 
-	sections.push(`\n## Pre-Planning Setup (MANDATORY)\n`);
-	sections.push(
-		`Before reading any files or writing the plan, sync with the default branch.\n` +
-			`Run all three lines as a **single bash invocation** (variables persist within one call):\n` +
-			`\`\`\`bash\n` +
-			`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
-			`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
-			`git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
-			`\`\`\`\n` +
-			`**If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase`
-	);
+Your job has two phases within a single session:
+1. **Plan phase**: Spawn the \`plan-writer\` sub-agent to explore the codebase and create a plan PR
+2. **Task creation phase**: After the plan is approved, merge the PR and create tasks
 
-	sections.push(`\n## Phase 1: Planning\n`);
-	sections.push(`1. Read relevant files to understand the current codebase state`);
-	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
-	sections.push(
-		`3. Order tasks by dependency (later tasks build on earlier ones). Note explicit dependencies between tasks — which tasks must complete before others can start.`
-	);
-	sections.push(
-		`4. Each task description must include clear acceptance criteria. ` +
-			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
-	);
-	sections.push(
-		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
-	);
-	sections.push(
-		`6. Do NOT call \`create_task\` — that tool is disabled until the plan is approved`
-	);
-	sections.push(`7. Do NOT implement any code — only plan`);
-	sections.push(`8. If the Leader sends feedback, update the plan document accordingly`);
+## Pre-Planning Setup (MANDATORY)
 
-	sections.push(`\n### Plan Deliverable (REQUIRED)\n`);
-	sections.push(`You MUST produce a plan file and create a PR for review:`);
-	sections.push(
-		`1. Create the \`docs/plans/\` directory if it doesn't exist, then write the plan file at \`${planPath}\` with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments`
-	);
-	sections.push(`2. Create a feature branch, commit the plan file, and push it`);
-	sections.push(
-		`3. Create a GitHub PR — detect the default branch inside the subshell with the plan summary as the PR description:\n` +
-			`   \`\`\`bash\n` +
-			`   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
-			`   \`\`\``
-	);
-	sections.push(
-		`4. Finish your response — the Leader will dispatch reviewers, then submit for human approval`
-	);
+Before starting, sync with the default branch.
+Run all three lines as a **single bash invocation** (variables persist within one call):
+\`\`\`bash
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+git fetch origin && git rebase origin/$DEFAULT_BRANCH
+\`\`\`
+**If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase
 
-	sections.push(`\n## Phase 2: Task Creation (after plan approval)\n`);
-	sections.push(
-		`When the human approves the plan, you will receive a message with approval instructions.`
-	);
-	sections.push(
-		`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`
-	);
-	sections.push(
-		`2. Read the plan file (look for \`${planPath}\` or any \`.md\` file under \`docs/plans/\`) to get the approved plan`
-	);
-	sections.push(`3. Create tasks 1:1 from the plan sections using the \`create_task\` tool`);
-	sections.push(`4. Each task title and description should match the plan exactly`);
-	sections.push(
-		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
-	);
-	sections.push(
-		`6. Use the \`depends_on\` parameter to declare task dependencies. ` +
-			`Pass the task IDs returned by previous \`create_task\` calls. ` +
-			`Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.`
-	);
-	sections.push(
-		`7. Each task description must include clear acceptance criteria. ` +
-			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
-	);
-	sections.push(`8. Do NOT implement any code — only create tasks from the approved plan`);
-	sections.push(`9. Finish your response after all tasks are created`);
+## Phase 1: Planning
 
-	return sections.join('\n');
+Spawn the \`plan-writer\` sub-agent to handle all exploration and plan creation work.
+Pass the full goal context (title, description, room background, instructions) as the Task prompt:
+
+\`\`\`
+Task(subagent_type: "plan-writer", prompt: "Goal: <title>\\n\\nDescription: <description>\\n\\n<room context>")
+\`\`\`
+
+The plan-writer will:
+- Explore the codebase and assess scope
+- For small goals (≤ 5 milestones): write a single plan file at \`${planPath}\`
+- For large goals (> 5 milestones): write multi-file plans in \`${planDir}/\` with a numbered overview (\`00-overview.md\`) and per-milestone files (\`01-<milestone>.md\`, \`02-<milestone>.md\`, …)
+- Use an iterative two-pass approach for large goals: first create the overview, then expand each milestone into detailed tasks and subtasks
+- Create a feature branch, commit, push, and open a PR
+
+Parse the \`---PLAN_RESULT---\` block in the plan-writer's response to capture:
+- \`pr_number\` — needed for Phase 2 merge
+- \`plan_files\` — file paths to read in Phase 2
+- \`structure\` — \`single\` or \`multi\`
+
+**If the Leader sends feedback on the plan:** Edit the plan files directly (you have Write/Edit/Bash tools), push to the existing branch, and finish your response.
+
+5. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
+6. Do NOT implement any code — only plan
+
+Finish your response after the plan-writer completes — the Leader will dispatch reviewers, then submit for human approval.
+
+## Phase 2: Task Creation (after plan approval)
+
+When the Leader sends you an approval message, you are in Phase 2.
+**IMPORTANT**: Do NOT skip straight to \`create_task\` — you MUST merge the plan PR first.
+
+1. Merge the plan PR: run \`gh pr merge <PR_NUMBER> --merge\` (use the pr_number from the Phase 1 plan-writer result)
+2. Read the plan files (use the \`plan_files\` list from Phase 1, or find them under \`${planDir}/\` or at \`${planPath}\`)
+3. Create tasks 1:1 from the plan sections using the \`create_task\` tool
+4. Each task title and description should match the plan exactly
+5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks
+6. Use the \`depends_on\` parameter to declare task dependencies. Pass the task IDs returned by previous \`create_task\` calls. Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.
+7. Each task description must include clear acceptance criteria. For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
+8. Do NOT implement any code — only create tasks from the approved plan
+9. Finish your response after all tasks are created`;
 }
 
 /**
@@ -265,7 +371,7 @@ export function createPlannerMcpServer(config: PlannerAgentConfig) {
 					success: false,
 					error:
 						'This tool is not available during the planning phase. ' +
-						'Write your plan file under docs/plans/, commit it, and create a PR instead. ' +
+						'The plan-writer sub-agent will create plan files under docs/plans/, commit them, and create a PR. ' +
 						'Tasks will be created after the plan is approved.',
 				}),
 			},
@@ -414,11 +520,39 @@ export function createPlannerMcpServer(config: PlannerAgentConfig) {
 /**
  * Create an AgentSessionInit for a Planner agent.
  *
- * Uses the Claude Code preset (for read/glob/grep codebase access) plus planning
- * MCP tools. The system prompt instructs the agent to plan only, not implement.
+ * Uses the agent/agents pattern so the Planner has access to the Task/TaskOutput/TaskStop
+ * tools for spawning the plan-writer sub-agent. The plan-writer handles all Phase 1 work
+ * (exploration, scope assessment, plan creation, branch/PR).
+ *
+ * MCP planning tools (create_task, update_task, remove_task) are provided via mcpServers
+ * and are available to the main Planner agent thread regardless.
  */
 export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSessionInit {
 	const mcpServer = createPlannerMcpServer(config);
+	const planSlug = toPlanSlug(config.goal.title);
+
+	const plannerAgentDef: AgentDefinition = {
+		description:
+			'Planning agent that orchestrates plan creation by spawning a plan-writer sub-agent, ' +
+			'then creates tasks from the approved plan.',
+		prompt: buildPlannerSystemPrompt(config.goal.title),
+		// Planner needs Task/TaskOutput/TaskStop to spawn plan-writer,
+		// plus standard tools for direct file editing during feedback rounds.
+		tools: [
+			'Task',
+			'TaskOutput',
+			'TaskStop',
+			'Read',
+			'Write',
+			'Edit',
+			'Bash',
+			'Grep',
+			'Glob',
+			'WebFetch',
+			'WebSearch',
+		],
+		model: 'inherit',
+	};
 
 	return {
 		sessionId: config.sessionId,
@@ -426,7 +560,6 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildPlannerSystemPrompt(config.goal.title),
 		},
 		mcpServers: {
 			'planner-tools': mcpServer as unknown as McpServerConfig,
@@ -435,6 +568,11 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'planner',
 		model: config.model ?? DEFAULT_PLANNER_MODEL,
+		agent: 'Planner',
+		agents: {
+			Planner: plannerAgentDef,
+			'plan-writer': buildPlanWriterAgentDef(planSlug),
+		},
 		contextAutoQueue: false,
 	};
 }

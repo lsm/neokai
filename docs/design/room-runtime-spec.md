@@ -107,8 +107,6 @@ On worker terminal state:
 - `send_to_worker`
   - forwards feedback to worker
   - if `feedbackIteration >= maxReviewRounds`, runtime escalates to human review (`task.review`, `submittedForReview=true`)
-- `handoff_to_worker`
-  - compatibility no-op
 - `submit_for_review(pr_url)`
   - sets `submittedForReview=true`
   - transitions task to `review`
@@ -191,7 +189,6 @@ This allows the room to continue autonomous execution while waiting for human re
 ## Legacy Compatibility Notes
 
 - Existing DB columns/strings like `state='awaiting_worker'` are retained for compatibility but are not the primary orchestration signal.
-- Tool names like `handoff_to_worker` remain for compatibility, even where behavior is now a no-op.
 - Historical design/plan docs may contain legacy state/status terms and are not authoritative for current behavior.
 
 ## Implementation Anchors

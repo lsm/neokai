@@ -142,7 +142,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -156,6 +156,10 @@ export function createTables(db: BunDatabase): void {
         assigned_agent TEXT DEFAULT 'coder',
         created_by_task_id TEXT,
         archived_at INTEGER,
+        active_session TEXT,
+        pr_url TEXT,
+        pr_number INTEGER,
+        pr_created_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);

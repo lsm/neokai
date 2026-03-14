@@ -155,7 +155,7 @@ export type TaskStatus =
 	| 'in_progress'
 	| 'review'
 	| 'completed'
-	| 'failed'
+	| 'needs_attention'
 	| 'cancelled';
 
 /**
@@ -213,6 +213,18 @@ export interface NeoTask {
 	completedAt?: number;
 	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
 	archivedAt?: number | null;
+	/**
+	 * Which agent session is currently active (generating output).
+	 * Set when a human message is injected; cleared when the session reaches terminal state.
+	 * Allows the UI to show a "working" indicator even when status is 'review'.
+	 */
+	activeSession?: 'worker' | 'leader' | null;
+	/** Pull request URL (when task has associated PR) */
+	prUrl?: string | null;
+	/** Pull request number (extracted from URL for display) */
+	prNumber?: number | null;
+	/** When PR was created/submitted (milliseconds since epoch) */
+	prCreatedAt?: number | null;
 }
 
 /**
@@ -257,6 +269,39 @@ export interface UpdateTaskParams {
 	result?: string | null;
 	error?: string | null;
 	dependsOn?: string[];
+	/** Which session is actively generating output. null clears the indicator. */
+	activeSession?: 'worker' | 'leader' | null;
+	prUrl?: string | null;
+	prNumber?: number | null;
+	prCreatedAt?: number | null;
+}
+
+// ============================================================================
+// Sub-Agent Configuration Types
+// ============================================================================
+
+/**
+ * Configuration for a sub-agent entry in room.config.agentSubagents.
+ *
+ * Used for leader reviewers (.leader[]), leader analysis helpers (.leaderHelpers[]),
+ * and coder worker helpers (.worker[]). The runtime builder functions convert these
+ * configs into AgentDefinition objects for the SDK.
+ */
+export interface SubagentConfig {
+	/** Model ID (e.g., 'claude-haiku-4-5', 'claude-sonnet-4-6') or CLI agent short name */
+	model: string;
+	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
+	provider?: string;
+	/** Marks this as CLI-based (external tool orchestrated via Bash) */
+	type?: 'cli';
+	/** Full model ID when different from the short name in 'model' */
+	modelId?: string;
+	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
+	cliModel?: string;
+	/** Optional display name override for this sub-agent */
+	name?: string;
+	/** Optional description of what this sub-agent specializes in */
+	description?: string;
 }
 
 // ============================================================================
@@ -295,6 +340,12 @@ export interface TaskSummary {
 	dependsOn: string[];
 	/** Error message for failed tasks */
 	error?: string | null;
+	/** Which session is actively generating output (see NeoTask.activeSession) */
+	activeSession?: 'worker' | 'leader' | null;
+	/** Pull request URL (if available) */
+	prUrl?: string | null;
+	/** Pull request number (if available) */
+	prNumber?: number | null;
 }
 
 /**
