@@ -74,12 +74,12 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			const terminalPlanning = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				{ taskType: 'planning', status: ['completed', 'review', 'needs_attention'] },
 				120_000
 			);
-			if (terminalPlanning.status === 'failed') {
+			if (terminalPlanning.status === 'needs_attention') {
 				throw new Error(
-					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
+					`Planning task needs attention: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
 			// If planning is in 'review', approve via task.approve to trigger phase 2
@@ -99,12 +99,12 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			const terminalCoding = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
+				{ taskType: 'coding', status: ['completed', 'review', 'needs_attention'] },
 				120_000
 			);
-			if (terminalCoding.status === 'failed') {
+			if (terminalCoding.status === 'needs_attention') {
 				throw new Error(
-					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
+					`Coding task needs attention: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
 			if (terminalCoding.status === 'review') {
@@ -132,13 +132,13 @@ describe('Room Replan Recovery (API-dependent)', () => {
 				});
 			}
 
-			// Verify the original tasks are now failed (new tasks may have
+			// Verify the original task needs attention (new tasks may have
 			// already been spawned by the runtime tick since task.fail emits
 			// room.task.update → immediate scheduleTick())
 			const tasksAfterFail = await listTasks(daemon, roomId);
 			for (const task of tasksAfterFail) {
 				if (existingTaskIds.has(task.id)) {
-					expect(task.status).toBe('failed');
+					expect(task.status).toBe('needs_attention');
 				}
 			}
 
@@ -163,7 +163,7 @@ describe('Room Replan Recovery (API-dependent)', () => {
 			const newTerminalPlanning = await waitForNewTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				{ taskType: 'planning', status: ['completed', 'review', 'needs_attention'] },
 				existingTaskIds,
 				120_000
 			);

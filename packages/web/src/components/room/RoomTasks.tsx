@@ -5,20 +5,25 @@
  * - Active: pending + in_progress
  * - Review: review status (awaiting human action)
  * - Done: completed
- * - Failed: failed + cancelled
+ * - Needs Attention: needs_attention + cancelled
  */
 
 import { signal, effect } from '@preact/signals';
 import type { TaskSummary } from '@neokai/shared';
 
 /** Tab filter types */
-export type TaskFilterTab = 'active' | 'review' | 'done' | 'failed';
+export type TaskFilterTab = 'active' | 'review' | 'done' | 'needs_attention';
 
 /** Get initial tab from localStorage */
 function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
-	if (stored === 'active' || stored === 'review' || stored === 'done' || stored === 'failed') {
+	if (
+		stored === 'active' ||
+		stored === 'review' ||
+		stored === 'done' ||
+		stored === 'needs_attention'
+	) {
 		return stored;
 	}
 	return 'active';
@@ -48,7 +53,8 @@ function getTabCounts(tasks: TaskSummary[]) {
 		active: tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length,
 		review: tasks.filter((t) => t.status === 'review').length,
 		done: tasks.filter((t) => t.status === 'completed').length,
-		failed: tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled').length,
+		needs_attention: tasks.filter((t) => t.status === 'needs_attention' || t.status === 'cancelled')
+			.length,
 	};
 }
 
@@ -61,8 +67,8 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 			return tasks.filter((t) => t.status === 'review');
 		case 'done':
 			return tasks.filter((t) => t.status === 'completed');
-		case 'failed':
-			return tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled');
+		case 'needs_attention':
+			return tasks.filter((t) => t.status === 'needs_attention' || t.status === 'cancelled');
 	}
 }
 
@@ -109,10 +115,10 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					variant="green"
 				/>
 				<TabButton
-					label="Failed"
-					count={tabCounts.failed}
-					isActive={selectedTab === 'failed'}
-					onClick={() => handleTabClick('failed')}
+					label="Needs Attention"
+					count={tabCounts.needs_attention}
+					isActive={selectedTab === 'needs_attention'}
+					onClick={() => handleTabClick('needs_attention')}
 					variant="red"
 				/>
 			</div>
@@ -203,9 +209,9 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 			title: 'No completed tasks',
 			description: 'Completed tasks will appear here',
 		},
-		failed: {
-			title: 'No failed tasks',
-			description: 'Failed and cancelled tasks will appear here',
+		needs_attention: {
+			title: 'No tasks needing attention',
+			description: 'Tasks needing attention and cancelled tasks will appear here',
 		},
 	};
 
@@ -238,7 +244,7 @@ function TaskList({
 	// For Active tab, group by in_progress and pending
 	// For Review tab - all are review status
 	// For Done tab - all are completed
-	// For Failed tab - group by failed and cancelled
+	// For Needs Attention tab - group by needs_attention and cancelled
 
 	if (tab === 'active') {
 		const inProgress = tasks.filter((t) => t.status === 'in_progress');
@@ -302,18 +308,18 @@ function TaskList({
 		);
 	}
 
-	// Failed tab
-	const failed = tasks.filter((t) => t.status === 'failed');
+	// Needs Attention tab
+	const needsAttention = tasks.filter((t) => t.status === 'needs_attention');
 	const cancelled = tasks.filter((t) => t.status === 'cancelled');
 
 	return (
 		<div class="space-y-4">
-			{failed.length > 0 && (
+			{needsAttention.length > 0 && (
 				<TaskGroup
-					title="Failed"
-					count={failed.length}
+					title="Needs Attention"
+					count={needsAttention.length}
 					variant="red"
-					tasks={failed}
+					tasks={needsAttention}
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
 					showAlert
@@ -502,7 +508,7 @@ function TaskItem({
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
-			{task.status === 'failed' && task.error && (
+			{task.status === 'needs_attention' && task.error && (
 				<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={task.error}>
 					{task.error}
 				</p>

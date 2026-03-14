@@ -66,7 +66,7 @@ describe('RoomTasks', () => {
 				createTask('t1', 'in_progress'),
 				createTask('t2', 'review'),
 				createTask('t3', 'completed'),
-				createTask('t4', 'failed'),
+				createTask('t4', 'needs_attention'),
 			];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
@@ -74,7 +74,7 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Active');
 			expect(container.textContent).toContain('Review');
 			expect(container.textContent).toContain('Done');
-			expect(container.textContent).toContain('Failed');
+			expect(container.textContent).toContain('Needs Attention');
 		});
 
 		it('should show correct counts on tabs', () => {
@@ -83,7 +83,7 @@ describe('RoomTasks', () => {
 				createTask('t2', 'pending'),
 				createTask('t3', 'review'),
 				createTask('t4', 'completed'),
-				createTask('t5', 'failed'),
+				createTask('t5', 'needs_attention'),
 				createTask('t6', 'cancelled'),
 			];
 
@@ -316,31 +316,31 @@ describe('RoomTasks', () => {
 		});
 	});
 
-	describe('Failed Tab', () => {
+	describe('Needs Attention Tab', () => {
 		beforeEach(() => {
-			selectedTabSignal.value = 'failed';
+			selectedTabSignal.value = 'needs_attention';
 		});
 
-		it('should render failed section with red header', () => {
-			const tasks = [createTask('t1', 'failed', { title: 'Broken task' })];
+		it('should render needs attention section with red header', () => {
+			const tasks = [createTask('t1', 'needs_attention', { title: 'Broken task' })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
 			const header = container.querySelector('h3.text-red-400');
 			expect(header).toBeTruthy();
-			expect(header?.textContent).toContain('Failed (1)');
+			expect(header?.textContent).toContain('Needs Attention (1)');
 		});
 
-		it('should show failed task titles', () => {
-			const tasks = [createTask('t1', 'failed', { title: 'Broken task' })];
+		it('should show needs attention task titles', () => {
+			const tasks = [createTask('t1', 'needs_attention', { title: 'Broken task' })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
 			expect(container.textContent).toContain('Broken task');
 		});
 
-		it('should have red background header for failed section', () => {
-			const tasks = [createTask('t1', 'failed')];
+		it('should have red background header for needs attention section', () => {
+			const tasks = [createTask('t1', 'needs_attention')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
@@ -348,9 +348,12 @@ describe('RoomTasks', () => {
 			expect(redHeader).toBeTruthy();
 		});
 
-		it('should show error message for failed tasks with error', () => {
+		it('should show error message for needs attention tasks with error', () => {
 			const tasks = [
-				createTask('t1', 'failed', { title: 'Broken task', error: 'Something went wrong' }),
+				createTask('t1', 'needs_attention', {
+					title: 'Broken task',
+					error: 'Something went wrong',
+				}),
 			];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
@@ -358,8 +361,8 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Something went wrong');
 		});
 
-		it('should not show error message for failed tasks without error', () => {
-			const tasks = [createTask('t1', 'failed', { title: 'Broken task' })];
+		it('should not show error message for needs attention tasks without error', () => {
+			const tasks = [createTask('t1', 'needs_attention', { title: 'Broken task' })];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
@@ -401,9 +404,9 @@ describe('RoomTasks', () => {
 			expect(approveBtn).toBeFalsy();
 		});
 
-		it('should render cancelled separately from failed', () => {
+		it('should render cancelled separately from needs attention tasks', () => {
 			const tasks = [
-				createTask('t1', 'failed', { title: 'Error task' }),
+				createTask('t1', 'needs_attention', { title: 'Error task' }),
 				createTask('t2', 'cancelled', { title: 'Stopped task' }),
 			];
 
@@ -412,16 +415,16 @@ describe('RoomTasks', () => {
 			const headers = container.querySelectorAll('h3');
 			const headerTexts = Array.from(headers).map((h) => h.textContent);
 
-			expect(headerTexts).toContain('Failed (1)');
+			expect(headerTexts).toContain('Needs Attention (1)');
 			expect(headerTexts).toContain('Cancelled (1)');
 		});
 
-		it('should show empty state when no failed or cancelled tasks', () => {
+		it('should show empty state when no needs attention or cancelled tasks', () => {
 			const tasks = [createTask('t1', 'pending')];
 
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			expect(container.textContent).toContain('No failed tasks');
+			expect(container.textContent).toContain('No tasks needing attention');
 		});
 	});
 
@@ -463,21 +466,21 @@ describe('RoomTasks', () => {
 			expect(container.textContent).toContain('Completed (1)');
 		});
 
-		it('should switch to failed tab when clicked', () => {
+		it('should switch to needs attention tab when clicked', () => {
 			const tasks = [
 				createTask('t1', 'in_progress'),
-				createTask('t2', 'failed', { title: 'Failed task' }),
+				createTask('t2', 'needs_attention', { title: 'Needs attention task' }),
 			];
 
 			// Set to active BEFORE render
 			selectedTabSignal.value = 'active';
 			const { container } = render(<RoomTasks tasks={tasks} />);
 
-			// Click failed tab
-			clickTab(container, 'Failed');
+			// Click needs attention tab
+			clickTab(container, 'Needs Attention');
 
-			// Should see failed section
-			expect(container.textContent).toContain('Failed (1)');
+			// Should see needs attention section
+			expect(container.textContent).toContain('Needs Attention (1)');
 		});
 	});
 

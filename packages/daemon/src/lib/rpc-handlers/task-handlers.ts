@@ -295,10 +295,10 @@ export function setupTaskHandlers(
 		}
 
 		// Validate task is in a terminal state before archiving
-		const TERMINAL_STATES: TaskStatus[] = ['completed', 'failed', 'cancelled'];
+		const TERMINAL_STATES: TaskStatus[] = ['completed', 'needs_attention', 'cancelled'];
 		if (!TERMINAL_STATES.includes(task.status)) {
 			throw new Error(
-				`Cannot archive task in '${task.status}' state. Only tasks in terminal states (completed, failed, cancelled) can be archived.`
+				`Cannot archive task in '${task.status}' state. Only tasks in terminal states (completed, needs_attention, cancelled) can be archived.`
 			);
 		}
 
@@ -362,7 +362,7 @@ export function setupTaskHandlers(
 			if (runtime) {
 				const isTerminalStatus =
 					params.status === 'completed' ||
-					params.status === 'failed' ||
+					params.status === 'needs_attention' ||
 					params.status === 'cancelled';
 				if (isTerminalStatus) {
 					if (params.status === 'cancelled') {
@@ -391,8 +391,8 @@ export function setupTaskHandlers(
 			}
 		}
 
-		// Handle restart: reset failed/cancelled group so runtime picks it up fresh
-		if (task.status === 'failed' || task.status === 'cancelled') {
+		// Handle restart: reset needs_attention/cancelled group so runtime picks it up fresh
+		if (task.status === 'needs_attention' || task.status === 'cancelled') {
 			if (params.status === 'pending' || params.status === 'in_progress') {
 				const groupRepo = new SessionGroupRepository(db.getDatabase());
 				const group = groupRepo.getGroupByTaskId(params.taskId);

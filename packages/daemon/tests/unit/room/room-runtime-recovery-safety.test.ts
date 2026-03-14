@@ -100,7 +100,7 @@ describe('Zombie detection in tick', () => {
 
 		// Task should be failed
 		const updatedTask = await ctx.taskManager.getTask(taskId);
-		expect(updatedTask!.status).toBe('failed');
+		expect(updatedTask!.status).toBe('needs_attention');
 	});
 
 	it('should restore a zombie leader session during tick', async () => {
@@ -254,7 +254,7 @@ describe('Zombie detection in tick', () => {
 		expect(updated!.completedAt).not.toBeNull();
 
 		const updatedTask = await ctx.taskManager.getTask(taskId);
-		expect(updatedTask!.status).toBe('failed');
+		expect(updatedTask!.status).toBe('needs_attention');
 	});
 
 	it('should reattach observer after restoring zombie worker', async () => {

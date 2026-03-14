@@ -26,10 +26,10 @@ import type {
 export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 	draft: ['pending'],
 	pending: ['in_progress', 'cancelled'],
-	in_progress: ['review', 'completed', 'failed', 'cancelled'],
-	review: ['completed', 'failed', 'in_progress'],
+	in_progress: ['review', 'completed', 'needs_attention', 'cancelled'],
+	review: ['completed', 'needs_attention', 'in_progress'],
 	completed: [], // Terminal state
-	failed: ['pending', 'in_progress', 'review'], // Restart allowed + revive to review via message
+	needs_attention: ['pending', 'in_progress', 'review'], // Restart allowed + revive to review via message
 	cancelled: ['pending', 'in_progress'], // Restart only — worktree is cleaned up on cancel
 };
 
@@ -198,17 +198,17 @@ export class TaskManager {
 			}
 		}
 
-		if (newStatus === 'failed') {
+		if (newStatus === 'needs_attention') {
 			if (options?.error) {
 				updates.error = options.error;
 			}
 		}
 
-		// Clear error/result when restarting from failed/cancelled, or when reviving
-		// a failed task to review. The 'review' case only applies to 'failed' since
+		// Clear error/result when restarting from needs_attention/cancelled, or when reviving
+		// a needs_attention task to review. The 'review' case only applies to 'needs_attention' since
 		// 'cancelled → review' is not a valid transition (worktree is cleaned up).
 		if (
-			(task.status === 'failed' || task.status === 'cancelled') &&
+			(task.status === 'needs_attention' || task.status === 'cancelled') &&
 			(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')
 		) {
 			// Use null to explicitly clear these fields in the database
@@ -224,7 +224,7 @@ export class TaskManager {
 	 * Fail task
 	 */
 	async failTask(taskId: string, error: string): Promise<NeoTask> {
-		return this.updateTaskStatus(taskId, 'failed', {
+		return this.updateTaskStatus(taskId, 'needs_attention', {
 			error,
 		});
 	}

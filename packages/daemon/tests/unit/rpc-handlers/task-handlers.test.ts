@@ -385,8 +385,8 @@ describe('task.cancel RPC Handler', () => {
 			);
 		});
 
-		it('throws when task status is failed', async () => {
-			const failedTask = { ...mockTask, status: 'failed' as const };
+		it('throws when task needs attention', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
 			setup({ task: failedTask, runtimeService: makeNullRuntimeService() });
 			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
 				'Task cannot be cancelled'
@@ -816,8 +816,8 @@ describe('task.setStatus RPC Handler', () => {
 			expect(result).toEqual({ task: { ...mockTask, status: 'completed' } });
 		});
 
-		it('allows valid transition from failed to pending (restart)', async () => {
-			const failedTask = { ...mockTask, status: 'failed' as const };
+		it('allows valid transition from needs_attention to pending (restart)', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
 			setup({ task: failedTask, runtimeService: makeNullRuntimeService() });
 			const result = await getHandler()(
 				{ roomId: 'room-1', taskId: 'task-1', status: 'pending' },

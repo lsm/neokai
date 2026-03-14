@@ -155,7 +155,7 @@ export type TaskStatus =
 	| 'in_progress'
 	| 'review'
 	| 'completed'
-	| 'failed'
+	| 'needs_attention'
 	| 'cancelled';
 
 /**

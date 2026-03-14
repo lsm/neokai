@@ -16,21 +16,21 @@ stateDiagram-v2
 
     in_progress --> review: Work done, awaiting review
     in_progress --> completed: Human marks complete
-    in_progress --> failed: Worker fails / Human marks failed
+    in_progress --> needs_attention: Worker fails / Human marks needs attention
     in_progress --> cancelled: Human cancels
 
     review --> completed: Human approves
-    review --> failed: Human marks failed (manual terminal)
+    review --> needs_attention: Human marks needs attention (manual terminal)
     review --> in_progress: Human rejects (task.reject)
 
-    failed --> pending: Restart (human retry)
-    failed --> in_progress: Restart (human retry)
+    needs_attention --> pending: Restart (human retry)
+    needs_attention --> in_progress: Restart (human retry)
 
     cancelled --> pending: Restart (human retry)
     cancelled --> in_progress: Restart (human retry)
 
     completed --> [*]
-    failed --> [*]
+    needs_attention --> [*]
     cancelled --> [*]
 ```
 
@@ -40,10 +40,10 @@ stateDiagram-v2
 |----------------|------------------------|-------|
 | `draft` | `pending` | Planning-created tasks, promoted when plan approved |
 | `pending` | `in_progress`, `cancelled` | Worker not started yet |
-| `in_progress` | `review`, `completed`, `failed`, `cancelled` | Worker is actively working |
-| `review` | `completed`, `failed`, `in_progress` | Awaiting human approval |
+| `in_progress` | `review`, `completed`, `needs_attention`, `cancelled` | Worker is actively working |
+| `review` | `completed`, `needs_attention`, `in_progress` | Awaiting human approval |
 | `completed` | _(none)_ | Terminal state - no transitions allowed |
-| `failed` | `pending`, `in_progress` | Restart: human can retry failed task |
+| `needs_attention` | `pending`, `in_progress`, `review` | Restart or revive to review for human attention |
 | `cancelled` | `pending`, `in_progress` | Restart: human can retry cancelled task |
 
 ## Session Group State (Current)
@@ -54,7 +54,7 @@ stateDiagram-v2
 - `awaiting_leader`
 - `awaiting_human`
 - `completed`
-- `failed`
+- `needs_attention`
 
 `hibernated` is not part of the current model.
 
@@ -65,23 +65,23 @@ stateDiagram-v2
 All status transitions are validated against `VALID_STATUS_TRANSITIONS` before applying:
 
 - **Validation**: Throws error if transition is not allowed
-- **Restart clearing**: When moving from `failed`/`cancelled` to `pending`/`in_progress`:
+- **Restart clearing**: When moving from `needs_attention`/`cancelled` to `pending`/`in_progress`:
   - Clears `error` field (sets to `null`)
   - Clears `result` field (sets to `null`)
   - Clears `progress` field (sets to `null`)
 - **Completion**: When moving to `completed`:
   - Sets `progress` to `100`
   - Optionally sets `result` if provided
-- **Failure**: When moving to `failed`:
+- **Failure**: When moving to `needs_attention`:
   - Optionally sets `error` if provided
 
 ### Active Group Cancellation
 
-When a task has an active session group (agents currently running) and transitions to a terminal state (`completed`, `failed`, `cancelled`), the system:
+When a task has an active session group (agents currently running) and transitions to a terminal state (`completed`, `needs_attention`, `cancelled`), the system:
 
 1. Looks up the active group for the task
 2. For `cancelled`, calls `runtime.cancelTask(taskId)` (task cancel + group/session cleanup)
-3. For `completed` or `failed`, calls `runtime.terminateTaskGroup(taskId)` (group/session cleanup only)
+3. For `completed` or `needs_attention`, calls `runtime.terminateTaskGroup(taskId)` (group/session cleanup only)
 4. If runtime cleanup fails, throws an error
 5. Only then applies (or returns) the final task status
 
@@ -91,7 +91,7 @@ For `task.cancel`, if runtime exists, the handler delegates directly to `runtime
 flowchart LR
     A["task.cancel"] --> B["runtime.cancelTask(taskId)"]
     C["task.setStatus(cancelled)"] --> B
-    D["task.setStatus(completed|failed)"] --> E["runtime.terminateTaskGroup(taskId)"]
+    D["task.setStatus(completed|needs_attention)"] --> E["runtime.terminateTaskGroup(taskId)"]
     E --> F["persist requested terminal status"]
 ```
 
@@ -118,11 +118,11 @@ flowchart LR
       task_id: { type: 'string', description: 'Task ID to update' },
       status: {
         type: 'string',
-        enum: ['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'],
+        enum: ['draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled'],
         description: 'New status to set'
       },
       result: { type: 'string', description: 'Optional result message (for completed status)' },
-      error: { type: 'string', description: 'Optional error message (for failed status)' }
+      error: { type: 'string', description: 'Optional error message (for needs_attention status)' }
     },
     required: ['task_id', 'status']
   }

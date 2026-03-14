@@ -1505,12 +1505,12 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 
 			// tick() spawns a coder group and spawn() throws on null worktree;
-			// the runtime catches the error and the task is marked failed
+			// the runtime catches the error and the task needs attention
 			await isolCtx.runtime.tick();
 
 			// Task should be failed with a worktree-related error
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 			expect(updatedTask!.error).toContain('worktree');
 		});
 
@@ -1537,8 +1537,8 @@ describe('RoomRuntime flow', () => {
 			isolCtx.runtime.start();
 			await isolCtx.runtime.tick();
 
-			// The planning task should have been created by spawnPlanningGroup and then failed
-			const allTasks = await isolCtx.taskManager.listTasks({ status: 'failed' });
+			// The planning task needs attention
+			const allTasks = await isolCtx.taskManager.listTasks({ status: 'needs_attention' });
 			expect(allTasks.length).toBeGreaterThan(0);
 			expect(allTasks[0].error).toContain('worktree');
 		});
@@ -1564,7 +1564,7 @@ describe('RoomRuntime flow', () => {
 
 			// Task should be failed with a worktree-related error
 			const updatedTask = await isolCtx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
+			expect(updatedTask!.status).toBe('needs_attention');
 			expect(updatedTask!.error).toContain('worktree');
 		});
 
