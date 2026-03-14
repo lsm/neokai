@@ -12,6 +12,7 @@ import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
+import { CopilotCliProvider } from './copilot-cli-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -57,6 +58,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GitHub Copilot provider (will be available if OAuth token is configured)
 	registry.register(new GitHubCopilotProvider());
+
+	// Register GitHub Copilot CLI provider (will be available if copilot binary + gh auth)
+	registry.register(new CopilotCliProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
