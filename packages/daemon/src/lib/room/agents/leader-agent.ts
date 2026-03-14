@@ -135,25 +135,56 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 	sections.push(`Do NOT respond with only text.`);
 
 	// Post-approval workflow (when human approves after submit_for_review)
-	// This applies to ALL task types: planner, coder, and general
+	// Differs by task type: planning tasks require a Phase 2 worker run to create tasks;
+	// coder/general tasks are completed directly by the leader (merge + complete_task).
 	sections.push(`\n## Post-Approval Workflow (CRITICAL)\n`);
 	sections.push(
-		`When the human message indicates approval (e.g., "approved", "merge it", "looks good"), you must complete the task by:`
+		`When the human message indicates approval (e.g., "approved", "merge it", "looks good"):`
 	);
-	sections.push(`\n1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:`);
-	sections.push(`   \`\`\`bash\n   gh pr merge <PR_NUMBER> --squash --delete-branch\n   \`\`\`\n`);
-	sections.push(`2. **Sync the root repo** — Pull the merged changes into the root workspace:`);
-	sections.push(
-		`   \`\`\`bash\n   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n   ` +
-			`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n   ` +
-			`git fetch origin && git pull origin $DEFAULT_BRANCH\n   \`\`\`\n`
-	);
-	sections.push(
-		`3. **Call \`complete_task\`** — Mark the task done with a summary of what was accomplished.`
-	);
-	sections.push(
-		`\n**IMPORTANT**: Do NOT send the worker back to do the merge. The leader handles merge and completion after human approval.`
-	);
+
+	if (isPlanReview) {
+		// Planning tasks: planner must run Phase 2 (merge plan PR + create tasks)
+		sections.push(
+			`\nFor planning tasks the planner must run a second phase to create tasks.\n` +
+				`**Do NOT merge the plan PR yourself — the planner handles merge + task creation.**\n`
+		);
+		sections.push(
+			`1. **Send the planner back** — Call \`send_to_worker\` (mode: "queue") with:\n` +
+				`   "The plan is approved. Please:\n` +
+				`   1. Merge the plan PR: \`gh pr merge <PR_NUMBER> --merge\`\n` +
+				`   2. Read the plan file under docs/plans/\n` +
+				`   3. Create all tasks 1:1 from the plan using the \`create_task\` tool\n` +
+				`   4. Finish your response after all tasks are created"`
+		);
+		sections.push(
+			`2. **Hand off to planner** — Call \`handoff_to_worker\` so the planner can run.`
+		);
+		sections.push(
+			`3. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing ` +
+				`"Phase 2 (task creation)" and "Tasks created: N", call \`complete_task\` with a summary.`
+		);
+		sections.push(
+			`\n**IMPORTANT**: The planner must use the \`create_task\` tool to register tasks. ` +
+				`You cannot call \`complete_task\` until tasks are created — the runtime gate will reject it.`
+		);
+	} else {
+		sections.push(
+			`\n1. **Merge the PR** — Use \`gh pr merge\` to merge the approved PR:\n` +
+				`   \`\`\`bash\n   gh pr merge <PR_NUMBER> --squash --delete-branch\n   \`\`\`\n`
+		);
+		sections.push(`2. **Sync the root repo** — Pull the merged changes into the root workspace:`);
+		sections.push(
+			`   \`\`\`bash\n   DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n   ` +
+				`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n   ` +
+				`git fetch origin && git pull origin $DEFAULT_BRANCH\n   \`\`\`\n`
+		);
+		sections.push(
+			`3. **Call \`complete_task\`** — Mark the task done with a summary of what was accomplished.`
+		);
+		sections.push(
+			`\n**IMPORTANT**: Do NOT send the worker back to do the merge. The leader handles merge and completion after human approval.`
+		);
+	}
 
 	// Post-rejection workflow (when human rejects and provides feedback)
 	sections.push(`\n## Post-Rejection Workflow\n`);
@@ -248,12 +279,13 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			sections.push(`- **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\``);
 			sections.push(
-				`\nDo NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are created.`
+				`\nDo NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. ` +
+					`After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`
 			);
 		} else {
 			sections.push(`\n## Plan Review Guidelines\n`);
 			sections.push(
-				`**Every iteration follows the same workflow** — including after the planner addresses feedback.`
+				`**Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:`
 			);
 			sections.push(`1. Read the planner output and extract the PR number/URL.`);
 			sections.push(
@@ -274,7 +306,10 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 			);
 			sections.push(`5. **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`.`);
 			sections.push(
-				`6. Do NOT use \`complete_task\` for plans — plans must be reviewed by a human before tasks are promoted.`
+				`6. Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first.`
+			);
+			sections.push(
+				`\n**Phase 2 (task creation)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N", call \`complete_task\` with a summary of the tasks created.`
 			);
 		}
 	} else {

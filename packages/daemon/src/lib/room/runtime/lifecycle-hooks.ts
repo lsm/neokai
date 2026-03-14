@@ -450,7 +450,15 @@ export async function checkLeaderDraftsExist(
 		pass: false,
 		reason: 'No draft tasks exist for this planning task.',
 		bounceMessage:
-			'No draft tasks were created. Use `send_to_worker` to ask the planner to create tasks using `create_task`.',
+			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
+			'To fix this:\n' +
+			'1. Call `send_to_worker` (mode: "queue") with: "The plan is approved. Please:\n' +
+			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER> --merge`\n' +
+			'   2. Read the plan file under docs/plans/\n' +
+			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +
+			'   4. Finish your response after all tasks are created"\n' +
+			'2. Call `handoff_to_worker` so the planner can run.\n' +
+			'3. After the planner exits with tasks created, call `complete_task` again.',
 	};
 }
 
