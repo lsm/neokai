@@ -16,14 +16,15 @@ const log = new Logger('lifecycle-hooks');
 
 /**
  * Special markers that workers can use to bypass git/PR gates
- * for research/verification-only tasks.
+ * for read-only tasks that produce no file changes.
+ * DOCUMENTATION_COMPLETE is intentionally excluded: writing docs requires file changes
+ * and should follow the normal git/PR workflow.
  */
 export const BYPASS_GATES_MARKERS = {
 	RESEARCH_ONLY: 'RESEARCH_ONLY:',
 	VERIFICATION_COMPLETE: 'VERIFICATION_COMPLETE:',
 	INVESTIGATION_RESULT: 'INVESTIGATION_RESULT:',
 	ANALYSIS_COMPLETE: 'ANALYSIS_COMPLETE:',
-	DOCUMENTATION_COMPLETE: 'DOCUMENTATION_COMPLETE:',
 } as const;
 
 export type BypassMarker = (typeof BYPASS_GATES_MARKERS)[keyof typeof BYPASS_GATES_MARKERS];

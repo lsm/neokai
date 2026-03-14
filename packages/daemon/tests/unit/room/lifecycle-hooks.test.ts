@@ -1147,9 +1147,11 @@ describe('detectBypassMarker', () => {
 		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.ANALYSIS_COMPLETE);
 	});
 
-	test('detects DOCUMENTATION_COMPLETE marker', () => {
+	test('does NOT detect DOCUMENTATION_COMPLETE — writing docs requires file changes and must use git/PR', () => {
+		// DOCUMENTATION_COMPLETE is intentionally excluded from bypass markers.
+		// Documentation tasks involve writing/modifying files and must go through the normal workflow.
 		const output = 'DOCUMENTATION_COMPLETE:\n\nDocumentation done.';
-		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.DOCUMENTATION_COMPLETE);
+		expect(detectBypassMarker(output)).toBeNull();
 	});
 
 	test('detects marker with leading whitespace', () => {

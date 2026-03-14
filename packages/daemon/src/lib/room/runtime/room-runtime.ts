@@ -56,6 +56,7 @@ import {
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
 	type HookOptions,
+	type HookResult,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 } from './lifecycle-hooks';
@@ -545,7 +546,7 @@ export class RoomRuntime {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
 				hookCtx.draftTaskCount = draftTasks.length;
 			}
-			let gateResult: { pass: boolean; reason?: string; bounceMessage?: string };
+			let gateResult: HookResult;
 			try {
 				gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			} catch (err) {

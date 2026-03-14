@@ -256,8 +256,7 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 		`- \`RESEARCH_ONLY:\` — For pure research tasks (e.g., "Analyze and document X")\n` +
 			`- \`VERIFICATION_COMPLETE:\` — For verification tasks (e.g., "Verify Y is correct")\n` +
 			`- \`INVESTIGATION_RESULT:\` — For investigation tasks (e.g., "Investigate why Z fails")\n` +
-			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")\n` +
-			`- \`DOCUMENTATION_COMPLETE:\` — For documentation-only tasks (e.g., "Document the API")`
+			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")`
 	);
 	sections.push(
 		`**Example**:\n` +
