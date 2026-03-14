@@ -876,15 +876,18 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Revive a failed or cancelled task by injecting a human message, then
-	 * automatically transitioning the task to 'review' status.
+	 * Revive the session group for a failed/cancelled task and inject a human message.
 	 *
-	 * This is the implementation of "send message to failed task" UX:
+	 * The caller is responsible for transitioning the task status to 'review' before
+	 * calling this method. This method handles the group-level work:
 	 * - Clears the group's completedAt so it becomes active again
-	 * - Sets submittedForReview = true (group is awaiting human)
 	 * - Restores agent sessions (they were stopped when the task failed)
 	 * - Re-registers terminal-state observers so the runtime hears when agents finish
 	 * - Injects the human message (leader first, worker as fallback)
+	 *
+	 * On failure, undoes the group revive (re-sets completedAt) so the group is not
+	 * left in an orphaned active state without a running agent. The caller is
+	 * responsible for rolling back the task status on failure.
 	 *
 	 * Returns true on success, false if the group cannot be found or sessions
 	 * cannot be restored / injected.
@@ -893,10 +896,13 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group) return false;
 
-		// If the group is still marked as terminated, revive it
+		// If the group is still marked as terminated, revive it.
+		// Track whether we cleared completedAt so we can undo it on failure.
+		let didReviveGroup = false;
 		if (group.completedAt !== null) {
 			const revived = this.groupRepo.reviveGroup(group.id);
 			if (!revived) return false;
+			didReviveGroup = true;
 		}
 
 		// Mark as awaiting human so the runtime doesn't auto-inject a continuation
@@ -952,11 +958,16 @@ export class RoomRuntime {
 		}
 
 		if (!injected) {
-			// Neither session could accept the message — undo the revive so the
-			// group doesn't appear active without a running agent.
+			// Neither session could accept the message. Re-terminate the group so it
+			// doesn't appear active without a running agent.
+			if (didReviveGroup) {
+				const currentGroup = this.groupRepo.getGroup(group.id);
+				if (currentGroup) {
+					this.groupRepo.failGroup(currentGroup.id, currentGroup.version);
+				}
+			}
 			log.error(
-				`reviveTaskForMessage: no sessions available for task ${taskId}; ` +
-					'task reverted to failed group state'
+				`reviveTaskForMessage: no sessions available for task ${taskId}; group re-terminated`
 			);
 			return false;
 		}

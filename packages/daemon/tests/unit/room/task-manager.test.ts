@@ -783,6 +783,17 @@ describe('TaskManager', () => {
 			expect(revived.status).toBe('review');
 		});
 
+		it('should clear error field on failed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'something broke');
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+			// error is mapped null→undefined by the task repository
+			expect(revived.error).toBeUndefined();
+		});
+
 		it('should allow cancelled → review transition', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);

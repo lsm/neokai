@@ -204,10 +204,12 @@ export class TaskManager {
 			}
 		}
 
-		// Clear error/result when restarting from failed/cancelled
+		// Clear error/result when restarting or reviving from failed/cancelled.
+		// Clearing on 'review' prevents the agent receiving the revive message from
+		// seeing a stale error field alongside a review-status task.
 		if (
 			(task.status === 'failed' || task.status === 'cancelled') &&
-			(newStatus === 'pending' || newStatus === 'in_progress')
+			(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')
 		) {
 			// Use null to explicitly clear these fields in the database
 			updates.error = null;

@@ -928,7 +928,7 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[0]).toBe(taskId);
 		});
 
-		it('should return partial success when reviveTaskForMessage returns false', async () => {
+		it('should roll back task to failed when reviveTaskForMessage returns false', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => false,
 				injectMessageToWorker: async () => true,
@@ -951,11 +951,11 @@ describe('Room Agent Tools', () => {
 				await h.send_message_to_task({ task_id: taskId, message: 'hello' })
 			);
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('review');
+			expect(result.error).toContain('failed');
 
-			// Task status should still be review (already transitioned)
+			// Task status should be rolled back to failed (not left in review)
 			const task = await taskManager.getTask(taskId);
-			expect(task!.status).toBe('review');
+			expect(task!.status).toBe('failed');
 		});
 	});
 
@@ -1226,6 +1226,79 @@ describe('Room Agent Tools', () => {
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
 			expect(groupAfter!.submittedForReview).toBe(true);
+		});
+
+		it('should revive group (clear completedAt) when transitioning failed -> review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress, create a group, then fail the task and the group
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_worker');
+			await taskManager.failTask(taskId, 'Something went wrong');
+			// Properly terminate the group (as failGroup would in production)
+			const groupBeforeFail = groupRepo.getGroup(groupId)!;
+			groupRepo.failGroup(groupId, groupBeforeFail.version);
+
+			// Verify the group is terminated
+			const groupTerminated = groupRepo.getGroup(groupId);
+			expect(groupTerminated!.completedAt).not.toBeNull();
+
+			// Revive to review via set_task_status
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+
+			// Group should be revived (completedAt cleared) and marked submittedForReview
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(true);
+		});
+
+		it('should clear error field when transitioning failed -> review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			await taskManager.startTask(taskId);
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Revive to review — error field should be cleared (null→undefined via task repo)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+			// The handler returns updatedTask which maps null→undefined for the error field
+			expect(result.task.error).toBeFalsy();
+		});
+
+		it('should not revive group when already active (failed -> review, group has completedAt null)', async () => {
+			// Edge case: group is not yet terminated (completedAt is null)
+			// This can happen if set_task_status is called before the runtime terminates the group.
+			// In this case, reviveGroup should be a no-op.
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			await taskManager.startTask(taskId);
+			// Create a group but don't terminate it (completedAt stays null)
+			const groupId = insertGroup(taskId, 'awaiting_worker');
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Group still has completedAt = null (insertGroup doesn't set it)
+			const groupBefore = groupRepo.getGroup(groupId)!;
+			expect(groupBefore.completedAt).toBeNull();
+
+			// Revive to review should still work
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+			// Group should still be active
+			expect(groupRepo.getGroup(groupId)!.completedAt).toBeNull();
 		});
 
 		it('should allow transition: in_progress -> completed with result', async () => {
