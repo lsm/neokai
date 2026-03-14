@@ -403,6 +403,7 @@ function CompleteTaskDialog({ task, isOpen, onClose, onConfirm }: CompleteTaskDi
 			await onConfirm(summary);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to complete task');
+		} finally {
 			setLoading(false);
 		}
 	};
@@ -511,6 +512,7 @@ function CancelTaskDialog({ task, isOpen, onClose, onConfirm }: CancelTaskDialog
 			await onConfirm();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : 'Failed to cancel task');
+		} finally {
 			setLoading(false);
 		}
 	};
