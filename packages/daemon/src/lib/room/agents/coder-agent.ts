@@ -122,6 +122,46 @@ summary: <1-3 sentence description of what was done and the result>
 }
 
 /**
+ * Build the AgentDefinition for the built-in Tester sub-agent.
+ *
+ * The Tester is automatically included whenever the Coder is in agent/agents mode.
+ * It writes and runs tests for the work just implemented, then commits test files.
+ */
+export function buildTesterAgentDef(): AgentDefinition {
+	return {
+		description:
+			'Test writer and runner. Spawned by the Coder after implementing changes to write and execute tests against the new code.',
+		tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'],
+		model: 'inherit',
+		prompt: `You are a Tester Agent spawned by the main Coder Agent to write and run tests for recently implemented changes.
+
+Your job is to ensure the implementation is correctly tested and return a concise result summary.
+
+## Rules
+
+1. **Understand what was implemented** — read the prompt carefully; explore the changed files
+2. **Write tests** — create or update test files covering the new behavior and edge cases
+3. **Run the tests** — execute them and fix any failures you introduced
+4. **Commit test files** to the current branch (do NOT create new PRs or new branches)
+5. **Do not modify implementation files** — only write tests; if you find a bug, report it in your summary
+6. **No sub-agents** — do not spawn further sub-agents
+
+## Summary Format
+
+End your response with a structured summary:
+
+---TEST_RESULT---
+status: pass | fail | partial
+tests_written: <count or brief description>
+tests_run: <count>
+failures: <list of failing tests, or "none">
+summary: <1-3 sentence description of what was tested and the outcome>
+---END_TEST_RESULT---
+`,
+	};
+}
+
+/**
  * Build the AgentDefinition map for worker helper sub-agents.
  * Returns a map of helper name to AgentDefinition.
  */
@@ -235,28 +275,45 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 		`7. Finish your response — the leader will re-dispatch reviewers for the next round`
 	);
 
-	// Sub-agent usage instructions (only when helpers are configured)
+	// Sub-agent usage instructions (only when in agent/agents mode)
 	if (hasHelpers) {
 		sections.push(`\n## Sub-Agent Usage (Available)\n`);
 		sections.push(
-			`Helper sub-agents are available to delegate heavy subtasks and keep your context clean.`
+			`Sub-agents are available to delegate heavy subtasks and keep your context clean.`
 		);
-		sections.push(`Available helpers: ${helperAgentNames!.join(', ')}\n`);
-		sections.push(`**Spawn sub-agents for:**`);
+
+		// Tester is always available in agent mode
+		sections.push(`\n### Built-in: \`tester\``);
+		sections.push(`Writes and runs tests for changes you just implemented.`);
+		sections.push(
+			`**Spawn after implementation** — before committing, run the tester to cover new code:`
+		);
+		sections.push(
+			`\`\`\`\nTask(subagent_type: "tester", prompt: "Just implemented: <summary of changes>. Write and run tests for: <specific targets>.")\n\`\`\``
+		);
+		sections.push(
+			`The tester commits test files to the current branch and returns a \`---TEST_RESULT---\` block.`
+		);
+
+		// Custom helpers (if configured)
+		const helperList = helperAgentNames!.join(', ');
+		sections.push(`\n### Custom helpers: ${helperList}`);
+		sections.push(`**Spawn helpers for:**`);
 		sections.push(`- Analyzing large files (>500 lines) or many files at once`);
 		sections.push(
 			`- Implementing isolated components (e.g., a single module of a multi-file feature)`
 		);
-		sections.push(`- Running test suites and collecting detailed results`);
 		sections.push(`- Verbose git operations (e.g., comparing large diffs)`);
-		sections.push(`\n**Usage pattern:**`);
 		sections.push(
 			`\`\`\`\nTask(subagent_type: "<helper-name>", prompt: "Specific task with all necessary context")\n\`\`\``
 		);
 		sections.push(
-			`The helper commits changes to the current branch and returns a concise result summary.`
+			`The helper commits changes to the current branch and returns a \`---SUBTASK_RESULT---\` block.`
 		);
-		sections.push(`Store only the summary — do NOT re-read every file the helper touched.`);
+
+		sections.push(
+			`\nStore only the result summary — do NOT re-read every file the sub-agent touched.`
+		);
 		sections.push(`**Limit:** max 3 concurrent sub-agents per turn.`);
 	}
 
@@ -370,6 +427,7 @@ export function createCoderAgentInit(config: CoderAgentConfig): AgentSessionInit
 			agent: 'Coder',
 			agents: {
 				Coder: coderAgentDef,
+				tester: buildTesterAgentDef(),
 				...helperAgents,
 			},
 			contextAutoQueue: false,

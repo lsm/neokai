@@ -3,6 +3,7 @@ import {
 	buildCoderHelperAgentPrompt,
 	buildCoderSystemPrompt,
 	buildCoderTaskMessage,
+	buildTesterAgentDef,
 	buildWorkerHelperAgents,
 	createCoderAgentInit,
 	getWorkerSubagents,
@@ -305,6 +306,36 @@ describe('Coder Agent', () => {
 				expect(coderPrompt).toContain('helper-');
 			});
 
+			it('includes built-in tester agent in agents map', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				expect(init.agents).toHaveProperty('tester');
+			});
+
+			it('tester agent has Write and Edit tools', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				const tester = init.agents?.['tester'];
+				expect(tester?.tools).toContain('Write');
+				expect(tester?.tools).toContain('Edit');
+			});
+
+			it('tester agent does NOT have Task tool', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				const tester = init.agents?.['tester'];
+				expect(tester?.tools).not.toContain('Task');
+			});
+
+			it('tester agent uses inherit model', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				expect(init.agents?.['tester']?.model).toBe('inherit');
+			});
+
+			it('Coder system prompt includes tester sub-agent instructions', () => {
+				const init = createCoderAgentInit(makeConfigWithWorkers());
+				const prompt = init.agents?.['Coder']?.prompt ?? '';
+				expect(prompt).toContain('tester');
+				expect(prompt).toContain('---TEST_RESULT---');
+			});
+
 			it('uses simple preset path when no worker sub-agents configured', () => {
 				const init = createCoderAgentInit(makeConfig());
 				expect(init.agent).toBeUndefined();
@@ -316,7 +347,8 @@ describe('Coder Agent', () => {
 				const init = createCoderAgentInit(
 					makeConfigWithWorkers([{ model: 'haiku' }, { model: 'haiku' }])
 				);
-				const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Coder');
+				// Filter out built-in Coder and tester; count only the helper sub-agents
+				const keys = Object.keys(init.agents ?? {}).filter((k) => k !== 'Coder' && k !== 'tester');
 				// Two haiku configs should produce unique names
 				expect(keys.length).toBe(2);
 				expect(new Set(keys).size).toBe(2);
@@ -397,6 +429,50 @@ describe('Coder Agent', () => {
 		it('maps haiku model to haiku tier', () => {
 			const agents = buildWorkerHelperAgents([{ model: 'haiku' }]);
 			expect(Object.values(agents)[0].model).toBe('haiku');
+		});
+	});
+
+	describe('buildTesterAgentDef', () => {
+		it('has Read, Write, Edit, Bash, Grep, Glob tools', () => {
+			const def = buildTesterAgentDef();
+			expect(def.tools).toContain('Read');
+			expect(def.tools).toContain('Write');
+			expect(def.tools).toContain('Edit');
+			expect(def.tools).toContain('Bash');
+			expect(def.tools).toContain('Grep');
+			expect(def.tools).toContain('Glob');
+		});
+
+		it('does NOT have Task tool (no recursive sub-agents)', () => {
+			const def = buildTesterAgentDef();
+			expect(def.tools).not.toContain('Task');
+		});
+
+		it('uses inherit model', () => {
+			const def = buildTesterAgentDef();
+			expect(def.model).toBe('inherit');
+		});
+
+		it('prompt requires ---TEST_RESULT--- structured output block', () => {
+			const def = buildTesterAgentDef();
+			expect(def.prompt).toContain('---TEST_RESULT---');
+			expect(def.prompt).toContain('---END_TEST_RESULT---');
+		});
+
+		it('prompt forbids modifying implementation files', () => {
+			const def = buildTesterAgentDef();
+			expect(def.prompt).toContain('Do not modify implementation files');
+		});
+
+		it('prompt forbids recursive sub-agent spawning', () => {
+			const def = buildTesterAgentDef();
+			expect(def.prompt).toContain('No sub-agents');
+		});
+
+		it('prompt instructs to commit test files to current branch', () => {
+			const def = buildTesterAgentDef();
+			expect(def.prompt).toContain('current branch');
+			expect(def.prompt).toContain('do NOT create new PRs');
 		});
 	});
 

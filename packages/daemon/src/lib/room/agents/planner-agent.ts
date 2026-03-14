@@ -22,6 +22,7 @@ import type {
 	McpServerConfig,
 	TaskPriority,
 	AgentType,
+	AgentDefinition,
 } from '@neokai/shared';
 
 const DEFAULT_PLANNER_MODEL = 'claude-sonnet-4-5-20250929';
@@ -131,14 +132,31 @@ git fetch origin && git rebase origin/$DEFAULT_BRANCH
 
 ## Phase 1: Planning
 
-1. Read relevant files to understand the current codebase state
-2. Break the goal into 3-8 concrete, independently executable tasks
-3. Order tasks by dependency (later tasks build on earlier ones). Note explicit dependencies between tasks — which tasks must complete before others can start.
-4. Each task description must include clear acceptance criteria. For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
-5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks
-6. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
-7. Do NOT implement any code — only plan
-8. If the Leader sends feedback, update the plan document accordingly
+### Codebase Exploration
+
+Before writing the plan, explore the codebase thoroughly. Use the built-in **Explore** sub-agent for deep analysis — it has its own context window and won't pollute yours:
+
+\`\`\`
+Task(subagent_type: "Explore", prompt: "Explore [specific area]. I need to understand: [questions]. Return key findings, file paths, and relevant code patterns.")
+\`\`\`
+
+Use Explore for:
+- Understanding large unfamiliar codebases before planning
+- Mapping out architectural patterns and conventions
+- Finding all files affected by a proposed change
+- Answering "how does X work?" without reading dozens of files yourself
+
+Spawn multiple Explore agents in parallel if you need to investigate different areas.
+
+### Plan Creation
+
+1. Break the goal into as many concrete, independently executable tasks as needed — be as granular as the goal requires. Simple goals may need just a few tasks; complex goals may need many more.
+2. Order tasks by dependency (later tasks build on earlier ones). Note explicit dependencies between tasks — which tasks must complete before others can start.
+3. Each task description must include clear acceptance criteria. For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
+4. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks
+5. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
+6. Do NOT implement any code — only plan
+7. If the Leader sends feedback, update the plan document accordingly
 
 ### Plan Deliverable (REQUIRED)
 
@@ -382,11 +400,37 @@ export function createPlannerMcpServer(config: PlannerAgentConfig) {
 /**
  * Create an AgentSessionInit for a Planner agent.
  *
- * Uses the Claude Code preset (for read/glob/grep codebase access) plus planning
- * MCP tools. The system prompt instructs the agent to plan only, not implement.
+ * Always uses the agent/agents pattern so the Planner has access to the Task/
+ * TaskOutput/TaskStop tools. This enables spawning the built-in Explore sub-agent
+ * for deep codebase analysis without consuming the Planner's own context window.
+ *
+ * MCP planning tools (create_task, update_task, remove_task) are provided via
+ * mcpServers and are available to the main Planner agent thread regardless.
  */
 export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSessionInit {
 	const mcpServer = createPlannerMcpServer(config);
+
+	const plannerAgentDef: AgentDefinition = {
+		description:
+			'Planning agent that breaks goals into concrete tasks. Uses Explore sub-agents for deep codebase analysis.',
+		prompt: buildPlannerSystemPrompt(config.goal.title),
+		// Planner needs Task/TaskOutput/TaskStop to spawn Explore sub-agents,
+		// plus standard codebase tools for direct file reading.
+		tools: [
+			'Task',
+			'TaskOutput',
+			'TaskStop',
+			'Read',
+			'Write',
+			'Edit',
+			'Bash',
+			'Grep',
+			'Glob',
+			'WebFetch',
+			'WebSearch',
+		],
+		model: 'inherit',
+	};
 
 	return {
 		sessionId: config.sessionId,
@@ -394,7 +438,6 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
-			append: buildPlannerSystemPrompt(config.goal.title),
 		},
 		mcpServers: {
 			'planner-tools': mcpServer as unknown as McpServerConfig,
@@ -403,6 +446,10 @@ export function createPlannerAgentInit(config: PlannerAgentConfig): AgentSession
 		context: { roomId: config.room.id },
 		type: 'planner',
 		model: config.model ?? DEFAULT_PLANNER_MODEL,
+		agent: 'Planner',
+		agents: {
+			Planner: plannerAgentDef,
+		},
 		contextAutoQueue: false,
 	};
 }

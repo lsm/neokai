@@ -2,9 +2,49 @@ import { describe, expect, it } from 'bun:test';
 import {
 	buildPlannerSystemPrompt,
 	buildPlannerTaskMessage,
+	createPlannerAgentInit,
 	toPlanSlug,
 	type PlannerAgentConfig,
 } from '../../../src/lib/room/agents/planner-agent';
+
+const sharedBaseConfig: PlannerAgentConfig = {
+	task: {
+		id: 'task-1',
+		roomId: 'room-1',
+		title: 'Plan: Build stock app',
+		description: 'Break down the goal',
+		status: 'in_progress',
+		priority: 'normal',
+		createdAt: Date.now(),
+		taskType: 'planning',
+	},
+	goal: {
+		id: 'goal-1',
+		roomId: 'room-1',
+		title: 'Build stock app',
+		description: 'A stock tracking web app',
+		status: 'active',
+		priority: 'normal',
+		progress: 0,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	},
+	room: {
+		id: 'room-1',
+		name: 'Test Room',
+		allowedPaths: [{ path: '/workspace', label: 'ws' }],
+		defaultPath: '/workspace',
+		sessionIds: [],
+		status: 'active',
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	},
+	sessionId: 'session-1',
+	workspacePath: '/workspace',
+	createDraftTask: async () => ({ id: 'draft-1', title: 'Draft' }),
+	updateDraftTask: async () => ({ id: 'draft-1', title: 'Draft' }),
+	removeDraftTask: async () => true,
+};
 
 describe('planner-agent', () => {
 	describe('toPlanSlug', () => {
@@ -113,6 +153,37 @@ describe('planner-agent', () => {
 			expect(prompt).toContain('Do NOT call');
 			expect(prompt).toContain('disabled');
 		});
+
+		it('should NOT impose a fixed task count limit', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).not.toContain('3-8');
+			expect(prompt).not.toContain('3 to 8');
+		});
+
+		it('should encourage granular tasks for complex goals', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('granular');
+		});
+
+		it('should include Explore sub-agent guidance for codebase exploration', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('Explore');
+			expect(prompt).toContain('subagent_type');
+		});
+
+		it('should recommend spawning multiple Explore agents in parallel', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			expect(prompt).toContain('parallel');
+		});
+
+		it('should include Codebase Exploration section before Plan Creation', () => {
+			const prompt = buildPlannerSystemPrompt('Build stock app');
+			const exploreIdx = prompt.indexOf('Codebase Exploration');
+			const planCreationIdx = prompt.indexOf('Plan Creation');
+			expect(exploreIdx).toBeGreaterThanOrEqual(0);
+			expect(planCreationIdx).toBeGreaterThanOrEqual(0);
+			expect(exploreIdx).toBeLessThan(planCreationIdx);
+		});
 	});
 
 	describe('buildPlannerTaskMessage', () => {
@@ -196,6 +267,56 @@ describe('planner-agent', () => {
 			expect(msg).toContain('Add signup');
 			expect(msg).toContain('OAuth not configured');
 			expect(msg).toContain('DO NOT redo');
+		});
+	});
+
+	describe('createPlannerAgentInit', () => {
+		it('should always use agent/agents pattern', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agent).toBe('Planner');
+			expect(init.agents).toBeDefined();
+			expect(init.agents).toHaveProperty('Planner');
+		});
+
+		it('Planner agent def includes Task tool for spawning Explore sub-agents', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents?.['Planner']?.tools).toContain('Task');
+		});
+
+		it('Planner agent def includes TaskOutput and TaskStop tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const tools = init.agents?.['Planner']?.tools ?? [];
+			expect(tools).toContain('TaskOutput');
+			expect(tools).toContain('TaskStop');
+		});
+
+		it('Planner agent def includes standard codebase tools', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			const tools = init.agents?.['Planner']?.tools ?? [];
+			expect(tools).toContain('Read');
+			expect(tools).toContain('Write');
+			expect(tools).toContain('Bash');
+			expect(tools).toContain('Grep');
+		});
+
+		it('Planner agent def uses inherit model', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.agents?.['Planner']?.model).toBe('inherit');
+		});
+
+		it('should use claude_code preset', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.systemPrompt).toEqual({ type: 'preset', preset: 'claude_code' });
+		});
+
+		it('should include planner-tools MCP server', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.mcpServers).toHaveProperty('planner-tools');
+		});
+
+		it('should set session type to planner', () => {
+			const init = createPlannerAgentInit(sharedBaseConfig);
+			expect(init.type).toBe('planner');
 		});
 	});
 });
