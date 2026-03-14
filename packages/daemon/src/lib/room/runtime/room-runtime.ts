@@ -1792,9 +1792,17 @@ export class RoomRuntime {
 				}
 			}
 
+			// Re-establish message mirroring for this recovered group so real-time messages
+			// from restored sessions are forwarded to the frontend TaskView.
+			// mirroringCleanups is in-memory and is lost on daemon restart, so we must
+			// re-subscribe here for any group that was active before the restart.
+			if (!this.mirroringCleanups.has(group.id)) {
+				this.setupMirroring(group);
+			}
+
 			// Inject continuation message for restored sessions.
 			// The SDK query is started lazily by injectMessage → ensureQueryStarted().
-			// Groups awaiting human review don't need a message — human will provide one.
+			// Groups awaiting human review don’t need a message — human will provide one.
 			if (group.submittedForReview) {
 				continue; // Awaiting human - no continuation message needed
 			}

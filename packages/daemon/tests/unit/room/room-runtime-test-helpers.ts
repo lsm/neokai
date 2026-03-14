@@ -34,6 +34,16 @@ export function createMockDaemonHub() {
 				}
 			};
 		},
+		async emit(_event: string, _data: unknown): Promise<void> {
+			// No-op for tests — runtime calls emit for task/goal updates
+		},
+		/** Check if a handler is registered for a given event + optional sessionId */
+		hasHandlerFor(event: string, sessionId?: string): boolean {
+			const eventHandlers = handlers.get(event);
+			if (!eventHandlers) return false;
+			const list = eventHandlers.get(sessionId);
+			return !!list && list.length > 0;
+		},
 	};
 }
 
@@ -164,6 +174,7 @@ export interface RuntimeTestContext {
 	groupRepo: SessionGroupRepository;
 	sessionFactory: ReturnType<typeof createMockSessionFactory>;
 	observer: SessionObserver;
+	daemonHub: ReturnType<typeof createMockDaemonHub>;
 }
 
 export interface RuntimeTestContextOptions {
@@ -205,6 +216,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		maxConcurrentGroups: opts?.maxConcurrentGroups ?? 1,
 		maxFeedbackIterations: opts?.maxFeedbackIterations,
 		tickInterval: 60_000,
+		daemonHub: mockHub as unknown as DaemonHub,
 		hookOptions:
 			opts?.hookOptions ??
 			({
@@ -217,7 +229,16 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getGoal: (goalId) => goalManager.getGoal(goalId),
 	});
 
-	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
+	return {
+		db,
+		runtime,
+		taskManager,
+		goalManager,
+		groupRepo,
+		sessionFactory,
+		observer,
+		daemonHub: mockHub,
+	};
 }
 
 export async function createGoalAndTask(
