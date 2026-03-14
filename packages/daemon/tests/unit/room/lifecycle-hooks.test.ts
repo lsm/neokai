@@ -1199,6 +1199,7 @@ describe('runWorkerExitGate with bypass markers', () => {
 		});
 		const result = await runWorkerExitGate(ctx, mockRunner({}));
 		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
 		expect(result.reason).toContain('Bypassed');
 		expect(result.reason).toContain('RESEARCH_ONLY:');
 	});
@@ -1211,6 +1212,7 @@ describe('runWorkerExitGate with bypass markers', () => {
 		});
 		const result = await runWorkerExitGate(ctx, mockRunner({}));
 		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
 		expect(result.reason).toContain('Bypassed');
 	});
 
@@ -1236,16 +1238,20 @@ describe('runWorkerExitGate with bypass markers', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('bypasses gate for planner role with bypass marker', async () => {
+	test('does NOT bypass for planner role — planner bypass is unsupported', async () => {
+		// Planners require draft task creation; bypassing the gate leaves the leader unable
+		// to complete_task (needs tasks). Bypass is intentionally restricted to coder/general.
 		const ctx = makeWorkerCtx({
 			workerRole: 'planner',
 			approved: false,
 			draftTaskCount: 0,
 			workerOutput: 'RESEARCH_ONLY:\n\nThis is a planning-related research task.',
 		});
+		// mockRunner({}) → git commands fail gracefully → normal planner pre-approval hooks pass
 		const result = await runWorkerExitGate(ctx, mockRunner({}));
 		expect(result.pass).toBe(true);
-		expect(result.reason).toContain('Bypassed');
+		expect(result.bypassed).toBeFalsy();
+		expect(result.reason).toBeUndefined();
 	});
 
 	test('bypass not triggered when approved=true — post-approval path runs instead', async () => {
@@ -1267,6 +1273,7 @@ describe('runWorkerExitGate with bypass markers', () => {
 		});
 		const result = await runWorkerExitGate(ctx, mockRunner({}));
 		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
 		expect(result.reason).toContain('Bypassed');
 	});
 });

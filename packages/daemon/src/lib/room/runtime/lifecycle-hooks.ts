@@ -52,6 +52,8 @@ export function detectBypassMarker(workerOutput: string): BypassMarker | null {
 
 export interface HookResult {
 	pass: boolean;
+	/** Set to true when the worker used a bypass marker to skip git/PR gates */
+	bypassed?: boolean;
 	/** Human-readable reason (for logs/group timeline) */
 	reason?: string;
 	/** Message injected back to the agent to fix the issue */
@@ -598,13 +600,16 @@ export async function runWorkerExitGate(
 			return { pass: true };
 		}
 
-		// Check for bypass marker BEFORE running git/PR gates
-		if (ctx.workerOutput) {
+		// Check for bypass marker BEFORE running git/PR gates (only for PR-based roles).
+		// Planner bypass is intentionally unsupported: planners require draft task creation,
+		// and the leader gate cannot complete without tasks even in bypass mode.
+		if (isPrBasedRole && ctx.workerOutput) {
 			const bypassMarker = detectBypassMarker(ctx.workerOutput);
 			if (bypassMarker) {
 				log.info(`Worker output contains bypass marker ${bypassMarker} - skipping git/PR gates`);
 				return {
 					pass: true,
+					bypassed: true,
 					reason: `Bypassed git/PR gates: ${bypassMarker}`,
 				};
 			}

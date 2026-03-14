@@ -584,7 +584,7 @@ export class RoomRuntime {
 			// fails open when no PR exists (gh command returns non-zero → pass gracefully).
 			// Only applies to coder/general roles; planner bypass is unsupported (no system prompt
 			// instructions added, and planner tasks require draft task creation).
-			if (gateResult.reason?.startsWith('Bypassed')) {
+			if (gateResult.bypassed) {
 				this.appendGroupEvent(groupId, 'status', {
 					text: `Worker bypassed git/PR gates: ${gateResult.reason}`,
 				});
