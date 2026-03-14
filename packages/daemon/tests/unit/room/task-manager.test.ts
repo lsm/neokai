@@ -794,13 +794,14 @@ describe('TaskManager', () => {
 			expect(revived.error).toBeUndefined();
 		});
 
-		it('should allow cancelled → review transition', async () => {
+		it('should reject cancelled → review transition (worktree is cleaned up on cancel)', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
 			await taskManager.cancelTask(task.id);
 
-			const revived = await taskManager.setTaskStatus(task.id, 'review');
-			expect(revived.status).toBe('review');
+			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
 		});
 
 		it('should reject completed → review transition', async () => {

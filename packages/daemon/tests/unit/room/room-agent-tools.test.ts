@@ -893,13 +893,9 @@ describe('Room Agent Tools', () => {
 			expect(reviveCalledWith[1]).toBe('please retry');
 		});
 
-		it('should auto-revive cancelled task and call reviveTaskForMessage', async () => {
-			let reviveCalledWith: unknown[] = [];
+		it('should return error for cancelled task (worktree is gone, restart required)', async () => {
 			const mockRuntime = {
-				reviveTaskForMessage: async (...args: unknown[]) => {
-					reviveCalledWith = args;
-					return true;
-				},
+				reviveTaskForMessage: async () => true,
 				injectMessageToWorker: async () => true,
 				injectMessageToLeader: async () => true,
 			};
@@ -920,12 +916,14 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(
 				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
 			);
-			expect(result.success).toBe(true);
-			expect(result.message).toContain('revived');
+			// Cancelled tasks cannot receive messages — workspace is cleaned up
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('cancelled');
+			expect(result.error).toContain('set_task_status');
 
+			// Task should remain cancelled (no revive attempted)
 			const task = await taskManager.getTask(taskId);
-			expect(task!.status).toBe('review');
-			expect(reviveCalledWith[0]).toBe(taskId);
+			expect(task!.status).toBe('cancelled');
 		});
 
 		it('should roll back task to failed when reviveTaskForMessage returns false', async () => {

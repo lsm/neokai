@@ -289,11 +289,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 								error: `Failed to reset group for task ${args.task_id} — group may have been modified concurrently`,
 							});
 						}
-					} else if (args.status === 'review' && group.completedAt !== null) {
-						// Lightweight revive: clear completedAt without resetting metadata.
-						// Agent sessions are NOT restored here — the group becomes active
-						// but awaiting_human, so the tick loop and zombie-recovery will
-						// handle session restoration when needed.
+					} else if (
+						args.status === 'review' &&
+						task.status === 'failed' &&
+						group.completedAt !== null
+					) {
+						// Lightweight revive (failed → review only): clear completedAt without
+						// resetting metadata. Only supported for failed tasks — cancelled tasks
+						// have their worktree cleaned up so reviving the group would point
+						// sessions at a gone workspace.
 						const revived = groupRepo.reviveGroup(group.id);
 						if (!revived) {
 							return jsonResult({
@@ -405,12 +409,23 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
 
-			// Auto-revive: if the task is failed or cancelled, transition it to
-			// 'review' status and restore the agent sessions so the message can
-			// be delivered. This lets users provide corrective feedback without
-			// manually calling set_task_status first.
-			if (task.status === 'failed' || task.status === 'cancelled') {
-				const originalStatus = task.status;
+			// Cancelled tasks cannot be revived via message — the worktree is cleaned
+			// up on cancellation so restoring the session would point to a gone
+			// workspace. Direct the caller to restart the task from scratch instead.
+			if (task.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is cancelled. Cancelled tasks cannot receive messages ` +
+						'because their workspace has been cleaned up. Use set_task_status to restart it ' +
+						'(e.g. status: "pending" or "in_progress").',
+				});
+			}
+
+			// Auto-revive: if the task has failed, transition it to 'review' and
+			// restore the agent sessions so the message can be delivered. Failed
+			// tasks preserve their worktree, so session restoration is safe.
+			if (task.status === 'failed') {
 				try {
 					await taskManager.setTaskStatus(args.task_id, 'review');
 				} catch (err) {
@@ -422,9 +437,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
 				if (!revived) {
-					// Roll back the task status: review → failed is always valid.
-					// Both 'failed' and 'cancelled' original statuses roll back to 'failed'
-					// because 'review → cancelled' is not a valid transition.
+					// Roll back the task status; review → failed is a valid transition.
 					try {
 						await taskManager.setTaskStatus(args.task_id, 'failed');
 					} catch {
@@ -433,13 +446,13 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					return jsonResult({
 						success: false,
 						error:
-							`Failed to revive task ${args.task_id} (originally ${originalStatus}): ` +
-							'agent sessions could not be restored. Task status has been reset to failed.',
+							`Failed to revive task ${args.task_id}: agent sessions could not be restored. ` +
+							'Task status has been reset to failed.',
 					});
 				}
 				return jsonResult({
 					success: true,
-					message: `Task ${args.task_id} revived from ${originalStatus} to review and message delivered to agent`,
+					message: `Task ${args.task_id} revived from failed to review and message delivered to agent`,
 				});
 			}
 
