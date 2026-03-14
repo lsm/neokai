@@ -349,7 +349,7 @@ function HumanInputArea({
 						onClick={clearDraft}
 						data-testid="draft-dismiss-button"
 					>
-						Dismiss
+						Discard draft
 					</button>
 				</div>
 			)}
