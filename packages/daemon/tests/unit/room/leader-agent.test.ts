@@ -1084,6 +1084,65 @@ describe('Leader Helper Sub-Agents', () => {
 			const agents = buildLeaderHelperAgents([{ model: 'claude-opus-4-6' }]);
 			expect(Object.values(agents)[0].model).toBe('opus');
 		});
+
+		describe('model field validation — matches buildReviewerAgents behavior', () => {
+			it('maps short name "sonnet" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'sonnet' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-sonnet-4-6');
+			});
+
+			it('maps short name "haiku" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'haiku' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-haiku-4-5');
+			});
+
+			it('maps short name "opus" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'opus' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-opus-4-6');
+			});
+
+			it('maps short name "codex" to full model ID in description', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'codex' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('gpt-5.3-codex');
+			});
+
+			it('uses modelId field over model when both are provided', () => {
+				const agents = buildLeaderHelperAgents([
+					{ model: 'sonnet', modelId: 'claude-sonnet-4-5-20250929' },
+				]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-sonnet-4-5-20250929');
+				expect(agent.description).not.toContain('claude-sonnet-4-6');
+			});
+
+			it('detects Anthropic provider from short name "sonnet"', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'sonnet' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('Anthropic');
+			});
+
+			it('detects OpenAI provider from model name containing "codex"', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'codex-review' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('OpenAI');
+			});
+
+			it('uses explicit provider field when set', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'sonnet', provider: 'glm' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('GLM');
+			});
+
+			it('passes full model ID through unchanged when no short name mapping exists', () => {
+				const agents = buildLeaderHelperAgents([{ model: 'claude-sonnet-4-5-20250929' }]);
+				const agent = Object.values(agents)[0];
+				expect(agent.description).toContain('claude-sonnet-4-5-20250929');
+			});
+		});
 	});
 
 	describe('createLeaderAgentInit with leaderHelpers', () => {
