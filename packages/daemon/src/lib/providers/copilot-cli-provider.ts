@@ -49,11 +49,6 @@ const execFileAsync = promisify(execFile);
 const logger = new Logger('copilot-cli-provider');
 
 /**
- * GitHub Copilot CLI model definitions.
- *
- * Model IDs match the `--model` flag values accepted by the `copilot` binary.
- */
-/**
  * Model IDs shared with GitHubCopilotProvider.
  *
  * Both providers expose these Anthropic models, but GitHubCopilotProvider (id:
@@ -65,6 +60,11 @@ const logger = new Logger('copilot-cli-provider');
  */
 const SHARED_WITH_GITHUB_COPILOT = new Set(['claude-opus-4.6', 'claude-sonnet-4.6']);
 
+/**
+ * GitHub Copilot CLI model definitions.
+ *
+ * Model IDs match the `--model` flag values accepted by the `copilot` binary.
+ */
 const COPILOT_CLI_MODELS: ModelInfo[] = [
 	{
 		id: 'claude-opus-4.6',
@@ -202,23 +202,25 @@ export class CopilotCliProvider implements Provider {
 		options: ProviderQueryOptions,
 		context: ProviderQueryContext
 	): Promise<AsyncGenerator<SDKMessage, void> | null> {
-		// Single availability check covers both binary detection and auth verification.
-		// findCopilotCli() result is cached after the first call.
-		if (!(await this.isAvailable())) {
-			const copilotPath = await this.findCopilotCli();
-			if (!copilotPath) {
-				logger.warn(
-					'GitHub Copilot CLI not found on PATH. Install from: https://github.com/github/copilot-cli'
-				);
-			} else {
-				logger.warn(
-					'GitHub Copilot CLI not authenticated. Run `gh auth login` or set COPILOT_GITHUB_TOKEN.'
-				);
-			}
+		// findCopilotCli() result is cached; calling it first lets us emit the
+		// specific warning ("not found" vs "not authenticated") and also provides
+		// the path to pass to the generator — without a 3rd call on the happy path.
+		const copilotPath = await this.findCopilotCli();
+		if (!copilotPath) {
+			logger.warn(
+				'GitHub Copilot CLI not found on PATH. Install from: https://github.com/github/copilot-cli'
+			);
 			return null;
 		}
 
-		const copilotPath = (await this.findCopilotCli())!;
+		// Binary found — verify authentication. isAvailable() re-calls findCopilotCli()
+		// (cached, O(1)) then checks the token env vars or `gh auth status`.
+		if (!(await this.isAvailable())) {
+			logger.warn(
+				'GitHub Copilot CLI not authenticated. Run `gh auth login` or set COPILOT_GITHUB_TOKEN.'
+			);
+			return null;
+		}
 
 		// Resolve model alias to CLI model ID
 		const modelEntry = COPILOT_CLI_MODELS.find(
