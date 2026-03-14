@@ -59,6 +59,7 @@ import {
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 } from './lifecycle-hooks';
+import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 
 const log = new Logger('room-runtime');
 
@@ -110,6 +111,8 @@ export interface RoomRuntimeConfig {
 	messageHub?: MessageHub;
 	/** Hook options for lifecycle gates (test injection point) */
 	hookOptions?: HookOptions;
+	/** Dead loop detection config (overrides defaults) */
+	deadLoopConfig?: Partial<DeadLoopConfig>;
 	/** Fetch room from DB by ID (for lazy leader init with current config) */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID (for lazy leader init with current data) */
@@ -142,6 +145,7 @@ export class RoomRuntime {
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
+	private readonly deadLoopConfig: DeadLoopConfig;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
 
@@ -204,6 +208,7 @@ export class RoomRuntime {
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
+		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
 
@@ -427,6 +432,30 @@ export class RoomRuntime {
 				this.appendGroupEvent(groupId, 'status', {
 					text: `Worker exit gate: ${gateResult.reason}`,
 				});
+
+				// Dead loop detection: record failure and check for loop
+				this.groupRepo.recordGateFailure(
+					groupId,
+					'worker_exit',
+					gateResult.reason ?? 'Gate check failed'
+				);
+				const history = this.groupRepo.getGateFailureHistory(groupId);
+				const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
+				if (loopStatus?.isDeadLoop) {
+					const failureMsg =
+						`Dead loop detected in worker exit gate: ${loopStatus.reason}\n\n` +
+						`Failure pattern:\n` +
+						`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
+						`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
+						`The task cannot make progress and is stuck in a retry loop. ` +
+						`Please review the requirements and try again with clearer instructions.`;
+					log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
+					await this.taskGroupManager.fail(groupId, failureMsg);
+					this.cleanupMirroring(groupId, 'Dead loop detected.');
+					await this.emitTaskUpdateById(group.taskId);
+					return;
+				}
+
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
 					gateResult.bounceMessage ?? gateResult.reason ?? 'Gate check failed'
@@ -676,6 +705,30 @@ export class RoomRuntime {
 							this.appendGroupEvent(groupId, 'status', {
 								text: `Leader complete gate: ${gateResult.reason}`,
 							});
+
+							// Dead loop detection: record failure and check for loop
+							this.groupRepo.recordGateFailure(
+								groupId,
+								'leader_complete',
+								gateResult.reason ?? 'Gate check failed'
+							);
+							const history = this.groupRepo.getGateFailureHistory(groupId);
+							const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
+							if (loopStatus?.isDeadLoop) {
+								const failureMsg =
+									`Dead loop detected in leader complete gate: ${loopStatus.reason}\n\n` +
+									`Failure pattern:\n` +
+									`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
+									`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
+									`The task cannot make progress and is stuck in a retry loop. ` +
+									`Please review the requirements and try again with clearer instructions.`;
+								log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
+								await this.taskGroupManager.fail(groupId, failureMsg);
+								this.cleanupMirroring(groupId, 'Dead loop detected.');
+								await this.emitTaskUpdateById(group.taskId);
+								return jsonResult({ success: false, error: failureMsg });
+							}
+
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
 							return jsonResult({
@@ -743,6 +796,30 @@ export class RoomRuntime {
 							this.appendGroupEvent(groupId, 'status', {
 								text: `Leader submit gate: ${gateResult.reason}`,
 							});
+
+							// Dead loop detection: record failure and check for loop
+							this.groupRepo.recordGateFailure(
+								groupId,
+								'leader_submit',
+								gateResult.reason ?? 'Gate check failed'
+							);
+							const submitHistory = this.groupRepo.getGateFailureHistory(groupId);
+							const submitLoopStatus = checkDeadLoop(submitHistory, this.deadLoopConfig);
+							if (submitLoopStatus?.isDeadLoop) {
+								const failureMsg =
+									`Dead loop detected in leader submit gate: ${submitLoopStatus.reason}\n\n` +
+									`Failure pattern:\n` +
+									`- ${submitLoopStatus.failureCount} failures${submitLoopStatus.timeWindowMs > 0 ? ` over ${Math.round(submitLoopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
+									`- Repeated reasons: ${submitLoopStatus.topFailureReasons.join('; ')}\n\n` +
+									`The task cannot make progress and is stuck in a retry loop. ` +
+									`Please review the requirements and try again with clearer instructions.`;
+								log.warn(`Dead loop detected for group ${groupId}: ${submitLoopStatus.reason}`);
+								await this.taskGroupManager.fail(groupId, failureMsg);
+								this.cleanupMirroring(groupId, 'Dead loop detected.');
+								await this.emitTaskUpdateById(group.taskId);
+								return jsonResult({ success: false, error: failureMsg });
+							}
+
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
 							return jsonResult({
