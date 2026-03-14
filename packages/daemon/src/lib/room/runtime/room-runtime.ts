@@ -49,7 +49,8 @@ import {
 	formatLeaderToWorkerFeedback,
 	sortTasksByPriority,
 } from './message-routing';
-import { isRateLimitError, createRateLimitBackoff } from './rate-limit-utils';
+import { createRateLimitBackoff } from './rate-limit-utils';
+import { classifyError } from './error-classifier';
 import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
@@ -600,22 +601,42 @@ export class RoomRuntime {
 			}
 		}
 
-		// Check for rate limit errors in worker output
-		if (isRateLimitError(workerOutputText)) {
-			const rateLimitBackoff = createRateLimitBackoff(workerOutputText, 'worker');
-			if (rateLimitBackoff) {
-				this.groupRepo.setRateLimit(groupId, rateLimitBackoff);
-				log.info(
-					`Rate limit detected in worker output for group ${groupId}. ` +
-						`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
-				);
-				this.appendGroupEvent(groupId, 'rate_limited', {
-					text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
-					resetsAt: rateLimitBackoff.resetsAt,
-					sessionRole: 'worker',
+		// Classify any API errors in worker output.
+		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
+		// rate_limit → pause with timed backoff (429 / usage limit)
+		// recoverable / null → fall through to normal leader routing
+		{
+			const errorClass = classifyError(workerOutputText);
+			if (errorClass?.class === 'terminal') {
+				log.info(`Terminal API error in worker output for group ${groupId}: ${errorClass.reason}`);
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Terminal error: ${errorClass.reason}`,
 				});
-				this.scheduleTickAfterRateLimitReset(groupId);
+				await this.taskGroupManager.fail(groupId, errorClass.reason);
+				this.cleanupMirroring(groupId, `Terminal API error: ${errorClass.reason}`);
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+				this.scheduleTick();
 				return;
+			}
+			if (errorClass?.class === 'rate_limit') {
+				const rateLimitBackoff = errorClass.resetsAt
+					? createRateLimitBackoff(workerOutputText, 'worker')
+					: null;
+				if (rateLimitBackoff) {
+					this.groupRepo.setRateLimit(groupId, rateLimitBackoff);
+					log.info(
+						`Rate limit detected in worker output for group ${groupId}. ` +
+							`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
+					);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: rateLimitBackoff.resetsAt,
+						sessionRole: 'worker',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
+					return;
+				}
 			}
 		}
 
@@ -1549,10 +1570,10 @@ export class RoomRuntime {
 					if (uuid && mirroredUuids.has(uuid)) return;
 					if (uuid) mirroredUuids.add(uuid);
 
-					// Check for rate limit errors in the message content
-					// This detects rate limits in real-time for both Worker and Leader sessions
+					// Check for rate limit errors in real-time for both Worker and Leader sessions
 					const messageContent = JSON.stringify(event.message);
-					if (isRateLimitError(messageContent)) {
+					const msgErrorClass = classifyError(messageContent);
+					if (msgErrorClass?.class === 'rate_limit') {
 						const sessionRole = sessionId === group.workerSessionId ? 'worker' : 'leader';
 						const rateLimitBackoff = createRateLimitBackoff(messageContent, sessionRole);
 						if (rateLimitBackoff) {
