@@ -219,7 +219,7 @@ describe('RoomRuntime', () => {
 			// Task should be marked as needs_attention (not stuck in pending)
 			const updatedTask = await ctx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('needs_attention');
-			expect(updatedTask!.error).toContain('No active goal found');
+			expect(updatedTask!.error).toContain('No goal found');
 		});
 
 		it('should skip pending tasks with taskType planning and not get stuck', async () => {
@@ -239,14 +239,12 @@ describe('RoomRuntime', () => {
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
-			// No worker sessions should be spawned for the planning task via the execution queue
-			// (the planning task will be picked up by spawnPlanningGroup only when triggered by getNextGoalForPlanning)
-			const workerCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'planner'
+			// No sessions should be spawned at all — planning-type tasks are filtered from the
+			// execution queue, and the goal already has an active task so no replanning is triggered
+			const sessionCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
 			);
-			// The goal has a pending planning task, so it counts as an "active task" — no replanning triggered
-			// but also no regular execution spawned
-			expect(workerCalls).toHaveLength(0);
+			expect(sessionCalls).toHaveLength(0);
 
 			// The planning-type task should remain in its current state (not errored out)
 			const updatedPlanningTask = await ctx.taskManager.getTask(planningTask.id);
