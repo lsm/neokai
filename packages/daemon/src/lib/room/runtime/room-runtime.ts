@@ -1746,10 +1746,11 @@ export class RoomRuntime {
 	 * Conditions for a "stuck worker":
 	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
 	 * - Worker session IS in the session factory (not a zombie)
-	 * - Worker session processing state is terminal (idle/interrupted/waiting_for_input)
+	 * - Worker session processing state is terminal (idle or interrupted)
 	 * - Leader session is NOT in the session factory (not yet created)
 	 * - Group is NOT awaiting human review
 	 * - Group is NOT rate-limited
+	 * - Group is NOT paused waiting for a question answer (waiting_for_input is intentional pause)
 	 * - A recovery for this group is NOT already in-flight from a previous tick
 	 */
 	private recoverStuckWorkers(): void {
@@ -1763,6 +1764,9 @@ export class RoomRuntime {
 			if (group.submittedForReview) continue;
 			// Skip rate-limited groups
 			if (this.groupRepo.isRateLimited(group.id)) continue;
+			// Skip groups paused waiting for a question answer — waiting_for_input is an
+			// intentional pause, not a stuck state; the task resumes when the user answers
+			if (group.waitingForQuestion) continue;
 
 			// Worker must be in the session factory (not a zombie)
 			if (!this.sessionFactory.hasSession(group.workerSessionId)) continue;
@@ -1770,14 +1774,10 @@ export class RoomRuntime {
 			// Leader must NOT exist yet (routing hasn't happened)
 			if (this.sessionFactory.hasSession(group.leaderSessionId)) continue;
 
-			// Worker must be in a terminal state (idle, interrupted, or waiting_for_input)
+			// Worker must be in a terminal state (idle or interrupted)
+			// Note: waiting_for_input is excluded — it is handled separately as an intentional pause
 			const workerState = this.sessionFactory.getProcessingState(group.workerSessionId);
-			if (
-				workerState !== 'idle' &&
-				workerState !== 'interrupted' &&
-				workerState !== 'waiting_for_input'
-			)
-				continue;
+			if (workerState !== 'idle' && workerState !== 'interrupted') continue;
 
 			// Guard against duplicate in-flight recovery: if a previous tick already
 			// triggered routing for this group and it hasn't completed yet, skip it.
@@ -1790,7 +1790,7 @@ export class RoomRuntime {
 
 			log.warn(
 				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but leader never created ` +
-					`(feedbackIteration=0). Re-triggering worker→leader routing.`
+					`(feedbackIteration=0, waitingForQuestion=false). Re-triggering worker→leader routing.`
 			);
 			this.appendGroupEvent(group.id, 'status', {
 				text: `Worker found in ${workerState} state without a leader — re-triggering routing to Leader.`,

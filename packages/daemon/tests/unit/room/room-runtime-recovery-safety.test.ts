@@ -606,7 +606,9 @@ describe('Stuck worker detection and recovery', () => {
 		expect(leaderCalls).toHaveLength(0);
 	});
 
-	it('should detect a stuck worker in waiting_for_input state and re-trigger routing', async () => {
+	it('should NOT re-trigger routing when worker is in waiting_for_input (intentional pause)', async () => {
+		// Since PR #330, waiting_for_input means the worker asked a question and the task
+		// is intentionally paused — recoverStuckWorkers must skip these groups.
 		const group = await spawnGroup();
 
 		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'waiting_for_input');
@@ -615,15 +617,23 @@ describe('Stuck worker detection and recovery', () => {
 			return true;
 		};
 
-		const leaderCreated = waitForLeaderCreation();
+		// Simulate that onWorkerTerminalState already set waitingForQuestion=true
+		ctx.groupRepo.setWaitingForQuestion(group.id, true, 'worker');
 
 		await ctx.runtime.tick();
-		await leaderCreated;
+		// Give any fire-and-forget tasks a chance to run
+		await new Promise((r) => setTimeout(r, 5));
 
+		// No leader should have been created — the group is intentionally paused
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(1);
+		expect(leaderCalls).toHaveLength(0);
+
+		// The group should still be active (not failed, not routed)
+		const updated = ctx.groupRepo.getGroup(group.id);
+		expect(updated!.completedAt).toBeNull();
+		expect(updated!.waitingForQuestion).toBe(true);
 	});
 
 	it('should not fire duplicate routing on successive ticks while recovery is in-flight', async () => {
