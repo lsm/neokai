@@ -78,11 +78,12 @@ const mockTask: NeoTask = {
 /** Build a minimal TaskManagerFactory that returns a controlled task. */
 function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
 	const cancelledTask = task ? { ...task, status: 'cancelled' as const } : null;
+	const failedTask = task ? { ...task, status: 'failed' as const } : null;
 	const manager = {
 		createTask: mock(async () => task!),
 		getTask: mock(async () => task),
 		listTasks: mock(async () => []),
-		failTask: mock(async () => task!),
+		failTask: mock(async () => failedTask!),
 		cancelTask: mock(async () => cancelledTask!),
 	};
 	return mock(() => manager);
@@ -144,12 +145,14 @@ function makeRuntimeService(resumeResult = true, injectResult = true) {
 		cancelledTaskIds: injectResult ? ['task-1'] : [],
 	}));
 	const terminateTaskGroup = mock(async () => injectResult);
+	const interruptTaskSession = mock(async () => ({ success: injectResult }));
 	const runtime = {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
 		injectMessageToWorker,
 		cancelTask,
 		terminateTaskGroup,
+		interruptTaskSession,
 	};
 	const service = {
 		getRuntime: mock(() => runtime),
@@ -831,6 +834,116 @@ describe('task.setStatus RPC Handler', () => {
 				{}
 			);
 			expect(result).toEqual({ task: { ...cancelledTask, status: 'in_progress' } });
+		});
+	});
+});
+
+// ─── task.interruptSession Tests ───
+
+describe('task.interruptSession RPC Handler', () => {
+	let hub: MessageHub;
+	let handlers: Map<string, RequestHandler>;
+
+	function setup(opts: { task?: NeoTask | null; runtimeService?: RoomRuntimeService }) {
+		const { task = mockTask, runtimeService } = opts;
+		const mh = createMockMessageHub();
+		hub = mh.hub;
+		handlers = mh.handlers;
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb(makeGroupRow()),
+			makeTaskManagerFactory(task),
+			runtimeService
+		);
+	}
+
+	function getHandler(): RequestHandler {
+		const h = handlers.get('task.interruptSession');
+		expect(h).toBeDefined();
+		return h!;
+	}
+
+	describe('parameter validation', () => {
+		beforeEach(() => {
+			setup({ runtimeService: makeNullRuntimeService() });
+		});
+
+		it('throws when roomId is missing', async () => {
+			await expect(getHandler()({ taskId: 'task-1' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when taskId is missing', async () => {
+			await expect(getHandler()({ roomId: 'room-1' }, {})).rejects.toThrow('Task ID is required');
+		});
+	});
+
+	describe('task status validation', () => {
+		it('throws when task is not found', async () => {
+			setup({ task: null, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task not found'
+			);
+		});
+
+		it('throws when task status is pending', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task cannot be interrupted'
+			);
+		});
+
+		it('throws when task status is completed', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task cannot be interrupted'
+			);
+		});
+
+		it('throws when no runtime found for room', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			// makeNullRuntimeService returns a service with getRuntime() = null (no room runtime)
+			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'No runtime found for room'
+			);
+		});
+	});
+
+	describe('happy paths', () => {
+		it('calls runtime.interruptTaskSession for in_progress task and returns success', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			const { service, runtime } = makeRuntimeService(true);
+			setup({ task: inProgressTask, runtimeService: service });
+
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			expect(runtime.interruptTaskSession).toHaveBeenCalledWith('task-1');
+			// Returns just { success: true }, NOT the task (task status is unchanged)
+			expect(result).toEqual({ success: true });
+		});
+
+		it('calls runtime.interruptTaskSession for review task and returns success', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			const { service, runtime } = makeRuntimeService(true);
+			setup({ task: reviewTask, runtimeService: service });
+
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+			expect(runtime.interruptTaskSession).toHaveBeenCalledWith('task-1');
+			expect(result).toEqual({ success: true });
+		});
+
+		it('throws when runtime.interruptTaskSession returns failure', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			// Pass false as injectResult to make interruptTaskSession fail
+			const { service } = makeRuntimeService(true, false);
+			setup({ task: inProgressTask, runtimeService: service });
+
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Failed to interrupt task session'
+			);
 		});
 	});
 });

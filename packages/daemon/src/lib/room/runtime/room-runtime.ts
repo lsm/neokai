@@ -59,6 +59,7 @@ import {
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 } from './lifecycle-hooks';
+import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
 
 const log = new Logger('room-runtime');
 
@@ -110,6 +111,8 @@ export interface RoomRuntimeConfig {
 	messageHub?: MessageHub;
 	/** Hook options for lifecycle gates (test injection point) */
 	hookOptions?: HookOptions;
+	/** Dead loop detection config (overrides defaults) */
+	deadLoopConfig?: Partial<DeadLoopConfig>;
 	/** Fetch room from DB by ID (for lazy leader init with current config) */
 	getRoom: (roomId: string) => Room | null;
 	/** Fetch task from DB by ID (for lazy leader init with current data) */
@@ -142,6 +145,7 @@ export class RoomRuntime {
 	private readonly daemonHub?: DaemonHub;
 	private readonly messageHub?: MessageHub;
 	private readonly hookOptions?: HookOptions;
+	private readonly deadLoopConfig: DeadLoopConfig;
 	private readonly getRoomById: (roomId: string) => Room | null;
 	private readonly defaultModel: string;
 
@@ -189,6 +193,42 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Record a gate failure, check for a dead loop, and fail the group if one is detected.
+	 *
+	 * Call this at every bounce point before injecting the bounce message back to the agent.
+	 * Returns true when a dead loop was detected and the group has been failed — the caller
+	 * should return immediately without injecting the bounce message.
+	 * Returns false when no loop detected — caller should proceed with the normal bounce.
+	 */
+	private async recordAndCheckDeadLoop(
+		groupId: string,
+		taskId: string,
+		gateName: string,
+		reason: string
+	): Promise<boolean> {
+		this.groupRepo.recordGateFailure(groupId, gateName, reason);
+		const history = this.groupRepo.getGateFailureHistory(groupId);
+		const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
+		if (loopStatus?.isDeadLoop) {
+			const failureMsg =
+				`Dead loop detected in ${gateName} gate: ${loopStatus.reason}\n\n` +
+				`Failure pattern:\n` +
+				`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
+				`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
+				`The task cannot make progress and is stuck in a retry loop. ` +
+				`Please review the requirements and try again with clearer instructions.`;
+			log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
+			await this.taskGroupManager.fail(groupId, failureMsg);
+			this.cleanupMirroring(groupId, 'Dead loop detected.');
+			await this.emitTaskUpdateById(taskId);
+			await this.emitGoalProgressForTask(taskId);
+			this.scheduleTick();
+			return true;
+		}
+		return false;
+	}
+
 	constructor(config: RoomRuntimeConfig) {
 		this.roomId = config.room.id;
 		this.room = config.room;
@@ -204,6 +244,7 @@ export class RoomRuntime {
 		this.daemonHub = config.daemonHub;
 		this.messageHub = config.messageHub;
 		this.hookOptions = config.hookOptions;
+		this.deadLoopConfig = { ...DEFAULT_DEAD_LOOP_CONFIG, ...config.deadLoopConfig };
 		this.getRoomById = config.getRoom;
 		this.defaultModel = config.defaultModel ?? 'sonnet';
 
@@ -378,6 +419,30 @@ export class RoomRuntime {
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
 
+		// Check if worker is waiting for user input (asked a question)
+		// Pause routing to leader — task resumes when question is answered
+		if (terminalState.kind === 'waiting_for_input') {
+			log.info(`Worker ${group.workerSessionId} is waiting for user input - pausing task`);
+			this.groupRepo.setWaitingForQuestion(groupId, true, 'worker');
+			this.appendGroupEvent(groupId, 'status', {
+				text: 'Worker asked a question. Waiting for human response.',
+			});
+			await this.emitTaskUpdateById(group.taskId);
+			return;
+		}
+
+		// Clear waiting flag if it was set (worker resumed after question was answered)
+		if (group.waitingForQuestion && group.waitingSession === 'worker') {
+			this.groupRepo.setWaitingForQuestion(groupId, false, null);
+		}
+
+		// Check if generation was interrupted by human — skip routing to leader, await user input
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(groupId, false);
+			log.info(`Worker reached terminal state after human interrupt — awaiting user input`);
+			return;
+		}
+
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {
 			log.info(`Worker reached terminal state while rate limited - pausing routing to Leader`);
@@ -395,6 +460,16 @@ export class RoomRuntime {
 				this.appendGroupEvent(groupId, 'status', {
 					text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
 				});
+				if (
+					await this.recordAndCheckDeadLoop(
+						groupId,
+						group.taskId,
+						'worktree_dirty',
+						'Worktree has uncommitted changes or untracked files'
+					)
+				) {
+					return;
+				}
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
 					'Your worktree has uncommitted changes or untracked files. ' +
@@ -427,6 +502,18 @@ export class RoomRuntime {
 				this.appendGroupEvent(groupId, 'status', {
 					text: `Worker exit gate: ${gateResult.reason}`,
 				});
+
+				if (
+					await this.recordAndCheckDeadLoop(
+						groupId,
+						group.taskId,
+						'worker_exit',
+						gateResult.reason ?? 'Gate check failed'
+					)
+				) {
+					return;
+				}
+
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
 					gateResult.bounceMessage ?? gateResult.reason ?? 'Gate check failed'
@@ -530,9 +617,26 @@ export class RoomRuntime {
 	 * Called when Leader reaches a terminal state.
 	 * No state checks - leader can finish without calling a tool.
 	 */
-	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
+	async onLeaderTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
+
+		// Check if leader is waiting for user input (asked a question)
+		// Pause — task resumes when question is answered
+		if (terminalState.kind === 'waiting_for_input') {
+			log.info(`Leader ${group.leaderSessionId} is waiting for user input - pausing task`);
+			this.groupRepo.setWaitingForQuestion(groupId, true, 'leader');
+			this.appendGroupEvent(groupId, 'status', {
+				text: 'Leader asked a question. Waiting for human response.',
+			});
+			await this.emitTaskUpdateById(group.taskId);
+			return;
+		}
+
+		// Clear waiting flag if it was set (leader resumed after question was answered)
+		if (group.waitingForQuestion && group.waitingSession === 'leader') {
+			this.groupRepo.setWaitingForQuestion(groupId, false, null);
+		}
 
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {
@@ -665,6 +769,18 @@ export class RoomRuntime {
 							this.appendGroupEvent(groupId, 'status', {
 								text: `Leader complete gate: ${gateResult.reason}`,
 							});
+
+							if (
+								await this.recordAndCheckDeadLoop(
+									groupId,
+									group.taskId,
+									'leader_complete',
+									gateResult.reason ?? 'Gate check failed'
+								)
+							) {
+								return jsonResult({ success: false, error: 'Dead loop detected.' });
+							}
+
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
 							return jsonResult({
@@ -732,6 +848,18 @@ export class RoomRuntime {
 							this.appendGroupEvent(groupId, 'status', {
 								text: `Leader submit gate: ${gateResult.reason}`,
 							});
+
+							if (
+								await this.recordAndCheckDeadLoop(
+									groupId,
+									group.taskId,
+									'leader_submit',
+									gateResult.reason ?? 'Gate check failed'
+								)
+							) {
+								return jsonResult({ success: false, error: 'Dead loop detected.' });
+							}
+
 							// Reset leaderCalledTool so leader can try again
 							this.groupRepo.setLeaderCalledTool(groupId, false);
 							return jsonResult({
@@ -1064,6 +1192,49 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Interrupt the current agent session(s) for a task without changing task status.
+	 *
+	 * Unlike stopTaskSession() / cancelTask(), this:
+	 * - Does NOT change task status (keeps it 'in_progress' or 'review')
+	 * - Does NOT mark the group as terminal
+	 * - Does NOT clean up the session (session stays in cache, can receive new messages)
+	 * - Sets humanInterrupted flag to prevent automatic routing to leader
+	 *
+	 * Use this when a human wants to interrupt ongoing generation and immediately
+	 * type new instructions — the session stays alive and ready for input.
+	 */
+	async interruptTaskSession(taskId: string): Promise<{ success: boolean }> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return { success: false };
+
+		if (task.status !== 'in_progress' && task.status !== 'review') {
+			return { success: false };
+		}
+
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.completedAt !== null) return { success: false };
+
+		// Set flag first so onWorkerTerminalState skips routing to leader
+		this.groupRepo.setHumanInterrupted(group.id, true);
+
+		// Interrupt active sessions (lightweight: no cleanup, no cache removal)
+		if (this.sessionFactory.interruptSession) {
+			for (const sessionId of [group.workerSessionId, group.leaderSessionId]) {
+				try {
+					await this.sessionFactory.interruptSession(sessionId);
+				} catch (error) {
+					log.warn(`Failed to interrupt session ${sessionId}:`, error);
+				}
+			}
+		}
+
+		this.appendGroupEvent(group.id, 'status', {
+			text: 'Generation interrupted by user. Awaiting input.',
+		});
+		return { success: true };
+	}
+
+	/**
 	 * Inject a human message directly into the worker session.
 	 *
 	 * Used when a human wants to provide additional context directly to the worker.
@@ -1075,6 +1246,12 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.workerSessionId)) return false;
+
+		// Clear humanInterrupted: the user is providing new input, so the next
+		// worker completion should route to leader normally (not be suppressed).
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(group.id, false);
+		}
 
 		try {
 			await this.sessionFactory.injectMessage(group.workerSessionId, message);
