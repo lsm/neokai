@@ -106,10 +106,6 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async handoffToWorker(groupId: string) {
-			calls.push({ method: 'handoffToWorker', args: [groupId] });
-			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
-		},
 		async completeTask(groupId: string, summary: string) {
 			calls.push({ method: 'completeTask', args: [groupId, summary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };

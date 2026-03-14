@@ -173,7 +173,7 @@ For planning tasks the planner must run a second phase to create tasks.
    2. Read the plan file under docs/plans/
    3. Create all tasks 1:1 from the plan using the \`create_task\` tool
    4. Finish your response after all tasks are created"
-3. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N", call \`complete_task\` with a summary.
+2. **After planner exits with tasks created** — When you next receive \`[PLANNER OUTPUT]\` showing "Phase 2 (task creation)" and "Tasks created: N", call \`complete_task\` with a summary.
 
 **IMPORTANT**: The planner must use the \`create_task\` tool to register tasks. You cannot call \`complete_task\` until tasks are created — the runtime gate will reject it.`;
 	}
@@ -260,7 +260,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 ### Step 4: Route
 
 - **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
-  - You may call \`send_to_worker\` multiple times as reviewer results arrive. 
+  - You may call \`send_to_worker\` multiple times as reviewer results arrive.
 - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL for human approval
 - **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
 - **Fundamentally unplannable** → \`fail_task\` or \`replan_goal\`
@@ -328,7 +328,7 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 ### Step 4: Route
 
 - **Any P0/P1/P2 issues** → call \`send_to_worker\` with \`mode: "queue"\` and ONLY the review URLs (one per line). Do NOT summarize or interpret the reviews — the worker will fetch the full review content from GitHub.
-  - You may call \`send_to_worker\` multiple times as reviewer results arrive. 
+  - You may call \`send_to_worker\` multiple times as reviewer results arrive.
 - **Only P3 nits or no issues** → \`submit_for_review\` with the PR URL
 - **TIMEOUT or ERROR** → Ignore that reviewer's result. Route based on the remaining reviewers' results. If all reviewers timed out/errored, \`submit_for_review\` with the PR URL (let human decide).
 - **Fundamentally broken** → \`fail_task\` or \`replan_goal\``;
