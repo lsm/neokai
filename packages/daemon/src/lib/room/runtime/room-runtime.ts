@@ -193,6 +193,37 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Fail a group due to a detected dead loop.
+	 * Formats the diagnostic message, fails the group, cleans up mirroring,
+	 * and schedules a tick so the runtime can start other pending tasks.
+	 */
+	private async failGroupForDeadLoop(
+		groupId: string,
+		taskId: string,
+		loopStatus: {
+			reason: string;
+			failureCount: number;
+			timeWindowMs: number;
+			topFailureReasons: string[];
+		},
+		gateName: string
+	): Promise<void> {
+		const failureMsg =
+			`Dead loop detected in ${gateName} gate: ${loopStatus.reason}\n\n` +
+			`Failure pattern:\n` +
+			`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
+			`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
+			`The task cannot make progress and is stuck in a retry loop. ` +
+			`Please review the requirements and try again with clearer instructions.`;
+		log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
+		await this.taskGroupManager.fail(groupId, failureMsg);
+		this.cleanupMirroring(groupId, 'Dead loop detected.');
+		await this.emitTaskUpdateById(taskId);
+		await this.emitGoalProgressForTask(taskId);
+		this.scheduleTick();
+	}
+
 	constructor(config: RoomRuntimeConfig) {
 		this.roomId = config.room.id;
 		this.room = config.room;
@@ -442,17 +473,7 @@ export class RoomRuntime {
 				const history = this.groupRepo.getGateFailureHistory(groupId);
 				const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
 				if (loopStatus?.isDeadLoop) {
-					const failureMsg =
-						`Dead loop detected in worker exit gate: ${loopStatus.reason}\n\n` +
-						`Failure pattern:\n` +
-						`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
-						`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
-						`The task cannot make progress and is stuck in a retry loop. ` +
-						`Please review the requirements and try again with clearer instructions.`;
-					log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
-					await this.taskGroupManager.fail(groupId, failureMsg);
-					this.cleanupMirroring(groupId, 'Dead loop detected.');
-					await this.emitTaskUpdateById(group.taskId);
+					await this.failGroupForDeadLoop(groupId, group.taskId, loopStatus, 'worker_exit');
 					return;
 				}
 
@@ -715,18 +736,13 @@ export class RoomRuntime {
 							const history = this.groupRepo.getGateFailureHistory(groupId);
 							const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
 							if (loopStatus?.isDeadLoop) {
-								const failureMsg =
-									`Dead loop detected in leader complete gate: ${loopStatus.reason}\n\n` +
-									`Failure pattern:\n` +
-									`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
-									`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
-									`The task cannot make progress and is stuck in a retry loop. ` +
-									`Please review the requirements and try again with clearer instructions.`;
-								log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
-								await this.taskGroupManager.fail(groupId, failureMsg);
-								this.cleanupMirroring(groupId, 'Dead loop detected.');
-								await this.emitTaskUpdateById(group.taskId);
-								return jsonResult({ success: false, error: failureMsg });
+								await this.failGroupForDeadLoop(
+									groupId,
+									group.taskId,
+									loopStatus,
+									'leader_complete'
+								);
+								return jsonResult({ success: false, error: loopStatus.reason });
 							}
 
 							// Reset leaderCalledTool so leader can try again
@@ -806,18 +822,13 @@ export class RoomRuntime {
 							const submitHistory = this.groupRepo.getGateFailureHistory(groupId);
 							const submitLoopStatus = checkDeadLoop(submitHistory, this.deadLoopConfig);
 							if (submitLoopStatus?.isDeadLoop) {
-								const failureMsg =
-									`Dead loop detected in leader submit gate: ${submitLoopStatus.reason}\n\n` +
-									`Failure pattern:\n` +
-									`- ${submitLoopStatus.failureCount} failures${submitLoopStatus.timeWindowMs > 0 ? ` over ${Math.round(submitLoopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
-									`- Repeated reasons: ${submitLoopStatus.topFailureReasons.join('; ')}\n\n` +
-									`The task cannot make progress and is stuck in a retry loop. ` +
-									`Please review the requirements and try again with clearer instructions.`;
-								log.warn(`Dead loop detected for group ${groupId}: ${submitLoopStatus.reason}`);
-								await this.taskGroupManager.fail(groupId, failureMsg);
-								this.cleanupMirroring(groupId, 'Dead loop detected.');
-								await this.emitTaskUpdateById(group.taskId);
-								return jsonResult({ success: false, error: failureMsg });
+								await this.failGroupForDeadLoop(
+									groupId,
+									group.taskId,
+									submitLoopStatus,
+									'leader_submit'
+								);
+								return jsonResult({ success: false, error: submitLoopStatus.reason });
 							}
 
 							// Reset leaderCalledTool so leader can try again

@@ -110,11 +110,12 @@ export function calculateSimilarity(a: string, b: string): number {
  *
  * Returns a DeadLoopStatus with isDeadLoop=true when the same gate has failed
  * at least `config.maxFailures` times within `config.rapidFailureWindow` AND
- * the failure reasons are sufficiently similar.
+ * the failure reasons are sufficiently similar (or the count reaches 2×
+ * the threshold regardless of similarity).
  *
- * Returns null when the history is too short to trigger detection.
- * Returns a status with isDeadLoop=false when count threshold is met but
- * reasons appear distinct (different issues, not a loop).
+ * Returns null when the history is too short to trigger detection, or when
+ * the count threshold is met but the reasons are too distinct (different
+ * underlying issues, not a stuck loop).
  */
 export function checkDeadLoop(
 	history: GateFailureRecord[],

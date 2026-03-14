@@ -83,11 +83,10 @@ describe('checkDeadLoop', () => {
 		expect(checkDeadLoop([])).toBeNull();
 	});
 
-	test('returns null when fewer failures than maxFailures', () => {
+	test('detects dead loop when failures equal maxFailures with identical reasons', () => {
 		const history = makeRepeatedFailures('worker_exit', 'No PR', 4);
 		const result = checkDeadLoop(history, STRICT_CONFIG);
-		// 4 < 3*2=6 but >= threshold 3; however similarity must pass too
-		// With count >= maxFailures AND similar reasons → should detect
+		// 4 >= maxFailures (3) with identical reasons → similarity ratio is 1.0 → detected
 		expect(result?.isDeadLoop).toBe(true);
 	});
 
