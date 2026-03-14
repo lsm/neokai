@@ -502,8 +502,8 @@ export async function* copilotCliQueryGenerator(
 	let resultData: CopilotResultData = {};
 	let hasAssistantMessage = false;
 
-	// Wrap loop in try/finally so readline and child are cleaned up if the generator
-	// consumer calls .return() mid-stream (e.g., when the upstream session is cancelled).
+	// Wrap loop in try/finally so readline, child, and abort listener are all cleaned up
+	// if the generator consumer calls .return() mid-stream (session cancelled, timeout, etc).
 	try {
 		for await (const line of readline) {
 			if (context.signal.aborted) {
@@ -574,6 +574,10 @@ export async function* copilotCliQueryGenerator(
 			}
 		}
 	} finally {
+		// Always remove abort listener — including when the generator is abandoned mid-stream
+		// via .return(). Without this, the listener leaks for the lifetime of context.signal
+		// (typically a whole session), and a later abort would SIGTERM an already-dead process.
+		context.signal.removeEventListener('abort', abortHandler);
 		readline.close();
 		// Kill process if still running (e.g., generator was abandoned mid-stream)
 		if (child.exitCode === null) {
@@ -596,9 +600,6 @@ export async function* copilotCliQueryGenerator(
 			child.on('error', () => resolve(1));
 		});
 	}
-
-	// Cleanup abort listener
-	context.signal.removeEventListener('abort', abortHandler);
 
 	if (context.signal.aborted) {
 		yield copilotResultToSdkResult(

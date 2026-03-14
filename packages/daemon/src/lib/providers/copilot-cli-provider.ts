@@ -53,6 +53,18 @@ const logger = new Logger('copilot-cli-provider');
  *
  * Model IDs match the `--model` flag values accepted by the `copilot` binary.
  */
+/**
+ * Model IDs shared with GitHubCopilotProvider.
+ *
+ * Both providers expose these Anthropic models, but GitHubCopilotProvider (id:
+ * 'github-copilot') is registered first in the registry and wins in detectProvider()
+ * lookups. To prevent the CLI provider from shadowing the API-based provider when a
+ * user selects 'claude-sonnet-4.6' without specifying a provider, ownsModel() does
+ * NOT claim these IDs. Users select them via alias (e.g., 'copilot-cli-sonnet') to
+ * explicitly route through the CLI.
+ */
+const SHARED_WITH_GITHUB_COPILOT = new Set(['claude-opus-4.6', 'claude-sonnet-4.6']);
+
 const COPILOT_CLI_MODELS: ModelInfo[] = [
 	{
 		id: 'claude-opus-4.6',
@@ -155,7 +167,12 @@ export class CopilotCliProvider implements Provider {
 	}
 
 	ownsModel(modelId: string): boolean {
-		return COPILOT_CLI_MODELS.some((m) => m.id === modelId || m.alias === modelId);
+		// Aliases are always unique to this provider (e.g., 'copilot-cli-opus').
+		// Shared model IDs (claude-opus-4.6, claude-sonnet-4.6) are excluded here to
+		// prevent collision with GitHubCopilotProvider in detectProvider() routing.
+		return COPILOT_CLI_MODELS.some(
+			(m) => m.alias === modelId || (m.id === modelId && !SHARED_WITH_GITHUB_COPILOT.has(m.id))
+		);
 	}
 
 	getModelForTier(tier: ModelTier): string | undefined {
