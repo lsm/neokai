@@ -419,6 +419,23 @@ export class RoomRuntime {
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
 
+		// Check if worker is waiting for user input (asked a question)
+		// Pause routing to leader — task resumes when question is answered
+		if (terminalState.kind === 'waiting_for_input') {
+			log.info(`Worker ${group.workerSessionId} is waiting for user input - pausing task`);
+			this.groupRepo.setWaitingForQuestion(groupId, true, 'worker');
+			this.appendGroupEvent(groupId, 'status', {
+				text: 'Worker asked a question. Waiting for human response.',
+			});
+			await this.emitTaskUpdateById(group.taskId);
+			return;
+		}
+
+		// Clear waiting flag if it was set (worker resumed after question was answered)
+		if (group.waitingForQuestion && group.waitingSession === 'worker') {
+			this.groupRepo.setWaitingForQuestion(groupId, false, null);
+		}
+
 		// Check if generation was interrupted by human — skip routing to leader, await user input
 		if (group.humanInterrupted) {
 			this.groupRepo.setHumanInterrupted(groupId, false);
@@ -600,9 +617,26 @@ export class RoomRuntime {
 	 * Called when Leader reaches a terminal state.
 	 * No state checks - leader can finish without calling a tool.
 	 */
-	async onLeaderTerminalState(groupId: string, _terminalState: TerminalState): Promise<void> {
+	async onLeaderTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
+
+		// Check if leader is waiting for user input (asked a question)
+		// Pause — task resumes when question is answered
+		if (terminalState.kind === 'waiting_for_input') {
+			log.info(`Leader ${group.leaderSessionId} is waiting for user input - pausing task`);
+			this.groupRepo.setWaitingForQuestion(groupId, true, 'leader');
+			this.appendGroupEvent(groupId, 'status', {
+				text: 'Leader asked a question. Waiting for human response.',
+			});
+			await this.emitTaskUpdateById(group.taskId);
+			return;
+		}
+
+		// Clear waiting flag if it was set (leader resumed after question was answered)
+		if (group.waitingForQuestion && group.waitingSession === 'leader') {
+			this.groupRepo.setWaitingForQuestion(groupId, false, null);
+		}
 
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {

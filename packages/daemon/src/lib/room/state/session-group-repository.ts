@@ -66,6 +66,10 @@ interface TaskGroupMetadata {
 	humanInterrupted?: boolean;
 	/** Gate failure history for dead loop detection */
 	gateFailures?: GateFailureRecord[];
+	/** Whether the group is paused waiting for a question to be answered */
+	waitingForQuestion?: boolean;
+	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
+	waitingSession?: 'worker' | 'leader' | null;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -118,6 +122,10 @@ export interface SessionGroup {
 	deferredLeader: DeferredLeaderConfig | null;
 	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
 	humanInterrupted: boolean;
+	/** Whether the group is paused waiting for a question to be answered */
+	waitingForQuestion: boolean;
+	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
+	waitingSession: 'worker' | 'leader' | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -461,6 +469,28 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set waitingForQuestion flag without version check.
+	 * When set, the group is paused waiting for a human answer to an agent question.
+	 */
+	setWaitingForQuestion(
+		groupId: string,
+		waiting: boolean,
+		session: 'worker' | 'leader' | null
+	): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, waitingForQuestion: waiting, waitingSession: session };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Persist deferred Leader bootstrap configuration.
 	 * Stored in metadata so runtime restart can still lazy-create the leader session.
 	 */
@@ -678,6 +708,8 @@ export class SessionGroupRepository {
 			rateLimit: meta.rateLimit ?? null,
 			deferredLeader: meta.deferredLeader ?? null,
 			humanInterrupted: meta.humanInterrupted === true,
+			waitingForQuestion: meta.waitingForQuestion ?? false,
+			waitingSession: meta.waitingSession ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

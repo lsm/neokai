@@ -160,6 +160,70 @@ describe('RoomRuntime flow', () => {
 			const updated = ctx.groupRepo.getGroup(group.id);
 			expect(updated!.submittedForReview).toBe(false);
 		});
+
+		it('should pause task (not route to leader) when worker is waiting_for_input', async () => {
+			await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Record factory calls before worker terminal state
+			const callsBefore = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			).length;
+
+			// Worker asks a question
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Should NOT have routed to leader
+			const leaderCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(leaderCalls.length).toBe(callsBefore);
+
+			// Group should be marked as waiting for question
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.waitingForQuestion).toBe(true);
+			expect(updated!.waitingSession).toBe('worker');
+
+			// Group should still be active (not completed)
+			expect(updated!.completedAt).toBeNull();
+		});
+
+		it('should resume routing after worker answers question and returns idle', async () => {
+			await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const groups = ctx.groupRepo.getActiveGroups('room-1');
+			const group = groups[0];
+
+			// Step 1: Worker asks a question → task pauses
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			const afterQuestion = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterQuestion.waitingForQuestion).toBe(true);
+			expect(afterQuestion.waitingSession).toBe('worker');
+
+			// Step 2: Question answered, worker completes work → idle
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// waiting flag should be cleared
+			const afterResume = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterResume.waitingForQuestion).toBe(false);
+			expect(afterResume.waitingSession).toBeNull();
+		});
 	});
 
 	describe('cancelTask', () => {
@@ -799,6 +863,49 @@ describe('RoomRuntime flow', () => {
 			// Leader terminal state should be no-op (tool was called)
 			const updated = ctx.groupRepo.getGroup(group.id);
 			expect(updated!.completedAt).not.toBeNull();
+		});
+
+		it('should pause task (not complete/route) when leader is waiting_for_input', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			// Leader asks a question
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Group should be marked as waiting for question
+			const updated = ctx.groupRepo.getGroup(group.id);
+			expect(updated!.waitingForQuestion).toBe(true);
+			expect(updated!.waitingSession).toBe('leader');
+
+			// Group should still be active (not completed)
+			expect(updated!.completedAt).toBeNull();
+		});
+
+		it('should clear waiting flag when leader resumes and reaches idle', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx);
+
+			// Step 1: Leader asks a question
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			const afterQuestion = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterQuestion.waitingForQuestion).toBe(true);
+			expect(afterQuestion.waitingSession).toBe('leader');
+
+			// Step 2: Question answered, leader resumes → idle
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// waiting flag should be cleared
+			const afterResume = ctx.groupRepo.getGroup(group.id)!;
+			expect(afterResume.waitingForQuestion).toBe(false);
+			expect(afterResume.waitingSession).toBeNull();
 		});
 	});
 

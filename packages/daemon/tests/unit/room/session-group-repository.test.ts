@@ -396,6 +396,39 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
+	describe('setWaitingForQuestion', () => {
+		it('should default to waitingForQuestion=false and waitingSession=null', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(group.waitingForQuestion).toBe(false);
+			expect(group.waitingSession).toBeNull();
+		});
+
+		it('should set waitingForQuestion=true and waitingSession=worker', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setWaitingForQuestion(group.id, true, 'worker');
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.waitingForQuestion).toBe(true);
+			expect(updated.waitingSession).toBe('worker');
+		});
+
+		it('should set waitingForQuestion=true and waitingSession=leader', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setWaitingForQuestion(group.id, true, 'leader');
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.waitingForQuestion).toBe(true);
+			expect(updated.waitingSession).toBe('leader');
+		});
+
+		it('should clear waitingForQuestion flag', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setWaitingForQuestion(group.id, true, 'worker');
+			repo.setWaitingForQuestion(group.id, false, null);
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.waitingForQuestion).toBe(false);
+			expect(updated.waitingSession).toBeNull();
+		});
+	});
+
 	describe('optimistic locking', () => {
 		it('should prevent concurrent updates', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
