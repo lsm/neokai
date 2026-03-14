@@ -23,6 +23,7 @@ import type {
 	SessionFeatures,
 	McpServerConfig,
 	AgentDefinition,
+	SubagentConfig,
 } from '@neokai/shared';
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
@@ -113,6 +114,13 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		}
 	}
 
+	// Collect helper names from the built agent map — single source of truth (P2 fix).
+	// Names are derived once in buildLeaderHelperAgents and reused here via Object.keys().
+	const helperConfigs = getLeaderHelperSubagents(roomConfig);
+	const helperAgentsMap =
+		helperConfigs && helperConfigs.length > 0 ? buildLeaderHelperAgents(helperConfigs) : undefined;
+	const helperNames = helperAgentsMap ? Object.keys(helperAgentsMap) : [];
+
 	return [
 		leaderRoleIntro(isPlanReview),
 		leaderToolContractSection(),
@@ -120,8 +128,8 @@ export function buildLeaderSystemPrompt(config: LeaderAgentConfig): string {
 		leaderPostRejectionSection(),
 		leaderWorkerQuestionsSection(),
 		isPlanReview
-			? leaderPlanReviewGuidelinesSection(reviewerNames)
-			: leaderCodeReviewGuidelinesSection(reviewerNames),
+			? leaderPlanReviewGuidelinesSection(reviewerNames, helperNames)
+			: leaderCodeReviewGuidelinesSection(reviewerNames, helperNames),
 	].join('\n\n');
 }
 
@@ -218,14 +226,17 @@ If the worker output shows \`Terminal state: waiting_for_input\`, the worker is 
 - If the question requires human judgment or information you don't have, use \`fail_task\` with the reason (e.g., "Worker needs human input: <question>")`;
 }
 
-function leaderPlanReviewGuidelinesSection(reviewerNames: string[]): string {
+function leaderPlanReviewGuidelinesSection(reviewerNames: string[], helperNames: string[]): string {
 	if (reviewerNames.length > 0) {
-		return leaderPlanReviewOrchestrationSection(reviewerNames);
+		return leaderPlanReviewOrchestrationSection(reviewerNames, helperNames);
 	}
-	return leaderPlanReviewSimpleSection();
+	return leaderPlanReviewSimpleSection(helperNames);
 }
 
-function leaderPlanReviewOrchestrationSection(reviewerNames: string[]): string {
+function leaderPlanReviewOrchestrationSection(
+	reviewerNames: string[],
+	helperNames: string[]
+): string {
 	const dispatchCalls = reviewerNames
 		.map(
 			(name) =>
@@ -233,10 +244,15 @@ function leaderPlanReviewOrchestrationSection(reviewerNames: string[]): string {
 		)
 		.join('\n');
 
+	const allSpecialists =
+		helperNames.length > 0
+			? `${reviewerNames.join(', ')}, ${helperNames.join(', ')}`
+			: reviewerNames.join(', ');
+
 	return `\
 ## Available Specialists (via Task subagent_type)
 
-Custom: ${reviewerNames.join(', ')}
+Custom: ${allSpecialists}
 
 ## Plan Review Orchestration Workflow
 
@@ -268,9 +284,13 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 Do NOT call \`complete_task\` after Phase 1 — the plan must be reviewed by a human first. After the planner runs Phase 2 and you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\`, call \`complete_task\`.`;
 }
 
-function leaderPlanReviewSimpleSection(): string {
+function leaderPlanReviewSimpleSection(helperNames: string[]): string {
+	const helperSection =
+		helperNames.length > 0
+			? `\n## Available Helpers (via Task subagent_type)\n\n${helperNames.join(', ')}\n\nHelpers perform read-only analysis tasks. Use them to delegate heavy analysis and keep your context clean.\n`
+			: '';
 	return `\
-## Plan Review Guidelines
+${helperSection}## Plan Review Guidelines
 
 **Phase 1 (plan document)**: When you receive \`[PLANNER OUTPUT] — Phase 1 (plan document)\`, follow this workflow:
 1. Read the planner output and extract the PR number/URL.
@@ -286,14 +306,17 @@ function leaderPlanReviewSimpleSection(): string {
 **Phase 2 (task creation)**: When you receive \`[PLANNER OUTPUT] — Phase 2 (task creation)\` showing "Tasks created: N", call \`complete_task\` with a summary of the tasks created.`;
 }
 
-function leaderCodeReviewGuidelinesSection(reviewerNames: string[]): string {
+function leaderCodeReviewGuidelinesSection(reviewerNames: string[], helperNames: string[]): string {
 	if (reviewerNames.length > 0) {
-		return leaderCodeReviewOrchestrationSection(reviewerNames);
+		return leaderCodeReviewOrchestrationSection(reviewerNames, helperNames);
 	}
-	return leaderCodeReviewSimpleSection();
+	return leaderCodeReviewSimpleSection(helperNames);
 }
 
-function leaderCodeReviewOrchestrationSection(reviewerNames: string[]): string {
+function leaderCodeReviewOrchestrationSection(
+	reviewerNames: string[],
+	helperNames: string[]
+): string {
 	const dispatchCalls = reviewerNames
 		.map(
 			(name) =>
@@ -301,10 +324,15 @@ function leaderCodeReviewOrchestrationSection(reviewerNames: string[]): string {
 		)
 		.join('\n');
 
+	const allSpecialists =
+		helperNames.length > 0
+			? `${reviewerNames.join(', ')}, ${helperNames.join(', ')}`
+			: reviewerNames.join(', ');
+
 	return `\
 ## Available Specialists (via Task subagent_type)
 
-Custom: ${reviewerNames.join(', ')}
+Custom: ${allSpecialists}
 
 ## Review Orchestration Workflow
 
@@ -334,9 +362,13 @@ Each reviewer returns a \`---REVIEW_POSTED---\` block containing the review URL,
 - **Fundamentally broken** → \`fail_task\` or \`replan_goal\``;
 }
 
-function leaderCodeReviewSimpleSection(): string {
+function leaderCodeReviewSimpleSection(helperNames: string[]): string {
+	const helperSection =
+		helperNames.length > 0
+			? `\n## Available Helpers (via Task subagent_type)\n\n${helperNames.join(', ')}\n\nHelpers perform read-only analysis tasks (e.g., "summarize changes in these files"). Use them to delegate heavy analysis and keep your context clean.\n`
+			: '';
 	return `\
-## Code Review Guidelines
+${helperSection}## Code Review Guidelines
 
 **Every iteration follows the same workflow** — including after the worker addresses feedback.
 1. Read the worker output and extract the PR number/URL.
@@ -475,22 +507,6 @@ export function createLeaderMcpServer(groupId: string, callbacks: LeaderToolCall
 }
 
 /**
- * Sub-agent configuration (used in room.config.agentSubagents.{role})
- */
-interface SubagentConfig {
-	/** Model ID (e.g., 'claude-opus-4-6', 'gpt-5.3-codex') or CLI agent short name */
-	model: string;
-	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
-	provider?: string;
-	/** Marks this reviewer as CLI-based (external tool orchestrated via Bash) */
-	type?: 'cli';
-	/** Full model ID when different from the short name in 'model' */
-	modelId?: string;
-	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
-	cliModel?: string;
-}
-
-/**
  * Read leader sub-agents from room config.
  * Path: room.config.agentSubagents.leader
  */
@@ -500,6 +516,78 @@ function getLeaderSubagents(roomConfig: Record<string, unknown>): SubagentConfig
 		return agentSubagents.leader;
 	}
 	return undefined;
+}
+
+/**
+ * Read leader helper sub-agents from room config.
+ * Path: room.config.agentSubagents.leaderHelpers
+ *
+ * Leader helpers are read-only analysis agents (no Write/Edit) used to delegate
+ * heavy analysis tasks. Unlike reviewers, they do not post GitHub reviews.
+ */
+export function getLeaderHelperSubagents(
+	roomConfig: Record<string, unknown>
+): SubagentConfig[] | undefined {
+	const agentSubagents = roomConfig.agentSubagents as Record<string, SubagentConfig[]> | undefined;
+	if (agentSubagents?.leaderHelpers && agentSubagents.leaderHelpers.length > 0) {
+		return agentSubagents.leaderHelpers;
+	}
+	return undefined;
+}
+
+/**
+ * Build AgentDefinition map for leader helper sub-agents.
+ *
+ * Helper names follow the pattern `leader-helper-{shortModelName}` with a counter
+ * suffix to avoid collisions. The names returned by Object.keys() of this map are
+ * the canonical names used in prompts — ensuring prompt and agent map stay in sync.
+ */
+export function buildLeaderHelperAgents(
+	helpers: SubagentConfig[]
+): Record<string, AgentDefinition> {
+	const agents: Record<string, AgentDefinition> = {};
+	const usedNames = new Set<string>();
+
+	for (const helper of helpers) {
+		const shortName = toShortModelName(helper.model);
+		let name = `leader-helper-${shortName}`;
+		let counter = 2;
+		while (usedNames.has(name)) {
+			name = `leader-helper-${shortName}-${counter}`;
+			counter++;
+		}
+		usedNames.add(name);
+
+		const modelId = helper.modelId ?? helper.model;
+		const provider = helper.provider ?? 'anthropic';
+		const description = `Leader analysis helper using ${modelId} (${provider}). Performs read-only analysis to keep the main leader context clean.`;
+
+		agents[name] = {
+			description,
+			// Read-only tools — helpers analyze but do not modify files
+			tools: ['Read', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch'],
+			model: toAgentModel(modelId),
+			prompt: `You are a Leader Analysis Helper Agent. Your job is to perform read-only analysis tasks delegated by the main Leader Agent.
+
+## Rules
+
+1. **Read-only** — do NOT modify, create, or delete files
+2. **Return a concise summary** — include what you found and the key insights
+3. **No sub-agents** — do not spawn further sub-agents
+
+## Summary Format
+
+End your response with a structured summary:
+
+---ANALYSIS_RESULT---
+status: success | partial | failed
+summary: <1-3 sentence description of findings>
+---END_ANALYSIS_RESULT---
+`,
+		};
+	}
+
+	return agents;
 }
 
 /**
@@ -965,14 +1053,24 @@ export function createLeaderAgentInit(
 			? buildReviewerAgents(reviewerConfigs, leaderModel)
 			: undefined;
 
-	// Only define the Leader agent definition and use agent/agents pattern
-	// when there are reviewer sub-agents to dispatch. Otherwise, use the simple
-	// preset path to avoid unnecessary complexity.
-	if (reviewerAgents) {
+	// Build helper agents from room config (if any)
+	const helperConfigs = getLeaderHelperSubagents(roomConfig);
+	const helperAgents =
+		helperConfigs && helperConfigs.length > 0 ? buildLeaderHelperAgents(helperConfigs) : undefined;
+
+	// Merge reviewers and helpers into a single sub-agents map.
+	// Use the agent/agents pattern when ANY sub-agents are configured.
+	const allSubAgents: Record<string, AgentDefinition> = {
+		...reviewerAgents,
+		...helperAgents,
+	};
+	const hasSubAgents = Object.keys(allSubAgents).length > 0;
+
+	if (hasSubAgents) {
 		// Leader agent definition — orchestrates reviews via MCP tools + Task for sub-agents
 		const leaderAgentDef: AgentDefinition = {
 			description:
-				'Coordinator that orchestrates code review. Dispatches reviewer sub-agents, collects their review links, and routes decisions using MCP tools.',
+				'Coordinator that orchestrates code review. Dispatches reviewer and helper sub-agents, collects their results, and routes decisions using MCP tools.',
 			prompt: buildLeaderSystemPrompt(config),
 			tools: ['Task', 'TaskOutput', 'TaskStop', 'Read', 'Grep', 'Glob'],
 			model: toAgentModel(config.model ?? DEFAULT_LEADER_MODEL),
@@ -980,7 +1078,7 @@ export function createLeaderAgentInit(
 
 		const allAgents: Record<string, AgentDefinition> = {
 			Leader: leaderAgentDef,
-			...reviewerAgents,
+			...allSubAgents,
 		};
 
 		return {
