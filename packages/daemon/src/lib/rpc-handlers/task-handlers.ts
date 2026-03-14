@@ -21,6 +21,7 @@ import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
+import { TaskRepository } from '../../storage/repositories/task-repository';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -163,6 +164,31 @@ export function setupTaskHandlers(
 		}
 
 		return { task };
+	});
+
+	// task.updateDraft - Persist human input draft for a task (server-side)
+	messageHub.onRequest('task.updateDraft', async (data) => {
+		const params = data as { roomId: string; taskId: string; draft: string | null };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		// Verify the task belongs to this room
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Update input_draft directly via repository (lightweight, no status side effects)
+		const taskRepo = new TaskRepository(db.getDatabase());
+		taskRepo.updateTask(params.taskId, { inputDraft: params.draft ?? null });
+
+		return { success: true };
 	});
 
 	// task.fail - Fail a task

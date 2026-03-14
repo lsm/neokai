@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, act } from '@testing-library/preact';
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
+import { signal } from '@preact/signals';
 // Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
 
@@ -30,6 +31,31 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 		onEvent: mockOnEvent,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
+	}),
+}));
+
+// Mock useTaskInputDraft so component tests don't depend on hub connectivity.
+// Uses Preact Signals so that updating the content triggers proper component re-renders,
+// matching the real hook's behavior (which also uses signals internally).
+const _draftContentSignal = signal('');
+const _draftRestoredSignal = signal(false);
+const mockSetMessageText = vi.fn((v: string) => {
+	_draftContentSignal.value = v;
+});
+const mockClearDraft = vi.fn(() => {
+	_draftContentSignal.value = '';
+	_draftRestoredSignal.value = false;
+});
+vi.mock('../../hooks/useTaskInputDraft.ts', () => ({
+	useTaskInputDraft: () => ({
+		get content() {
+			return _draftContentSignal.value;
+		},
+		setContent: mockSetMessageText,
+		clear: mockClearDraft,
+		get draftRestored() {
+			return _draftRestoredSignal.value;
+		},
 	}),
 }));
 
@@ -324,6 +350,11 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		mockShowScrollButton.value = false;
 		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
+		// Reset draft mock state
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
 	});
 
 	afterEach(() => {
