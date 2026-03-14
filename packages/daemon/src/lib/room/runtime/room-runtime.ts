@@ -843,22 +843,23 @@ export class RoomRuntime {
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
-				// State machine enforcement: PR/planning tasks must go through submit_for_review first.
-				// They follow a two-phase flow: work → review → human approval → merge/create tasks → complete.
-				// Exception: approved=true means human already approved (PR or plan).
+				// State machine enforcement: PR/planning tasks require human approval before complete_task.
+				// They follow a two-phase flow: work → submit_for_review → human approval → merge/create tasks → complete.
+				// Human approval (approved=true) is set when a human calls reviewTask to approve the PR or plan.
+				// Bypass marker tasks are pre-authorized (approved=true) so they skip this check.
 				if (
 					(group.workerRole === 'coder' ||
 						group.workerRole === 'general' ||
 						group.workerRole === 'planner') &&
-					!group.submittedForReview &&
 					!group.approved
 				) {
 					this.groupRepo.setLeaderCalledTool(groupId, false);
 					return jsonResult({
 						success: false,
-						error: 'Tasks must go through submit_for_review before complete_task.',
-						action_required:
-							'Call submit_for_review with the PR URL first. After human approval, you can call complete_task.',
+						error: 'Human approval is required before completing this task.',
+						action_required: group.submittedForReview
+							? 'The task is awaiting human review. Wait for a human to approve the PR/plan before calling complete_task.'
+							: 'Call submit_for_review with the PR URL first. After human approval, you can call complete_task.',
 					});
 				}
 

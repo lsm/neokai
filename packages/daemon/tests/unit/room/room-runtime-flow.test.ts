@@ -494,8 +494,9 @@ describe('RoomRuntime flow', () => {
 			});
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 
-			// Step 3: Leader reviews and approves
+			// Step 3: Leader reviews and approves (human approval required)
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Endpoint added successfully',
 			});
@@ -556,6 +557,7 @@ describe('RoomRuntime flow', () => {
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Error handling added',
 			});
@@ -744,6 +746,7 @@ describe('RoomRuntime flow', () => {
 				kind: 'idle',
 			});
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'All done' });
 
 			expect(ctx.groupRepo.getGroup(group.id)!.completedAt).not.toBeNull();
@@ -768,8 +771,9 @@ describe('RoomRuntime flow', () => {
 			expect(ctx.groupRepo.getGroup(group.id)!.leaderContractViolations).toBe(0);
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 
-			// Leader can still complete after review submission.
+			// Leader can still complete after human approval.
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'Done' });
 			expect(ctx.groupRepo.getGroup(group.id)!.completedAt).not.toBeNull();
 		});
@@ -856,6 +860,7 @@ describe('RoomRuntime flow', () => {
 		it('should not fire if Leader called a tool', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx);
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 
 			// Leader calls complete_task (which persists leaderCalledTool in DB)
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', { summary: 'Done' });
@@ -1040,9 +1045,10 @@ describe('RoomRuntime flow', () => {
 			});
 
 			// Must be a coder task so the reviewer gate fires
-			// Also pre-set submittedForReview so the state machine gate doesn't block first
+			// Set approved=true so the human-approval gate passes and reviewer check is reached
 			const { group } = await spawnAndRouteToLeader(hookCtx, { assignedAgent: 'coder' });
 			hookCtx.groupRepo.setSubmittedForReview(group.id, true);
+			hookCtx.groupRepo.setApproved(group.id, true);
 
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'done',
@@ -1075,6 +1081,7 @@ describe('RoomRuntime flow', () => {
 
 			const { group } = await spawnAndRouteToLeader(hookCtx);
 			hookCtx.groupRepo.setSubmittedForReview(group.id, true);
+			hookCtx.groupRepo.setApproved(group.id, true);
 
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'done',
@@ -1174,9 +1181,10 @@ describe('RoomRuntime flow', () => {
 			const initialGoal = await ctx.goalManager.getGoal(goal.id);
 			expect(initialGoal!.progress).toBeLessThan(100);
 
-			// Leader completes the task
+			// Leader completes the task (requires human approval)
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 			await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Task done',
 			});
@@ -1321,16 +1329,16 @@ describe('RoomRuntime flow', () => {
 	});
 
 	describe('state machine: submit_for_review → awaiting_human → complete_task', () => {
-		test('complete_task is rejected for coder tasks without prior submit_for_review', async () => {
+		test('complete_task is rejected for coder tasks without human approval', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
 
-			// Coder task: complete_task without submit_for_review should be rejected
+			// Coder task: complete_task without human approval should be rejected
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Done',
 			});
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('submit_for_review');
+			expect(parsed.error).toContain('Human approval');
 			expect(parsed.action_required).toBeDefined();
 
 			// Group stays in awaiting_leader — not completed
@@ -1380,7 +1388,7 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.completedAt).not.toBeNull();
 		});
 
-		test('complete_task is rejected for general tasks without prior submit_for_review', async () => {
+		test('complete_task is rejected for general tasks without human approval', async () => {
 			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
@@ -1388,7 +1396,7 @@ describe('RoomRuntime flow', () => {
 			});
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('submit_for_review');
+			expect(parsed.error).toContain('Human approval');
 			expect(ctx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 		});
 
@@ -2194,7 +2202,7 @@ describe('RoomRuntime flow', () => {
 			});
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('submit_for_review');
+			expect(parsed.error).toContain('Human approval');
 		});
 
 		test('full approve cycle: code → review → approve → merge → complete', async () => {
