@@ -249,6 +249,29 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Revive a failed/cancelled group for human message injection.
+	 * Clears completed_at WITHOUT resetting metadata — preserves conversation
+	 * history, feedback iterations, and other state so the agent can continue
+	 * from where it left off after the human provides guidance.
+	 *
+	 * Unlike resetGroupForRestart() which does a full metadata wipe, this is a
+	 * lightweight revive intended for the "send message to failed task" flow.
+	 */
+	reviveGroup(groupId: string): SessionGroup | null {
+		const result = this.db
+			.prepare(
+				`UPDATE session_groups
+				 SET completed_at = NULL,
+				     version = version + 1
+				 WHERE id = ?`
+			)
+			.run(groupId);
+
+		if (result.changes === 0) return null;
+		return this.getGroup(groupId);
+	}
+
+	/**
 	 * Reset a failed/completed group for task restart.
 	 * Clears completed_at and resets metadata fields to allow the task to be
 	 * picked up fresh by the runtime.

@@ -276,16 +276,33 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
-			// Handle restart: reset failed/cancelled group so runtime picks it up fresh
+			// Handle restart/revive: update group state for failed/cancelled tasks
 			if (task.status === 'failed' || task.status === 'cancelled') {
-				if (args.status === 'pending' || args.status === 'in_progress') {
-					const group = groupRepo.getGroupByTaskId(args.task_id);
-					if (group) {
+				const group = groupRepo.getGroupByTaskId(args.task_id);
+				if (group) {
+					if (args.status === 'pending' || args.status === 'in_progress') {
+						// Full reset: wipe metadata so the runtime picks the task up fresh
 						const reset = groupRepo.resetGroupForRestart(group.id);
 						if (!reset) {
 							return jsonResult({
 								success: false,
 								error: `Failed to reset group for task ${args.task_id} — group may have been modified concurrently`,
+							});
+						}
+					} else if (
+						args.status === 'review' &&
+						task.status === 'failed' &&
+						group.completedAt !== null
+					) {
+						// Lightweight revive (failed → review only): clear completedAt without
+						// resetting metadata. Only supported for failed tasks — cancelled tasks
+						// have their worktree cleaned up so reviving the group would point
+						// sessions at a gone workspace.
+						const revived = groupRepo.reviveGroup(group.id);
+						if (!revived) {
+							return jsonResult({
+								success: false,
+								error: `Failed to revive group for task ${args.task_id} — group may have been modified concurrently`,
 							});
 						}
 					}
@@ -391,6 +408,54 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!runtime) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
+
+			// Cancelled tasks cannot be revived via message — the worktree is cleaned
+			// up on cancellation so restoring the session would point to a gone
+			// workspace. Direct the caller to restart the task from scratch instead.
+			if (task.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is cancelled. Cancelled tasks cannot receive messages ` +
+						'because their workspace has been cleaned up. Use set_task_status to restart it ' +
+						'(e.g. status: "pending" or "in_progress").',
+				});
+			}
+
+			// Auto-revive: if the task has failed, transition it to 'review' and
+			// restore the agent sessions so the message can be delivered. Failed
+			// tasks preserve their worktree, so session restoration is safe.
+			if (task.status === 'failed') {
+				try {
+					await taskManager.setTaskStatus(args.task_id, 'review');
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: `Failed to revive task ${args.task_id}: ${String(err)}`,
+					});
+				}
+
+				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
+				if (!revived) {
+					// Roll back the task status; review → failed is a valid transition.
+					try {
+						await taskManager.setTaskStatus(args.task_id, 'failed');
+					} catch {
+						// Rollback is best-effort; swallow to avoid masking the original error
+					}
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to revive task ${args.task_id}: agent sessions could not be restored. ` +
+							'Task status has been reset to failed.',
+					});
+				}
+				return jsonResult({
+					success: true,
+					message: `Task ${args.task_id} revived from failed to review and message delivered to agent`,
+				});
+			}
+
 			const { success, error } = await routeHumanMessageToGroup(
 				runtime,
 				groupRepo,

@@ -772,4 +772,46 @@ describe('TaskManager', () => {
 			expect(final?.status).toBe('completed');
 		});
 	});
+
+	describe('setTaskStatus — revive to review', () => {
+		it('should allow failed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'boom');
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+		});
+
+		it('should clear error field on failed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'something broke');
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+			// error is mapped null→undefined by the task repository
+			expect(revived.error).toBeUndefined();
+		});
+
+		it('should reject cancelled → review transition (worktree is cleaned up on cancel)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject completed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+	});
 });

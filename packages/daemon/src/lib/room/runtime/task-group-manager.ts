@@ -525,7 +525,7 @@ export class TaskGroupManager {
 	 *
 	 * Used for ALL human resumptions (both approval and rejection):
 	 * - Approval: leader merges PR and calls complete_task
-	 * - Rejection: leader forwards feedback to worker via send_to_worker + handoff_to_worker
+	 * - Rejection: leader forwards feedback to worker via send_to_worker
 	 *
 	 * No new sessions are created. The existing observer will fire
 	 * onLeaderTerminalState again when the leader finishes.

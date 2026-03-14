@@ -106,10 +106,6 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async handoffToWorker(groupId: string) {
-			calls.push({ method: 'handoffToWorker', args: [groupId] });
-			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
-		},
 		async completeTask(groupId: string, summary: string) {
 			calls.push({ method: 'completeTask', args: [groupId, summary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
@@ -135,7 +131,6 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Tool Contract (CRITICAL)');
 			expect(prompt).toContain('send_to_worker');
-			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
@@ -186,7 +181,7 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			expect(prompt).toContain('P0/P1/P2 issues');
 			expect(prompt).toContain('ONLY your review URL(s)');
-			expect(prompt).toContain('Every iteration follows the same workflow');
+			expect(prompt).toContain('Phase 1 (plan document)');
 		});
 
 		it('should include plan review guidelines when reviewContext is plan_review', () => {
@@ -194,6 +189,28 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('Plan Review Guidelines');
 			expect(prompt).toContain('task breakdown');
 			expect(prompt).toContain('replan_goal');
+		});
+
+		it('should include Phase 2 completion guidance in simple plan review path', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			expect(prompt).toContain('Phase 2 (task creation)');
+			expect(prompt).toContain('complete_task');
+		});
+
+		it('should use planning-specific post-approval workflow for plan_review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
+			// Should instruct leader to send planner back — NOT merge the PR itself
+			expect(prompt).toContain('send_to_worker');
+			expect(prompt).toContain('create_task');
+			// The "merge PR yourself" instructions should NOT be present
+			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --squash');
+		});
+
+		it('should use direct merge post-approval workflow for code review', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			// Leader merges the PR directly for coder/general tasks
+			expect(prompt).toContain('gh pr merge <PR_NUMBER> --squash');
+			expect(prompt).toContain('Do NOT send the worker back to do the merge');
 		});
 
 		it('should include replan_goal guidance in code review guidelines', () => {
@@ -309,17 +326,6 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
 			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
-		});
-
-		it('should route handoff_to_worker to callback with groupId', async () => {
-			const callbacks = makeCallbacks();
-			const handlers = createLeaderToolHandlers('group-1', callbacks);
-
-			await handlers.handoff_to_worker();
-
-			expect(callbacks.calls).toHaveLength(1);
-			expect(callbacks.calls[0].method).toBe('handoffToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1']);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {
