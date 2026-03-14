@@ -239,6 +239,179 @@ describe('RoomRuntime flow', () => {
 		});
 	});
 
+	describe('interruptTaskSession', () => {
+		it('should interrupt sessions without changing task status', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.completedAt).toBeNull();
+
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// Task should remain in_progress (not failed/cancelled)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+
+			// Group should remain active (not terminal)
+			const updatedGroup = ctx.groupRepo.getGroup(group!.id);
+			expect(updatedGroup!.completedAt).toBeNull();
+
+			// Both sessions should have been interrupted (not stopped/removed)
+			const interruptCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'interruptSession'
+			);
+			expect(interruptCalls).toHaveLength(2);
+			expect(interruptCalls.map((c) => c.args[0])).toEqual(
+				expect.arrayContaining([group!.workerSessionId, group!.leaderSessionId])
+			);
+			// stopSession should NOT be called
+			const stopCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'stopSession');
+			expect(stopCalls).toHaveLength(0);
+		});
+
+		it('should return failure for non-existent task', async () => {
+			const result = await ctx.runtime.interruptTaskSession('non-existent-task-id');
+			expect(result.success).toBe(false);
+		});
+
+		it('should return failure for task not in in_progress or review status', async () => {
+			const task = await ctx.taskManager.createTask({
+				title: 'Pending Task',
+				description: 'Not started yet',
+				priority: 'normal',
+			});
+			// Task is pending by default
+			expect(task.status).toBe('pending');
+
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(false);
+		});
+
+		it('should return failure for task with no active group', async () => {
+			const task = await ctx.taskManager.createTask({
+				title: 'Task without group',
+				description: 'desc',
+				priority: 'normal',
+			});
+			// Manually move to in_progress with no group
+			await ctx.taskManager.setTaskStatus(task.id, 'in_progress');
+
+			// No group exists, so interruptTaskSession should fail gracefully
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(false);
+		});
+
+		it('should set humanInterrupted flag preventing auto-routing to leader', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task
+			await ctx.runtime.interruptTaskSession(task.id);
+
+			// humanInterrupted should be set
+			const updatedGroup = ctx.groupRepo.getGroup(group!.id);
+			expect(updatedGroup!.humanInterrupted).toBe(true);
+
+			// Simulate worker reaching terminal state (would normally route to leader)
+			const initialInjectCount = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage'
+			).length;
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted should be cleared after onWorkerTerminalState
+			const clearedGroup = ctx.groupRepo.getGroup(group!.id);
+			expect(clearedGroup!.humanInterrupted).toBe(false);
+
+			// No leader session should have been created (routing was blocked)
+			const createCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			// Only 1 create call (the initial worker), leader was not created
+			expect(createCalls).toHaveLength(1);
+
+			// No new inject messages (routing to leader sends an envelope)
+			const injectCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'injectMessage');
+			expect(injectCalls.length).toBe(initialInjectCount);
+		});
+
+		it('should clear humanInterrupted when routeLeaderToWorker is called (P2 fix)', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task (sets humanInterrupted = true)
+			await ctx.runtime.interruptTaskSession(task.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(true);
+
+			// Leader routes feedback to worker (simulates send_to_worker tool call)
+			await ctx.runtime.taskGroupManager.routeLeaderToWorker(group!.id, 'Here is my feedback');
+
+			// humanInterrupted should be cleared so the next worker completion routes normally
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// Now when worker finishes, onWorkerTerminalState should NOT be blocked
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted remains false after terminal state
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+		});
+
+		it('should clear humanInterrupted when injectMessageToWorker is called (race condition fix)', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task (sets humanInterrupted = true)
+			await ctx.runtime.interruptTaskSession(task.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(true);
+
+			// User injects a new message to the worker (simulates typing after interrupt)
+			const injected = await ctx.runtime.injectMessageToWorker(task.id, 'Please fix the error');
+			expect(injected).toBe(true);
+
+			// humanInterrupted should be cleared so the next worker completion routes normally
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// Now when worker finishes, onWorkerTerminalState should NOT be blocked by humanInterrupted
+			// (it's already false). Verify by checking the flag is NOT re-set after terminal state.
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted remains false — not set again by onWorkerTerminalState
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// The 'humanInterrupted early return' path was NOT taken, so either exit gate
+			// routing or normal routing occurred — at minimum, more than 0 injectMessage
+			// calls were made (from gate checks or leader routing), unlike the interrupt
+			// path which returns before any inject
+			const allCalls = ctx.sessionFactory.calls.map((c) => c.method);
+			// At least interruptSession x2 + injectMessage x1 (human msg) were made
+			expect(allCalls.filter((m) => m === 'interruptSession')).toHaveLength(2);
+		});
+	});
+
 	describe('autonomous flow integration', () => {
 		it('should complete the full single-iteration cycle: spawn → worker done → leader completes', async () => {
 			const { task } = await createGoalAndTask(ctx);

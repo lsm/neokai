@@ -62,6 +62,8 @@ interface TaskGroupMetadata {
 	rateLimit?: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
 	deferredLeader?: DeferredLeaderConfig | null;
+	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
+	humanInterrupted?: boolean;
 	/** Gate failure history for dead loop detection */
 	gateFailures?: GateFailureRecord[];
 }
@@ -114,6 +116,8 @@ export interface SessionGroup {
 	rateLimit: RateLimitBackoff | null;
 	/** Persisted bootstrap config for deferred Leader creation */
 	deferredLeader: DeferredLeaderConfig | null;
+	/** Whether the user interrupted the session mid-generation (prevents auto-routing to leader) */
+	humanInterrupted: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -421,6 +425,24 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set humanInterrupted flag without version check.
+	 * When true, prevents automatic routing to leader when worker reaches idle state.
+	 */
+	setHumanInterrupted(groupId: string, value: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, humanInterrupted: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Set approved flag without version check.
 	 * Records that the human has approved the task (plan or PR).
 	 */
@@ -655,6 +677,7 @@ export class SessionGroupRepository {
 			approved: meta.approved ?? false,
 			rateLimit: meta.rateLimit ?? null,
 			deferredLeader: meta.deferredLeader ?? null,
+			humanInterrupted: meta.humanInterrupted === true,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
