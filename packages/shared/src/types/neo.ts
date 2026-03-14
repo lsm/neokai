@@ -268,6 +268,34 @@ export interface UpdateTaskParams {
 }
 
 // ============================================================================
+// Sub-Agent Configuration Types
+// ============================================================================
+
+/**
+ * Configuration for a sub-agent entry in room.config.agentSubagents.
+ *
+ * Used for leader reviewers (.leader[]), leader analysis helpers (.leaderHelpers[]),
+ * and coder worker helpers (.worker[]). The runtime builder functions convert these
+ * configs into AgentDefinition objects for the SDK.
+ */
+export interface SubagentConfig {
+	/** Model ID (e.g., 'claude-haiku-4-5', 'claude-sonnet-4-6') or CLI agent short name */
+	model: string;
+	/** Provider name (e.g., 'anthropic', 'openai', 'google') */
+	provider?: string;
+	/** Marks this as CLI-based (external tool orchestrated via Bash) */
+	type?: 'cli';
+	/** Full model ID when different from the short name in 'model' */
+	modelId?: string;
+	/** Model the CLI tool should use internally (e.g., copilot --model gpt-5.3-codex) */
+	cliModel?: string;
+	/** Optional display name override for this sub-agent */
+	name?: string;
+	/** Optional description of what this sub-agent specializes in */
+	description?: string;
+}
+
+// ============================================================================
 // Runtime Types
 // ============================================================================
 
