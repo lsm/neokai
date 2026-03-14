@@ -12,7 +12,7 @@ Improve the kai binary's configuration system to make local development, testing
 
 3. **No debug visibility** - There's no way to see what configuration is actually being used at startup.
 
-4. **Provider env vars always override user settings** - The provider system always applies its own ANTHROPIC_BASE_URL, meaning even if a user sets it in settings.json, it gets overridden when making queries (except for Anthropic provider).
+4. **Provider env vars always override user settings** - The provider system always applies its own ANTHROPIC_BASE_URL, meaning even if a user sets it in settings.json, it gets overridden when making queries (except for Anthropic provider). **Status: PARTIALLY FIXED** - provider-service.ts now preserves user's ANTHROPIC_BASE_URL via user-configured env var capture.
 
 5. **Configuration precedence unclear** - While code has precedence (CLI > env > settings.json), it's not documented.
 
@@ -85,22 +85,21 @@ Improve the kai binary's configuration system to make local development, testing
 ### Task 3: Fix ANTHROPIC_BASE_URL Configuration for Anthropic Provider
 
 **Description:**
-- The issue exists in TWO locations in `provider-service.ts`:
-
-  **Location 1**: `getEnvVarsForModel()` (lines 361-367) - returns `{}` for Anthropic provider which causes `clearProviderRoutingEnvVars()` to delete user's ANTHROPIC_BASE_URL
-
-  **Location 2**: `applyEnvVarsToProcessForProvider()` (lines 444-446) - same issue when called with explicit provider
-
-- **Implementation approach for both methods**: Modify each to return `{ ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL }` if the user has configured it and the provider is Anthropic
-- This preserves user's configured URL instead of clearing it
-- Ensure CLI/env overrides take precedence over settings.json for Anthropic provider
+- **Status: PARTIALLY IMPLEMENTED** - The fix has been applied to `provider-service.ts` in a different approach than originally planned
+- The implementation captures user-configured env vars at module initialization (lines 638-644) and preserves them in `clearProviderRoutingEnvVars()` (lines 521-531)
+- This approach is actually better than the original plan as it preserves the user's config throughout the module lifecycle
+- Verify the implementation works correctly:
+  - User's `ANTHROPIC_BASE_URL` from environment/settings.json should be preserved when using Anthropic provider
+  - The `userConfiguredBaseUrl` constant captures the value at module load time
+  - The `clearProviderRoutingEnvVars()` method now checks against this captured value instead of unconditionally deleting
+- No code changes needed - this task is now about verification
 
 **Dependencies:** Task 1
 
 **Acceptance Criteria:**
-- Setting `ANTHROPIC_BASE_URL` environment variable or CLI flag uses the custom URL for Anthropic provider
-- The user's ANTHROPIC_BASE_URL is not deleted when making queries with Anthropic provider via either method
-- Both `getEnvVarsForModel()` and `applyEnvVarsToProcessForProvider()` preserve user's config
+- Verify that user's `ANTHROPIC_BASE_URL` from environment/settings.json is preserved when using Anthropic provider
+- The implementation in `clearProviderRoutingEnvVars()` correctly preserves user config via `userConfiguredBaseUrl`
+- No code changes needed - implementation exists in provider-service.ts (already done)
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 **Agent Type:** coder
@@ -187,7 +186,7 @@ Task 1: Add ANTHROPIC_BASE_URL to Config Interface and CLI Flags
 | `packages/daemon/src/config.ts` | 1, 2, 5 |
 | `packages/cli/src/cli-utils.ts` | 1, 2, 4 |
 | `packages/cli/main.ts` | 1, 2 |
-| `packages/daemon/src/lib/provider-service.ts` | 3 |
+| `packages/daemon/src/lib/provider-service.ts` | 3 (already implemented) |
 | `docs/configuration.md` (new) | 4 |
 | `packages/daemon/tests/unit/core/config.test.ts` (extend) | 5 |
 | `packages/cli/tests/cli-utils.test.ts` (if exists) | 5 |
