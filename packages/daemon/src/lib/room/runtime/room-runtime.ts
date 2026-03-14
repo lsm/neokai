@@ -148,6 +148,13 @@ export class RoomRuntime {
 	/** Mirroring unsub functions per group ID */
 	private mirroringCleanups = new Map<string, () => void>();
 
+	/**
+	 * Group IDs whose stuck-worker recovery is currently in-flight.
+	 * Guards against duplicate `onWorkerTerminalState` calls across successive ticks
+	 * while the first fire-and-forget routing is still completing.
+	 */
+	private stuckWorkerRecoveryInFlight = new Set<string>();
+
 	readonly taskGroupManager: TaskGroupManager;
 
 	/**
@@ -1576,10 +1583,11 @@ export class RoomRuntime {
 	 * Conditions for a "stuck worker":
 	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
 	 * - Worker session IS in the session factory (not a zombie)
-	 * - Worker session processing state is terminal (idle/interrupted)
+	 * - Worker session processing state is terminal (idle/interrupted/waiting_for_input)
 	 * - Leader session is NOT in the session factory (not yet created)
 	 * - Group is NOT awaiting human review
 	 * - Group is NOT rate-limited
+	 * - A recovery for this group is NOT already in-flight from a previous tick
 	 */
 	private recoverStuckWorkers(): void {
 		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
@@ -1599,7 +1607,7 @@ export class RoomRuntime {
 			// Leader must NOT exist yet (routing hasn't happened)
 			if (this.sessionFactory.hasSession(group.leaderSessionId)) continue;
 
-			// Worker must be in a terminal state (idle or interrupted)
+			// Worker must be in a terminal state (idle, interrupted, or waiting_for_input)
 			const workerState = this.sessionFactory.getProcessingState(group.workerSessionId);
 			if (
 				workerState !== 'idle' &&
@@ -1607,6 +1615,15 @@ export class RoomRuntime {
 				workerState !== 'waiting_for_input'
 			)
 				continue;
+
+			// Guard against duplicate in-flight recovery: if a previous tick already
+			// triggered routing for this group and it hasn't completed yet, skip it.
+			// feedbackIteration is incremented only after routeWorkerToLeader succeeds,
+			// so without this guard successive ticks would fire concurrent routing calls.
+			if (this.stuckWorkerRecoveryInFlight.has(group.id)) {
+				log.debug(`[StuckWorker] Group ${group.id}: recovery already in-flight, skipping`);
+				continue;
+			}
 
 			log.warn(
 				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but leader never created ` +
@@ -1616,13 +1633,18 @@ export class RoomRuntime {
 				text: `Worker found in ${workerState} state without a leader — re-triggering routing to Leader.`,
 			});
 
-			// Re-trigger routing (fire-and-forget, guarded with error logging)
+			// Mark as in-flight before firing, clear when done (success or error)
+			this.stuckWorkerRecoveryInFlight.add(group.id);
 			void this.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: workerState,
-			}).catch((err) => {
-				log.error(`[StuckWorker] Group ${group.id}: re-triggered routing threw:`, err);
-			});
+			})
+				.catch((err) => {
+					log.error(`[StuckWorker] Group ${group.id}: re-triggered routing threw:`, err);
+				})
+				.finally(() => {
+					this.stuckWorkerRecoveryInFlight.delete(group.id);
+				});
 		}
 	}
 

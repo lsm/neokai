@@ -605,4 +605,60 @@ describe('Stuck worker detection and recovery', () => {
 		);
 		expect(leaderCalls).toHaveLength(0);
 	});
+
+	it('should detect a stuck worker in waiting_for_input state and re-trigger routing', async () => {
+		const group = await spawnGroup();
+
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'waiting_for_input');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		const leaderCreated = waitForLeaderCreation();
+
+		await ctx.runtime.tick();
+		await leaderCreated;
+
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(1);
+	});
+
+	it('should not fire duplicate routing on successive ticks while recovery is in-flight', async () => {
+		const group = await spawnGroup();
+
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		// Track how many times leader creation is attempted
+		let leaderCreateCount = 0;
+		const firstLeaderCreated = new Promise<void>((resolve) => {
+			const orig = ctx.sessionFactory.createAndStartSession.bind(ctx.sessionFactory);
+			ctx.sessionFactory.createAndStartSession = async (init: unknown, role: string) => {
+				if (role === 'leader') {
+					leaderCreateCount++;
+					if (leaderCreateCount === 1) resolve();
+				}
+				await orig(init, role);
+			};
+		});
+
+		// Tick 1: triggers fire-and-forget recovery (routing is in-flight)
+		await ctx.runtime.tick();
+		// Tick 2: recovery is still in-flight — should be skipped due to in-flight guard
+		await ctx.runtime.tick();
+
+		// Wait for the first (and only) leader creation to complete
+		await firstLeaderCreated;
+		// Brief drain to ensure any second attempt would have fired by now
+		await new Promise((r) => setTimeout(r, 5));
+
+		// Only one leader creation should have been attempted despite two ticks
+		expect(leaderCreateCount).toBe(1);
+	});
 });
