@@ -552,4 +552,68 @@ describe('SessionGroupRepository', () => {
 			expect(repo.getRateLimitRemainingMs(group.id)).toBe(0);
 		});
 	});
+
+	describe('Gate Failure Tracking (Dead Loop Detection)', () => {
+		it('starts with empty failure history', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toEqual([]);
+		});
+
+		it('records a gate failure', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.recordGateFailure(group.id, 'worker_exit', 'No PR found.');
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(1);
+			expect(history[0].gateName).toBe('worker_exit');
+			expect(history[0].reason).toBe('No PR found.');
+			expect(history[0].timestamp).toBeGreaterThan(0);
+		});
+
+		it('accumulates multiple failures', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.recordGateFailure(group.id, 'worker_exit', 'No PR found.');
+			repo.recordGateFailure(group.id, 'worker_exit', 'Branch is base branch.');
+			repo.recordGateFailure(group.id, 'leader_complete', 'PR not merged.');
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(3);
+			expect(history[0].gateName).toBe('worker_exit');
+			expect(history[2].gateName).toBe('leader_complete');
+		});
+
+		it('caps history at 50 records', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			for (let i = 0; i < 60; i++) {
+				repo.recordGateFailure(group.id, 'worker_exit', `Failure ${i}`);
+			}
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(50);
+			// Should keep the most recent (last 50)
+			expect(history[0].reason).toBe('Failure 10');
+			expect(history[49].reason).toBe('Failure 59');
+		});
+
+		it('returns empty array for non-existent group', () => {
+			const history = repo.getGateFailureHistory('non-existent-id');
+			expect(history).toEqual([]);
+		});
+
+		it('preserves existing metadata when recording failures', () => {
+			const group = repo.createGroup(
+				taskId,
+				workerSessionId,
+				leaderSessionId,
+				'coder',
+				'/workspace'
+			);
+			repo.setApproved(group.id, true);
+			repo.recordGateFailure(group.id, 'worker_exit', 'No PR found.');
+			const updated = repo.getGroup(group.id)!;
+			// Approved flag should still be set
+			expect(updated.approved).toBe(true);
+			// Failure should be recorded
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(1);
+		});
+	});
 });
