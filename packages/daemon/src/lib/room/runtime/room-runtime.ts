@@ -511,10 +511,25 @@ export class RoomRuntime {
 			}
 		}
 
+		// Collect Worker messages since last forwarded message (needed for bypass marker detection)
+		const workerMessages = this.getWorkerMessages
+			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
+			: [];
+
 		// Lifecycle hooks: Worker Exit Gate
 		// Validates preconditions before routing to leader (branch/PR for coder/general, tasks for planners)
 		{
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
+
+			// Build preliminary worker output text for bypass marker detection
+			const preliminaryWorkerOutput =
+				workerMessages.length > 0
+					? workerMessages
+							.map((m) => m.text)
+							.filter(Boolean)
+							.join('\n\n')
+					: undefined;
+
 			const hookCtx: WorkerExitHookContext = {
 				workspacePath: groupWorkspace,
 				taskType: task.taskType ?? 'coding',
@@ -522,6 +537,7 @@ export class RoomRuntime {
 				taskId: group.taskId,
 				groupId,
 				approved: group.approved,
+				workerOutput: preliminaryWorkerOutput,
 			};
 			if (group.workerRole === 'planner') {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
@@ -558,12 +574,14 @@ export class RoomRuntime {
 				return; // Keep worker turn active
 			}
 			log.debug(`[Worker→Leader] Group ${groupId}: worker exit gate passed`);
-		}
 
-		// Collect Worker messages since last forwarded message
-		const workerMessages = this.getWorkerMessages
-			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
-			: [];
+			// Log bypass event if gate was bypassed
+			if (gateResult.reason?.startsWith('Bypassed')) {
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Worker bypassed git/PR gates: ${gateResult.reason}`,
+				});
+			}
+		}
 
 		// Build the worker output text
 		const workerOutputText =

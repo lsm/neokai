@@ -12,6 +12,40 @@ import { Logger } from '../../logger';
 
 const log = new Logger('lifecycle-hooks');
 
+// --- Bypass Markers ---
+
+/**
+ * Special markers that workers can use to bypass git/PR gates
+ * for research/verification-only tasks.
+ */
+export const BYPASS_GATES_MARKERS = {
+	RESEARCH_ONLY: 'RESEARCH_ONLY:',
+	VERIFICATION_COMPLETE: 'VERIFICATION_COMPLETE:',
+	INVESTIGATION_RESULT: 'INVESTIGATION_RESULT:',
+	ANALYSIS_COMPLETE: 'ANALYSIS_COMPLETE:',
+	DOCUMENTATION_COMPLETE: 'DOCUMENTATION_COMPLETE:',
+} as const;
+
+export type BypassMarker = (typeof BYPASS_GATES_MARKERS)[keyof typeof BYPASS_GATES_MARKERS];
+
+/**
+ * Check if worker output contains a bypass marker.
+ * Returns the marker if found, null otherwise.
+ */
+export function detectBypassMarker(workerOutput: string): BypassMarker | null {
+	const lines = workerOutput.split('\n');
+
+	for (const marker of Object.values(BYPASS_GATES_MARKERS)) {
+		for (const line of lines) {
+			if (line.trim().startsWith(marker)) {
+				return marker as BypassMarker;
+			}
+		}
+	}
+
+	return null;
+}
+
 // --- Types ---
 
 export interface HookResult {
@@ -37,6 +71,8 @@ export interface WorkerExitHookContext {
 	draftTaskCount?: number;
 	/** Whether a human has approved the task (plan or PR) */
 	approved?: boolean;
+	/** Worker's final output text (for detecting bypass markers) */
+	workerOutput?: string;
 }
 
 export interface LeaderCompleteHookContext {
@@ -558,6 +594,18 @@ export async function runWorkerExitGate(
 				if (!result.pass) return result;
 			}
 			return { pass: true };
+		}
+
+		// Check for bypass marker BEFORE running git/PR gates
+		if (ctx.workerOutput) {
+			const bypassMarker = detectBypassMarker(ctx.workerOutput);
+			if (bypassMarker) {
+				log.info(`Worker output contains bypass marker ${bypassMarker} - skipping git/PR gates`);
+				return {
+					pass: true,
+					reason: `Bypassed git/PR gates: ${bypassMarker}`,
+				};
+			}
 		}
 
 		// Pre-approval: must create feature branch, PR, and push commits
