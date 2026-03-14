@@ -324,6 +324,52 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
+	describe('reviveGroup', () => {
+		it('should clear completedAt on a failed group', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const failed = repo.failGroup(group.id, group.version);
+			expect(failed!.completedAt).not.toBeNull();
+
+			const revived = repo.reviveGroup(group.id);
+			expect(revived).not.toBeNull();
+			expect(revived!.completedAt).toBeNull();
+		});
+
+		it('should preserve existing metadata (unlike resetGroupForRestart)', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			// Simulate some accumulated metadata
+			const afterIter = repo.incrementFeedbackIteration(group.id, group.version)!;
+			repo.failGroup(afterIter.id, afterIter.version);
+
+			const revived = repo.reviveGroup(group.id);
+			// feedbackIteration should be preserved (not reset to 0)
+			expect(revived!.feedbackIteration).toBe(1);
+		});
+
+		it('should increment version', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+
+			const revived = repo.reviveGroup(group.id);
+			expect(revived!.version).toBe(group.version + 2); // +1 failGroup, +1 revive
+		});
+
+		it('should return null for non-existent group', () => {
+			const result = repo.reviveGroup('non-existent');
+			expect(result).toBeNull();
+		});
+
+		it('should make the group appear in getActiveGroups after revive', () => {
+			// room and task already exist from beforeEach
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+			expect(repo.getActiveGroups(roomId)).toHaveLength(0);
+
+			repo.reviveGroup(group.id);
+			expect(repo.getActiveGroups(roomId)).toHaveLength(1);
+		});
+	});
+
 	describe('updateLeaderContractViolations', () => {
 		it('should update violations and turn ID', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);

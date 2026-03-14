@@ -772,4 +772,34 @@ describe('TaskManager', () => {
 			expect(final?.status).toBe('completed');
 		});
 	});
+
+	describe('setTaskStatus — revive to review', () => {
+		it('should allow failed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'boom');
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+		});
+
+		it('should allow cancelled → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+		});
+
+		it('should reject completed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+	});
 });

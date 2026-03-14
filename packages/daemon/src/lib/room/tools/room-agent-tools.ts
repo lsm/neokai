@@ -391,6 +391,36 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!runtime) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
+
+			// Auto-revive: if the task is failed or cancelled, transition it to
+			// 'review' status and restore the agent sessions so the message can
+			// be delivered. This lets users provide corrective feedback without
+			// manually calling set_task_status first.
+			if (task.status === 'failed' || task.status === 'cancelled') {
+				try {
+					await taskManager.setTaskStatus(args.task_id, 'review');
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: `Failed to revive task ${args.task_id}: ${String(err)}`,
+					});
+				}
+
+				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
+				if (!revived) {
+					return jsonResult({
+						success: false,
+						error:
+							'Task revived to review status but agent sessions could not be restored. ' +
+							'The task is now in review — you can use approve_task or reject_task to proceed.',
+					});
+				}
+				return jsonResult({
+					success: true,
+					message: `Task ${args.task_id} revived from ${task.status} to review and message delivered to agent`,
+				});
+			}
+
 			const { success, error } = await routeHumanMessageToGroup(
 				runtime,
 				groupRepo,

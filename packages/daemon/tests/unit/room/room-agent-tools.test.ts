@@ -853,6 +853,110 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('No active session group');
 		});
+
+		it('should auto-revive failed task and call reviveTaskForMessage', async () => {
+			let reviveCalledWith: unknown[] = [];
+			const mockRuntime = {
+				reviveTaskForMessage: async (...args: unknown[]) => {
+					reviveCalledWith = args;
+					return true;
+				},
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to failed state
+			await taskManager.startTask(taskId);
+			await taskManager.failTask(taskId, 'test failure');
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'please retry' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('revived');
+
+			// Task should be in review status after revive
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('review');
+
+			// reviveTaskForMessage should have been called with correct args
+			expect(reviveCalledWith[0]).toBe(taskId);
+			expect(reviveCalledWith[1]).toBe('please retry');
+		});
+
+		it('should auto-revive cancelled task and call reviveTaskForMessage', async () => {
+			let reviveCalledWith: unknown[] = [];
+			const mockRuntime = {
+				reviveTaskForMessage: async (...args: unknown[]) => {
+					reviveCalledWith = args;
+					return true;
+				},
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to cancelled state
+			await taskManager.startTask(taskId);
+			await taskManager.cancelTask(taskId);
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('revived');
+
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('review');
+			expect(reviveCalledWith[0]).toBe(taskId);
+		});
+
+		it('should return partial success when reviveTaskForMessage returns false', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			await taskManager.startTask(taskId);
+			await taskManager.failTask(taskId, 'test failure');
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'hello' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('review');
+
+			// Task status should still be review (already transitioned)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('review');
+		});
 	});
 
 	describe('get_task_detail', () => {

@@ -29,8 +29,8 @@ export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 	in_progress: ['review', 'completed', 'failed', 'cancelled'],
 	review: ['completed', 'failed', 'in_progress'],
 	completed: [], // Terminal state
-	failed: ['pending', 'in_progress'], // Restart allowed
-	cancelled: ['pending', 'in_progress'], // Restart allowed
+	failed: ['pending', 'in_progress', 'review'], // Restart allowed + revive to review
+	cancelled: ['pending', 'in_progress', 'review'], // Restart allowed + revive to review
 };
 
 /**
