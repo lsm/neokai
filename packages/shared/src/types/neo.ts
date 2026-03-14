@@ -213,6 +213,12 @@ export interface NeoTask {
 	completedAt?: number;
 	/** Archive timestamp (milliseconds since epoch) - orthogonal to status */
 	archivedAt?: number | null;
+	/**
+	 * Which agent session is currently active (generating output).
+	 * Set when a human message is injected; cleared when the session reaches terminal state.
+	 * Allows the UI to show a "working" indicator even when status is 'review'.
+	 */
+	activeSession?: 'worker' | 'leader' | null;
 }
 
 /**
@@ -257,6 +263,8 @@ export interface UpdateTaskParams {
 	result?: string | null;
 	error?: string | null;
 	dependsOn?: string[];
+	/** Which session is actively generating output. null clears the indicator. */
+	activeSession?: 'worker' | 'leader' | null;
 }
 
 // ============================================================================
@@ -295,6 +303,8 @@ export interface TaskSummary {
 	dependsOn: string[];
 	/** Error message for failed tasks */
 	error?: string | null;
+	/** Which session is actively generating output (see NeoTask.activeSession) */
+	activeSession?: 'worker' | 'leader' | null;
 }
 
 /**

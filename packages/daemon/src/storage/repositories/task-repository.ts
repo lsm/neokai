@@ -151,6 +151,18 @@ export class TaskRepository {
 			fields.push('depends_on = ?');
 			values.push(JSON.stringify(params.dependsOn));
 		}
+		if (params.activeSession !== undefined) {
+			fields.push('active_session = ?');
+			values.push(params.activeSession ?? null);
+		}
+		// Auto-clear active_session when task reaches a terminal status (unless already set explicitly)
+		if (
+			params.activeSession === undefined &&
+			(params.status === 'completed' || params.status === 'failed' || params.status === 'cancelled')
+		) {
+			fields.push('active_session = ?');
+			values.push(null);
+		}
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
@@ -244,6 +256,7 @@ export class TaskRepository {
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? undefined,
+			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
 		};
 	}
 }

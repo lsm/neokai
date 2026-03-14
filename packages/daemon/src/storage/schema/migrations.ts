@@ -90,6 +90,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 22: Drop legacy session_groups.state column and index
 	runMigration22(db);
+
+	// Migration 23: Add active_session column to tasks table
+	runMigration23(db);
 }
 
 /**
@@ -1039,6 +1042,21 @@ function runMigration22(db: BunDatabase): void {
 	}
 
 	db.exec(`ALTER TABLE session_groups DROP COLUMN state`);
+}
+
+/**
+ * Migration 23: Add active_session column to tasks table.
+ * Tracks which agent session is currently generating output ('worker' | 'leader' | null).
+ * Allows the UI to show a "working" indicator even when the task status is 'review'.
+ */
+function runMigration23(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (tableHasColumn(db, 'tasks', 'active_session')) {
+		return;
+	}
+	db.exec(`ALTER TABLE tasks ADD COLUMN active_session TEXT`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {

@@ -419,6 +419,11 @@ export class RoomRuntime {
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
 
+		// Clear active session indicator — worker is no longer generating output
+		if (task.activeSession === 'worker') {
+			await this.taskManager.updateTaskStatus(task.id, task.status, { activeSession: null });
+		}
+
 		// Check if worker is waiting for user input (asked a question)
 		// Pause routing to leader — task resumes when question is answered
 		if (terminalState.kind === 'waiting_for_input') {
@@ -620,6 +625,14 @@ export class RoomRuntime {
 	async onLeaderTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
+
+		// Clear active session indicator — leader is no longer generating output
+		const leaderTask = await this.taskManager.getTask(group.taskId);
+		if (leaderTask?.activeSession === 'leader') {
+			await this.taskManager.updateTaskStatus(leaderTask.id, leaderTask.status, {
+				activeSession: null,
+			});
+		}
 
 		// Check if leader is waiting for user input (asked a question)
 		// Pause — task resumes when question is answered
@@ -1259,6 +1272,16 @@ export class RoomRuntime {
 			log.error(`Failed to inject message into worker session ${group.workerSessionId}:`, error);
 			return false;
 		}
+
+		// Mark worker as active so the UI can show a "working" indicator
+		const injectTask = await this.taskManager.getTask(taskId);
+		if (injectTask) {
+			await this.taskManager.updateTaskStatus(injectTask.id, injectTask.status, {
+				activeSession: 'worker',
+			});
+			await this.emitTaskUpdateById(taskId);
+		}
+
 		return true;
 	}
 
@@ -1284,6 +1307,16 @@ export class RoomRuntime {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
 			return false;
 		}
+
+		// Mark leader as active so the UI can show a "working" indicator
+		const injectLeaderTask = await this.taskManager.getTask(taskId);
+		if (injectLeaderTask) {
+			await this.taskManager.updateTaskStatus(injectLeaderTask.id, injectLeaderTask.status, {
+				activeSession: 'leader',
+			});
+			await this.emitTaskUpdateById(taskId);
+		}
+
 		return true;
 	}
 

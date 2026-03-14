@@ -547,4 +547,43 @@ describe('RoomTasks', () => {
 			expect(progressBar).toBeTruthy();
 		});
 	});
+
+	describe('Working Indicator (activeSession)', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'review';
+		});
+
+		it('should show worker working indicator when activeSession is worker on a review task', () => {
+			const tasks = [createTask('t1', 'review', { activeSession: 'worker' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Worker working');
+		});
+
+		it('should show leader working indicator when activeSession is leader on a review task', () => {
+			const tasks = [createTask('t1', 'review', { activeSession: 'leader' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('Leader working');
+		});
+
+		it('should not show working indicator when activeSession is null on a review task', () => {
+			const tasks = [createTask('t1', 'review', { activeSession: null })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).not.toContain('working');
+		});
+
+		it('should not show working indicator when activeSession is set but task is not in review status', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [createTask('t1', 'in_progress', { activeSession: 'worker' })];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).not.toContain('Worker working');
+		});
+	});
 });

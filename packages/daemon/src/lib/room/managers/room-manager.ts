@@ -136,6 +136,7 @@ export class RoomManager {
 			progress: task.progress,
 			dependsOn: task.dependsOn,
 			error: task.error,
+			activeSession: task.activeSession,
 		});
 		const nonTerminal = tasks.filter(
 			(t) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled'
