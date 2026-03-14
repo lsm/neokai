@@ -2544,5 +2544,42 @@ describe('RoomRuntime flow', () => {
 			const taskAfter = await ctx.taskManager.getTask(task.id);
 			expect(taskAfter!.activeSession).toBe('leader');
 		});
+
+		it('should clear activeSession when interruptTaskSession is called', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// Set activeSession to 'worker' (simulating active generation)
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('worker');
+
+			// Interrupt the session
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should be idempotent when interruptTaskSession is called with no active session', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// activeSession starts as null
+			const taskBefore = await ctx.taskManager.getTask(task.id);
+			expect(taskBefore!.activeSession).toBeNull();
+
+			// Interrupt should succeed even when no activeSession is set
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// activeSession stays null
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
 	});
 });
