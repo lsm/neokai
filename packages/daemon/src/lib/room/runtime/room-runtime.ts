@@ -194,34 +194,39 @@ export class RoomRuntime {
 	}
 
 	/**
-	 * Fail a group due to a detected dead loop.
-	 * Formats the diagnostic message, fails the group, cleans up mirroring,
-	 * and schedules a tick so the runtime can start other pending tasks.
+	 * Record a gate failure, check for a dead loop, and fail the group if one is detected.
+	 *
+	 * Call this at every bounce point before injecting the bounce message back to the agent.
+	 * Returns true when a dead loop was detected and the group has been failed — the caller
+	 * should return immediately without injecting the bounce message.
+	 * Returns false when no loop detected — caller should proceed with the normal bounce.
 	 */
-	private async failGroupForDeadLoop(
+	private async recordAndCheckDeadLoop(
 		groupId: string,
 		taskId: string,
-		loopStatus: {
-			reason: string;
-			failureCount: number;
-			timeWindowMs: number;
-			topFailureReasons: string[];
-		},
-		gateName: string
-	): Promise<void> {
-		const failureMsg =
-			`Dead loop detected in ${gateName} gate: ${loopStatus.reason}\n\n` +
-			`Failure pattern:\n` +
-			`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
-			`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
-			`The task cannot make progress and is stuck in a retry loop. ` +
-			`Please review the requirements and try again with clearer instructions.`;
-		log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
-		await this.taskGroupManager.fail(groupId, failureMsg);
-		this.cleanupMirroring(groupId, 'Dead loop detected.');
-		await this.emitTaskUpdateById(taskId);
-		await this.emitGoalProgressForTask(taskId);
-		this.scheduleTick();
+		gateName: string,
+		reason: string
+	): Promise<boolean> {
+		this.groupRepo.recordGateFailure(groupId, gateName, reason);
+		const history = this.groupRepo.getGateFailureHistory(groupId);
+		const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
+		if (loopStatus?.isDeadLoop) {
+			const failureMsg =
+				`Dead loop detected in ${gateName} gate: ${loopStatus.reason}\n\n` +
+				`Failure pattern:\n` +
+				`- ${loopStatus.failureCount} failures${loopStatus.timeWindowMs > 0 ? ` over ${Math.round(loopStatus.timeWindowMs / 60000)} minutes` : ''}\n` +
+				`- Repeated reasons: ${loopStatus.topFailureReasons.join('; ')}\n\n` +
+				`The task cannot make progress and is stuck in a retry loop. ` +
+				`Please review the requirements and try again with clearer instructions.`;
+			log.warn(`Dead loop detected for group ${groupId}: ${loopStatus.reason}`);
+			await this.taskGroupManager.fail(groupId, failureMsg);
+			this.cleanupMirroring(groupId, 'Dead loop detected.');
+			await this.emitTaskUpdateById(taskId);
+			await this.emitGoalProgressForTask(taskId);
+			this.scheduleTick();
+			return true;
+		}
+		return false;
 	}
 
 	constructor(config: RoomRuntimeConfig) {
@@ -431,6 +436,16 @@ export class RoomRuntime {
 				this.appendGroupEvent(groupId, 'status', {
 					text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
 				});
+				if (
+					await this.recordAndCheckDeadLoop(
+						groupId,
+						group.taskId,
+						'worktree_dirty',
+						'Worktree has uncommitted changes or untracked files'
+					)
+				) {
+					return;
+				}
 				await this.sessionFactory.injectMessage(
 					group.workerSessionId,
 					'Your worktree has uncommitted changes or untracked files. ' +
@@ -464,16 +479,14 @@ export class RoomRuntime {
 					text: `Worker exit gate: ${gateResult.reason}`,
 				});
 
-				// Dead loop detection: record failure and check for loop
-				this.groupRepo.recordGateFailure(
-					groupId,
-					'worker_exit',
-					gateResult.reason ?? 'Gate check failed'
-				);
-				const history = this.groupRepo.getGateFailureHistory(groupId);
-				const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
-				if (loopStatus?.isDeadLoop) {
-					await this.failGroupForDeadLoop(groupId, group.taskId, loopStatus, 'worker_exit');
+				if (
+					await this.recordAndCheckDeadLoop(
+						groupId,
+						group.taskId,
+						'worker_exit',
+						gateResult.reason ?? 'Gate check failed'
+					)
+				) {
 					return;
 				}
 
@@ -727,22 +740,15 @@ export class RoomRuntime {
 								text: `Leader complete gate: ${gateResult.reason}`,
 							});
 
-							// Dead loop detection: record failure and check for loop
-							this.groupRepo.recordGateFailure(
-								groupId,
-								'leader_complete',
-								gateResult.reason ?? 'Gate check failed'
-							);
-							const history = this.groupRepo.getGateFailureHistory(groupId);
-							const loopStatus = checkDeadLoop(history, this.deadLoopConfig);
-							if (loopStatus?.isDeadLoop) {
-								await this.failGroupForDeadLoop(
+							if (
+								await this.recordAndCheckDeadLoop(
 									groupId,
 									group.taskId,
-									loopStatus,
-									'leader_complete'
-								);
-								return jsonResult({ success: false, error: loopStatus.reason });
+									'leader_complete',
+									gateResult.reason ?? 'Gate check failed'
+								)
+							) {
+								return jsonResult({ success: false, error: 'Dead loop detected.' });
 							}
 
 							// Reset leaderCalledTool so leader can try again
@@ -813,22 +819,15 @@ export class RoomRuntime {
 								text: `Leader submit gate: ${gateResult.reason}`,
 							});
 
-							// Dead loop detection: record failure and check for loop
-							this.groupRepo.recordGateFailure(
-								groupId,
-								'leader_submit',
-								gateResult.reason ?? 'Gate check failed'
-							);
-							const submitHistory = this.groupRepo.getGateFailureHistory(groupId);
-							const submitLoopStatus = checkDeadLoop(submitHistory, this.deadLoopConfig);
-							if (submitLoopStatus?.isDeadLoop) {
-								await this.failGroupForDeadLoop(
+							if (
+								await this.recordAndCheckDeadLoop(
 									groupId,
 									group.taskId,
-									submitLoopStatus,
-									'leader_submit'
-								);
-								return jsonResult({ success: false, error: submitLoopStatus.reason });
+									'leader_submit',
+									gateResult.reason ?? 'Gate check failed'
+								)
+							) {
+								return jsonResult({ success: false, error: 'Dead loop detected.' });
 							}
 
 							// Reset leaderCalledTool so leader can try again
