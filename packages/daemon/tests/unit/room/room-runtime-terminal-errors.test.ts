@@ -114,19 +114,6 @@ describe('RoomRuntime - terminal error detection', () => {
 			expect(updatedTask!.status).toBe('failed');
 		});
 
-		it('fails task immediately on "Invalid model" text pattern', async () => {
-			ctx = createRuntimeTestContext({
-				getWorkerMessages: () => [
-					makeWorkerMessage('Invalid model: claude-unknown-v99. Please check your configuration.'),
-				],
-			});
-
-			const { task } = await spawnAndSimulateWorkerOutput('');
-
-			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('failed');
-		});
-
 		it('fails task on terminal error embedded in multi-line worker output', async () => {
 			const multilineOutput = [
 				'Starting task execution...',
@@ -169,6 +156,28 @@ describe('RoomRuntime - terminal error detection', () => {
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
 			// Task should remain in_progress (awaiting leader review)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
+		it('does NOT fail task when worker discusses error handling in prose (regression)', async () => {
+			// Regression: broad text patterns previously caused false positives
+			// when the worker wrote explanatory text containing phrases like
+			// "invalid model", "authentication failed", etc.
+			const proseOutput = [
+				'I have implemented handling for invalid model errors in the provider adapter.',
+				'The fix ensures authentication failed scenarios are retried correctly.',
+				'I also added quota exceeded detection so users get clear messages.',
+				'All tests pass. Creating PR now.',
+			].join('\n');
+
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [makeWorkerMessage(proseOutput)],
+			});
+
+			const { task } = await spawnAndSimulateWorkerOutput('');
+
+			// Prose should NOT fail the task — it should route to leader normally
 			const updatedTask = await ctx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('in_progress');
 		});

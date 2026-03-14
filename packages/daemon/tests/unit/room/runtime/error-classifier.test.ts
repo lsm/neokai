@@ -6,7 +6,7 @@ import {
 
 describe('error-classifier', () => {
 	describe('classifyError', () => {
-		describe('terminal HTTP status codes', () => {
+		describe('terminal HTTP status codes (via "API Error: NNN")', () => {
 			it('classifies HTTP 400 as terminal', () => {
 				const result = classifyError('API Error: 400 {"error":{"message":"Invalid model: xyz"}}');
 				expect(result).not.toBeNull();
@@ -89,62 +89,6 @@ describe('error-classifier', () => {
 			});
 		});
 
-		describe('terminal text patterns', () => {
-			it('classifies "Invalid model" as terminal', () => {
-				const result = classifyError('Invalid model: claude-fake-model');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-				expect(result!.statusCode).toBeUndefined();
-			});
-
-			it('classifies "invalid api key" as terminal (case-insensitive)', () => {
-				const result = classifyError('Invalid API Key provided');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('classifies "authentication failed" as terminal', () => {
-				const result = classifyError('Authentication failed: bad credentials');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('classifies "quota exceeded" as terminal', () => {
-				const result = classifyError('quota exceeded for this account');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('classifies "account suspended" as terminal', () => {
-				const result = classifyError('Account suspended due to policy violation');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('classifies "model does not exist" as terminal', () => {
-				const result = classifyError('The model does not exist: gpt-99');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('classifies "model not found" as terminal', () => {
-				const result = classifyError('model not found in registry');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('classifies "no such model" as terminal', () => {
-				const result = classifyError('No such model: my-custom-model');
-				expect(result).not.toBeNull();
-				expect(result!.class).toBe('terminal');
-			});
-
-			it('is case-insensitive for text patterns', () => {
-				expect(classifyError('INVALID MODEL')!.class).toBe('terminal');
-				expect(classifyError('Quota Exceeded')!.class).toBe('terminal');
-			});
-		});
-
 		describe('realistic combined messages', () => {
 			it('classifies full invalid-model API error as terminal with statusCode', () => {
 				const msg =
@@ -152,11 +96,10 @@ describe('error-classifier', () => {
 				const result = classifyError(msg);
 				expect(result).not.toBeNull();
 				expect(result!.class).toBe('terminal');
-				// HTTP status check fires first, so statusCode is set
 				expect(result!.statusCode).toBe(400);
 			});
 
-			it('classifies bare HTTP 400 with no text pattern as terminal', () => {
+			it('classifies bare HTTP 400 as terminal', () => {
 				const result = classifyError('API Error: 400 Bad Request');
 				expect(result).not.toBeNull();
 				expect(result!.class).toBe('terminal');
@@ -164,7 +107,29 @@ describe('error-classifier', () => {
 			});
 		});
 
-		describe('unrecognized messages return null', () => {
+		describe('prose / explanatory text does NOT trigger false positives', () => {
+			it('returns null for "implemented handling for invalid model errors"', () => {
+				expect(
+					classifyError('implemented handling for invalid model errors in provider adapter')
+				).toBeNull();
+			});
+
+			it('returns null for "added support for invalid api key detection"', () => {
+				expect(classifyError('added support for invalid api key detection')).toBeNull();
+			});
+
+			it('returns null for "fixed authentication failed edge case"', () => {
+				expect(classifyError('fixed authentication failed edge case in login flow')).toBeNull();
+			});
+
+			it('returns null for "handle quota exceeded scenario in tests"', () => {
+				expect(classifyError('handle quota exceeded scenario in tests')).toBeNull();
+			});
+
+			it('returns null for "model not found error is now logged properly"', () => {
+				expect(classifyError('model not found error is now logged properly')).toBeNull();
+			});
+
 			it('returns null for generic text', () => {
 				expect(classifyError('Some unrelated error')).toBeNull();
 			});
@@ -173,7 +138,7 @@ describe('error-classifier', () => {
 				expect(classifyError('')).toBeNull();
 			});
 
-			it('returns null for network errors (not API errors)', () => {
+			it('returns null for network errors (not "API Error: NNN" shaped)', () => {
 				expect(classifyError('Network timeout')).toBeNull();
 				expect(classifyError('Connection refused')).toBeNull();
 			});
@@ -229,6 +194,15 @@ describe('error-classifier', () => {
 			const result = detectTerminalError(output);
 			expect(result).not.toBeNull();
 			expect(result!.class).toBe('terminal');
+		});
+
+		it('does NOT trigger on explanatory prose about error handling', () => {
+			const proseOutput = [
+				'I have implemented handling for invalid model errors in the provider adapter.',
+				'The fix ensures authentication failed scenarios are retried correctly.',
+				'All tests pass.',
+			].join('\n');
+			expect(detectTerminalError(proseOutput)).toBeNull();
 		});
 	});
 });

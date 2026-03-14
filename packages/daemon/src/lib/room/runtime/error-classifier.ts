@@ -2,13 +2,18 @@
  * Error Classifier - Unified API error classification
  *
  * Single point of truth for classifying API errors from agent output:
- * - terminal:    unrecoverable errors (4xx, invalid model, etc.) → fail task immediately
+ * - terminal:    unrecoverable errors (4xx) → fail task immediately
  * - rate_limit:  429 rate limits with parseable retry-after → pause with backoff
- * - recoverable: transient errors (5xx, network) → bounce/retry
+ * - recoverable: transient errors (5xx) → bounce/retry
  *
- * Consolidates the previously separate rate-limit-utils detection into one place.
- * rate-limit-utils.ts remains for its parsing logic but is no longer imported
- * directly in room-runtime.ts.
+ * Detection strategy: match only structured "API Error: NNN" messages from the
+ * Claude Agent SDK. Free-form text patterns are intentionally avoided because
+ * they cause false positives when workers discuss error handling in prose
+ * (e.g. "implemented handling for invalid model errors").
+ *
+ * The Anthropic usage-limit text pattern ("You've hit your limit · resets …")
+ * is kept as a rate_limit fallback because it is highly specific and not
+ * something a worker would write as normal explanatory output.
  */
 
 import { parseRateLimitReset } from './rate-limit-utils';
@@ -18,7 +23,7 @@ export type ErrorClass = 'terminal' | 'rate_limit' | 'recoverable';
 export interface ErrorClassification {
 	class: ErrorClass;
 	reason: string;
-	/** HTTP status code if extracted from the error message, undefined otherwise */
+	/** HTTP status code extracted from the error message, if present */
 	statusCode?: number;
 	/**
 	 * For rate_limit: Unix timestamp (ms) when the limit resets.
@@ -29,32 +34,17 @@ export interface ErrorClassification {
 
 /**
  * HTTP status codes that are terminal (unrecoverable client errors).
- * 429 is handled separately as rate_limit (not terminal) because it has
- * a parseable retry-after time and the underlying credentials are valid.
+ * 429 is handled separately as rate_limit because the underlying credentials
+ * are valid and the limit resets after a known period.
  */
 const TERMINAL_HTTP_CODES = new Set([400, 401, 403, 404, 422]);
-
-/**
- * Text patterns that indicate terminal errors regardless of HTTP status code.
- * Applied case-insensitively against the full error message.
- */
-const TERMINAL_TEXT_PATTERNS: readonly RegExp[] = [
-	/invalid model/i,
-	/invalid api key/i,
-	/authentication failed/i,
-	/quota exceeded/i,
-	/account suspended/i,
-	/model does not exist/i,
-	/model not found/i,
-	/no such model/i,
-];
 
 /** Pattern to extract HTTP status code from SDK error messages like "API Error: 400 ..." */
 const API_ERROR_PATTERN = /API Error:\s*(\d{3})/;
 
 /**
- * Extract the HTTP status code from an error message.
- * Returns undefined if no recognizable HTTP error code is found.
+ * Extract the HTTP status code from a message.
+ * Returns undefined if no recognisable "API Error: NNN" prefix is found.
  */
 function extractHttpStatus(message: string): number | undefined {
 	const match = message.match(API_ERROR_PATTERN);
@@ -63,36 +53,36 @@ function extractHttpStatus(message: string): number | undefined {
 }
 
 /**
- * Classify an API error message.
+ * Classify an error message from agent output.
+ *
+ * Only matches structured "API Error: NNN" messages produced by the Claude
+ * Agent SDK, plus the Anthropic usage-limit text for rate_limit detection.
+ * Free-form prose does NOT trigger classification.
  *
  * Evaluation order (first match wins):
- * 1. HTTP status code — most authoritative signal
+ * 1. "API Error: NNN" — HTTP status code determines class
  *    - 400/401/403/404/422 → terminal
- *    - 429 → rate_limit (with resetsAt if parseable)
- *    - 5xx → recoverable
- * 2. Text patterns — fallback for messages without an HTTP code
- *    - "invalid model", "invalid api key", etc. → terminal
+ *    - 429               → rate_limit (with resetsAt if parseable)
+ *    - 5xx              → recoverable
+ * 2. Anthropic usage-limit text → rate_limit (specific, not prose-writable)
  *
- * Returns null when the message is not recognised as an API error.
+ * Returns null when the message is not an API error.
  *
  * @example
  * classifyError('API Error: 400 {"error":{"message":"Invalid model: xyz"}}')
  * // → { class: 'terminal', reason: '...', statusCode: 400 }
  *
  * classifyError("You've hit your limit · resets 1pm (America/New_York)")
- * // → { class: 'rate_limit', reason: '...', statusCode: 429, resetsAt: <timestamp> }
+ * // → { class: 'rate_limit', reason: '...', resetsAt: <timestamp> }
  *
  * classifyError('API Error: 500 Internal Server Error')
  * // → { class: 'recoverable', reason: '...', statusCode: 500 }
  *
- * classifyError('Invalid model: claude-bad-v0')
- * // → { class: 'terminal', reason: '...' }
- *
- * classifyError('some unrelated text')
- * // → null
+ * classifyError('implemented handling for invalid model errors')
+ * // → null  (prose — no false positive)
  */
 export function classifyError(message: string): ErrorClassification | null {
-	// ── 1. HTTP status code ──────────────────────────────────────────────────
+	// ── 1. Structured "API Error: NNN" from the SDK ──────────────────────────
 	const statusCode = extractHttpStatus(message);
 	if (statusCode !== undefined) {
 		const excerpt = message.slice(0, 300);
@@ -124,8 +114,7 @@ export function classifyError(message: string): ErrorClassification | null {
 		}
 	}
 
-	// ── 2. Text patterns (no explicit HTTP code) ─────────────────────────────
-	// Also catches the Anthropic usage-limit message ("You've hit your limit…")
+	// ── 2. Anthropic usage-limit text (specific, cannot appear in normal prose)
 	const resetsAt = parseRateLimitReset(message);
 	if (resetsAt !== null) {
 		return {
@@ -133,16 +122,6 @@ export function classifyError(message: string): ErrorClassification | null {
 			reason: `Rate limit reached — resets at ${new Date(resetsAt).toLocaleTimeString()}`,
 			resetsAt,
 		};
-	}
-
-	for (const pattern of TERMINAL_TEXT_PATTERNS) {
-		if (pattern.test(message)) {
-			const excerpt = message.slice(0, 300);
-			return {
-				class: 'terminal',
-				reason: `Terminal error detected: ${excerpt}`,
-			};
-		}
 	}
 
 	return null;
