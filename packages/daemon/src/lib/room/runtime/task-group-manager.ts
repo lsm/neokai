@@ -414,6 +414,12 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
+		// Clear humanInterrupted: the leader is routing a message to the worker,
+		// so the next worker completion should route back to leader normally.
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(groupId, false);
+		}
+
 		// If worker is waiting for input (AskUserQuestion), answer the question.
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);

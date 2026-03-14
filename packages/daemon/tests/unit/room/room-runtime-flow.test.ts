@@ -345,6 +345,34 @@ describe('RoomRuntime flow', () => {
 			expect(injectCalls.length).toBe(initialInjectCount);
 		});
 
+		it('should clear humanInterrupted when routeLeaderToWorker is called (P2 fix)', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+
+			// Interrupt the task (sets humanInterrupted = true)
+			await ctx.runtime.interruptTaskSession(task.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(true);
+
+			// Leader routes feedback to worker (simulates send_to_worker tool call)
+			await ctx.runtime.taskGroupManager.routeLeaderToWorker(group!.id, 'Here is my feedback');
+
+			// humanInterrupted should be cleared so the next worker completion routes normally
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+
+			// Now when worker finishes, onWorkerTerminalState should NOT be blocked
+			await ctx.runtime.onWorkerTerminalState(group!.id, {
+				sessionId: group!.workerSessionId,
+				kind: 'idle',
+			});
+
+			// humanInterrupted remains false after terminal state
+			expect(ctx.groupRepo.getGroup(group!.id)!.humanInterrupted).toBe(false);
+		});
+
 		it('should clear humanInterrupted when injectMessageToWorker is called (race condition fix)', async () => {
 			const { task } = await createGoalAndTask(ctx);
 			ctx.runtime.start();
