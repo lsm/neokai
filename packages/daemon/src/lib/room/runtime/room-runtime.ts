@@ -378,6 +378,13 @@ export class RoomRuntime {
 		const task = await this.taskManager.getTask(group.taskId);
 		if (!task) return;
 
+		// Check if generation was interrupted by human — skip routing to leader, await user input
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(groupId, false);
+			log.info(`Worker reached terminal state after human interrupt — awaiting user input`);
+			return;
+		}
+
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {
 			log.info(`Worker reached terminal state while rate limited - pausing routing to Leader`);
@@ -1064,6 +1071,49 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Interrupt the current agent session(s) for a task without changing task status.
+	 *
+	 * Unlike stopTaskSession() / cancelTask(), this:
+	 * - Does NOT change task status (keeps it 'in_progress' or 'review')
+	 * - Does NOT mark the group as terminal
+	 * - Does NOT clean up the session (session stays in cache, can receive new messages)
+	 * - Sets humanInterrupted flag to prevent automatic routing to leader
+	 *
+	 * Use this when a human wants to interrupt ongoing generation and immediately
+	 * type new instructions — the session stays alive and ready for input.
+	 */
+	async interruptTaskSession(taskId: string): Promise<{ success: boolean }> {
+		const task = await this.taskManager.getTask(taskId);
+		if (!task) return { success: false };
+
+		if (task.status !== 'in_progress' && task.status !== 'review') {
+			return { success: false };
+		}
+
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group || group.completedAt !== null) return { success: false };
+
+		// Set flag first so onWorkerTerminalState skips routing to leader
+		this.groupRepo.setHumanInterrupted(group.id, true);
+
+		// Interrupt active sessions (lightweight: no cleanup, no cache removal)
+		if (this.sessionFactory.interruptSession) {
+			for (const sessionId of [group.workerSessionId, group.leaderSessionId]) {
+				try {
+					await this.sessionFactory.interruptSession(sessionId);
+				} catch (error) {
+					log.warn(`Failed to interrupt session ${sessionId}:`, error);
+				}
+			}
+		}
+
+		this.appendGroupEvent(group.id, 'status', {
+			text: 'Generation interrupted by user. Awaiting input.',
+		});
+		return { success: true };
+	}
+
+	/**
 	 * Inject a human message directly into the worker session.
 	 *
 	 * Used when a human wants to provide additional context directly to the worker.
@@ -1075,6 +1125,12 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroupByTaskId(taskId);
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.workerSessionId)) return false;
+
+		// Clear humanInterrupted: the user is providing new input, so the next
+		// worker completion should route to leader normally (not be suppressed).
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(group.id, false);
+		}
 
 		try {
 			await this.sessionFactory.injectMessage(group.workerSessionId, message);

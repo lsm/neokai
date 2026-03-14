@@ -269,6 +269,16 @@ export class RoomRuntimeService {
 					return null;
 				}
 			},
+			interruptSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return;
+
+				try {
+					await session.handleInterrupt();
+				} catch (error) {
+					log.warn(`Failed to interrupt session ${sessionId}:`, error);
+				}
+			},
 			stopSession: async (sessionId) => {
 				const session = agentSessions.get(sessionId);
 				if (!session) return;

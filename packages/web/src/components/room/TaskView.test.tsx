@@ -1120,6 +1120,120 @@ describe('TaskView — Task options dropdown menu', () => {
 	});
 });
 
+// ─── Interrupt Button Tests ───
+
+describe('TaskView — Interrupt button', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows interrupt button for in_progress tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const stopButton = container.querySelector(
+			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
+		);
+		expect(stopButton).not.toBeNull();
+	});
+
+	it('shows interrupt button for review tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const stopButton = container.querySelector(
+			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
+		);
+		expect(stopButton).not.toBeNull();
+	});
+
+	it('does NOT show interrupt button for pending tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'pending') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const stopButton = container.querySelector(
+			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
+		);
+		expect(stopButton).toBeNull();
+	});
+
+	it('does NOT show interrupt button for failed tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'failed') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const stopButton = container.querySelector(
+			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
+		);
+		expect(stopButton).toBeNull();
+	});
+
+	it('does NOT show interrupt button for cancelled tasks', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'cancelled') };
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		const stopButton = container.querySelector(
+			'button[title="Interrupt generation (task stays active, type your suggestions)"]'
+		);
+		expect(stopButton).toBeNull();
+	});
+});
+
 // ─── Reject Button Tests ───
 
 describe('TaskView — Reject button in HeaderReviewBar', () => {

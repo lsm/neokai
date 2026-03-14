@@ -556,6 +556,78 @@ describe('Room Agent Tools', () => {
 		});
 	});
 
+	describe('stop_session', () => {
+		it('should interrupt in_progress task (task stays active)', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			// Move task to in_progress
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			// Without runtime service, returns error (interrupt requires runtime)
+			const result = parseResult(await handlers.stop_session({ task_id: taskId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('unavailable');
+
+			// Task should still be in_progress (not failed)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+		});
+
+		it('should use runtime.interruptTaskSession when runtime service is available', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			const calls: Array<string> = [];
+			const mockRuntime = {
+				interruptTaskSession: async (tid: string) => {
+					calls.push(tid);
+					return { success: true };
+				},
+			};
+			const runtimeHandlers = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			const result = parseResult(await runtimeHandlers.stop_session({ task_id: taskId }));
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('interrupted');
+			expect(calls).toEqual([taskId]);
+		});
+
+		it('should return error when task not found', async () => {
+			const result = parseResult(await handlers.stop_session({ task_id: 'no-such-task' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error for pending task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			// Task is pending by default
+			const result = parseResult(
+				await handlers.stop_session({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task cannot be interrupted');
+		});
+
+		it('should return error for completed task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			await taskManager.setTaskStatus(created.taskId as string, 'in_progress');
+			await taskManager.completeTask(created.taskId as string, 'done');
+
+			const result = parseResult(
+				await handlers.stop_session({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task cannot be interrupted');
+		});
+	});
+
 	describe('get_room_status', () => {
 		it('should return room overview', async () => {
 			await handlers.create_goal({ title: 'G1' });

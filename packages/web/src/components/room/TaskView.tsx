@@ -813,6 +813,23 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 		});
 	}
 
+	// Interrupt button shown only when task has active agent sessions
+	const canInterrupt = task.status === 'in_progress' || task.status === 'review';
+	const [interrupting, setInterrupting] = useState(false);
+
+	// Interrupt handler - stops LLM generation without changing task status
+	const interruptSession = async () => {
+		if (interrupting) return;
+		setInterrupting(true);
+		try {
+			await request('task.interruptSession', { roomId, taskId });
+		} catch (err) {
+			// Best-effort: ignore errors from interrupt (session may already be idle)
+			void err;
+		} finally {
+			setInterrupting(false);
+		}
+	};
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
@@ -859,6 +876,19 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						</div>
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					</div>
+				)}
+				{/* Interrupt button - stops LLM generation without changing task status */}
+				{canInterrupt && (
+					<button
+						class="p-1.5 rounded text-amber-400 hover:text-amber-300 hover:bg-dark-700 transition-colors disabled:opacity-50"
+						onClick={interruptSession}
+						title="Interrupt generation (task stays active, type your suggestions)"
+						disabled={interrupting}
+					>
+						<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+							<rect x="6" y="6" width="12" height="12" rx="1" />
+						</svg>
+					</button>
 				)}
 				{/* Task options dropdown — shown when at least one action is available */}
 				{dropdownItems.length > 0 && (

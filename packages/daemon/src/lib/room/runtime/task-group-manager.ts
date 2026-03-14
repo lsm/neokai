@@ -85,6 +85,12 @@ export interface SessionFactory {
 	 */
 	setSessionMcpServers(sessionId: string, mcpServers: Record<string, unknown>): boolean;
 	/**
+	 * Optional: interrupt a session's current LLM generation without cleanup.
+	 * The session remains in cache and can accept new messages immediately.
+	 * Used for user-initiated interrupts that keep the task alive.
+	 */
+	interruptSession?(sessionId: string): Promise<void>;
+	/**
 	 * Optional: stop and cleanup a session immediately.
 	 * Used for urgent cancellation paths where the group should terminate now.
 	 */
