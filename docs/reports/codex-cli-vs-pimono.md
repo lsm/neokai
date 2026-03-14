@@ -187,6 +187,6 @@ If Codex CLI is adopted as an opt-in provider:
 
 3. **Session configuration.** Users can select Codex CLI execution by setting the provider to `openai-codex-cli` in session config. NeoKai's session manager will route queries to `CodexCliProvider.createQuery()`, which spawns `codex exec --json`.
 
-4. **No model ID collision.** `CodexCliProvider` uses the same model IDs as `OpenAiProvider` (e.g., `gpt-5.3-codex`) but under a different provider ID. `ownsModel` returns `false` on both providers for the same ID, so auto-detection will route to `OpenAiProvider` (pi-mono path) as the default. Codex CLI is only used when explicitly selected.
+4. **Model ID routing.** `CodexCliProvider` uses the same model ID strings as `OpenAiProvider` (e.g., `gpt-5.3-codex`, `gpt-5.4`). `OpenAiProvider.ownsModel()` returns `true` for any model ID starting with `gpt-` via its `lower.startsWith('gpt-')` check. `CodexCliProvider.ownsModel()` always returns `false`. This means auto-detection always routes `gpt-*` models to `OpenAiProvider` (pi-mono path). The Codex CLI provider is only invoked when a session explicitly sets `provider: 'openai-codex-cli'` — never via auto-detection.
 
 5. **Documentation.** Communicate clearly to users that `openai-codex-cli` sessions delegate autonomously to Codex — NeoKai tool interceptors, permission modes, and audit logs do not apply within the Codex subprocess.

@@ -336,7 +336,7 @@ export async function* codexExecQueryGenerator(
 	}
 
 	logger.debug(`Codex CLI: spawning ${codexBin} exec --json --model ${config.model}`);
-	logger.info(
+	logger.debug(
 		'NOTE: Codex executes tools autonomously — NeoKai tool definitions are NOT forwarded'
 	);
 
@@ -558,6 +558,13 @@ function translateCodexEvent(
 	switch (event.type) {
 		case 'thread.started':
 			logger.debug(`Codex thread started: ${event.thread_id}`);
+			// POC LIMITATION: thread_id is not persisted to NeoKai session metadata.
+			// Each new user turn spawns a fresh Codex thread with no conversation history.
+			// To support multi-turn, persist event.thread_id and pass it via
+			// `codex exec resume <thread_id>` on subsequent turns.
+			logger.warn(
+				`[codex-cli-adapter] thread_id=${event.thread_id} not persisted — multi-turn is not supported in this POC`
+			);
 			break;
 
 		case 'turn.started':

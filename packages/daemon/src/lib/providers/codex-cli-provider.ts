@@ -38,6 +38,18 @@ const logger = new Logger('codex-cli-provider');
 // Model definitions
 // ---------------------------------------------------------------------------
 
+/**
+ * Codex CLI model list.
+ *
+ * NOTE (POC): These model IDs are illustrative placeholders based on the Codex CLI
+ * documentation available as of March 2026. Actual available model IDs depend on the
+ * installed Codex CLI version and OpenAI account subscription. Users should verify
+ * available models via `codex model/list` or the Codex CLI documentation, and pass
+ * the correct model ID explicitly when creating sessions with this provider.
+ *
+ * If an invalid model ID is passed to Codex CLI, the subprocess will exit with a
+ * non-zero code and the adapter will yield an error result message.
+ */
 const CODEX_CLI_MODELS: ModelInfo[] = [
 	{
 		id: 'gpt-5.4',
@@ -96,14 +108,30 @@ export class CodexCliProvider implements Provider {
 		vision: true,
 	};
 
+	/**
+	 * Cached result of `findCodexCli()` to avoid repeated synchronous `which` syscalls.
+	 * `undefined` = not yet resolved; `null` = resolved as not found; `string` = resolved path.
+	 */
+	private cachedCodexPath: string | null | undefined = undefined;
+
 	constructor(private readonly env: Record<string, string | undefined> = process.env) {}
+
+	/**
+	 * Resolve the codex binary path, caching the result after the first call.
+	 */
+	private resolveCodexPath(): string | null {
+		if (this.cachedCodexPath === undefined) {
+			this.cachedCodexPath = findCodexCli();
+		}
+		return this.cachedCodexPath;
+	}
 
 	/**
 	 * Provider is available when the codex binary exists on PATH and at least one
 	 * supported API key is present in the environment.
 	 */
 	isAvailable(): boolean {
-		const codexOnPath = findCodexCli() !== null;
+		const codexOnPath = this.resolveCodexPath() !== null;
 		const hasApiKey = Boolean(this.env['OPENAI_API_KEY']) || Boolean(this.env['CODEX_API_KEY']);
 		return codexOnPath && hasApiKey;
 	}
@@ -155,7 +183,7 @@ export class CodexCliProvider implements Provider {
 		options: ProviderQueryOptions,
 		context: ProviderQueryContext
 	): AsyncGenerator<SDKMessage, void> | null {
-		const codexPath = findCodexCli();
+		const codexPath = this.resolveCodexPath();
 		if (!codexPath) {
 			logger.warn('Codex CLI not found on PATH. Install the OpenAI Codex CLI or set codexPath.');
 			return null;
