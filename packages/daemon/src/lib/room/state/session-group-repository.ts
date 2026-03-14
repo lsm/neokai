@@ -33,7 +33,7 @@ export interface RateLimitBackoff {
 /** Persisted bootstrap context for lazily creating Leader sessions */
 export interface DeferredLeaderConfig {
 	roomId: string;
-	goalId: string;
+	goalId: string | null;
 	reviewContext?: 'plan_review' | 'code_review';
 	leaderTaskContext?: string;
 }

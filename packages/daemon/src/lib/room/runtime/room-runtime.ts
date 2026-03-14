@@ -2207,25 +2207,18 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
-		// Find the goal linked to this task
+		// Find the goal linked to this task. Goal is optional — tasks without a goal still run.
 		const goals = await this.goalManager.getGoalsForTask(task.id);
-		const goal = goals[0] ?? (await this.goalManager.getNextGoal());
+		const goal = goals[0] ?? null;
 		if (!goal) {
-			log.warn(
-				`[spawnGroupForTask] No goal found for task ${task.id} ("${task.title}"). ` +
-					`Link the task to a goal or create an active goal first. Marking as needs_attention.`
+			log.debug(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") has no linked goal — spawning without goal context`
 			);
-			await this.taskManager.failTask(
-				task.id,
-				'No goal found for this task. Link the task to a goal or create an active goal first.'
-			);
-			await this.emitTaskUpdateById(task.id);
-			return;
 		}
 
 		// Get summaries of previously completed tasks for context
 		const completedTasks = await this.taskManager.listTasks({ status: 'completed' });
-		const goalLinkedIds = new Set(goal.linkedTaskIds ?? []);
+		const goalLinkedIds = new Set(goal?.linkedTaskIds ?? []);
 		const previousTaskSummaries = completedTasks
 			.filter((t) => goalLinkedIds.has(t.id) && t.id !== task.id)
 			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);

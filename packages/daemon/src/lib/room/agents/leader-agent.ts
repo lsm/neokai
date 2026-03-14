@@ -66,7 +66,7 @@ export interface LeaderToolCallbacks {
 
 export interface LeaderAgentConfig {
 	task: NeoTask;
-	goal: RoomGoal;
+	goal: RoomGoal | null;
 	room: Room;
 	sessionId: string;
 	workspacePath: string;
@@ -402,11 +402,13 @@ export function buildLeaderTaskContext(config: LeaderAgentConfig): string {
 		sections.push(`**Priority:** ${task.priority}`);
 	}
 
-	// Goal context
-	sections.push(`\n## Goal Context\n`);
-	sections.push(`**Goal:** ${goal.title}`);
-	if (goal.description) {
-		sections.push(`**Description:** ${goal.description}`);
+	// Goal context (only if a goal is linked)
+	if (goal) {
+		sections.push(`\n## Goal Context\n`);
+		sections.push(`**Goal:** ${goal.title}`);
+		if (goal.description) {
+			sections.push(`**Description:** ${goal.description}`);
+		}
 	}
 
 	// Room review policy

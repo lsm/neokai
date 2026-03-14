@@ -203,23 +203,25 @@ describe('RoomRuntime', () => {
 			expect(goalAfter!.status).toBe('needs_human');
 		});
 
-		it('should mark task as needs_attention when pending task has no linked goal and no active goal exists', async () => {
-			// Task created without linking to any goal, and no active goals exist
+		it('should spawn a task that has no linked goal (goal is optional)', async () => {
+			// Task created without linking to any goal — should still spawn normally
 			const task = await ctx.taskManager.createTask({
-				title: 'Orphaned task',
-				description: 'No goal linked',
+				title: 'Goal-free task',
+				description: 'No goal needed',
 			});
 
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
-			// No sessions should have been spawned
-			expect(ctx.sessionFactory.calls).toHaveLength(0);
+			// Worker session should be spawned even without a goal
+			const workerCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
+			);
+			expect(workerCalls).toHaveLength(1);
 
-			// Task should be marked as needs_attention (not stuck in pending)
+			// Task should be in_progress
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			expect(updatedTask!.status).toBe('needs_attention');
-			expect(updatedTask!.error).toContain('No goal found');
+			expect(updatedTask!.status).toBe('in_progress');
 		});
 
 		it('should skip pending tasks with taskType planning and not get stuck', async () => {
