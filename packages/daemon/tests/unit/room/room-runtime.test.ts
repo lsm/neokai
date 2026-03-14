@@ -203,6 +203,56 @@ describe('RoomRuntime', () => {
 			expect(goalAfter!.status).toBe('needs_human');
 		});
 
+		it('should spawn a task that has no linked goal (goal is optional)', async () => {
+			// Task created without linking to any goal — should still spawn normally
+			const task = await ctx.taskManager.createTask({
+				title: 'Goal-free task',
+				description: 'No goal needed',
+			});
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// Worker session should be spawned even without a goal
+			const workerCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
+			);
+			expect(workerCalls).toHaveLength(1);
+
+			// Task should be in_progress
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
+		it('should skip pending tasks with taskType planning and not get stuck', async () => {
+			// Simulate an externally-created task with planning type (which is reserved for internal use)
+			const goal = await ctx.goalManager.createGoal({
+				title: 'Some goal',
+				description: 'Test',
+			});
+			// Bypass create_task handler to inject a planning-type task directly
+			const planningTask = await ctx.taskManager.createTask({
+				title: 'External planning task',
+				description: 'Should be skipped by executeTick',
+				taskType: 'planning',
+			});
+			await ctx.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// No sessions should be spawned at all — planning-type tasks are filtered from the
+			// execution queue, and the goal already has an active task so no replanning is triggered
+			const sessionCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession'
+			);
+			expect(sessionCalls).toHaveLength(0);
+
+			// The planning-type task should remain in its current state (not errored out)
+			const updatedPlanningTask = await ctx.taskManager.getTask(planningTask.id);
+			expect(updatedPlanningTask!.status).toBe('pending'); // stays pending — not needs_attention
+		});
+
 		it('should NOT replan when execution tasks are still active', async () => {
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build API',

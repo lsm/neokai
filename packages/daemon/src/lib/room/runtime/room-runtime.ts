@@ -1946,6 +1946,15 @@ export class RoomRuntime {
 
 		// Find pending non-planning tasks (planning tasks are spawned directly, not via queue)
 		const pendingTasks = await this.taskManager.listTasks({ status: 'pending' });
+		const planningTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') === 'planning');
+		if (planningTasks.length > 0) {
+			// Debug-level: these tasks are handled (skipped), no operator action needed from runtime
+			log.debug(
+				`[executeTick] ${planningTasks.length} pending task(s) with reserved 'planning' type will be skipped: ` +
+					planningTasks.map((t) => `${t.id} ("${t.title}")`).join(', ') +
+					`. 'planning' type is reserved for internal use.`
+			);
+		}
 		const executableTasks = pendingTasks.filter((t) => (t.taskType ?? 'coding') !== 'planning');
 		if (executableTasks.length === 0) return;
 
@@ -1954,6 +1963,10 @@ export class RoomRuntime {
 		for (const task of executableTasks) {
 			if (await this.taskManager.areDependenciesMet(task)) {
 				readyTasks.push(task);
+			} else {
+				log.debug(
+					`[executeTick] Task ${task.id} ("${task.title}") skipped — dependencies not yet completed`
+				);
 			}
 		}
 		if (readyTasks.length === 0) return;
@@ -2194,14 +2207,18 @@ export class RoomRuntime {
 	 * Reads task.assignedAgent to pick the appropriate worker factory.
 	 */
 	private async spawnGroupForTask(task: NeoTask): Promise<void> {
-		// Find the goal linked to this task
+		// Find the goal linked to this task. Goal is optional — tasks without a goal still run.
 		const goals = await this.goalManager.getGoalsForTask(task.id);
-		const goal = goals[0] ?? (await this.goalManager.getNextGoal());
-		if (!goal) return;
+		const goal = goals[0] ?? null;
+		if (!goal) {
+			log.debug(
+				`[spawnGroupForTask] Task ${task.id} ("${task.title}") has no linked goal — spawning without goal context`
+			);
+		}
 
 		// Get summaries of previously completed tasks for context
 		const completedTasks = await this.taskManager.listTasks({ status: 'completed' });
-		const goalLinkedIds = new Set(goal.linkedTaskIds ?? []);
+		const goalLinkedIds = new Set(goal?.linkedTaskIds ?? []);
 		const previousTaskSummaries = completedTasks
 			.filter((t) => goalLinkedIds.has(t.id) && t.id !== task.id)
 			.map((t) => `${t.title}: ${t.result ?? 'completed'}`);

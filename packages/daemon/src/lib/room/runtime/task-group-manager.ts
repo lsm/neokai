@@ -225,7 +225,7 @@ export class TaskGroupManager {
 	async spawn(
 		room: Room,
 		task: NeoTask,
-		goal: RoomGoal,
+		goal: RoomGoal | null,
 		onWorkerTerminal: (groupId: string, state: TerminalState) => void,
 		onLeaderTerminal: (groupId: string, state: TerminalState) => void,
 		_leaderCallbacksFactory: LeaderCallbacksFactory,
@@ -269,7 +269,7 @@ export class TaskGroupManager {
 		// This survives daemon restart, unlike in-memory maps.
 		const deferredLeader: DeferredLeaderConfig = {
 			roomId: room.id,
-			goalId: goal.id,
+			goalId: goal?.id ?? null,
 			reviewContext,
 			leaderTaskContext: workerConfig.leaderTaskContext,
 		};
@@ -361,8 +361,8 @@ export class TaskGroupManager {
 				return null;
 			}
 
-			const goal = await this.getGoalById(deferredLeader.goalId);
-			if (!goal) {
+			const goal = deferredLeader.goalId ? await this.getGoalById(deferredLeader.goalId) : null;
+			if (deferredLeader.goalId && !goal) {
 				log.error(
 					`[routeWorkerToLeader] Group ${groupId}: goal ${deferredLeader.goalId} not found — failing task`
 				);

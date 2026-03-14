@@ -377,6 +377,24 @@ describe('TaskGroupManager', () => {
 				leaderTaskContext: 'Goal context for leader',
 			});
 		});
+
+		it('should persist null goalId in deferred leader config for goal-free tasks', async () => {
+			const task = await createTask();
+			const callbacks = createMockLeaderCallbacks();
+
+			const group = await manager.spawn(
+				room,
+				task,
+				null, // no goal
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			const persisted = groupRepo.getGroup(group.id)!;
+			expect(persisted.deferredLeader?.goalId).toBeNull();
+		});
 	});
 
 	describe('routeWorkerToLeader', () => {
@@ -517,6 +535,44 @@ describe('TaskGroupManager', () => {
 
 			const refreshed = groupRepo.getGroup(group.id)!;
 			expect(refreshed.deferredLeader).toBeNull();
+		});
+
+		it('should create leader session for a goal-free task (goalId is null)', async () => {
+			const task = await createTask();
+			const callbacks = createMockLeaderCallbacks();
+
+			// Spawn with null goal — task has no linked goal
+			const group = await manager.spawn(
+				room,
+				task,
+				null,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Deferred leader config should store null goalId
+			const persisted = groupRepo.getGroup(group.id)!;
+			expect(persisted.deferredLeader?.goalId).toBeNull();
+
+			// Routing worker to leader should succeed — leader session is created
+			const result = await manager.routeWorkerToLeader(
+				group.id,
+				'Worker output for goal-free task',
+				(_groupId) => callbacks
+			);
+
+			expect(result).not.toBeNull();
+
+			const leaderCalls = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(leaderCalls).toHaveLength(1);
+
+			// Task should not be failed (leader creation succeeded without a goal)
+			const updatedTask = await taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
 		});
 
 		it('should fail when leader session is missing and deferred metadata is absent', async () => {
