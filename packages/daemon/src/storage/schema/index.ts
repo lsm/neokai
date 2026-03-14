@@ -156,6 +156,7 @@ export function createTables(db: BunDatabase): void {
         assigned_agent TEXT DEFAULT 'coder',
         created_by_task_id TEXT,
         archived_at INTEGER,
+        active_session TEXT,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);

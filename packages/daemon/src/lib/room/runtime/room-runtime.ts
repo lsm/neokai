@@ -436,6 +436,12 @@ export class RoomRuntime {
 			return;
 		}
 
+		// Clear active session indicator — worker is no longer generating output
+		if (task.activeSession === 'worker') {
+			await this.taskManager.updateTaskStatus(task.id, task.status, { activeSession: null });
+			await this.emitTaskUpdateById(task.id);
+		}
+
 		// Check if worker is waiting for user input (asked a question)
 		// Pause routing to leader — task resumes when question is answered
 		if (terminalState.kind === 'waiting_for_input') {
@@ -680,6 +686,15 @@ export class RoomRuntime {
 	async onLeaderTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
+
+		// Clear active session indicator — leader is no longer generating output
+		const leaderTask = await this.taskManager.getTask(group.taskId);
+		if (leaderTask?.activeSession === 'leader') {
+			await this.taskManager.updateTaskStatus(leaderTask.id, leaderTask.status, {
+				activeSession: null,
+			});
+			await this.emitTaskUpdateById(group.taskId);
+		}
 
 		// Check if leader is waiting for user input (asked a question)
 		// Pause — task resumes when question is answered
@@ -1292,6 +1307,12 @@ export class RoomRuntime {
 			}
 		}
 
+		// Clear activeSession indicator — the agent is no longer generating output
+		if (task.activeSession !== null) {
+			await this.taskManager.updateTaskStatus(task.id, task.status, { activeSession: null });
+			await this.emitTaskUpdateById(taskId);
+		}
+
 		this.appendGroupEvent(group.id, 'status', {
 			text: 'Generation interrupted by user. Awaiting input.',
 		});
@@ -1317,12 +1338,30 @@ export class RoomRuntime {
 			this.groupRepo.setHumanInterrupted(group.id, false);
 		}
 
+		// Mark worker as active BEFORE injecting so the terminal-state handler always sees
+		// and clears the value correctly, even if the session responds before the DB write.
+		const injectTask = await this.taskManager.getTask(taskId);
+		if (injectTask) {
+			await this.taskManager.updateTaskStatus(injectTask.id, injectTask.status, {
+				activeSession: 'worker',
+			});
+			await this.emitTaskUpdateById(taskId);
+		}
+
 		try {
 			await this.sessionFactory.injectMessage(group.workerSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into worker session ${group.workerSessionId}:`, error);
+			// Clear the indicator — the session never started working
+			if (injectTask) {
+				await this.taskManager.updateTaskStatus(injectTask.id, injectTask.status, {
+					activeSession: null,
+				});
+				await this.emitTaskUpdateById(taskId);
+			}
 			return false;
 		}
+
 		return true;
 	}
 
@@ -1342,12 +1381,30 @@ export class RoomRuntime {
 		if (!group) return false;
 		if (!this.sessionFactory.hasSession(group.leaderSessionId)) return false;
 
+		// Mark leader as active BEFORE injecting so the terminal-state handler always sees
+		// and clears the value correctly, even if the session responds before the DB write.
+		const injectLeaderTask = await this.taskManager.getTask(taskId);
+		if (injectLeaderTask) {
+			await this.taskManager.updateTaskStatus(injectLeaderTask.id, injectLeaderTask.status, {
+				activeSession: 'leader',
+			});
+			await this.emitTaskUpdateById(taskId);
+		}
+
 		try {
 			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
+			// Clear the indicator — the session never started working
+			if (injectLeaderTask) {
+				await this.taskManager.updateTaskStatus(injectLeaderTask.id, injectLeaderTask.status, {
+					activeSession: null,
+				});
+				await this.emitTaskUpdateById(taskId);
+			}
 			return false;
 		}
+
 		return true;
 	}
 

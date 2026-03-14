@@ -858,9 +858,15 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							<p class="text-xs text-gray-500">
 								{group.feedbackIteration > 0 && `iteration ${group.feedbackIteration}`}
 							</p>
-							{group.submittedForReview && (
+							{group.submittedForReview && !task.activeSession && (
 								<span class="inline-flex items-center gap-1 text-xs font-medium text-amber-400 bg-amber-900/30 border border-amber-700/40 px-1.5 py-0.5 rounded-full animate-pulse">
 									Awaiting your review
+								</span>
+							)}
+							{task.status === 'review' && task.activeSession && (
+								<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/30 border border-blue-700/40 px-1.5 py-0.5 rounded-full">
+									<span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+									{task.activeSession === 'worker' ? 'Worker' : 'Leader'} processing your message…
 								</span>
 							)}
 						</div>

@@ -2444,4 +2444,142 @@ describe('RoomRuntime flow', () => {
 			expect((await ctx.taskManager.getTask(taskC.id))!.status).toBe('in_progress');
 		});
 	});
+
+	describe('activeSession indicator', () => {
+		it('should set activeSession to worker when injecting message to worker', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+			expect(group).toBeDefined();
+
+			// Task starts with no activeSession
+			const taskBefore = await ctx.taskManager.getTask(task.id);
+			expect(taskBefore!.activeSession).toBeNull();
+
+			// Inject message to worker
+			const result = await ctx.runtime.injectMessageToWorker(task.id, 'Please add error handling');
+			expect(result).toBe(true);
+
+			// activeSession should now be 'worker'
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBe('worker');
+		});
+
+		it('should set activeSession to leader when injecting message to leader', async () => {
+			const { task } = await spawnAndRouteToLeader(ctx);
+
+			// Inject message to leader
+			const result = await ctx.runtime.injectMessageToLeader(
+				task.id,
+				'Please reconsider the approach'
+			);
+			expect(result).toBe(true);
+
+			// activeSession should now be 'leader'
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBe('leader');
+		});
+
+		it('should clear activeSession when worker reaches terminal state', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Set activeSession to 'worker' manually
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('worker');
+
+			// Worker reaches terminal state
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should clear activeSession when leader reaches terminal state', async () => {
+			const { task, group } = await spawnAndRouteToLeader(ctx);
+
+			// Set activeSession to 'leader' manually
+			await ctx.taskManager.updateTaskStatus(task.id, task.status, { activeSession: 'leader' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('leader');
+
+			// Leader reaches terminal state
+			await ctx.runtime.onLeaderTerminalState(group.id, {
+				sessionId: group.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should not clear activeSession when worker terminal state is for a different session', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Set activeSession to 'leader' (different from the worker that just finished)
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'leader' });
+
+			// Worker reaches terminal state — should NOT clear activeSession (it's 'leader')
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// activeSession should still be 'leader'
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBe('leader');
+		});
+
+		it('should clear activeSession when interruptTaskSession is called', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// Set activeSession to 'worker' (simulating active generation)
+			await ctx.taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const taskWithActive = await ctx.taskManager.getTask(task.id);
+			expect(taskWithActive!.activeSession).toBe('worker');
+
+			// Interrupt the session
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// activeSession should be cleared
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+
+		it('should be idempotent when interruptTaskSession is called with no active session', async () => {
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			// activeSession starts as null
+			const taskBefore = await ctx.taskManager.getTask(task.id);
+			expect(taskBefore!.activeSession).toBeNull();
+
+			// Interrupt should succeed even when no activeSession is set
+			const result = await ctx.runtime.interruptTaskSession(task.id);
+			expect(result.success).toBe(true);
+
+			// activeSession stays null
+			const taskAfter = await ctx.taskManager.getTask(task.id);
+			expect(taskAfter!.activeSession).toBeNull();
+		});
+	});
 });

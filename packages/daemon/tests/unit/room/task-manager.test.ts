@@ -814,4 +814,75 @@ describe('TaskManager', () => {
 			);
 		});
 	});
+
+	describe('activeSession field', () => {
+		it('should be null by default on a new task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			expect(task.activeSession).toBeNull();
+		});
+
+		it('should be settable to worker via updateTaskStatus', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			const updated = await taskManager.updateTaskStatus(task.id, 'in_progress', {
+				activeSession: 'worker',
+			});
+			expect(updated.activeSession).toBe('worker');
+		});
+
+		it('should be settable to leader via updateTaskStatus', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			const updated = await taskManager.updateTaskStatus(task.id, 'in_progress', {
+				activeSession: 'leader',
+			});
+			expect(updated.activeSession).toBe('leader');
+		});
+
+		it('should be clearable back to null', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const cleared = await taskManager.updateTaskStatus(task.id, 'in_progress', {
+				activeSession: null,
+			});
+			expect(cleared.activeSession).toBeNull();
+		});
+
+		it('should be auto-cleared when task is completed', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+
+			const completed = await taskManager.completeTask(task.id, 'done');
+			expect(completed.activeSession).toBeNull();
+		});
+
+		it('should be auto-cleared when task is failed', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'leader' });
+
+			const failed = await taskManager.failTask(task.id, 'error occurred');
+			expect(failed.activeSession).toBeNull();
+		});
+
+		it('should be auto-cleared when task is cancelled', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+
+			const cancelled = await taskManager.cancelTask(task.id);
+			expect(cancelled.activeSession).toBeNull();
+		});
+
+		it('should persist across getTask calls', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+
+			const fetched = await taskManager.getTask(task.id);
+			expect(fetched!.activeSession).toBe('worker');
+		});
+	});
 });

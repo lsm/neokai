@@ -449,6 +449,8 @@ function TaskItem({
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 
+	const isWorking = task.status === 'review' && !!task.activeSession;
+
 	return (
 		<div
 			class={`px-4 py-3 ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
@@ -458,6 +460,12 @@ function TaskItem({
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2">
 						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
+						{isWorking && (
+							<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/20 border border-blue-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0">
+								<span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+								{task.activeSession === 'worker' ? 'Worker' : 'Leader'} working
+							</span>
+						)}
 						{blocked && (
 							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
 								Blocked
