@@ -119,7 +119,10 @@ export class CopilotCliProvider implements Provider {
 		streaming: true,
 		extendedThinking: false,
 		maxContextWindow: 272000, // Max across all supported models
-		functionCalling: true, // Via CLI's autonomous tool execution
+		// functionCalling is false: the CLI executes tools autonomously; NeoKai cannot
+		// define tools, receive tool callbacks, or intercept tool executions. Setting
+		// this to true would mislead any code that gates behavior on this capability.
+		functionCalling: false,
 		vision: false, // Not supported in NDJSON mode (v1.0.2)
 	};
 
@@ -182,20 +185,23 @@ export class CopilotCliProvider implements Provider {
 		options: ProviderQueryOptions,
 		context: ProviderQueryContext
 	): Promise<AsyncGenerator<SDKMessage, void> | null> {
-		const copilotPath = await this.findCopilotCli();
-		if (!copilotPath) {
-			logger.warn(
-				'GitHub Copilot CLI not found on PATH. Install from: https://github.com/github/copilot-cli'
-			);
+		// Single availability check covers both binary detection and auth verification.
+		// findCopilotCli() result is cached after the first call.
+		if (!(await this.isAvailable())) {
+			const copilotPath = await this.findCopilotCli();
+			if (!copilotPath) {
+				logger.warn(
+					'GitHub Copilot CLI not found on PATH. Install from: https://github.com/github/copilot-cli'
+				);
+			} else {
+				logger.warn(
+					'GitHub Copilot CLI not authenticated. Run `gh auth login` or set COPILOT_GITHUB_TOKEN.'
+				);
+			}
 			return null;
 		}
 
-		if (!(await this.isAvailable())) {
-			logger.warn(
-				'GitHub Copilot CLI not authenticated. Run `gh auth login` or set COPILOT_GITHUB_TOKEN.'
-			);
-			return null;
-		}
+		const copilotPath = (await this.findCopilotCli())!;
 
 		// Resolve model alias to CLI model ID
 		const modelEntry = COPILOT_CLI_MODELS.find(

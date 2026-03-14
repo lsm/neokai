@@ -234,9 +234,15 @@ describe('copilotMessageToSdkAssistant', () => {
 			reasoningText: 'Let me analyze this carefully.',
 		};
 		const result = copilotMessageToSdkAssistant(data, 'session-1');
-		const content = result.message.content as Array<{ type: string; text?: string }>;
-		expect(content[0].type).toBe('text');
-		expect(content[0].text).toBe('<thinking>Let me analyze this carefully.</thinking>');
+		const content = result.message.content as Array<{
+			type: string;
+			text?: string;
+			thinking?: string;
+		}>;
+		// reasoningText is emitted as a 'thinking' block (not a text block with XML tags)
+		expect(content[0].type).toBe('thinking');
+		expect(content[0].thinking).toBe('Let me analyze this carefully.');
+		expect(content[1].type).toBe('text');
 		expect(content[1].text).toBe('Answer');
 	});
 
