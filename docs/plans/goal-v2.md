@@ -69,6 +69,7 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
        unit?: string;
      }
      ```
+   - `MetricHistoryEntry`: `{ metricName: string; value: number; recordedAt: string }` -- for time-series history
    - `CronSchedule`: `{ expression: string; timezone: string; nextRunAt?: string }`
    - `MissionExecutionStatus = 'running' | 'completed' | 'failed'`
 
@@ -78,9 +79,13 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
      - `autonomyLevel: AutonomyLevel` (default `'supervised'`)
      - `structuredMetrics?: MissionMetric[]` (coexists with existing `metrics` field during migration)
      - `schedule?: CronSchedule` (for recurring missions)
+     - `schedulePaused?: boolean` (default false -- schedule-level pause flag, orthogonal to mission status)
      - `maxConsecutiveFailures?: number` (default 3)
      - `maxPlanningAttempts?: number` (default 5)
+     - `consecutiveFailures?: number` (default 0)
    - Keep `RoomGoal` as `type RoomGoal = Mission` (deprecated alias)
+
+   **Design decision: `schedulePaused` vs new GoalStatus value**: Recurring mission pause is a schedule-level boolean flag, NOT a new `GoalStatus` value. Current `GoalStatus` is `'active' | 'needs_human' | 'completed' | 'archived'` with a DB CHECK constraint. Adding `'paused'` would require updating the constraint and modifying `getNextGoalForPlanning()` which only selects `'active'` goals. Instead, `schedulePaused` keeps pause orthogonal to mission status — a recurring mission stays `active` (eligible for tick processing) but the scheduler skips it when `schedulePaused = true`. This mirrors how `RuntimeState.paused` is orthogonal to goal status at the room level.
 
 3. **Update shared exports**: Ensure all new types are exported from `@neokai/shared`
 
@@ -93,76 +98,106 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
 
 ---
 
-### Task 2: Database Migration -- Schema Changes for Mission System
+### Task 2: Database Migration -- New Columns and Tables (Physical Table Stays `goals`)
 
 **Agent**: `coder`
 **Priority**: `high`
 **Dependencies**: Task 1
 
 **Description**:
-Database-only changes to support the Mission system. No manager/handler/import changes.
+Add new columns to the existing `goals` table and create supporting tables. The physical table name remains `goals` to avoid breaking historical migrations, reactive DB mappings, SQL queries, and test helpers. The `Mission` name exists only at the type/API layer (Task 1). A physical table rename is deferred to a future coordinated cutover (or may never happen -- many codebases keep legacy table names).
 
-1. **Rename `goals` table to `missions`** via migration:
-   - Add new columns: `mission_type` (TEXT, default `'one_shot'`), `autonomy_level` (TEXT, default `'supervised'`), `schedule` (TEXT/JSON, nullable), `max_consecutive_failures` (INTEGER, default 3), `max_planning_attempts` (INTEGER, default 5), `consecutive_failures` (INTEGER, default 0)
+1. **Add new columns to `goals` table** via migration:
+   - `mission_type` (TEXT, default `'one_shot'`, CHECK constraint for valid values)
+   - `autonomy_level` (TEXT, default `'supervised'`, CHECK constraint for valid values)
+   - `schedule` (TEXT/JSON, nullable) -- stores `CronSchedule` for recurring missions
+   - `schedule_paused` (INTEGER, default 0) -- boolean flag for pausing recurring schedules (see design note below)
+   - `structured_metrics` (TEXT/JSON, nullable) -- stores `MissionMetric[]` with target/current/unit
+   - `max_consecutive_failures` (INTEGER, default 3)
+   - `max_planning_attempts` (INTEGER, default 5)
+   - `consecutive_failures` (INTEGER, default 0)
    - Migrate existing rows: all get `mission_type = 'one_shot'`, `autonomy_level = 'supervised'`
+   - **Do NOT rename the table** -- all SQL queries, indexes, reactive DB mappings, and test helpers continue to reference `goals`
 
-2. **Extend existing `metrics` column**:
-   - The existing `metrics` JSON column (`Record<string, number>`) is preserved as-is for backward compatibility
-   - Add new `structured_metrics` column (TEXT/JSON, nullable) for `MissionMetric[]` with target/current/unit fields
-   - Migration: existing `metrics` data is left untouched; `structured_metrics` starts as NULL
+2. **Preserve existing `metrics` column**:
+   - The existing `metrics` JSON column (`Record<string, number>`) is preserved as-is
+   - The new `structured_metrics` column coexists alongside it
+   - Migration: existing `metrics` data untouched; `structured_metrics` starts as NULL
 
-3. **New `mission_executions` table** for recurring mission history:
-   - `id, mission_id, started_at, completed_at, status, result_summary, tasks_created` (JSON array of task IDs)
-   - Foreign key to `missions`
+3. **New `mission_metric_history` table** for time-series KPI tracking:
+   - `id` (TEXT PRIMARY KEY)
+   - `goal_id` (TEXT, FK to `goals.id` ON DELETE CASCADE)
+   - `metric_name` (TEXT NOT NULL)
+   - `value` (REAL NOT NULL)
+   - `recorded_at` (INTEGER NOT NULL) -- unix timestamp
+   - Index on `(goal_id, metric_name, recorded_at)`
+   - This table enables `recordMetric(..., timestamp)` and `getMetricHistory(..., timeRange)` in Task 5
 
-4. **Update `MissionRepository`** (rename from `GoalRepository`):
-   - Rename class, update table references
-   - Add CRUD for new columns
-   - Add `mission_executions` queries
-   - Preserve all existing query patterns
+4. **New `mission_executions` table** for recurring mission history:
+   - `id, goal_id, started_at, completed_at, status, result_summary, tasks_created` (JSON array of task IDs)
+   - Foreign key to `goals` (physical table name)
+
+5. **Update `GoalRepository`** (keep class name for now -- renamed in Task 3):
+   - Add CRUD for new columns (mission_type, autonomy_level, schedule, etc.)
+   - Add `mission_metric_history` queries (insert, query by time range)
+   - Add `mission_executions` queries (insert, list by goal_id, update status)
+   - Preserve all existing query patterns and SQL unchanged
+
+**Design note on `schedule_paused`**: Recurring mission pause is implemented as a schedule-level boolean flag (`schedule_paused`) rather than a new `GoalStatus` value. This avoids modifying the existing `CHECK(status IN ('active', 'needs_human', 'completed', 'archived'))` constraint and keeps pause orthogonal to mission status. A recurring mission can be `active` (eligible for tick-loop selection) but have `schedule_paused = 1` (scheduler skips it). This mirrors how `RuntimeState.paused` is orthogonal to goal status at the room level.
 
 **Acceptance Criteria**:
 - Migration runs cleanly on fresh DB and on DB with existing goals data
+- Physical table name remains `goals` -- all existing SQL queries still work
 - Existing `metrics` data is preserved after migration
-- New columns have correct defaults
+- New columns have correct defaults and CHECK constraints
+- `mission_metric_history` table supports insert and time-range queries
 - `mission_executions` table is created and queryable
-- Unit tests cover: fresh migration, migration with existing data, new column defaults
+- `schedule_paused` flag defaults to 0 and is queryable
+- Unit tests cover: fresh migration, migration with existing data, new column defaults, metric history CRUD, execution CRUD
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 3: Backend Rename -- Manager, RPC Handlers, and Agent References
+### Task 3: Backend Rename -- Repository, Manager, RPC Handlers, and Agent References
 
 **Agent**: `coder`
 **Priority**: `high`
 **Dependencies**: Task 2
 
 **Description**:
-Rename all backend goal references to mission. This is a mechanical rename with backward-compatible RPC aliases.
+Rename all backend goal references to mission. This is a mechanical rename with backward-compatible RPC aliases. The physical DB table stays `goals` (decided in Task 2) -- only class names, method names, RPC endpoints, and event names change.
 
-1. **Rename `GoalManager` -> `MissionManager`**:
+1. **Rename `GoalRepository` -> `MissionRepository`**:
+   - Rename class and method names (e.g., `createGoal` -> `createMission`, `listGoals` -> `listMissions`)
+   - All SQL queries continue to reference the physical `goals` table -- only the TypeScript API changes
+   - Update reactive DB table mappings: method names change but table string stays `'goals'`
+   - Update database facade methods and public getter
+
+2. **Rename `GoalManager` -> `MissionManager`**:
    - Rename class, methods, and internal references
    - Update constructor and dependency injection in `RoomRuntime`
    - Preserve all existing functionality exactly
 
-2. **Rename RPC handlers** (`goal-handlers.ts` -> `mission-handlers.ts`):
+3. **Rename RPC handlers** (`goal-handlers.ts` -> `mission-handlers.ts`):
    - Rename all `goal.*` handlers to `mission.*`
    - Register backward-compatible aliases: `goal.create` -> `mission.create`, etc.
    - No new handlers in this task (new handlers added in feature tasks)
 
-3. **Update agent references**:
+4. **Update agent references**:
    - Planner, Coder, General, Leader agent prompts: `goal` -> `mission` in system prompts
    - Room agent tools: `create_goal` -> `create_mission`, etc. (keep old names as aliases)
    - Update `room-runtime.ts` references
 
-4. **Update event names**:
+5. **Update event names**:
    - `goal.created` -> `mission.created`, `goal.updated` -> `mission.updated`, etc.
    - Emit both old and new event names during transition period
 
-5. **Update all remaining imports/references** in `packages/daemon/` and `packages/shared/`
+6. **Update all remaining imports/references** in `packages/daemon/` and `packages/shared/`
+   - Update test files (10+ files with goal references, test helpers with table creation SQL)
 
 **Acceptance Criteria**:
 - All existing goal-related tests pass with renamed entities
+- SQL queries still reference `goals` table (no physical rename)
 - RPC handlers respond to both `goal.*` and `mission.*` namespaces
 - Event subscriptions work with both old and new event names
 - No TypeScript compilation errors
@@ -209,8 +244,8 @@ Rename all frontend goal references to mission. This can run in parallel with Ta
 Implement the measurable mission type with structured KPI tracking and adaptive replanning.
 
 1. **Structured metrics in MissionManager**:
-   - `recordMetric(missionId, metricName, value, timestamp)`: Update `structured_metrics` JSON and append to history
-   - `getMetricHistory(missionId, metricName, timeRange)`: Query historical values from `structured_metrics`
+   - `recordMetric(missionId, metricName, value, timestamp)`: Update `current` in `structured_metrics` JSON AND insert a row into `mission_metric_history` table (created in Task 2)
+   - `getMetricHistory(missionId, metricName, timeRange)`: Query `mission_metric_history` table by `(goal_id, metric_name, recorded_at)` index
    - `checkMetricTargets(missionId)`: Compare each metric's `current` against `target`, return pass/fail per metric
    - Progress calculation for measurable missions: `progress = average(min(current/target, 1.0) * 100)` across all metrics
    - **Migration from existing `metrics` field**: If a mission has `metrics` but no `structured_metrics`, treat `metrics` values as current values with no targets (one-shot behavior preserved)
@@ -277,20 +312,21 @@ Implement recurring mission support with cron-based scheduling.
    - Mission progress shows latest execution status, not aggregate across all executions
 
 4. **Lifecycle management**:
-   - Recurring missions never auto-complete; only manual archive/pause
-   - Add `paused` status for temporarily stopping recurring missions
-   - Resume from pause recalculates `next_run_at` from current time
+   - Recurring missions never auto-complete; only manual archive
+   - Pause via `schedule_paused` flag (defined in Task 1, column added in Task 2): setting `schedule_paused = true` causes the scheduler to skip this mission without changing its `active` status
+   - Resume sets `schedule_paused = false` and recalculates `next_run_at` from current time
+   - `getNextGoalForPlanning()` already filters by `status = 'active'` -- no changes needed there; the scheduler adds an additional check for `schedule_paused = false` on recurring missions
 
 5. **MCP tools**:
    - `set_schedule(mission_id, cron, timezone)`: Set/update schedule
-   - `pause_mission(mission_id)` / `resume_mission(mission_id)`: Control recurring execution
+   - `pause_schedule(mission_id)` / `resume_schedule(mission_id)`: Toggle `schedule_paused` flag
 
 **Acceptance Criteria**:
 - Cron expressions parsed correctly with timezone support
 - Scheduler triggers execution at the right times (within 30s jitter)
 - Overlap prevention works (no concurrent executions of same mission)
 - Daemon restart catches up on past-due schedules correctly
-- Paused missions don't fire; resumed missions recalculate correctly
+- `schedule_paused` flag prevents firing; resuming recalculates `next_run_at` correctly
 - Each execution cycle is independent with proper context passing
 - Execution history is recorded and queryable
 - Unit tests for: cron parsing, schedule calculation, overlap prevention, daemon restart catch-up, pause/resume
@@ -306,7 +342,7 @@ Implement recurring mission support with cron-based scheduling.
 **Dependencies**: Task 3
 
 **Description**:
-Implement tiered autonomy levels that control how much human oversight is required, with explicit risk classification and safety mechanisms.
+Implement tiered autonomy levels that control how much human oversight is required. This task modifies the core approval flow (`submittedForReview` / `approved` semantics, `complete_task` gate, and plan approval).
 
 1. **Autonomy level enforcement in RoomRuntime**:
    - `supervised` (default, current behavior):
@@ -323,29 +359,45 @@ Implement tiered autonomy levels that control how much human oversight is requir
      - Human notified asynchronously of all decisions
      - Escalation to human on: repeated failures, explicit uncertainty, or mission-level error
 
-2. **Update Leader agent behavior**:
-   - `complete_task` tool: Check mission autonomy level before requiring human approval
-   - In `semi_autonomous` / `autonomous`: Leader's approval is sufficient
-   - In `supervised`: Current behavior (human gate)
+2. **Modify the `complete_task` gate** (`room-runtime.ts` line ~628):
+   - Current gate: requires `submittedForReview === true` OR `approved === true`
+   - New behavior: check mission `autonomyLevel` first:
+     - `supervised`: unchanged -- requires `submittedForReview` + human `approved`
+     - `semi_autonomous` / `autonomous`: Leader can call `complete_task` directly
+       - Runtime auto-sets `approved = true` on the session group (no human action needed)
+       - Lifecycle hooks (`checkLeaderPrMerged`, `checkWorkerPrMerged`) still run -- PR must actually be merged
+       - `submittedForReview` is skipped (Leader does not need to call `submit_for_review` first)
 
-3. **Update plan approval flow**:
-   - In `autonomous` mode: Leader can approve plans directly
-   - Skip `submit_for_review` human gate
-   - Still create PR for auditability, but auto-merge after Leader approval
+3. **Modify the plan approval flow** (`room-runtime.ts` `resumeWorkerFromHuman`):
+   - Current: human calls `task.approve` RPC -> sets `approved = true` -> Leader can create tasks
+   - New behavior for `autonomous` mode:
+     - After Leader reviews the plan PR and is satisfied, Leader calls a new tool: `auto_approve_plan(task_id)`
+     - This tool (available only when `autonomyLevel === 'autonomous'`):
+       - Sets `approved = true` on the session group (same as human approval)
+       - Sets `submittedForReview = false` (clears the review state)
+       - Resumes the planner to enter Phase 2 (task creation)
+     - Plan PR is still created for auditability -- Leader merges it after self-approval
+   - For `semi_autonomous`: plan approval still requires human (current flow)
 
-4. **Notification system** (foundation):
+4. **Handle merge failures gracefully**:
+   - If `gh pr merge` fails (branch protection, conflicts, permissions):
+     - Existing `checkLeaderPrMerged()` / `checkWorkerPrMerged()` lifecycle hooks already detect CLOSED/non-MERGED state and bounce a message back to the agent
+     - In autonomous mode: after 2 merge retries, escalate to `needs_human` (don't loop forever)
+     - Track merge retry count in session group metadata
+
+5. **Notification system** (foundation):
    - Emit events when tasks complete without human review: `mission.task.auto_completed`
    - Emit events for autonomous plan approvals: `mission.plan.auto_approved`
    - Notification payload must include: mission ID, task ID, task title, summary of changes (e.g., PR URL, files changed count), autonomy level that allowed auto-completion
    - These events are broadcast via MessageHub for UI consumption
 
-5. **Escalation policy**:
+6. **Escalation policy**:
    - Track `consecutive_failures` per mission (column added in Task 2)
    - When `consecutiveFailures >= maxConsecutiveFailures`: set mission status to `needs_human`
    - Reset counter on successful task completion
    - On escalation, notification includes: failure count, last error, mission context
 
-6. **Audit trail**:
+7. **Audit trail**:
    - All auto-approved completions are logged in session group messages (already mirrored by existing infrastructure)
    - PRs serve as immutable audit trail (code changes are always committed)
    - `mission_executions` table records outcome of each execution cycle
@@ -353,13 +405,15 @@ Implement tiered autonomy levels that control how much human oversight is requir
 **Acceptance Criteria**:
 - Three autonomy levels work as described
 - `supervised` mode behavior is unchanged from current system
-- `semi_autonomous` allows Leader to complete tasks but requires human plan approval
-- `autonomous` allows full agent autonomy with async notifications
+- `semi_autonomous` allows Leader to complete tasks without human approval, but requires human plan approval
+- `autonomous` allows Leader to self-approve plans via `auto_approve_plan` tool, and complete tasks directly
+- `complete_task` gate correctly checks autonomy level before enforcing human approval
+- Merge failures escalate to `needs_human` after retries in autonomous mode
 - Notification payloads contain enough context to understand what happened
 - Escalation triggers correctly after consecutive failures and resets on success
 - Audit trail is available via session group messages and PRs
-- Unit tests for each autonomy level's gate behavior, escalation counter, and notification payloads
-- Online tests for semi-autonomous task completion flow
+- Unit tests for: each autonomy level's gate behavior, `auto_approve_plan` tool, escalation counter, merge failure retry, notification payloads
+- Online tests for semi-autonomous task completion flow and autonomous plan approval flow
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
