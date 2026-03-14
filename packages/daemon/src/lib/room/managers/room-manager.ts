@@ -137,6 +137,8 @@ export class RoomManager {
 			dependsOn: task.dependsOn,
 			error: task.error,
 			activeSession: task.activeSession,
+			prUrl: task.prUrl,
+			prNumber: task.prNumber,
 		});
 		const nonTerminal = tasks.filter(
 			(t) => t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'

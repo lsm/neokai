@@ -34,6 +34,15 @@ export const VALID_STATUS_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 };
 
 /**
+ * Parse PR URL to extract PR number.
+ * Supports: https://github.com/org/repo/pull/123
+ */
+export function extractPrNumber(prUrl: string): number | null {
+	const match = prUrl.match(/\/pull\/(\d+)/);
+	return match ? parseInt(match[1], 10) : null;
+}
+
+/**
  * Check if a status transition is valid
  */
 export function isValidStatusTransition(from: TaskStatus, to: TaskStatus): boolean {
@@ -266,9 +275,14 @@ export class TaskManager {
 	 * Move task to review (work done, awaiting human approval)
 	 */
 	async reviewTask(taskId: string, prUrl?: string): Promise<NeoTask> {
+		const prNumber = prUrl ? extractPrNumber(prUrl) : null;
+		const prCreatedAt = prUrl ? Date.now() : null;
 		return this.updateTaskStatus(taskId, 'review', {
-			currentStep: prUrl,
+			currentStep: prUrl ?? 'Awaiting review', // Keep for backward compatibility
 			progress: 80,
+			prUrl: prUrl ?? null,
+			prNumber,
+			prCreatedAt,
 		});
 	}
 

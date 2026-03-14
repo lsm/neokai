@@ -589,4 +589,62 @@ describe('RoomTasks', () => {
 			expect(container.textContent).not.toContain('Worker working');
 		});
 	});
+
+	describe('PR Button', () => {
+		beforeEach(() => {
+			selectedTabSignal.value = 'review';
+		});
+
+		it('should render PR button when prUrl is set', () => {
+			const tasks = [
+				createTask('t1', 'review', {
+					prUrl: 'https://github.com/org/repo/pull/42',
+					prNumber: 42,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/42"]');
+			expect(prLink).toBeTruthy();
+			expect(container.textContent).toContain('PR #42');
+		});
+
+		it('should not render PR button when prUrl is not set', () => {
+			const tasks = [createTask('t1', 'review')];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLinks = container.querySelectorAll('a[href*="/pull/"]');
+			expect(prLinks).toHaveLength(0);
+		});
+
+		it('should open PR link in new tab', () => {
+			const tasks = [
+				createTask('t1', 'review', {
+					prUrl: 'https://github.com/org/repo/pull/7',
+					prNumber: 7,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href*="/pull/"]') as HTMLAnchorElement;
+			expect(prLink?.target).toBe('_blank');
+			expect(prLink?.rel).toContain('noopener');
+		});
+
+		it('should show PR number in button text', () => {
+			const tasks = [
+				createTask('t1', 'review', {
+					prUrl: 'https://github.com/org/repo/pull/99',
+					prNumber: 99,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			expect(container.textContent).toContain('PR #99');
+		});
+	});
 });

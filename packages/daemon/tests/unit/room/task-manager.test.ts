@@ -16,7 +16,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { TaskManager } from '../../../src/lib/room/managers/task-manager';
+import { TaskManager, extractPrNumber } from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 describe('TaskManager', () => {
@@ -441,6 +441,31 @@ describe('TaskManager', () => {
 			const updated = await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
 
 			expect(updated.status).toBe('review');
+			expect(updated.prUrl).toBe('https://github.com/org/repo/pull/1');
+			expect(updated.prNumber).toBe(1);
+			expect(updated.prCreatedAt).toBeDefined();
+		});
+
+		it('should extract PR number from GitHub URL', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+
+			const updated = await taskManager.reviewTask(
+				task.id,
+				'https://github.com/myorg/myrepo/pull/123'
+			);
+
+			expect(updated.prNumber).toBe(123);
+		});
+
+		it('should set null PR fields when no prUrl provided', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+
+			const updated = await taskManager.reviewTask(task.id);
+
+			expect(updated.status).toBe('review');
+			expect(updated.prUrl).toBeUndefined();
+			expect(updated.prNumber).toBeUndefined();
+			expect(updated.prCreatedAt).toBeUndefined();
 		});
 
 		it('should throw error for non-existent task', async () => {
@@ -884,5 +909,27 @@ describe('TaskManager', () => {
 			const fetched = await taskManager.getTask(task.id);
 			expect(fetched!.activeSession).toBe('worker');
 		});
+	});
+});
+
+describe('extractPrNumber', () => {
+	it('should extract PR number from GitHub URL', () => {
+		expect(extractPrNumber('https://github.com/org/repo/pull/123')).toBe(123);
+	});
+
+	it('should extract PR number from URL with trailing path', () => {
+		expect(extractPrNumber('https://github.com/org/repo/pull/42/files')).toBe(42);
+	});
+
+	it('should return null for URL without pull segment', () => {
+		expect(extractPrNumber('https://github.com/org/repo')).toBeNull();
+	});
+
+	it('should handle large PR numbers', () => {
+		expect(extractPrNumber('https://github.com/org/repo/pull/9999')).toBe(9999);
+	});
+
+	it('should return null for empty string', () => {
+		expect(extractPrNumber('')).toBeNull();
 	});
 });

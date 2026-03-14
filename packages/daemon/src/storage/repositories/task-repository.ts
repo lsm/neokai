@@ -165,6 +165,18 @@ export class TaskRepository {
 			fields.push('active_session = ?');
 			values.push(null);
 		}
+		if (params.prUrl !== undefined) {
+			fields.push('pr_url = ?');
+			values.push(params.prUrl ?? null);
+		}
+		if (params.prNumber !== undefined) {
+			fields.push('pr_number = ?');
+			values.push(params.prNumber ?? null);
+		}
+		if (params.prCreatedAt !== undefined) {
+			fields.push('pr_created_at = ?');
+			values.push(params.prCreatedAt ?? null);
+		}
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
@@ -259,6 +271,9 @@ export class TaskRepository {
 			completedAt: (row.completed_at as number | null) ?? undefined,
 			archivedAt: (row.archived_at as number | null) ?? undefined,
 			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
+			prUrl: (row.pr_url as string | null) ?? undefined,
+			prNumber: (row.pr_number as number | null) ?? undefined,
+			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 		};
 	}
 }
