@@ -442,7 +442,7 @@ describe('RoomManager', () => {
 					`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 				)
-				.run('task-4', room.id, 'Failed', 'Desc', 'failed', 'normal', '[]', Date.now());
+				.run('task-4', room.id, 'Failed', 'Desc', 'needs_attention', 'normal', '[]', Date.now());
 
 			const status = roomManager.getRoomStatus(room.id);
 

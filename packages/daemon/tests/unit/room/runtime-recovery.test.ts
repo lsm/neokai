@@ -226,7 +226,7 @@ describe('Runtime Recovery', () => {
 		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('failed');
+		expect(task!.status).toBe('needs_attention');
 	});
 
 	it('should fail groups with lost leader sessions', async () => {
@@ -384,7 +384,7 @@ describe('Runtime Recovery', () => {
 		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('failed');
+		expect(task!.status).toBe('needs_attention');
 	});
 
 	it('should restore sessions not live in cache for awaiting_worker', async () => {

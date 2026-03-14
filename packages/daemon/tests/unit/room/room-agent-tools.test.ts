@@ -522,7 +522,7 @@ describe('Room Agent Tools', () => {
 			const cancelledTasks = parseResult(await handlers.list_tasks({ status: 'cancelled' }));
 			expect((cancelledTasks.tasks as unknown[]).length).toBe(1);
 
-			const failedTasks = parseResult(await handlers.list_tasks({ status: 'failed' }));
+			const failedTasks = parseResult(await handlers.list_tasks({ status: 'needs_attention' }));
 			expect((failedTasks.tasks as unknown[]).length).toBe(0);
 		});
 
@@ -649,16 +649,16 @@ describe('Room Agent Tools', () => {
 			expect(status.tasksNeedingReview).toEqual([]);
 		});
 
-		it('should count cancelled tasks separately from failed', async () => {
+		it('should count cancelled tasks separately from needs_attention tasks', async () => {
 			const t1 = parseResult(await handlers.create_task({ title: 'To cancel', description: 'd' }));
 			await handlers.cancel_task({ task_id: t1.taskId as string });
 
 			const result = parseResult(await handlers.get_room_status());
 			const status = result.status as {
-				tasks: { total: number; failed: number; cancelled: number };
+				tasks: { total: number; needsAttention: number; cancelled: number };
 			};
 			expect(status.tasks.total).toBe(1);
-			expect(status.tasks.failed).toBe(0);
+			expect(status.tasks.needsAttention).toBe(0);
 			expect(status.tasks.cancelled).toBe(1);
 		});
 
@@ -999,7 +999,7 @@ describe('Room Agent Tools', () => {
 			expect(task!.status).toBe('cancelled');
 		});
 
-		it('should roll back task to failed when reviveTaskForMessage returns false', async () => {
+		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => false,
 				injectMessageToWorker: async () => true,
@@ -1022,11 +1022,11 @@ describe('Room Agent Tools', () => {
 				await h.send_message_to_task({ task_id: taskId, message: 'hello' })
 			);
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('failed');
+			expect(result.error).toContain('needs_attention');
 
 			// Task status should be rolled back to failed (not left in review)
 			const task = await taskManager.getTask(taskId);
-			expect(task!.status).toBe('failed');
+			expect(task!.status).toBe('needs_attention');
 		});
 	});
 
@@ -1402,12 +1402,12 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(
 				await handlers.set_task_status({
 					task_id: taskId,
-					status: 'failed',
+					status: 'needs_attention',
 					error: 'Tests failed',
 				})
 			);
 			expect(result.success).toBe(true);
-			expect(result.task.status).toBe('failed');
+			expect(result.task.status).toBe('needs_attention');
 			expect(result.task.error).toBe('Tests failed');
 		});
 

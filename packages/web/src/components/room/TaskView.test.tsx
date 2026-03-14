@@ -879,9 +879,9 @@ describe('TaskView — Task options dropdown menu', () => {
 		expect(menuButton).toBeNull();
 	});
 
-	it('does NOT show task options menu for failed tasks', async () => {
+	it('does NOT show cancel button for needs_attention tasks', async () => {
 		mockRequest.mockImplementation(async (method) => {
-			if (method === 'task.get') return { task: makeTask('task-1', 'failed') };
+			if (method === 'task.get') return { task: makeTask('task-1', 'needs_attention') };
 			if (method === 'task.getGroup') return { group: null };
 			return {};
 		});

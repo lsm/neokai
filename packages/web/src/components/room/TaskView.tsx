@@ -96,7 +96,7 @@ const TASK_STATUS_COLORS: Record<string, string> = {
 	pending: 'text-gray-400',
 	in_progress: 'text-yellow-400',
 	completed: 'text-green-400',
-	failed: 'text-red-400',
+	needs_attention: 'text-red-400',
 	review: 'text-purple-400',
 	draft: 'text-gray-500',
 	cancelled: 'text-gray-500',
@@ -1046,8 +1046,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 										? 'Waiting for the runtime to pick up this task.'
 										: task.status === 'completed'
 											? 'This task has been completed.'
-											: task.status === 'failed'
-												? 'This task has failed.'
+											: task.status === 'needs_attention'
+												? 'This task needs attention.'
 												: task.status === 'review'
 													? 'This task is awaiting human review.'
 													: task.status === 'draft'

@@ -185,8 +185,8 @@ export class GoalManager {
 			if (task && task.roomId === this.roomId) {
 				if (task.status === 'completed') {
 					totalProgress += 100;
-				} else if (task.status === 'failed' || task.status === 'cancelled') {
-					// Terminal tasks (failed or cancelled) don't contribute to progress
+				} else if (task.status === 'needs_attention' || task.status === 'cancelled') {
+					// Terminal tasks (needs_attention or cancelled) don't contribute to progress
 					totalProgress += 0;
 				} else {
 					totalProgress += task.progress ?? 0;

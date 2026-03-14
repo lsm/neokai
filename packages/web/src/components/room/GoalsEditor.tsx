@@ -147,12 +147,13 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 		pending: 'bg-gray-700 text-gray-300',
 		in_progress: 'bg-yellow-900/50 text-yellow-300',
 		completed: 'bg-green-900/50 text-green-300',
-		failed: 'bg-red-900/50 text-red-300',
+		needs_attention: 'bg-red-900/50 text-red-300',
 		draft: 'bg-dark-600 text-gray-400',
 		review: 'bg-purple-900/50 text-purple-300',
 		cancelled: 'bg-gray-800 text-gray-400',
 	};
-	const label = status === 'in_progress' ? 'active' : status;
+	const label =
+		status === 'in_progress' ? 'active' : status === 'needs_attention' ? 'needs attention' : status;
 	return (
 		<span
 			class={cn(

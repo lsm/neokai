@@ -139,7 +139,7 @@ export class RoomManager {
 			activeSession: task.activeSession,
 		});
 		const nonTerminal = tasks.filter(
-			(t) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled'
+			(t) => t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
 		);
 		const taskSummaries = nonTerminal.map(toSummary);
 		const allTaskSummaries = allTasks.map(toSummary);

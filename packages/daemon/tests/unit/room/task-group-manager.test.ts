@@ -554,7 +554,7 @@ describe('TaskGroupManager', () => {
 			expect(result).toBeNull();
 
 			const failedTask = await taskManager.getTask(task.id);
-			expect(failedTask!.status).toBe('failed');
+			expect(failedTask!.status).toBe('needs_attention');
 			expect(failedTask!.error).toContain('Leader session lost during restart');
 		});
 	});
@@ -680,7 +680,7 @@ describe('TaskGroupManager', () => {
 			expect(updated!.completedAt).toBeDefined();
 
 			const taskResult = await taskManager.getTask(task.id);
-			expect(taskResult!.status).toBe('failed');
+			expect(taskResult!.status).toBe('needs_attention');
 		});
 
 		it('should stop observing sessions', async () => {
@@ -758,7 +758,7 @@ describe('TaskGroupManager', () => {
 	});
 
 	describe('cancel', () => {
-		it('should fail the group and mark the task as cancelled (not failed)', async () => {
+		it('should fail the group and mark the task with cancelled status (not needs_attention)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -775,7 +775,7 @@ describe('TaskGroupManager', () => {
 			const updated = await manager.cancel(group.id);
 
 			// Group becomes terminal and the underlying task status is 'cancelled'
-			// (semantically distinct from 'failed').
+			// (semantically distinct from 'needs_attention').
 			expect(updated!.completedAt).not.toBeNull();
 			const cancelledTask = await taskManager.getTask(task.id);
 			expect(cancelledTask?.status).toBe('cancelled');
@@ -823,7 +823,7 @@ describe('TaskGroupManager', () => {
 			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
 		});
 
-		it('should cleanup worktree on archiveGroup (even for failed tasks)', async () => {
+		it('should cleanup worktree on archiveGroup (even for needs_attention tasks)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();

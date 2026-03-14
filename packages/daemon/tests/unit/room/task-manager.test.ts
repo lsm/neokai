@@ -228,12 +228,12 @@ describe('TaskManager', () => {
 			expect(updated.completedAt).toBeDefined();
 		});
 
-		it('should update task status to failed', async () => {
+		it('should update task status to needs_attention', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.updateTaskStatus(task.id, 'failed');
+			const updated = await taskManager.updateTaskStatus(task.id, 'needs_attention');
 
-			expect(updated.status).toBe('failed');
+			expect(updated.status).toBe('needs_attention');
 			expect(updated.completedAt).toBeDefined();
 		});
 
@@ -339,7 +339,7 @@ describe('TaskManager', () => {
 
 			const updated = await taskManager.failTask(task.id, 'Something went wrong');
 
-			expect(updated.status).toBe('failed');
+			expect(updated.status).toBe('needs_attention');
 			expect(updated.error).toBe('Something went wrong');
 			expect(updated.completedAt).toBeDefined();
 		});
@@ -352,7 +352,7 @@ describe('TaskManager', () => {
 	});
 
 	describe('cancelTask', () => {
-		it('should cancel task with cancelled status (not failed)', async () => {
+		it('should cancel task with cancelled status (not needs_attention)', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
 			const updated = await taskManager.cancelTask(task.id);
@@ -774,7 +774,7 @@ describe('TaskManager', () => {
 	});
 
 	describe('setTaskStatus — revive to review', () => {
-		it('should allow failed → review transition', async () => {
+		it('should allow needs_attention → review transition', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
 			await taskManager.failTask(task.id, 'boom');
@@ -783,7 +783,7 @@ describe('TaskManager', () => {
 			expect(revived.status).toBe('review');
 		});
 
-		it('should clear error field on failed → review transition', async () => {
+		it('should clear error field on needs_attention → review transition', async () => {
 			const task = await taskManager.createTask({ title: 'T', description: '' });
 			await taskManager.startTask(task.id);
 			await taskManager.failTask(task.id, 'something broke');

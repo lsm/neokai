@@ -1953,7 +1953,7 @@ export class RoomRuntime {
 	 *
 	 * A goal needs planning when:
 	 * - status is 'active'
-	 * - has no linked tasks at all, OR all linked tasks are 'failed'
+	 * - has no linked tasks at all, OR all linked tasks need attention
 	 * - has no pending/in_progress/draft/escalated tasks
 	 * - planning_attempts < this.maxPlanningAttempts
 	 *
@@ -1974,7 +1974,7 @@ export class RoomRuntime {
 				// Check whether execution tasks need replanning.
 				// A goal needs replanning when:
 				// - No active (pending/in_progress/draft/escalated) tasks remain
-				// - All execution tasks (non-planning) are failed
+				// - All execution tasks (non-planning) need attention
 				// This handles both "all tasks failed" and "planning succeeded but
 				// all execution tasks failed" scenarios.
 				const linkedTasks = await Promise.all(
@@ -1989,7 +1989,8 @@ export class RoomRuntime {
 					)
 				);
 				const executionTasks = validTasks.filter((t) => t.taskType !== 'planning');
-				const isTerminal = (status: string) => status === 'failed' || status === 'cancelled';
+				const isTerminal = (status: string) =>
+					status === 'needs_attention' || status === 'cancelled';
 				const allExecutionFailed =
 					executionTasks.length > 0 && executionTasks.every((t) => isTerminal(t.status));
 				const allFailed = validTasks.length > 0 && validTasks.every((t) => isTerminal(t.status));

@@ -281,9 +281,9 @@ describe('TaskRepository', () => {
 			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
 			const beforeTime = Date.now();
 
-			const updated = repository.updateTask(task.id, { status: 'failed' });
+			const updated = repository.updateTask(task.id, { status: 'needs_attention' });
 
-			expect(updated?.status).toBe('failed');
+			expect(updated?.status).toBe('needs_attention');
 			expect(updated?.completedAt).toBeDefined();
 			expect(updated?.completedAt).toBeGreaterThanOrEqual(beforeTime);
 		});
@@ -468,7 +468,7 @@ describe('TaskRepository', () => {
 
 			repository.updateTask(task1.id, { status: 'in_progress' });
 			repository.updateTask(task2.id, { status: 'completed' });
-			repository.updateTask(task3.id, { status: 'failed' });
+			repository.updateTask(task3.id, { status: 'needs_attention' });
 			// task4 stays pending
 
 			const activeCount = repository.countActiveTasks('room-1');
@@ -476,7 +476,7 @@ describe('TaskRepository', () => {
 			expect(activeCount).toBe(2); // pending + in_progress
 		});
 
-		it('should return 0 when all tasks are completed or failed', () => {
+		it('should return 0 when all tasks are completed or needs_attention', () => {
 			const task1 = repository.createTask({
 				roomId: 'room-1',
 				title: 'Task 1',
@@ -489,7 +489,7 @@ describe('TaskRepository', () => {
 			});
 
 			repository.updateTask(task1.id, { status: 'completed' });
-			repository.updateTask(task2.id, { status: 'failed' });
+			repository.updateTask(task2.id, { status: 'needs_attention' });
 
 			const activeCount = repository.countActiveTasks('room-1');
 
@@ -557,12 +557,12 @@ describe('TaskRepository', () => {
 
 			// Fail task
 			repository.updateTask(task.id, {
-				status: 'failed',
+				status: 'needs_attention',
 				error: 'Connection timeout',
 			});
 
 			const failed = repository.getTask(task.id);
-			expect(failed?.status).toBe('failed');
+			expect(failed?.status).toBe('needs_attention');
 			expect(failed?.completedAt).toBeDefined();
 			expect(failed?.error).toBe('Connection timeout');
 		});
