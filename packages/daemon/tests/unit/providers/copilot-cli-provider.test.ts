@@ -5,9 +5,7 @@
  * using a mocked subprocess (fake NDJSON stream).
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
-import { EventEmitter } from 'node:events';
-import { Readable, Writable } from 'node:stream';
+import { beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import type { SDKUserMessage } from '@neokai/shared/sdk';
 import type { UUID } from 'crypto';
 import { CopilotCliProvider } from '../../../src/lib/providers/copilot-cli-provider';
@@ -15,45 +13,6 @@ import {
 	copilotCliQueryGenerator,
 	type CopilotCliAdapterConfig,
 } from '../../../src/lib/providers/copilot-cli-adapter';
-
-// ---------------------------------------------------------------------------
-// Mock child process factory
-// ---------------------------------------------------------------------------
-
-/**
- * Creates a mock ChildProcess that emits the given NDJSON lines on stdout,
- * then exits with the given code.
- */
-class MockChildProcess extends EventEmitter {
-	stdout: Readable;
-	stdin: Writable;
-	stderr: Readable;
-	exitCode: number | null = null;
-
-	constructor(
-		ndjsonLines: string[],
-		private readonly exitWith: number = 0
-	) {
-		super();
-		this.stdout = Readable.from(ndjsonLines.join('\n') + '\n');
-		this.stderr = Readable.from('');
-		this.stdin = new Writable({
-			write(_c, _e, cb) {
-				cb();
-			},
-		});
-	}
-
-	kill(_signal?: string): boolean {
-		return true;
-	}
-
-	/** Simulate process exit after all stdout is read */
-	simulateExit() {
-		this.exitCode = this.exitWith;
-		this.emit('exit', this.exitWith, null);
-	}
-}
 
 function makePrompt(text: string): AsyncGenerator<SDKUserMessage> {
 	const msg: SDKUserMessage = {
@@ -130,25 +89,29 @@ describe('CopilotCliProvider', () => {
 	});
 
 	describe('ownsModel', () => {
-		it('should own claude-opus-4.6', () => {
-			expect(provider.ownsModel('claude-opus-4.6')).toBe(true);
-		});
-
-		it('should own claude-sonnet-4.6', () => {
-			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(true);
-		});
-
-		it('should own gpt-5.3-codex', () => {
+		it('should own CLI-exclusive model IDs (not claimed by GitHubCopilotProvider)', () => {
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(true);
+			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
 		});
 
-		it('should own model aliases', () => {
+		it('should own all CLI-specific aliases', () => {
 			expect(provider.ownsModel('copilot-cli-opus')).toBe(true);
 			expect(provider.ownsModel('copilot-cli-sonnet')).toBe(true);
 			expect(provider.ownsModel('copilot-cli-codex')).toBe(true);
+			expect(provider.ownsModel('copilot-cli-gemini')).toBe(true);
+			expect(provider.ownsModel('copilot-cli-mini')).toBe(true);
 		});
 
-		it('should not own anthropic models', () => {
+		it('should NOT own shared model IDs to avoid shadowing GitHubCopilotProvider', () => {
+			// claude-opus-4.6 and claude-sonnet-4.6 are also registered by
+			// GitHubCopilotProvider. The CLI provider excludes them from ownsModel()
+			// so detectProvider() routing isn't ambiguous. Use aliases instead.
+			expect(provider.ownsModel('claude-opus-4.6')).toBe(false);
+			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(false);
+		});
+
+		it('should not own anthropic models not in its list', () => {
 			expect(provider.ownsModel('claude-3-5-sonnet-20241022')).toBe(false);
 		});
 
@@ -248,18 +211,6 @@ describe('CopilotCliProvider', () => {
 // ---------------------------------------------------------------------------
 
 describe('copilotCliQueryGenerator', () => {
-	let spawnMock: ReturnType<typeof mock>;
-	let mockChild: MockChildProcess;
-
-	beforeEach(() => {
-		// We need to mock node:child_process.spawn
-		// Bun's module mocking replaces the module for the duration of the test
-	});
-
-	afterEach(() => {
-		if (spawnMock) spawnMock.mockRestore?.();
-	});
-
 	it('should yield system init message first', async () => {
 		// Use a real subprocess that immediately exits — simulated via the empty prompt path
 		const prompt = (async function* (): AsyncGenerator<SDKUserMessage> {
@@ -325,26 +276,12 @@ describe('copilotCliQueryGenerator', () => {
 	});
 
 	/**
-	 * Helper: collect all messages from the generator with a mock subprocess.
-	 * Injects mock spawn via the childProcessSpawn export hook.
+	 * Helper: collect messages from the generator using a non-existent binary path,
+	 * which triggers the ENOENT spawn-failure path.
 	 */
-	async function collectWithMockProcess(
-		ndjsonLines: string[],
-		exitCode = 0
-	): Promise<Array<{ type: string; is_error?: boolean; subtype?: string }>> {
-		mockChild = new MockChildProcess(ndjsonLines, exitCode);
-
-		// Override spawn inside copilot-cli-adapter by using Bun's module mock
-		// We use a workaround: pass a custom copilotPath that is a fake script.
-		// Since we can't easily mock node:child_process in bun tests without
-		// module-level mocking, we test the NDJSON parsing path via a minimal
-		// echo script that outputs our test lines.
-		//
-		// For now, verify that the generator correctly handles the empty subprocess
-		// case (process not found — ENOENT) since direct process mocking requires
-		// bun module mock infrastructure not available in all test setups.
-
-		// Use non-existent path to trigger ENOENT error case
+	async function collectWithEnoent(): Promise<
+		Array<{ type: string; is_error?: boolean; subtype?: string }>
+	> {
 		const msgs: Array<{ type: string; is_error?: boolean; subtype?: string }> = [];
 		for await (const msg of copilotCliQueryGenerator(
 			makePrompt('test'),
@@ -362,14 +299,14 @@ describe('copilotCliQueryGenerator', () => {
 	}
 
 	it('should yield error result when copilot binary is not found', async () => {
-		const msgs = await collectWithMockProcess([], 1);
+		const msgs = await collectWithEnoent();
 		const result = msgs.find((m) => m.type === 'result');
 		expect(result).toBeDefined();
 		expect(result?.is_error).toBe(true);
 	});
 
 	it('should include system init message even on spawn error', async () => {
-		const msgs = await collectWithMockProcess([], 1);
+		const msgs = await collectWithEnoent();
 		expect(msgs[0]?.type).toBe('system');
 	});
 });
