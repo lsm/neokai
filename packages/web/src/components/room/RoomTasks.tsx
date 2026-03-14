@@ -18,6 +18,8 @@ export type TaskFilterTab = 'active' | 'review' | 'done' | 'needs_attention';
 function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
+	// Migrate old 'failed' tab value to 'needs_attention'
+	if (stored === 'failed') return 'needs_attention';
 	if (
 		stored === 'active' ||
 		stored === 'review' ||

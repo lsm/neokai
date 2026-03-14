@@ -306,11 +306,11 @@ describe('RoomRuntime leader tools', () => {
 			expect(parsed.success).toBe(true);
 			expect(parsed.message).toContain('Replanning triggered');
 
-			// The current task needs attention it via replan_goal)
+			// The current task should be needs_attention (leader explicitly failed it via replan_goal)
 			const updatedTask = await ctx.taskManager.getTask(task1.id);
 			expect(updatedTask!.status).toBe('needs_attention');
 
-			// Remaining pending task needs attention — intentionally stopped)
+			// Remaining pending tasks should be cancelled (not needs_attention — intentionally stopped)
 			const t2 = await ctx.taskManager.getTask(task2.id);
 			const t3 = await ctx.taskManager.getTask(task3.id);
 			expect(t2!.status).toBe('cancelled');
@@ -444,7 +444,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(planningTasks[0].title).toStartWith('Replan:');
 		});
 
-		it('should pass completed task needs attention task in replan context', async () => {
+		it('should pass completed tasks and needs_attention task in replan context', async () => {
 			const goal = await ctx.goalManager.createGoal({
 				title: 'Build auth system',
 				description: 'Implement authentication',
@@ -469,7 +469,7 @@ describe('RoomRuntime leader tools', () => {
 			// Mark task1 as completed with a result
 			await ctx.taskManager.completeTask(task1.id, 'Login endpoint implemented with JWT');
 
-			// task needs attention by replan)
+			// task2 is the one being worked on (will be needs_attention by replan)
 			await ctx.goalManager.incrementPlanningAttempts(goal.id);
 
 			ctx.runtime.start();

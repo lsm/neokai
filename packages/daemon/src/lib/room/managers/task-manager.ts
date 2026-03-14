@@ -4,7 +4,7 @@
  * Handles:
  * - Creating tasks
  * - Listing and filtering tasks
- * - Status transitions (draft -> pending -> in_progress -> completed/failed/cancelled/review)
+ * - Status transitions (draft -> pending -> in_progress -> completed/needs_attention/cancelled/review)
  * - Task assignment to sessions
  */
 

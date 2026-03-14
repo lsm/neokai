@@ -54,7 +54,10 @@ stateDiagram-v2
 - `awaiting_leader`
 - `awaiting_human`
 - `completed`
-- `needs_attention`
+- `failed`
+
+Note: `session_groups.state` has its own `failed` value which is **separate from `TaskStatus`**
+and was not renamed. It marks a terminal group state when the agent session ends abnormally.
 
 `hibernated` is not part of the current model.
 

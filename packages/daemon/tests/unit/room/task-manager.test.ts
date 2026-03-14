@@ -228,7 +228,7 @@ describe('TaskManager', () => {
 			expect(updated.completedAt).toBeDefined();
 		});
 
-		it('should update task needs attention', async () => {
+		it('should update task status to needs_attention', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
 			const updated = await taskManager.updateTaskStatus(task.id, 'needs_attention');
@@ -352,7 +352,7 @@ describe('TaskManager', () => {
 	});
 
 	describe('cancelTask', () => {
-		it('should cancel task needs attention)', async () => {
+		it('should cancel task with cancelled status (not needs_attention)', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
 			const updated = await taskManager.cancelTask(task.id);

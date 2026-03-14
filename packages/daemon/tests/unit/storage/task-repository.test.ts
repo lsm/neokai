@@ -476,7 +476,7 @@ describe('TaskRepository', () => {
 			expect(activeCount).toBe(2); // pending + in_progress
 		});
 
-		it('should return 0 when all task needs attention', () => {
+		it('should return 0 when all tasks are completed or needs_attention', () => {
 			const task1 = repository.createTask({
 				roomId: 'room-1',
 				title: 'Task 1',

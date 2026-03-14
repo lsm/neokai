@@ -758,7 +758,7 @@ describe('TaskGroupManager', () => {
 	});
 
 	describe('cancel', () => {
-		it('should fail the group and mark the task needs attention)', async () => {
+		it('should fail the group and mark the task with cancelled status (not needs_attention)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
