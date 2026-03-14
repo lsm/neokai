@@ -96,6 +96,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 24: Rename 'failed' task status to 'needs_attention' for better semantic clarity
 	runMigration24(db);
+
+	// Migration 25: Add PR fields to tasks table
+	runMigration25(db);
 }
 
 /**
@@ -1106,6 +1109,9 @@ function runMigration24(db: BunDatabase): void {
 				created_by_task_id TEXT,
 				archived_at INTEGER,
 				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
 				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 			)
 		`);
@@ -1132,6 +1138,9 @@ function runMigration24(db: BunDatabase): void {
 			'created_by_task_id',
 			'archived_at',
 			'active_session',
+			'pr_url',
+			'pr_number',
+			'pr_created_at',
 		];
 		for (const col of optionalCols) {
 			if (tableHasColumn(db, 'tasks', col)) baseCols.push(col);
@@ -1155,6 +1164,27 @@ function runMigration24(db: BunDatabase): void {
 		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
 	} finally {
 		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 25: Add PR fields to tasks table.
+ *
+ * Adds pr_url, pr_number, pr_created_at as first-class columns so PR data
+ * is no longer stored as a hack in current_step.
+ */
+function runMigration25(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'tasks', 'pr_url')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN pr_url TEXT`);
+	}
+	if (!tableHasColumn(db, 'tasks', 'pr_number')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN pr_number INTEGER`);
+	}
+	if (!tableHasColumn(db, 'tasks', 'pr_created_at')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN pr_created_at INTEGER`);
 	}
 }
 

@@ -132,7 +132,10 @@ const DB_SCHEMA = `
 		assigned_agent TEXT DEFAULT 'coder',
 		created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
 		archived_at INTEGER,
-		active_session TEXT
+		active_session TEXT,
+		pr_url TEXT,
+		pr_number INTEGER,
+		pr_created_at INTEGER
 	);
 	CREATE TABLE session_groups (
 		id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',

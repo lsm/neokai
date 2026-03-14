@@ -157,6 +157,9 @@ export function createTables(db: BunDatabase): void {
         created_by_task_id TEXT,
         archived_at INTEGER,
         active_session TEXT,
+        pr_url TEXT,
+        pr_number INTEGER,
+        pr_created_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);

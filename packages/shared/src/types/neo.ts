@@ -219,6 +219,12 @@ export interface NeoTask {
 	 * Allows the UI to show a "working" indicator even when status is 'review'.
 	 */
 	activeSession?: 'worker' | 'leader' | null;
+	/** Pull request URL (when task has associated PR) */
+	prUrl?: string | null;
+	/** Pull request number (extracted from URL for display) */
+	prNumber?: number | null;
+	/** When PR was created/submitted (milliseconds since epoch) */
+	prCreatedAt?: number | null;
 }
 
 /**
@@ -265,6 +271,9 @@ export interface UpdateTaskParams {
 	dependsOn?: string[];
 	/** Which session is actively generating output. null clears the indicator. */
 	activeSession?: 'worker' | 'leader' | null;
+	prUrl?: string | null;
+	prNumber?: number | null;
+	prCreatedAt?: number | null;
 }
 
 // ============================================================================
@@ -333,6 +342,10 @@ export interface TaskSummary {
 	error?: string | null;
 	/** Which session is actively generating output (see NeoTask.activeSession) */
 	activeSession?: 'worker' | 'leader' | null;
+	/** Pull request URL (if available) */
+	prUrl?: string | null;
+	/** Pull request number (if available) */
+	prNumber?: number | null;
 }
 
 /**
