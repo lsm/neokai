@@ -11,6 +11,7 @@
  * - Clears draft on successful send
  * - Cleans up drafts older than 7 days on initialization
  * - Each task has its own independent draft
+ * - Flushes any pending debounced save on unmount so no keystroke is lost
  *
  * IMPORTANT: Uses Preact Signals instead of useState to prevent lost keystrokes.
  * See useInputDraft.ts for rationale.
@@ -136,6 +137,12 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const prevTaskIdRef = useRef<string>(taskId);
 
+	// Keep a stable ref to the current taskId so the signal effect and callbacks
+	// can read it without taking a dependency on the primitive value. This avoids
+	// fragile closure captures and keeps `clear` stable across task switches.
+	const taskIdRef = useRef<string>(taskId);
+	taskIdRef.current = taskId;
+
 	// When taskId changes, reload the draft for the new task
 	useEffect(() => {
 		// Skip if taskId hasn't actually changed
@@ -155,9 +162,28 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 		}
 	}, [taskId, contentSignal, draftRestoredSignal]);
 
-	// Debounced save via signal effect
+	// Flush any pending debounced save on unmount so no keystroke is lost
+	useEffect(() => {
+		return () => {
+			if (draftSaveTimeoutRef.current) {
+				clearTimeout(draftSaveTimeoutRef.current);
+				draftSaveTimeoutRef.current = null;
+			}
+			const currentTaskId = taskIdRef.current;
+			const content = contentSignal.peek();
+			if (currentTaskId && content.trim()) {
+				saveDraftToStorage(currentTaskId, content);
+			}
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	// Debounced save via signal effect.
+	// Reads taskId via taskIdRef (a stable ref) rather than the prop directly,
+	// so the closure is always up-to-date without adding a non-signal dependency.
 	useSignalEffect(() => {
 		const content = contentSignal.value;
+		const currentTaskId = taskIdRef.current;
 
 		// Clear any pending save
 		if (draftSaveTimeoutRef.current) {
@@ -165,17 +191,17 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 			draftSaveTimeoutRef.current = null;
 		}
 
-		if (!taskId) return;
+		if (!currentTaskId) return;
 
 		// Empty: clear immediately
 		if (!content.trim()) {
-			removeDraftFromStorage(taskId);
+			removeDraftFromStorage(currentTaskId);
 			return;
 		}
 
 		// Non-empty: debounce save
 		draftSaveTimeoutRef.current = setTimeout(() => {
-			saveDraftToStorage(taskId, content);
+			saveDraftToStorage(currentTaskId, content);
 		}, debounceMs);
 
 		return () => {
@@ -197,13 +223,16 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 		[contentSignal, draftRestoredSignal]
 	);
 
+	// Uses taskIdRef so the reference stays stable across task switches —
+	// the ref is always current, so clear() always targets the active task.
 	const clear = useCallback(() => {
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;
-		if (taskId) {
-			removeDraftFromStorage(taskId);
+		const currentTaskId = taskIdRef.current;
+		if (currentTaskId) {
+			removeDraftFromStorage(currentTaskId);
 		}
-	}, [contentSignal, draftRestoredSignal, taskId]);
+	}, [contentSignal, draftRestoredSignal, taskIdRef]);
 
 	return useMemo(
 		() => ({

@@ -505,6 +505,43 @@ describe('useTaskInputDraft', () => {
 		});
 	});
 
+	// ── Flush on unmount ─────────────────────────────────────────────────────
+
+	describe('flush on unmount', () => {
+		it('should flush pending debounced save on unmount', async () => {
+			const { result, unmount } = renderHook(() => useTaskInputDraft('task-1', 500));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			act(() => {
+				result.current.setContent('Unsaved content');
+			});
+
+			// Not saved yet (debounce hasn't fired)
+			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+
+			// Unmount before debounce fires — should flush immediately
+			unmount();
+
+			const stored = JSON.parse(ls.getItem('neokai_task_draft_task-1')!);
+			expect(stored.message).toBe('Unsaved content');
+		});
+
+		it('should not flush on unmount when content is empty', async () => {
+			const { unmount } = renderHook(() => useTaskInputDraft('task-1', 500));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			unmount();
+
+			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+		});
+	});
+
 	// ── Function stability ────────────────────────────────────────────────────
 
 	describe('function stability', () => {
@@ -522,6 +559,45 @@ describe('useTaskInputDraft', () => {
 			const firstClear = result.current.clear;
 			rerender();
 			expect(result.current.clear).toBe(firstClear);
+		});
+
+		it('should return stable clear reference across task switches', () => {
+			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
+				initialProps: { taskId: 'task-1' },
+			});
+
+			const firstClear = result.current.clear;
+			rerender({ taskId: 'task-2' });
+
+			// clear uses a taskIdRef internally, so its reference stays stable
+			expect(result.current.clear).toBe(firstClear);
+		});
+
+		it('should clear the current task draft even after task switch', async () => {
+			ls.setItem(
+				'neokai_task_draft_task-2',
+				JSON.stringify({ taskId: 'task-2', message: 'Task 2 draft', timestamp: Date.now() })
+			);
+
+			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
+				initialProps: { taskId: 'task-1' },
+			});
+
+			rerender({ taskId: 'task-2' });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(result.current.content).toBe('Task 2 draft');
+
+			// Clear should remove task-2's draft (not task-1's)
+			act(() => {
+				result.current.clear();
+			});
+
+			expect(ls.getItem('neokai_task_draft_task-2')).toBeNull();
+			expect(result.current.content).toBe('');
 		});
 	});
 });
