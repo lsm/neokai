@@ -2643,6 +2643,54 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 		expect(updatedGroup.approved).toBe(false);
 	});
 
+	it('detects bypass marker in the LAST message when worker sends multiple messages', async () => {
+		// The bypass marker must be in the final message, not in earlier messages.
+		// With multi-message responses, the joined text would have the marker buried mid-string,
+		// but checking only the last message ensures the first-line rule applies to the right output.
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'I looked at the codebase and gathered context.',
+					toolCallNames: [],
+				},
+				{
+					id: 'msg-2',
+					text: 'RESEARCH_ONLY:\n\nHere are my findings from the analysis.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.submittedForReview).toBe(true);
+		expect(updatedGroup.approved).toBe(true);
+	});
+
+	it('does NOT bypass when marker is in the first message but NOT the last', async () => {
+		// Marker only counts in the last message — earlier messages are preamble.
+		bypassCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId, _afterId) => [
+				{
+					id: 'msg-1',
+					text: 'RESEARCH_ONLY:\n\nI started researching...',
+					toolCallNames: [],
+				},
+				{
+					id: 'msg-2',
+					text: 'After further investigation, I created some files.',
+					toolCallNames: [],
+				},
+			],
+		});
+		const { group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
+
+		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
+		// No bypass — last message has no marker, gate runs normally (git checks fail-open)
+		expect(updatedGroup.approved).toBe(false);
+	});
+
 	it('allows leader to call complete_task directly after coder bypass (no PR needed)', async () => {
 		bypassCtx = createRuntimeTestContext({
 			getWorkerMessages: (_sessionId, _afterId) => [

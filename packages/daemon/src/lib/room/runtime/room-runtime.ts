@@ -539,8 +539,9 @@ export class RoomRuntime {
 				taskId: group.taskId,
 				groupId,
 				approved: group.approved,
-				// Pass output only when messages exist so detectBypassMarker sees real content
-				workerOutput: workerMessages.length > 0 ? workerOutputText : undefined,
+				// Check the last message for the bypass marker: workers put the marker at the start
+				// of their final response, not in a joined concatenation of all messages.
+				workerOutput: workerMessages.length > 0 ? (workerMessages.at(-1)?.text ?? '') : undefined,
 			};
 			if (group.workerRole === 'planner') {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
