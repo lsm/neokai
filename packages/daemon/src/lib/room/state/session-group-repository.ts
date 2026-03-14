@@ -512,21 +512,23 @@ export class SessionGroupRepository {
 	 * Keeps the last 50 records to bound storage size.
 	 */
 	recordGateFailure(groupId: string, gateName: string, reason: string): void {
-		const raw = (
-			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
-				string,
-				unknown
-			>
-		)?.metadata as string;
-		const currentMeta = this.parseMetadata(raw);
-		const existing = currentMeta.gateFailures ?? [];
-		const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
-		// Cap at 50 records — old entries are unlikely to matter for detection
-		const updated = [...existing, record].slice(-50);
-		const merged = { ...currentMeta, gateFailures: updated };
-		this.db
-			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
-			.run(JSON.stringify(merged), groupId);
+		this.db.transaction(() => {
+			const raw = (
+				this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+					string,
+					unknown
+				>
+			)?.metadata as string;
+			const currentMeta = this.parseMetadata(raw);
+			const existing = currentMeta.gateFailures ?? [];
+			const record: GateFailureRecord = { gateName, reason, timestamp: Date.now() };
+			// Cap at 50 records — old entries are unlikely to matter for detection
+			const updated = [...existing, record].slice(-50);
+			const merged = { ...currentMeta, gateFailures: updated };
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(merged), groupId);
+		})();
 	}
 
 	/**
