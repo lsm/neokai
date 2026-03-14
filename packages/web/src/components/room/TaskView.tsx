@@ -288,7 +288,7 @@ function HumanInputArea({
 		setContent: setMessageText,
 		clear: clearDraft,
 		draftRestored,
-	} = useTaskInputDraft(taskId);
+	} = useTaskInputDraft(roomId, taskId);
 	const [sending, setSending] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
 	const [target, setTarget] = useState<HumanMessageTarget>('worker');

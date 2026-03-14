@@ -1,100 +1,24 @@
 /**
  * useTaskInputDraft Hook
  *
- * Manages draft persistence for the task view message input using localStorage.
- * Unlike useInputDraft (which persists to the server via session metadata),
- * this hook stores drafts locally per task ID.
+ * Manages draft persistence for the task view message input using server-side storage.
+ * Mirrors the pattern of useInputDraft (which persists session chat drafts), but uses
+ * task.get / task.updateDraft RPC calls instead of session.get / session.update.
  *
  * Features:
+ * - Loads draft from server on mount / task change
  * - Auto-saves as the user types (debounced 500ms)
- * - Restores draft when returning to a task
- * - Clears draft on successful send
- * - Cleans up drafts older than 7 days on initialization
- * - Each task has its own independent draft
+ * - Clears draft on successful send via clear()
  * - Flushes any pending debounced save on unmount so no keystroke is lost
+ * - Each task has its own independent draft
  *
  * IMPORTANT: Uses Preact Signals instead of useState to prevent lost keystrokes.
  * See useInputDraft.ts for rationale.
- *
- * IMPORTANT: The draft is loaded synchronously at initialization to prevent
- * the useSignalEffect (which clears storage for empty content) from wiping
- * the stored draft before it can be loaded in a useEffect.
  */
 
 import { useEffect, useRef, useCallback, useMemo } from 'preact/hooks';
 import { useSignal, useSignalEffect } from '@preact/signals';
-
-const STORAGE_KEY_PREFIX = 'neokai_task_draft_';
-const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-
-interface StoredDraft {
-	taskId: string;
-	message: string;
-	timestamp: number;
-}
-
-function getStorageKey(taskId: string): string {
-	return `${STORAGE_KEY_PREFIX}${taskId}`;
-}
-
-function loadDraftFromStorage(taskId: string): string {
-	try {
-		const raw = localStorage.getItem(getStorageKey(taskId));
-		if (!raw) return '';
-		const parsed: StoredDraft = JSON.parse(raw);
-		const age = Date.now() - parsed.timestamp;
-		if (age > DRAFT_MAX_AGE_MS) {
-			localStorage.removeItem(getStorageKey(taskId));
-			return '';
-		}
-		return parsed.message;
-	} catch {
-		localStorage.removeItem(getStorageKey(taskId));
-		return '';
-	}
-}
-
-function saveDraftToStorage(taskId: string, message: string): void {
-	try {
-		if (!message.trim()) {
-			localStorage.removeItem(getStorageKey(taskId));
-			return;
-		}
-		const draft: StoredDraft = { taskId, message, timestamp: Date.now() };
-		localStorage.setItem(getStorageKey(taskId), JSON.stringify(draft));
-	} catch {
-		// Ignore localStorage quota errors
-	}
-}
-
-function removeDraftFromStorage(taskId: string): void {
-	try {
-		localStorage.removeItem(getStorageKey(taskId));
-	} catch {
-		// Ignore errors
-	}
-}
-
-/** Clean up all task drafts older than 7 days */
-function cleanupStaleDrafts(): void {
-	try {
-		const keys = Object.keys(localStorage).filter((k) => k.startsWith(STORAGE_KEY_PREFIX));
-		for (const key of keys) {
-			try {
-				const raw = localStorage.getItem(key);
-				if (!raw) continue;
-				const parsed: StoredDraft = JSON.parse(raw);
-				if (Date.now() - parsed.timestamp > DRAFT_MAX_AGE_MS) {
-					localStorage.removeItem(key);
-				}
-			} catch {
-				localStorage.removeItem(key);
-			}
-		}
-	} catch {
-		// Ignore errors
-	}
-}
+import { connectionManager } from '../lib/connection-manager';
 
 export interface UseTaskInputDraftResult {
 	/** Current draft content */
@@ -103,64 +27,62 @@ export interface UseTaskInputDraftResult {
 	setContent: (content: string) => void;
 	/** Clear content and remove the stored draft */
 	clear: () => void;
-	/** Whether the draft was restored from storage on mount */
+	/** Whether the draft was restored from server on mount */
 	draftRestored: boolean;
 }
 
 /**
- * Hook for managing task message input draft persistence via localStorage.
+ * Hook for managing task message input draft persistence via server-side storage.
  *
+ * @param roomId - Room this task belongs to
  * @param taskId - Current task ID (each task has its own draft)
  * @param debounceMs - Debounce delay for saving (default: 500ms)
  */
-export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInputDraftResult {
-	// Clean up stale drafts once at module level per component mount.
-	// Done synchronously here so it completes before any draft loading.
-	const cleanupDoneRef = useRef(false);
-	if (!cleanupDoneRef.current) {
-		cleanupDoneRef.current = true;
-		cleanupStaleDrafts();
-	}
-
-	// Load draft synchronously on first render so the initial signal value
-	// is already populated — this prevents useSignalEffect from seeing an
-	// empty value and clearing the stored draft before we've had a chance to
-	// read it.
-	const initialDraft = useRef<string | null>(null);
-	if (initialDraft.current === null) {
-		initialDraft.current = taskId ? loadDraftFromStorage(taskId) : '';
-	}
-
-	const contentSignal = useSignal(initialDraft.current);
-	const draftRestoredSignal = useSignal(initialDraft.current !== '');
-
+export function useTaskInputDraft(
+	roomId: string,
+	taskId: string,
+	debounceMs = 500
+): UseTaskInputDraftResult {
+	const contentSignal = useSignal('');
+	const draftRestoredSignal = useSignal(false);
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const prevTaskIdRef = useRef<string>(taskId);
 
-	// Keep a stable ref to the current taskId so the signal effect and callbacks
-	// can read it without taking a dependency on the primitive value. This avoids
-	// fragile closure captures and keeps `clear` stable across task switches.
+	// Keep stable refs so signal effects and callbacks always see current values
+	// without taking a dependency on the primitive (avoids stale closures).
 	const taskIdRef = useRef<string>(taskId);
 	taskIdRef.current = taskId;
+	const roomIdRef = useRef<string>(roomId);
+	roomIdRef.current = roomId;
 
-	// When taskId changes, reload the draft for the new task
+	// Load draft when taskId/roomId changes (including on mount).
+	// Clear content immediately on each change so the previous task's draft isn't shown.
 	useEffect(() => {
-		// Skip if taskId hasn't actually changed
-		if (prevTaskIdRef.current === taskId) return;
-		prevTaskIdRef.current = taskId;
-
-		// Clear content immediately to avoid showing previous task's draft
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;
 
-		if (!taskId) return;
+		if (!taskId || !roomId) return;
 
-		const savedMessage = loadDraftFromStorage(taskId);
-		if (savedMessage) {
-			contentSignal.value = savedMessage;
-			draftRestoredSignal.value = true;
-		}
-	}, [taskId, contentSignal, draftRestoredSignal]);
+		const loadDraft = async () => {
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) return;
+
+			try {
+				const response = await hub.request<{ task: { inputDraft?: string | null } }>('task.get', {
+					roomId,
+					taskId,
+				});
+				const draft = response.task?.inputDraft;
+				if (draft) {
+					contentSignal.value = draft;
+					draftRestoredSignal.value = true;
+				}
+			} catch {
+				// Ignore errors loading draft
+			}
+		};
+
+		loadDraft();
+	}, [taskId, roomId, contentSignal, draftRestoredSignal]);
 
 	// Flush any pending debounced save on unmount so no keystroke is lost
 	useEffect(() => {
@@ -170,20 +92,32 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 				draftSaveTimeoutRef.current = null;
 			}
 			const currentTaskId = taskIdRef.current;
+			const currentRoomId = roomIdRef.current;
 			const content = contentSignal.peek();
-			if (currentTaskId && content.trim()) {
-				saveDraftToStorage(currentTaskId, content);
+			if (currentTaskId && currentRoomId) {
+				const hub = connectionManager.getHubIfConnected();
+				if (hub) {
+					hub
+						.request('task.updateDraft', {
+							roomId: currentRoomId,
+							taskId: currentTaskId,
+							draft: content.trim() || null,
+						})
+						.catch(() => {
+							/* ignore flush errors */
+						});
+				}
 			}
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	// Debounced save via signal effect.
-	// Reads taskId via taskIdRef (a stable ref) rather than the prop directly,
-	// so the closure is always up-to-date without adding a non-signal dependency.
+	// Reads taskId/roomId via stable refs so the closure is always up-to-date.
 	useSignalEffect(() => {
 		const content = contentSignal.value;
 		const currentTaskId = taskIdRef.current;
+		const currentRoomId = roomIdRef.current;
 
 		// Clear any pending save
 		if (draftSaveTimeoutRef.current) {
@@ -191,17 +125,41 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 			draftSaveTimeoutRef.current = null;
 		}
 
-		if (!currentTaskId) return;
+		if (!currentTaskId || !currentRoomId) return;
+
+		const trimmedContent = content.trim();
 
 		// Empty: clear immediately
-		if (!content.trim()) {
-			removeDraftFromStorage(currentTaskId);
+		if (trimmedContent === '') {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub
+					.request('task.updateDraft', {
+						roomId: currentRoomId,
+						taskId: currentTaskId,
+						draft: null,
+					})
+					.catch(() => {
+						/* ignore clear errors */
+					});
+			}
 			return;
 		}
 
 		// Non-empty: debounce save
 		draftSaveTimeoutRef.current = setTimeout(() => {
-			saveDraftToStorage(currentTaskId, content);
+			const hub = connectionManager.getHubIfConnected();
+			if (!hub) return;
+
+			hub
+				.request('task.updateDraft', {
+					roomId: currentRoomId,
+					taskId: currentTaskId,
+					draft: trimmedContent,
+				})
+				.catch(() => {
+					/* ignore save errors */
+				});
 		}, debounceMs);
 
 		return () => {
@@ -223,16 +181,27 @@ export function useTaskInputDraft(taskId: string, debounceMs = 500): UseTaskInpu
 		[contentSignal, draftRestoredSignal]
 	);
 
-	// Uses taskIdRef so the reference stays stable across task switches —
-	// the ref is always current, so clear() always targets the active task.
+	// Uses refs so the reference stays stable across task switches
 	const clear = useCallback(() => {
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;
 		const currentTaskId = taskIdRef.current;
-		if (currentTaskId) {
-			removeDraftFromStorage(currentTaskId);
+		const currentRoomId = roomIdRef.current;
+		if (currentTaskId && currentRoomId) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub
+					.request('task.updateDraft', {
+						roomId: currentRoomId,
+						taskId: currentTaskId,
+						draft: null,
+					})
+					.catch(() => {
+						/* ignore clear errors */
+					});
+			}
 		}
-	}, [contentSignal, draftRestoredSignal, taskIdRef]);
+	}, [contentSignal, draftRestoredSignal]);
 
 	return useMemo(
 		() => ({

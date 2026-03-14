@@ -2,145 +2,143 @@
 /**
  * Tests for useTaskInputDraft Hook
  *
- * Tests draft persistence via localStorage, debounced saving, task switching,
- * draft restoration, stale draft cleanup, and content management.
- *
- * NOTE: The global vitest setup mocks localStorage with a no-op implementation.
- * These tests override that with a real in-memory implementation so
- * localStorage reads/writes actually work.
+ * Tests draft persistence via server-side RPC (task.get / task.updateDraft),
+ * debounced saving, task switching, draft restoration, and content management.
  */
 
 import { renderHook, act } from '@testing-library/preact';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useTaskInputDraft } from '../useTaskInputDraft.ts';
+import { connectionManager } from '../../lib/connection-manager.ts';
 
-/**
- * Create a real in-memory localStorage that supports Object.keys() enumeration.
- * The global mock from vitest.setup.ts doesn't actually store values.
- */
-function createRealLocalStorage(): Storage {
-	const store: Record<string, string> = {};
-
-	return new Proxy(
-		{
-			getItem: (key: string) => store[key] ?? null,
-			setItem: (key: string, value: string) => {
-				store[key] = String(value);
-			},
-			removeItem: (key: string) => {
-				delete store[key];
-			},
-			clear: () => {
-				for (const k of Object.keys(store)) {
-					delete store[k];
-				}
-			},
-			get length() {
-				return Object.keys(store).length;
-			},
-			key: (index: number) => Object.keys(store)[index] ?? null,
-		},
-		{
-			// Make Object.keys(localStorage) return stored item keys
-			ownKeys() {
-				return Object.keys(store);
-			},
-			getOwnPropertyDescriptor(_target, prop) {
-				if (typeof prop === 'string' && Object.prototype.hasOwnProperty.call(store, prop)) {
-					return { value: store[prop], writable: true, enumerable: true, configurable: true };
-				}
-				// Expose the method names too
-				return { value: undefined, writable: true, enumerable: true, configurable: true };
-			},
-			get(target, prop) {
-				if (typeof prop === 'string' && Object.prototype.hasOwnProperty.call(store, prop)) {
-					return store[prop];
-				}
-				return Reflect.get(target, prop);
-			},
-		}
-	) as unknown as Storage;
-}
+// Mock the connection manager
+vi.mock('../../lib/connection-manager.ts', () => ({
+	connectionManager: {
+		getHubIfConnected: vi.fn(),
+	},
+}));
 
 describe('useTaskInputDraft', () => {
-	let ls: Storage;
+	const mockHub = {
+		request: vi.fn().mockResolvedValue({ task: {} }),
+		event: vi.fn(),
+		onRequest: vi.fn().mockReturnValue(() => {}),
+		onEvent: vi.fn().mockReturnValue(() => {}),
+		joinRoom: vi.fn(),
+		leaveRoom: vi.fn(),
+		isConnected: vi.fn().mockReturnValue(true),
+		onConnection: vi.fn().mockReturnValue(() => {}),
+	};
 
 	beforeEach(() => {
 		vi.useFakeTimers();
-		ls = createRealLocalStorage();
-		vi.stubGlobal('localStorage', ls);
+		vi.clearAllMocks();
+		// Default: no hub connected
+		vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
 	});
 
 	afterEach(() => {
 		vi.useRealTimers();
-		vi.unstubAllGlobals();
 	});
 
 	// ── Initialization ────────────────────────────────────────────────────────
 
 	describe('initialization', () => {
-		it('should initialize with empty content when no draft exists', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+		it('should initialize with empty content', () => {
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			expect(result.current.content).toBe('');
 		});
 
 		it('should provide setContent function', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			expect(typeof result.current.setContent).toBe('function');
 		});
 
 		it('should provide clear function', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			expect(typeof result.current.clear).toBe('function');
 		});
 
-		it('should initialize draftRestored as false when no draft', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+		it('should initialize draftRestored as false when no draft exists', async () => {
+			mockHub.request.mockResolvedValue({ task: {} });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
 
 			expect(result.current.draftRestored).toBe(false);
 		});
 
-		it('should restore existing draft on mount', () => {
-			// Pre-seed localStorage with a draft
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Saved draft', timestamp: Date.now() })
-			);
+		it('should restore existing draft on mount when hub is connected', async () => {
+			mockHub.request.mockResolvedValue({ task: { inputDraft: 'Saved draft' } });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
-			// Draft is loaded synchronously during hook initialization
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(mockHub.request).toHaveBeenCalledWith('task.get', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+			});
 			expect(result.current.content).toBe('Saved draft');
 			expect(result.current.draftRestored).toBe(true);
 		});
 
-		it('should not restore expired draft (> 7 days)', () => {
-			const oldTimestamp = Date.now() - 8 * 24 * 60 * 60 * 1000;
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Old draft', timestamp: oldTimestamp })
-			);
+		it('should not restore draft when hub is not connected', async () => {
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
 
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
 
 			expect(result.current.content).toBe('');
 			expect(result.current.draftRestored).toBe(false);
-			// Should have cleaned up the stale draft
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
 		});
 
-		it('should handle invalid JSON in localStorage gracefully', () => {
-			ls.setItem('neokai_task_draft_task-1', 'not valid json{{{');
+		it('should handle load error gracefully', async () => {
+			mockHub.request.mockRejectedValue(new Error('Network error'));
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
 
 			expect(result.current.content).toBe('');
 			expect(result.current.draftRestored).toBe(false);
-			// Should remove the invalid entry
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+		});
+
+		it('should handle task with null inputDraft', async () => {
+			mockHub.request.mockResolvedValue({ task: { inputDraft: null } });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(result.current.content).toBe('');
+			expect(result.current.draftRestored).toBe(false);
+		});
+
+		it('should handle empty roomId or taskId', () => {
+			const { result } = renderHook(() => useTaskInputDraft('', ''));
+
+			expect(result.current.content).toBe('');
+			expect(result.current.draftRestored).toBe(false);
 		});
 	});
 
@@ -148,7 +146,7 @@ describe('useTaskInputDraft', () => {
 
 	describe('setContent', () => {
 		it('should update content synchronously', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			act(() => {
 				result.current.setContent('Hello world');
@@ -158,7 +156,7 @@ describe('useTaskInputDraft', () => {
 		});
 
 		it('should handle multiple rapid updates', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			act(() => {
 				result.current.setContent('H');
@@ -172,7 +170,7 @@ describe('useTaskInputDraft', () => {
 		});
 
 		it('should handle special characters and emoji', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			act(() => {
 				result.current.setContent('Hello <world> & "friends" 🎉');
@@ -182,7 +180,7 @@ describe('useTaskInputDraft', () => {
 		});
 
 		it('should handle multiline content', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			act(() => {
 				result.current.setContent('Line 1\nLine 2\nLine 3');
@@ -191,13 +189,16 @@ describe('useTaskInputDraft', () => {
 			expect(result.current.content).toBe('Line 1\nLine 2\nLine 3');
 		});
 
-		it('should dismiss draftRestored when content is updated', () => {
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Saved draft', timestamp: Date.now() })
-			);
+		it('should dismiss draftRestored when content is updated', async () => {
+			mockHub.request.mockResolvedValue({ task: { inputDraft: 'Saved draft' } });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
 			expect(result.current.draftRestored).toBe(true);
 
 			act(() => {
@@ -208,41 +209,59 @@ describe('useTaskInputDraft', () => {
 		});
 	});
 
-	// ── Auto-save to localStorage ─────────────────────────────────────────────
+	// ── Auto-save via task.updateDraft ────────────────────────────────────────
 
-	describe('auto-save to localStorage', () => {
+	describe('auto-save to server', () => {
 		it('should save draft after debounce delay', async () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1', 500));
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
 
 			// Wait for initial effects to flush
 			await act(async () => {
 				await vi.runAllTimersAsync();
 			});
 
+			mockHub.request.mockClear();
+
 			act(() => {
 				result.current.setContent('Draft message');
 			});
 
-			// Not saved yet (debounce hasn't fired)
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+			// Advance partially — should not have saved yet
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			const earlyUpdateCalls = mockHub.request.mock.calls.filter(
+				(call) => call[0] === 'task.updateDraft' && call[1]?.draft === 'Draft message'
+			);
+			expect(earlyUpdateCalls.length).toBe(0);
 
 			// Advance past debounce
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(500);
+				await vi.advanceTimersByTimeAsync(400);
 			});
 
-			const stored = JSON.parse(ls.getItem('neokai_task_draft_task-1')!);
-			expect(stored.message).toBe('Draft message');
-			expect(stored.taskId).toBe('task-1');
-			expect(typeof stored.timestamp).toBe('number');
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				draft: 'Draft message',
+			});
 		});
 
 		it('should debounce rapid typing — only save after last keystroke', async () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1', 500));
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
 
 			await act(async () => {
 				await vi.runAllTimersAsync();
 			});
+
+			mockHub.request.mockClear();
 
 			act(() => {
 				result.current.setContent('H');
@@ -260,53 +279,130 @@ describe('useTaskInputDraft', () => {
 				result.current.setContent('Hello');
 			});
 
-			// Still before last debounce expires
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+			// Not yet saved
+			const earlyUpdateCalls = mockHub.request.mock.calls.filter(
+				(call) => call[0] === 'task.updateDraft' && call[1]?.draft
+			);
+			expect(earlyUpdateCalls.length).toBe(0);
 
 			// Advance past final debounce
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(500);
+				await vi.advanceTimersByTimeAsync(600);
 			});
 
-			const stored = JSON.parse(ls.getItem('neokai_task_draft_task-1')!);
-			expect(stored.message).toBe('Hello');
-		});
-
-		it('should clear localStorage immediately when content is emptied', async () => {
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Saved draft', timestamp: Date.now() })
+			const updateCalls = mockHub.request.mock.calls.filter(
+				(call) => call[0] === 'task.updateDraft' && call[1]?.draft
 			);
-
-			const { result } = renderHook(() => useTaskInputDraft('task-1', 500));
-
-			// Content is restored synchronously
-			expect(result.current.content).toBe('Saved draft');
-
-			act(() => {
-				result.current.setContent('');
-			});
-
-			// Should be removed immediately (no debounce for empty)
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+			expect(updateCalls).toHaveLength(1);
+			expect(updateCalls[0][1].draft).toBe('Hello');
 		});
 
-		it('should not save whitespace-only content', async () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1', 500));
+		it('should clear draft immediately when content is emptied', async () => {
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
 
 			await act(async () => {
 				await vi.runAllTimersAsync();
 			});
+			mockHub.request.mockClear();
+
+			act(() => {
+				result.current.setContent('Some content');
+			});
+
+			// Now clear it — should call updateDraft immediately with null
+			act(() => {
+				result.current.setContent('');
+			});
+
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				draft: null,
+			});
+		});
+
+		it('should not save whitespace-only content', async () => {
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+			mockHub.request.mockClear();
 
 			act(() => {
 				result.current.setContent('   ');
 			});
 
+			// Whitespace-only is treated as empty — immediate clear with null
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				draft: null,
+			});
+		});
+
+		it('should trim content before saving', async () => {
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 100));
+
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(500);
+				await vi.runAllTimersAsync();
+			});
+			mockHub.request.mockClear();
+
+			act(() => {
+				result.current.setContent('  Content with spaces  ');
 			});
 
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				draft: 'Content with spaces',
+			});
+		});
+
+		it('should handle save error gracefully', async () => {
+			mockHub.request.mockRejectedValue(new Error('Save error'));
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 100));
+
+			act(() => {
+				result.current.setContent('Content');
+			});
+
+			// Should not throw
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+		});
+
+		it('should not call hub when not connected', async () => {
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 100));
+
+			act(() => {
+				result.current.setContent('Content');
+			});
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(200);
+			});
+
+			expect(mockHub.request).not.toHaveBeenCalled();
 		});
 	});
 
@@ -314,12 +410,11 @@ describe('useTaskInputDraft', () => {
 
 	describe('clear', () => {
 		it('should clear content', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			act(() => {
 				result.current.setContent('Some content');
 			});
-
 			expect(result.current.content).toBe('Some content');
 
 			act(() => {
@@ -329,30 +424,38 @@ describe('useTaskInputDraft', () => {
 			expect(result.current.content).toBe('');
 		});
 
-		it('should remove draft from localStorage', () => {
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Saved draft', timestamp: Date.now() })
-			);
+		it('should call task.updateDraft with null when hub is connected', () => {
+			mockHub.request.mockResolvedValue({ success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
-			expect(result.current.content).toBe('Saved draft');
+			act(() => {
+				result.current.setContent('Some content');
+			});
+			mockHub.request.mockClear();
 
 			act(() => {
 				result.current.clear();
 			});
 
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				draft: null,
+			});
 		});
 
-		it('should reset draftRestored flag', () => {
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Saved draft', timestamp: Date.now() })
-			);
+		it('should reset draftRestored flag', async () => {
+			mockHub.request.mockResolvedValue({ task: { inputDraft: 'Saved draft' } });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
 			expect(result.current.draftRestored).toBe(true);
 
 			act(() => {
@@ -363,7 +466,7 @@ describe('useTaskInputDraft', () => {
 		});
 
 		it('should work when content is already empty', () => {
-			const { result } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			// Should not throw
 			act(() => {
@@ -378,35 +481,41 @@ describe('useTaskInputDraft', () => {
 
 	describe('task switching', () => {
 		it('should clear content immediately when switching tasks', () => {
-			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
-				initialProps: { taskId: 'task-1' },
-			});
+			const { result, rerender } = renderHook(
+				({ roomId, taskId }) => useTaskInputDraft(roomId, taskId),
+				{ initialProps: { roomId: 'room-1', taskId: 'task-1' } }
+			);
 
 			act(() => {
 				result.current.setContent('Content for task 1');
 			});
-
 			expect(result.current.content).toBe('Content for task 1');
 
-			// Switch task — content should clear immediately
-			rerender({ taskId: 'task-2' });
+			rerender({ roomId: 'room-1', taskId: 'task-2' });
 
 			expect(result.current.content).toBe('');
 		});
 
-		it('should restore draft for switched-to task', async () => {
-			ls.setItem(
-				'neokai_task_draft_task-2',
-				JSON.stringify({ taskId: 'task-2', message: 'Task 2 draft', timestamp: Date.now() })
+		it('should load draft for switched-to task when hub is connected', async () => {
+			mockHub.request.mockImplementation((method, params) => {
+				if (method === 'task.get' && params?.taskId === 'task-2') {
+					return Promise.resolve({ task: { inputDraft: 'Task 2 draft' } });
+				}
+				return Promise.resolve({ task: {}, success: true });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result, rerender } = renderHook(
+				({ roomId, taskId }) => useTaskInputDraft(roomId, taskId),
+				{ initialProps: { roomId: 'room-1', taskId: 'task-1' } }
 			);
 
-			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
-				initialProps: { taskId: 'task-1' },
+			await act(async () => {
+				await vi.runAllTimersAsync();
 			});
 
-			rerender({ taskId: 'task-2' });
+			rerender({ roomId: 'room-1', taskId: 'task-2' });
 
-			// taskId change triggers useEffect for loading
 			await act(async () => {
 				await vi.runAllTimersAsync();
 			});
@@ -415,93 +524,24 @@ describe('useTaskInputDraft', () => {
 			expect(result.current.draftRestored).toBe(true);
 		});
 
-		it('should keep per-task drafts independent', async () => {
-			// Seed drafts for two tasks
-			ls.setItem(
-				'neokai_task_draft_task-1',
-				JSON.stringify({ taskId: 'task-1', message: 'Task 1 draft', timestamp: Date.now() })
-			);
-			ls.setItem(
-				'neokai_task_draft_task-2',
-				JSON.stringify({ taskId: 'task-2', message: 'Task 2 draft', timestamp: Date.now() })
-			);
-
-			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
-				initialProps: { taskId: 'task-1' },
-			});
-
-			// Initial render loads task-1's draft synchronously
-			expect(result.current.content).toBe('Task 1 draft');
-
-			rerender({ taskId: 'task-2' });
-
-			await act(async () => {
-				await vi.runAllTimersAsync();
-			});
-
-			expect(result.current.content).toBe('Task 2 draft');
-
-			rerender({ taskId: 'task-1' });
-
-			await act(async () => {
-				await vi.runAllTimersAsync();
-			});
-
-			expect(result.current.content).toBe('Task 1 draft');
-		});
-
 		it('should handle empty taskId', () => {
-			const { result } = renderHook(() => useTaskInputDraft(''));
+			const { result } = renderHook(() => useTaskInputDraft('room-1', ''));
 
 			expect(result.current.content).toBe('');
 			expect(result.current.draftRestored).toBe(false);
 		});
 
 		it('should handle rapid task switches', () => {
-			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
-				initialProps: { taskId: 'task-1' },
-			});
+			const { result, rerender } = renderHook(
+				({ roomId, taskId }) => useTaskInputDraft(roomId, taskId),
+				{ initialProps: { roomId: 'room-1', taskId: 'task-1' } }
+			);
 
-			rerender({ taskId: 'task-2' });
-			rerender({ taskId: 'task-3' });
-			rerender({ taskId: 'task-4' });
+			rerender({ roomId: 'room-1', taskId: 'task-2' });
+			rerender({ roomId: 'room-1', taskId: 'task-3' });
+			rerender({ roomId: 'room-1', taskId: 'task-4' });
 
 			expect(result.current.content).toBe('');
-		});
-	});
-
-	// ── Stale draft cleanup ───────────────────────────────────────────────────
-
-	describe('stale draft cleanup', () => {
-		it('should clean up all drafts older than 7 days on mount', () => {
-			const now = Date.now();
-			const oldTs = now - 8 * 24 * 60 * 60 * 1000;
-
-			ls.setItem(
-				'neokai_task_draft_old-task',
-				JSON.stringify({ taskId: 'old-task', message: 'Stale', timestamp: oldTs })
-			);
-			ls.setItem(
-				'neokai_task_draft_recent-task',
-				JSON.stringify({ taskId: 'recent-task', message: 'Fresh', timestamp: now })
-			);
-			// Unrelated key should not be touched
-			ls.setItem('some_other_key', 'value');
-
-			renderHook(() => useTaskInputDraft('task-1'));
-
-			// Cleanup runs synchronously in hook body
-			expect(ls.getItem('neokai_task_draft_old-task')).toBeNull();
-			expect(ls.getItem('neokai_task_draft_recent-task')).not.toBeNull();
-			expect(ls.getItem('some_other_key')).toBe('value');
-		});
-
-		it('should remove corrupt entries during cleanup', () => {
-			ls.setItem('neokai_task_draft_corrupt', 'not-json');
-
-			renderHook(() => useTaskInputDraft('task-1'));
-
-			expect(ls.getItem('neokai_task_draft_corrupt')).toBeNull();
 		});
 	});
 
@@ -509,28 +549,34 @@ describe('useTaskInputDraft', () => {
 
 	describe('flush on unmount', () => {
 		it('should flush pending debounced save on unmount', async () => {
-			const { result, unmount } = renderHook(() => useTaskInputDraft('task-1', 500));
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result, unmount } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
 
 			await act(async () => {
 				await vi.runAllTimersAsync();
 			});
+			mockHub.request.mockClear();
 
 			act(() => {
 				result.current.setContent('Unsaved content');
 			});
 
-			// Not saved yet (debounce hasn't fired)
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
-
-			// Unmount before debounce fires — should flush immediately
+			// Unmount before debounce fires
 			unmount();
 
-			const stored = JSON.parse(ls.getItem('neokai_task_draft_task-1')!);
-			expect(stored.message).toBe('Unsaved content');
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				draft: 'Unsaved content',
+			});
 		});
 
 		it('should not flush on unmount when content is empty', async () => {
-			const { unmount } = renderHook(() => useTaskInputDraft('task-1', 500));
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+
+			const { unmount } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
 
 			await act(async () => {
 				await vi.runAllTimersAsync();
@@ -538,7 +584,21 @@ describe('useTaskInputDraft', () => {
 
 			unmount();
 
-			expect(ls.getItem('neokai_task_draft_task-1')).toBeNull();
+			expect(mockHub.request).not.toHaveBeenCalledWith('task.updateDraft', expect.anything());
+		});
+
+		it('should handle flush error gracefully', async () => {
+			mockHub.request.mockRejectedValue(new Error('Flush error'));
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result, unmount } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
+
+			act(() => {
+				result.current.setContent('Content to flush');
+			});
+
+			// Should not throw when unmounted
+			unmount();
 		});
 	});
 
@@ -546,7 +606,7 @@ describe('useTaskInputDraft', () => {
 
 	describe('function stability', () => {
 		it('should return stable setContent reference across rerenders', () => {
-			const { result, rerender } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result, rerender } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			const firstSetContent = result.current.setContent;
 			rerender();
@@ -554,7 +614,7 @@ describe('useTaskInputDraft', () => {
 		});
 
 		it('should return stable clear reference across rerenders', () => {
-			const { result, rerender } = renderHook(() => useTaskInputDraft('task-1'));
+			const { result, rerender } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
 
 			const firstClear = result.current.clear;
 			rerender();
@@ -562,28 +622,37 @@ describe('useTaskInputDraft', () => {
 		});
 
 		it('should return stable clear reference across task switches', () => {
-			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
-				initialProps: { taskId: 'task-1' },
-			});
+			const { result, rerender } = renderHook(
+				({ roomId, taskId }) => useTaskInputDraft(roomId, taskId),
+				{ initialProps: { roomId: 'room-1', taskId: 'task-1' } }
+			);
 
 			const firstClear = result.current.clear;
-			rerender({ taskId: 'task-2' });
+			rerender({ roomId: 'room-1', taskId: 'task-2' });
 
 			// clear uses a taskIdRef internally, so its reference stays stable
 			expect(result.current.clear).toBe(firstClear);
 		});
 
-		it('should clear the current task draft even after task switch', async () => {
-			ls.setItem(
-				'neokai_task_draft_task-2',
-				JSON.stringify({ taskId: 'task-2', message: 'Task 2 draft', timestamp: Date.now() })
+		it('should target the current task after task switch when clearing', async () => {
+			mockHub.request.mockImplementation((method, params) => {
+				if (method === 'task.get' && params?.taskId === 'task-2') {
+					return Promise.resolve({ task: { inputDraft: 'Task 2 draft' } });
+				}
+				return Promise.resolve({ task: {}, success: true });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result, rerender } = renderHook(
+				({ roomId, taskId }) => useTaskInputDraft(roomId, taskId),
+				{ initialProps: { roomId: 'room-1', taskId: 'task-1' } }
 			);
 
-			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft(taskId), {
-				initialProps: { taskId: 'task-1' },
+			await act(async () => {
+				await vi.runAllTimersAsync();
 			});
 
-			rerender({ taskId: 'task-2' });
+			rerender({ roomId: 'room-1', taskId: 'task-2' });
 
 			await act(async () => {
 				await vi.runAllTimersAsync();
@@ -591,12 +660,27 @@ describe('useTaskInputDraft', () => {
 
 			expect(result.current.content).toBe('Task 2 draft');
 
-			// Clear should remove task-2's draft (not task-1's)
+			// Clear should target task-2 (current task)
+			mockHub.request.mockClear();
 			act(() => {
 				result.current.clear();
 			});
 
-			expect(ls.getItem('neokai_task_draft_task-2')).toBeNull();
+			expect(mockHub.request).toHaveBeenCalledWith('task.updateDraft', {
+				roomId: 'room-1',
+				taskId: 'task-2',
+				draft: null,
+			});
+		});
+	});
+
+	// ── Custom debounce delay ─────────────────────────────────────────────────
+
+	describe('custom debounce delay', () => {
+		it('should accept custom debounce delay parameter', () => {
+			// Should not throw
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 250));
+
 			expect(result.current.content).toBe('');
 		});
 	});

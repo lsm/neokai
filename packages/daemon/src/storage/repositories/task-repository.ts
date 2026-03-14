@@ -177,6 +177,10 @@ export class TaskRepository {
 			fields.push('pr_created_at = ?');
 			values.push(params.prCreatedAt ?? null);
 		}
+		if (params.inputDraft !== undefined) {
+			fields.push('input_draft = ?');
+			values.push(params.inputDraft ?? null);
+		}
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
@@ -266,6 +270,7 @@ export class TaskRepository {
 			result: (row.result as string | null) ?? undefined,
 			error: (row.error as string | null) ?? undefined,
 			dependsOn: JSON.parse(row.depends_on as string) as string[],
+			inputDraft: (row.input_draft as string | null) ?? undefined,
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
