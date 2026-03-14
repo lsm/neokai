@@ -14,6 +14,7 @@
 import { generateUUID } from '@neokai/shared';
 import type { Room, RoomGoal, NeoTask, MessageDeliveryMode } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
+import { Logger } from '../../logger';
 import type {
 	SessionGroupRepository,
 	SessionGroup,
@@ -34,6 +35,8 @@ import type { RoomRuntime } from './room-runtime';
  * e.g. "Add health check endpoint" → "task/add-health-check-endpoint"
  * Falls back to undefined if the title produces an empty slug (caller uses session-based default).
  */
+const log = new Logger('task-group-manager');
+
 function taskTitleToBranchName(title: string): string | undefined {
 	const slug = title
 		.toLowerCase()
@@ -305,16 +308,28 @@ export class TaskGroupManager {
 		leaderCallbacksFactory: LeaderCallbacksFactory
 	): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group) return null;
+		if (!group) {
+			log.warn(`[routeWorkerToLeader] Group ${groupId}: not found in repository`);
+			return null;
+		}
 
 		// Lazy-start leader session if this is the first review round.
 		// Deferred bootstrap data is persisted in DB metadata so restart is safe.
 		const deferredLeader = group.deferredLeader;
 		let shouldClearDeferredLeader = false;
 
-		if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
+		const leaderAlreadyExists = this.sessionFactory.hasSession(group.leaderSessionId);
+		log.debug(
+			`[routeWorkerToLeader] Group ${groupId}: leader session exists=${leaderAlreadyExists}, ` +
+				`deferredLeader=${!!deferredLeader}, feedbackIteration=${group.feedbackIteration}`
+		);
+
+		if (!leaderAlreadyExists) {
 			if (!deferredLeader) {
 				// No live leader session and no persisted bootstrap config.
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: no leader session and no deferredLeader config — failing task`
+				);
 				await this.fail(groupId, 'Leader session lost during restart; task will be re-queued');
 				return null;
 			}
@@ -324,22 +339,34 @@ export class TaskGroupManager {
 			// when the leader starts.
 			const room = this.getRoom(deferredLeader.roomId);
 			if (!room) {
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: room ${deferredLeader.roomId} not found — failing task`
+				);
 				await this.fail(groupId, `Room ${deferredLeader.roomId} not found`);
 				return null;
 			}
 
 			const task = await this.getTaskById(group.taskId);
 			if (!task) {
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: task ${group.taskId} not found — failing task`
+				);
 				await this.fail(groupId, `Task ${group.taskId} not found`);
 				return null;
 			}
 
 			const goal = await this.getGoalById(deferredLeader.goalId);
 			if (!goal) {
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: goal ${deferredLeader.goalId} not found — failing task`
+				);
 				await this.fail(groupId, `Goal ${deferredLeader.goalId} not found`);
 				return null;
 			}
 
+			log.info(
+				`[routeWorkerToLeader] Group ${groupId}: creating leader session ${group.leaderSessionId}`
+			);
 			const leaderCallbacks = leaderCallbacksFactory(group.id);
 			const leaderConfig: LeaderAgentConfig = {
 				task,
@@ -359,6 +386,9 @@ export class TaskGroupManager {
 			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
 			await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
+			log.info(
+				`[routeWorkerToLeader] Group ${groupId}: leader session ${group.leaderSessionId} created successfully`
+			);
 		}
 
 		if (deferredLeader) {
@@ -374,7 +404,13 @@ export class TaskGroupManager {
 			: workerOutput;
 
 		// Inject worker output into Leader session
+		log.debug(
+			`[routeWorkerToLeader] Group ${groupId}: injecting worker output into leader session`
+		);
 		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
+		log.info(
+			`[routeWorkerToLeader] Group ${groupId}: worker output injected into leader session successfully`
+		);
 
 		if (shouldClearDeferredLeader) {
 			this.groupRepo.setDeferredLeader(groupId, null);

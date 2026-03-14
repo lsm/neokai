@@ -416,3 +416,193 @@ describe('Tick async behavior', () => {
 		expect(restoreCount).toBe(1);
 	});
 });
+
+describe('Stuck worker detection and recovery', () => {
+	let ctx: ReturnType<typeof createRuntimeTestContext>;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	/**
+	 * Helper: spawn a group via tick and return it with its session IDs.
+	 * The group has deferredLeader set (normal spawn) and feedbackIteration = 0.
+	 */
+	async function spawnGroup() {
+		await createGoalAndTask(ctx);
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+		const groups = ctx.groupRepo.getActiveGroups('room-1');
+		return groups[0];
+	}
+
+	/**
+	 * Helper: await the next leader session creation by spying on createAndStartSession.
+	 * Returns a Promise that resolves when 'createAndStartSession' is called with role 'leader'.
+	 */
+	function waitForLeaderCreation(): Promise<void> {
+		return new Promise((resolve) => {
+			const orig = ctx.sessionFactory.createAndStartSession.bind(ctx.sessionFactory);
+			ctx.sessionFactory.createAndStartSession = async (init: unknown, role: string) => {
+				await orig(init, role);
+				if (role === 'leader') {
+					ctx.sessionFactory.createAndStartSession = orig;
+					resolve();
+				}
+			};
+		});
+	}
+
+	it('should detect a stuck worker (idle, no leader) during tick and re-trigger routing', async () => {
+		const group = await spawnGroup();
+
+		// Simulate: worker is idle but leader hasn't been created yet
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			// Leader doesn't exist in the session factory yet
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		const leaderCreated = waitForLeaderCreation();
+
+		// Tick detects the stuck worker and re-triggers routing
+		await ctx.runtime.tick();
+
+		// Wait for the fire-and-forget routing to complete
+		await leaderCreated;
+
+		// Leader session should now be created
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(1);
+	});
+
+	it('should detect a stuck worker in interrupted state and re-trigger routing', async () => {
+		const group = await spawnGroup();
+
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'interrupted');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		const leaderCreated = waitForLeaderCreation();
+
+		await ctx.runtime.tick();
+		await leaderCreated;
+
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(1);
+	});
+
+	it('should not re-trigger routing if worker is still processing (not stuck)', async () => {
+		const group = await spawnGroup();
+
+		// Worker is still actively processing — NOT stuck
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'processing');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		await ctx.runtime.tick();
+		// Allow any pending microtasks to drain
+		await new Promise((r) => setTimeout(r, 5));
+
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(0);
+	});
+
+	it('should not re-trigger routing when processing state is undefined (unknown)', async () => {
+		const group = await spawnGroup();
+
+		// No processing state set → undefined (worker state unknown)
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+		// processingStates is empty by default → getProcessingState returns undefined
+
+		await ctx.runtime.tick();
+		await new Promise((r) => setTimeout(r, 5));
+
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(0);
+	});
+
+	it('should skip stuck-worker recovery for groups with feedbackIteration > 0', async () => {
+		const group = await spawnGroup();
+
+		// Manually increment feedbackIteration to simulate a group past its first review
+		ctx.groupRepo.incrementFeedbackIteration(group.id, group.version);
+		const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.feedbackIteration).toBe(1);
+
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		await ctx.runtime.tick();
+		await new Promise((r) => setTimeout(r, 5));
+
+		// Should NOT re-trigger routing because feedbackIteration > 0
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(0);
+	});
+
+	it('should skip stuck-worker recovery for groups awaiting human review', async () => {
+		const group = await spawnGroup();
+
+		// Mark as submitted for review
+		ctx.groupRepo.setSubmittedForReview(group.id, true);
+
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === group.leaderSessionId) return false;
+			return true;
+		};
+
+		await ctx.runtime.tick();
+		await new Promise((r) => setTimeout(r, 5));
+
+		// Should NOT re-trigger because group is in submitted_for_review state
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(0);
+	});
+
+	it('should skip stuck-worker recovery when leader already exists in session factory', async () => {
+		const group = await spawnGroup();
+
+		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+		// Leader EXISTS in session factory (default mock returns true for all)
+		// → recoverStuckWorkers should skip this group
+
+		await ctx.runtime.tick();
+		await new Promise((r) => setTimeout(r, 5));
+
+		// No extra leader creation (first tick already created one worker session)
+		const leaderCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+		);
+		expect(leaderCalls).toHaveLength(0);
+	});
+});

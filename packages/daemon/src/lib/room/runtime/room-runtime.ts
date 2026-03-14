@@ -372,15 +372,25 @@ export class RoomRuntime {
 	 * Checks worktree cleanliness, then collects Worker output and routes to Leader.
 	 */
 	async onWorkerTerminalState(groupId: string, terminalState: TerminalState): Promise<void> {
+		log.debug(
+			`[Worker→Leader] Group ${groupId}: worker reached terminal state '${terminalState.kind}'`
+		);
+
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group) return;
+		if (!group) {
+			log.warn(`[Worker→Leader] Group ${groupId}: group not found in repository, skipping`);
+			return;
+		}
 
 		const task = await this.taskManager.getTask(group.taskId);
-		if (!task) return;
+		if (!task) {
+			log.warn(`[Worker→Leader] Group ${groupId}: task ${group.taskId} not found, skipping`);
+			return;
+		}
 
 		// Check rate limit backoff
 		if (this.groupRepo.isRateLimited(groupId)) {
-			log.info(`Worker reached terminal state while rate limited - pausing routing to Leader`);
+			log.info(`[Worker→Leader] Group ${groupId}: rate limited — pausing routing to Leader`);
 			this.scheduleTickAfterRateLimitReset(groupId);
 			return;
 		}
@@ -389,9 +399,17 @@ export class RoomRuntime {
 		// Applies to all workers — planners create plan files under docs/plans/ and commit to branches.
 		{
 			const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
-			const dirty = await this.isWorktreeDirty(groupWorkspace);
+			let dirty: boolean;
+			try {
+				dirty = await this.isWorktreeDirty(groupWorkspace);
+			} catch (err) {
+				log.warn(`[Worker→Leader] Group ${groupId}: worktree dirty check failed:`, err);
+				dirty = false;
+			}
 			if (dirty) {
-				log.info(`Worktree dirty for group ${groupId} — sending worker back to clean up.`);
+				log.info(
+					`[Worker→Leader] Group ${groupId}: worktree dirty — bouncing worker back to clean up`
+				);
 				this.appendGroupEvent(groupId, 'status', {
 					text: 'Worktree has uncommitted changes. Sending worker back to clean up.',
 				});
@@ -421,9 +439,15 @@ export class RoomRuntime {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
 				hookCtx.draftTaskCount = draftTasks.length;
 			}
-			const gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
+			let gateResult: { pass: boolean; reason?: string; bounceMessage?: string };
+			try {
+				gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
+			} catch (err) {
+				log.error(`[Worker→Leader] Group ${groupId}: worker exit gate threw an error:`, err);
+				gateResult = { pass: true }; // Fail open so the worker doesn't get permanently stuck
+			}
 			if (!gateResult.pass) {
-				log.info(`Worker exit gate failed for group ${groupId}: ${gateResult.reason}`);
+				log.info(`[Worker→Leader] Group ${groupId}: worker exit gate failed: ${gateResult.reason}`);
 				this.appendGroupEvent(groupId, 'status', {
 					text: `Worker exit gate: ${gateResult.reason}`,
 				});
@@ -433,6 +457,7 @@ export class RoomRuntime {
 				);
 				return; // Keep worker turn active
 			}
+			log.debug(`[Worker→Leader] Group ${groupId}: worker exit gate passed`);
 		}
 
 		// Collect Worker messages since last forwarded message
@@ -511,9 +536,37 @@ export class RoomRuntime {
 		});
 
 		// Route to Leader (room fetched from DB via getRoom)
-		await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, (groupId) =>
-			this.createLeaderCallbacks(groupId)
+		log.debug(
+			`[Worker→Leader] Group ${groupId}: calling routeWorkerToLeader (review round ${reviewIteration})`
 		);
+		let routed: boolean;
+		try {
+			const result = await this.taskGroupManager.routeWorkerToLeader(groupId, envelope, (gId) =>
+				this.createLeaderCallbacks(gId)
+			);
+			routed = result !== null;
+			if (routed) {
+				log.info(
+					`[Worker→Leader] Group ${groupId}: successfully routed to Leader (review round ${reviewIteration})`
+				);
+			} else {
+				log.warn(
+					`[Worker→Leader] Group ${groupId}: routeWorkerToLeader returned null — group may have been failed`
+				);
+			}
+		} catch (err) {
+			log.error(`[Worker→Leader] Group ${groupId}: routeWorkerToLeader threw an error:`, err);
+			this.appendGroupEvent(groupId, 'status', {
+				text: `Failed to route worker output to Leader: ${err instanceof Error ? err.message : String(err)}`,
+			});
+			// Don't update task progress if routing failed
+			return;
+		}
+
+		if (!routed) {
+			// routeWorkerToLeader already called fail() internally; no progress update needed
+			return;
+		}
 
 		// Update task progress based on review iteration
 		// Formula: iteration 1 → 20%, then +60%/maxRounds per subsequent round, capped at 80%
@@ -917,7 +970,9 @@ export class RoomRuntime {
 			leaderAvailable = await this.sessionFactory.restoreSession(group.leaderSessionId);
 			if (leaderAvailable) {
 				this.observer.observe(group.leaderSessionId, (state) => {
-					void this.onLeaderTerminalState(group.id, state);
+					void this.onLeaderTerminalState(group.id, state).catch((err) => {
+						log.error(`[leader-observer] Group ${group.id}: terminal state handler threw:`, err);
+					});
 				});
 			}
 		}
@@ -927,7 +982,9 @@ export class RoomRuntime {
 			workerAvailable = await this.sessionFactory.restoreSession(group.workerSessionId);
 			if (workerAvailable) {
 				this.observer.observe(group.workerSessionId, (state) => {
-					void this.onWorkerTerminalState(group.id, state);
+					void this.onWorkerTerminalState(group.id, state).catch((err) => {
+						log.error(`[worker-observer] Group ${group.id}: terminal state handler threw:`, err);
+					});
 				});
 			}
 		}
@@ -1389,6 +1446,14 @@ export class RoomRuntime {
 	 *
 	 * Split into sync detection + async recovery to avoid unnecessary microtask
 	 * checkpoints when there are no zombies (common case).
+	 *
+	 * Leader zombie detection rules:
+	 * - A leader is "expected" if feedbackIteration > 0 (at least one review round completed)
+	 *   OR if deferredLeader is null (no deferred bootstrap config means the leader was already
+	 *   live at some point and may have gone missing after a process restart).
+	 * - When deferredLeader is set (non-null), the leader is lazily created by routeWorkerToLeader;
+	 *   before that happens feedbackIteration == 0 and the leader session does not yet exist —
+	 *   this is normal and must NOT be treated as a zombie.
 	 */
 	private findZombieGroups(): SessionGroup[] {
 		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
@@ -1396,7 +1461,15 @@ export class RoomRuntime {
 
 		for (const group of allActiveGroups) {
 			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
-			const leaderMissing = !this.sessionFactory.hasSession(group.leaderSessionId);
+			// Leader is expected to exist when:
+			//   1. feedbackIteration > 0: leader was created in a prior review round, or
+			//   2. deferredLeader == null: no pending lazy-creation config means the leader
+			//      was previously live and may be missing after a restart.
+			// Groups where deferredLeader is set and feedbackIteration == 0 have NOT created
+			// the leader yet — missing leader is expected there and must NOT be flagged.
+			const leaderExpected = group.feedbackIteration > 0 || group.deferredLeader === null;
+			const leaderMissing =
+				leaderExpected && !this.sessionFactory.hasSession(group.leaderSessionId);
 
 			if (workerMissing || leaderMissing) {
 				zombies.push(group);
@@ -1423,7 +1496,9 @@ export class RoomRuntime {
 				if (restored) {
 					log.info(`Restored worker session ${group.workerSessionId} for group ${group.id}`);
 					this.observer.observe(group.workerSessionId, (state) => {
-						this.onWorkerTerminalState(group.id, state);
+						void this.onWorkerTerminalState(group.id, state).catch((err) => {
+							log.error(`[worker-observer] Group ${group.id}: terminal state handler threw:`, err);
+						});
 					});
 					workerRestored = true;
 				} else {
@@ -1451,7 +1526,9 @@ export class RoomRuntime {
 				if (restored) {
 					log.info(`Restored leader session ${group.leaderSessionId} for group ${group.id}`);
 					this.observer.observe(group.leaderSessionId, (state) => {
-						this.onLeaderTerminalState(group.id, state);
+						void this.onLeaderTerminalState(group.id, state).catch((err) => {
+							log.error(`[leader-observer] Group ${group.id}: terminal state handler threw:`, err);
+						});
 					});
 					leaderRestored = true;
 				} else {
@@ -1488,6 +1565,67 @@ export class RoomRuntime {
 		}
 	}
 
+	/**
+	 * Detect and recover workers that finished (reached terminal/idle state) but were never
+	 * routed to the leader. This acts as a safety net for the following failure modes:
+	 *
+	 * 1. Observer callback fired but the routing threw an error (now logged, but still need recovery)
+	 * 2. Observer callback was missed due to a race condition (extremely rare)
+	 * 3. Any other silent failure in the worker→leader routing path
+	 *
+	 * Conditions for a "stuck worker":
+	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
+	 * - Worker session IS in the session factory (not a zombie)
+	 * - Worker session processing state is terminal (idle/interrupted)
+	 * - Leader session is NOT in the session factory (not yet created)
+	 * - Group is NOT awaiting human review
+	 * - Group is NOT rate-limited
+	 */
+	private recoverStuckWorkers(): void {
+		if (!this.sessionFactory.getProcessingState) return; // getProcessingState is optional
+
+		const activeGroups = this.groupRepo.getActiveGroups(this.roomId);
+		for (const group of activeGroups) {
+			// Only recover groups that haven't routed to leader yet
+			if (group.feedbackIteration > 0) continue;
+			// Skip groups awaiting human
+			if (group.submittedForReview) continue;
+			// Skip rate-limited groups
+			if (this.groupRepo.isRateLimited(group.id)) continue;
+
+			// Worker must be in the session factory (not a zombie)
+			if (!this.sessionFactory.hasSession(group.workerSessionId)) continue;
+
+			// Leader must NOT exist yet (routing hasn't happened)
+			if (this.sessionFactory.hasSession(group.leaderSessionId)) continue;
+
+			// Worker must be in a terminal state (idle or interrupted)
+			const workerState = this.sessionFactory.getProcessingState(group.workerSessionId);
+			if (
+				workerState !== 'idle' &&
+				workerState !== 'interrupted' &&
+				workerState !== 'waiting_for_input'
+			)
+				continue;
+
+			log.warn(
+				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but leader never created ` +
+					`(feedbackIteration=0). Re-triggering worker→leader routing.`
+			);
+			this.appendGroupEvent(group.id, 'status', {
+				text: `Worker found in ${workerState} state without a leader — re-triggering routing to Leader.`,
+			});
+
+			// Re-trigger routing (fire-and-forget, guarded with error logging)
+			void this.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: workerState,
+			}).catch((err) => {
+				log.error(`[StuckWorker] Group ${group.id}: re-triggered routing threw:`, err);
+			});
+		}
+	}
+
 	private async executeTick(): Promise<void> {
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
 		// Sync detection avoids unnecessary microtask checkpoints in the common case.
@@ -1495,6 +1633,11 @@ export class RoomRuntime {
 		if (zombies.length > 0) {
 			await this.recoverZombieGroups(zombies);
 		}
+
+		// Safety net: detect workers stuck in terminal state without being routed to leader.
+		// This recovers cases where the observer callback fired but the routing failed silently.
+		// Note: synchronous scan, only fires async work as fire-and-forget if stuck workers are found.
+		this.recoverStuckWorkers();
 
 		// Check capacity — groups awaiting human review don't consume slots
 		const activeGroups = this.groupRepo
@@ -1723,8 +1866,16 @@ export class RoomRuntime {
 				currentRoom,
 				planningTask,
 				goal,
-				(groupId, state) => this.onWorkerTerminalState(groupId, state),
-				(groupId, state) => this.onLeaderTerminalState(groupId, state),
+				(groupId, state) => {
+					void this.onWorkerTerminalState(groupId, state).catch((err) => {
+						log.error(`[worker-observer] Group ${groupId}: terminal state handler threw:`, err);
+					});
+				},
+				(groupId, state) => {
+					void this.onLeaderTerminalState(groupId, state).catch((err) => {
+						log.error(`[leader-observer] Group ${groupId}: terminal state handler threw:`, err);
+					});
+				},
 				(groupId) => this.createLeaderCallbacks(groupId),
 				workerConfig,
 				'plan_review'
@@ -1835,8 +1986,16 @@ export class RoomRuntime {
 				currentRoom,
 				task,
 				goal,
-				(groupId, state) => this.onWorkerTerminalState(groupId, state),
-				(groupId, state) => this.onLeaderTerminalState(groupId, state),
+				(groupId, state) => {
+					void this.onWorkerTerminalState(groupId, state).catch((err) => {
+						log.error(`[worker-observer] Group ${groupId}: terminal state handler threw:`, err);
+					});
+				},
+				(groupId, state) => {
+					void this.onLeaderTerminalState(groupId, state).catch((err) => {
+						log.error(`[leader-observer] Group ${groupId}: terminal state handler threw:`, err);
+					});
+				},
 				(groupId) => this.createLeaderCallbacks(groupId),
 				workerConfig,
 				'code_review'

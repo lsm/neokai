@@ -39,8 +39,14 @@ export function createMockDaemonHub() {
 
 export function createMockSessionFactory() {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
+	/** Per-session processing state, configurable in tests for stuck worker scenarios */
+	const processingStates = new Map<
+		string,
+		'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input'
+	>();
 	return {
 		calls,
+		processingStates,
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
@@ -54,12 +60,20 @@ export function createMockSessionFactory() {
 		hasSession(_sessionId: string) {
 			return true;
 		},
+		getProcessingState(
+			sessionId: string
+		): 'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input' | undefined {
+			return processingStates.get(sessionId);
+		},
 		async answerQuestion(_sessionId: string, _answer: string) {
 			return false;
 		},
 		async createWorktree(_basePath: string, sessionId: string, _branchName?: string) {
 			// Return a synthetic worktree path so isolation enforcement passes in tests
 			return `/tmp/worktrees/${sessionId}`;
+		},
+		async removeWorktree(_workspacePath: string) {
+			return true;
 		},
 		async restoreSession(sessionId: string) {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
@@ -68,7 +82,13 @@ export function createMockSessionFactory() {
 		async stopSession(sessionId: string) {
 			calls.push({ method: 'stopSession', args: [sessionId] });
 		},
-	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
+	} satisfies SessionFactory & {
+		calls: Array<{ method: string; args: unknown[] }>;
+		processingStates: Map<
+			string,
+			'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input'
+		>;
+	};
 }
 
 export function makeRoom(overrides?: Partial<Room>): Room {
