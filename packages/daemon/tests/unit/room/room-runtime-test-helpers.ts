@@ -174,7 +174,7 @@ export interface RuntimeTestContextOptions {
 	room?: Partial<Room>;
 	maxConcurrentGroups?: number;
 	maxFeedbackIterations?: number;
-	/** Optional worker message provider for testing bypass markers and envelope content */
+	/** Worker message provider for testing (bypass markers, envelope content, terminal errors) */
 	getWorkerMessages?: (
 		sessionId: string,
 		afterMessageId: string | null

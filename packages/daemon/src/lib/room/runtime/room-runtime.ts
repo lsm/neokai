@@ -50,6 +50,7 @@ import {
 	sortTasksByPriority,
 } from './message-routing';
 import { isRateLimitError, createRateLimitBackoff } from './rate-limit-utils';
+import { detectTerminalError } from './error-classifier';
 import { Logger } from '../../logger';
 import {
 	runWorkerExitGate,
@@ -597,6 +598,27 @@ export class RoomRuntime {
 						`Bypass detected for ${group.workerRole} group ${groupId} — pre-authorizing leader complete`
 					);
 				}
+			}
+		}
+
+
+		// Check for terminal API errors in worker output (e.g. HTTP 400/401/403/404/422).
+		// These are unrecoverable — bouncing back to the agent will never fix them.
+		{
+			const terminalError = detectTerminalError(workerOutputText);
+			if (terminalError) {
+				log.info(
+					`Terminal API error in worker output for group ${groupId}: ${terminalError.reason}`
+				);
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Terminal error: ${terminalError.reason}`,
+				});
+				await this.taskGroupManager.fail(groupId, terminalError.reason);
+				this.cleanupMirroring(groupId, `Terminal API error: ${terminalError.reason}`);
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+				this.scheduleTick();
+				return;
 			}
 		}
 
