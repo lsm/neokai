@@ -12,10 +12,49 @@ import { Logger } from '../../logger';
 
 const log = new Logger('lifecycle-hooks');
 
+// --- Bypass Markers ---
+
+/**
+ * Special markers that workers can use to bypass git/PR gates
+ * for read-only tasks that produce no file changes.
+ * DOCUMENTATION_COMPLETE is intentionally excluded: writing docs requires file changes
+ * and should follow the normal git/PR workflow.
+ */
+export const BYPASS_GATES_MARKERS = {
+	RESEARCH_ONLY: 'RESEARCH_ONLY:',
+	VERIFICATION_COMPLETE: 'VERIFICATION_COMPLETE:',
+	INVESTIGATION_RESULT: 'INVESTIGATION_RESULT:',
+	ANALYSIS_COMPLETE: 'ANALYSIS_COMPLETE:',
+} as const;
+
+export type BypassMarker = (typeof BYPASS_GATES_MARKERS)[keyof typeof BYPASS_GATES_MARKERS];
+
+/**
+ * Check if worker output starts with a bypass marker.
+ * Only the first non-empty line of the output is checked to prevent false positives
+ * from markers mentioned inside code blocks, analysis text, or quoted content.
+ * Returns the marker if found, null otherwise.
+ */
+export function detectBypassMarker(workerOutput: string): BypassMarker | null {
+	const lines = workerOutput.split('\n');
+	const firstNonEmptyLine = lines.find((line) => line.trim().length > 0);
+	if (!firstNonEmptyLine) return null;
+
+	for (const marker of Object.values(BYPASS_GATES_MARKERS)) {
+		if (firstNonEmptyLine.trim().startsWith(marker)) {
+			return marker as BypassMarker;
+		}
+	}
+
+	return null;
+}
+
 // --- Types ---
 
 export interface HookResult {
 	pass: boolean;
+	/** Set to true when the worker used a bypass marker to skip git/PR gates */
+	bypassed?: boolean;
 	/** Human-readable reason (for logs/group timeline) */
 	reason?: string;
 	/** Message injected back to the agent to fix the issue */
@@ -37,6 +76,8 @@ export interface WorkerExitHookContext {
 	draftTaskCount?: number;
 	/** Whether a human has approved the task (plan or PR) */
 	approved?: boolean;
+	/** Worker's final output text (for detecting bypass markers) */
+	workerOutput?: string;
 }
 
 export interface LeaderCompleteHookContext {
@@ -558,6 +599,21 @@ export async function runWorkerExitGate(
 				if (!result.pass) return result;
 			}
 			return { pass: true };
+		}
+
+		// Check for bypass marker BEFORE running git/PR gates (only for PR-based roles).
+		// Planner bypass is intentionally unsupported: planners require draft task creation,
+		// and the leader gate cannot complete without tasks even in bypass mode.
+		if (isPrBasedRole && ctx.workerOutput) {
+			const bypassMarker = detectBypassMarker(ctx.workerOutput);
+			if (bypassMarker) {
+				log.info(`Worker output contains bypass marker ${bypassMarker} - skipping git/PR gates`);
+				return {
+					pass: true,
+					bypassed: true,
+					reason: `Bypassed git/PR gates: ${bypassMarker}`,
+				};
+			}
 		}
 
 		// Pre-approval: must create feature branch, PR, and push commits

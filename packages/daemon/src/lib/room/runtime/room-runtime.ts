@@ -56,6 +56,7 @@ import {
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
 	type HookOptions,
+	type HookResult,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 } from './lifecycle-hooks';
@@ -511,6 +512,22 @@ export class RoomRuntime {
 			}
 		}
 
+		// Collect Worker messages since last forwarded message (needed for bypass marker detection)
+		const workerMessages = this.getWorkerMessages
+			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
+			: [];
+
+		// Build worker output text once — used both for bypass detection and leader envelope.
+		// For empty messages, use a sentinel string for the envelope but pass undefined to the
+		// gate so bypass detection is skipped (no output means no marker).
+		const workerOutputText =
+			workerMessages.length > 0
+				? workerMessages
+						.map((m) => m.text)
+						.filter(Boolean)
+						.join('\n\n')
+				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
+
 		// Lifecycle hooks: Worker Exit Gate
 		// Validates preconditions before routing to leader (branch/PR for coder/general, tasks for planners)
 		{
@@ -522,12 +539,15 @@ export class RoomRuntime {
 				taskId: group.taskId,
 				groupId,
 				approved: group.approved,
+				// Check the last message for the bypass marker: workers put the marker at the start
+				// of their final response, not in a joined concatenation of all messages.
+				workerOutput: workerMessages.length > 0 ? (workerMessages.at(-1)?.text ?? '') : undefined,
 			};
 			if (group.workerRole === 'planner') {
 				const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);
 				hookCtx.draftTaskCount = draftTasks.length;
 			}
-			let gateResult: { pass: boolean; reason?: string; bounceMessage?: string };
+			let gateResult: HookResult;
 			try {
 				gateResult = await runWorkerExitGate(hookCtx, this.hookOptions);
 			} catch (err) {
@@ -558,21 +578,27 @@ export class RoomRuntime {
 				return; // Keep worker turn active
 			}
 			log.debug(`[Worker→Leader] Group ${groupId}: worker exit gate passed`);
+
+			// When a bypass marker is detected, pre-authorize the leader to call complete_task
+			// directly without a PR. This prevents a dead loop where the leader cannot call
+			// submit_for_review (no PR) and cannot call complete_task (submit required first).
+			// Setting approved=true routes through the "post-approval" leader gate path which
+			// fails open when no PR exists (gh command returns non-zero → pass gracefully).
+			// Only applies to coder/general roles; planner bypass is unsupported (no system prompt
+			// instructions added, and planner tasks require draft task creation).
+			if (gateResult.bypassed) {
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Worker bypassed git/PR gates: ${gateResult.reason}`,
+				});
+				if (group.workerRole === 'coder' || group.workerRole === 'general') {
+					this.groupRepo.setSubmittedForReview(groupId, true);
+					this.groupRepo.setApproved(groupId, true);
+					log.info(
+						`Bypass detected for ${group.workerRole} group ${groupId} — pre-authorizing leader complete`
+					);
+				}
+			}
 		}
-
-		// Collect Worker messages since last forwarded message
-		const workerMessages = this.getWorkerMessages
-			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
-			: [];
-
-		// Build the worker output text
-		const workerOutputText =
-			workerMessages.length > 0
-				? workerMessages
-						.map((m) => m.text)
-						.filter(Boolean)
-						.join('\n\n')
-				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
 
 		// Check for rate limit errors in worker output
 		if (isRateLimitError(workerOutputText)) {

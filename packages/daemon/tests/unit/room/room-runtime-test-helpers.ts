@@ -171,6 +171,11 @@ export interface RuntimeTestContextOptions {
 	room?: Partial<Room>;
 	maxConcurrentGroups?: number;
 	maxFeedbackIterations?: number;
+	/** Optional worker message provider for testing bypass markers and envelope content */
+	getWorkerMessages?: (
+		sessionId: string,
+		afterMessageId: string | null
+	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -205,6 +210,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 			({
 				runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
 			} as const),
+		getWorkerMessages: opts?.getWorkerMessages,
 		// Fetch from managers (reads from DB) instead of caching objects
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),

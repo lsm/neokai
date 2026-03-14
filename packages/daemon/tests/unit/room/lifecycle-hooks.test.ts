@@ -13,6 +13,8 @@ import {
 	runWorkerExitGate,
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
+	detectBypassMarker,
+	BYPASS_GATES_MARKERS,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 	type HookOptions,
@@ -1121,5 +1123,159 @@ describe('runLeaderSubmitGate', () => {
 			opts
 		);
 		expect(result.pass).toBe(true);
+	});
+});
+
+describe('detectBypassMarker', () => {
+	test('detects RESEARCH_ONLY marker at line start', () => {
+		const output = 'RESEARCH_ONLY:\n\nHere is my research...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.RESEARCH_ONLY);
+	});
+
+	test('detects VERIFICATION_COMPLETE marker', () => {
+		const output = 'VERIFICATION_COMPLETE:\n\nVerification complete...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.VERIFICATION_COMPLETE);
+	});
+
+	test('detects INVESTIGATION_RESULT marker', () => {
+		const output = 'INVESTIGATION_RESULT:\n\nInvestigation findings...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.INVESTIGATION_RESULT);
+	});
+
+	test('detects ANALYSIS_COMPLETE marker', () => {
+		const output = 'ANALYSIS_COMPLETE:\n\nAnalysis results...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.ANALYSIS_COMPLETE);
+	});
+
+	test('does NOT detect DOCUMENTATION_COMPLETE — writing docs requires file changes and must use git/PR', () => {
+		// DOCUMENTATION_COMPLETE is intentionally excluded from bypass markers.
+		// Documentation tasks involve writing/modifying files and must go through the normal workflow.
+		const output = 'DOCUMENTATION_COMPLETE:\n\nDocumentation done.';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('detects marker with leading whitespace', () => {
+		const output = '  VERIFICATION_COMPLETE:\n\nVerification complete...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.VERIFICATION_COMPLETE);
+	});
+
+	test('does NOT detect marker in the middle of output — only first non-empty line is checked', () => {
+		// Security: a marker buried in analysis text or a code block should not trigger bypass.
+		// Worker must explicitly start the response with the marker.
+		const output = 'Some preamble text\n\nRESEARCH_ONLY:\n\nResearch findings...';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('detects marker when first line is empty (skips blank lines)', () => {
+		// Leading blank lines are OK — the first *non-empty* line is checked
+		const output = '\n\nRESEARCH_ONLY:\n\nResearch findings...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.RESEARCH_ONLY);
+	});
+
+	test('does NOT detect marker inside backtick code block on first line', () => {
+		const output = '`RESEARCH_ONLY:` is a marker used for bypass.';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('returns null when no marker present', () => {
+		const output = 'Regular worker output without any bypass marker';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('returns null for empty string', () => {
+		expect(detectBypassMarker('')).toBeNull();
+	});
+
+	test('does not match partial marker (no colon)', () => {
+		const output = 'RESEARCH_ONLY This text has no colon after the marker';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+});
+
+describe('runWorkerExitGate with bypass markers', () => {
+	test('bypasses gate for coder role with RESEARCH_ONLY marker', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: 'RESEARCH_ONLY:\n\nResearch findings here.',
+		});
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
+		expect(result.reason).toContain('Bypassed');
+		expect(result.reason).toContain('RESEARCH_ONLY:');
+	});
+
+	test('bypasses gate for general role with VERIFICATION_COMPLETE marker', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'general',
+			approved: false,
+			workerOutput: 'VERIFICATION_COMPLETE:\n\nAll checks passed.',
+		});
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
+		expect(result.reason).toContain('Bypassed');
+	});
+
+	test('does NOT bypass when no marker present — runs normal git checks', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: 'I implemented the feature and created a PR.',
+		});
+		// No git responses → git commands fail gracefully → passes
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+	});
+
+	test('does NOT bypass when workerOutput is undefined', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: undefined,
+		});
+		// Gate runs normally; git fails gracefully → passes
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+	});
+
+	test('does NOT bypass for planner role — planner bypass is unsupported', async () => {
+		// Planners require draft task creation; bypassing the gate leaves the leader unable
+		// to complete_task (needs tasks). Bypass is intentionally restricted to coder/general.
+		const ctx = makeWorkerCtx({
+			workerRole: 'planner',
+			approved: false,
+			draftTaskCount: 0,
+			workerOutput: 'RESEARCH_ONLY:\n\nThis is a planning-related research task.',
+		});
+		// mockRunner({}) → git commands fail gracefully → normal planner pre-approval hooks pass
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBeFalsy();
+		expect(result.reason).toBeUndefined();
+	});
+
+	test('bypass not triggered when approved=true — post-approval path runs instead', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: true,
+			workerOutput: 'RESEARCH_ONLY:\n\nResearch findings.',
+		});
+		// Post-approval: checks PR merge state; git fails gracefully → passes
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+	});
+
+	test('bypasses gate with INVESTIGATION_RESULT marker and whitespace', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: '   INVESTIGATION_RESULT:   \n\nFound the root cause.',
+		});
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
+		expect(result.reason).toContain('Bypassed');
 	});
 });
