@@ -158,7 +158,9 @@ export class TaskRepository {
 		// Auto-clear active_session when task reaches a terminal status (unless already set explicitly)
 		if (
 			params.activeSession === undefined &&
-			(params.status === 'completed' || params.status === 'failed' || params.status === 'cancelled')
+			(params.status === 'completed' ||
+				params.status === 'needs_attention' ||
+				params.status === 'cancelled')
 		) {
 			fields.push('active_session = ?');
 			values.push(null);
