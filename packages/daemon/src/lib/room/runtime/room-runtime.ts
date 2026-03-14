@@ -876,6 +876,112 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Revive the session group for a failed/cancelled task and inject a human message.
+	 *
+	 * The caller is responsible for transitioning the task status to 'review' before
+	 * calling this method. This method handles the group-level work:
+	 * - Clears the group's completedAt so it becomes active again
+	 * - Restores agent sessions (they were stopped when the task failed)
+	 * - Re-registers terminal-state observers so the runtime hears when agents finish
+	 * - Injects the human message (leader first, worker as fallback)
+	 *
+	 * On failure, undoes the group revive (re-sets completedAt) so the group is not
+	 * left in an orphaned active state without a running agent. The caller is
+	 * responsible for rolling back the task status on failure.
+	 *
+	 * Returns true on success, false if the group cannot be found or sessions
+	 * cannot be restored / injected.
+	 */
+	async reviveTaskForMessage(taskId: string, message: string): Promise<boolean> {
+		const group = this.groupRepo.getGroupByTaskId(taskId);
+		if (!group) return false;
+
+		// If the group is still marked as terminated, revive it.
+		// Track whether we cleared completedAt so we can undo it on failure.
+		let didReviveGroup = false;
+		if (group.completedAt !== null) {
+			const revived = this.groupRepo.reviveGroup(group.id);
+			if (!revived) return false;
+			didReviveGroup = true;
+		}
+
+		// Mark as awaiting human so the runtime doesn't auto-inject a continuation
+		// message if it happens to tick before we inject below.
+		this.groupRepo.setSubmittedForReview(group.id, true);
+
+		// Restore sessions that were stopped when the task failed.
+		// restoreSession() is idempotent — if a session is already in cache it
+		// returns true immediately without touching the running query.
+		let leaderAvailable = this.sessionFactory.hasSession(group.leaderSessionId);
+		if (!leaderAvailable) {
+			leaderAvailable = await this.sessionFactory.restoreSession(group.leaderSessionId);
+			if (leaderAvailable) {
+				this.observer.observe(group.leaderSessionId, (state) => {
+					void this.onLeaderTerminalState(group.id, state);
+				});
+			}
+		}
+
+		let workerAvailable = this.sessionFactory.hasSession(group.workerSessionId);
+		if (!workerAvailable) {
+			workerAvailable = await this.sessionFactory.restoreSession(group.workerSessionId);
+			if (workerAvailable) {
+				this.observer.observe(group.workerSessionId, (state) => {
+					void this.onWorkerTerminalState(group.id, state);
+				});
+			}
+		}
+
+		// Restore MCP servers (non-serialisable, lost when sessions were stopped)
+		if (leaderAvailable || workerAvailable) {
+			await this.restoreMcpServersForGroup(group);
+		}
+
+		// Inject into leader first (preferred — leader orchestrates the workflow).
+		// Fall back to worker if leader is unavailable.
+		let injected = false;
+		if (leaderAvailable) {
+			try {
+				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
+				injected = true;
+			} catch (error) {
+				log.warn(`reviveTaskForMessage: leader inject failed for ${taskId}:`, error);
+			}
+		}
+		if (!injected && workerAvailable) {
+			try {
+				await this.sessionFactory.injectMessage(group.workerSessionId, message);
+				injected = true;
+			} catch (error) {
+				log.warn(`reviveTaskForMessage: worker inject failed for ${taskId}:`, error);
+			}
+		}
+
+		if (!injected) {
+			// Neither session could accept the message. Re-terminate the group so it
+			// doesn't appear active without a running agent.
+			if (didReviveGroup) {
+				const currentGroup = this.groupRepo.getGroup(group.id);
+				if (currentGroup) {
+					this.groupRepo.failGroup(currentGroup.id, currentGroup.version);
+				}
+			}
+			log.error(
+				`reviveTaskForMessage: no sessions available for task ${taskId}; group re-terminated`
+			);
+			return false;
+		}
+
+		// Message delivered — clear the review gate so agents can proceed
+		this.groupRepo.setSubmittedForReview(group.id, false);
+
+		await this.emitTaskUpdateById(group.taskId);
+		await this.emitGoalProgressForTask(group.taskId);
+		this.scheduleTick();
+		return true;
+	}
+
+	/**
 	 * Terminate the task's active group (if any) without changing task status.
 	 *
 	 * Used by task.setStatus paths that move tasks to terminal states other than
