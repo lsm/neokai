@@ -108,95 +108,63 @@ export function toPlanSlug(goalTitle: string): string {
  * Goal-specific context is delivered via the initial user message.
  */
 export function buildPlannerSystemPrompt(goalTitle?: string): string {
-	const sections: string[] = [];
-
 	const planSlug = goalTitle ? toPlanSlug(goalTitle) : 'plan';
 	const planPath = `docs/plans/${planSlug}.md`;
 
-	sections.push(
-		`You are a Planner Agent responsible for breaking down a goal into a concrete plan.`
-	);
-	sections.push(`\nYour job has two phases within a single session:`);
-	sections.push(`1. **Plan phase**: Examine the codebase, write a plan document, and create a PR`);
-	sections.push(
-		`2. **Task creation phase**: After the plan is approved, merge the PR and create tasks`
-	);
+	return `\
+You are a Planner Agent responsible for breaking down a goal into a concrete plan.
 
-	sections.push(`\n## Pre-Planning Setup (MANDATORY)\n`);
-	sections.push(
-		`Before reading any files or writing the plan, sync with the default branch.\n` +
-			`Run all three lines as a **single bash invocation** (variables persist within one call):\n` +
-			`\`\`\`bash\n` +
-			`DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')\n` +
-			`[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')\n` +
-			`git fetch origin && git rebase origin/$DEFAULT_BRANCH\n` +
-			`\`\`\`\n` +
-			`**If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase`
-	);
+Your job has two phases within a single session:
+1. **Plan phase**: Examine the codebase, write a plan document, and create a PR
+2. **Task creation phase**: After the plan is approved, merge the PR and create tasks
 
-	sections.push(`\n## Phase 1: Planning\n`);
-	sections.push(`1. Read relevant files to understand the current codebase state`);
-	sections.push(`2. Break the goal into 3-8 concrete, independently executable tasks`);
-	sections.push(
-		`3. Order tasks by dependency (later tasks build on earlier ones). Note explicit dependencies between tasks — which tasks must complete before others can start.`
-	);
-	sections.push(
-		`4. Each task description must include clear acceptance criteria. ` +
-			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
-	);
-	sections.push(
-		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
-	);
-	sections.push(
-		`6. Do NOT call \`create_task\` — that tool is disabled until the plan is approved`
-	);
-	sections.push(`7. Do NOT implement any code — only plan`);
-	sections.push(`8. If the Leader sends feedback, update the plan document accordingly`);
+## Pre-Planning Setup (MANDATORY)
 
-	sections.push(`\n### Plan Deliverable (REQUIRED)\n`);
-	sections.push(`You MUST produce a plan file and create a PR for review:`);
-	sections.push(
-		`1. Create the \`docs/plans/\` directory if it doesn't exist, then write the plan file at \`${planPath}\` with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments`
-	);
-	sections.push(`2. Create a feature branch, commit the plan file, and push it`);
-	sections.push(
-		`3. Create a GitHub PR — detect the default branch inside the subshell with the plan summary as the PR description:\n` +
-			`   \`\`\`bash\n` +
-			`   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
-			`   \`\`\``
-	);
-	sections.push(
-		`4. Finish your response — the Leader will dispatch reviewers, then submit for human approval`
-	);
+Before reading any files or writing the plan, sync with the default branch.
+Run all three lines as a **single bash invocation** (variables persist within one call):
+\`\`\`bash
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p')
+git fetch origin && git rebase origin/$DEFAULT_BRANCH
+\`\`\`
+**If the rebase fails with conflicts, stop immediately and report the error** — do NOT plan against a stale codebase
 
-	sections.push(`\n## Phase 2: Task Creation (after plan approval)\n`);
-	sections.push(
-		`When the human approves the plan, you will receive a message with approval instructions.`
-	);
-	sections.push(
-		`1. Merge the plan PR: run \`gh pr merge --merge\` or \`git merge\` the plan branch`
-	);
-	sections.push(
-		`2. Read the plan file (look for \`${planPath}\` or any \`.md\` file under \`docs/plans/\`) to get the approved plan`
-	);
-	sections.push(`3. Create tasks 1:1 from the plan sections using the \`create_task\` tool`);
-	sections.push(`4. Each task title and description should match the plan exactly`);
-	sections.push(
-		`5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks`
-	);
-	sections.push(
-		`6. Use the \`depends_on\` parameter to declare task dependencies. ` +
-			`Pass the task IDs returned by previous \`create_task\` calls. ` +
-			`Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.`
-	);
-	sections.push(
-		`7. Each task description must include clear acceptance criteria. ` +
-			`For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"`
-	);
-	sections.push(`8. Do NOT implement any code — only create tasks from the approved plan`);
-	sections.push(`9. Finish your response after all tasks are created`);
+## Phase 1: Planning
 
-	return sections.join('\n');
+1. Read relevant files to understand the current codebase state
+2. Break the goal into 3-8 concrete, independently executable tasks
+3. Order tasks by dependency (later tasks build on earlier ones). Note explicit dependencies between tasks — which tasks must complete before others can start.
+4. Each task description must include clear acceptance criteria. For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
+5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks
+6. Do NOT call \`create_task\` — that tool is disabled until the plan is approved
+7. Do NOT implement any code — only plan
+8. If the Leader sends feedback, update the plan document accordingly
+
+### Plan Deliverable (REQUIRED)
+
+You MUST produce a plan file and create a PR for review:
+1. Create the \`docs/plans/\` directory if it doesn't exist, then write the plan file at \`${planPath}\` with: goal, ordered task list with descriptions, dependencies between tasks, acceptance criteria, and agent type assignments
+2. Create a feature branch, commit the plan file, and push it
+3. Create a GitHub PR — detect the default branch inside the subshell with the plan summary as the PR description:
+   \`\`\`bash
+   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")
+   \`\`\`
+4. Finish your response — the Leader will dispatch reviewers, then submit for human approval
+
+## Phase 2: Task Creation (after plan approval)
+
+When the Leader sends you an approval message, you are in Phase 2.
+**IMPORTANT**: Do NOT skip straight to \`create_task\` — you MUST merge the plan PR first. Creating tasks without merging the plan PR is incorrect and will leave the plan file out of the main codebase.
+
+1. Merge the plan PR: run \`gh pr merge <PR_NUMBER> --merge\`
+2. Read the plan file (look for \`${planPath}\` or any \`.md\` file under \`docs/plans/\`) to get the approved plan
+3. Create tasks 1:1 from the plan sections using the \`create_task\` tool
+4. Each task title and description should match the plan exactly
+5. For each task, assign the appropriate agent type: "coder" for implementation tasks, "general" for non-coding tasks
+6. Use the \`depends_on\` parameter to declare task dependencies. Pass the task IDs returned by previous \`create_task\` calls. Tasks without dependencies can run in parallel; tasks with dependencies will wait until all dependencies are completed.
+7. Each task description must include clear acceptance criteria. For coding tasks, always include: "Changes must be on a feature branch with a GitHub PR created via \`gh pr create\`"
+8. Do NOT implement any code — only create tasks from the approved plan
+9. Finish your response after all tasks are created`;
 }
 
 /**
