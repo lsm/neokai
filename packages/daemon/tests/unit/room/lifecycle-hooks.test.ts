@@ -463,7 +463,6 @@ describe('checkLeaderDraftsExist', () => {
 		const result = await checkLeaderDraftsExist(makeLeaderCtx({ draftTaskCount: 0 }));
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('send_to_worker');
-		expect(result.bounceMessage).toContain('handoff_to_worker');
 		expect(result.bounceMessage).toContain('create_task');
 	});
 });

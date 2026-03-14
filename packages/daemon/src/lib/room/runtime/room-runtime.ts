@@ -614,17 +614,6 @@ export class RoomRuntime {
 				});
 			}
 
-			case 'handoff_to_worker': {
-				// No-op: no state to transition. Kept for backward compatibility.
-				this.appendGroupEvent(groupId, 'status', {
-					text: 'Leader signaled handoff to Worker (no-op).',
-				});
-				return jsonResult({
-					success: true,
-					message: 'Handoff acknowledged. Use send_to_worker to send messages.',
-				});
-			}
-
 			case 'complete_task': {
 				const summary = params.summary ?? '';
 
@@ -781,9 +770,6 @@ export class RoomRuntime {
 			sendToWorker: async (_groupId: string, message: string, mode?: 'steer' | 'queue') => {
 				return this.handleLeaderTool(groupId, 'send_to_worker', { message, mode });
 			},
-			handoffToWorker: async (_groupId: string) => {
-				return this.handleLeaderTool(groupId, 'handoff_to_worker', {});
-			},
 			completeTask: async (_groupId: string, summary: string) => {
 				return this.handleLeaderTool(groupId, 'complete_task', { summary });
 			},
@@ -846,7 +832,7 @@ export class RoomRuntime {
 
 		// Route ALL messages (approval and rejection) to leader
 		// Leader handles: approval → merge + complete_task
-		// Leader handles: rejection → send_to_worker + handoff_to_worker
+		// Leader handles: rejection → send_to_worker
 		try {
 			const updated = await this.taskGroupManager.resumeLeaderFromHuman(group.id, message);
 			if (!updated) {

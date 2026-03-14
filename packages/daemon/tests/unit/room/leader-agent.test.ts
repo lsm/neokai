@@ -106,10 +106,6 @@ function makeCallbacks(): LeaderToolCallbacks & {
 			calls.push({ method: 'sendToWorker', args: [groupId, message, mode] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
 		},
-		async handoffToWorker(groupId: string) {
-			calls.push({ method: 'handoffToWorker', args: [groupId] });
-			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
-		},
 		async completeTask(groupId: string, summary: string) {
 			calls.push({ method: 'completeTask', args: [groupId, summary] });
 			return { content: [{ type: 'text' as const, text: JSON.stringify({ success: true }) }] };
@@ -135,7 +131,6 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			expect(prompt).toContain('Tool Contract (CRITICAL)');
 			expect(prompt).toContain('send_to_worker');
-			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('complete_task');
 			expect(prompt).toContain('fail_task');
 			expect(prompt).toContain('replan_goal');
@@ -206,7 +201,6 @@ describe('Leader Agent', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig({ reviewContext: 'plan_review' }));
 			// Should instruct leader to send planner back — NOT merge the PR itself
 			expect(prompt).toContain('send_to_worker');
-			expect(prompt).toContain('handoff_to_worker');
 			expect(prompt).toContain('create_task');
 			// The "merge PR yourself" instructions should NOT be present
 			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --squash');
@@ -332,17 +326,6 @@ describe('Leader Agent', () => {
 			expect(callbacks.calls).toHaveLength(1);
 			expect(callbacks.calls[0].method).toBe('sendToWorker');
 			expect(callbacks.calls[0].args).toEqual(['group-1', 'Queue this', 'queue']);
-		});
-
-		it('should route handoff_to_worker to callback with groupId', async () => {
-			const callbacks = makeCallbacks();
-			const handlers = createLeaderToolHandlers('group-1', callbacks);
-
-			await handlers.handoff_to_worker();
-
-			expect(callbacks.calls).toHaveLength(1);
-			expect(callbacks.calls[0].method).toBe('handoffToWorker');
-			expect(callbacks.calls[0].args).toEqual(['group-1']);
 		});
 
 		it('should route complete_task to callback with groupId', async () => {

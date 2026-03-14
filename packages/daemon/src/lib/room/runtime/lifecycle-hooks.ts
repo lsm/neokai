@@ -527,8 +527,7 @@ export async function checkLeaderDraftsExist(
 			'   2. Read the plan file under docs/plans/\n' +
 			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +
 			'   4. Finish your response after all tasks are created"\n' +
-			'2. Call `handoff_to_worker` so the planner can run.\n' +
-			'3. After the planner exits with tasks created, call `complete_task` again.',
+			'2. After the planner exits with tasks created, call `complete_task` again.',
 	};
 }
 
