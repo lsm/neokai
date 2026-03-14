@@ -22,7 +22,8 @@ import { useMessageHub } from '../../hooks/useMessageHub';
 import { useModal } from '../../hooks/useModal';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { copyToClipboard } from '../../lib/utils';
-import { ConfirmModal } from '../ui/ConfirmModal';
+import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
+import { Modal } from '../ui/Modal';
 import { RejectModal } from '../ui/RejectModal';
 import { InputTextarea } from '../InputTextarea';
 import { ScrollToBottomButton } from '../ScrollToBottomButton';
@@ -377,6 +378,205 @@ function HumanInputArea({
 	);
 }
 
+interface CompleteTaskDialogProps {
+	task: NeoTask;
+	isOpen: boolean;
+	onClose: () => void;
+	onConfirm: (summary: string) => Promise<void>;
+}
+
+function CompleteTaskDialog({ task, isOpen, onClose, onConfirm }: CompleteTaskDialogProps) {
+	const [summary, setSummary] = useState('');
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const handleClose = () => {
+		setSummary('');
+		setError(null);
+		onClose();
+	};
+
+	const handleConfirm = async () => {
+		setLoading(true);
+		setError(null);
+		try {
+			await onConfirm(summary);
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to complete task');
+			setLoading(false);
+		}
+	};
+
+	return (
+		<Modal
+			isOpen={isOpen}
+			onClose={handleClose}
+			title="Mark Task as Complete?"
+			size="md"
+			showCloseButton
+		>
+			<div class="space-y-4">
+				<p class="text-sm text-gray-300">
+					You are about to mark <strong class="text-gray-100">{task.title}</strong> as completed.
+				</p>
+
+				<div class="bg-dark-800 border border-dark-600 rounded-lg p-3 text-xs text-gray-400">
+					<p class="font-medium text-gray-300 mb-1.5">What happens next:</p>
+					<ul class="list-disc list-inside space-y-1">
+						<li>
+							Task status changes to <span class="text-green-400">completed</span>
+						</li>
+						<li>All sessions will be terminated</li>
+						<li>Task slot will be freed</li>
+					</ul>
+				</div>
+
+				<div>
+					<label class="block text-sm font-medium text-gray-300 mb-1.5">
+						Completion Summary <span class="text-gray-500 font-normal">(optional)</span>
+					</label>
+					<textarea
+						class="w-full h-24 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+						placeholder="Briefly describe what was accomplished..."
+						value={summary}
+						onInput={(e) => setSummary((e.target as HTMLTextAreaElement).value)}
+						disabled={loading}
+					/>
+				</div>
+
+				{error && (
+					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
+						{error}
+					</p>
+				)}
+
+				<div class="flex items-center justify-end gap-3 pt-2">
+					<button
+						type="button"
+						onClick={handleClose}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={() => void handleConfirm()}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-green-600 hover:bg-green-700 text-white disabled:bg-green-600/50 flex items-center gap-1.5"
+						data-testid="complete-task-confirm"
+					>
+						{loading ? (
+							'Completing…'
+						) : (
+							<>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M5 13l4 4L19 7"
+									/>
+								</svg>
+								Mark Complete
+							</>
+						)}
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
+interface CancelTaskDialogProps {
+	task: NeoTask;
+	isOpen: boolean;
+	onClose: () => void;
+	onConfirm: () => Promise<void>;
+}
+
+function CancelTaskDialog({ task, isOpen, onClose, onConfirm }: CancelTaskDialogProps) {
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const handleClose = () => {
+		setError(null);
+		onClose();
+	};
+
+	const handleConfirm = async () => {
+		setLoading(true);
+		setError(null);
+		try {
+			await onConfirm();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to cancel task');
+			setLoading(false);
+		}
+	};
+
+	return (
+		<Modal isOpen={isOpen} onClose={handleClose} title="Cancel Task?" size="sm" showCloseButton>
+			<div class="space-y-4">
+				<p class="text-sm text-gray-300">
+					You are about to cancel <strong class="text-gray-100">{task.title}</strong>.
+				</p>
+
+				<div class="bg-red-900/20 border border-red-800/50 rounded-lg p-3 text-xs text-gray-400">
+					<p class="font-medium text-red-400 mb-1.5">This action cannot be undone:</p>
+					<ul class="list-disc list-inside space-y-1">
+						<li>
+							Task will be marked as <span class="text-gray-300">cancelled</span>
+						</li>
+						<li>All sessions will be terminated</li>
+						<li>Isolated worktree and branch will be removed</li>
+					</ul>
+				</div>
+
+				{error && (
+					<p class="text-sm text-red-400 bg-red-900/20 border border-red-800/50 rounded px-3 py-2">
+						{error}
+					</p>
+				)}
+
+				<div class="flex items-center justify-end gap-3 pt-2">
+					<button
+						type="button"
+						onClick={handleClose}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white bg-dark-800 hover:bg-dark-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+					>
+						Keep Task
+					</button>
+					<button
+						type="button"
+						onClick={() => void handleConfirm()}
+						disabled={loading}
+						class="px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:cursor-not-allowed bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50 flex items-center gap-1.5"
+						data-testid="cancel-task-confirm"
+					>
+						{loading ? (
+							'Cancelling…'
+						) : (
+							<>
+								<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="2"
+										d="M6 18L18 6M6 6l12 12"
+									/>
+								</svg>
+								Cancel Task
+							</>
+						)}
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
 export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const { request, onEvent, joinRoom, leaveRoom } = useMessageHub();
 	const [task, setTask] = useState<NeoTask | null>(null);
@@ -394,10 +594,9 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 	const [showInfoPanel, setShowInfoPanel] = useState(false);
 	const [autoScrollEnabled, setAutoScrollEnabled] = useState(true);
 
-	// Cancel task modal state
+	// Task action modals
+	const completeModal = useModal();
 	const cancelModal = useModal();
-	const [cancelling, setCancelling] = useState(false);
-	const [cancelError, setCancelError] = useState<string | null>(null);
 
 	// Tracks whether the conversation pane is showing its first batch of messages.
 	// Starts true, resets to true each time the conversation reloads (conversationKey bumps),
@@ -547,26 +746,71 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 
 	const statusColor = TASK_STATUS_COLORS[task.status] ?? 'text-gray-400';
 
-	// Determine if cancel button should be shown (pending, in_progress, or review status)
+	// Determine which actions are available based on task status
+	// Only in_progress and review tasks can transition to completed
+	const canComplete = task.status === 'in_progress' || task.status === 'review';
+	// Pending, in_progress, and review tasks can be cancelled
 	const canCancel =
 		task.status === 'pending' || task.status === 'in_progress' || task.status === 'review';
 
-	// Cancel task handler
-	const cancelTask = async () => {
-		if (cancelling) return;
-		setCancelling(true);
-		setCancelError(null);
-		try {
-			await request('task.cancel', { roomId, taskId });
-			cancelModal.close();
-			// Navigate back to room since task is now cancelled
-			navigateToRoom(roomId);
-		} catch (err) {
-			setCancelError(err instanceof Error ? err.message : 'Failed to cancel task');
-		} finally {
-			setCancelling(false);
-		}
+	// Complete task handler — throws on error so the dialog can display it
+	const completeTask = async (summary: string) => {
+		await request('task.setStatus', {
+			roomId,
+			taskId,
+			status: 'completed',
+			result: summary || 'Marked complete by user',
+		});
+		completeModal.close();
+		navigateToRoom(roomId);
 	};
+
+	// Cancel task handler — throws on error so the dialog can display it
+	const cancelTask = async () => {
+		await request('task.cancel', { roomId, taskId });
+		cancelModal.close();
+		navigateToRoom(roomId);
+	};
+
+	// Build dropdown menu items for task actions
+	const dropdownItems: DropdownMenuItem[] = [];
+	if (canComplete) {
+		dropdownItems.push({
+			label: 'Mark as Complete',
+			icon: (
+				<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M5 13l4 4L19 7"
+					/>
+				</svg>
+			),
+			onClick: () => completeModal.open(),
+		});
+	}
+	if (canCancel) {
+		if (canComplete) {
+			dropdownItems.push({ type: 'divider' });
+		}
+		dropdownItems.push({
+			label: 'Cancel Task',
+			icon: (
+				<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						stroke-width="2"
+						d="M6 18L18 6M6 6l12 12"
+					/>
+				</svg>
+			),
+			danger: true,
+			onClick: () => cancelModal.open(),
+		});
+	}
+
 	return (
 		<div class="flex-1 flex flex-col overflow-hidden bg-dark-900">
 			{/* Header */}
@@ -614,23 +858,25 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						<span class="text-xs text-gray-400">{task.progress}%</span>
 					</div>
 				)}
-				{/* Cancel button - shown for pending, in_progress, or review tasks */}
-				{canCancel && (
-					<button
-						class="p-1.5 rounded text-red-400 hover:text-red-300 hover:bg-dark-700 transition-colors"
-						onClick={cancelModal.open}
-						title="Cancel task"
-						disabled={cancelling}
-					>
-						<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-							<path
-								stroke-linecap="round"
-								stroke-linejoin="round"
-								stroke-width="2"
-								d="M6 18L18 6M6 6l12 12"
-							/>
-						</svg>
-					</button>
+				{/* Task options dropdown — shown when at least one action is available */}
+				{dropdownItems.length > 0 && (
+					<Dropdown
+						position="right"
+						trigger={
+							<button
+								class="p-1.5 rounded text-gray-400 hover:text-gray-200 hover:bg-dark-700 transition-colors"
+								title="Task options"
+								data-testid="task-options-menu"
+							>
+								<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+									<circle cx="12" cy="5" r="2" />
+									<circle cx="12" cy="12" r="2" />
+									<circle cx="12" cy="19" r="2" />
+								</svg>
+							</button>
+						}
+						items={dropdownItems}
+					/>
 				)}
 				{/* Info toggle button */}
 				<button
@@ -818,17 +1064,18 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 				onMessageSentWithReload={() => setConversationKey((k) => k + 1)}
 			/>
 
-			{/* Cancel confirmation modal */}
-			<ConfirmModal
+			{/* Task action dialogs */}
+			<CompleteTaskDialog
+				task={task}
+				isOpen={completeModal.isOpen}
+				onClose={completeModal.close}
+				onConfirm={completeTask}
+			/>
+			<CancelTaskDialog
+				task={task}
 				isOpen={cancelModal.isOpen}
 				onClose={cancelModal.close}
 				onConfirm={cancelTask}
-				title="Cancel Task"
-				message="Are you sure you want to cancel this task? The task's isolated worktree and branch will be permanently removed. This action cannot be undone."
-				confirmText="Cancel Task"
-				confirmButtonVariant="danger"
-				isLoading={cancelling}
-				error={cancelError}
 			/>
 		</div>
 	);
