@@ -173,16 +173,15 @@ describe('RoomRuntime - terminal error detection', () => {
 			expect(updatedTask!.status).toBe('in_progress');
 		});
 
-		it('does NOT fail task on HTTP 429 rate limit (handled by rate-limit-utils)', async () => {
+		it('does NOT fail task on HTTP 429 rate limit (classified as rate_limit, not terminal)', async () => {
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => [makeWorkerMessage('API Error: 429 Too Many Requests')],
 			});
 
 			const { task } = await spawnAndSimulateWorkerOutput('');
 
-			// 429 without a parseable retry-after falls through to normal leader routing
+			// 429 is rate_limit, not terminal — task is NOT failed immediately
 			const updatedTask = await ctx.taskManager.getTask(task.id);
-			// Should NOT be failed — 429 handling is separate
 			expect(updatedTask!.status).not.toBe('failed');
 		});
 	});

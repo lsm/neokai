@@ -66,11 +66,26 @@ describe('error-classifier', () => {
 			});
 		});
 
-		describe('429 rate limit exclusion', () => {
-			it('does NOT classify HTTP 429 as terminal (rate limits handled separately)', () => {
+		describe('429 rate limit handling', () => {
+			it('classifies HTTP 429 as rate_limit (not terminal)', () => {
 				const result = classifyError('API Error: 429 Too Many Requests');
-				// 429 is excluded from TERMINAL_HTTP_CODES, so it falls through to null
-				expect(result).toBeNull();
+				expect(result).not.toBeNull();
+				expect(result!.class).toBe('rate_limit');
+				expect(result!.statusCode).toBe(429);
+			});
+
+			it('classifies Anthropic usage-limit message as rate_limit with resetsAt', () => {
+				const result = classifyError("You've hit your limit · resets 1pm (America/New_York)");
+				expect(result).not.toBeNull();
+				expect(result!.class).toBe('rate_limit');
+				expect(result!.resetsAt).toBeGreaterThan(Date.now() - 1000);
+			});
+
+			it('classifies HTTP 429 without retry-after as rate_limit (resetsAt undefined)', () => {
+				const result = classifyError('API Error: 429 Too Many Requests');
+				expect(result!.class).toBe('rate_limit');
+				// No parseable retry-after time in this message
+				expect(result!.resetsAt).toBeUndefined();
 			});
 		});
 
@@ -199,7 +214,7 @@ describe('error-classifier', () => {
 			expect(result).toBeNull();
 		});
 
-		it('returns null for rate limit messages (handled separately)', () => {
+		it('returns null for rate limit messages (classified as rate_limit, not terminal)', () => {
 			const result = detectTerminalError('API Error: 429 Too Many Requests');
 			expect(result).toBeNull();
 		});

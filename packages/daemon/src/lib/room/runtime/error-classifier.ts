@@ -1,23 +1,36 @@
 /**
- * Error Classifier - Classifies errors as terminal or recoverable
+ * Error Classifier - Unified API error classification
  *
- * Terminal errors indicate unrecoverable failures that should immediately fail a task.
- * Recoverable errors may succeed on retry (network issues, 5xx, temporary limits).
+ * Single point of truth for classifying API errors from agent output:
+ * - terminal:    unrecoverable errors (4xx, invalid model, etc.) → fail task immediately
+ * - rate_limit:  429 rate limits with parseable retry-after → pause with backoff
+ * - recoverable: transient errors (5xx, network) → bounce/retry
+ *
+ * Consolidates the previously separate rate-limit-utils detection into one place.
+ * rate-limit-utils.ts remains for its parsing logic but is no longer imported
+ * directly in room-runtime.ts.
  */
 
-export type ErrorClass = 'recoverable' | 'terminal';
+import { parseRateLimitReset } from './rate-limit-utils';
+
+export type ErrorClass = 'terminal' | 'rate_limit' | 'recoverable';
 
 export interface ErrorClassification {
 	class: ErrorClass;
 	reason: string;
 	/** HTTP status code if extracted from the error message, undefined otherwise */
 	statusCode?: number;
+	/**
+	 * For rate_limit: Unix timestamp (ms) when the limit resets.
+	 * Consumers should set a backoff until this time.
+	 */
+	resetsAt?: number;
 }
 
 /**
  * HTTP status codes that are terminal (unrecoverable client errors).
- * Note: 429 (rate limit) is intentionally excluded — it is handled separately
- * by rate-limit-utils.ts which parses retry-after timing.
+ * 429 is handled separately as rate_limit (not terminal) because it has
+ * a parseable retry-after time and the underlying credentials are valid.
  */
 const TERMINAL_HTTP_CODES = new Set([400, 401, 403, 404, 422]);
 
@@ -50,17 +63,24 @@ function extractHttpStatus(message: string): number | undefined {
 }
 
 /**
- * Classify an error message as terminal or recoverable.
+ * Classify an API error message.
  *
- * HTTP status codes are checked first (they carry the most reliable signal).
- * Text patterns are a fallback for messages that lack an explicit HTTP code.
+ * Evaluation order (first match wins):
+ * 1. HTTP status code — most authoritative signal
+ *    - 400/401/403/404/422 → terminal
+ *    - 429 → rate_limit (with resetsAt if parseable)
+ *    - 5xx → recoverable
+ * 2. Text patterns — fallback for messages without an HTTP code
+ *    - "invalid model", "invalid api key", etc. → terminal
  *
- * Returns an ErrorClassification if the message matches a known error pattern,
- * or null if it is not recognized as an API error.
+ * Returns null when the message is not recognised as an API error.
  *
  * @example
  * classifyError('API Error: 400 {"error":{"message":"Invalid model: xyz"}}')
  * // → { class: 'terminal', reason: '...', statusCode: 400 }
+ *
+ * classifyError("You've hit your limit · resets 1pm (America/New_York)")
+ * // → { class: 'rate_limit', reason: '...', statusCode: 429, resetsAt: <timestamp> }
  *
  * classifyError('API Error: 500 Internal Server Error')
  * // → { class: 'recoverable', reason: '...', statusCode: 500 }
@@ -72,10 +92,11 @@ function extractHttpStatus(message: string): number | undefined {
  * // → null
  */
 export function classifyError(message: string): ErrorClassification | null {
-	// Check HTTP status code first — it is the most authoritative signal.
+	// ── 1. HTTP status code ──────────────────────────────────────────────────
 	const statusCode = extractHttpStatus(message);
 	if (statusCode !== undefined) {
 		const excerpt = message.slice(0, 300);
+
 		if (TERMINAL_HTTP_CODES.has(statusCode)) {
 			return {
 				class: 'terminal',
@@ -83,6 +104,17 @@ export function classifyError(message: string): ErrorClassification | null {
 				statusCode,
 			};
 		}
+
+		if (statusCode === 429) {
+			const resetsAt = parseRateLimitReset(message) ?? undefined;
+			return {
+				class: 'rate_limit',
+				reason: `Rate limit reached (HTTP 429)${resetsAt ? ` — resets at ${new Date(resetsAt).toLocaleTimeString()}` : ''}`,
+				statusCode: 429,
+				resetsAt,
+			};
+		}
+
 		if (statusCode >= 500 && statusCode < 600) {
 			return {
 				class: 'recoverable',
@@ -92,8 +124,17 @@ export function classifyError(message: string): ErrorClassification | null {
 		}
 	}
 
-	// Fall back to text patterns — these catch misconfigurations that may not
-	// include an explicit HTTP status code in the message.
+	// ── 2. Text patterns (no explicit HTTP code) ─────────────────────────────
+	// Also catches the Anthropic usage-limit message ("You've hit your limit…")
+	const resetsAt = parseRateLimitReset(message);
+	if (resetsAt !== null) {
+		return {
+			class: 'rate_limit',
+			reason: `Rate limit reached — resets at ${new Date(resetsAt).toLocaleTimeString()}`,
+			resetsAt,
+		};
+	}
+
 	for (const pattern of TERMINAL_TEXT_PATTERNS) {
 		if (pattern.test(message)) {
 			const excerpt = message.slice(0, 300);
@@ -109,11 +150,9 @@ export function classifyError(message: string): ErrorClassification | null {
 
 /**
  * Check whether a message contains a terminal error that should fail a task immediately.
- *
- * Returns the classification when the error is terminal, null otherwise.
- * Callers should still invoke isRateLimitError() separately for 429 rate-limit handling.
+ * Returns the classification when terminal, null otherwise.
  */
 export function detectTerminalError(message: string): ErrorClassification | null {
-	const classification = classifyError(message);
-	return classification?.class === 'terminal' ? classification : null;
+	const c = classifyError(message);
+	return c?.class === 'terminal' ? c : null;
 }
