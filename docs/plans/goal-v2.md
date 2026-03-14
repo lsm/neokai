@@ -69,7 +69,7 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
        unit?: string;
      }
      ```
-   - `MetricHistoryEntry`: `{ metricName: string; value: number; recordedAt: string }` -- for time-series history
+   - `MetricHistoryEntry`: `{ metricName: string; value: number; recordedAt: number }` -- unix timestamp, matches DB `recorded_at INTEGER`
    - `CronSchedule`: `{ expression: string; timezone: string; nextRunAt?: string }`
    - `MissionExecutionStatus = 'running' | 'completed' | 'failed'`
 
@@ -84,6 +84,8 @@ Define the new Mission types in `packages/shared/src/types/neo.ts` and update ex
      - `maxPlanningAttempts?: number` (default 5)
      - `consecutiveFailures?: number` (default 0)
    - Keep `RoomGoal` as `type RoomGoal = Mission` (deprecated alias)
+
+   **Design decision: `maxPlanningAttempts` precedence**: The room-level `config.maxPlanningRetries` (used in `room-runtime.ts` planning gates, default from `RoomConfig`) and the new mission-level `maxPlanningAttempts` could conflict. **Rule: mission-level overrides room-level when set; otherwise fall back to room-level config.** Implementation: extract a shared helper `getEffectiveMaxPlanningAttempts(mission, roomConfig)` that returns `mission.maxPlanningAttempts ?? roomConfig.maxPlanningRetries ?? 5`. All planning/replanning gate checks (in `getNextGoalForPlanning()`, measurable replan logic, etc.) must use this helper — no direct reads of either config value.
 
    **Design decision: `schedulePaused` vs new GoalStatus value**: Recurring mission pause is a schedule-level boolean flag, NOT a new `GoalStatus` value. Current `GoalStatus` is `'active' | 'needs_human' | 'completed' | 'archived'` with a DB CHECK constraint. Adding `'paused'` would require updating the constraint and modifying `getNextGoalForPlanning()` which only selects `'active'` goals. Instead, `schedulePaused` keeps pause orthogonal to mission status — a recurring mission stays `active` (eligible for tick processing) but the scheduler skips it when `schedulePaused = true`. This mirrors how `RuntimeState.paused` is orthogonal to goal status at the room level.
 
@@ -253,7 +255,7 @@ Implement the measurable mission type with structured KPI tracking and adaptive 
 2. **Runtime behavior for measurable missions** in `RoomRuntime`:
    - After all linked tasks complete, call `checkMetricTargets()`
    - If all targets met -> complete mission
-   - If targets not met AND `planning_attempts < maxPlanningAttempts` -> trigger replanning with metric context
+   - If targets not met AND `planning_attempts < getEffectiveMaxPlanningAttempts(mission, roomConfig)` -> trigger replanning with metric context (use shared helper defined in Task 1 design decisions)
    - If targets not met AND attempts exhausted -> set status to `needs_human`
    - Replanning context includes: current metric values, historical trend, completed tasks summary, failed tasks and their errors
 
@@ -293,8 +295,13 @@ Implement recurring mission support with cron-based scheduling.
    - Store timezone with schedule (default: system timezone)
    - Calculate and store `next_run_at` timestamp
 
-2. **Scheduler in RoomRuntime**:
-   - On tick, check for recurring missions where `next_run_at <= now`
+2. **Make `getNextGoalForPlanning()` mission-type aware** (critical):
+   - Current behavior: any `active` goal with no linked tasks or all-failed tasks is immediately selected for planning. This means a newly created recurring mission with `next_run_at` in the future would be planned immediately by the existing tick loop.
+   - **Required change**: `getNextGoalForPlanning()` must skip `mission_type = 'recurring'` goals entirely. Recurring missions are planned ONLY through the scheduler path (step 3 below), never through the standard planning selector.
+   - This is the cleanest separation: the planning selector handles one-shot and measurable missions (plan immediately when active); the scheduler handles recurring missions (plan only when schedule is due).
+
+3. **Scheduler in RoomRuntime**:
+   - On tick (after standard planning selector runs), check for recurring missions where `next_run_at <= now` AND `schedule_paused = false`
    - When triggered: create a new execution cycle (plan -> tasks -> execute)
    - After execution completes: calculate next `next_run_at` from cron expression
    - Each execution cycle is independent (stateless execution with external state)
@@ -315,13 +322,14 @@ Implement recurring mission support with cron-based scheduling.
    - Recurring missions never auto-complete; only manual archive
    - Pause via `schedule_paused` flag (defined in Task 1, column added in Task 2): setting `schedule_paused = true` causes the scheduler to skip this mission without changing its `active` status
    - Resume sets `schedule_paused = false` and recalculates `next_run_at` from current time
-   - `getNextGoalForPlanning()` already filters by `status = 'active'` -- no changes needed there; the scheduler adds an additional check for `schedule_paused = false` on recurring missions
+   - `getNextGoalForPlanning()` is modified to skip `mission_type = 'recurring'` (step 2 above) -- recurring missions are planned only through the scheduler path
 
 5. **MCP tools**:
    - `set_schedule(mission_id, cron, timezone)`: Set/update schedule
    - `pause_schedule(mission_id)` / `resume_schedule(mission_id)`: Toggle `schedule_paused` flag
 
 **Acceptance Criteria**:
+- `getNextGoalForPlanning()` skips `mission_type = 'recurring'` (recurring missions never planned by standard selector)
 - Cron expressions parsed correctly with timezone support
 - Scheduler triggers execution at the right times (within 30s jitter)
 - Overlap prevention works (no concurrent executions of same mission)
