@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useModal } from '../../hooks/useModal';
+import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { copyToClipboard } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -282,7 +283,12 @@ function HumanInputArea({
 	onMessageSentWithReload,
 }: HumanInputAreaProps) {
 	const { request } = useMessageHub();
-	const [messageText, setMessageText] = useState('');
+	const {
+		content: messageText,
+		setContent: setMessageText,
+		clear: clearDraft,
+		draftRestored,
+	} = useTaskInputDraft(roomId, taskId);
 	const [sending, setSending] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
 	const [target, setTarget] = useState<HumanMessageTarget>('worker');
@@ -314,7 +320,7 @@ function HumanInputArea({
 				message: messageText.trim(),
 				target,
 			});
-			setMessageText('');
+			clearDraft();
 			onMessageSentWithReload();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
@@ -331,6 +337,22 @@ function HumanInputArea({
 
 	return (
 		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
+			{draftRestored && (
+				<div
+					class="flex items-center justify-between rounded bg-blue-900/30 border border-blue-700/40 px-3 py-1.5 text-xs text-blue-300"
+					data-testid="draft-restored-banner"
+				>
+					<span>Draft restored</span>
+					<button
+						type="button"
+						class="ml-2 text-blue-400 hover:text-blue-200 transition-colors"
+						onClick={clearDraft}
+						data-testid="draft-dismiss-button"
+					>
+						Discard draft
+					</button>
+				</div>
+			)}
 			<InputTextarea
 				content={messageText}
 				onContentChange={setMessageText}

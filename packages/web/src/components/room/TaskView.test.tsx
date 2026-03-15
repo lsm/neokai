@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, waitFor, fireEvent, act } from '@testing-library/preact';
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
+import { signal } from '@preact/signals';
 // Static import gives access to vi.mocked(useAutoScroll) for call assertions
 import { useAutoScroll } from '../../hooks/useAutoScroll.ts';
 
@@ -30,6 +31,31 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 		onEvent: mockOnEvent,
 		joinRoom: mockJoinRoom,
 		leaveRoom: mockLeaveRoom,
+	}),
+}));
+
+// Mock useTaskInputDraft so component tests don't depend on hub connectivity.
+// Uses Preact Signals so that updating the content triggers proper component re-renders,
+// matching the real hook's behavior (which also uses signals internally).
+const _draftContentSignal = signal('');
+const _draftRestoredSignal = signal(false);
+const mockSetMessageText = vi.fn((v: string) => {
+	_draftContentSignal.value = v;
+});
+const mockClearDraft = vi.fn(() => {
+	_draftContentSignal.value = '';
+	_draftRestoredSignal.value = false;
+});
+vi.mock('../../hooks/useTaskInputDraft.ts', () => ({
+	useTaskInputDraft: () => ({
+		get content() {
+			return _draftContentSignal.value;
+		},
+		setContent: mockSetMessageText,
+		clear: mockClearDraft,
+		get draftRestored() {
+			return _draftRestoredSignal.value;
+		},
 	}),
 }));
 
@@ -324,6 +350,11 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		mockShowScrollButton.value = false;
 		mockMessageCount.value = 0;
 		vi.mocked(useAutoScroll).mockClear();
+		// Reset draft mock state
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
 	});
 
 	afterEach(() => {
@@ -1333,5 +1364,99 @@ describe('TaskView — Reject button in HeaderReviewBar', () => {
 				feedback: 'Needs more work on error handling',
 			});
 		});
+	});
+});
+
+describe('TaskView — draft-restored banner', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+		_draftContentSignal.value = '';
+		_draftRestoredSignal.value = false;
+		mockSetMessageText.mockClear();
+		mockClearDraft.mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows draft-restored banner when draftRestored is true', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { queryByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		// Wait for input area to appear
+		await waitFor(() => {
+			expect(queryByTestId('input-textarea')).not.toBeNull();
+		});
+
+		// Banner not visible initially
+		expect(queryByTestId('draft-restored-banner')).toBeNull();
+
+		// Simulate draft being restored from server
+		act(() => {
+			_draftRestoredSignal.value = true;
+		});
+
+		expect(queryByTestId('draft-restored-banner')).not.toBeNull();
+	});
+
+	it('hides draft-restored banner when draftRestored is false', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		// Start with banner visible
+		_draftRestoredSignal.value = true;
+
+		const { queryByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(queryByTestId('input-textarea')).not.toBeNull();
+		});
+
+		expect(queryByTestId('draft-restored-banner')).not.toBeNull();
+
+		// Dismiss the banner
+		act(() => {
+			_draftRestoredSignal.value = false;
+		});
+
+		expect(queryByTestId('draft-restored-banner')).toBeNull();
+	});
+
+	it('calls clearDraft when "Discard draft" button is clicked', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		// Start with banner visible
+		_draftRestoredSignal.value = true;
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('draft-restored-banner')).not.toBeNull();
+		});
+
+		const dismissBtn = getByTestId('draft-dismiss-button');
+		fireEvent.click(dismissBtn);
+
+		expect(mockClearDraft).toHaveBeenCalledTimes(1);
 	});
 });
