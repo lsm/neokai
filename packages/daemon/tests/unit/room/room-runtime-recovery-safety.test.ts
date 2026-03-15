@@ -295,6 +295,85 @@ describe('Zombie detection in tick', () => {
 
 		expect(ctx.observer.isObserving(leaderSessionId)).toBe(true);
 	});
+
+	it('should set up mirroring for worker session after zombie recovery', async () => {
+		const { workerSessionId } = await createTaskWithGroup(ctx);
+
+		const restoredSessions = new Set<string>();
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === workerSessionId && !restoredSessions.has(sessionId)) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async (sessionId: string) => {
+			restoredSessions.add(sessionId);
+			return true;
+		};
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Mirroring should be set up: sdk.message handler registered for worker session
+		expect(ctx.daemonHub.hasHandlerFor('sdk.message', workerSessionId)).toBe(true);
+	});
+
+	it('should set up mirroring for leader session after zombie recovery', async () => {
+		const { leaderSessionId } = await createTaskWithGroup(ctx);
+
+		const restoredSessions = new Set<string>();
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === leaderSessionId && !restoredSessions.has(sessionId)) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async (sessionId: string) => {
+			restoredSessions.add(sessionId);
+			return true;
+		};
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Mirroring should be set up: sdk.message handler registered for leader session
+		expect(ctx.daemonHub.hasHandlerFor('sdk.message', leaderSessionId)).toBe(true);
+	});
+
+	it('should set up mirroring for submitted_for_review group after zombie recovery', async () => {
+		const { workerSessionId, leaderSessionId } = await createTaskWithGroup(ctx, true);
+
+		const restoredSessions = new Set<string>();
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (!restoredSessions.has(sessionId)) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async (sessionId: string) => {
+			restoredSessions.add(sessionId);
+			return true;
+		};
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Mirroring should be set up even for groups awaiting human review,
+		// so messages flow when the human responds.
+		expect(ctx.daemonHub.hasHandlerFor('sdk.message', workerSessionId)).toBe(true);
+		expect(ctx.daemonHub.hasHandlerFor('sdk.message', leaderSessionId)).toBe(true);
+	});
+
+	it('should NOT set up mirroring when worker restore fails', async () => {
+		const { workerSessionId } = await createTaskWithGroup(ctx);
+
+		// Worker missing and cannot be restored
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === workerSessionId) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async () => false;
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// Worker restore failed — group was failed, no mirroring should be set up
+		expect(ctx.daemonHub.hasHandlerFor('sdk.message', workerSessionId)).toBe(false);
+	});
 });
 
 describe('resumeWorkerFromHuman rollback', () => {
