@@ -33,19 +33,22 @@ runs:
 
         if [ "$INPUT_VERSION" = "latest" ]; then
           echo "Querying GitHub API for latest Dev Proxy release..."
-          # Retry up to 3 times in case of transient API failures
+          # Use GITHUB_TOKEN to avoid unauthenticated rate limits (60 req/hr per IP).
+          # jq is pre-installed on all GitHub-hosted Ubuntu runners.
           for attempt in 1 2 3; do
             VERSION=$(curl -fsSL --retry 2 --connect-timeout 10 \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/dotnet/dev-proxy/releases/latest" \
-              | grep -o '"tag_name":"[^"]*"' | sed 's/"tag_name":"\(.*\)"/\1/' || true)
-            if [ -n "$VERSION" ]; then
+              | jq -r '.tag_name // ""' 2>/dev/null || true)
+            if [ -n "$VERSION" ] && [ "$VERSION" != "null" ]; then
               break
             fi
             echo "API attempt $attempt failed, retrying..."
             sleep 2
           done
 
-          if [ -z "$VERSION" ]; then
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
             echo "::error::Could not resolve latest Dev Proxy version from GitHub API"
             exit 1
           fi
