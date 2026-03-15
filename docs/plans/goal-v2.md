@@ -82,20 +82,22 @@ Add mission metadata columns to the existing `goals` table, create supporting ta
      }
      ```
    - `MetricHistoryEntry`: `{ metricName: string; value: number; recordedAt: number }` -- unix timestamp, matches DB INTEGER
-   - `CronSchedule`: `{ expression: string; timezone: string; nextRunAt?: number }` -- `nextRunAt` is unix timestamp
+   - `CronSchedule`: `{ expression: string; timezone: string }` -- `nextRunAt` lives on `RoomGoal` as a dedicated field (see below), not inside the schedule JSON
    - `MissionExecutionStatus = 'running' | 'completed' | 'failed'`
    - `type Mission = RoomGoal` (alias for UI/type layer; `RoomGoal` stays canonical)
-   - Add to `RoomGoal` interface: `missionType?: MissionType`, `autonomyLevel?: AutonomyLevel`, `structuredMetrics?: MissionMetric[]`, `schedule?: CronSchedule`, `schedulePaused?: boolean`, `maxConsecutiveFailures?: number`, `maxPlanningAttempts?: number`, `consecutiveFailures?: number`
+   - Add to `RoomGoal` interface: `missionType?: MissionType`, `autonomyLevel?: AutonomyLevel`, `structuredMetrics?: MissionMetric[]`, `schedule?: CronSchedule`, `schedulePaused?: boolean`, `nextRunAt?: number` (unix timestamp), `maxConsecutiveFailures?: number`, `maxPlanningAttempts?: number`, `consecutiveFailures?: number`
 
 2. **Add new columns to `goals` table** via migration:
    - `mission_type` (TEXT, default `'one_shot'`, CHECK constraint)
    - `autonomy_level` (TEXT, default `'supervised'`, CHECK constraint)
    - `schedule` (TEXT/JSON, nullable)
    - `schedule_paused` (INTEGER, default 0)
+   - `next_run_at` (INTEGER, nullable) -- dedicated column for scheduler queries; not inside schedule JSON
    - `structured_metrics` (TEXT/JSON, nullable)
    - `max_consecutive_failures` (INTEGER, default 3)
    - `max_planning_attempts` (INTEGER, default 5)
    - `consecutive_failures` (INTEGER, default 0)
+   - Index on `(mission_type, schedule_paused, next_run_at)` for efficient scheduler queries
    - Migrate existing rows: `mission_type = 'one_shot'`, `autonomy_level = 'supervised'`
 
 3. **New `mission_metric_history` table**:
@@ -103,8 +105,9 @@ Add mission metadata columns to the existing `goals` table, create supporting ta
    - Index on `(goal_id, metric_name, recorded_at)`
 
 4. **New `mission_executions` table**:
-   - `id` (TEXT PK), `goal_id` (TEXT FK), `execution_number` (INTEGER NOT NULL), `started_at` (INTEGER), `completed_at` (INTEGER), `status` (TEXT), `result_summary` (TEXT), `task_ids` (TEXT/JSON)
+   - `id` (TEXT PK), `goal_id` (TEXT FK), `execution_number` (INTEGER NOT NULL), `started_at` (INTEGER), `completed_at` (INTEGER), `status` (TEXT), `result_summary` (TEXT), `task_ids` (TEXT/JSON), `planning_attempts` (INTEGER, default 0)
    - Unique constraint on `(goal_id, execution_number)`
+   - `planning_attempts` is per-execution for recurring missions (see Task 3 per-execution storage model)
 
 5. **Update `GoalRepository`** (keep class name):
    - Add CRUD for new columns
@@ -202,12 +205,14 @@ Implement recurring mission support with cron-based scheduling, execution identi
    - **Overlap prevention**: If `mission_executions` has `status = 'running'` for this goal, skip AND advance `next_run_at` to the next scheduled interval (so subsequent ticks don't re-evaluate the same past-due time). Log a warning.
    - **Room runtime state**: Only fire when `RuntimeState === 'running'`. On resume, recalculate `next_run_at` from current time.
 
-5. **Per-execution task isolation** (critical for recurring missions):
-   - Recurring missions do NOT accumulate tasks in `linkedTaskIds` across executions
-   - Each execution gets its own set of tasks. When a new execution starts, previous execution's tasks are finalized (completed/failed)
-   - `planning_attempts` resets per execution (not mission-lifetime), because a long-lived recurring mission would otherwise permanently hit its cap
-   - Progress shows **latest execution status only**, not aggregate across all executions
-   - Task IDs for each execution are stored in `mission_executions.task_ids`
+5. **Per-execution task isolation — explicit storage model** (critical for recurring missions):
+
+   Recurring missions need per-execution scoping for tasks and planning attempts. Here is where each piece of state lives:
+
+   - **Task linkage**: `mission_executions.task_ids` (JSON array) is the source of truth for which tasks belong to an execution. `goals.linked_task_ids` is overwritten on each new execution to contain only the current execution's tasks (so existing runtime code that reads `linkedTaskIds` for progress aggregation, replan checks, etc. continues to work without modification). After an execution completes, its tasks remain in `mission_executions.task_ids` for history; `goals.linked_task_ids` is cleared when the next execution starts.
+   - **Planning attempts**: `mission_executions.planning_attempts` (INTEGER column, added in Task 1 schema) is the per-execution counter. For recurring missions, `getEffectiveMaxPlanningAttempts()` checks this column instead of `goals.planning_attempts`. `goals.planning_attempts` is unused for recurring missions.
+   - **Progress**: Derived from `goals.linked_task_ids` (which mirrors current execution only), so existing progress aggregation logic works unchanged. Shows latest execution status, not lifetime aggregate.
+   - **After daemon restart**: `goals.linked_task_ids` still contains the current execution's tasks. `mission_executions` row with `status = 'running'` identifies which execution is active. Session group metadata contains `executionId` to correlate recovered groups.
 
 6. **Lifecycle management**:
    - Recurring missions never auto-complete; only manual archive
@@ -246,13 +251,14 @@ Implement `semi_autonomous` mode for **coder and general tasks only**. Plan appr
    - Planning tasks (`workerRole === 'planner'`) are ALWAYS supervised regardless of autonomy level
    - Phase 2 planner gating (`isPlanApproved()` in `planner-agent.ts`) is unchanged — `approved` must still be set by human
 
-2. **Modify the `complete_task` gate** (`room-runtime.ts`, `runLeaderCompleteTaskChecks` around line 843):
-   - Current: requires `submittedForReview === true` OR `approved === true`
-   - New behavior when `goal.autonomyLevel === 'semi_autonomous'` AND `workerRole !== 'planner'`:
-     - Leader can call `complete_task` without prior `submit_for_review`
-     - Runtime auto-sets `approved = true` on the session group
+2. **Modify the approval flow** (`room-runtime.ts`, `runLeaderCompleteTaskChecks` around line 843):
+   - Current flow: Leader calls `submit_for_review(prUrl)` -> task moves to `review` status, PR URL/number recorded via `taskManager.reviewTask()` -> human approves -> `approved = true` -> Leader calls `complete_task`
+   - New flow for `semi_autonomous` AND `workerRole !== 'planner'`:
+     - Leader still calls `submit_for_review(prUrl)` — this is kept because it records PR metadata (URL, PR number) on the task via `taskManager.reviewTask()`, which is needed for notification payloads and lifecycle hooks
+     - But instead of waiting for human approval, runtime **auto-approves immediately**: sets `approved = true` and resumes the Leader without pausing for human input
+     - Leader can then call `complete_task` in the same turn
      - Lifecycle hooks still run: `checkLeaderPrMerged()` / `checkWorkerPrMerged()` — PR must actually be merged
-     - `submittedForReview` step is skipped entirely
+   - Implementation: in `taskGroupManager.submitForReview()`, check `goal.autonomyLevel`; if `semi_autonomous` and non-planner, call `setApproved(groupId, true)` and resume Leader immediately instead of waiting for human
 
 3. **Record approval source** in session group metadata:
    - Add `approvalSource?: 'human' | 'leader_semi_auto'` to `TaskGroupMetadata`
@@ -284,14 +290,14 @@ Implement `semi_autonomous` mode for **coder and general tasks only**. Plan appr
 
 ---
 
-### Task 5: UI -- Mission Terminology and Type-Specific Features
+### Task 5: UI Terminology -- Goal to Mission Copy Rename
 
 **Agent**: `coder`
 **Priority**: `normal`
 **Dependencies**: Task 1
 
 **Description**:
-Update the frontend to use "Mission" terminology and add type-specific UI. This task depends only on Task 1 (shared types) and can run in parallel with Tasks 2, 3, 4. The UI is built against the type definitions — form fields, conditional rendering, and type-specific displays work off the `MissionType`, `MissionMetric`, `CronSchedule`, and `AutonomyLevel` types. Data binding to actual backend values will work once the corresponding backend task is merged. Backend RPCs and events stay as `goal.*`.
+Rename all user-facing "Goal" text to "Mission" in the frontend. No new UI features — just terminology. Can run in parallel with backend tasks.
 
 1. **Terminology rename in UI copy only**:
    - All user-visible text: "Goal" -> "Mission" (labels, headings, buttons, tooltips)
@@ -299,40 +305,57 @@ Update the frontend to use "Mission" terminology and add type-specific UI. This 
    - RoomStore signals keep `goal` naming internally; event subscriptions stay `goal.*`
    - Import `Mission` type alias from shared types
 
-2. **Mission creation form enhancements**:
+**Acceptance Criteria**:
+- All user-visible "Goal" text replaced with "Mission"
+- Backend event subscriptions still use `goal.*` (no backend changes)
+- Existing UI functionality unchanged
+- E2E test verifying mission terminology is displayed correctly
+- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+
+---
+
+### Task 6: UI Features -- Type-Specific Creation and Detail Views
+
+**Agent**: `coder`
+**Priority**: `normal`
+**Dependencies**: Task 2, Task 3, Task 4, Task 5
+
+**Description**:
+Add type-specific UI for mission creation and detail views. Depends on backend tasks because the create/update RPCs (`goal.create`, `goal.update`) must accept and persist the new fields (`missionType`, `structuredMetrics`, `schedule`, `autonomyLevel`) before the forms can function end-to-end.
+
+1. **Mission creation form enhancements**:
    - Mission type selector (one-shot, measurable, recurring)
    - Conditional fields:
      - Measurable: metric name, target value, unit (add/remove multiple)
      - Recurring: schedule preset dropdown or custom cron, timezone selector
    - Autonomy level selector (supervised, semi-autonomous) with descriptions
 
-3. **Mission detail view -- type-specific displays**:
+2. **Mission detail view -- type-specific displays**:
    - One-shot: task progress bar (current behavior)
    - Measurable: metric current vs target, progress percentage per metric
    - Recurring: next execution time, execution history list with status/summary
    - Autonomy level indicator badge
 
-4. **Dashboard updates**:
+3. **Dashboard updates**:
    - Group or filter missions by type
    - Show schedule/next-run for recurring missions
    - Show metric progress for measurable missions
    - Notification feed for auto-completed tasks (from `goal.task.auto_completed` events)
 
 **Acceptance Criteria**:
-- All user-visible "Goal" text replaced with "Mission"
-- Backend event subscriptions still use `goal.*` (no backend changes)
 - Mission creation supports all three types with conditional fields
 - Detail view shows type-specific information
-- E2E tests for: creating a one-shot mission, creating a measurable mission with metrics, creating a recurring mission with schedule
+- Dashboard displays type-specific details
+- E2E tests for: creating a measurable mission with metrics, creating a recurring mission with schedule
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 6: Integration Testing and Documentation
+### Task 7: Integration Testing and Documentation
 
 **Agent**: `coder`
 **Priority**: `normal`
-**Dependencies**: Task 2, Task 3, Task 4, Task 5
+**Dependencies**: Task 2, Task 3, Task 4, Task 6
 
 **Description**:
 Comprehensive testing and documentation. Test scope follows repo rules: E2E covers user-facing flows only; daemon tests cover scheduler edge cases, autonomy internals, and recovery scenarios.
@@ -377,17 +400,22 @@ Comprehensive testing and documentation. Test scope follows repo rules: E2E cove
 
 ```
 Task 1 (Schema + Types)
-  ├─> Task 2 (Measurable) ──┐
-  ├─> Task 3 (Recurring) ───┤
-  ├─> Task 4 (Semi-Auto) ───┤
-  └─> Task 5 (UI) ──────────┤
-                              v
-                       Task 6 (Tests + Docs)
+  ├─> Task 2 (Measurable) ──────────────┐
+  ├─> Task 3 (Recurring) ───────────────┤
+  ├─> Task 4 (Semi-Auto) ───────────────┤
+  ├─> Task 5 (UI Copy Rename) ──┐       │
+  │                              v       │
+  └─────────────────────> Task 6 (UI Features)
+                                         │
+                                         v
+                                  Task 7 (Tests + Docs)
 ```
 
 - Task 1 has no dependencies and unblocks everything
-- Tasks 2, 3, 4, 5 can ALL run in parallel after Task 1 (UI works off shared types, doesn't need backend to be complete)
-- Task 6 (tests) depends on Tasks 2, 3, 4, 5
+- Tasks 2, 3, 4, 5 can ALL run in parallel after Task 1
+- Task 5 (copy-only rename) depends only on Task 1 — can run in parallel with backend tasks
+- Task 6 (type-specific UI features) depends on Tasks 2, 3, 4, 5 — needs backend RPCs to accept new fields
+- Task 7 (tests + docs) depends on Tasks 2, 3, 4, 6
 
 ## Future Work (Out of Scope for V2)
 
