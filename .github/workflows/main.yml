@@ -277,30 +277,7 @@ jobs:
 
       - name: Install GitHub Copilot CLI
         if: matrix.module == 'providers-copilot-anthropic'
-        env:
-          # Use the dedicated PAT (COPILOT_GITHUB_TOKEN) which has the scopes
-          # needed by `gh extension install`.  The default GITHUB_TOKEN only
-          # has Contents:read / Metadata:read and cannot authenticate gh API
-          # calls for extension downloads.
-          # If COPILOT_GITHUB_TOKEN is not configured the tests self-skip, so
-          # we exit 0 early rather than failing the job.
-          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "COPILOT_GITHUB_TOKEN not configured; skipping Copilot CLI install (tests will self-skip)"
-            exit 0
-          fi
-          gh extension install github/copilot
-          # Expose the extension binary as standalone `copilot` in PATH so
-          # CopilotAnthropicProvider's `which copilot` lookup succeeds.
-          EXT_BIN=$(find "$HOME/.local/share/gh/extensions/gh-copilot" -maxdepth 1 -type f 2>/dev/null | head -1)
-          if [ -n "$EXT_BIN" ]; then
-            sudo ln -sf "$EXT_BIN" /usr/local/bin/copilot
-          else
-            echo "ERROR: could not locate copilot extension binary in $HOME/.local/share/gh/extensions/gh-copilot"
-            ls -la "$HOME/.local/share/gh/extensions/gh-copilot" 2>/dev/null || echo "(directory does not exist)"
-            exit 1
-          fi
+        run: bun install -g @github/copilot
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
