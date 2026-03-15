@@ -753,6 +753,72 @@ describe('RoomRuntime flow', () => {
 			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(3);
 		});
 
+		it('should not apply max feedback iterations limit when task is in review state', async () => {
+			// When a human reviewer sends feedback (task is in 'review' state),
+			// the leader should be able to send unlimited messages to the worker.
+			ctx.runtime.stop();
+			ctx.db.close();
+			ctx = createRuntimeTestContext({ maxFeedbackIterations: 2 });
+
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
+
+			// Exhaust all 2 iterations (feedbackIteration reaches 2, escalation fires)
+			for (let i = 0; i < 1; i++) {
+				await ctx.runtime.onWorkerTerminalState(group.id, {
+					sessionId: group.workerSessionId,
+					kind: 'idle',
+				});
+				await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+					message: `Round ${i + 1}`,
+					mode: 'queue',
+				});
+			}
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			// feedbackIteration is now 2 >= maxFeedbackIterations (2), trigger escalation
+			await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Trigger escalation',
+				mode: 'queue',
+			});
+
+			// Task is now in 'review' state
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('review');
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBe(2);
+
+			// Manually put task back to 'review' status (simulate human reviewer sending feedback)
+			// The feedbackIteration is still >= maxFeedbackIterations (not reset yet)
+			// but the limit should NOT apply because task is in 'review' state
+			await ctx.taskManager.reviewTask(task.id);
+
+			// Leader sends to worker while task is in 'review' state — should succeed
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+			// Increment feedbackIteration via routeWorkerToLeader (now 3)
+			expect(ctx.groupRepo.getGroup(group.id)!.feedbackIteration).toBeGreaterThanOrEqual(2);
+
+			// Directly set task status to 'review' to simulate human-in-the-loop
+			await ctx.taskManager.reviewTask(task.id);
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('review');
+
+			// Now call send_to_worker — limit should NOT apply in review state
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'send_to_worker', {
+				message: 'Human reviewer feedback to worker',
+				mode: 'queue',
+			});
+
+			// Should succeed even though feedbackIteration >= maxFeedbackIterations
+			expect(JSON.parse(result.content[0].text).success).toBe(true);
+			// Task should remain in review state (not escalated again)
+			expect((await ctx.taskManager.getTask(task.id))!.status).toBe('review');
+		});
+
 		it('should keep leader contract violations at 0 when leader reaches terminal without a tool', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
