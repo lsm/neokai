@@ -129,6 +129,7 @@ jobs:
           - providers-anthropic-to-codex-bridge
           - providers-openai
           - providers-copilot
+          - providers-copilot-anthropic
           - rewind
           # Room tests temporarily disabled during refactoring
           # - room-1
@@ -196,6 +197,8 @@ jobs:
             test_path: tests/online/providers/openai-provider.test.ts
           - module: providers-copilot
             test_path: tests/online/providers/github-copilot-provider.test.ts
+          - module: providers-copilot-anthropic
+            test_path: tests/online/providers/copilot-anthropic-provider.test.ts
           - module: rewind
             test_path: tests/online/rewind
             mock_sdk: true
