@@ -57,6 +57,11 @@ export function useTaskInputDraft(
 	// This is intentionally scoped to only guard the "empty-content clear" path inside
 	// useSignalEffect — user-initiated calls to setContent always take effect immediately.
 	const isLoadingRef = useRef(false);
+	// Version counter to detect when clear() is called while a task.get is in-flight
+	// for the *same* task. Each loadDraft invocation captures the current version;
+	// clear() increments it; after the await, a stale version means the draft was
+	// superseded by a user-initiated clear and must be discarded.
+	const loadVersionRef = useRef(0);
 
 	// Keep stable refs so signal effects and callbacks always see current values
 	// without taking a dependency on the primitive (avoids stale closures).
@@ -85,6 +90,8 @@ export function useTaskInputDraft(
 			};
 		}
 
+		const capturedVersion = ++loadVersionRef.current;
+
 		const loadDraft = async () => {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
@@ -98,6 +105,7 @@ export function useTaskInputDraft(
 					taskId,
 				});
 				if (cancelled) return; // stale response — discard to prevent cross-task write
+				if (loadVersionRef.current !== capturedVersion) return; // clear() was called mid-load
 				const draft = response.task?.inputDraft;
 				if (draft) {
 					contentSignal.value = draft;
@@ -240,7 +248,10 @@ export function useTaskInputDraft(
 	// Setting contentSignal.value = '' triggers useSignalEffect synchronously,
 	// which sends task.updateDraft(null) immediately — no redundant explicit call needed.
 	// Clear the loading guard first so the signal effect fires even if called during load.
+	// Incrementing loadVersionRef invalidates any in-flight task.get for the same task
+	// so a slow server response won't overwrite the cleared state.
 	const clear = useCallback(() => {
+		loadVersionRef.current++;
 		isLoadingRef.current = false;
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;

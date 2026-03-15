@@ -767,6 +767,43 @@ describe('useTaskInputDraft', () => {
 		});
 	});
 
+	// ── Version counter: clear() invalidates in-flight load (same task) ──────
+
+	describe('loadVersionRef (clear() mid-load prevention)', () => {
+		it('should not overwrite cleared state with stale in-flight response (same task)', async () => {
+			let resolveLoad!: (value: unknown) => void;
+			const pendingLoad = new Promise((resolve) => {
+				resolveLoad = resolve;
+			});
+
+			mockHub.request.mockImplementation((method) => {
+				if (method === 'task.get') return pendingLoad;
+				return Promise.resolve({ success: true });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result } = renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			// load is in flight — call clear() before it resolves
+			act(() => {
+				result.current.clear();
+			});
+
+			expect(result.current.content).toBe('');
+
+			// Resolve the in-flight load with a draft
+			resolveLoad({ task: { inputDraft: 'Draft loaded too late' } });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// The stale load must NOT overwrite the cleared state
+			expect(result.current.content).toBe('');
+			expect(result.current.draftRestored).toBe(false);
+		});
+	});
+
 	// ── Cancelled flag: cross-task stale response prevention ─────────────────
 
 	describe('cancelled flag (cross-task data corruption prevention)', () => {

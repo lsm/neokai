@@ -104,6 +104,28 @@ describe('Task Draft RPC Handlers', () => {
 			expect(fetchedTask.inputDraft == null).toBe(true);
 		});
 
+		test('should normalize whitespace-only string draft to null', async () => {
+			const roomId = await createRoom('draft-normalize');
+			const task = await createTask(roomId, 'Test task for normalization');
+
+			// First, save some content
+			await daemon.messageHub.request('task.updateDraft', {
+				roomId,
+				taskId: task.id,
+				draft: 'some content',
+			});
+
+			// Then save whitespace-only — the handler normalizes it to null via .trim() || null
+			await daemon.messageHub.request('task.updateDraft', {
+				roomId,
+				taskId: task.id,
+				draft: '   ',
+			});
+
+			const fetchedTask = await getTask(roomId, task.id);
+			expect(fetchedTask.inputDraft == null).toBe(true);
+		});
+
 		test('should accept draft at max length (100,000 chars)', async () => {
 			const roomId = await createRoom('draft-max-length');
 			const task = await createTask(roomId, 'Test task for max length');
