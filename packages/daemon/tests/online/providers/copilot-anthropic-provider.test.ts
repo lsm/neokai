@@ -78,6 +78,8 @@ rl.on('line', (line) => {
   } else if (id !== undefined) {
     write({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' }});
   }
+  // notifications/initialized has no id — silently ignored here, which is correct
+  // per MCP spec (it is a fire-and-forget notification, not a request).
 });
 function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
 `.trim();
@@ -87,7 +89,7 @@ function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
 // ---------------------------------------------------------------------------
 
 function extractAssistantText(msg: Record<string, unknown>): string {
-	const message = msg['message'] as { content?: unknown };
+	const message = msg.message as { content?: unknown };
 	if (!message?.content) return '';
 	if (typeof message.content === 'string') return message.content;
 	if (Array.isArray(message.content)) {
@@ -238,6 +240,8 @@ describe('CopilotAnthropicProvider (Online)', () => {
 				.filter((m) => (m as { type?: string }).type === 'assistant')
 				.map((m) => extractAssistantText(m as Record<string, unknown>))
 				.join('');
+			// "secret" proves the actual file content was received (not a coincidental "42")
+			expect(text).toContain('secret');
 			expect(text).toContain('42');
 		},
 		TEST_TIMEOUT
