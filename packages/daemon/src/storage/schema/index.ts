@@ -161,6 +161,7 @@ export function createTables(db: BunDatabase): void {
         pr_number INTEGER,
         pr_created_at INTEGER,
         input_draft TEXT,
+        updated_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -298,6 +299,7 @@ function createIndexes(db: BunDatabase): void {
 	// Room indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
 

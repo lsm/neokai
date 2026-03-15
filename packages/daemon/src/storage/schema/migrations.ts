@@ -102,6 +102,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 26: Add input_draft column to tasks table for server-side draft persistence
 	runMigration26(db);
+
+	// Migration 27: Add updated_at column to tasks table for sorting by most recently updated
+	runMigration27(db);
 }
 
 /**
@@ -1202,6 +1205,21 @@ function runMigration26(db: BunDatabase): void {
 		return;
 	}
 	db.exec(`ALTER TABLE tasks ADD COLUMN input_draft TEXT`);
+}
+
+function runMigration27(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'tasks', 'updated_at')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN updated_at INTEGER`);
+		// Backfill updated_at with the best available timestamp for existing rows
+		db.exec(
+			`UPDATE tasks SET updated_at = COALESCE(completed_at, started_at, created_at) WHERE updated_at IS NULL`
+		);
+	}
+	// Add composite index for listTasks() query: WHERE room_id = ? ORDER BY updated_at DESC
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {

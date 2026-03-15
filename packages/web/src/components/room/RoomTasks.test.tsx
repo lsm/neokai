@@ -26,6 +26,7 @@ describe('RoomTasks', () => {
 		priority: 'normal',
 		progress: 0,
 		dependsOn: [],
+		updatedAt: Date.now(),
 		...overrides,
 	});
 
