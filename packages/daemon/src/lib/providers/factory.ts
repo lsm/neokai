@@ -12,8 +12,6 @@ import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
-import { CopilotCliProvider } from './copilot-cli-provider.js';
-import { CopilotSdkProvider } from './copilot-sdk-provider.js';
 import { CopilotAnthropicProvider } from './copilot-anthropic-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
@@ -62,12 +60,6 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GitHub Copilot provider (will be available if OAuth token is configured)
 	registry.register(new GitHubCopilotProvider());
-
-	// Register GitHub Copilot CLI provider (will be available if copilot binary + gh auth)
-	registry.register(new CopilotCliProvider());
-
-	// Register GitHub Copilot SDK provider (uses @github/copilot-sdk for JSON-RPC transport)
-	registry.register(new CopilotSdkProvider());
 
 	// Register GitHub Copilot Anthropic provider (embedded Anthropic-compatible server)
 	registry.register(new CopilotAnthropicProvider());
