@@ -75,10 +75,12 @@ class Deferred<T> {
 
 type RpcOutgoing = { method: string; id?: number; params?: unknown };
 
+// Codex app-server uses string IDs for server-initiated requests (e.g. "srv-req-1").
+// Our outgoing requests use numeric IDs, so responses carry those back as numbers.
 type RpcIncoming =
-	| { id: number; method: string; params: unknown } // server request
+	| { id: number | string; method: string; params: unknown } // server request (string IDs from Codex)
 	| { method: string; params?: unknown } // notification
-	| { id: number; result: unknown } // response
+	| { id: number; result: unknown } // response to our request (numeric ID we sent)
 	| { id: number; error: { message: string; code?: number } }; // error response
 
 /** Bun subprocess with piped stdio — matches Bun.spawn return shape. */
@@ -201,8 +203,8 @@ export class AppServerConn {
 		const hasId = 'id' in msg;
 
 		if (hasMethod && hasId) {
-			// Server request — must respond
-			const req = msg as { id: number; method: string; params: unknown };
+			// Server request — must respond (Codex uses string IDs like "srv-req-1")
+			const req = msg as { id: number | string; method: string; params: unknown };
 			logger.debug(`AppServerConn: server request method=${req.method}`);
 			const handler = this.serverRequestHandlers.get(req.method);
 			try {
@@ -223,7 +225,7 @@ export class AppServerConn {
 		}
 
 		if (!hasMethod && hasId) {
-			// Response to one of our requests
+			// Response to one of our requests (numeric IDs we sent)
 			const resp = msg as
 				| { id: number; result: unknown }
 				| { id: number; error: { message: string } };
@@ -251,6 +253,7 @@ type TurnStartResult = { turnId: string };
 export class BridgeSession {
 	private threadId: string | null = null;
 	private readonly queue = new AsyncQueue<BridgeEvent | Error>();
+	private turnStarted = false;
 
 	constructor(
 		private readonly conn: AppServerConn,
@@ -333,6 +336,9 @@ export class BridgeSession {
 	/** Start a new turn and return an async generator of BridgeEvents. */
 	async *startTurn(userText: string): AsyncGenerator<BridgeEvent> {
 		if (!this.threadId) throw new Error('BridgeSession not initialized');
+		if (this.turnStarted) throw new Error('BridgeSession.startTurn() called more than once');
+		this.turnStarted = true;
+
 		const res = await this.conn.request<TurnStartResult>('turn/start', {
 			threadId: this.threadId,
 			input: { type: 'text', text: userText },
