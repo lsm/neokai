@@ -49,23 +49,7 @@ async function readSSEEvents(
 }
 
 // ---------------------------------------------------------------------------
-// Inject a scripted event sequence into the bridge via mock
-// ---------------------------------------------------------------------------
-
-type ScriptedSession = {
-	events: BridgeEvent[];
-	toolProviders: Map<string, (text: string) => void>;
-};
-
-/**
- * Patches createBridgeServer so that AppServerConn.create and BridgeSession
- * constructor use a factory that returns a scripted session.
- *
- * Returns a function to set the next script and capture provideResult callbacks.
- */
-
-// ---------------------------------------------------------------------------
-// Mock createBridgeServer with injected BridgeSession factory
+// Mock BridgeSession — pre-scripted events, no real subprocess
 // ---------------------------------------------------------------------------
 
 /** A simplified in-process mock of BridgeSession */
@@ -84,7 +68,6 @@ class MockBridgeSession {
 	async *startTurn(_text: string): AsyncGenerator<BridgeEvent> {
 		for (const event of this.events) {
 			if (event.type === 'tool_call') {
-				// Capture provideResult so tests can call it
 				const capturedProvide = event.provideResult;
 				this.capturedProviders.set(event.callId, capturedProvide);
 			}
@@ -94,12 +77,24 @@ class MockBridgeSession {
 }
 
 // ---------------------------------------------------------------------------
-// Create a bridge server that delegates to MockBridgeSession factory
+// Mock bridge server — reimplements server logic with MockBridgeSession
 // ---------------------------------------------------------------------------
 
 let mockSessionFactory: (() => MockBridgeSession) | null = null;
 
-function createMockBridgeServer(): BridgeServer {
+/** Shared tool session map — reset in beforeEach. */
+const toolSessions = new Map<
+	string,
+	{
+		gen: AsyncGenerator<BridgeEvent>;
+		session: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
+		provideResult: (text: string) => void;
+		model: string;
+		cleanupTimer: ReturnType<typeof setTimeout>;
+	}
+>();
+
+function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 	return Bun.serve({
 		port: 0,
 		async fetch(req: Request): Promise<Response> {
@@ -114,6 +109,15 @@ function createMockBridgeServer(): BridgeServer {
 				buildConversationText,
 				extractSystemText,
 				buildDynamicTools,
+				pingSSE,
+				messageStartSSE,
+				contentBlockStartTextSSE,
+				contentBlockStartToolUseSSE,
+				textDeltaSSE,
+				inputJsonDeltaSSE,
+				contentBlockStopSSE,
+				messageDeltaSSE,
+				messageStopSSE,
 			} = await import('../../../../src/lib/providers/codex-anthropic-bridge/translator');
 
 			const body =
@@ -126,27 +130,14 @@ function createMockBridgeServer(): BridgeServer {
 				Connection: 'keep-alive',
 			};
 
-			// Reuse the real drainToSSE logic by importing it:
-			// (We can't import it directly since it's unexported, so we build a minimal inline version)
-			const {
-				pingSSE,
-				messageStartSSE,
-				contentBlockStartTextSSE,
-				contentBlockStartToolUseSSE,
-				textDeltaSSE,
-				inputJsonDeltaSSE,
-				contentBlockStopSSE,
-				messageDeltaSSE,
-				messageStopSSE,
-			} = await import('../../../../src/lib/providers/codex-anthropic-bridge/translator');
-
 			const enc = new TextEncoder();
+			const ttlMs = opts?.ttlMs ?? 5 * 60 * 1000;
 
-			// Shared drain helper — uses gen.next() directly to avoid for-await-of
-			// triggering gen.return() on early exit (which would close the generator).
+			// Uses gen.next() manually — avoids for-await-of calling gen.return() on early exit.
 			async function drainGen(
 				genArg: AsyncGenerator<BridgeEvent>,
 				sessionArg: MockBridgeSession | null,
+				sessionModel: string,
 				controller: ReadableStreamDefaultController<Uint8Array>
 			): Promise<void> {
 				let blockIndex = 0;
@@ -177,11 +168,18 @@ function createMockBridgeServer(): BridgeServer {
 						controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
 						controller.enqueue(enc.encode(messageDeltaSSE('tool_use', outputTokens)));
 						controller.enqueue(enc.encode(messageStopSSE()));
-						toolSessions.set(event.callId, {
+						const callId = event.callId;
+						const cleanupTimer = setTimeout(() => {
+							sessionArg?.kill();
+							toolSessions.delete(callId);
+						}, ttlMs);
+						toolSessions.set(callId, {
 							gen: genArg,
 							session:
 								sessionArg as unknown as import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession,
 							provideResult: event.provideResult,
+							model: sessionModel,
+							cleanupTimer,
 						});
 						controller.close();
 						return;
@@ -209,11 +207,13 @@ function createMockBridgeServer(): BridgeServer {
 				const stored = toolSessions.get(tr.toolUseId);
 				if (!stored) return new Response('Session not found', { status: 404 });
 				toolSessions.delete(tr.toolUseId);
+				clearTimeout(stored.cleanupTimer);
 				stored.provideResult(tr.text);
+				const resumeModel = stored.model; // preserve original model
 				const stream = new ReadableStream<Uint8Array>({
 					async start(controller) {
-						controller.enqueue(enc.encode(messageStartSSE(`msg_${Date.now()}`, model, 0)));
-						await drainGen(stored.gen, null, controller);
+						controller.enqueue(enc.encode(messageStartSSE(`msg_${Date.now()}`, resumeModel, 0)));
+						await drainGen(stored.gen, null, resumeModel, controller);
 					},
 				});
 				return new Response(stream, { headers: sseHeaders });
@@ -230,23 +230,13 @@ function createMockBridgeServer(): BridgeServer {
 				async start(controller) {
 					controller.enqueue(enc.encode(messageStartSSE(`msg_${Date.now()}`, model, 0)));
 					controller.enqueue(enc.encode(pingSSE()));
-					await drainGen(gen, mock, controller);
+					await drainGen(gen, mock, model, controller);
 				},
 			});
 			return new Response(stream, { headers: sseHeaders });
 		},
 	}) as unknown as BridgeServer;
 }
-
-// Shared tool session map for mock server
-const toolSessions = new Map<
-	string,
-	{
-		gen: AsyncGenerator<BridgeEvent>;
-		session: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
-		provideResult: (text: string) => void;
-	}
->();
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -329,7 +319,6 @@ describe('Bridge HTTP server', () => {
 					},
 				},
 			]);
-			// Capture the provideResult function once startTurn runs
 			return session;
 		};
 
@@ -377,10 +366,6 @@ describe('Bridge HTTP server', () => {
 	// -------------------------------------------------------------------------
 
 	it('resumes after tool result and completes the turn', async () => {
-		// The mock generator yields events in order. When the server stores the
-		// suspended generator at tool_call and then resumes it on the next HTTP
-		// request, the remaining events (text_delta, turn_done) are produced.
-		// provideResult is a no-op in the mock since we don't block the generator.
 		mockSessionFactory = () =>
 			new MockBridgeSession([
 				{
@@ -392,7 +377,6 @@ describe('Bridge HTTP server', () => {
 						// no-op in mock: the generator continues automatically
 					},
 				},
-				// These events are yielded when gen.next() is called after the tool_call
 				{ type: 'text_delta', text: 'file1.ts' },
 				{ type: 'turn_done', inputTokens: 10, outputTokens: 5 },
 			]);
@@ -468,5 +452,120 @@ describe('Bridge HTTP server', () => {
 			}),
 		});
 		expect(resp.status).toBe(404);
+	});
+
+	// -------------------------------------------------------------------------
+	// Model preservation across tool round-trips (regression: P1 fix)
+	// -------------------------------------------------------------------------
+
+	it('preserves the original model across tool continuation requests', async () => {
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{
+					type: 'tool_call',
+					callId: 'call-model-test',
+					toolName: 'bash',
+					toolInput: { command: 'echo hi' },
+					provideResult: (_text: string) => {},
+				},
+				{ type: 'text_delta', text: 'done' },
+				{ type: 'turn_done', inputTokens: 1, outputTokens: 1 },
+			]);
+
+		// First request: original-model
+		const resp1 = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'original-model',
+				messages: [{ role: 'user', content: 'echo' }],
+				stream: true,
+			}),
+		});
+		await readSSEEvents(resp1.body); // drain
+
+		// Second request (tool continuation) with a DIFFERENT model name
+		const resp2 = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'different-model', // must be ignored — original-model should be used
+				messages: [
+					{ role: 'user', content: 'echo' },
+					{
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 'call-model-test',
+								name: 'bash',
+								input: { command: 'echo hi' },
+							},
+						],
+					},
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'call-model-test', content: 'hi' }],
+					},
+				],
+				stream: true,
+			}),
+		});
+
+		expect(resp2.ok).toBe(true);
+		const events2 = await readSSEEvents(resp2.body);
+
+		const msgStart = events2.find((e) => e.event === 'message_start');
+		const msgModel = (msgStart?.data as { message?: { model?: string } })?.message?.model;
+		expect(msgModel).toBe('original-model');
+	});
+
+	// -------------------------------------------------------------------------
+	// TTL cleanup — abandoned tool session kills subprocess (regression: P0 fix)
+	// -------------------------------------------------------------------------
+
+	it('TTL timer removes abandoned tool session and calls kill()', async () => {
+		let killCalled = false;
+
+		mockSessionFactory = () => {
+			const sess = new MockBridgeSession([
+				{
+					type: 'tool_call',
+					callId: 'call-ttl',
+					toolName: 'bash',
+					toolInput: { command: 'sleep 100' },
+					provideResult: (_text: string) => {},
+				},
+			]);
+			sess.kill = () => {
+				killCalled = true;
+			};
+			return sess;
+		};
+
+		// Use a very short TTL (50 ms)
+		const ttlServer = createMockBridgeServer({ ttlMs: 50 }) as BridgeServer & { port: number };
+
+		try {
+			const resp = await fetch(`http://127.0.0.1:${ttlServer.port}/v1/messages`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					model: 'codex-1',
+					messages: [{ role: 'user', content: 'sleep' }],
+					stream: true,
+				}),
+			});
+			await readSSEEvents(resp.body); // drain first response
+			expect(toolSessions.has('call-ttl')).toBe(true);
+
+			// Wait for TTL to fire (100 ms > 50 ms TTL)
+			await new Promise((res) => setTimeout(res, 120));
+
+			expect(toolSessions.has('call-ttl')).toBe(false);
+			expect(killCalled).toBe(true);
+		} finally {
+			ttlServer.stop();
+		}
 	});
 });

@@ -44,3 +44,5 @@ process.env.CLAUDE_CODE_OAUTH_TOKEN = '';
 process.env.GLM_API_KEY = '';
 process.env.ZHIPU_API_KEY = '';
 process.env.MINIMAX_API_KEY = '';
+process.env.OPENAI_API_KEY = '';
+process.env.CODEX_API_KEY = '';

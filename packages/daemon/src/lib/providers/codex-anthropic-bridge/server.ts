@@ -33,6 +33,9 @@ import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
 
+/** Default TTL before an unresolved tool-call session is abandoned (5 min). */
+export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
+
 // ---------------------------------------------------------------------------
 // Session state for tool-call round-trips
 // ---------------------------------------------------------------------------
@@ -44,6 +47,10 @@ type ToolSession = {
 	session: BridgeSession;
 	/** Resolve with the tool result text to unblock the Codex read loop. */
 	provideResult: (text: string) => void;
+	/** Model from the original request — preserved across tool round-trips. */
+	model: string;
+	/** TTL timer — fires if the HTTP client never sends the tool result. */
+	cleanupTimer: ReturnType<typeof setTimeout>;
 };
 
 function generateMsgId(): string {
@@ -59,7 +66,8 @@ async function drainToSSE(
 	session: BridgeSession,
 	model: string,
 	toolSessions: Map<string, ToolSession>,
-	controller: ReadableStreamDefaultController<Uint8Array>
+	controller: ReadableStreamDefaultController<Uint8Array>,
+	ttlMs: number
 ): Promise<void> {
 	const enc = new TextEncoder();
 	const send = (s: string) => controller.enqueue(enc.encode(s));
@@ -101,14 +109,25 @@ async function drainToSSE(
 			send(messageDeltaSSE('tool_use', outputTokens));
 			send(messageStopSSE());
 
-			// Store the session so the next HTTP request can resume it
-			toolSessions.set(event.callId, {
+			// Store the session so the next HTTP request can resume it.
+			// Schedule a TTL timer to kill the subprocess if the client never
+			// sends the tool result (e.g. HTTP client disconnected).
+			const callId = event.callId;
+			const cleanupTimer = setTimeout(() => {
+				logger.warn(`codex-bridge: TTL expired, killing abandoned session callId=${callId}`);
+				session.kill();
+				toolSessions.delete(callId);
+			}, ttlMs);
+
+			toolSessions.set(callId, {
 				gen,
 				session,
 				provideResult: event.provideResult,
+				model,
+				cleanupTimer,
 			});
 
-			logger.debug(`codex-bridge: tool_call suspended callId=${event.callId}`);
+			logger.debug(`codex-bridge: tool_call suspended callId=${callId}`);
 			// End this HTTP response without closing the generator
 			controller.close();
 			return;
@@ -117,7 +136,7 @@ async function drainToSSE(
 				send(contentBlockStopSSE(blockIndex));
 				textBlockOpen = false;
 			}
-			send(messageDeltaSSE('end_turn', event.outputTokens || outputTokens));
+			send(messageDeltaSSE('end_turn', event.outputTokens ?? outputTokens));
 			send(messageStopSSE());
 			session.kill();
 			controller.close();
@@ -159,6 +178,8 @@ export type BridgeServerConfig = {
 	apiKey: string;
 	/** Working directory for Codex subprocess. */
 	cwd: string;
+	/** Milliseconds before an unresolved tool-call session is abandoned (default 5 min). */
+	toolSessionTtlMs?: number;
 };
 
 export type BridgeServer = {
@@ -169,6 +190,7 @@ export type BridgeServer = {
 export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 	/** Active tool-call sessions waiting for tool results. */
 	const toolSessions = new Map<string, ToolSession>();
+	const ttlMs = config.toolSessionTtlMs ?? DEFAULT_TOOL_SESSION_TTL_MS;
 
 	const server = Bun.serve({
 		port: 0, // random available port
@@ -191,7 +213,6 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				return new Response('Bad Request', { status: 400 });
 			}
 
-			const model = body.model;
 			const sseHeaders = {
 				'Content-Type': 'text/event-stream',
 				'Cache-Control': 'no-cache',
@@ -217,13 +238,16 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				}
 				toolSessions.delete(tr.toolUseId);
 
-				const { gen, session, provideResult } = stored;
+				// Cancel the TTL timer — session is being resumed normally
+				clearTimeout(stored.cleanupTimer);
+
+				const { gen, session, provideResult, model: sessionModel } = stored;
 				// Provide the tool result — this unblocks the Codex read loop
 				provideResult(tr.text);
 
 				const stream = new ReadableStream<Uint8Array>({
 					start(controller) {
-						void drainToSSE(gen, session, model, toolSessions, controller);
+						void drainToSSE(gen, session, sessionModel, toolSessions, controller, ttlMs);
 					},
 				});
 				return new Response(stream, { headers: sseHeaders });
@@ -232,6 +256,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			// ------------------------------------------------------------------
 			// New conversation turn: spawn a fresh Codex session
 			// ------------------------------------------------------------------
+			const model = body.model;
 			const system = extractSystemText(body.system);
 			const userText = buildConversationText(body.messages, system);
 			const dynamicTools = buildDynamicTools(body.tools ?? []);
@@ -250,14 +275,13 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
-					void drainToSSE(gen, session, model, toolSessions, controller);
+					void drainToSSE(gen, session, model, toolSessions, controller, ttlMs);
 				},
 			});
 			return new Response(stream, { headers: sseHeaders });
 		},
 	});
 
-	// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 	const port = server.port!;
 	logger.info(`codex-bridge: HTTP server listening on port ${port}`);
 
