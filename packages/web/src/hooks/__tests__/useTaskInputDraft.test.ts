@@ -684,4 +684,51 @@ describe('useTaskInputDraft', () => {
 			expect(result.current.content).toBe('');
 		});
 	});
+
+	// ── Race condition: no spurious updateDraft during load ───────────────────
+
+	describe('race condition guard (isLoadingRef)', () => {
+		it('should not call task.updateDraft during initial draft load', async () => {
+			// Simulate a slow server response so the signal effect has time to fire
+			// before loadDraft resolves.
+			let resolveRequest!: (value: unknown) => void;
+			const pendingRequest = new Promise((resolve) => {
+				resolveRequest = resolve;
+			});
+
+			mockHub.request.mockImplementation((method) => {
+				if (method === 'task.get') {
+					return pendingRequest;
+				}
+				return Promise.resolve({ success: true });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			renderHook(() => useTaskInputDraft('room-1', 'task-1'));
+
+			// Advance timers — signal effect fires with content='' during load.
+			// With the guard in place, task.updateDraft should NOT be called yet.
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const updateDraftCallsDuringLoad = mockHub.request.mock.calls.filter(
+				(call) => call[0] === 'task.updateDraft'
+			);
+			expect(updateDraftCallsDuringLoad.length).toBe(0);
+
+			// Now resolve the pending request (load completes)
+			resolveRequest({ task: { inputDraft: 'restored draft' } });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// Still no updateDraft call was made during the load
+			const updateDraftCallsAfterLoad = mockHub.request.mock.calls.filter(
+				(call) => call[0] === 'task.updateDraft'
+			);
+			expect(updateDraftCallsAfterLoad.length).toBe(0);
+		});
+	});
 });

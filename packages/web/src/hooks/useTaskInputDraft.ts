@@ -46,6 +46,17 @@ export function useTaskInputDraft(
 	const contentSignal = useSignal('');
 	const draftRestoredSignal = useSignal(false);
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Guard to prevent the signal effect from sending a spurious task.updateDraft(null)
+	// when the content is cleared at the start of a new task load, before the server
+	// draft has been fetched.
+	//
+	// Set to true when useEffect clears content for a new task; cleared when:
+	//   (a) the user explicitly calls setContent() (user interaction wins), or
+	//   (b) loadDraft() completes (regardless of outcome).
+	//
+	// This is intentionally scoped to only guard the "empty-content clear" path inside
+	// useSignalEffect — user-initiated calls to setContent always take effect immediately.
+	const isLoadingRef = useRef(false);
 
 	// Keep stable refs so signal effects and callbacks always see current values
 	// without taking a dependency on the primitive (avoids stale closures).
@@ -57,14 +68,21 @@ export function useTaskInputDraft(
 	// Load draft when taskId/roomId changes (including on mount).
 	// Clear content immediately on each change so the previous task's draft isn't shown.
 	useEffect(() => {
+		isLoadingRef.current = true;
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;
 
-		if (!taskId || !roomId) return;
+		if (!taskId || !roomId) {
+			isLoadingRef.current = false;
+			return;
+		}
 
 		const loadDraft = async () => {
 			const hub = connectionManager.getHubIfConnected();
-			if (!hub) return;
+			if (!hub) {
+				isLoadingRef.current = false;
+				return;
+			}
 
 			try {
 				const response = await hub.request<{ task: { inputDraft?: string | null } }>('task.get', {
@@ -78,6 +96,8 @@ export function useTaskInputDraft(
 				}
 			} catch {
 				// Ignore errors loading draft
+			} finally {
+				isLoadingRef.current = false;
 			}
 		};
 
@@ -115,7 +135,15 @@ export function useTaskInputDraft(
 	// Debounced save via signal effect.
 	// Reads taskId/roomId via stable refs so the closure is always up-to-date.
 	useSignalEffect(() => {
+		// IMPORTANT: read contentSignal.value FIRST so Preact Signals always
+		// tracks it as a dependency — even when we skip the save below.
+		// If we return early before accessing the signal, the effect loses
+		// its subscription and won't re-run on future content changes.
 		const content = contentSignal.value;
+
+		// Skip during initial draft load to avoid sending a spurious
+		// task.updateDraft(null) before the server draft has been fetched.
+		if (isLoadingRef.current) return;
 		const currentTaskId = taskIdRef.current;
 		const currentRoomId = roomIdRef.current;
 
@@ -172,6 +200,9 @@ export function useTaskInputDraft(
 
 	const setContent = useCallback(
 		(newContent: string) => {
+			// User interaction: clear the loading guard so the signal effect can fire.
+			// This handles the case where the user types before loadDraft() completes.
+			isLoadingRef.current = false;
 			// Dismiss the "draft restored" notification once the user starts interacting
 			if (draftRestoredSignal.value) {
 				draftRestoredSignal.value = false;
