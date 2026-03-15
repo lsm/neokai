@@ -593,6 +593,7 @@ export class RoomRuntime {
 				});
 				if (group.workerRole === 'coder' || group.workerRole === 'general') {
 					this.groupRepo.setSubmittedForReview(groupId, true);
+					this.groupRepo.setWorkerBypassed(groupId, true);
 					log.info(
 						`Bypass detected for ${group.workerRole} group ${groupId} — pre-setting submittedForReview, human approval still required`
 					);
@@ -880,6 +881,7 @@ export class RoomRuntime {
 							groupId,
 							hasReviewers,
 							approved: group.approved,
+							workerBypassed: group.workerBypassed,
 						};
 						if (hookTask.taskType === 'planning') {
 							const draftTasks = await this.taskManager.getDraftTasksByCreator(group.taskId);

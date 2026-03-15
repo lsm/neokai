@@ -39,8 +39,12 @@ export interface ErrorClassification {
  */
 const TERMINAL_HTTP_CODES = new Set([400, 401, 403, 404, 422]);
 
-/** Pattern to extract HTTP status code from SDK error messages like "API Error: 400 ..." */
-const API_ERROR_PATTERN = /API Error:\s*(\d{3})/;
+/**
+ * Pattern to extract HTTP status code from SDK error messages like "API Error: 400 ...".
+ * Anchored to start of line (multiline flag) to prevent false positives when worker output
+ * contains "API Error: NNN" mid-sentence (e.g. "we handle API Error: 400 from provider").
+ */
+const API_ERROR_PATTERN = /^API Error:\s*(\d{3})/m;
 
 /**
  * Extract the HTTP status code from a message.

@@ -572,12 +572,38 @@ describe('checkLeaderPrMerged', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('passes gracefully when gh fails', async () => {
+	test('fails closed when gh fails and task is approved (no workerBypassed)', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
 		});
 		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('gh command failed');
+		expect(result.bounceMessage).toContain('gh');
+	});
+
+	test('passes gracefully when gh fails and task used bypass marker (workerBypassed=true)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(
+			makeLeaderCtx({ approved: true, workerBypassed: true }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes gracefully when gh fails and task is not yet approved', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(
+			makeLeaderCtx({ approved: false, workerBypassed: false }),
+			opts
+		);
 		expect(result.pass).toBe(true);
 	});
 
@@ -831,7 +857,10 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.bounceMessage).toContain('send_to_worker');
 	});
 
-	test('passes gracefully for coder tasks with approved when gh unavailable', async () => {
+	test('fails closed for approved coder tasks when gh unavailable (no workerBypassed)', async () => {
+		// P1: once a human has approved a PR-based task, failing open would silently skip
+		// merge verification. The gate must fail closed so the leader is forced to fix the
+		// gh setup rather than completing the task without a verified merge.
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
@@ -841,6 +870,25 @@ describe('runLeaderCompleteGate', () => {
 				workerRole: 'coder',
 				taskType: 'coding',
 				approved: true,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('gh command failed');
+	});
+
+	test('passes gracefully for bypass tasks with approved when gh unavailable', async () => {
+		// Bypass tasks (RESEARCH_ONLY etc.) have no PR — fail open is correct even with approved=true.
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				workerBypassed: true,
 			}),
 			opts
 		);

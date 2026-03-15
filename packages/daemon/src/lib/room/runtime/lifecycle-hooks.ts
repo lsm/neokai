@@ -97,6 +97,13 @@ export interface LeaderCompleteHookContext {
 	 * The field is kept here for context/logging purposes only.
 	 */
 	approved?: boolean;
+	/**
+	 * Whether the worker used a bypass marker (RESEARCH_ONLY, VERIFICATION_COMPLETE, etc.)
+	 * to skip git/PR gates. When true, checkLeaderPrMerged fails open even with approved=true
+	 * because bypass tasks have no PR. When false/undefined and approved=true, gh failures
+	 * are treated as fail-closed to prevent completing a PR task without merge verification.
+	 */
+	workerBypassed?: boolean;
 }
 
 // --- Shell Command Helper ---
@@ -336,7 +343,22 @@ export async function checkLeaderPrMerged(
 		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
-		log.debug(`checkLeaderPrMerged: gh command failed, skipping check`);
+		// Bypass tasks (RESEARCH_ONLY, VERIFICATION_COMPLETE, etc.) have no PR — fail open.
+		// For PR-based roles with human approval, fail closed: if gh is unavailable we cannot
+		// verify merge state, and allowing completion would silently skip the merge invariant.
+		if (ctx.approved && !ctx.workerBypassed) {
+			log.warn(`checkLeaderPrMerged: gh command failed and task is approved — failing closed`);
+			return {
+				pass: false,
+				reason:
+					'Cannot verify PR merge state: gh command failed. Merge verification is required when human approval is present.',
+				bounceMessage:
+					'Cannot verify whether the PR was merged — the `gh` command is unavailable or failed.\n\n' +
+					'This task has been approved by a human, so merge verification is required.\n' +
+					'Please ensure `gh` is installed and authenticated, then call `complete_task` again.',
+			};
+		}
+		log.debug(`checkLeaderPrMerged: gh command failed, skipping check (bypass/unapproved task)`);
 		return { pass: true };
 	}
 
