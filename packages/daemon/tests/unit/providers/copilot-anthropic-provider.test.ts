@@ -199,21 +199,20 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('does NOT own bare model IDs shared with other providers', () => {
-			// Claude IDs: also claimed by GitHubCopilotProvider and CopilotCliProvider
+			// Claude IDs: also claimed by GitHubCopilotProvider (registered before this)
 			expect(provider.ownsModel('claude-opus-4.6')).toBe(false);
 			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(false);
-			// gpt-5.3-codex/gpt-5-mini: also claimed by GitHubCopilotProvider
+			// gpt-5.3-codex/gpt-5-mini: also claimed by GitHubCopilotProvider (registered before this)
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(false);
 			expect(provider.ownsModel('gpt-5-mini')).toBe(false);
-			// gemini-3-pro-preview: also claimed by CopilotCliProvider
-			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(false);
 		});
 
-		it('does not own copilot-sdk-* aliases', () => {
+		it('owns gemini-3-pro-preview bare ID (no collision partner after CopilotCliProvider removal)', () => {
+			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(true);
+		});
+
+		it('does not own unknown models', () => {
 			expect(provider.ownsModel('copilot-sdk-sonnet')).toBe(false);
-		});
-
-		it('does not own copilot-cli-* aliases', () => {
 			expect(provider.ownsModel('copilot-cli-sonnet')).toBe(false);
 		});
 
