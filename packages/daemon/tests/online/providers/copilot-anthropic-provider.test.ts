@@ -132,19 +132,6 @@ describe('CopilotAnthropicProvider (Online)', () => {
 		}
 	}, SETUP_TIMEOUT);
 
-	/** Returns true when the github-copilot-anthropic provider reports authenticated. */
-	async function isCopilotAnthropicAvailable(): Promise<boolean> {
-		try {
-			const result = (await daemon.messageHub.request('auth.providers', {})) as {
-				providers: Array<{ id: string; isAuthenticated: boolean }>;
-			};
-			const p = result.providers.find((x) => x.id === 'github-copilot-anthropic');
-			return p?.isAuthenticated ?? false;
-		} catch {
-			return false;
-		}
-	}
-
 	// -------------------------------------------------------------------------
 	// 1. Basic conversation
 	// -------------------------------------------------------------------------
@@ -152,14 +139,6 @@ describe('CopilotAnthropicProvider (Online)', () => {
 	test(
 		'basic conversation: model responds correctly via gpt-5-mini',
 		async () => {
-			if (!(await isCopilotAnthropicAvailable())) {
-				console.log(
-					'Skipping — github-copilot-anthropic not authenticated. ' +
-						'Install the copilot CLI and run `gh auth login`.'
-				);
-				return;
-			}
-
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
 
@@ -200,11 +179,6 @@ describe('CopilotAnthropicProvider (Online)', () => {
 	test(
 		'tool use: bridge routes tool_use/tool_result correctly',
 		async () => {
-			if (!(await isCopilotAnthropicAvailable())) {
-				console.log('Skipping — github-copilot-anthropic not authenticated.');
-				return;
-			}
-
 			// Create a workspace with a known file the model will read.
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-tool-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
@@ -254,11 +228,6 @@ describe('CopilotAnthropicProvider (Online)', () => {
 	test(
 		'custom MCP: tool from .mcp.json is exposed and called by the model',
 		async () => {
-			if (!(await isCopilotAnthropicAvailable())) {
-				console.log('Skipping — github-copilot-anthropic not authenticated.');
-				return;
-			}
-
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
 

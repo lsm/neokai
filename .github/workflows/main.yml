@@ -199,6 +199,7 @@ jobs:
             test_path: tests/online/providers/github-copilot-provider.test.ts
           - module: providers-copilot-anthropic
             test_path: tests/online/providers/copilot-anthropic-provider.test.ts
+            timeout: 10
           - module: rewind
             test_path: tests/online/rewind
             mock_sdk: true
@@ -274,6 +275,19 @@ jobs:
         if: matrix.module == 'providers-anthropic-to-codex-bridge' || matrix.module == 'providers-openai'
         run: npm install -g @openai/codex
 
+      - name: Install GitHub Copilot CLI
+        if: startsWith(matrix.module, 'providers-copilot')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh extension install github/copilot
+          # Expose the extension binary as standalone `copilot` in PATH so
+          # CopilotAnthropicProvider's `which copilot` lookup succeeds.
+          EXT_BIN=$(find "$HOME/.local/share/gh/extensions/gh-copilot" -maxdepth 1 -type f 2>/dev/null | head -1)
+          if [ -n "$EXT_BIN" ]; then
+            sudo ln -sf "$EXT_BIN" /usr/local/bin/copilot
+          fi
+
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}
@@ -288,6 +302,7 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ (matrix.module == 'providers-openai' || matrix.module == 'providers-anthropic-to-codex-bridge') && secrets.OPENAI_API_KEY || '' }}
+          COPILOT_GITHUB_TOKEN: ${{ startsWith(matrix.module, 'providers-copilot') && secrets.GITHUB_TOKEN || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.
