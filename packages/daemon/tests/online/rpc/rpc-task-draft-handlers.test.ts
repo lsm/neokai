@@ -150,7 +150,7 @@ describe('Task Draft RPC Handlers', () => {
 			const roomId = await createRoom('draft-too-long');
 			const task = await createTask(roomId, 'Test task for too long draft');
 
-			const tooLongDraft = 'a'.repeat(100_001);
+			const tooLongDraft = 'a'.repeat(200_001);
 
 			await expect(
 				daemon.messageHub.request('task.updateDraft', {

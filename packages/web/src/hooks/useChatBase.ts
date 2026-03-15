@@ -71,7 +71,7 @@ export interface UseChatBaseOptions<T = ChatMessage> {
 	/** Function to save draft */
 	saveDraft?: (content: string) => Promise<void>;
 
-	/** Maximum character limit for input (default: 100000) */
+	/** Maximum character limit for input (default: 200000) */
 	maxChars?: number;
 
 	/** Callback for validation errors */
