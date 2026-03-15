@@ -408,7 +408,7 @@ export class SDKMessageHandler {
 			daemonHub
 				.emit('sdk.message', {
 					sessionId: session.id,
-					message: { ...sdkMessage, timestamp: sentAt } as unknown as SDKMessage,
+					message: { ...sdkMessage, timestamp: sentAt },
 				})
 				.catch(() => {});
 			return;
@@ -448,7 +448,7 @@ export class SDKMessageHandler {
 		daemonHub
 			.emit('sdk.message', {
 				sessionId: session.id,
-				message: { ...sdkMessage, timestamp: sentAt } as unknown as SDKMessage,
+				message: { ...sdkMessage, timestamp: sentAt },
 			})
 			.catch(() => {});
 	}

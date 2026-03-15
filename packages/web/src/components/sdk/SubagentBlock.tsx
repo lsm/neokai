@@ -292,7 +292,7 @@ export function SubagentBlock({
 					<span
 						class={cn('text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0', colors.badge)}
 					>
-						{input.subagent_type}
+						{input.subagent_type ?? 'general-purpose'}
 					</span>
 
 					{/* Description */}
