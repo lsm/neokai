@@ -320,6 +320,9 @@ async function handlePlainRequest(
 		await runSessionStreaming(session, prompt, body.model, req, res);
 	} catch (err) {
 		logger.error('Streaming failed:', err);
+		// Disconnect the session in case runSessionStreaming threw before its
+		// internal finishCompleted() handler had a chance to run (resource leak guard).
+		session.disconnect().catch(() => {});
 		if (!res.headersSent) {
 			sendJsonError(res, 500, 'api_error', err instanceof Error ? err.message : 'Internal error');
 		}

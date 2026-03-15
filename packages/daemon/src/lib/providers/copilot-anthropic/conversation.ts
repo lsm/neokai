@@ -78,12 +78,16 @@ export class ConversationManager {
 		if (ids.length === 0) return undefined;
 
 		// First pass: find the conversation that owns the first known tool call ID.
-		// Warn for any IDs with no registered conversation (TTL-expired sessions).
+		// The Anthropic protocol sends the full message history on every request, so
+		// historical (already-resolved) tool_result IDs are expected to be absent from
+		// byToolCallId — log at debug level to avoid noise in multi-turn conversations.
 		let found: ActiveConversation | undefined;
 		for (const id of ids) {
 			const conv = this.byToolCallId.get(id);
 			if (!conv) {
-				logger.warn(`tool_result for ${id} has no active conversation — session may have expired`);
+				logger.debug(
+					`tool_result for ${id} has no active conversation (historical or TTL-expired)`
+				);
 				continue;
 			}
 			if (!found) found = conv;
@@ -102,6 +106,8 @@ export class ConversationManager {
 				toolResults.push({ toolUseId: id, result });
 			}
 		}
+		// If no tool results could be matched (malformed messages), treat as new conversation.
+		if (toolResults.length === 0) return undefined;
 		return { conv, toolResults };
 	}
 
