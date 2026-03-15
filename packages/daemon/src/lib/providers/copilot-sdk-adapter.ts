@@ -284,6 +284,13 @@ export async function* copilotSdkQueryGenerator(
 		return;
 	}
 
+	// Prepend system prompt as a [Context: ...] prefix — mirrors the CLI adapter.
+	// The Copilot CLI's own system instructions take precedence; this prefix is
+	// injected into the user turn as supplemental context, not a formal system role.
+	const fullPrompt = options.systemPrompt
+		? `[Context: ${options.systemPrompt}]\n\n${promptText}`
+		: promptText;
+
 	const queue = new AsyncMessageQueue<SDKMessage>();
 	let session: CopilotSession | undefined;
 	let numTurns = 0;
@@ -361,7 +368,7 @@ export async function* copilotSdkQueryGenerator(
 		});
 
 		// Send the prompt; session events are delivered asynchronously
-		await session.send({ prompt: promptText });
+		await session.send({ prompt: fullPrompt });
 
 		// Drain the queue, yielding each SDK message as it arrives
 		for await (const msg of queue) {
@@ -381,8 +388,6 @@ export async function* copilotSdkQueryGenerator(
 		}
 	}
 
-	const durationMs = Date.now() - startTime;
-
 	if (context.signal.aborted) {
 		yield makeErrorResult(context.sessionId, startTime, numTurns, 'Query aborted');
 		return;
@@ -398,6 +403,7 @@ export async function* copilotSdkQueryGenerator(
 		return;
 	}
 
+	const durationMs = Date.now() - startTime;
 	yield {
 		type: 'result',
 		uuid: generateUUID() as UUID,

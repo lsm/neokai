@@ -57,11 +57,20 @@ const execFileAsync = promisify(execFile);
 const logger = new Logger('copilot-sdk-provider');
 
 /**
- * Model IDs also available through GitHubCopilotProvider (direct API) and
- * CopilotCliProvider. Excluded from ownsModel() to prevent routing ambiguity
- * when a user selects by bare model ID. Use `copilot-sdk-*` aliases instead.
+ * Model IDs also registered by other providers. Excluded from ownsModel() to
+ * prevent routing collisions in detectProvider() lookups. Use `copilot-sdk-*`
+ * aliases to explicitly route a query to this provider.
+ *
+ * - Claude IDs: also claimed by GitHubCopilotProvider and CopilotCliProvider
+ * - Non-Anthropic IDs: also claimed by CopilotCliProvider (registered first)
  */
-const SHARED_MODEL_IDS = new Set(['claude-opus-4.6', 'claude-sonnet-4.6']);
+const SHARED_MODEL_IDS = new Set([
+	'claude-opus-4.6',
+	'claude-sonnet-4.6',
+	'gpt-5.3-codex',
+	'gemini-3-pro-preview',
+	'gpt-5-mini',
+]);
 
 /**
  * GitHub Copilot SDK model definitions.
@@ -199,7 +208,6 @@ export class CopilotSdkProvider implements Provider {
 	 * Returns null if:
 	 * - The `copilot` binary is not found on PATH
 	 * - The user is not authenticated
-	 * - The CopilotClient cannot be initialized
 	 */
 	async createQuery(
 		prompt: AsyncGenerator<SDKUserMessage>,
@@ -222,7 +230,6 @@ export class CopilotSdkProvider implements Provider {
 		}
 
 		const client = this.getOrCreateClient(copilotPath);
-		if (!client) return null;
 
 		// Resolve model alias → CLI model ID
 		const modelEntry = COPILOT_SDK_MODELS.find(
