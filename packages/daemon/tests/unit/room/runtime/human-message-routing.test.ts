@@ -79,7 +79,6 @@ function makeRuntime(injectResult = true): {
 function makeTaskOperator(task: NeoTask | null = null) {
 	return {
 		getTask: mock(async () => task),
-		setTaskStatus: mock(async () => undefined),
 	};
 }
 
@@ -194,7 +193,6 @@ describe('routeHumanMessageToGroup', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain(`'${status}'`);
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
-			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
 		});
 
 		it('returns error with terminated-state message when task not found', async () => {

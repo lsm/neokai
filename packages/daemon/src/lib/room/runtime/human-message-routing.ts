@@ -17,11 +17,6 @@ import type { SessionGroupRepository } from '../state/session-group-repository';
 
 export interface TaskOperator {
 	getTask(taskId: string): Promise<{ status: TaskStatus } | null>;
-	setTaskStatus(
-		taskId: string,
-		status: TaskStatus,
-		options?: { result?: string; error?: string }
-	): Promise<unknown>;
 }
 
 export interface HumanMessageResult {

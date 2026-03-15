@@ -78,7 +78,7 @@ const mockTask: NeoTask = {
 /** Build a minimal TaskManagerFactory that returns a controlled task. */
 function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
 	const cancelledTask = task ? { ...task, status: 'cancelled' as const } : null;
-	const failedTask = task ? { ...task, status: 'failed' as const } : null;
+	const failedTask = task ? { ...task, status: 'needs_attention' as const } : null;
 	const manager = {
 		createTask: mock(async () => task!),
 		getTask: mock(async () => task),
@@ -351,16 +351,40 @@ describe('task.sendHumanMessage RPC Handler', () => {
 		});
 
 		it('throws and rolls back status when reviveTaskForMessage returns false', async () => {
-			const failedTask = { ...mockTask, status: 'needs_attention' as const };
+			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };
 			const { service, runtime } = makeRuntimeService(true, true, false);
-			setup({ task: failedTask, runtimeService: service });
+
+			// Build factory manually to expose setTaskStatus spy for rollback assertion
+			const setTaskStatus = mock(async () => needsAttentionTask);
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => needsAttentionTask),
+				getTask: mock(async () => needsAttentionTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => needsAttentionTask),
+				cancelTask: mock(async () => ({ ...needsAttentionTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				factory,
+				service
+			);
 
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
 			).rejects.toThrow('agent sessions could not be restored');
 
-			// reviveTaskForMessage was called
 			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry');
+			// Verify rollback: first transitioned to 'review', then rolled back to 'needs_attention'
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'review');
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'needs_attention');
 		});
 	});
 });

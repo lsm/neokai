@@ -796,10 +796,7 @@ export function setupTaskHandlers(
 				);
 			}
 
-			const revivedTask = await taskManager.getTask(params.taskId);
-			if (revivedTask) {
-				emitTaskUpdate(params.roomId, revivedTask);
-			}
+			// reviveTaskForMessage already emits task updates internally — no extra emit needed.
 			return { success: true };
 		}
 
