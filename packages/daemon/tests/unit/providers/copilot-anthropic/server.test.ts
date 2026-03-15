@@ -497,6 +497,18 @@ describe('startEmbeddedServer', () => {
 	// Tool-use: SSE emits tool_use block when request has tools
 	// -------------------------------------------------------------------------
 
+	// Helper: wait until session has at least one registered tool
+	async function waitForTools(s: MockCopilotSession): Promise<void> {
+		await new Promise<void>((resolve) => {
+			const id = setInterval(() => {
+				if (s.registeredTools.length > 0) {
+					clearInterval(id);
+					resolve();
+				}
+			}, 5);
+		});
+	}
+
 	it('emits tool_use SSE block when model calls a registered tool', async () => {
 		// Create a session that simulates a tool call via external_tool.requested
 		// when tools are registered in SessionConfig.
@@ -522,7 +534,7 @@ describe('startEmbeddedServer', () => {
 				// Simulate external_tool.requested: call the tool handler
 				if (toolHandler) {
 					// The handler suspends waiting for tool_result.
-					// We don't await here — just kick off the call asynchronously.
+					// Suppress rejection (e.g. when server shuts down without a result).
 					toolHandler(
 						{ command: 'ls' },
 						{
@@ -531,7 +543,7 @@ describe('startEmbeddedServer', () => {
 							toolName: 'bash',
 							arguments: { command: 'ls' },
 						}
-					);
+					).catch(() => {});
 				}
 			});
 			return 'send-result';
@@ -577,6 +589,200 @@ describe('startEmbeddedServer', () => {
 			expect(cb['id']).toBe('tc_test');
 		} finally {
 			await ts.stop();
+		}
+	});
+
+	it('routes tool_result continuation to suspended session (round-trip)', async () => {
+		let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+		const toolSession = new MockCopilotSession();
+		const toolClient = makeMockClient(() => toolSession);
+
+		spyOn(toolClient, 'createSession').mockImplementation(async (cfg: unknown) => {
+			toolSession.capturedConfig = cfg;
+			const tools = (cfg as Record<string, unknown>)?.['tools'] as
+				| Array<{ name: string; handler: (args: unknown, inv: unknown) => Promise<unknown> }>
+				| undefined;
+			if (tools?.[0]) toolHandler = tools[0].handler;
+			return toolSession as unknown as CopilotSession;
+		});
+
+		// send() simulates the model calling the tool then hanging (no session.idle).
+		toolSession.send = async function (opts) {
+			this.capturedPrompt = opts.prompt;
+			Promise.resolve().then(async () => {
+				if (toolHandler) {
+					// Kick off the tool handler.  It suspends until resolveToolResult is
+					// called.  After it resolves, emit session.idle to complete the turn.
+					// Suppress rejection for the case where server shuts down first.
+					toolHandler(
+						{ command: 'ls' },
+						{
+							sessionId: 's1',
+							toolCallId: 'tc_round',
+							toolName: 'bash',
+							arguments: { command: 'ls' },
+						}
+					)
+						.then(() => {
+							toolSession.emit('assistant.message_delta', { deltaContent: 'Done.' });
+							toolSession.emit('assistant.message', { content: 'Done.' });
+							toolSession.emit('session.idle', {});
+						})
+						.catch(() => {});
+				}
+			});
+			return 'send-result';
+		};
+
+		const ts = await startEmbeddedServer(toolClient, '/tmp');
+		try {
+			const toolsDef = [
+				{ name: 'bash', description: 'Run bash', input_schema: { type: 'object' } },
+			];
+
+			// --- Request 1: model calls tool → tool_use response ---
+			const r1 = await postMessages(ts.url, {
+				model: 'x',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: 'run ls' }],
+				tools: toolsDef,
+			});
+
+			expect(r1.status).toBe(200);
+			const toolUseStart = r1.events.find(
+				(e) =>
+					e.type === 'content_block_start' &&
+					((e.data as Record<string, unknown>)['content_block'] as Record<string, unknown>)?.[
+						'type'
+					] === 'tool_use'
+			);
+			expect(toolUseStart).toBeDefined();
+			const toolCallId = (
+				(toolUseStart!.data as Record<string, unknown>)['content_block'] as Record<string, unknown>
+			)['id'] as string;
+			expect(toolCallId).toBe('tc_round');
+
+			// stop_reason must be tool_use
+			const msgDelta1 = r1.events.find((e) => e.type === 'message_delta');
+			expect(
+				((msgDelta1!.data as Record<string, unknown>)['delta'] as Record<string, unknown>)[
+					'stop_reason'
+				]
+			).toBe('tool_use');
+
+			// --- Request 2: tool_result continuation → end_turn response ---
+			const r2 = await postMessages(ts.url, {
+				model: 'x',
+				max_tokens: 100,
+				// Note: tools omitted to verify routing works without re-sending tools array.
+				messages: [
+					{ role: 'user', content: 'run ls' },
+					{
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: toolCallId, name: 'bash', input: { command: 'ls' } }],
+					},
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: toolCallId, content: 'file.txt\ndir/' }],
+					},
+				],
+			});
+
+			expect(r2.status).toBe(200);
+			// Second response should have end_turn (continuation resumed and completed)
+			const msgDelta2 = r2.events.find((e) => e.type === 'message_delta');
+			expect(msgDelta2).toBeDefined();
+			expect(
+				((msgDelta2!.data as Record<string, unknown>)['delta'] as Record<string, unknown>)[
+					'stop_reason'
+				]
+			).toBe('end_turn');
+		} finally {
+			await ts.stop();
+		}
+	});
+
+	it('routes tool_result continuation even when tools array is omitted from follow-up', async () => {
+		// Verifies P1/3 fix: hasToolResults check must not require hasTools=true.
+		let toolHandler: ((args: unknown, inv: unknown) => Promise<unknown>) | undefined;
+		const ts2Session = new MockCopilotSession();
+		const ts2Client = makeMockClient(() => ts2Session);
+
+		spyOn(ts2Client, 'createSession').mockImplementation(async (cfg: unknown) => {
+			ts2Session.capturedConfig = cfg;
+			const tools = (cfg as Record<string, unknown>)?.['tools'] as
+				| Array<{ name: string; handler: (args: unknown, inv: unknown) => Promise<unknown> }>
+				| undefined;
+			if (tools?.[0]) toolHandler = tools[0].handler;
+			return ts2Session as unknown as CopilotSession;
+		});
+
+		ts2Session.send = async function (opts) {
+			this.capturedPrompt = opts.prompt;
+			Promise.resolve().then(() => {
+				if (toolHandler) {
+					toolHandler(
+						{ q: 1 },
+						{
+							sessionId: 's2',
+							toolCallId: 'tc_notools',
+							toolName: 'read',
+							arguments: { q: 1 },
+						}
+					)
+						.then(() => {
+							ts2Session.emit('session.idle', {});
+						})
+						.catch(() => {});
+				}
+			});
+			return 'send-result';
+		};
+
+		const ts2 = await startEmbeddedServer(ts2Client, '/tmp');
+		try {
+			// First request with tools
+			const r1 = await postMessages(ts2.url, {
+				model: 'x',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: 'q' }],
+				tools: [{ name: 'read', description: 'read file', input_schema: {} }],
+			});
+			expect(r1.status).toBe(200);
+			const delta1 = r1.events.find((e) => e.type === 'message_delta');
+			expect(
+				((delta1!.data as Record<string, unknown>)['delta'] as Record<string, unknown>)[
+					'stop_reason'
+				]
+			).toBe('tool_use');
+
+			// Second request WITHOUT tools array — must still route to suspended session
+			const r2 = await postMessages(ts2.url, {
+				model: 'x',
+				max_tokens: 100,
+				// tools intentionally omitted
+				messages: [
+					{ role: 'user', content: 'q' },
+					{
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'tc_notools', name: 'read', input: { q: 1 } }],
+					},
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'tc_notools', content: 'ok' }],
+					},
+				],
+			});
+
+			expect(r2.status).toBe(200);
+			const delta2 = r2.events.find((e) => e.type === 'message_delta');
+			expect(
+				((delta2!.data as Record<string, unknown>)['delta'] as Record<string, unknown>)[
+					'stop_reason'
+				]
+			).toBe('end_turn');
+		} finally {
+			await ts2.stop();
 		}
 	});
 });

@@ -178,7 +178,9 @@ async function handleMessages(
 	const hasToolResults = extractToolResultIds(body.messages).length > 0;
 
 	// 2a. Tool-result continuation: resume a suspended session.
-	if (hasToolResults && hasTools) {
+	// Note: the Anthropic spec does not require clients to re-send the `tools`
+	// array on follow-up requests, so we check hasToolResults unconditionally.
+	if (hasToolResults) {
 		const continuation = manager.findContinuation(body.messages);
 		if (continuation) {
 			const { conv, toolResults } = continuation;
@@ -383,8 +385,12 @@ export function startEmbeddedServer(
 
 			resolve({
 				url,
-				stop: () =>
-					new Promise<void>((res, rej) => {
+				stop: async () => {
+					// Release all active tool-use conversations first so suspended
+					// Promises are rejected and TTL timers are cleared before we
+					// close the HTTP server.
+					await manager.shutdown();
+					return new Promise<void>((res, rej) => {
 						server.close((err) => {
 							if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
 								rej(err);
@@ -393,7 +399,8 @@ export function startEmbeddedServer(
 							}
 						});
 						server.closeAllConnections?.();
-					}),
+					});
+				},
 			});
 		});
 

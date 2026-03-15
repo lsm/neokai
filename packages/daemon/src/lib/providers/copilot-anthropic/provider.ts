@@ -287,6 +287,7 @@ export class CopilotAnthropicProvider implements Provider {
 
 		try {
 			this.serverCache = await this.serverStarting;
+			this.serverStarting = undefined;
 		} catch (err) {
 			this.serverStarting = undefined;
 			throw err;
