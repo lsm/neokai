@@ -5,9 +5,11 @@
  *   CodexBridgeProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
  *
  * REQUIREMENTS:
- * - NEOKAI_TEST_ONLINE=1 must be set (guard against accidental API usage)
  * - OPENAI_API_KEY or CODEX_API_KEY must be set
  * - The `codex` binary must be installed and on PATH
+ *
+ * Tests skip automatically when either requirement is missing, consistent with
+ * other provider online tests (openai-provider.test.ts, github-copilot-provider.test.ts).
  *
  * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
  * The bridge uses its own random-port HTTP server; Anthropic API traffic
@@ -15,7 +17,7 @@
  * Codex API.
  *
  * Run with:
- *   NEOKAI_TEST_ONLINE=1 OPENAI_API_KEY=sk-xxx bun test \
+ *   OPENAI_API_KEY=sk-xxx bun test \
  *     packages/daemon/tests/online/providers/codex-bridge.test.ts
  */
 
@@ -27,7 +29,6 @@ import { CodexBridgeProvider } from '../../../src/lib/providers/codex-bridge-pro
 // ---------------------------------------------------------------------------
 
 const SKIP_REASON: string | null = (() => {
-	if (!process.env.NEOKAI_TEST_ONLINE) return 'NEOKAI_TEST_ONLINE not set';
 	if (!process.env.OPENAI_API_KEY && !process.env.CODEX_API_KEY) {
 		return 'OPENAI_API_KEY or CODEX_API_KEY not set';
 	}
