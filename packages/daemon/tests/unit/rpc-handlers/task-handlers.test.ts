@@ -1105,6 +1105,14 @@ describe('task.archive RPC Handler', () => {
 				"Cannot archive task in 'pending' state"
 			);
 		});
+
+		it('throws when task is review (non-terminal)', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				"Cannot archive task in 'review' state"
+			);
+		});
 	});
 
 	describe('archive with runtime', () => {

@@ -310,7 +310,7 @@ export function setupTaskHandlers(
 			await runtime.archiveTaskGroup(params.taskId);
 		} else {
 			// No runtime — set archivedAt directly. Worktree cleanup (if any) is skipped;
-			// it will be reclaimed by cleanupOrphanedWorktrees() at next startup.
+			// orphaned worktrees must be reclaimed manually via the worktree.cleanup RPC.
 			await taskManager.archiveTask(params.taskId);
 		}
 
