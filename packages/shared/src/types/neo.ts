@@ -205,6 +205,8 @@ export interface NeoTask {
 	error?: string | null;
 	/** IDs of tasks this task depends on */
 	dependsOn: string[];
+	/** Draft input text for the human input area (persisted server-side) */
+	inputDraft?: string | null;
 	/** Creation timestamp (milliseconds since epoch) */
 	createdAt: number;
 	/** Start timestamp (milliseconds since epoch) */
@@ -274,6 +276,7 @@ export interface UpdateTaskParams {
 	prUrl?: string | null;
 	prNumber?: number | null;
 	prCreatedAt?: number | null;
+	inputDraft?: string | null;
 }
 
 // ============================================================================
