@@ -12,6 +12,7 @@ import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
+import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 
@@ -379,6 +380,12 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				gitHubService.stop();
 				logInfo('[Daemon] GitHub service stopped');
 			}
+
+			// Shut down providers that hold background resources (e.g. embedded servers)
+			const providerRegistry = getProviderRegistry();
+			await Promise.allSettled(
+				providerRegistry.getAll().flatMap((p) => (p.shutdown ? [p.shutdown()] : []))
+			);
 
 			// Stop all agent sessions
 			await sessionManager.cleanup();

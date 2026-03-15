@@ -13,17 +13,19 @@
  * ## Request flow
  *
  * 1. Claude Agent SDK sends `POST /v1/messages` (Anthropic wire format)
- * 2. Server validates and extracts messages + system prompt
- * 3. Creates or reuses a `CopilotSession` (primary-conversation pattern)
- * 4. Formats messages as flat `[User]: …` / `[Assistant]: …` prompt string
+ * 2. Server validates the body (10 MB hard cap) and extracts messages + system
+ * 3. Creates a fresh `CopilotSession` for this request
+ * 4. Formats all messages as flat `[User]: …` / `[Assistant]: …` prompt string
  * 5. Calls `session.send({ prompt })` and streams Anthropic SSE back
  *
- * ## Conversation management
+ * ## Session-per-request design
  *
- * One *primary* conversation is kept alive across requests for multi-turn
- * context. If the primary is busy, an isolated single-use conversation is
- * created instead. On session error the primary is cleared so the next
- * request gets a fresh session.
+ * A new Copilot session is created for every HTTP request. The Claude Agent SDK
+ * already includes the full conversation history in every `POST /v1/messages`
+ * call, so the formatted prompt carries all context without the server needing
+ * to maintain state across requests. This avoids cross-session contamination
+ * that would occur if a single primary session were shared between concurrent
+ * NeoKai chat sessions.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
@@ -39,68 +41,8 @@ import { Logger } from '../logger.js';
 
 const logger = new Logger('copilot-anthropic-server');
 
-// ---------------------------------------------------------------------------
-// Conversation management (adapted from copilot-sdk-proxy/conversation-manager)
-// ---------------------------------------------------------------------------
-
-interface Conversation {
-	id: string;
-	session: CopilotSession | null;
-	/** Number of messages sent so far (for incremental prompting) */
-	sentMessageCount: number;
-	isPrimary: boolean;
-	sessionActive: boolean;
-}
-
-class ConversationManager {
-	private readonly conversations = new Map<string, Conversation>();
-	private primaryId: string | null = null;
-
-	private create(isPrimary = false): Conversation {
-		const id = randomUUID();
-		const conv: Conversation = {
-			id,
-			session: null,
-			sentMessageCount: 0,
-			isPrimary,
-			sessionActive: false,
-		};
-		this.conversations.set(id, conv);
-		if (isPrimary) this.primaryId = id;
-		return conv;
-	}
-
-	findForNewRequest(): { conversation: Conversation; isReuse: boolean } {
-		// Evict finished isolated conversations to prevent unbounded growth
-		for (const [id, conv] of this.conversations) {
-			if (!conv.isPrimary && !conv.sessionActive) {
-				this.conversations.delete(id);
-			}
-		}
-
-		const primary = this.primaryId ? (this.conversations.get(this.primaryId) ?? null) : null;
-		if (primary) {
-			if (primary.sessionActive || !primary.session) {
-				// Primary is busy — spin up a single-use isolated conversation
-				return { conversation: this.create(), isReuse: false };
-			}
-			return { conversation: primary, isReuse: true };
-		}
-		return { conversation: this.create(true), isReuse: false };
-	}
-
-	remove(id: string): void {
-		if (this.conversations.get(id)?.isPrimary) this.primaryId = null;
-		this.conversations.delete(id);
-	}
-
-	clearPrimary(): void {
-		if (this.primaryId) {
-			this.conversations.delete(this.primaryId);
-			this.primaryId = null;
-		}
-	}
-}
+/** Maximum request body size accepted by the server (10 MB). */
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Anthropic message types (inline — no external schema dep)
@@ -159,7 +101,7 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
 	}
 }
 
-function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
+export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
 	const parts: string[] = [];
 	for (const msg of messages) {
 		if (typeof msg.content === 'string') {
@@ -344,10 +286,13 @@ function runSessionStreaming(
 		}
 	});
 
+	// Send the prompt. On rejection emit a well-formed SSE epilogue so the
+	// Claude Agent SDK parser sees a complete stream rather than a truncated one.
 	session.send({ prompt }).catch((err: unknown) => {
 		if (sessionDone) return;
 		logger.error('Failed to send prompt to Copilot session:', err);
 		sessionDone = true;
+		writer.sendFailed(res);
 		res.end();
 		unsubscribe();
 		resolve(false);
@@ -360,11 +305,32 @@ function runSessionStreaming(
 // HTTP request parsing helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Read the request body up to MAX_BODY_BYTES.
+ * Rejects with a 413-tagged error if the limit is exceeded.
+ */
 function readBody(req: IncomingMessage): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
-		req.on('data', (chunk: Buffer) => chunks.push(chunk));
-		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+		let total = 0;
+		let failed = false;
+
+		req.on('data', (chunk: Buffer) => {
+			if (failed) return;
+			total += chunk.byteLength;
+			if (total > MAX_BODY_BYTES) {
+				failed = true;
+				reject(Object.assign(new Error('Request body too large'), { code: 413 }));
+				// Drain remaining bytes without accumulating so the response socket
+				// stays intact and sendJsonError() can write the 413 response.
+				req.resume();
+				return;
+			}
+			chunks.push(chunk);
+		});
+		req.on('end', () => {
+			if (!failed) resolve(Buffer.concat(chunks).toString('utf8'));
+		});
 		req.on('error', reject);
 	});
 }
@@ -441,21 +407,22 @@ function buildSessionConfig(
 }
 
 // ---------------------------------------------------------------------------
-// Request handler
+// Request handler (session-per-request — no shared conversation state)
 // ---------------------------------------------------------------------------
 
 async function handleMessages(
 	req: IncomingMessage,
 	res: ServerResponse,
 	client: CopilotClient,
-	manager: ConversationManager,
 	cwd: string
 ): Promise<void> {
 	let bodyText: string;
 	try {
 		bodyText = await readBody(req);
-	} catch {
-		sendJsonError(res, 400, 'invalid_request_error', 'Failed to read request body');
+	} catch (err) {
+		const status = (err as { code?: number }).code === 413 ? 413 : 400;
+		const msg = status === 413 ? 'Request body exceeds 10 MB limit' : 'Failed to read request body';
+		sendJsonError(res, status, 'invalid_request_error', msg);
 		return;
 	}
 
@@ -482,21 +449,10 @@ async function handleMessages(
 		return;
 	}
 
-	const { conversation, isReuse } = manager.findForNewRequest();
-	conversation.sessionActive = true;
-
-	logger.debug(
-		isReuse ? `Reusing conversation ${conversation.id}` : `New conversation ${conversation.id}`
-	);
-
 	let prompt: string;
 	try {
-		prompt = formatAnthropicPrompt(
-			body.messages.slice(isReuse ? conversation.sentMessageCount : 0)
-		);
+		prompt = formatAnthropicPrompt(body.messages);
 	} catch (err) {
-		conversation.sessionActive = false;
-		if (!isReuse) manager.remove(conversation.id);
 		sendJsonError(
 			res,
 			400,
@@ -506,45 +462,25 @@ async function handleMessages(
 		return;
 	}
 
-	if (!isReuse) {
-		const systemMessage = extractSystemText(body.system);
-		const sessionConfig = buildSessionConfig(body.model, systemMessage, cwd);
+	const systemMessage = extractSystemText(body.system);
+	const sessionConfig = buildSessionConfig(body.model, systemMessage, cwd);
 
-		try {
-			conversation.session = await client.createSession(sessionConfig);
-		} catch (err) {
-			logger.error('Failed to create Copilot session:', err);
-			conversation.sessionActive = false;
-			manager.remove(conversation.id);
-			sendJsonError(res, 500, 'api_error', 'Failed to create session');
-			return;
-		}
-	}
-
-	const session = conversation.session;
-	if (!session) {
-		logger.error('Conversation has no session, clearing primary');
-		manager.clearPrimary();
-		conversation.sessionActive = false;
-		sendJsonError(res, 500, 'api_error', 'Session lost, please retry');
+	let session: CopilotSession;
+	try {
+		session = await client.createSession(sessionConfig);
+	} catch (err) {
+		logger.error('Failed to create Copilot session:', err);
+		sendJsonError(res, 500, 'api_error', 'Failed to create session');
 		return;
 	}
 
 	try {
-		const healthy = await runSessionStreaming(session, prompt, body.model, res);
-		if (healthy) {
-			conversation.sentMessageCount = body.messages.length;
-		} else {
-			if (conversation.isPrimary) manager.clearPrimary();
-		}
+		await runSessionStreaming(session, prompt, body.model, res);
 	} catch (err) {
 		logger.error('Streaming failed:', err);
-		if (conversation.isPrimary) manager.clearPrimary();
 		if (!res.headersSent) {
 			sendJsonError(res, 500, 'api_error', err instanceof Error ? err.message : 'Internal error');
 		}
-	} finally {
-		conversation.sessionActive = false;
 	}
 }
 
@@ -573,14 +509,12 @@ export function startEmbeddedServer(
 	client: CopilotClient,
 	cwd = process.cwd()
 ): Promise<EmbeddedServer> {
-	const manager = new ConversationManager();
-
 	const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
 		const url = req.url ?? '';
 		const method = req.method ?? '';
 
 		if (method === 'POST' && (url === '/v1/messages' || url.startsWith('/v1/messages?'))) {
-			handleMessages(req, res, client, manager, cwd).catch((err: unknown) => {
+			handleMessages(req, res, client, cwd).catch((err: unknown) => {
 				logger.error('Unhandled error in handleMessages:', err);
 				if (!res.headersSent) {
 					sendJsonError(res, 500, 'api_error', 'Internal server error');

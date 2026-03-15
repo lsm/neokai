@@ -201,6 +201,12 @@ export interface Provider {
 	 * Clears stored credentials.
 	 */
 	logout?(): Promise<void>;
+
+	/**
+	 * Optional: Shut down any resources held by this provider (e.g. an embedded
+	 * HTTP server). Called during daemon shutdown so the event loop can exit.
+	 */
+	shutdown?(): Promise<void>;
 }
 
 /**

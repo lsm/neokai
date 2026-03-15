@@ -4,9 +4,11 @@
  * Tests cover:
  * - Provider properties (id, capabilities, ownsModel, getModelForTier)
  * - Availability checks (binary + auth)
- * - buildSdkConfig env-var shape
- * - Embedded server: prompt formatting, SSE streaming, conversation reuse,
- *   error handling, and system-message extraction
+ * - buildSdkConfig env-var shape (requires pre-warmed serverCache)
+ * - Embedded server: prompt formatting, SSE streaming,
+ *   error handling, system-message extraction, concurrent requests
+ * - getModels() pre-warms the embedded server
+ * - shutdown() stops the embedded server
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
@@ -264,6 +266,23 @@ describe('CopilotAnthropicProvider', () => {
 	});
 
 	describe('buildSdkConfig', () => {
+		/** Inject a fake server URL so buildSdkConfig doesn't throw. */
+		const fakeServerUrl = 'http://127.0.0.1:54321';
+
+		beforeEach(() => {
+			(provider as unknown as Record<string, unknown>)['serverCache'] = {
+				url: fakeServerUrl,
+				stop: async () => {},
+			};
+		});
+
+		it('throws when embedded server has not been started', () => {
+			const p = new CopilotAnthropicProvider({});
+			expect(() => p.buildSdkConfig('copilot-anthropic-sonnet')).toThrow(
+				'embedded server not started'
+			);
+		});
+
 		it('returns isAnthropicCompatible=true', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			expect(cfg.isAnthropicCompatible).toBe(true);
@@ -274,9 +293,11 @@ describe('CopilotAnthropicProvider', () => {
 			expect(cfg.envVars['ANTHROPIC_AUTH_TOKEN']).toBeDefined();
 		});
 
-		it('sets ANTHROPIC_BASE_URL', () => {
+		it('ANTHROPIC_BASE_URL uses the injected server URL with port > 0', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
-			expect(cfg.envVars['ANTHROPIC_BASE_URL']).toMatch(/^http:\/\/127\.0\.0\.1/);
+			const parsedUrl = new URL(cfg.envVars['ANTHROPIC_BASE_URL'] as string);
+			expect(parsedUrl.hostname).toBe('127.0.0.1');
+			expect(Number(parsedUrl.port)).toBeGreaterThan(0);
 		});
 
 		it('sets ANTHROPIC_DEFAULT_SONNET_MODEL to resolved model ID', () => {
@@ -293,6 +314,68 @@ describe('CopilotAnthropicProvider', () => {
 		it('sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			expect(cfg.envVars['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC']).toBe('1');
+		});
+	});
+
+	describe('getModels() pre-warms embedded server', () => {
+		it('calls ensureServerStarted when provider is available', async () => {
+			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
+				'/usr/local/bin/copilot' as never
+			);
+			const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
+				'http://127.0.0.1:9999' as never
+			);
+			await p.getModels();
+			expect(ensureSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it('returns empty array when ensureServerStarted fails', async () => {
+			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
+				'/usr/local/bin/copilot' as never
+			);
+			spyOn(p, 'ensureServerStarted').mockRejectedValue(new Error('port in use') as never);
+			const models = await p.getModels();
+			expect(models).toEqual([]);
+		});
+
+		it('returns empty array when provider is not available', async () => {
+			const p = new CopilotAnthropicProvider({});
+			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
+				null as never
+			);
+			const models = await p.getModels();
+			expect(models).toEqual([]);
+		});
+	});
+
+	describe('shutdown()', () => {
+		it('stops the embedded server and clears serverCache', async () => {
+			let stopped = false;
+			(provider as unknown as Record<string, unknown>)['serverCache'] = {
+				url: 'http://127.0.0.1:12345',
+				stop: async () => {
+					stopped = true;
+				},
+			};
+			await provider.shutdown();
+			expect(stopped).toBe(true);
+			expect((provider as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
+		});
+
+		it('is safe to call when server was never started', async () => {
+			// Should not throw
+			await expect(provider.shutdown()).resolves.toBeUndefined();
+		});
+
+		it('is safe to call twice', async () => {
+			(provider as unknown as Record<string, unknown>)['serverCache'] = {
+				url: 'http://127.0.0.1:12345',
+				stop: async () => {},
+			};
+			await provider.shutdown();
+			await expect(provider.shutdown()).resolves.toBeUndefined();
 		});
 	});
 });
@@ -317,6 +400,12 @@ describe('startEmbeddedServer', () => {
 
 	afterEach(async () => {
 		await stopServer();
+	});
+
+	it('binds to a real port (port > 0)', () => {
+		const parsedUrl = new URL(serverUrl);
+		expect(parsedUrl.hostname).toBe('127.0.0.1');
+		expect(Number(parsedUrl.port)).toBeGreaterThan(0);
 	});
 
 	it('health endpoint returns ok', async () => {
@@ -344,6 +433,21 @@ describe('startEmbeddedServer', () => {
 			stream: false,
 		});
 		expect(result.status).toBe(400);
+	});
+
+	it('returns 413 when body exceeds 10 MB', async () => {
+		// Build a JSON payload just over the 10 MB limit
+		const oversized = 'x'.repeat(11 * 1024 * 1024);
+		const resp = await fetch(`${serverUrl}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'claude-sonnet-4.6',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: oversized }],
+			}),
+		});
+		expect(resp.status).toBe(413);
 	});
 
 	it('streams Anthropic SSE events for a simple message', async () => {
@@ -530,6 +634,50 @@ describe('startEmbeddedServer', () => {
 			await s2.stop();
 		}
 	});
+
+	it('handles concurrent requests independently (no cross-session contamination)', async () => {
+		// Each concurrent request creates its own session — responses must not bleed.
+		const sessions: MockCopilotSession[] = [];
+		const concurrentClient = makeMockClient(() => {
+			const s = new MockCopilotSession();
+			sessions.push(s);
+			return s;
+		});
+
+		const concurrentServer = await startEmbeddedServer(concurrentClient, '/tmp');
+		try {
+			const [r1, r2] = await Promise.all([
+				postMessages(concurrentServer.url, {
+					model: 'claude-sonnet-4.6',
+					max_tokens: 100,
+					messages: [{ role: 'user', content: 'request-A' }],
+				}),
+				postMessages(concurrentServer.url, {
+					model: 'claude-sonnet-4.6',
+					max_tokens: 100,
+					messages: [{ role: 'user', content: 'request-B' }],
+				}),
+			]);
+
+			// Both requests must succeed and carry an independent stream
+			expect(r1.status).toBe(200);
+			expect(r2.status).toBe(200);
+
+			// Two separate sessions were created
+			expect(sessions.length).toBe(2);
+
+			// Each session received only its own prompt
+			const prompts = sessions.map((s) => s.capturedPrompt ?? '');
+			expect(prompts.some((p) => p.includes('request-A'))).toBe(true);
+			expect(prompts.some((p) => p.includes('request-B'))).toBe(true);
+			// Neither session captured both prompts
+			expect(prompts.every((p) => !(p.includes('request-A') && p.includes('request-B')))).toBe(
+				true
+			);
+		} finally {
+			await concurrentServer.stop();
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -545,8 +693,8 @@ describe('factory registration', () => {
 	it('registers CopilotAnthropicProvider with id github-copilot-anthropic', () => {
 		initializeProviders();
 		const registry = getProviderRegistry();
-		const provider = registry.get('github-copilot-anthropic');
-		expect(provider).toBeDefined();
-		expect(provider?.id).toBe('github-copilot-anthropic');
+		const p = registry.get('github-copilot-anthropic');
+		expect(p).toBeDefined();
+		expect(p?.id).toBe('github-copilot-anthropic');
 	});
 });

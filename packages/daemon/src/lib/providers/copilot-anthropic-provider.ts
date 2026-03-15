@@ -164,6 +164,14 @@ export class CopilotAnthropicProvider implements Provider {
 
 	async getModels(): Promise<ModelInfo[]> {
 		if (!(await this.isAvailable())) return [];
+		// Pre-warm the embedded server so buildSdkConfig() has a valid URL by
+		// the time the user picks a model and starts a session.
+		try {
+			await this.ensureServerStarted();
+		} catch (err) {
+			logger.error('Failed to start embedded Anthropic server:', err);
+			return [];
+		}
 		return COPILOT_ANTHROPIC_MODELS;
 	}
 
@@ -186,34 +194,33 @@ export class CopilotAnthropicProvider implements Provider {
 	/**
 	 * Build SDK configuration for this provider.
 	 *
-	 * Starts the embedded Anthropic server on first call and returns env vars
-	 * that point the Claude Agent SDK at the local server:
-	 * - `ANTHROPIC_BASE_URL` → `http://127.0.0.1:<port>`
+	 * Returns env vars that point the Claude Agent SDK at the embedded server:
+	 * - `ANTHROPIC_BASE_URL` → `http://127.0.0.1:<port>` (loopback server URL)
 	 * - `ANTHROPIC_AUTH_TOKEN` → dummy token (server ignores auth on loopback)
 	 * - `ANTHROPIC_DEFAULT_*_MODEL` → maps SDK tiers to Copilot model IDs
+	 *
+	 * **Precondition:** `getModels()` (or `ensureServerStarted()`) must be
+	 * awaited before calling this method. The embedded server is started
+	 * asynchronously in `getModels()`, which runs during provider initialisation
+	 * before any session can be created. If the server has not been started yet
+	 * this method throws rather than returning a silently-broken port-0 URL.
 	 */
 	buildSdkConfig(modelId: string, _sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+		if (!this.serverCache) {
+			throw new Error(
+				'CopilotAnthropicProvider: embedded server not started. ' +
+					'Await getModels() or ensureServerStarted() before calling buildSdkConfig().'
+			);
+		}
+
 		// Resolve alias → bare model ID
 		const entry = COPILOT_ANTHROPIC_MODELS.find((m) => m.alias === modelId || m.id === modelId);
 		const resolvedId = entry?.id ?? modelId;
 
-		// Server URL is only known after async start — return a placeholder during
-		// synchronous calls and rely on the startServer() side-effect. The agent
-		// session manager calls buildSdkConfig() before spawning the SDK subprocess,
-		// so we pre-warm via ensureServerStarted() (called in getModels / isAvailable).
-		// If the server isn't ready yet it will be started synchronously via the
-		// first HTTP request reaching the port (the server binds immediately).
-		const serverUrl = this.serverCache?.url ?? 'http://127.0.0.1:0';
-
-		// Start server async (fire-and-forget if not already started)
-		this.ensureServerStarted().catch((err: unknown) => {
-			logger.error('Failed to start embedded server:', err);
-		});
-
 		return {
 			envVars: {
-				ANTHROPIC_BASE_URL: serverUrl,
-				// Dummy key — the embedded server doesn't validate auth
+				ANTHROPIC_BASE_URL: this.serverCache.url,
+				// Dummy key — the embedded server does not validate auth
 				ANTHROPIC_AUTH_TOKEN: 'copilot-anthropic-proxy',
 				// Disable SDK telemetry to the real Anthropic API
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
@@ -228,6 +235,19 @@ export class CopilotAnthropicProvider implements Provider {
 			isAnthropicCompatible: true,
 			apiVersion: 'v1',
 		};
+	}
+
+	/**
+	 * Shut down the embedded HTTP server. Called during daemon cleanup so the
+	 * event loop can exit cleanly. Safe to call when the server was never started.
+	 */
+	async shutdown(): Promise<void> {
+		if (this.serverCache) {
+			await this.serverCache.stop().catch((err: unknown) => {
+				logger.warn('Error stopping embedded Anthropic server:', err);
+			});
+			this.serverCache = undefined;
+		}
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
