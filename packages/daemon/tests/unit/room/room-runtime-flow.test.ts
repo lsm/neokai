@@ -2597,7 +2597,7 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 		bypassCtx?.db.close();
 	});
 
-	it('sets submittedForReview and approved when coder worker exits with RESEARCH_ONLY marker', async () => {
+	it('sets submittedForReview but NOT approved when coder worker exits with RESEARCH_ONLY marker', async () => {
 		bypassCtx = createRuntimeTestContext({
 			getWorkerMessages: (_sessionId, _afterId) => [
 				{
@@ -2611,10 +2611,11 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 
 		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
 		expect(updatedGroup.submittedForReview).toBe(true);
-		expect(updatedGroup.approved).toBe(true);
+		// approved stays false — human approval is still required before complete_task
+		expect(updatedGroup.approved).toBe(false);
 	});
 
-	it('sets submittedForReview and approved when general worker exits with VERIFICATION_COMPLETE marker', async () => {
+	it('sets submittedForReview but NOT approved when general worker exits with VERIFICATION_COMPLETE marker', async () => {
 		bypassCtx = createRuntimeTestContext({
 			getWorkerMessages: (_sessionId, _afterId) => [
 				{
@@ -2628,7 +2629,8 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 
 		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
 		expect(updatedGroup.submittedForReview).toBe(true);
-		expect(updatedGroup.approved).toBe(true);
+		// approved stays false — human approval is still required before complete_task
+		expect(updatedGroup.approved).toBe(false);
 	});
 
 	it('does NOT set approved when marker is NOT on first line', async () => {
@@ -2670,7 +2672,8 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 
 		const updatedGroup = bypassCtx.groupRepo.getGroup(group.id)!;
 		expect(updatedGroup.submittedForReview).toBe(true);
-		expect(updatedGroup.approved).toBe(true);
+		// approved stays false — human approval is still required
+		expect(updatedGroup.approved).toBe(false);
 	});
 
 	it('does NOT bypass when marker is in the first message but NOT the last', async () => {
@@ -2696,7 +2699,7 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 		expect(updatedGroup.approved).toBe(false);
 	});
 
-	it('allows leader to call complete_task directly after coder bypass (no PR needed)', async () => {
+	it('requires human approval before leader can complete_task after bypass (no PR)', async () => {
 		bypassCtx = createRuntimeTestContext({
 			getWorkerMessages: (_sessionId, _afterId) => [
 				{
@@ -2708,13 +2711,26 @@ describe('bypass markers — worker exit gate and leader gate integration', () =
 		});
 		const { task, group } = await spawnAndRouteToLeader(bypassCtx, { assignedAgent: 'coder' });
 
-		// Leader should be able to call complete_task without submit_for_review
-		// because the bypass pre-set submittedForReview=true and approved=true
-		const result = await bypassCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+		// submittedForReview is pre-set by bypass, but approved is NOT — human approval required
+		expect(bypassCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(true);
+		expect(bypassCtx.groupRepo.getGroup(group.id)!.approved).toBe(false);
+
+		// complete_task fails: leader must wait for human to approve
+		const beforeResult = await bypassCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 			summary: 'Research complete',
 		});
-		const parsed = JSON.parse(result.content[0].text);
-		expect(parsed.success).toBe(true);
+		const beforeParsed = JSON.parse(beforeResult.content[0].text);
+		expect(beforeParsed.success).toBe(false);
+		expect(beforeParsed.error).toContain('Human approval');
+		expect(beforeParsed.action_required).toContain('awaiting human review');
+
+		// After human approves, complete_task succeeds
+		bypassCtx.groupRepo.setApproved(group.id, true);
+		const afterResult = await bypassCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
+			summary: 'Research complete',
+		});
+		const afterParsed = JSON.parse(afterResult.content[0].text);
+		expect(afterParsed.success).toBe(true);
 
 		const updatedTask = await bypassCtx.taskManager.getTask(task.id);
 		expect(updatedTask!.status).toBe('completed');

@@ -580,11 +580,11 @@ export class RoomRuntime {
 			}
 			log.debug(`[Worker→Leader] Group ${groupId}: worker exit gate passed`);
 
-			// When a bypass marker is detected, pre-authorize the leader to call complete_task
-			// directly without a PR. This prevents a dead loop where the leader cannot call
-			// submit_for_review (no PR) and cannot call complete_task (submit required first).
-			// Setting approved=true routes through the "post-approval" leader gate path which
-			// fails open when no PR exists (gh command returns non-zero → pass gracefully).
+			// When a bypass marker is detected, pre-set submittedForReview so the task moves
+			// to review status without requiring a PR. This prevents a dead loop where the leader
+			// cannot call submit_for_review (no PR) and cannot call complete_task (submit required).
+			// NOTE: approved is intentionally NOT set here — human approval is still required.
+			// The leader will see "awaiting human review" and must wait for a human to approve.
 			// Only applies to coder/general roles; planner bypass is unsupported (no system prompt
 			// instructions added, and planner tasks require draft task creation).
 			if (gateResult.bypassed) {
@@ -593,9 +593,8 @@ export class RoomRuntime {
 				});
 				if (group.workerRole === 'coder' || group.workerRole === 'general') {
 					this.groupRepo.setSubmittedForReview(groupId, true);
-					this.groupRepo.setApproved(groupId, true);
 					log.info(
-						`Bypass detected for ${group.workerRole} group ${groupId} — pre-authorizing leader complete`
+						`Bypass detected for ${group.workerRole} group ${groupId} — pre-setting submittedForReview, human approval still required`
 					);
 				}
 			}
@@ -846,7 +845,7 @@ export class RoomRuntime {
 				// State machine enforcement: PR/planning tasks require human approval before complete_task.
 				// They follow a two-phase flow: work → submit_for_review → human approval → merge/create tasks → complete.
 				// Human approval (approved=true) is set when a human calls reviewTask to approve the PR or plan.
-				// Bypass marker tasks are pre-authorized (approved=true) so they skip this check.
+				// Bypass marker tasks pre-set submittedForReview but still require human approval.
 				if (
 					(group.workerRole === 'coder' ||
 						group.workerRole === 'general' ||
