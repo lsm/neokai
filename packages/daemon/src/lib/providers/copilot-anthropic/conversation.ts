@@ -77,24 +77,32 @@ export class ConversationManager {
 		const ids = extractToolResultIds(messages);
 		if (ids.length === 0) return undefined;
 
+		// First pass: find the conversation that owns the first known tool call ID.
+		// Warn for any IDs with no registered conversation (TTL-expired sessions).
+		let found: ActiveConversation | undefined;
 		for (const id of ids) {
 			const conv = this.byToolCallId.get(id);
-			if (!conv) continue;
-
-			const toolResults: ToolResult[] = [];
-			for (const toolUseId of ids) {
-				const result = extractToolResultContent(messages, toolUseId);
-				if (result !== undefined) {
-					toolResults.push({ toolUseId, result });
-				} else {
-					logger.warn(
-						`tool_result content missing for tool_use_id ${toolUseId} — handler will time out`
-					);
-				}
+			if (!conv) {
+				logger.warn(`tool_result for ${id} has no active conversation — session may have expired`);
+				continue;
 			}
-			return { conv, toolResults };
+			if (!found) found = conv;
 		}
-		return undefined;
+		if (!found) return undefined;
+
+		// Second pass: collect only the tool results registered to that conversation.
+		// For parallel tool calls (multiple tools in one turn) all IDs belong to the
+		// same session; this guard prevents cross-session pollution in edge cases.
+		const conv = found;
+		const toolResults: ToolResult[] = [];
+		for (const id of ids) {
+			if (this.byToolCallId.get(id) !== conv) continue;
+			const result = extractToolResultContent(messages, id);
+			if (result !== undefined) {
+				toolResults.push({ toolUseId: id, result });
+			}
+		}
+		return { conv, toolResults };
 	}
 
 	// ---------------------------------------------------------------------------

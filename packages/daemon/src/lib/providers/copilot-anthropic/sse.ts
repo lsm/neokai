@@ -128,9 +128,14 @@ export class AnthropicStreamWriter {
 		res.end();
 	}
 
-	/** Emit an `end_turn` epilogue and end the response. */
+	/**
+	 * Emit an `end_turn` epilogue.
+	 *
+	 * Closes the open text block (if any) and sends the epilogue.  Does NOT
+	 * force an empty text block when no text was ever emitted — tool-only
+	 * responses have an empty `content` array which is valid per the spec.
+	 */
 	sendCompleted(res: ServerResponse): void {
-		this.ensureTextBlock(res);
 		this.closeTextBlock(res);
 		this.sendEpilogue(res, 'end_turn');
 	}

@@ -149,7 +149,11 @@ export class CopilotAnthropicProvider implements Provider {
 	/** In-flight server start promise (prevents race on concurrent first calls) */
 	private serverStarting: Promise<EmbeddedServer> | undefined = undefined;
 
-	constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
+	constructor(
+		/** Working directory for Copilot sessions — defaults to `process.cwd()` at construction time. */
+		private readonly cwd: string = process.cwd(),
+		private readonly env: NodeJS.ProcessEnv = process.env
+	) {}
 
 	async isAvailable(): Promise<boolean> {
 		const path = await this.findCopilotCli();
@@ -305,7 +309,7 @@ export class CopilotAnthropicProvider implements Provider {
 			throw new Error('GitHub Copilot CLI not found — cannot start embedded server');
 		}
 		const client = this.getOrCreateClient(cliPath);
-		const server = await startEmbeddedServer(client);
+		const server = await startEmbeddedServer(client, this.cwd);
 		logger.debug(`Embedded Anthropic server started at ${server.url}`);
 		return server;
 	}
