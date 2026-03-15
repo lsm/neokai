@@ -3,13 +3,13 @@
  *
  * Routes a human message to the worker or leader session.
  * - Active groups: messages are injected directly
- * - needs_attention/cancelled tasks: group is reset and task transitions to in_progress before injecting
+ * - needs_attention tasks: group is reset and task transitions to in_progress before injecting
+ * - cancelled/completed tasks: messages are blocked (caller should use set_task_status to restart)
  */
 
 import type { TaskStatus } from '@neokai/shared';
 import type { RoomRuntime } from './room-runtime';
 import type { SessionGroupRepository } from '../state/session-group-repository';
-import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 
 export interface TaskOperator {
 	getTask(taskId: string): Promise<{ status: TaskStatus } | null>;
@@ -53,66 +53,65 @@ export async function routeHumanMessageToGroup(
 
 	// Check if group is terminated using completedAt timestamp
 	if (group.completedAt !== null) {
-		// Get the task to check its status - we may be able to restart a failed task
+		// Get the task to check its status - we may be able to restart a needs_attention task
 		const task = await taskManager.getTask(taskId);
 		if (!task) {
 			return { success: false, error: 'Task not found' };
 		}
 
-		// Allow restarting needs_attention (failed) or cancelled tasks - transition to in_progress
-		if (task.status === 'needs_attention' || task.status === 'cancelled') {
-			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
-			if (!allowedTransitions.includes('in_progress')) {
-				return { success: false, error: `Task in '${task.status}' status cannot be restarted` };
-			}
-
-			// Save previous status for potential rollback
-			const previousStatus = task.status;
-			const previousVersion = group.version;
-
-			// Reset the group for restart (clears completedAt, resets state)
-			const reset = groupRepo.resetGroupForRestart(group.id);
-			if (!reset) {
-				return { success: false, error: 'Failed to reset task group for restart' };
-			}
-
-			// Transition task to in_progress
-			try {
-				await taskManager.setTaskStatus(taskId, 'in_progress');
-			} catch (error) {
-				// Rollback group state on failure (group was already reset, so use previousVersion + 1)
-				groupRepo.failGroup(group.id, previousVersion + 1);
-				return { success: false, error: `Failed to transition task to in_progress: ${error}` };
-			}
-
-			// Try to inject the message
-			let injected = false;
-			if (target === 'leader') {
-				injected = await runtime.injectMessageToLeader(taskId, message);
-			} else {
-				injected = await runtime.injectMessageToWorker(taskId, message);
-			}
-
-			// If injection failed, rollback the status and group changes
-			if (!injected) {
-				// Rollback: restore group to failed state and revert task status
-				groupRepo.failGroup(group.id, previousVersion + 1);
-				try {
-					await taskManager.setTaskStatus(taskId, previousStatus);
-				} catch {
-					// Rollback failure is logged but the main error is the injection failure
-				}
-				return {
-					success: false,
-					error: `Failed to inject message into ${target} session`,
-				};
-			}
-
-			return { success: true };
-		} else {
-			// For other terminated states (completed), still block messages
-			return { success: false, error: 'Task is already completed' };
+		// Only needs_attention tasks can be restarted via message injection.
+		// Cancelled tasks have their workspace cleaned up on cancellation, so
+		// restarting them via session injection would point at a gone workspace.
+		// Completed tasks are terminal. For both, the caller should use set_task_status.
+		if (task.status !== 'needs_attention') {
+			return {
+				success: false,
+				error: `Task is in '${task.status}' status and cannot receive messages. Use set_task_status to restart it.`,
+			};
 		}
+
+		// Save previous status for potential rollback
+		const previousStatus = task.status;
+
+		// Reset the group for restart (clears completedAt, resets state, bumps version)
+		const resetGroup = groupRepo.resetGroupForRestart(group.id);
+		if (!resetGroup) {
+			return { success: false, error: 'Failed to reset task group for restart' };
+		}
+
+		// Transition task to in_progress
+		try {
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+		} catch (error) {
+			// Rollback group state on failure (use the version returned by resetGroupForRestart)
+			groupRepo.failGroup(group.id, resetGroup.version);
+			return { success: false, error: `Failed to transition task to in_progress: ${error}` };
+		}
+
+		// Try to inject the message
+		let injected = false;
+		if (target === 'leader') {
+			injected = await runtime.injectMessageToLeader(taskId, message);
+		} else {
+			injected = await runtime.injectMessageToWorker(taskId, message);
+		}
+
+		// If injection failed, rollback the status and group changes
+		if (!injected) {
+			// Rollback: restore group to needs_attention state and revert task status
+			groupRepo.failGroup(group.id, resetGroup.version);
+			try {
+				await taskManager.setTaskStatus(taskId, previousStatus);
+			} catch {
+				// Rollback failure is best-effort; swallow to avoid masking the injection error
+			}
+			return {
+				success: false,
+				error: `Failed to inject message into ${target} session`,
+			};
+		}
+
+		return { success: true };
 	}
 
 	// Simple routing - no state checks

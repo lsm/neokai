@@ -37,7 +37,6 @@ export type TaskManagerLike = Pick<
 	| 'cancelTask'
 	| 'setTaskStatus'
 	| 'archiveTask'
-	| 'updateTaskStatus'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -759,6 +758,17 @@ export function setupTaskHandlers(
 		const task = await taskManager.getTask(params.taskId);
 		if (!task) {
 			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
+		}
+
+		// Cancelled tasks have their workspace cleaned up on cancellation.
+		// Restarting via session injection would point at a gone workspace.
+		// Direct the caller to use set_task_status to restart from scratch.
+		if (task.status === 'cancelled') {
+			throw new Error(
+				`Task ${params.taskId} is cancelled. Cancelled tasks cannot receive messages ` +
+					'because their workspace has been cleaned up. Use set_task_status to restart it ' +
+					'(e.g. status: "pending" or "in_progress").'
+			);
 		}
 
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
