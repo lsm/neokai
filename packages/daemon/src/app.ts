@@ -381,14 +381,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				logInfo('[Daemon] GitHub service stopped');
 			}
 
-			// Shut down providers that hold background resources (e.g. embedded servers)
+			// Stop all agent sessions first — this closes any open SSE connections
+			// that are held by providers (e.g. CopilotAnthropicProvider's embedded
+			// HTTP server). Provider shutdown must follow so server.close() is not
+			// blocked waiting for those connections to drain.
+			await sessionManager.cleanup();
+
+			// Shut down providers that hold background resources (e.g. embedded
+			// HTTP servers and CLI subprocesses). Runs after sessionManager.cleanup()
+			// so all active connections are already closed.
 			const providerRegistry = getProviderRegistry();
 			await Promise.allSettled(
 				providerRegistry.getAll().flatMap((p) => (p.shutdown ? [p.shutdown()] : []))
 			);
-
-			// Stop all agent sessions
-			await sessionManager.cleanup();
 
 			// Close database
 			db.close();

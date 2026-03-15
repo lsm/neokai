@@ -238,8 +238,16 @@ export class CopilotAnthropicProvider implements Provider {
 	}
 
 	/**
-	 * Shut down the embedded HTTP server. Called during daemon cleanup so the
-	 * event loop can exit cleanly. Safe to call when the server was never started.
+	 * Shut down the embedded HTTP server and the underlying CopilotClient
+	 * subprocess. Called during daemon cleanup so the event loop can exit
+	 * cleanly. Safe to call when the server/client was never started.
+	 *
+	 * **IMPORTANT — call after `sessionManager.cleanup()`.**
+	 * The embedded HTTP server only closes once all existing connections are
+	 * done. Active NeoKai sessions hold open SSE connections to this server;
+	 * they must be terminated first (by sessionManager.cleanup()) before
+	 * shutdown() is called, otherwise `serverCache.stop()` will block until
+	 * those connections close on their own.
 	 */
 	async shutdown(): Promise<void> {
 		if (this.serverCache) {
@@ -247,6 +255,12 @@ export class CopilotAnthropicProvider implements Provider {
 				logger.warn('Error stopping embedded Anthropic server:', err);
 			});
 			this.serverCache = undefined;
+		}
+		if (this.clientCache) {
+			await this.clientCache.stop().catch((err: unknown) => {
+				logger.warn('Error stopping CopilotClient:', err);
+			});
+			this.clientCache = undefined;
 		}
 	}
 
@@ -285,7 +299,13 @@ export class CopilotAnthropicProvider implements Provider {
 			this.serverStarting = this.createServer();
 		}
 
-		this.serverCache = await this.serverStarting;
+		try {
+			this.serverCache = await this.serverStarting;
+		} catch (err) {
+			// Clear the cached promise so the next call can retry.
+			this.serverStarting = undefined;
+			throw err;
+		}
 		return this.serverCache.url;
 	}
 

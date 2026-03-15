@@ -244,6 +244,13 @@ function runSessionStreaming(
 
 	const { promise, resolve } = Promise.withResolvers<boolean>();
 
+	function finishSession(ok: boolean): void {
+		unsubscribe();
+		// Release in-memory resources from the client's sessions map.
+		session.disconnect().catch(() => {});
+		resolve(ok);
+	}
+
 	const unsubscribe = session.on((event: SessionEvent) => {
 		switch (event.type) {
 			case 'assistant.message_delta':
@@ -259,8 +266,7 @@ function runSessionStreaming(
 				flushDeltas();
 				writer.sendCompleted(res);
 				res.end();
-				unsubscribe();
-				resolve(true);
+				finishSession(true);
 				break;
 
 			case 'session.error':
@@ -268,8 +274,7 @@ function runSessionStreaming(
 				sessionDone = true;
 				writer.sendFailed(res);
 				res.end();
-				unsubscribe();
-				resolve(false);
+				finishSession(false);
 				break;
 
 			default:
@@ -280,9 +285,8 @@ function runSessionStreaming(
 	res.on('close', () => {
 		if (!sessionDone) {
 			sessionDone = true;
-			unsubscribe();
 			session.abort().catch(() => {});
-			resolve(false);
+			finishSession(false);
 		}
 	});
 
@@ -294,8 +298,7 @@ function runSessionStreaming(
 		sessionDone = true;
 		writer.sendFailed(res);
 		res.end();
-		unsubscribe();
-		resolve(false);
+		finishSession(false);
 	});
 
 	return promise;

@@ -29,6 +29,9 @@ class MockCopilotSession {
 	private subscriptions: AnyEventHandler[] = [];
 	capturedPrompt: string | undefined = undefined;
 	shouldError = false;
+	/** When true, send() rejects immediately (simulates connection failure). */
+	shouldRejectSend = false;
+	disconnectCalled = false;
 
 	on(handler: AnyEventHandler): () => void {
 		this.subscriptions.push(handler);
@@ -45,6 +48,9 @@ class MockCopilotSession {
 
 	async send(opts: { prompt: string }): Promise<string> {
 		this.capturedPrompt = opts.prompt;
+		if (this.shouldRejectSend) {
+			return Promise.reject(new Error('connection lost'));
+		}
 		if (this.shouldError) {
 			// Simulate error after microtask
 			Promise.resolve().then(() => {
@@ -62,7 +68,9 @@ class MockCopilotSession {
 	}
 
 	async abort(): Promise<void> {}
-	async disconnect(): Promise<void> {}
+	async disconnect(): Promise<void> {
+		this.disconnectCalled = true;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +358,29 @@ describe('CopilotAnthropicProvider', () => {
 		});
 	});
 
+	describe('ensureServerStarted() retry-after-failure', () => {
+		it('clears serverStarting on rejection so the next call can retry', async () => {
+			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			let callCount = 0;
+			spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+				async () => {
+					callCount++;
+					if (callCount === 1) throw new Error('transient failure');
+					return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+				}
+			);
+
+			// First call should reject
+			await expect(p.ensureServerStarted()).rejects.toThrow('transient failure');
+			// serverStarting must be cleared so the second attempt creates a new promise
+			expect((p as unknown as Record<string, unknown>)['serverStarting']).toBeUndefined();
+
+			// Second call should succeed
+			const url = await p.ensureServerStarted();
+			expect(url).toBe('http://127.0.0.1:9999');
+		});
+	});
+
 	describe('shutdown()', () => {
 		it('stops the embedded server and clears serverCache', async () => {
 			let stopped = false;
@@ -362,6 +393,19 @@ describe('CopilotAnthropicProvider', () => {
 			await provider.shutdown();
 			expect(stopped).toBe(true);
 			expect((provider as unknown as Record<string, unknown>)['serverCache']).toBeUndefined();
+		});
+
+		it('stops the CopilotClient and clears clientCache', async () => {
+			let clientStopped = false;
+			(provider as unknown as Record<string, unknown>)['clientCache'] = {
+				stop: async () => {
+					clientStopped = true;
+					return [];
+				},
+			};
+			await provider.shutdown();
+			expect(clientStopped).toBe(true);
+			expect((provider as unknown as Record<string, unknown>)['clientCache']).toBeUndefined();
 		});
 
 		it('is safe to call when server was never started', async () => {
@@ -564,6 +608,61 @@ describe('startEmbeddedServer', () => {
 		const types = result.events.map((e) => e.type);
 		expect(types).toContain('message_start');
 		expect(types).toContain('message_stop');
+	});
+
+	it('sends complete SSE epilogue when session.send() rejects', async () => {
+		session.shouldRejectSend = true;
+
+		const result = await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'trigger send rejection' }],
+		});
+
+		// The SSE stream was started (200) before the send rejection is discovered
+		expect(result.status).toBe(200);
+		const types = result.events.map((e) => e.type);
+		// Must have a well-formed epilogue even when send() rejects
+		expect(types).toContain('message_start');
+		expect(types).toContain('message_stop');
+	});
+
+	it('calls session.disconnect() after a successful request', async () => {
+		await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'hi' }],
+		});
+
+		// Allow the async disconnect() to complete
+		await new Promise((r) => setTimeout(r, 10));
+		expect(session.disconnectCalled).toBe(true);
+	});
+
+	it('calls session.disconnect() after a session error', async () => {
+		session.shouldError = true;
+
+		await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'trigger error' }],
+		});
+
+		await new Promise((r) => setTimeout(r, 10));
+		expect(session.disconnectCalled).toBe(true);
+	});
+
+	it('calls session.disconnect() when send() rejects', async () => {
+		session.shouldRejectSend = true;
+
+		await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'trigger send rejection' }],
+		});
+
+		await new Promise((r) => setTimeout(r, 10));
+		expect(session.disconnectCalled).toBe(true);
 	});
 
 	it('message_start event contains correct model', async () => {
