@@ -289,10 +289,36 @@ use only the registered dynamic tools.
 
 ## 6. Integration Path for Full Transparency
 
+Two blockers must be resolved before Dynamic Tools work end-to-end.
+
+### Blocker A: `query-runner.ts` passes `tools: []` to all custom-query providers
+
+`packages/daemon/src/lib/agent/query-runner.ts` currently hardcodes `tools: []` when building
+`ProviderQueryOptions` for custom-query providers (including Codex App Server):
+
+```typescript
+// packages/daemon/src/lib/agent/query-runner.ts ~line 228
+const customQueryOptions: ProviderQueryOptions = {
+  ...
+  tools: [],  // ← always empty; Codex App Server gets zero Dynamic Tools
+  ...
+};
+```
+
+The reason `queryOptions.tools` (from `QueryOptionsBuilder`) cannot simply be forwarded here is
+that it holds the SDK-native tool spec (`string[] | { type: "preset"; preset: "claude_code" }`)
+which is incompatible with `ToolDefinition[]`. To fix this, NeoKai's MCP tool definitions must be
+separately assembled as `ToolDefinition[]` objects and injected here. The `QueryOptionsBuilder`
+does not currently produce `ToolDefinition` objects — it produces the SDK preset name.
+
+**Required change:** Expose a `getMcpToolDefinitions(): ToolDefinition[]` method on
+`AgentSession` (or `QueryOptionsBuilder`) and populate `customQueryOptions.tools` with the
+result before calling `provider.createQuery()`.
+
 ### Step 1: Wire `toolExecutor` from AgentSession
 
-In `packages/daemon/src/lib/agent/agent-session.ts` (or wherever providers are invoked),
-pass the MCP tool execution callback to the provider:
+Once `customQueryOptions.tools` has real `ToolDefinition` entries (Blocker A), wire the MCP
+tool execution callback into the provider:
 
 ```typescript
 // In the query runner, after creating the provider query:
@@ -303,6 +329,10 @@ const toolExecutor: ToolExecutionCallback = async (toolName, toolInput, toolUseI
 
 // Pass to provider via createQuery extension, or inject into provider config
 ```
+
+Currently `CodexAppServerProvider.createQuery()` passes `toolExecutor: undefined`. The provider
+interface's `createQuery()` signature must be extended to accept an optional `toolExecutor`
+parameter, or the executor must be injected via provider configuration.
 
 ### Step 2: Add sandbox policy option
 

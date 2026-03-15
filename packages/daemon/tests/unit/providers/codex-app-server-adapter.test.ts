@@ -1191,7 +1191,9 @@ describe('codexAppServerQueryGenerator', () => {
 		expect(lastMsg.type).toBe('result');
 	});
 
-	it('server sends error response to thread/start → generator throws with error message', async () => {
+	it('server sends error response to thread/start → generator yields error result (not throws)', async () => {
+		// P1 regression test: startThread() previously would propagate the rejection,
+		// causing an unhandled throw from the generator. Now it yields an error result.
 		mockAppServer([
 			{ id: 1, result: { serverInfo: { name: 'codex-app-server', version: '1.0.0' } } },
 			// Error response to thread/start (id=2)
@@ -1205,25 +1207,17 @@ describe('codexAppServerQueryGenerator', () => {
 			makeConfig()
 		);
 
-		// The generator yields the system init message first, then thread/start throws,
-		// causing the generator to throw (no inner try-catch wraps startThread).
-		let caughtError: unknown;
-		const messages: SDKMessage[] = [];
-		try {
-			for await (const msg of gen) {
-				messages.push(msg);
-			}
-		} catch (err) {
-			caughtError = err;
-		}
+		// Generator must NOT throw — it catches the error and yields a result message
+		const messages = await collectMessages(gen);
 
-		// At minimum the system init message was yielded before the error
-		expect(messages.length).toBeGreaterThanOrEqual(1);
+		// System init should be yielded before the error result
+		expect(messages.length).toBeGreaterThanOrEqual(2);
 		expect(messages[0].type).toBe('system');
 
-		// And the generator threw with the server's error message
-		expect(caughtError).toBeDefined();
-		expect((caughtError as Error).message).toContain('Model not found');
+		const lastMsg = messages[messages.length - 1];
+		expect(lastMsg.type).toBe('result');
+		expect((lastMsg as { is_error: boolean }).is_error).toBe(true);
+		expect((lastMsg as { errors?: string[] }).errors?.[0]).toContain('Model not found');
 	});
 
 	it('multi-text content blocks in SDKUserMessage → extracts and joins text', async () => {
@@ -1253,11 +1247,9 @@ describe('codexAppServerQueryGenerator', () => {
 		expect((lastMsg as { is_error: boolean }).is_error).toBe(false);
 	});
 
-	it('process stdout closes before turn/completed → generator unblocks when server sends turn/completed', async () => {
-		// The AsyncQueue only unblocks when 'done' is pushed (via turn/completed notification)
-		// or when the abort signal fires AND the queue gets a new item.
-		// Sending a delayed turn/completed after some notifications verifies the generator
-		// terminates normally once the server eventually sends the completion signal.
+	it('delayed turn/completed after partial output → generator terminates successfully', async () => {
+		// Verifies the generator terminates normally once the server eventually sends
+		// turn/completed after streaming some delta notifications.
 		mockAppServer([
 			{ id: 1, result: { serverInfo: { name: 'codex-app-server', version: '1.0.0' } } },
 			{ id: 2, result: { threadId: 'thread-test-123' } },
@@ -1289,6 +1281,269 @@ describe('codexAppServerQueryGenerator', () => {
 		const lastMsg = messages[messages.length - 1];
 		expect(lastMsg.type).toBe('result');
 		expect((lastMsg as { is_error: boolean }).is_error).toBe(false);
+	});
+
+	it('subprocess crashes before turn/completed → generator unblocks with error result', async () => {
+		// P0 regression test: when stdout closes without a turn/completed notification,
+		// the conn.closed promise resolves and pushes an Error sentinel into the AsyncQueue,
+		// unblocking the drain loop which then yields an error result message.
+		mockAppServer([
+			{ id: 1, result: { serverInfo: { name: 'codex-app-server', version: '1.0.0' } } },
+			{ id: 2, result: { threadId: 'thread-test-123' } },
+			{ id: 3, result: { turnId: 'turn-test-456' } },
+			{
+				method: 'item/agentMessage/delta',
+				params: {
+					threadId: 'thread-test-123',
+					turnId: 'turn-test-456',
+					itemId: 'item-x',
+					delta: { type: 'text_delta', text: 'partial output' },
+				},
+			},
+			// No turn/completed — stream closes here (subprocess crash)
+		]);
+
+		const gen = codexAppServerQueryGenerator(
+			singleMessageGenerator(makeUserMessage('hello')),
+			makeOptions(),
+			makeContext(),
+			makeConfig()
+		);
+
+		const messages = await collectMessages(gen);
+		const lastMsg = messages[messages.length - 1];
+		expect(lastMsg.type).toBe('result');
+		expect((lastMsg as { is_error: boolean }).is_error).toBe(true);
+		expect((lastMsg as { errors?: string[] }).errors?.[0]).toMatch(/subprocess closed/i);
+	});
+
+	it('server request with string ID → handler dispatched and response sent with same string ID', async () => {
+		// P0 regression test: server requests use string IDs (e.g. "srv-req-1").
+		// The AppServerIncoming type now accepts id: string | number, and dispatchMessage
+		// must echo the same string ID back in the response.
+		const stdinWrite = mock(() => {});
+		const stdinFlush = mock(() => {});
+
+		const encoder = new TextEncoder();
+		const stdout = new ReadableStream<Uint8Array>({
+			async start(ctrl) {
+				const messages = [
+					{ id: 1, result: { serverInfo: { name: 'codex-app-server', version: '1.0.0' } } },
+					{ id: 2, result: { threadId: 'thread-abc' } },
+					{ id: 3, result: { turnId: 'turn-xyz' } },
+					// Server request with STRING id
+					{
+						id: 'srv-req-1',
+						method: 'item/tool/call',
+						params: {
+							threadId: 'thread-abc',
+							turnId: 'turn-xyz',
+							callId: 'call-1',
+							tool: 'myTool',
+							arguments: { x: 1 },
+						},
+					},
+					{
+						method: 'turn/completed',
+						params: { threadId: 'thread-abc', turnId: 'turn-xyz' },
+					},
+				];
+				for (const msg of messages) {
+					await new Promise<void>((r) => setTimeout(r, 0));
+					ctrl.enqueue(encoder.encode(JSON.stringify(msg) + '\n'));
+				}
+				ctrl.close();
+			},
+		});
+
+		Bun.spawn = mock(() => ({
+			stdout,
+			stderr: buildServerStream([]),
+			stdin: { write: stdinWrite, flush: stdinFlush },
+			exited: Promise.resolve(0),
+			kill: mock(() => {}),
+		})) as unknown as typeof Bun.spawn;
+
+		Bun.spawnSync = mock(() => ({
+			exitCode: 0,
+			stdout: Buffer.from('/usr/local/bin/codex\n'),
+			stderr: Buffer.from(''),
+		})) as unknown as typeof Bun.spawnSync;
+
+		const toolExecutor: ToolExecutionCallback = mock(async () => ({
+			output: 'tool result',
+			isError: false,
+		}));
+
+		const gen = codexAppServerQueryGenerator(
+			singleMessageGenerator(makeUserMessage('use a tool')),
+			makeOptions(),
+			makeContext(),
+			makeConfig(),
+			toolExecutor
+		);
+
+		const messages = await collectMessages(gen);
+
+		// Tool executor should have been called
+		expect(toolExecutor).toHaveBeenCalledWith('myTool', { x: 1 }, 'call-1');
+
+		// The response written to stdin should echo the string id "srv-req-1"
+		const writtenLines: string[] = [];
+		for (const call of (stdinWrite as ReturnType<typeof mock>).mock.calls) {
+			const line = call[0] as string;
+			if (line.trim()) writtenLines.push(line.trim());
+		}
+		const responseForStringId = writtenLines
+			.map((l) => {
+				try {
+					return JSON.parse(l) as Record<string, unknown>;
+				} catch {
+					return null;
+				}
+			})
+			.filter(Boolean)
+			.find((m) => m !== null && m['id'] === 'srv-req-1');
+
+		expect(responseForStringId).toBeDefined();
+		expect(responseForStringId).toHaveProperty('result');
+
+		// Generator should succeed
+		const lastMsg = messages[messages.length - 1];
+		expect(lastMsg.type).toBe('result');
+		expect((lastMsg as { is_error: boolean }).is_error).toBe(false);
+	});
+
+	it('initialize fails → generator yields error result instead of throwing', async () => {
+		// P1 regression test: if conn.initialize() rejects (e.g. server responds with error),
+		// the generator should yield an error result message, not propagate the exception.
+		const stdinWrite = mock(() => {});
+		const encoder = new TextEncoder();
+		const stdout = new ReadableStream<Uint8Array>({
+			async start(ctrl) {
+				// Send error response to initialize request (id=1)
+				await new Promise<void>((r) => setTimeout(r, 0));
+				ctrl.enqueue(
+					encoder.encode(
+						JSON.stringify({
+							id: 1,
+							error: { code: -32000, message: 'Server init failed: unsupported version' },
+						}) + '\n'
+					)
+				);
+				ctrl.close();
+			},
+		});
+
+		Bun.spawn = mock(() => ({
+			stdout,
+			stderr: buildServerStream([]),
+			stdin: { write: stdinWrite, flush: mock(() => {}) },
+			exited: Promise.resolve(1),
+			kill: mock(() => {}),
+		})) as unknown as typeof Bun.spawn;
+
+		Bun.spawnSync = mock(() => ({
+			exitCode: 0,
+			stdout: Buffer.from('/usr/local/bin/codex\n'),
+			stderr: Buffer.from(''),
+		})) as unknown as typeof Bun.spawnSync;
+
+		const gen = codexAppServerQueryGenerator(
+			singleMessageGenerator(makeUserMessage('hello')),
+			makeOptions(),
+			makeContext(),
+			makeConfig()
+		);
+
+		const messages = await collectMessages(gen);
+		const lastMsg = messages[messages.length - 1];
+		expect(lastMsg.type).toBe('result');
+		expect((lastMsg as { is_error: boolean }).is_error).toBe(true);
+		expect((lastMsg as { errors?: string[] }).errors?.[0]).toMatch(/init failed/i);
+	});
+
+	it('unregistered server request method → dispatchMessage sends JSON-RPC -32601 error (not empty result)', async () => {
+		// P1 regression test: previously, unregistered server request methods received
+		// { id, result: {} } which is a success response. The server would interpret this
+		// as a successful method call with empty result, masking the error. Now the adapter
+		// sends { id, error: { code: -32601, message: "Method not found: ..." } }.
+		const stdinWrite = mock(() => {});
+		const stdinFlush = mock(() => {});
+		const encoder = new TextEncoder();
+
+		const stdout = new ReadableStream<Uint8Array>({
+			async start(ctrl) {
+				const messages = [
+					{ id: 1, result: { serverInfo: { name: 'codex-app-server', version: '1.0.0' } } },
+					{ id: 2, result: { threadId: 'thread-abc' } },
+					{ id: 3, result: { turnId: 'turn-xyz' } },
+					// Server sends a request for an unknown method
+					{
+						id: 42,
+						method: 'unknown/futureMethod',
+						params: { some: 'data' },
+					},
+					{
+						method: 'turn/completed',
+						params: { threadId: 'thread-abc', turnId: 'turn-xyz' },
+					},
+				];
+				for (const msg of messages) {
+					await new Promise<void>((r) => setTimeout(r, 0));
+					ctrl.enqueue(encoder.encode(JSON.stringify(msg) + '\n'));
+				}
+				ctrl.close();
+			},
+		});
+
+		Bun.spawn = mock(() => ({
+			stdout,
+			stderr: buildServerStream([]),
+			stdin: { write: stdinWrite, flush: stdinFlush },
+			exited: Promise.resolve(0),
+			kill: mock(() => {}),
+		})) as unknown as typeof Bun.spawn;
+
+		Bun.spawnSync = mock(() => ({
+			exitCode: 0,
+			stdout: Buffer.from('/usr/local/bin/codex\n'),
+			stderr: Buffer.from(''),
+		})) as unknown as typeof Bun.spawnSync;
+
+		const gen = codexAppServerQueryGenerator(
+			singleMessageGenerator(makeUserMessage('hello')),
+			makeOptions(),
+			makeContext(),
+			makeConfig()
+		);
+
+		await collectMessages(gen);
+
+		// Find the response written for id=42
+		const writtenLines: string[] = [];
+		for (const call of (stdinWrite as ReturnType<typeof mock>).mock.calls) {
+			const line = call[0] as string;
+			if (line.trim()) writtenLines.push(line.trim());
+		}
+		const responseFor42 = writtenLines
+			.map((l) => {
+				try {
+					return JSON.parse(l) as Record<string, unknown>;
+				} catch {
+					return null;
+				}
+			})
+			.filter(Boolean)
+			.find((m) => m !== null && m['id'] === 42);
+
+		expect(responseFor42).toBeDefined();
+		// Must be an error response, NOT { result: {} }
+		expect(responseFor42).toHaveProperty('error');
+		expect(responseFor42).not.toHaveProperty('result');
+		const errObj = responseFor42?.['error'] as { code: number; message: string };
+		expect(errObj.code).toBe(-32601);
+		expect(errObj.message).toContain('unknown/futureMethod');
 	});
 
 	it('abort mid-stream → yields abort error result', async () => {
