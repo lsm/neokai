@@ -278,11 +278,18 @@ jobs:
       - name: Install GitHub Copilot CLI
         if: matrix.module == 'providers-copilot-anthropic'
         env:
-          # GH_TOKEN is the env var read by the gh CLI for authentication.
-          # Used here only to download the copilot extension; it is separate
-          # from COPILOT_GITHUB_TOKEN which authenticates actual Copilot API calls.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Use the dedicated PAT (COPILOT_GITHUB_TOKEN) which has the scopes
+          # needed by `gh extension install`.  The default GITHUB_TOKEN only
+          # has Contents:read / Metadata:read and cannot authenticate gh API
+          # calls for extension downloads.
+          # If COPILOT_GITHUB_TOKEN is not configured the tests self-skip, so
+          # we exit 0 early rather than failing the job.
+          GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "COPILOT_GITHUB_TOKEN not configured; skipping Copilot CLI install (tests will self-skip)"
+            exit 0
+          fi
           gh extension install github/copilot
           # Expose the extension binary as standalone `copilot` in PATH so
           # CopilotAnthropicProvider's `which copilot` lookup succeeds.
