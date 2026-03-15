@@ -227,6 +227,8 @@ export interface NeoTask {
 	prNumber?: number | null;
 	/** When PR was created/submitted (milliseconds since epoch) */
 	prCreatedAt?: number | null;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
 }
 
 /**
@@ -349,6 +351,8 @@ export interface TaskSummary {
 	prUrl?: string | null;
 	/** Pull request number (if available) */
 	prNumber?: number | null;
+	/** Last update timestamp (milliseconds since epoch) */
+	updatedAt: number;
 }
 
 /**

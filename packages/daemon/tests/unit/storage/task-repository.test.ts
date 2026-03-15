@@ -45,7 +45,8 @@ describe('TaskRepository', () => {
 				active_session TEXT,
 				pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER
+				pr_created_at INTEGER,
+				updated_at INTEGER
 			);
 
 			CREATE INDEX idx_tasks_room ON tasks(room_id);
@@ -91,7 +92,7 @@ describe('TaskRepository', () => {
 			expect(task.dependsOn).toEqual(['task-1', 'task-2']);
 		});
 
-		it('should set createdAt timestamp', () => {
+		it('should set createdAt and updatedAt timestamps', () => {
 			const beforeTime = Date.now();
 			const params: CreateTaskParams = {
 				roomId: 'room-1',
@@ -102,6 +103,8 @@ describe('TaskRepository', () => {
 			const task = repository.createTask(params);
 
 			expect(task.createdAt).toBeGreaterThanOrEqual(beforeTime);
+			expect(task.updatedAt).toBeGreaterThanOrEqual(beforeTime);
+			expect(task.updatedAt).toBeGreaterThanOrEqual(task.createdAt);
 		});
 
 		it('should support all priority levels', () => {
@@ -154,10 +157,18 @@ describe('TaskRepository', () => {
 			expect(tasks.map((t) => t.title)).toContain('Task 2');
 		});
 
-		it('should return tasks ordered by created_at DESC', async () => {
-			repository.createTask({ roomId: 'room-1', title: 'Oldest', description: 'Desc' });
+		it('should return tasks ordered by updated_at DESC', async () => {
+			const oldest = repository.createTask({
+				roomId: 'room-1',
+				title: 'Oldest',
+				description: 'Desc',
+			});
 			await new Promise((r) => setTimeout(r, 5));
-			repository.createTask({ roomId: 'room-1', title: 'Middle', description: 'Desc' });
+			const middle = repository.createTask({
+				roomId: 'room-1',
+				title: 'Middle',
+				description: 'Desc',
+			});
 			await new Promise((r) => setTimeout(r, 5));
 			repository.createTask({ roomId: 'room-1', title: 'Newest', description: 'Desc' });
 
@@ -166,6 +177,18 @@ describe('TaskRepository', () => {
 			expect(tasks[0].title).toBe('Newest');
 			expect(tasks[1].title).toBe('Middle');
 			expect(tasks[2].title).toBe('Oldest');
+
+			// After updating the oldest task, it should appear first
+			await new Promise((r) => setTimeout(r, 5));
+			repository.updateTask(oldest.id, { title: 'Oldest (updated)' });
+			const tasksAfterUpdate = repository.listTasks('room-1');
+			expect(tasksAfterUpdate[0].title).toBe('Oldest (updated)');
+
+			// After updating the middle task, it should now appear first
+			await new Promise((r) => setTimeout(r, 5));
+			repository.updateTask(middle.id, { title: 'Middle (updated)' });
+			const tasksAfterMiddleUpdate = repository.listTasks('room-1');
+			expect(tasksAfterMiddleUpdate[0].title).toBe('Middle (updated)');
 		});
 
 		it('should filter by status', () => {
@@ -343,6 +366,20 @@ describe('TaskRepository', () => {
 			const updated = repository.updateTask('non-existent', { title: 'New Title' });
 
 			expect(updated).toBeNull();
+		});
+
+		it('should update updatedAt timestamp on every update', async () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'Task',
+				description: 'Desc',
+			});
+			const originalUpdatedAt = task.updatedAt;
+
+			await new Promise((r) => setTimeout(r, 5));
+			const updated = repository.updateTask(task.id, { title: 'New Title' });
+
+			expect(updated?.updatedAt).toBeGreaterThan(originalUpdatedAt);
 		});
 
 		it('should update multiple fields at once', () => {

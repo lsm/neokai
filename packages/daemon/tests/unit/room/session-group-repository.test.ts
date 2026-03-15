@@ -39,7 +39,8 @@ describe('SessionGroupRepository', () => {
 				active_session TEXT,
 				pr_url TEXT,
 				pr_number INTEGER,
-				pr_created_at INTEGER
+				pr_created_at INTEGER,
+				updated_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,

@@ -161,6 +161,7 @@ export function createTables(db: BunDatabase): void {
         pr_number INTEGER,
         pr_created_at INTEGER,
         input_draft TEXT,
+        updated_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);

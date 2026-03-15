@@ -21,8 +21,8 @@ export class TaskRepository {
 		const now = Date.now();
 
 		const stmt = this.db.prepare(
-			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			`INSERT INTO tasks (id, room_id, title, description, status, priority, depends_on, task_type, assigned_agent, created_by_task_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -36,6 +36,7 @@ export class TaskRepository {
 			params.taskType ?? 'coding',
 			params.assignedAgent ?? 'coder',
 			params.createdByTaskId ?? null,
+			now,
 			now
 		);
 
@@ -88,7 +89,7 @@ export class TaskRepository {
 			query += ` AND priority = ?`;
 			params.push(filter.priority);
 		}
-		query += ` ORDER BY created_at DESC`;
+		query += ` ORDER BY updated_at DESC`;
 
 		const stmt = this.db.prepare(query);
 		const rows = stmt.all(...params) as Record<string, unknown>[];
@@ -182,6 +183,8 @@ export class TaskRepository {
 			values.push(params.inputDraft ?? null);
 		}
 		if (fields.length > 0) {
+			fields.push('updated_at = ?');
+			values.push(Date.now());
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
 			stmt.run(...values);
@@ -279,6 +282,7 @@ export class TaskRepository {
 			prUrl: (row.pr_url as string | null) ?? undefined,
 			prNumber: (row.pr_number as number | null) ?? undefined,
 			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
+			updatedAt: (row.updated_at as number | null) ?? (row.created_at as number),
 		};
 	}
 }
