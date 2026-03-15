@@ -822,7 +822,8 @@ export function RoomAgents({ room }: RoomAgentsProps) {
 				<div>
 					<label class="block text-sm font-medium text-gray-300 mb-1">Max Review Rounds</label>
 					<p class="text-xs text-gray-500 mb-2">
-						Maximum number of review iterations before failing the task.
+						Maximum number of automated review iterations before escalating to human review. No
+						limit applies when the task is already in human review.
 					</p>
 					<input
 						type="number"
