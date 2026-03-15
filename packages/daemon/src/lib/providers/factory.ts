@@ -13,6 +13,7 @@ import { MinimaxProvider } from './minimax-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
 import { CodexCliProvider } from './codex-cli-provider.js';
+import { CodexAppServerProvider } from './codex-app-server-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -61,6 +62,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register Codex CLI provider (available when codex binary is on PATH + API key set)
 	registry.register(new CodexCliProvider());
+
+	// Register Codex App Server provider (transparent backend with tool call interception)
+	registry.register(new CodexAppServerProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
