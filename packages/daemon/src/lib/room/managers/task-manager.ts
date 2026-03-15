@@ -275,15 +275,20 @@ export class TaskManager {
 	 * Move task to review (work done, awaiting human approval)
 	 */
 	async reviewTask(taskId: string, prUrl?: string): Promise<NeoTask> {
-		const prNumber = prUrl ? extractPrNumber(prUrl) : null;
-		const prCreatedAt = prUrl ? Date.now() : null;
-		return this.updateTaskStatus(taskId, 'review', {
+		const updates: Partial<NeoTask> = {
 			currentStep: prUrl ?? 'Awaiting review', // Keep for backward compatibility
 			progress: 80,
-			prUrl: prUrl ?? null,
-			prNumber,
-			prCreatedAt,
-		});
+		};
+
+		// Only update PR fields when prUrl is explicitly provided.
+		// When prUrl is omitted (e.g. runtime escalation), preserve any existing PR data.
+		if (prUrl !== undefined) {
+			updates.prUrl = prUrl;
+			updates.prNumber = extractPrNumber(prUrl);
+			updates.prCreatedAt = Date.now();
+		}
+
+		return this.updateTaskStatus(taskId, 'review', updates);
 	}
 
 	/**

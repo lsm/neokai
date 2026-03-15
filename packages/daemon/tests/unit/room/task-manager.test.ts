@@ -457,7 +457,7 @@ describe('TaskManager', () => {
 			expect(updated.prNumber).toBe(123);
 		});
 
-		it('should set null PR fields when no prUrl provided', async () => {
+		it('should leave PR fields undefined when no prUrl provided on a fresh task', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
 			const updated = await taskManager.reviewTask(task.id);
@@ -466,6 +466,38 @@ describe('TaskManager', () => {
 			expect(updated.prUrl).toBeUndefined();
 			expect(updated.prNumber).toBeUndefined();
 			expect(updated.prCreatedAt).toBeUndefined();
+		});
+
+		it('should preserve existing PR data when reviewed again without prUrl (runtime escalation)', async () => {
+			// Task first goes to review with a PR URL
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/42');
+
+			// Simulate rejection — move back to in_progress
+			await taskManager.updateTaskStatus(task.id, 'in_progress');
+
+			// Runtime escalates to review without a prUrl (max feedback iterations reached)
+			const escalated = await taskManager.reviewTask(task.id);
+
+			// PR data must be preserved — not wiped
+			expect(escalated.status).toBe('review');
+			expect(escalated.prUrl).toBe('https://github.com/org/repo/pull/42');
+			expect(escalated.prNumber).toBe(42);
+			expect(escalated.prCreatedAt).toBeDefined();
+		});
+
+		it('should overwrite PR data when reviewed again with a new prUrl', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
+
+			// Move back to in_progress, then submit new PR
+			await taskManager.updateTaskStatus(task.id, 'in_progress');
+			const updated = await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/2');
+
+			expect(updated.prUrl).toBe('https://github.com/org/repo/pull/2');
+			expect(updated.prNumber).toBe(2);
 		});
 
 		it('should throw error for non-existent task', async () => {
