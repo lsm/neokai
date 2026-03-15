@@ -86,6 +86,10 @@ export class ConversationManager {
 				const result = extractToolResultContent(messages, toolUseId);
 				if (result !== undefined) {
 					toolResults.push({ toolUseId, result });
+				} else {
+					logger.warn(
+						`tool_result content missing for tool_use_id ${toolUseId} — handler will time out`
+					);
 				}
 			}
 			return { conv, toolResults };
@@ -110,7 +114,12 @@ export class ConversationManager {
 	): Promise<ActiveConversation> {
 		const registry = new ToolBridgeRegistry();
 
-		// Wire up: when the registry gets a pending tool call, register it here.
+		// Declare conv with `let` BEFORE registering the callback so the closure
+		// captures the mutable binding (not a TDZ const reference).  conv is
+		// assigned after createSession() returns — tool handlers are only called
+		// after session.send() which happens after createConversation() completes,
+		// so `conv` is always initialized by the time the callback fires.
+		let conv: ActiveConversation;
 		registry.setOnPendingToolCall((toolCallId) => {
 			this.byToolCallId.set(toolCallId, conv);
 			this.scheduleCleanup(conv);
@@ -139,17 +148,7 @@ export class ConversationManager {
 			hooks: {},
 		});
 
-		// conv is referenced inside the registry callback above so declare it with
-		// a late-binding trick (immediately assigned below).
-		const conv: ActiveConversation = { session, registry };
-		// Patch: re-register the callback now that `conv` is defined.
-		// (The previous registration used `conv` before it was initialized —
-		//  we overwrite it here with the correct reference.)
-		registry.setOnPendingToolCall((toolCallId) => {
-			this.byToolCallId.set(toolCallId, conv);
-			this.scheduleCleanup(conv);
-		});
-
+		conv = { session, registry };
 		return conv;
 	}
 
@@ -195,6 +194,23 @@ export class ConversationManager {
 		await conv.session.disconnect().catch((err: unknown) => {
 			logger.warn('Error disconnecting conversation session:', err);
 		});
+	}
+
+	// ---------------------------------------------------------------------------
+	// Shutdown
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Release all active conversations.  Call before daemon shutdown to ensure
+	 * suspended tool-handler Promises are rejected and TTL timers are cleared so
+	 * the event loop can exit cleanly.
+	 */
+	async shutdown(): Promise<void> {
+		const convs = new Set<ActiveConversation>([
+			...this.byToolCallId.values(),
+			...this.cleanupTimers.keys(),
+		]);
+		await Promise.allSettled([...convs].map((c) => this.releaseConversation(c)));
 	}
 
 	// ---------------------------------------------------------------------------

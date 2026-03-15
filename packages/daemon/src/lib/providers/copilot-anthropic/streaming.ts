@@ -62,8 +62,9 @@ export type StreamingOutcome =
  * @param startFn    Called after the event subscription is set up.
  *                   For new turns: calls `session.send(prompt)`.
  *                   For continuations: resolves tool results.
- *                   Receives `finishCompleted` as argument so async failures
- *                   (e.g. session.send() rejection) can resolve the outer Promise.
+ *                   Receives `finishCompleted` and `writeFailed` as arguments so
+ *                   async failures (e.g. session.send() rejection) can emit a
+ *                   well-formed SSE epilogue using the original writer state.
  * @param onDone     Called when the session is done (before disconnect).
  */
 function streamSession(
@@ -72,7 +73,7 @@ function streamSession(
 	req: IncomingMessage,
 	res: ServerResponse,
 	registry: ToolBridgeRegistry | undefined,
-	startFn: (finish: () => void) => void,
+	startFn: (finish: () => void, writeFailed: () => void) => void,
 	onDone: () => void
 ): Promise<StreamingOutcome> {
 	const writer = new AnthropicStreamWriter();
@@ -99,13 +100,10 @@ function streamSession(
 		resolve({ kind: 'completed' });
 	}
 
-	let toolCallIdEmitted: string | null = null;
-
 	function finishToolUse(toolCallId: string): void {
 		if (sessionDone) return;
 		// Mark done so the req.on('close') handler does not abort the session.
 		sessionDone = true;
-		toolCallIdEmitted = toolCallId;
 		unsubscribe();
 		// Do NOT disconnect — session is still alive waiting for tool_result.
 		resolve({ kind: 'tool_use', toolCallId });
@@ -163,11 +161,12 @@ function streamSession(
 		}
 	});
 
-	startFn(finishCompleted);
-
-	// Capture toolCallIdEmitted to satisfy the linter — it is used inside
-	// finishToolUse which is called synchronously from the tool handler.
-	void toolCallIdEmitted;
+	// Pass writeFailed so startFn can emit a well-formed SSE epilogue using the
+	// original writer state (e.g. when session.send() rejects mid-stream).
+	startFn(finishCompleted, () => {
+		writer.sendFailed(res);
+		res.end();
+	});
 
 	return promise;
 }
@@ -197,16 +196,13 @@ export function runSessionStreaming(
 		req,
 		res,
 		registry,
-		(finish) => {
+		(finish, writeFailed) => {
 			session.send({ prompt }).catch((err: unknown) => {
-				// send() can reject if the CLI subprocess crashes.  Emit a well-formed
-				// SSE epilogue so the Claude Agent SDK parser sees a complete stream.
-				// writeHead was already called by writer.start() so we write only the
-				// epilogue events here, then call finish() to resolve the outer Promise.
+				// send() can reject if the CLI subprocess crashes.  Use writeFailed()
+				// so the original writer's state (open text blocks etc.) is consistent
+				// with the SSE epilogue.  writeHead was already called by writer.start().
 				logger.error('Failed to send prompt to Copilot session:', err);
-				const writer2 = new AnthropicStreamWriter();
-				writer2.sendFailed(res);
-				res.end();
+				writeFailed();
 				session.abort().catch(() => {});
 				finish();
 			});
@@ -236,10 +232,9 @@ export function resumeSessionStreaming(
 		req,
 		res,
 		registry,
-		(_finish) => {
+		(_finish, _writeFailed) => {
 			// Deliver tool results AFTER the event subscription is live so we cannot
 			// miss events that fire immediately after resumption.
-			// (_finish is not needed here — no async failure path in result delivery.)
 			for (const { toolUseId, result } of toolResults) {
 				registry.resolveToolResult(toolUseId, result);
 			}
