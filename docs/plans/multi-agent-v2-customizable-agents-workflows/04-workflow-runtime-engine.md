@@ -2,13 +2,34 @@
 
 ## Goal
 
-Build a workflow executor that can run tasks through configurable step sequences instead of the hardcoded planning/execution/review cycle. The workflow runtime reads `Workflow` definitions from the data layer and orchestrates agent sessions according to the defined steps and gates.
+Build a goal-level workflow executor that orchestrates agent step sequences while preserving the existing Leader/Worker group model. The executor reads `Workflow` definitions from the data layer and manages step progression, gate evaluation, and rule injection.
+
+## Key Architecture: Goal-Level Orchestration with Preserved Leader/Worker Pairs
+
+The `WorkflowExecutor` operates at the **goal level**, not the task level:
+
+1. A goal has an associated workflow (e.g., Planner -> Coder -> Security Reviewer)
+2. Each workflow step produces **tasks**. The executor creates tasks for the current step's agent.
+3. Each task still gets a **Worker + Leader group pair**. The Leader reviews the Worker's output via the existing `submit_for_review` -> `complete_task` / `send_to_worker` cycle.
+4. When a step's tasks complete (Leader approves), the executor evaluates the **exit gate** and, if passed, advances to the next step (creating new tasks for the next agent).
+5. Custom agents with `role: 'reviewer'` are specialized Workers (e.g., produce a security audit), NOT replacements for the Leader. The Leader still approves/rejects their output.
+
+**What changes in `RoomRuntime`:**
+- `onWorkerTerminalState` / `onLeaderTerminalState` remain unchanged within a group
+- After a task completes (Leader approves via `complete_task`), the goal-level completion path checks the `WorkflowExecutor` to decide whether to advance to the next step or mark the goal as complete
+- The existing `submittedForReview` / `approved` / `feedbackIteration` semantics are unchanged per group
+
+**What does NOT change:**
+- Worker/Leader pair creation in `TaskGroupManager`
+- `createLeaderCallbacks()` and Leader tool contract (`complete_task` must follow `submit_for_review`)
+- The `onWorkerTerminalState` -> Leader routing flow
+- Non-workflow tasks (fallback to existing hardcoded behavior)
 
 ## Scope
 
-- New `WorkflowExecutor` class that interprets workflow step sequences
-- Integration with existing `RoomRuntime` tick loop
-- Gate evaluation logic (auto, human_approval, quality_check, pr_review, custom)
+- New `WorkflowExecutor` class that interprets workflow step sequences at the goal level
+- Integration with existing `RoomRuntime` goal completion path
+- Gate evaluation logic with security enforcement (auto, human_approval, quality_check, pr_review, custom)
 - Rule injection into agent system prompts
 - Backward compatibility: rooms without a custom workflow use the default built-in behavior
 - Unit and online tests
@@ -23,49 +44,62 @@ Build a workflow executor that can run tasks through configurable step sequences
 
 **Description:**
 
-Create the `WorkflowExecutor` class that manages the progression of a task through workflow steps.
+Create the `WorkflowExecutor` class that manages the progression of a goal through workflow steps.
 
 **Subtasks:**
 
 1. Create `packages/daemon/src/lib/room/runtime/workflow-executor.ts`:
    - `WorkflowExecutor` class with:
-     - Constructor takes: `workflow: Workflow`, `taskId: string`, `groupRepo: SessionGroupRepository`, `taskManager: TaskManager`, `customAgentManager: CustomAgentManager`
-     - `getCurrentStep(): WorkflowStep | null` -- returns the current active step based on task/group state
+     - Constructor takes: `workflow: Workflow`, `goalId: string`, `taskManager: TaskManager`, `customAgentManager: CustomAgentManager`, `workspacePath: string`
+     - `getCurrentStep(): WorkflowStep | null` -- returns the current active step based on goal/task state
      - `getNextStep(): WorkflowStep | null` -- returns the next step in sequence
      - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` -- evaluates the current step's exit gate
-     - `advance(): Promise<WorkflowStep>` -- moves to the next step, creates the session group for it
-     - `isComplete(): boolean` -- returns true if all steps have been executed
+     - `advance(): Promise<{ step: WorkflowStep; tasks: NeoTask[] }>` -- moves to the next step, creates tasks for the next agent
+     - `isComplete(): boolean` -- returns true if all steps have been executed and gates passed
 
-2. Add workflow execution state tracking in `SessionGroupRepository`:
-   - Add `workflowId` and `currentStepId` to `TaskGroupMetadata`
-   - Track which workflow step a group is executing
+2. Track workflow state on the goal:
+   - Use `goals.workflow_id` (added in consolidated Migration B) to associate goals with workflows
+   - Track current step via task metadata (latest task's `current_workflow_step_id`)
 
-3. Implement gate evaluation:
+3. Implement gate evaluation with security enforcement:
    - `evaluateGate(gate: WorkflowGate, context: GateContext): Promise<GateResult>`
-   - `GateContext` includes: `workspacePath`, `taskId`, `groupId`, `workerOutput`, etc.
+   - `GateContext` includes: `workspacePath`, `goalId`, `taskId`, `lastTaskSummary`, etc.
    - Gate types:
      - `auto`: always passes
-     - `human_approval`: checks `group.approved` flag (reuses existing pattern)
-     - `quality_check`: runs shell command (e.g., `bun run check`) and checks exit code
+     - `human_approval`: checks approval flag (reuses existing pattern from `submittedForReview`/`approved`)
+     - `quality_check`: runs command from **allowlist only** (e.g., `bun run check`, `bun test`) with timeout enforcement. Reject any command not in the allowlist.
      - `pr_review`: reuses existing `runWorkerExitGate` logic from lifecycle-hooks.ts
-     - `custom`: runs user-provided command, checks exit code
+     - `custom`: validates command is a relative path within workspace (no `..`, no absolute paths), then runs with timeout via `Bun.spawn`. Logs command output for debugging.
+   - **Timeout enforcement**: All shell-executing gates (`quality_check`, `custom`) use `gate.timeoutMs` (default: 60000ms, max: 300000ms) via `Bun.spawn`'s timeout option. On timeout, gate fails with a descriptive error.
+   - **Retry logic**: On gate failure, if `gate.maxRetries > 0` and retries remain, re-evaluate the gate (do NOT re-run the agent step). After all retries exhausted, fail the gate and transition the task to `needs_attention`.
 
-4. Write unit tests:
-   - Step progression through a multi-step workflow
+4. Define the quality check command allowlist:
+   - Create `packages/daemon/src/lib/room/runtime/gate-allowlist.ts`
+   - Default allowlist: `['bun run check', 'bun test', 'bun run lint', 'bun run typecheck', 'bun run format:check']`
+   - Allowlist is configurable via room settings (future extensibility)
+
+5. Write unit tests:
+   - Step progression through a multi-step workflow at the goal level
    - Gate evaluation for each gate type
+   - Gate security: reject non-allowlisted commands for quality_check, reject path traversal for custom gates
+   - Timeout enforcement (mock Bun.spawn)
+   - Retry logic (re-evaluate gate, not re-run step)
    - Workflow completion detection
-   - Error handling (missing step, gate failure)
+   - Error handling (missing step, gate failure, timeout)
 
 **Acceptance criteria:**
-- `WorkflowExecutor` can advance a task through a sequence of steps
-- All gate types are evaluated correctly
-- State is persisted via group metadata
+- `WorkflowExecutor` can advance a goal through a sequence of steps
+- All gate types are evaluated correctly with security enforcement
+- Non-allowlisted commands are rejected
+- Path traversal in custom gates is rejected
+- Timeout is enforced on all shell-executing gates
+- Retry re-evaluates gate only (not agent step)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 4.2: Integrate WorkflowExecutor into RoomRuntime
+### Task 4.2a: Integrate WorkflowExecutor into RoomRuntime — Workflow Resolution and Step Spawning
 
 **Agent:** coder
 **Priority:** high
@@ -73,41 +107,80 @@ Create the `WorkflowExecutor` class that manages the progression of a task throu
 
 **Description:**
 
-Update `RoomRuntime` to use `WorkflowExecutor` when a task has an associated workflow, while preserving the existing hardcoded behavior as fallback.
+Update `RoomRuntime` to resolve workflows for goals and spawn tasks using the `WorkflowExecutor`. This is the first part of the runtime integration, focused on workflow resolution and task creation.
 
 **Subtasks:**
 
-1. In `RoomRuntime`, add workflow resolution logic:
-   - When spawning a group for a task, check if the task's goal has an associated workflow (via room's default workflow or task-level override)
-   - If a workflow exists, create a `WorkflowExecutor` and use it to determine which agent to spawn for the first step
-   - Store `workflowId` in the group metadata
+1. Add `WorkflowManager` and `WorkflowExecutor` factory as dependencies in `RoomRuntimeConfig`
 
-2. Update the `onWorkerTerminalState` handler:
-   - If the group has a `workflowId`, use the `WorkflowExecutor` to evaluate the exit gate and determine the next step
-   - If the next step is a different agent, complete the current group and spawn a new one for the next step
-   - If the exit gate requires human approval, set `submittedForReview` (reuse existing pattern)
-   - If all steps are complete, mark the task as completed
+2. Add workflow resolution logic in the goal processing path:
+   - When a new goal is created or started, check if it has a `workflowId`
+   - If no explicit `workflowId`, check room's default workflow
+   - If a workflow is found, create a `WorkflowExecutor` instance for the goal
+   - Store executors in a `Map<goalId, WorkflowExecutor>` on the runtime
 
-3. Inject workflow rules into agent system prompts:
-   - When building the `WorkerConfig`, check if the current step has associated rules
-   - Append applicable rules to the system prompt
+3. Update task creation for workflow goals:
+   - For the first step, create tasks assigned to the step's agent (using `customAgentId` for custom agents, `assignedAgent` for built-in)
+   - Set `task.workflowId` and `task.currentWorkflowStepId` on created tasks
 
 4. Backward compatibility:
-   - If no workflow is associated with a task/goal/room, use the existing hardcoded behavior (no behavior change)
+   - If no workflow is associated with a goal/room, use the existing hardcoded behavior (no behavior change)
    - The existing `taskType` and `assignedAgent` fields continue to work as before
+   - **Explicit regression test**: verify that the entire existing flow (goal -> planner -> coder -> leader) works identically when no workflow is configured
 
 5. Write integration tests:
-   - Run a task through a 3-step workflow (plan -> code -> review)
-   - Verify gates are checked between steps
-   - Verify rules are injected
-   - Verify fallback to built-in behavior when no workflow exists
-   - Verify human approval gate pauses execution
+   - Goal with workflow resolves to WorkflowExecutor
+   - First step tasks are created with correct agent assignment
+   - Goals without workflows use existing behavior (regression test covering the full goal -> planner -> coder -> leader flow)
 
 **Acceptance criteria:**
-- Tasks with workflows progress through steps automatically
-- Gates between steps are enforced
-- Rules are injected into agent prompts
-- Existing non-workflow tasks are unaffected
+- Workflow resolution works for goals with explicit, room-default, and no workflows
+- Task creation uses the correct agent for the current workflow step
+- Existing non-workflow goals are completely unaffected (comprehensive regression test)
+- Integration tests pass
+- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+
+---
+
+### Task 4.2b: Integrate WorkflowExecutor into RoomRuntime — Step Advancement and Gate Enforcement
+
+**Agent:** coder
+**Priority:** high
+**Depends on:** Task 4.2a
+
+**Description:**
+
+Update the goal completion path in `RoomRuntime` to use `WorkflowExecutor` for gate evaluation and step advancement.
+
+**Subtasks:**
+
+1. Update the goal-level task completion handler:
+   - After a task completes (Leader approves via `complete_task`), check if the goal has a `WorkflowExecutor`
+   - If yes, call `executor.canAdvance()` to evaluate the current step's exit gate
+   - If gate passes, call `executor.advance()` to create tasks for the next step
+   - If gate requires human approval, set appropriate flag and pause
+   - If gate fails (after retries), set task to `needs_attention`
+   - If all steps complete, mark the goal as complete
+
+2. Inject workflow rules into agent system prompts:
+   - When building the `WorkerConfig` for a workflow task, check the current step for associated rules
+   - Append applicable rules (filtered by `rule.appliesTo`) to the system prompt
+   - Rules with empty `appliesTo` are injected for all steps
+
+3. Write integration tests:
+   - Run a goal through a 3-step workflow (plan -> code -> review)
+   - Verify exit gates are checked between steps
+   - Verify entry gates are checked before step starts
+   - Verify rules are injected into agent prompts
+   - Verify human approval gate pauses execution
+   - Verify gate failure transitions to needs_attention
+
+**Acceptance criteria:**
+- Goals with workflows progress through steps when tasks complete
+- Gates between steps are enforced (including security constraints)
+- Rules are injected into agent prompts per step
+- Human approval gates pause correctly
+- Gate failures are handled gracefully
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -117,7 +190,7 @@ Update `RoomRuntime` to use `WorkflowExecutor` when a task has an associated wor
 
 **Agent:** coder
 **Priority:** normal
-**Depends on:** Task 4.2
+**Depends on:** Task 4.2b
 
 **Description:**
 
@@ -125,32 +198,39 @@ Update task status tracking and group lifecycle to reflect workflow step progres
 
 **Subtasks:**
 
-1. Add workflow step tracking to `NeoTask`:
-   - Add `workflowId?: string` and `currentWorkflowStepId?: string` to the `NeoTask` interface
-   - Add corresponding columns in a new migration
-   - Update `TaskRepository` to read/write these fields
+1. Update task and goal fields for workflow tracking:
+   - `NeoTask.workflowId` and `NeoTask.currentWorkflowStepId` are already available from consolidated Migration B (Task 3.2)
+   - Update `TaskRepository` to read/write these fields (update `rowToTask()` mapping, SQL INSERT/UPDATE statements)
+   - Update `GoalRepository` to read/write `goals.workflow_id` (update `rowToGoal()` mapping, SQL INSERT/UPDATE statements)
 
-2. Update task status events to include workflow context:
+2. Update `SessionGroup` and `TaskGroupMetadata`:
+   - Add `workflowId` and `currentStepId` to `TaskGroupMetadata` in `session-group-repository.ts`
+   - Also update `SessionGroup` (the public view) to expose `workflowId`/`currentStepId` since consumers use `group.workflowId`, not `group.metadata.workflowId`
+
+3. Update task status events to include workflow context:
    - `room.task.update` events should include `workflowStepName` for UI display
    - The frontend can show "Step 2/3: Code Review" in the task view
 
-3. Update `TaskSummary` to include workflow info:
+4. Update `TaskSummary` to include workflow info:
    - Add `workflowStepName?: string` and `workflowTotalSteps?: number` to `TaskSummary`
 
-4. Handle multi-group lifecycle:
-   - A workflow task may spawn multiple sequential groups (one per step)
-   - Track the relationship: `taskId -> [groupId1 (step 1), groupId2 (step 2), ...]`
-   - The task remains `in_progress` until the final step completes
-   - If any step fails, the task goes to `needs_attention`
+5. Handle multi-step goal lifecycle:
+   - A workflow goal spawns sequential sets of tasks (one set per step)
+   - Track the relationship: `goalId -> step -> [task1, task2, ...]`
+   - The goal remains `in_progress` until the final step completes
+   - If any step fails (gate fails after retries), the goal goes to `needs_attention`
 
-5. Write unit tests:
+6. Write unit tests:
    - Task fields updated correctly at each step transition
-   - Multi-group tracking
+   - GoalRepository correctly reads/writes workflow_id
+   - SessionGroup exposes workflow metadata
+   - Multi-step goal tracking
    - Failure in middle step surfaces correctly
 
 **Acceptance criteria:**
-- Tasks track their current workflow step
+- Tasks and goals track their current workflow step
+- SessionGroup exposes workflow metadata to consumers
 - UI events include step progression info
-- Multi-group lifecycle is managed correctly
+- Multi-step goal lifecycle is managed correctly
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

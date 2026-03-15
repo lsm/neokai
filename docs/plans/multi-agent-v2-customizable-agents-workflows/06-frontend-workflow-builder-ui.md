@@ -4,6 +4,24 @@
 
 Build the visual workflow builder UI for composing agents into step sequences with gates and rules. Users should be able to create workflows by adding agent steps, configuring gates between them, and defining rules.
 
+## Dependency Clarification
+
+**M6 depends only on M3 (Workflow Data Model), NOT M4 (Workflow Runtime Engine).** The workflow builder is a pure data management UI — it creates and edits workflow definitions via RPC. The runtime engine (M4) consumes these definitions at execution time but is not needed for the builder UI. This allows M6 to proceed in parallel with M4 once M3 is complete.
+
+## Shared State Design
+
+Workflow state in `room-store.ts` follows the same pattern as custom agents:
+
+```typescript
+// In room-store.ts (alongside customAgents signal from M5)
+const workflows = signal<Workflow[]>([]);
+
+// Fetched when a room is selected
+// Updated in real-time via DaemonHub events: workflow.created, workflow.updated, workflow.deleted
+```
+
+Both `customAgents` and `workflows` signals share the same reactive pattern. If M5 and M6 are implemented by different developers, they should coordinate on the `room-store.ts` signal shape to avoid conflicts.
+
 ## Scope
 
 - Workflow list component
@@ -87,34 +105,37 @@ Build the core workflow editor -- a visual step builder where users add, reorder
    - Expanded: shows full configuration
    - Fields:
      - **Name**: text input
-     - **Agent**: dropdown populated from built-in agents + custom agents in the room
+     - **Agent**: dropdown populated from built-in agents (`planner`, `coder`, `general` — NOT `leader`) + custom agents in the room (from `customAgents` signal)
      - **Entry Gate**: gate type selector (auto, human_approval, quality_check, pr_review, custom)
      - **Exit Gate**: gate type selector
      - **Instructions**: textarea for step-specific instructions
    - Remove step button (with confirmation for non-empty steps)
 
 3. Gate configuration sub-form:
-   - When gate type is `custom`, show a command input field
-   - When gate type is `quality_check`, show preset options (e.g., "Run tests", "Run linter")
+   - When gate type is `quality_check`, show a dropdown of allowlisted commands (not a free-form text input)
+   - When gate type is `custom`, show a command input field with hint: "Relative path to script in workspace (e.g., scripts/check.sh)"
    - `human_approval` and `pr_review` need no additional config
    - Description field for all gate types
+   - Optional timeout field for `quality_check` and `custom` gates
 
 4. Built-in workflow templates:
    - "Start from template" option when creating a new workflow
-   - Templates: "Coding (Plan -> Code -> Review)", "Research (Plan -> Research -> Review)", "Quick Fix (Code -> Review)"
+   - Templates: "Coding (Plan -> Code)", "Research (Plan -> Research)", "Quick Fix (Code only)"
+   - Note: Templates do not include Leader as a step (Leader is implicit per group)
    - Template populates steps and gates with sensible defaults
 
 5. Write unit tests:
    - Step adding and removal
    - Step reordering
-   - Agent selection populates correctly
+   - Agent selection populates correctly (built-in agents exclude 'leader')
    - Gate configuration forms render correctly
+   - Quality check gate shows allowlisted commands only
 
 **Acceptance criteria:**
 - Users can build multi-step workflows visually
 - Steps can be added, removed, and reordered
-- Agent selection includes both built-in and custom agents
-- Gate configuration is intuitive
+- Agent selection includes built-in agents (excluding 'leader') and custom agents
+- Gate configuration is intuitive with security constraints visible
 - Templates provide quick-start options
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
