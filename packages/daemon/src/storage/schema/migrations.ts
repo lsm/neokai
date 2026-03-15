@@ -1211,14 +1211,15 @@ function runMigration27(db: BunDatabase): void {
 	if (!tableExists(db, 'tasks')) {
 		return;
 	}
-	if (tableHasColumn(db, 'tasks', 'updated_at')) {
-		return;
+	if (!tableHasColumn(db, 'tasks', 'updated_at')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN updated_at INTEGER`);
+		// Backfill updated_at with the best available timestamp for existing rows
+		db.exec(
+			`UPDATE tasks SET updated_at = COALESCE(completed_at, started_at, created_at) WHERE updated_at IS NULL`
+		);
 	}
-	db.exec(`ALTER TABLE tasks ADD COLUMN updated_at INTEGER`);
-	// Backfill updated_at with the best available timestamp for existing rows
-	db.exec(
-		`UPDATE tasks SET updated_at = COALESCE(completed_at, started_at, created_at) WHERE updated_at IS NULL`
-	);
+	// Add composite index for listTasks() query: WHERE room_id = ? ORDER BY updated_at DESC
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {

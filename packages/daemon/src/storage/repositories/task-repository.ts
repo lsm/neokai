@@ -50,9 +50,9 @@ export class TaskRepository {
 	promoteDraftTasksByCreator(createdByTaskId: string): number {
 		const result = this.db
 			.prepare(
-				`UPDATE tasks SET status = 'pending' WHERE created_by_task_id = ? AND status = 'draft'`
+				`UPDATE tasks SET status = 'pending', updated_at = ? WHERE created_by_task_id = ? AND status = 'draft'`
 			)
-			.run(createdByTaskId);
+			.run(Date.now(), createdByTaskId);
 		return result.changes;
 	}
 
@@ -207,8 +207,9 @@ export class TaskRepository {
 	 * Returns the updated task or null if not found.
 	 */
 	archiveTask(id: string): NeoTask | null {
-		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ? WHERE id = ?`);
-		stmt.run(Date.now(), id);
+		const now = Date.now();
+		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ?, updated_at = ? WHERE id = ?`);
+		stmt.run(now, now, id);
 		return this.getTask(id);
 	}
 
