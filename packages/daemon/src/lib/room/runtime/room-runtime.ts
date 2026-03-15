@@ -801,11 +801,13 @@ export class RoomRuntime {
 			case 'send_to_worker': {
 				// Enforce max feedback iterations — runtime escalates to human review.
 				// The reason is persisted in the group timeline by escalateToHumanReview().
-				// Only apply this limit when the task is in 'in_progress' state.
+				// Only apply this limit when the task is NOT in 'review' state.
 				// When the task is in 'review' state (human review phase), there is no limit.
+				// Null task (record deleted): conservatively enforce the limit; escalateToHumanReview
+				// will throw in that case, which is acceptable as a defensive edge-case.
 				const taskForCheck = await this.taskManager.getTask(group.taskId);
-				const isInProgress = !taskForCheck || taskForCheck.status === 'in_progress';
-				if (isInProgress && group.feedbackIteration >= this.maxFeedbackIterations) {
+				const shouldEnforceLimit = !taskForCheck || taskForCheck.status !== 'review';
+				if (shouldEnforceLimit && group.feedbackIteration >= this.maxFeedbackIterations) {
 					const reason = `Max feedback iterations (${this.maxFeedbackIterations}) reached`;
 					await this.taskGroupManager.escalateToHumanReview(groupId, reason);
 					this.appendGroupEvent(groupId, 'status', {
