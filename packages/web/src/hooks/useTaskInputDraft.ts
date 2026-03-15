@@ -67,20 +67,28 @@ export function useTaskInputDraft(
 
 	// Load draft when taskId/roomId changes (including on mount).
 	// Clear content immediately on each change so the previous task's draft isn't shown.
+	//
+	// The `cancelled` flag prevents a stale task.get response from writing to the
+	// wrong task. Without it, a slow task-A load that resolves AFTER the user switches
+	// to task-B would write draftA into contentSignal while taskIdRef.current = task-B,
+	// causing the signal effect to save draftA to task-B (cross-task data corruption).
 	useEffect(() => {
+		let cancelled = false;
 		isLoadingRef.current = true;
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;
 
 		if (!taskId || !roomId) {
 			isLoadingRef.current = false;
-			return;
+			return () => {
+				cancelled = true;
+			};
 		}
 
 		const loadDraft = async () => {
 			const hub = connectionManager.getHubIfConnected();
 			if (!hub) {
-				isLoadingRef.current = false;
+				if (!cancelled) isLoadingRef.current = false;
 				return;
 			}
 
@@ -89,6 +97,7 @@ export function useTaskInputDraft(
 					roomId,
 					taskId,
 				});
+				if (cancelled) return; // stale response — discard to prevent cross-task write
 				const draft = response.task?.inputDraft;
 				if (draft) {
 					contentSignal.value = draft;
@@ -97,11 +106,18 @@ export function useTaskInputDraft(
 			} catch {
 				// Ignore errors loading draft
 			} finally {
-				isLoadingRef.current = false;
+				if (!cancelled) isLoadingRef.current = false;
 			}
 		};
 
 		loadDraft();
+
+		return () => {
+			cancelled = true;
+			// Clear the loading guard so a task switch doesn't leave it permanently true.
+			// The next task's effect will immediately set it back to true.
+			isLoadingRef.current = false;
+		};
 	}, [taskId, roomId, contentSignal, draftRestoredSignal]);
 
 	// Flush any pending debounced save on unmount so no keystroke is lost.
