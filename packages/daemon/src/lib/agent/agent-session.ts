@@ -62,7 +62,7 @@
  * that continuously yields messages from a queue.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	AgentProcessingState,
 	MessageContent,

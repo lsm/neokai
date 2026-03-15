@@ -11,7 +11,7 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';

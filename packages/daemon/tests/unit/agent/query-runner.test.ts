@@ -8,7 +8,7 @@ import { describe, expect, it, beforeEach, mock } from 'bun:test';
 import { QueryRunner, type QueryRunnerContext } from '../../../src/lib/agent/query-runner';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { SDKMessage } from '@neokai/shared/sdk';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Database } from '../../../src/storage/database';
 import type { MessageQueue } from '../../../src/lib/agent/message-queue';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';

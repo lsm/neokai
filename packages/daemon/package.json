@@ -19,7 +19,7 @@
 		"test:online": "bun test --coverage --coverage-reporter=text ./tests/online"
 	},
 	"dependencies": {
-		"@anthropic-ai/claude-agent-sdk": "0.2.55",
+		"@anthropic-ai/claude-agent-sdk": "0.2.76",
 		"@mariozechner/pi-ai": "^0.58.2",
 		"@mariozechner/pi-agent-core": "^0.58.2",
 		"@neokai/shared": "workspace:*",

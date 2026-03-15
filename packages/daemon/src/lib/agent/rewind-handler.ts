@@ -10,7 +10,7 @@
  * - Checkpoint retrieval (from user messages in DB)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	RewindMode,
 	RewindPreview,

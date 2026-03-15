@@ -5,7 +5,7 @@
  * No special configuration needed - the SDK handles everything.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	Provider,
 	ProviderCapabilities,

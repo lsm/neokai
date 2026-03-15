@@ -493,6 +493,27 @@ describe('SDKUserMessage', () => {
 		});
 	});
 
+	describe('Send Status', () => {
+		it('should show "not delivered" badge when sendStatus is failed', () => {
+			const message = {
+				...createTextMessage('Hello world'),
+				sendStatus: 'failed',
+			};
+
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.textContent).toContain('not delivered');
+		});
+
+		it('should not show "not delivered" badge when sendStatus is absent', () => {
+			const message = createTextMessage('Hello world');
+
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			expect(container.textContent).not.toContain('not delivered');
+		});
+	});
+
 	describe('Styling', () => {
 		it('should be right-aligned (user messages)', () => {
 			const message = createTextMessage('Hello');

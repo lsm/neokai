@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
 import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
 import {

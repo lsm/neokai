@@ -14,7 +14,7 @@
  * - Circuit breaker trip handling (error loop detection)
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
 import type { MessageHub, Session, ContextInfo } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';

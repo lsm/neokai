@@ -16,7 +16,7 @@
  * fresh system:init is emitted with the correct model.
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, SessionConfig, CurrentModelInfo, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';

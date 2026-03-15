@@ -228,6 +228,16 @@ describe('SubagentBlock', () => {
 			// Default is indigo
 			expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
 		});
+
+		it('should render general-purpose fallback when subagent_type is undefined', () => {
+			const input: AgentInput = { description: 'Unnamed task', prompt: 'Do something' };
+			const { container } = render(<SubagentBlock input={input} toolId="toolu_task123" />);
+
+			// Falls back to general-purpose color scheme (indigo)
+			expect(container.querySelector('.bg-indigo-50, .dark\\:bg-indigo-900\\/20')).toBeTruthy();
+			// Badge should display the fallback label
+			expect(container.textContent).toContain('general-purpose');
+		});
 	});
 
 	describe('Expanded State', () => {

@@ -11,7 +11,7 @@
  */
 
 import type { ModelInfo } from '@neokai/shared';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { initializeProviders } from './providers/factory.js';
 import { getProviderRegistry } from './providers/registry.js';
 import type { Provider } from '@neokai/shared/provider';
