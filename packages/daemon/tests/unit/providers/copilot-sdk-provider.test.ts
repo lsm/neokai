@@ -41,12 +41,15 @@ function makeContext(aborted = false) {
 	return { signal: controller.signal, sessionId: 'test-session', usesCustomQuery: true };
 }
 
-function makeOptions(overrides: Partial<{ model: string; cwd: string }> = {}) {
+function makeOptions(
+	overrides: Partial<{ model: string; cwd: string; systemPrompt: string }> = {}
+) {
 	return {
 		model: overrides.model ?? 'claude-sonnet-4.6',
 		cwd: overrides.cwd ?? '/tmp',
 		tools: [],
 		maxTurns: 10,
+		systemPrompt: overrides.systemPrompt,
 	};
 }
 
@@ -573,6 +576,53 @@ describe('copilotSdkQueryGenerator (mock session events)', () => {
 		}
 
 		expect(usedResume).toBe(true);
+	});
+
+	it('should prepend systemPrompt as [Context: ...] prefix in session.send()', async () => {
+		let capturedPrompt: string | undefined;
+		const session = new MockCopilotSession();
+
+		session.send = async (opts: unknown): Promise<string> => {
+			capturedPrompt = (opts as { prompt: string }).prompt;
+			queueMicrotask(() => session.emit('session.idle', {}));
+			return 'msg-id';
+		};
+
+		const client = makeMockClient(() => session);
+		for await (const _ of copilotSdkQueryGenerator(
+			makePrompt('user question'),
+			makeOptions({ systemPrompt: 'be concise' }),
+			makeContext(),
+			{ ...makeConfig(), client }
+		)) {
+			// consume
+		}
+
+		expect(capturedPrompt).toStartWith('[Context: be concise]\n\n');
+		expect(capturedPrompt).toContain('user question');
+	});
+
+	it('should send prompt without prefix when no systemPrompt is set', async () => {
+		let capturedPrompt: string | undefined;
+		const session = new MockCopilotSession();
+
+		session.send = async (opts: unknown): Promise<string> => {
+			capturedPrompt = (opts as { prompt: string }).prompt;
+			queueMicrotask(() => session.emit('session.idle', {}));
+			return 'msg-id';
+		};
+
+		const client = makeMockClient(() => session);
+		for await (const _ of copilotSdkQueryGenerator(
+			makePrompt('bare question'),
+			makeOptions(), // no systemPrompt
+			makeContext(),
+			{ ...makeConfig(), client }
+		)) {
+			// consume
+		}
+
+		expect(capturedPrompt).toBe('bare question');
 	});
 });
 

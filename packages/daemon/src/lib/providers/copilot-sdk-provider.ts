@@ -62,7 +62,12 @@ const logger = new Logger('copilot-sdk-provider');
  * aliases to explicitly route a query to this provider.
  *
  * - Claude IDs: also claimed by GitHubCopilotProvider and CopilotCliProvider
- * - Non-Anthropic IDs: also claimed by CopilotCliProvider (registered first)
+ * - gpt-5.3-codex, gpt-5-mini: also claimed by GitHubCopilotProvider (registered first)
+ * - gemini-3-pro-preview: also claimed by CopilotCliProvider (registered before SDK)
+ *
+ * Note: GitHubCopilotProvider uses `gemini-3.1-pro-preview` (different minor version)
+ * while this provider and CopilotCliProvider use `gemini-3-pro-preview`. They are
+ * treated as separate model IDs; `gemini-3-pro-preview` routes to CopilotCliProvider.
  */
 const SHARED_MODEL_IDS = new Set([
 	'claude-opus-4.6',
