@@ -766,4 +766,103 @@ describe('useTaskInputDraft', () => {
 			expect(updateDraftCallsAfterLoad.length).toBe(0);
 		});
 	});
+
+	// ── Cancelled flag: cross-task stale response prevention ─────────────────
+
+	describe('cancelled flag (cross-task data corruption prevention)', () => {
+		it('should discard stale task.get response after task switch', async () => {
+			let resolveTaskA!: (value: unknown) => void;
+
+			// task-A load returns a slow promise
+			mockHub.request.mockImplementation((_method, params) => {
+				if (params?.taskId === 'task-A') {
+					return new Promise((resolve) => {
+						resolveTaskA = resolve;
+					});
+				}
+				// task-B load resolves immediately with no draft
+				return Promise.resolve({ task: {} });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft('room-1', taskId), {
+				initialProps: { taskId: 'task-A' },
+			});
+
+			// task-A load is in flight
+			expect(mockHub.request).toHaveBeenCalledWith('task.get', {
+				roomId: 'room-1',
+				taskId: 'task-A',
+			});
+
+			// Switch to task-B before task-A load resolves
+			rerender({ taskId: 'task-B' });
+
+			// task-B loads immediately
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			expect(result.current.content).toBe('');
+
+			// Now task-A's stale response resolves with a draft
+			resolveTaskA({ task: { inputDraft: 'Draft from task-A' } });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// The stale draft should NOT overwrite task-B's content
+			expect(result.current.content).toBe('');
+			expect(result.current.draftRestored).toBe(false);
+
+			// Ensure no updateDraft was sent with stale task-A content to task-B
+			const corruptedCalls = mockHub.request.mock.calls.filter(
+				(call) =>
+					call[0] === 'task.updateDraft' &&
+					call[1]?.taskId === 'task-B' &&
+					call[1]?.draft === 'Draft from task-A'
+			);
+			expect(corruptedCalls.length).toBe(0);
+		});
+
+		it('should still load task-B draft correctly after task switch', async () => {
+			let resolveTaskA!: (value: unknown) => void;
+
+			mockHub.request.mockImplementation((_method, params) => {
+				if (params?.taskId === 'task-A') {
+					return new Promise((resolve) => {
+						resolveTaskA = resolve;
+					});
+				}
+				return Promise.resolve({ task: { inputDraft: 'Draft for task-B' } });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { result, rerender } = renderHook(({ taskId }) => useTaskInputDraft('room-1', taskId), {
+				initialProps: { taskId: 'task-A' },
+			});
+
+			// Switch to task-B
+			rerender({ taskId: 'task-B' });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// task-B's draft should be loaded
+			expect(result.current.content).toBe('Draft for task-B');
+			expect(result.current.draftRestored).toBe(true);
+
+			// Resolve stale task-A response
+			resolveTaskA({ task: { inputDraft: 'Draft from task-A' } });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// task-B's draft must remain unchanged
+			expect(result.current.content).toBe('Draft for task-B');
+		});
+	});
 });
