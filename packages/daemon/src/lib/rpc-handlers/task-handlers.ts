@@ -771,6 +771,38 @@ export function setupTaskHandlers(
 			);
 		}
 
+		// needs_attention tasks: revive sessions and inject the message.
+		// Uses reviveTaskForMessage (lightweight revive via reviveGroup) which preserves
+		// metadata, conversation history, and uses the established session-restore path.
+		// This mirrors the agent-tool path in room-agent-tools.ts send_message_to_task.
+		if (task.status === 'needs_attention') {
+			try {
+				await taskManager.setTaskStatus(params.taskId, 'review');
+			} catch (err) {
+				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
+			}
+
+			const revived = await runtime.reviveTaskForMessage(params.taskId, params.message.trim());
+			if (!revived) {
+				// Rollback: restore task to needs_attention (review → needs_attention is a valid transition)
+				try {
+					await taskManager.setTaskStatus(params.taskId, 'needs_attention');
+				} catch {
+					// Best-effort rollback; swallow to avoid masking the revive error
+				}
+				throw new Error(
+					`Failed to revive task ${params.taskId}: agent sessions could not be restored. ` +
+						'Task status has been reset to needs_attention.'
+				);
+			}
+
+			const revivedTask = await taskManager.getTask(params.taskId);
+			if (revivedTask) {
+				emitTaskUpdate(params.roomId, revivedTask);
+			}
+			return { success: true };
+		}
+
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
 		const result = await routeHumanMessageToGroup(
 			runtime,

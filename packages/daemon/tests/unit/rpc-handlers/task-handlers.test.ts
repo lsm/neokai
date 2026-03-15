@@ -85,6 +85,7 @@ function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
 		listTasks: mock(async () => []),
 		failTask: mock(async () => failedTask!),
 		cancelTask: mock(async () => cancelledTask!),
+		setTaskStatus: mock(async () => task!),
 	};
 	return mock(() => manager);
 }
@@ -136,10 +137,11 @@ function makeDb(groupRow: Record<string, unknown> | null): Database {
 }
 
 /** Build a mock RoomRuntimeService with a runtime that can resume/inject. */
-function makeRuntimeService(resumeResult = true, injectResult = true) {
+function makeRuntimeService(resumeResult = true, injectResult = true, reviveResult = true) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
+	const reviveTaskForMessage = mock(async () => reviveResult);
 	const cancelTask = mock(async () => ({
 		success: injectResult,
 		cancelledTaskIds: injectResult ? ['task-1'] : [],
@@ -150,6 +152,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true) {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
 		injectMessageToWorker,
+		reviveTaskForMessage,
 		cancelTask,
 		terminateTaskGroup,
 		interruptTaskSession,
@@ -318,6 +321,46 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
 			).rejects.toThrow('No active session group');
+		});
+
+		it('throws when task is cancelled (workspace cleaned up)', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			const { service } = makeRuntimeService();
+			setup({ task: cancelledTask, runtimeService: service });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+			).rejects.toThrow('cancelled');
+		});
+	});
+
+	describe('needs_attention task revival', () => {
+		it('revives the task to review status and returns success', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setup({ task: failedTask, runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'please retry' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			// Sets status to review before reviving
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please retry');
+		});
+
+		it('throws and rolls back status when reviveTaskForMessage returns false', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, false);
+			setup({ task: failedTask, runtimeService: service });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
+			).rejects.toThrow('agent sessions could not be restored');
+
+			// reviveTaskForMessage was called
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry');
 		});
 	});
 });

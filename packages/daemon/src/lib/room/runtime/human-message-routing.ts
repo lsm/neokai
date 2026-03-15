@@ -1,10 +1,14 @@
 /**
  * Human Message Routing
  *
- * Routes a human message to the worker or leader session.
- * - Active groups: messages are injected directly
- * - needs_attention tasks: group is reset and task transitions to in_progress before injecting
- * - cancelled/completed tasks: messages are blocked (caller should use set_task_status to restart)
+ * Routes a human message to the worker or leader session of an **active** group.
+ * - Active groups (completedAt = null): messages are injected directly
+ * - Terminated groups (completedAt set): messages are blocked regardless of status
+ *
+ * Callers are responsible for pre-processing terminated tasks before calling this
+ * function. For example:
+ * - needs_attention → caller should use runtime.reviveTaskForMessage()
+ * - cancelled/completed → caller should block with a user-facing error
  */
 
 import type { TaskStatus } from '@neokai/shared';
@@ -28,7 +32,8 @@ export interface HumanMessageResult {
 export type HumanMessageTarget = 'worker' | 'leader';
 
 /**
- * Route a human message to the specified agent.
+ * Route a human message to the specified agent of an active session group.
+ * Returns an error if the group is terminated (completedAt is set).
  *
  * @param runtime       The RoomRuntime instance for the room
  * @param groupRepo     The SessionGroupRepository for DB access
@@ -51,70 +56,18 @@ export async function routeHumanMessageToGroup(
 		return { success: false, error: 'No active session group found for this task' };
 	}
 
-	// Check if group is terminated using completedAt timestamp
+	// Terminated groups cannot accept injected messages. Callers must revive or
+	// restart the task through the appropriate path before calling this function.
 	if (group.completedAt !== null) {
-		// Get the task to check its status - we may be able to restart a needs_attention task
 		const task = await taskManager.getTask(taskId);
-		if (!task) {
-			return { success: false, error: 'Task not found' };
-		}
-
-		// Only needs_attention tasks can be restarted via message injection.
-		// Cancelled tasks have their workspace cleaned up on cancellation, so
-		// restarting them via session injection would point at a gone workspace.
-		// Completed tasks are terminal. For both, the caller should use set_task_status.
-		if (task.status !== 'needs_attention') {
-			return {
-				success: false,
-				error: `Task is in '${task.status}' status and cannot receive messages. Use set_task_status to restart it.`,
-			};
-		}
-
-		// Save previous status for potential rollback
-		const previousStatus = task.status;
-
-		// Reset the group for restart (clears completedAt, resets state, bumps version)
-		const resetGroup = groupRepo.resetGroupForRestart(group.id);
-		if (!resetGroup) {
-			return { success: false, error: 'Failed to reset task group for restart' };
-		}
-
-		// Transition task to in_progress
-		try {
-			await taskManager.setTaskStatus(taskId, 'in_progress');
-		} catch (error) {
-			// Rollback group state on failure (use the version returned by resetGroupForRestart)
-			groupRepo.failGroup(group.id, resetGroup.version);
-			return { success: false, error: `Failed to transition task to in_progress: ${error}` };
-		}
-
-		// Try to inject the message
-		let injected = false;
-		if (target === 'leader') {
-			injected = await runtime.injectMessageToLeader(taskId, message);
-		} else {
-			injected = await runtime.injectMessageToWorker(taskId, message);
-		}
-
-		// If injection failed, rollback the status and group changes
-		if (!injected) {
-			// Rollback: restore group to needs_attention state and revert task status
-			groupRepo.failGroup(group.id, resetGroup.version);
-			try {
-				await taskManager.setTaskStatus(taskId, previousStatus);
-			} catch {
-				// Rollback failure is best-effort; swallow to avoid masking the injection error
-			}
-			return {
-				success: false,
-				error: `Failed to inject message into ${target} session`,
-			};
-		}
-
-		return { success: true };
+		const statusLabel = task ? `'${task.status}' status` : 'a terminated state';
+		return {
+			success: false,
+			error: `Task is in ${statusLabel} and cannot receive messages. Use the appropriate restart mechanism.`,
+		};
 	}
 
-	// Simple routing - no state checks
+	// Simple routing — group is active
 	if (target === 'leader') {
 		const injected = await runtime.injectMessageToLeader(taskId, message);
 		return injected
