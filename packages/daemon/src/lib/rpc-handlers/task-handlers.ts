@@ -7,6 +7,7 @@
  * - task.get - Get task details
  * - task.fail - Fail a task (used by tests to simulate failure)
  * - task.cancel - Cancel a task (human-initiated cancellation)
+ * - task.interruptSession - Interrupt current agent session(s) without changing task status
  * - task.setStatus - Set task status with validation (human-initiated status change)
  * - task.reject - Reject a task review (human-initiated rejection with feedback)
  * - task.getGroup - Get session group for a task
@@ -29,7 +30,14 @@ const log = new Logger('task-handlers');
 
 export type TaskManagerLike = Pick<
 	TaskManager,
-	'createTask' | 'getTask' | 'listTasks' | 'failTask' | 'cancelTask' | 'setTaskStatus' | 'updateTaskStatus'
+	| 'createTask'
+	| 'getTask'
+	| 'listTasks'
+	| 'failTask'
+	| 'cancelTask'
+	| 'setTaskStatus'
+	| 'archiveTask'
+  | 'updateTaskStatus'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -227,6 +235,93 @@ export function setupTaskHandlers(
 		return { task: cancelledTask };
 	});
 
+	// task.interruptSession - Interrupt current agent session(s) without changing task status.
+	// Stops LLM generation mid-stream while keeping the task alive. The user can immediately
+	// type new instructions and the session will process them.
+	messageHub.onRequest('task.interruptSession', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Only allow interrupting tasks with active agent sessions
+		if (task.status !== 'in_progress' && task.status !== 'review') {
+			throw new Error(
+				`Task cannot be interrupted (current status: ${task.status}). Only in_progress or review tasks can be interrupted.`
+			);
+		}
+
+		if (!runtimeService) {
+			throw new Error('Runtime service is required for task.interruptSession');
+		}
+
+		const runtime = runtimeService.getRuntime(params.roomId);
+		if (!runtime) {
+			throw new Error(`No runtime found for room: ${params.roomId}`);
+		}
+
+		const result = await runtime.interruptTaskSession(params.taskId);
+		if (!result.success) {
+			throw new Error(`Failed to interrupt task session for ${params.taskId}`);
+		}
+
+		return { success: true };
+	});
+
+	// task.archive - Archive a task (cleanup worktree, hide from UI)
+	messageHub.onRequest('task.archive', async (data) => {
+		const params = data as { roomId: string; taskId: string };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Validate task is in a terminal state before archiving
+		const TERMINAL_STATES: TaskStatus[] = ['completed', 'needs_attention', 'cancelled'];
+		if (!TERMINAL_STATES.includes(task.status)) {
+			throw new Error(
+				`Cannot archive task in '${task.status}' state. Only tasks in terminal states (completed, needs_attention, cancelled) can be archived.`
+			);
+		}
+
+		// If there's an active group with runtime, cleanup worktree
+		if (runtimeService) {
+			const runtime = runtimeService.getRuntime(params.roomId);
+			if (runtime) {
+				await runtime.archiveTaskGroup(params.taskId);
+			}
+		}
+
+		// Get the archived task (archiveTaskGroup already sets archivedAt)
+		const archivedTask = await taskManager.getTask(params.taskId);
+		if (archivedTask) {
+			emitTaskUpdate(params.roomId, archivedTask);
+			emitRoomOverview(params.roomId);
+		}
+
+		log.info(`Task ${params.taskId} archived in room ${params.roomId}`);
+		return { task: archivedTask };
+	});
+
 	// task.setStatus - Set task status with validation (human-initiated)
 	messageHub.onRequest('task.setStatus', async (data) => {
 		const params = data as {
@@ -268,7 +363,7 @@ export function setupTaskHandlers(
 			if (runtime) {
 				const isTerminalStatus =
 					params.status === 'completed' ||
-					params.status === 'failed' ||
+					params.status === 'needs_attention' ||
 					params.status === 'cancelled';
 				if (isTerminalStatus) {
 					if (params.status === 'cancelled') {
@@ -297,8 +392,8 @@ export function setupTaskHandlers(
 			}
 		}
 
-		// Handle restart: reset failed/cancelled group so runtime picks it up fresh
-		if (task.status === 'failed' || task.status === 'cancelled') {
+		// Handle restart: reset needs_attention/cancelled group so runtime picks it up fresh
+		if (task.status === 'needs_attention' || task.status === 'cancelled') {
 			if (params.status === 'pending' || params.status === 'in_progress') {
 				const groupRepo = new SessionGroupRepository(db.getDatabase());
 				const group = groupRepo.getGroupByTaskId(params.taskId);

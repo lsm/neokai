@@ -6,7 +6,7 @@
  * these tools are attached to it.
  *
  * Tools: create_goal, list_goals, update_goal, create_task, list_tasks,
- *        update_task, cancel_task, get_room_status, approve_task, reject_task,
+ *        update_task, cancel_task, stop_session, get_room_status, approve_task, reject_task,
  *        send_message_to_task, get_task_detail
  */
 
@@ -103,6 +103,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			task_type?: TaskType;
 			assigned_agent?: AgentType;
 		}): Promise<ToolResult> {
+			// 'planning' is reserved for internal use by the runtime's planning phase.
+			// User-created tasks must use 'coding', 'research', 'design', or 'goal_review'.
+			if (args.task_type === 'planning') {
+				return jsonResult({
+					success: false,
+					error:
+						"Task type 'planning' is reserved for internal use. Use 'coding', 'research', 'design', or 'goal_review' instead.",
+				});
+			}
 			let task;
 			try {
 				task = await taskManager.createTask({
@@ -230,6 +239,39 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			return jsonResult({ success: true, message: `Task ${args.task_id} cancelled` });
 		},
 
+		async stop_session(args: { task_id: string }): Promise<ToolResult> {
+			const task = await taskManager.getTask(args.task_id);
+			if (!task) {
+				return jsonResult({ success: false, error: `Task not found: ${args.task_id}` });
+			}
+
+			if (task.status !== 'in_progress' && task.status !== 'review') {
+				return jsonResult({
+					success: false,
+					error: `Task cannot be interrupted (current status: ${task.status}). Only in_progress or review tasks can be interrupted.`,
+				});
+			}
+
+			if (runtimeService) {
+				const runtime = runtimeService.getRuntime(roomId);
+				if (runtime) {
+					const result = await runtime.interruptTaskSession(args.task_id);
+					if (!result.success) {
+						return jsonResult({
+							success: false,
+							error: `Failed to interrupt session for task ${args.task_id}`,
+						});
+					}
+					return jsonResult({
+						success: true,
+						message: `Generation interrupted for task ${args.task_id}. Task remains active and awaiting input.`,
+					});
+				}
+			}
+
+			return jsonResult({ success: false, error: 'Runtime service unavailable' });
+		},
+
 		async set_task_status(args: {
 			task_id: string;
 			status: TaskStatus;
@@ -260,7 +302,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 							// There's an active group - cancel it first if moving to terminal state
 							if (
 								args.status === 'completed' ||
-								args.status === 'failed' ||
+								args.status === 'needs_attention' ||
 								args.status === 'cancelled'
 							) {
 								const cancelledGroup = await runtime.taskGroupManager.cancel(group.id);
@@ -276,16 +318,33 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				}
 			}
 
-			// Handle restart: reset failed/cancelled group so runtime picks it up fresh
-			if (task.status === 'failed' || task.status === 'cancelled') {
-				if (args.status === 'pending' || args.status === 'in_progress') {
-					const group = groupRepo.getGroupByTaskId(args.task_id);
-					if (group) {
+			// Handle restart/revive: update group state for needs_attention/cancelled tasks
+			if (task.status === 'needs_attention' || task.status === 'cancelled') {
+				const group = groupRepo.getGroupByTaskId(args.task_id);
+				if (group) {
+					if (args.status === 'pending' || args.status === 'in_progress') {
+						// Full reset: wipe metadata so the runtime picks the task up fresh
 						const reset = groupRepo.resetGroupForRestart(group.id);
 						if (!reset) {
 							return jsonResult({
 								success: false,
 								error: `Failed to reset group for task ${args.task_id} — group may have been modified concurrently`,
+							});
+						}
+					} else if (
+						args.status === 'review' &&
+						task.status === 'needs_attention' &&
+						group.completedAt !== null
+					) {
+						// Lightweight revive (failed → review only): clear completedAt without
+						// resetting metadata. Only supported for failed tasks — cancelled tasks
+						// have their worktree cleaned up so reviving the group would point
+						// sessions at a gone workspace.
+						const revived = groupRepo.reviveGroup(group.id);
+						if (!revived) {
+							return jsonResult({
+								success: false,
+								error: `Failed to revive group for task ${args.task_id} — group may have been modified concurrently`,
 							});
 						}
 					}
@@ -302,6 +361,15 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return jsonResult({ success: false, error: message });
+			}
+
+			const group = groupRepo.getGroupByTaskId(args.task_id);
+			if (group && group.completedAt === null) {
+				if (args.status === 'review') {
+					groupRepo.setSubmittedForReview(group.id, true);
+				} else if (task.status === 'review') {
+					groupRepo.setSubmittedForReview(group.id, false);
+				}
 			}
 
 			// Notify UI of the status change
@@ -382,6 +450,54 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			if (!runtime) {
 				return jsonResult({ success: false, error: 'Room runtime not found' });
 			}
+
+			// Cancelled tasks cannot be revived via message — the worktree is cleaned
+			// up on cancellation so restoring the session would point to a gone
+			// workspace. Direct the caller to restart the task from scratch instead.
+			if (task.status === 'cancelled') {
+				return jsonResult({
+					success: false,
+					error:
+						`Task ${args.task_id} is cancelled. Cancelled tasks cannot receive messages ` +
+						'because their workspace has been cleaned up. Use set_task_status to restart it ' +
+						'(e.g. status: "pending" or "in_progress").',
+				});
+			}
+
+			// Auto-revive: if the task needs attention, transition it to 'review' and
+			// restore the agent sessions so the message can be delivered. Needs_attention
+			// tasks preserve their worktree, so session restoration is safe.
+			if (task.status === 'needs_attention') {
+				try {
+					await taskManager.setTaskStatus(args.task_id, 'review');
+				} catch (err) {
+					return jsonResult({
+						success: false,
+						error: `Failed to revive task ${args.task_id}: ${String(err)}`,
+					});
+				}
+
+				const revived = await runtime.reviveTaskForMessage(args.task_id, args.message);
+				if (!revived) {
+					// Roll back the task status; review → needs_attention is a valid transition.
+					try {
+						await taskManager.setTaskStatus(args.task_id, 'needs_attention');
+					} catch {
+						// Rollback is best-effort; swallow to avoid masking the original error
+					}
+					return jsonResult({
+						success: false,
+						error:
+							`Failed to revive task ${args.task_id}: agent sessions could not be restored. ` +
+							'Task status has been reset to needs_attention.',
+					});
+				}
+				return jsonResult({
+					success: true,
+					message: `Task ${args.task_id} revived from needs_attention to review and message delivered to agent`,
+				});
+			}
+
 			const { success, error } = await routeHumanMessageToGroup(
 				runtime,
 				groupRepo,
@@ -456,7 +572,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 						inProgress: tasks.filter((t) => t.status === 'in_progress').length,
 						review: tasks.filter((t) => t.status === 'review').length,
 						completed: tasks.filter((t) => t.status === 'completed').length,
-						failed: tasks.filter((t) => t.status === 'failed').length,
+						needsAttention: tasks.filter((t) => t.status === 'needs_attention').length,
 						cancelled: tasks.filter((t) => t.status === 'cancelled').length,
 					},
 					activeGroups: activeGroups.length,
@@ -522,9 +638,11 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 					.optional()
 					.describe('IDs of tasks this task depends on (must complete first)'),
 				task_type: z
-					.enum(['planning', 'coding', 'research', 'design', 'goal_review'])
+					.enum(['coding', 'research', 'design', 'goal_review'])
 					.optional()
-					.describe('Task type - determines agent preset (default: coding)'),
+					.describe(
+						"Task type - determines agent preset (default: coding). Note: 'planning' is reserved for internal use."
+					),
 				assigned_agent: z
 					.enum(['coder', 'general'])
 					.optional()
@@ -538,7 +656,15 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			{
 				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
 				status: z
-					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'])
+					.enum([
+						'draft',
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+					])
 					.optional()
 					.describe('Filter by status'),
 			},
@@ -561,9 +687,15 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'cancel_task',
-			'Cancel a task (marks as cancelled — distinct from failed — and cleans up agent sessions)',
+			'Cancel a task (marks as cancelled — distinct from needs_attention — and cleans up agent sessions)',
 			{ task_id: z.string().describe('ID of the task to cancel') },
 			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'stop_session',
+			'Interrupt the current agent session(s) for a task. Stops LLM generation mid-stream while keeping the task in its current state (in_progress or review). The user can immediately type new instructions without any revive flow.',
+			{ task_id: z.string().describe('ID of the task whose session(s) to stop') },
+			(args) => handlers.stop_session(args)
 		),
 		tool(
 			'set_task_status',
@@ -571,10 +703,18 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			{
 				task_id: z.string().describe('ID of the task to update'),
 				status: z
-					.enum(['draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled'])
+					.enum([
+						'draft',
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+					])
 					.describe('New status for the task'),
 				result: z.string().optional().describe('Result description (for completed status)'),
-				error: z.string().optional().describe('Error message (for failed status)'),
+				error: z.string().optional().describe('Error message (for needs_attention status)'),
 			},
 			(args) => handlers.set_task_status(args)
 		),
@@ -595,7 +735,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'send_message_to_task',
-			'Send a message to the active agent session for a task (routes to worker or leader based on current state)',
+			'Send a message to the active worker session for a task',
 			{
 				task_id: z.string().describe('ID of the task to send the message to'),
 				message: z.string().describe('The message content to send'),
@@ -604,7 +744,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 		),
 		tool(
 			'get_task_detail',
-			'Get full details for a task including current group state, session IDs, and whether it is awaiting human review',
+			'Get full details for a task including group session IDs and whether it is awaiting human review',
 			{ task_id: z.string().describe('ID of the task to get details for') },
 			(args) => handlers.get_task_detail(args)
 		),

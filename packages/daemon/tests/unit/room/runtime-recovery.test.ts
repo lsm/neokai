@@ -111,7 +111,12 @@ describe('Runtime Recovery', () => {
 				task_type TEXT DEFAULT 'coding',
 				created_by_task_id TEXT,
 				assigned_agent TEXT DEFAULT 'coder',
-				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER
+				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -178,7 +183,9 @@ describe('Runtime Recovery', () => {
 
 		const group = groupRepo.createGroup(taskId, `worker:${taskId}`, `leader:${taskId}`);
 		if (groupState !== 'awaiting_worker') {
-			groupRepo.setCompatibilityState(group.id, groupState as never);
+			if (groupState === 'awaiting_human') {
+				groupRepo.setSubmittedForReview(group.id, true);
+			}
 		}
 
 		return { taskId, group: groupRepo.getGroup(group.id) };
@@ -219,10 +226,10 @@ describe('Runtime Recovery', () => {
 
 		expect(result.failedGroups).toBe(1);
 		const updatedGroup = groupRepo.getGroup(group!.id);
-		expect(updatedGroup!.state).toBe('failed');
+		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('failed');
+		expect(task!.status).toBe('needs_attention');
 	});
 
 	it('should fail groups with lost leader sessions', async () => {
@@ -327,9 +334,9 @@ describe('Runtime Recovery', () => {
 		);
 
 		expect(result.immediateTerminals).toBe(1);
-		// Group should transition to awaiting_leader (worker output routed to leader)
+		// Group should remain active and not awaiting human review
 		const updated = groupRepo.getGroup(group!.id);
-		expect(updated!.state).toBe('awaiting_leader');
+		expect(updated!.submittedForReview).toBe(false);
 	});
 
 	it('should restore and observe awaiting_human groups', async () => {
@@ -377,10 +384,10 @@ describe('Runtime Recovery', () => {
 
 		expect(result.failedGroups).toBe(1);
 		const updatedGroup = groupRepo.getGroup(group!.id);
-		expect(updatedGroup!.state).toBe('failed');
+		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('failed');
+		expect(task!.status).toBe('needs_attention');
 	});
 
 	it('should restore sessions not live in cache for awaiting_worker', async () => {

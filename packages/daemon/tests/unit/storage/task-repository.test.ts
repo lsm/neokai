@@ -40,7 +40,12 @@ describe('TaskRepository', () => {
 				depends_on TEXT NOT NULL DEFAULT '[]',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
-				completed_at INTEGER
+				completed_at INTEGER,
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 
 			CREATE INDEX idx_tasks_room ON tasks(room_id);
@@ -279,9 +284,9 @@ describe('TaskRepository', () => {
 			const task = repository.createTask({ roomId: 'room-1', title: 'Task', description: 'Desc' });
 			const beforeTime = Date.now();
 
-			const updated = repository.updateTask(task.id, { status: 'failed' });
+			const updated = repository.updateTask(task.id, { status: 'needs_attention' });
 
-			expect(updated?.status).toBe('failed');
+			expect(updated?.status).toBe('needs_attention');
 			expect(updated?.completedAt).toBeDefined();
 			expect(updated?.completedAt).toBeGreaterThanOrEqual(beforeTime);
 		});
@@ -466,7 +471,7 @@ describe('TaskRepository', () => {
 
 			repository.updateTask(task1.id, { status: 'in_progress' });
 			repository.updateTask(task2.id, { status: 'completed' });
-			repository.updateTask(task3.id, { status: 'failed' });
+			repository.updateTask(task3.id, { status: 'needs_attention' });
 			// task4 stays pending
 
 			const activeCount = repository.countActiveTasks('room-1');
@@ -474,7 +479,7 @@ describe('TaskRepository', () => {
 			expect(activeCount).toBe(2); // pending + in_progress
 		});
 
-		it('should return 0 when all tasks are completed or failed', () => {
+		it('should return 0 when all tasks are completed or needs_attention', () => {
 			const task1 = repository.createTask({
 				roomId: 'room-1',
 				title: 'Task 1',
@@ -487,7 +492,7 @@ describe('TaskRepository', () => {
 			});
 
 			repository.updateTask(task1.id, { status: 'completed' });
-			repository.updateTask(task2.id, { status: 'failed' });
+			repository.updateTask(task2.id, { status: 'needs_attention' });
 
 			const activeCount = repository.countActiveTasks('room-1');
 
@@ -555,12 +560,12 @@ describe('TaskRepository', () => {
 
 			// Fail task
 			repository.updateTask(task.id, {
-				status: 'failed',
+				status: 'needs_attention',
 				error: 'Connection timeout',
 			});
 
 			const failed = repository.getTask(task.id);
-			expect(failed?.status).toBe('failed');
+			expect(failed?.status).toBe('needs_attention');
 			expect(failed?.completedAt).toBeDefined();
 			expect(failed?.error).toBe('Connection timeout');
 		});
@@ -576,6 +581,65 @@ describe('TaskRepository', () => {
 
 			const reviewed = repository.getTask(task.id);
 			expect(reviewed?.status).toBe('review');
+		});
+	});
+
+	describe('PR fields', () => {
+		it('should default PR fields to undefined on creation', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'Task without PR',
+				description: '',
+			});
+
+			expect(task.prUrl).toBeUndefined();
+			expect(task.prNumber).toBeUndefined();
+			expect(task.prCreatedAt).toBeUndefined();
+		});
+
+		it('should update PR fields', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'PR Task',
+				description: '',
+			});
+			const now = Date.now();
+
+			repository.updateTask(task.id, {
+				prUrl: 'https://github.com/org/repo/pull/42',
+				prNumber: 42,
+				prCreatedAt: now,
+			});
+
+			const updated = repository.getTask(task.id);
+			expect(updated?.prUrl).toBe('https://github.com/org/repo/pull/42');
+			expect(updated?.prNumber).toBe(42);
+			expect(updated?.prCreatedAt).toBe(now);
+		});
+
+		it('should allow clearing PR fields to null', () => {
+			const task = repository.createTask({
+				roomId: 'room-1',
+				title: 'PR Task',
+				description: '',
+			});
+
+			repository.updateTask(task.id, {
+				prUrl: 'https://github.com/org/repo/pull/1',
+				prNumber: 1,
+				prCreatedAt: Date.now(),
+			});
+
+			repository.updateTask(task.id, {
+				prUrl: null,
+				prNumber: null,
+				prCreatedAt: null,
+			});
+
+			const cleared = repository.getTask(task.id);
+			expect(cleared?.prUrl).toBeUndefined();
+			expect(cleared?.prNumber).toBeUndefined();
+			expect(cleared?.prCreatedAt).toBeUndefined();
 		});
 	});
 });

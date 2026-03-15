@@ -53,7 +53,12 @@ describe('Room Agent Tools', () => {
 				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
-				completed_at INTEGER
+				completed_at INTEGER,
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -286,6 +291,31 @@ describe('Room Agent Tools', () => {
 			);
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Dependency task not found');
+		});
+
+		it('should reject task_type planning as it is reserved for internal use', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Planning task',
+					description: 'This should be rejected',
+					task_type: 'planning' as never, // cast to bypass TS check
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("'planning' is reserved for internal use");
+		});
+
+		it('should allow task_type coding, research, design, goal_review but not planning', async () => {
+			for (const taskType of ['coding', 'research', 'design', 'goal_review'] as const) {
+				const result = parseResult(
+					await handlers.create_task({
+						title: `${taskType} task`,
+						description: 'Should succeed',
+						task_type: taskType,
+					})
+				);
+				expect(result.success).toBe(true);
+			}
 		});
 	});
 
@@ -520,7 +550,7 @@ describe('Room Agent Tools', () => {
 			const cancelledTasks = parseResult(await handlers.list_tasks({ status: 'cancelled' }));
 			expect((cancelledTasks.tasks as unknown[]).length).toBe(1);
 
-			const failedTasks = parseResult(await handlers.list_tasks({ status: 'failed' }));
+			const failedTasks = parseResult(await handlers.list_tasks({ status: 'needs_attention' }));
 			expect((failedTasks.tasks as unknown[]).length).toBe(0);
 		});
 
@@ -555,6 +585,78 @@ describe('Room Agent Tools', () => {
 		});
 	});
 
+	describe('stop_session', () => {
+		it('should interrupt in_progress task (task stays active)', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			// Move task to in_progress
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			// Without runtime service, returns error (interrupt requires runtime)
+			const result = parseResult(await handlers.stop_session({ task_id: taskId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('unavailable');
+
+			// Task should still be in_progress (not failed)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+		});
+
+		it('should use runtime.interruptTaskSession when runtime service is available', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			const calls: Array<string> = [];
+			const mockRuntime = {
+				interruptTaskSession: async (tid: string) => {
+					calls.push(tid);
+					return { success: true };
+				},
+			};
+			const runtimeHandlers = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			const result = parseResult(await runtimeHandlers.stop_session({ task_id: taskId }));
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('interrupted');
+			expect(calls).toEqual([taskId]);
+		});
+
+		it('should return error when task not found', async () => {
+			const result = parseResult(await handlers.stop_session({ task_id: 'no-such-task' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error for pending task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			// Task is pending by default
+			const result = parseResult(
+				await handlers.stop_session({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task cannot be interrupted');
+		});
+
+		it('should return error for completed task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			await taskManager.setTaskStatus(created.taskId as string, 'in_progress');
+			await taskManager.completeTask(created.taskId as string, 'done');
+
+			const result = parseResult(
+				await handlers.stop_session({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task cannot be interrupted');
+		});
+	});
+
 	describe('get_room_status', () => {
 		it('should return room overview', async () => {
 			await handlers.create_goal({ title: 'G1' });
@@ -575,16 +677,16 @@ describe('Room Agent Tools', () => {
 			expect(status.tasksNeedingReview).toEqual([]);
 		});
 
-		it('should count cancelled tasks separately from failed', async () => {
+		it('should count cancelled tasks separately from needs_attention tasks', async () => {
 			const t1 = parseResult(await handlers.create_task({ title: 'To cancel', description: 'd' }));
 			await handlers.cancel_task({ task_id: t1.taskId as string });
 
 			const result = parseResult(await handlers.get_room_status());
 			const status = result.status as {
-				tasks: { total: number; failed: number; cancelled: number };
+				tasks: { total: number; needsAttention: number; cancelled: number };
 			};
 			expect(status.tasks.total).toBe(1);
-			expect(status.tasks.failed).toBe(0);
+			expect(status.tasks.needsAttention).toBe(0);
 			expect(status.tasks.cancelled).toBe(1);
 		});
 
@@ -852,6 +954,108 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('No active session group');
 		});
+
+		it('should auto-revive failed task and call reviveTaskForMessage', async () => {
+			let reviveCalledWith: unknown[] = [];
+			const mockRuntime = {
+				reviveTaskForMessage: async (...args: unknown[]) => {
+					reviveCalledWith = args;
+					return true;
+				},
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to failed state
+			await taskManager.startTask(taskId);
+			await taskManager.failTask(taskId, 'test failure');
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'please retry' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('revived');
+
+			// Task should be in review status after revive
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('review');
+
+			// reviveTaskForMessage should have been called with correct args
+			expect(reviveCalledWith[0]).toBe(taskId);
+			expect(reviveCalledWith[1]).toBe('please retry');
+		});
+
+		it('should return error for cancelled task (worktree is gone, restart required)', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => true,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to cancelled state
+			await taskManager.startTask(taskId);
+			await taskManager.cancelTask(taskId);
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'resume please' })
+			);
+			// Cancelled tasks cannot receive messages — workspace is cleaned up
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('cancelled');
+			expect(result.error).toContain('set_task_status');
+
+			// Task should remain cancelled (no revive attempted)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('cancelled');
+		});
+
+		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {
+			const mockRuntime = {
+				reviveTaskForMessage: async () => false,
+				injectMessageToWorker: async () => true,
+				injectMessageToLeader: async () => true,
+			};
+			const h = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+			const created = parseResult(await h.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			await taskManager.startTask(taskId);
+			await taskManager.failTask(taskId, 'test failure');
+
+			const result = parseResult(
+				await h.send_message_to_task({ task_id: taskId, message: 'hello' })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('needs_attention');
+
+			// Task status should be rolled back to failed (not left in review)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('needs_attention');
+		});
 	});
 
 	describe('get_task_detail', () => {
@@ -996,7 +1200,7 @@ describe('Room Agent Tools', () => {
 			// Verify the group exists in failed state
 			const groupBefore = groupRepo.getGroup(groupId);
 			expect(groupBefore).not.toBeNull();
-			expect(groupBefore!.state).toBe('failed');
+			expect(groupBefore!.taskId).toBe(taskId);
 
 			// Restart the task
 			const result = parseResult(
@@ -1005,11 +1209,11 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('pending');
 
-			// The old failed group should be reset to awaiting_worker
+			// The old failed group should be reset and active again
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
-			expect(groupAfter!.state).toBe('awaiting_worker');
 			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
 			expect(groupAfter!.feedbackIteration).toBe(0);
 		});
 
@@ -1025,7 +1229,7 @@ describe('Room Agent Tools', () => {
 			// Verify the group exists
 			const groupBefore = groupRepo.getGroup(groupId);
 			expect(groupBefore).not.toBeNull();
-			expect(groupBefore!.state).toBe('failed');
+			expect(groupBefore!.taskId).toBe(taskId);
 
 			// Restart the task
 			const result = parseResult(
@@ -1034,10 +1238,11 @@ describe('Room Agent Tools', () => {
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('in_progress');
 
-			// The old failed group should be reset to awaiting_worker
+			// The old failed group should be reset and active again
 			const groupAfter = groupRepo.getGroup(groupId);
 			expect(groupAfter).not.toBeNull();
-			expect(groupAfter!.state).toBe('awaiting_worker');
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
 		});
 
 		it('should succeed when group is already gone', async () => {
@@ -1095,6 +1300,106 @@ describe('Room Agent Tools', () => {
 			expect(result.task.status).toBe('review');
 		});
 
+		it('should update group state to awaiting_human when transitioning to review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress first
+			await taskManager.startTask(taskId);
+			// Create an active group in awaiting_worker state
+			const groupId = insertGroup(taskId, 'awaiting_worker');
+
+			// Verify initial group flags
+			const groupBefore = groupRepo.getGroup(groupId);
+			expect(groupBefore).not.toBeNull();
+			expect(groupBefore!.submittedForReview).toBe(false);
+
+			// Transition to review
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+
+			// Group should be marked as awaiting human review in metadata
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(true);
+		});
+
+		it('should revive group (clear completedAt) when transitioning failed -> review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			// Move to in_progress, create a group, then fail the task and the group
+			await taskManager.startTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_worker');
+			await taskManager.failTask(taskId, 'Something went wrong');
+			// Properly terminate the group (as failGroup would in production)
+			const groupBeforeFail = groupRepo.getGroup(groupId)!;
+			groupRepo.failGroup(groupId, groupBeforeFail.version);
+
+			// Verify the group is terminated
+			const groupTerminated = groupRepo.getGroup(groupId);
+			expect(groupTerminated!.completedAt).not.toBeNull();
+
+			// Revive to review via set_task_status
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+
+			// Group should be revived (completedAt cleared) and marked submittedForReview
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.completedAt).toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(true);
+		});
+
+		it('should clear error field when transitioning failed -> review', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			await taskManager.startTask(taskId);
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Revive to review — error field should be cleared (null→undefined via task repo)
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+			// The handler returns updatedTask which maps null→undefined for the error field
+			expect(result.task.error).toBeFalsy();
+		});
+
+		it('should not revive group when already active (failed -> review, group has completedAt null)', async () => {
+			// Edge case: group is not yet terminated (completedAt is null)
+			// This can happen if set_task_status is called before the runtime terminates the group.
+			// In this case, reviveGroup should be a no-op.
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+
+			await taskManager.startTask(taskId);
+			// Create a group but don't terminate it (completedAt stays null)
+			const groupId = insertGroup(taskId, 'awaiting_worker');
+			await taskManager.failTask(taskId, 'Something went wrong');
+
+			// Group still has completedAt = null (insertGroup doesn't set it)
+			const groupBefore = groupRepo.getGroup(groupId)!;
+			expect(groupBefore.completedAt).toBeNull();
+
+			// Revive to review should still work
+			const result = parseResult(
+				await handlers.set_task_status({ task_id: taskId, status: 'review' })
+			);
+			expect(result.success).toBe(true);
+			expect(result.task.status).toBe('review');
+			// Group should still be active
+			expect(groupRepo.getGroup(groupId)!.completedAt).toBeNull();
+		});
+
 		it('should allow transition: in_progress -> completed with result', async () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
@@ -1125,12 +1430,12 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(
 				await handlers.set_task_status({
 					task_id: taskId,
-					status: 'failed',
+					status: 'needs_attention',
 					error: 'Tests failed',
 				})
 			);
 			expect(result.success).toBe(true);
-			expect(result.task.status).toBe('failed');
+			expect(result.task.status).toBe('needs_attention');
 			expect(result.task.error).toBe('Tests failed');
 		});
 
@@ -1138,15 +1443,23 @@ describe('Room Agent Tools', () => {
 			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
 			const taskId = created.taskId as string;
 
-			// Move to in_progress and then to review
+			// Move to in_progress and create active group
 			await taskManager.startTask(taskId);
-			await taskManager.reviewTask(taskId);
+			const groupId = insertGroup(taskId, 'awaiting_worker');
 
+			// Transition into review first (sets submittedForReview=true)
+			await handlers.set_task_status({ task_id: taskId, status: 'review' });
 			const result = parseResult(
 				await handlers.set_task_status({ task_id: taskId, status: 'in_progress' })
 			);
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('in_progress');
+
+			// Leaving review should clear awaiting-human semantics
+			const groupAfter = groupRepo.getGroup(groupId);
+			expect(groupAfter).not.toBeNull();
+			expect(groupAfter!.submittedForReview).toBe(false);
+			expect(groupAfter!.completedAt).toBeNull();
 		});
 
 		it('should deny transition: completed -> pending (terminal state)', async () => {

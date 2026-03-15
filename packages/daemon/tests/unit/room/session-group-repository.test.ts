@@ -32,7 +32,14 @@ describe('SessionGroupRepository', () => {
 				task_type TEXT DEFAULT 'coding',
 				created_by_task_id TEXT,
 				assigned_agent TEXT DEFAULT 'coder',
-				created_at INTEGER NOT NULL
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -103,6 +110,33 @@ describe('SessionGroupRepository', () => {
 			const fetched = repo.getGroup(created.id);
 			expect(fetched).not.toBeNull();
 			expect(fetched!.id).toBe(created.id);
+		});
+
+		it('should derive submittedForReview from metadata only', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			db.prepare(`UPDATE session_groups SET state = 'awaiting_human' WHERE id = ?`).run(group.id);
+			// Keep metadata without submittedForReview=true
+			db.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`).run(
+				JSON.stringify({
+					feedbackIteration: 0,
+					leaderContractViolations: 0,
+					leaderCalledTool: false,
+					lastProcessedLeaderTurnId: null,
+					lastForwardedMessageId: null,
+					activeWorkStartedAt: null,
+					activeWorkElapsed: 0,
+					hibernatedAt: null,
+					tokensUsed: 0,
+					workerRole: 'coder',
+					submittedForReview: false,
+					approved: false,
+				}),
+				group.id
+			);
+
+			const fetched = repo.getGroup(group.id);
+			expect(fetched).not.toBeNull();
+			expect(fetched!.submittedForReview).toBe(false);
 		});
 	});
 
@@ -294,6 +328,52 @@ describe('SessionGroupRepository', () => {
 		});
 	});
 
+	describe('reviveGroup', () => {
+		it('should clear completedAt on a failed group', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const failed = repo.failGroup(group.id, group.version);
+			expect(failed!.completedAt).not.toBeNull();
+
+			const revived = repo.reviveGroup(group.id);
+			expect(revived).not.toBeNull();
+			expect(revived!.completedAt).toBeNull();
+		});
+
+		it('should preserve existing metadata (unlike resetGroupForRestart)', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			// Simulate some accumulated metadata
+			const afterIter = repo.incrementFeedbackIteration(group.id, group.version)!;
+			repo.failGroup(afterIter.id, afterIter.version);
+
+			const revived = repo.reviveGroup(group.id);
+			// feedbackIteration should be preserved (not reset to 0)
+			expect(revived!.feedbackIteration).toBe(1);
+		});
+
+		it('should increment version', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+
+			const revived = repo.reviveGroup(group.id);
+			expect(revived!.version).toBe(group.version + 2); // +1 failGroup, +1 revive
+		});
+
+		it('should return null for non-existent group', () => {
+			const result = repo.reviveGroup('non-existent');
+			expect(result).toBeNull();
+		});
+
+		it('should make the group appear in getActiveGroups after revive', () => {
+			// room and task already exist from beforeEach
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.failGroup(group.id, group.version);
+			expect(repo.getActiveGroups(roomId)).toHaveLength(0);
+
+			repo.reviveGroup(group.id);
+			expect(repo.getActiveGroups(roomId)).toHaveLength(1);
+		});
+	});
+
 	describe('updateLeaderContractViolations', () => {
 		it('should update violations and turn ID', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
@@ -317,6 +397,39 @@ describe('SessionGroupRepository', () => {
 			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
 			const updated = repo.updateLastForwardedMessageId(group.id, 'msg-123', group.version);
 			expect(updated!.lastForwardedMessageId).toBe('msg-123');
+		});
+	});
+
+	describe('setWaitingForQuestion', () => {
+		it('should default to waitingForQuestion=false and waitingSession=null', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			expect(group.waitingForQuestion).toBe(false);
+			expect(group.waitingSession).toBeNull();
+		});
+
+		it('should set waitingForQuestion=true and waitingSession=worker', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setWaitingForQuestion(group.id, true, 'worker');
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.waitingForQuestion).toBe(true);
+			expect(updated.waitingSession).toBe('worker');
+		});
+
+		it('should set waitingForQuestion=true and waitingSession=leader', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setWaitingForQuestion(group.id, true, 'leader');
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.waitingForQuestion).toBe(true);
+			expect(updated.waitingSession).toBe('leader');
+		});
+
+		it('should clear waitingForQuestion flag', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.setWaitingForQuestion(group.id, true, 'worker');
+			repo.setWaitingForQuestion(group.id, false, null);
+			const updated = repo.getGroup(group.id)!;
+			expect(updated.waitingForQuestion).toBe(false);
+			expect(updated.waitingSession).toBeNull();
 		});
 	});
 
@@ -474,6 +587,70 @@ describe('SessionGroupRepository', () => {
 
 			repo.setRateLimit(group.id, backoff);
 			expect(repo.getRateLimitRemainingMs(group.id)).toBe(0);
+		});
+	});
+
+	describe('Gate Failure Tracking (Dead Loop Detection)', () => {
+		it('starts with empty failure history', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toEqual([]);
+		});
+
+		it('records a gate failure', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.recordGateFailure(group.id, 'worker_exit', 'No PR found.');
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(1);
+			expect(history[0].gateName).toBe('worker_exit');
+			expect(history[0].reason).toBe('No PR found.');
+			expect(history[0].timestamp).toBeGreaterThan(0);
+		});
+
+		it('accumulates multiple failures', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			repo.recordGateFailure(group.id, 'worker_exit', 'No PR found.');
+			repo.recordGateFailure(group.id, 'worker_exit', 'Branch is base branch.');
+			repo.recordGateFailure(group.id, 'leader_complete', 'PR not merged.');
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(3);
+			expect(history[0].gateName).toBe('worker_exit');
+			expect(history[2].gateName).toBe('leader_complete');
+		});
+
+		it('caps history at 50 records', () => {
+			const group = repo.createGroup(taskId, workerSessionId, leaderSessionId);
+			for (let i = 0; i < 60; i++) {
+				repo.recordGateFailure(group.id, 'worker_exit', `Failure ${i}`);
+			}
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(50);
+			// Should keep the most recent (last 50)
+			expect(history[0].reason).toBe('Failure 10');
+			expect(history[49].reason).toBe('Failure 59');
+		});
+
+		it('returns empty array for non-existent group', () => {
+			const history = repo.getGateFailureHistory('non-existent-id');
+			expect(history).toEqual([]);
+		});
+
+		it('preserves existing metadata when recording failures', () => {
+			const group = repo.createGroup(
+				taskId,
+				workerSessionId,
+				leaderSessionId,
+				'coder',
+				'/workspace'
+			);
+			repo.setApproved(group.id, true);
+			repo.recordGateFailure(group.id, 'worker_exit', 'No PR found.');
+			const updated = repo.getGroup(group.id)!;
+			// Approved flag should still be set
+			expect(updated.approved).toBe(true);
+			// Failure should be recorded
+			const history = repo.getGateFailureHistory(group.id);
+			expect(history).toHaveLength(1);
 		});
 	});
 });

@@ -123,7 +123,11 @@ export class RoomManager {
 		const room = this.roomRepo.getRoom(roomId);
 		if (!room) return null;
 
+		// Get non-archived tasks for activeTasks
 		const tasks = this.taskRepo.listTasks(roomId);
+		// Get all tasks including archived for allTasks field
+		const allTasks = this.taskRepo.listTasks(roomId, { includeArchived: true });
+
 		const toSummary = (task: NeoTask): TaskSummary => ({
 			id: task.id,
 			title: task.title,
@@ -132,12 +136,15 @@ export class RoomManager {
 			progress: task.progress,
 			dependsOn: task.dependsOn,
 			error: task.error,
+			activeSession: task.activeSession,
+			prUrl: task.prUrl,
+			prNumber: task.prNumber,
 		});
 		const nonTerminal = tasks.filter(
-			(t) => t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled'
+			(t) => t.status !== 'completed' && t.status !== 'needs_attention' && t.status !== 'cancelled'
 		);
 		const taskSummaries = nonTerminal.map(toSummary);
-		const allTaskSummaries = tasks.map(toSummary);
+		const allTaskSummaries = allTasks.map(toSummary);
 
 		// Build session summaries from actual session data
 		// Filter out room-specific sessions (chat, craft, lead)

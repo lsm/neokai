@@ -16,7 +16,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createTables } from '../../../src/storage/schema';
-import { TaskManager } from '../../../src/lib/room/managers/task-manager';
+import { TaskManager, extractPrNumber } from '../../../src/lib/room/managers/task-manager';
 import { RoomManager } from '../../../src/lib/room/managers/room-manager';
 
 describe('TaskManager', () => {
@@ -228,12 +228,12 @@ describe('TaskManager', () => {
 			expect(updated.completedAt).toBeDefined();
 		});
 
-		it('should update task status to failed', async () => {
+		it('should update task status to needs_attention', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
-			const updated = await taskManager.updateTaskStatus(task.id, 'failed');
+			const updated = await taskManager.updateTaskStatus(task.id, 'needs_attention');
 
-			expect(updated.status).toBe('failed');
+			expect(updated.status).toBe('needs_attention');
 			expect(updated.completedAt).toBeDefined();
 		});
 
@@ -339,7 +339,7 @@ describe('TaskManager', () => {
 
 			const updated = await taskManager.failTask(task.id, 'Something went wrong');
 
-			expect(updated.status).toBe('failed');
+			expect(updated.status).toBe('needs_attention');
 			expect(updated.error).toBe('Something went wrong');
 			expect(updated.completedAt).toBeDefined();
 		});
@@ -352,7 +352,7 @@ describe('TaskManager', () => {
 	});
 
 	describe('cancelTask', () => {
-		it('should cancel task with cancelled status (not failed)', async () => {
+		it('should cancel task with cancelled status (not needs_attention)', async () => {
 			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
 
 			const updated = await taskManager.cancelTask(task.id);
@@ -441,6 +441,31 @@ describe('TaskManager', () => {
 			const updated = await taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/1');
 
 			expect(updated.status).toBe('review');
+			expect(updated.prUrl).toBe('https://github.com/org/repo/pull/1');
+			expect(updated.prNumber).toBe(1);
+			expect(updated.prCreatedAt).toBeDefined();
+		});
+
+		it('should extract PR number from GitHub URL', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+
+			const updated = await taskManager.reviewTask(
+				task.id,
+				'https://github.com/myorg/myrepo/pull/123'
+			);
+
+			expect(updated.prNumber).toBe(123);
+		});
+
+		it('should set null PR fields when no prUrl provided', async () => {
+			const task = await taskManager.createTask({ title: 'Test Task', description: '' });
+
+			const updated = await taskManager.reviewTask(task.id);
+
+			expect(updated.status).toBe('review');
+			expect(updated.prUrl).toBeUndefined();
+			expect(updated.prNumber).toBeUndefined();
+			expect(updated.prCreatedAt).toBeUndefined();
 		});
 
 		it('should throw error for non-existent task', async () => {
@@ -771,5 +796,140 @@ describe('TaskManager', () => {
 			const final = await taskManager.getTask(task.id);
 			expect(final?.status).toBe('completed');
 		});
+	});
+
+	describe('setTaskStatus — revive to review', () => {
+		it('should allow needs_attention → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'boom');
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+		});
+
+		it('should clear error field on needs_attention → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.failTask(task.id, 'something broke');
+
+			const revived = await taskManager.setTaskStatus(task.id, 'review');
+			expect(revived.status).toBe('review');
+			// error is mapped null→undefined by the task repository
+			expect(revived.error).toBeUndefined();
+		});
+
+		it('should reject cancelled → review transition (worktree is cleaned up on cancel)', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.cancelTask(task.id);
+
+			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+
+		it('should reject completed → review transition', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.completeTask(task.id, 'done');
+
+			await expect(taskManager.setTaskStatus(task.id, 'review')).rejects.toThrow(
+				'Invalid status transition'
+			);
+		});
+	});
+
+	describe('activeSession field', () => {
+		it('should be null by default on a new task', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			expect(task.activeSession).toBeNull();
+		});
+
+		it('should be settable to worker via updateTaskStatus', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			const updated = await taskManager.updateTaskStatus(task.id, 'in_progress', {
+				activeSession: 'worker',
+			});
+			expect(updated.activeSession).toBe('worker');
+		});
+
+		it('should be settable to leader via updateTaskStatus', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			const updated = await taskManager.updateTaskStatus(task.id, 'in_progress', {
+				activeSession: 'leader',
+			});
+			expect(updated.activeSession).toBe('leader');
+		});
+
+		it('should be clearable back to null', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+			const cleared = await taskManager.updateTaskStatus(task.id, 'in_progress', {
+				activeSession: null,
+			});
+			expect(cleared.activeSession).toBeNull();
+		});
+
+		it('should be auto-cleared when task is completed', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+
+			const completed = await taskManager.completeTask(task.id, 'done');
+			expect(completed.activeSession).toBeNull();
+		});
+
+		it('should be auto-cleared when task is failed', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'leader' });
+
+			const failed = await taskManager.failTask(task.id, 'error occurred');
+			expect(failed.activeSession).toBeNull();
+		});
+
+		it('should be auto-cleared when task is cancelled', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+
+			const cancelled = await taskManager.cancelTask(task.id);
+			expect(cancelled.activeSession).toBeNull();
+		});
+
+		it('should persist across getTask calls', async () => {
+			const task = await taskManager.createTask({ title: 'T', description: '' });
+			await taskManager.startTask(task.id);
+			await taskManager.updateTaskStatus(task.id, 'in_progress', { activeSession: 'worker' });
+
+			const fetched = await taskManager.getTask(task.id);
+			expect(fetched!.activeSession).toBe('worker');
+		});
+	});
+});
+
+describe('extractPrNumber', () => {
+	it('should extract PR number from GitHub URL', () => {
+		expect(extractPrNumber('https://github.com/org/repo/pull/123')).toBe(123);
+	});
+
+	it('should extract PR number from URL with trailing path', () => {
+		expect(extractPrNumber('https://github.com/org/repo/pull/42/files')).toBe(42);
+	});
+
+	it('should return null for URL without pull segment', () => {
+		expect(extractPrNumber('https://github.com/org/repo')).toBeNull();
+	});
+
+	it('should handle large PR numbers', () => {
+		expect(extractPrNumber('https://github.com/org/repo/pull/9999')).toBe(9999);
+	});
+
+	it('should return null for empty string', () => {
+		expect(extractPrNumber('')).toBeNull();
 	});
 });

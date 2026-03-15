@@ -15,7 +15,7 @@ export interface ConfirmModalProps {
 	message: string;
 	confirmText?: string;
 	cancelText?: string;
-	confirmButtonVariant?: 'danger' | 'primary';
+	confirmButtonVariant?: 'danger' | 'primary' | 'warning';
 	isLoading?: boolean;
 	error?: string | null;
 }
@@ -40,7 +40,9 @@ export function ConfirmModal({
 	const confirmButtonClasses =
 		confirmButtonVariant === 'danger'
 			? 'bg-red-600 hover:bg-red-700 text-white disabled:bg-red-600/50'
-			: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50';
+			: confirmButtonVariant === 'warning'
+				? 'bg-amber-600 hover:bg-amber-700 text-white disabled:bg-amber-600/50'
+				: 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-600/50';
 
 	return (
 		<Modal isOpen={isOpen} onClose={onClose} title={title} size="sm" showCloseButton={false}>

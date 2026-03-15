@@ -142,7 +142,7 @@ export function createTables(db: BunDatabase): void {
         room_id TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'failed', 'cancelled')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
         priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
         progress INTEGER,
         current_step TEXT,
@@ -155,6 +155,11 @@ export function createTables(db: BunDatabase): void {
         task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
         assigned_agent TEXT DEFAULT 'coder',
         created_by_task_id TEXT,
+        archived_at INTEGER,
+        active_session TEXT,
+        pr_url TEXT,
+        pr_number INTEGER,
+        pr_created_at INTEGER,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
       )
     `);
@@ -228,8 +233,6 @@ export function createTables(db: BunDatabase): void {
         id TEXT PRIMARY KEY,
         group_type TEXT NOT NULL DEFAULT 'task',
         ref_id TEXT NOT NULL,
-        state TEXT NOT NULL DEFAULT 'awaiting_worker'
-          CHECK(state IN ('awaiting_worker', 'awaiting_leader', 'awaiting_human', 'completed', 'failed')),
         version INTEGER NOT NULL DEFAULT 0,
         metadata TEXT NOT NULL DEFAULT '{}',
         created_at INTEGER NOT NULL,
@@ -307,7 +310,6 @@ function createIndexes(db: BunDatabase): void {
 	);
 	// Room Runtime indexes
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_ref ON session_groups(ref_id)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_session_groups_state ON session_groups(state)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_sgm_session ON session_group_members(session_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tge_group ON task_group_events(group_id, id)`);
 	// Job queue indexes

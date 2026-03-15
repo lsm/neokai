@@ -60,7 +60,7 @@ const mockTaskManager = {
 				id: 'task-123',
 				roomId: 'room-123',
 				title: 'Test Task',
-				status: 'failed' as TaskStatus,
+				status: 'needs_attention' as TaskStatus,
 				error: 'Task failed',
 				failedAt: Date.now(),
 				updatedAt: Date.now(),

@@ -123,17 +123,17 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			expect(planningTask.taskType).toBe('planning');
 
 			// Planning may end up in 'completed' (leader calls complete_task),
-			// 'review' (leader calls submit_for_review for human approval), or 'failed'.
+			// 'review' (leader calls submit_for_review for human approval), or 'needs_attention'.
 			const terminalPlanning = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				{ taskType: 'planning', status: ['completed', 'review', 'needs_attention'] },
 				PLANNING_TIMEOUT
 			);
 
-			if (terminalPlanning.status === 'failed') {
+			if (terminalPlanning.status === 'needs_attention') {
 				throw new Error(
-					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
+					`Planning task needs attention: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
 
@@ -148,7 +148,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				await waitForTask(
 					daemon,
 					roomId,
-					{ taskType: 'planning', status: ['completed', 'failed'] },
+					{ taskType: 'planning', status: ['completed', 'needs_attention'] },
 					PLANNING_TIMEOUT
 				);
 			}
@@ -169,31 +169,33 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			// - 'completed': leader approved after review
 			// - 'review': submit_for_review called (awaiting human)
 			// - 'needs_human': escalated (max iterations or other reason)
-			// - 'failed': if something goes wrong (less ideal but possible)
+			// - 'needs_attention': if something goes wrong (less ideal but possible)
 			const terminalTask = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: ['completed', 'review', 'needs_human', 'failed'] },
+				{ taskType: 'coding', status: ['completed', 'review', 'needs_human', 'needs_attention'] },
 				CODING_TIMEOUT
 			);
 
 			// Log terminal status for debugging
 			console.log(`Coding task reached terminal state: ${terminalTask.status}`);
-			if (terminalTask.status === 'failed') {
+			if (terminalTask.status === 'needs_attention') {
 				console.warn(
-					`Coding task failed: ${(terminalTask as { error?: string }).error ?? 'unknown error'}`
+					`Coding task needs attention: ${(terminalTask as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
 
 			// Accept any terminal state — the key assertion is reviewer dispatch evidence below
-			expect(['completed', 'review', 'needs_human', 'failed']).toContain(terminalTask.status);
+			expect(['completed', 'review', 'needs_human', 'needs_attention']).toContain(
+				terminalTask.status
+			);
 
 			// --- Stage 4: Verify group activity ---
 			const group = await waitForGroupState(
 				daemon,
 				roomId,
 				terminalTask.id,
-				['completed', 'awaiting_human', 'failed'],
+				['completed', 'awaiting_human', 'needs_attention'],
 				10_000
 			);
 
@@ -292,7 +294,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 			const completedTask = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: ['completed', 'failed'] },
+				{ taskType: 'coding', status: ['completed', 'needs_attention'] },
 				180_000
 			);
 
@@ -304,7 +306,7 @@ describe('Room Reviewer Sub-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				codingTaskId,
-				['completed', 'failed'],
+				['completed', 'needs_attention'],
 				10_000
 			);
 			expect(group.state).toBe('completed');

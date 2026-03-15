@@ -96,7 +96,7 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 				daemon,
 				roomId,
 				planningTask.id,
-				['awaiting_worker', 'awaiting_leader', 'completed', 'failed'],
+				['awaiting_worker', 'awaiting_leader', 'completed', 'needs_attention'],
 				30_000
 			);
 			expect(planningGroup.id).toBeTruthy();
@@ -106,12 +106,12 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			const terminalPlanning = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'planning', status: ['completed', 'review', 'failed'] },
+				{ taskType: 'planning', status: ['completed', 'review', 'needs_attention'] },
 				120_000
 			);
-			if (terminalPlanning.status === 'failed') {
+			if (terminalPlanning.status === 'needs_attention') {
 				throw new Error(
-					`Planning task failed: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
+					`Planning task needs attention: ${(terminalPlanning as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
 			// If planning is in 'review', approve via task.approve to trigger phase 2
@@ -147,12 +147,12 @@ describe('Room Multi-Agent Flow (API-dependent)', () => {
 			const terminalCoding = await waitForTask(
 				daemon,
 				roomId,
-				{ taskType: 'coding', status: ['completed', 'review', 'failed'] },
+				{ taskType: 'coding', status: ['completed', 'review', 'needs_attention'] },
 				120_000
 			);
-			if (terminalCoding.status === 'failed') {
+			if (terminalCoding.status === 'needs_attention') {
 				throw new Error(
-					`Coding task failed: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
+					`Coding task needs attention: ${(terminalCoding as { error?: string }).error ?? 'unknown error'}`
 				);
 			}
 			// If coding is in 'review', approve via task.approve to trigger PR merge

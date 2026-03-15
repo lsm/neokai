@@ -12,10 +12,49 @@ import { Logger } from '../../logger';
 
 const log = new Logger('lifecycle-hooks');
 
+// --- Bypass Markers ---
+
+/**
+ * Special markers that workers can use to bypass git/PR gates
+ * for read-only tasks that produce no file changes.
+ * DOCUMENTATION_COMPLETE is intentionally excluded: writing docs requires file changes
+ * and should follow the normal git/PR workflow.
+ */
+export const BYPASS_GATES_MARKERS = {
+	RESEARCH_ONLY: 'RESEARCH_ONLY:',
+	VERIFICATION_COMPLETE: 'VERIFICATION_COMPLETE:',
+	INVESTIGATION_RESULT: 'INVESTIGATION_RESULT:',
+	ANALYSIS_COMPLETE: 'ANALYSIS_COMPLETE:',
+} as const;
+
+export type BypassMarker = (typeof BYPASS_GATES_MARKERS)[keyof typeof BYPASS_GATES_MARKERS];
+
+/**
+ * Check if worker output starts with a bypass marker.
+ * Only the first non-empty line of the output is checked to prevent false positives
+ * from markers mentioned inside code blocks, analysis text, or quoted content.
+ * Returns the marker if found, null otherwise.
+ */
+export function detectBypassMarker(workerOutput: string): BypassMarker | null {
+	const lines = workerOutput.split('\n');
+	const firstNonEmptyLine = lines.find((line) => line.trim().length > 0);
+	if (!firstNonEmptyLine) return null;
+
+	for (const marker of Object.values(BYPASS_GATES_MARKERS)) {
+		if (firstNonEmptyLine.trim().startsWith(marker)) {
+			return marker as BypassMarker;
+		}
+	}
+
+	return null;
+}
+
 // --- Types ---
 
 export interface HookResult {
 	pass: boolean;
+	/** Set to true when the worker used a bypass marker to skip git/PR gates */
+	bypassed?: boolean;
 	/** Human-readable reason (for logs/group timeline) */
 	reason?: string;
 	/** Message injected back to the agent to fix the issue */
@@ -37,6 +76,8 @@ export interface WorkerExitHookContext {
 	draftTaskCount?: number;
 	/** Whether a human has approved the task (plan or PR) */
 	approved?: boolean;
+	/** Worker's final output text (for detecting bypass markers) */
+	workerOutput?: string;
 }
 
 export interface LeaderCompleteHookContext {
@@ -436,6 +477,76 @@ export async function checkPrHasReviews(
 }
 
 /**
+ * Check that the PR is mergeable before submitting for human review.
+ * Validates: no conflicts, mergeable state, CI passing.
+ */
+export async function checkPrIsMergeable(
+	ctx: LeaderCompleteHookContext,
+	opts?: HookOptions
+): Promise<HookResult> {
+	const run = getRunner(opts);
+
+	// Get current branch
+	const { stdout: branch, exitCode: branchExit } = await run(
+		['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+		ctx.workspacePath
+	);
+	if (branchExit !== 0) {
+		log.debug(`checkPrIsMergeable: git command failed, skipping check`);
+		return { pass: true }; // Can't check, allow to proceed
+	}
+
+	// Get PR details with mergeable status and CI status
+	const { stdout: prJson, exitCode: ghExit } = await run(
+		['gh', 'pr', 'view', branch, '--json', 'mergeable,mergeStateStatus,statusCheckRollup'],
+		ctx.workspacePath
+	);
+	if (ghExit !== 0) {
+		log.debug(`checkPrIsMergeable: gh command failed, skipping check`);
+		return { pass: true }; // Can't check, allow to proceed
+	}
+
+	try {
+		const pr = JSON.parse(prJson);
+
+		// Check mergeStateStatus for DIRTY or CONFLICTING (both indicate conflicts)
+		// Note: mergeable field is deprecated and returns a string enum, but mergeStateStatus is more reliable
+		if (pr.mergeStateStatus === 'DIRTY' || pr.mergeStateStatus === 'CONFLICTING') {
+			return {
+				pass: false,
+				reason: 'PR has merge conflicts. Please resolve conflicts before submitting for review.',
+				bounceMessage:
+					'Fix merge conflicts: `git fetch && git rebase origin/main` (or base branch), ' +
+					'resolve conflicts, force push, then try again.',
+			};
+		}
+
+		// Check CI status (if available)
+		if (pr.statusCheckRollup && Array.isArray(pr.statusCheckRollup)) {
+			// Check for failed checks
+			const failedChecks = pr.statusCheckRollup.filter(
+				(check: { conclusion?: string }) =>
+					check.conclusion === 'FAILURE' || check.conclusion === 'TIMED_OUT'
+			);
+			if (failedChecks.length > 0) {
+				const checkNames = failedChecks.map((c: { name: string }) => c.name).join(', ');
+				return {
+					pass: false,
+					reason: `CI checks failing: ${checkNames}. Please fix failing checks before submitting for review.`,
+					bounceMessage: 'View CI status: `gh pr checks`. Fix failures, push, then try again.',
+				};
+			}
+		}
+
+		return { pass: true };
+	} catch (error) {
+		log.debug(`checkPrIsMergeable: failed to parse PR data, skipping check: ${error}`);
+		// Failed to parse PR data, allow to proceed (fail open)
+		return { pass: true };
+	}
+}
+
+/**
  * Check that draft tasks exist before leader can complete a planning task.
  */
 export async function checkLeaderDraftsExist(
@@ -450,7 +561,14 @@ export async function checkLeaderDraftsExist(
 		pass: false,
 		reason: 'No draft tasks exist for this planning task.',
 		bounceMessage:
-			'No draft tasks were created. Use `send_to_worker` to ask the planner to create tasks using `create_task`.',
+			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
+			'To fix this:\n' +
+			'1. Call `send_to_worker` (mode: "queue") with: "The plan is approved. Please:\n' +
+			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER> --merge`\n' +
+			'   2. Read the plan file under docs/plans/\n' +
+			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +
+			'   4. Finish your response after all tasks are created"\n' +
+			'2. After the planner exits with tasks created, call `complete_task` again.',
 	};
 }
 
@@ -483,6 +601,21 @@ export async function runWorkerExitGate(
 			return { pass: true };
 		}
 
+		// Check for bypass marker BEFORE running git/PR gates (only for PR-based roles).
+		// Planner bypass is intentionally unsupported: planners require draft task creation,
+		// and the leader gate cannot complete without tasks even in bypass mode.
+		if (isPrBasedRole && ctx.workerOutput) {
+			const bypassMarker = detectBypassMarker(ctx.workerOutput);
+			if (bypassMarker) {
+				log.info(`Worker output contains bypass marker ${bypassMarker} - skipping git/PR gates`);
+				return {
+					pass: true,
+					bypassed: true,
+					reason: `Bypassed git/PR gates: ${bypassMarker}`,
+				};
+			}
+		}
+
 		// Pre-approval: must create feature branch, PR, and push commits
 		const hooks = [checkNotOnBaseBranch, checkPrExists, checkPrSynced];
 		for (const hook of hooks) {
@@ -507,6 +640,10 @@ export async function runLeaderSubmitGate(
 	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
 		const prResult = await checkLeaderPrExists(ctx, opts);
 		if (!prResult.pass) return prResult;
+
+		// Check PR is mergeable before submitting for human review
+		const mergeableResult = await checkPrIsMergeable(ctx, opts);
+		if (!mergeableResult.pass) return mergeableResult;
 
 		// If reviewers are configured, reviews must be posted before submitting
 		if (ctx.hasReviewers) {

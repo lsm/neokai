@@ -14,6 +14,7 @@
 import { generateUUID } from '@neokai/shared';
 import type { Room, RoomGoal, NeoTask, MessageDeliveryMode } from '@neokai/shared';
 import type { AgentSessionInit } from '../../agent/agent-session';
+import { Logger } from '../../logger';
 import type {
 	SessionGroupRepository,
 	SessionGroup,
@@ -34,6 +35,8 @@ import type { RoomRuntime } from './room-runtime';
  * e.g. "Add health check endpoint" → "task/add-health-check-endpoint"
  * Falls back to undefined if the title produces an empty slug (caller uses session-based default).
  */
+const log = new Logger('task-group-manager');
+
 function taskTitleToBranchName(title: string): string | undefined {
 	const slug = title
 		.toLowerCase()
@@ -85,10 +88,21 @@ export interface SessionFactory {
 	 */
 	setSessionMcpServers(sessionId: string, mcpServers: Record<string, unknown>): boolean;
 	/**
+	 * Optional: interrupt a session's current LLM generation without cleanup.
+	 * The session remains in cache and can accept new messages immediately.
+	 * Used for user-initiated interrupts that keep the task alive.
+	 */
+	interruptSession?(sessionId: string): Promise<void>;
+	/**
 	 * Optional: stop and cleanup a session immediately.
 	 * Used for urgent cancellation paths where the group should terminate now.
 	 */
 	stopSession?(sessionId: string): Promise<void>;
+	/**
+	 * Remove a worktree when a task group completes/fails/cancels.
+	 * Returns true if worktree was removed, false if it didn't exist or was main repo.
+	 */
+	removeWorktree(workspacePath: string): Promise<boolean>;
 }
 
 /**
@@ -203,7 +217,7 @@ export class TaskGroupManager {
 	 * 1. Create worktree for task isolation (ALL roles get an isolated worktree)
 	 * 2. Create worker session via workerConfig and start it immediately
 	 * 3. Build leader init but DEFER creation until first review round
-	 * 4. Create session_groups DB record (state: awaiting_worker)
+	 * 4. Create session_groups DB record (active group with submittedForReview=false)
 	 * 5. Set task status to in_progress
 	 * 6. Observe worker session for terminal state
 	 * 7. Kick off worker (inject initial message)
@@ -211,7 +225,7 @@ export class TaskGroupManager {
 	async spawn(
 		room: Room,
 		task: NeoTask,
-		goal: RoomGoal,
+		goal: RoomGoal | null,
 		onWorkerTerminal: (groupId: string, state: TerminalState) => void,
 		onLeaderTerminal: (groupId: string, state: TerminalState) => void,
 		_leaderCallbacksFactory: LeaderCallbacksFactory,
@@ -255,7 +269,7 @@ export class TaskGroupManager {
 		// This survives daemon restart, unlike in-memory maps.
 		const deferredLeader: DeferredLeaderConfig = {
 			roomId: room.id,
-			goalId: goal.id,
+			goalId: goal?.id ?? null,
 			reviewContext,
 			leaderTaskContext: workerConfig.leaderTaskContext,
 		};
@@ -300,16 +314,28 @@ export class TaskGroupManager {
 		leaderCallbacksFactory: LeaderCallbacksFactory
 	): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
-		if (!group) return null;
+		if (!group) {
+			log.warn(`[routeWorkerToLeader] Group ${groupId}: not found in repository`);
+			return null;
+		}
 
 		// Lazy-start leader session if this is the first review round.
 		// Deferred bootstrap data is persisted in DB metadata so restart is safe.
 		const deferredLeader = group.deferredLeader;
 		let shouldClearDeferredLeader = false;
 
-		if (!this.sessionFactory.hasSession(group.leaderSessionId)) {
+		const leaderAlreadyExists = this.sessionFactory.hasSession(group.leaderSessionId);
+		log.debug(
+			`[routeWorkerToLeader] Group ${groupId}: leader session exists=${leaderAlreadyExists}, ` +
+				`deferredLeader=${!!deferredLeader}, feedbackIteration=${group.feedbackIteration}`
+		);
+
+		if (!leaderAlreadyExists) {
 			if (!deferredLeader) {
 				// No live leader session and no persisted bootstrap config.
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: no leader session and no deferredLeader config — failing task`
+				);
 				await this.fail(groupId, 'Leader session lost during restart; task will be re-queued');
 				return null;
 			}
@@ -319,22 +345,34 @@ export class TaskGroupManager {
 			// when the leader starts.
 			const room = this.getRoom(deferredLeader.roomId);
 			if (!room) {
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: room ${deferredLeader.roomId} not found — failing task`
+				);
 				await this.fail(groupId, `Room ${deferredLeader.roomId} not found`);
 				return null;
 			}
 
 			const task = await this.getTaskById(group.taskId);
 			if (!task) {
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: task ${group.taskId} not found — failing task`
+				);
 				await this.fail(groupId, `Task ${group.taskId} not found`);
 				return null;
 			}
 
-			const goal = await this.getGoalById(deferredLeader.goalId);
-			if (!goal) {
+			const goal = deferredLeader.goalId ? await this.getGoalById(deferredLeader.goalId) : null;
+			if (deferredLeader.goalId && !goal) {
+				log.error(
+					`[routeWorkerToLeader] Group ${groupId}: goal ${deferredLeader.goalId} not found — failing task`
+				);
 				await this.fail(groupId, `Goal ${deferredLeader.goalId} not found`);
 				return null;
 			}
 
+			log.info(
+				`[routeWorkerToLeader] Group ${groupId}: creating leader session ${group.leaderSessionId}`
+			);
 			const leaderCallbacks = leaderCallbacksFactory(group.id);
 			const leaderConfig: LeaderAgentConfig = {
 				task,
@@ -354,6 +392,9 @@ export class TaskGroupManager {
 			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
 			await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
+			log.info(
+				`[routeWorkerToLeader] Group ${groupId}: leader session ${group.leaderSessionId} created successfully`
+			);
 		}
 
 		if (deferredLeader) {
@@ -369,7 +410,13 @@ export class TaskGroupManager {
 			: workerOutput;
 
 		// Inject worker output into Leader session
+		log.debug(
+			`[routeWorkerToLeader] Group ${groupId}: injecting worker output into leader session`
+		);
 		await this.sessionFactory.injectMessage(group.leaderSessionId, leaderMessage);
+		log.info(
+			`[routeWorkerToLeader] Group ${groupId}: worker output injected into leader session successfully`
+		);
 
 		if (shouldClearDeferredLeader) {
 			this.groupRepo.setDeferredLeader(groupId, null);
@@ -382,9 +429,6 @@ export class TaskGroupManager {
 		if (afterIncrement) {
 			this.groupRepo.resetLeaderContractViolations(groupId, afterIncrement.version);
 		}
-		// Keep legacy state column in sync for compatibility.
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_leader');
-
 		return this.groupRepo.getGroup(groupId);
 	}
 
@@ -406,6 +450,12 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return null;
 
+		// Clear humanInterrupted: the leader is routing a message to the worker,
+		// so the next worker completion should route back to leader normally.
+		if (group.humanInterrupted) {
+			this.groupRepo.setHumanInterrupted(groupId, false);
+		}
+
 		// If worker is waiting for input (AskUserQuestion), answer the question.
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
@@ -414,9 +464,6 @@ export class TaskGroupManager {
 				deliveryMode: opts?.deliveryMode,
 			});
 		}
-
-		// Keep legacy state column in sync for compatibility.
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_worker');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -441,6 +488,9 @@ export class TaskGroupManager {
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
 
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
+
 		return updated;
 	}
 
@@ -448,6 +498,7 @@ export class TaskGroupManager {
 	 * Fail a group - task cannot be completed.
 	 *
 	 * Called when Leader calls fail_task(reason).
+	 * Note: Worktree is NOT cleaned up on failure to allow debugging.
 	 */
 	async fail(groupId: string, reason: string): Promise<SessionGroup | null> {
 		const group = this.groupRepo.getGroup(groupId);
@@ -463,6 +514,9 @@ export class TaskGroupManager {
 		// Stop observing sessions
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
+
+		// NOTE: Worktree is NOT cleaned up on failure to allow debugging.
+		// Use archiveGroup() to cleanup worktree for failed tasks.
 
 		return updated;
 	}
@@ -480,7 +534,6 @@ export class TaskGroupManager {
 
 		// Move task to review status with PR URL
 		await this.taskManager.reviewTask(group.taskId, prUrl);
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_human');
 
 		return this.groupRepo.getGroup(groupId);
 	}
@@ -499,7 +552,7 @@ export class TaskGroupManager {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group || !group.submittedForReview) return false;
 
-		// Reset state for the new review round.
+		// Reset group metadata for the new review round.
 		// feedbackIteration is reset to 0 so the resumed task gets a fresh iteration budget —
 		// without this the task would immediately re-escalate on the very next leader cycle.
 		this.groupRepo.resetLeaderContractViolations(groupId, group.version);
@@ -509,19 +562,18 @@ export class TaskGroupManager {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
 
-		// Inject approval message into existing worker session.
+		// Inject message into existing worker session.
 		await this.sessionFactory.injectMessage(group.workerSessionId, message);
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_worker');
 
 		return true;
 	}
 
 	/**
-	 * Resume a group from awaiting_human by injecting a message into the existing leader.
+	 * Resume a submitted-for-review group by injecting a message into the existing leader.
 	 *
 	 * Used for ALL human resumptions (both approval and rejection):
 	 * - Approval: leader merges PR and calls complete_task
-	 * - Rejection: leader forwards feedback to worker via send_to_worker + handoff_to_worker
+	 * - Rejection: leader forwards feedback to worker via send_to_worker
 	 *
 	 * No new sessions are created. The existing observer will fire
 	 * onLeaderTerminalState again when the leader finishes.
@@ -539,7 +591,7 @@ export class TaskGroupManager {
 		// task status/approval without restoring group metadata.
 		await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 
-		// Reset state for the new cycle (same as resumeWorkerFromHuman).
+		// Reset group metadata for the new cycle (same as resumeWorkerFromHuman).
 		// feedbackIteration is reset to 0 so the worker gets a fresh iteration budget.
 		// submittedForReview is reset so the worker must re-submit for review after addressing feedback.
 		// For approval path, these resets are harmless since leader will complete the task.
@@ -550,7 +602,6 @@ export class TaskGroupManager {
 		if (afterReset) {
 			this.groupRepo.resetFeedbackIteration(groupId, afterReset.version);
 		}
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_leader');
 
 		return true;
 	}
@@ -571,7 +622,6 @@ export class TaskGroupManager {
 
 		// Set submittedForReview flag to indicate awaiting human action
 		this.groupRepo.setSubmittedForReview(groupId, true);
-		this.groupRepo.setCompatibilityState(groupId, 'awaiting_human');
 
 		// Move task to review status (no PR URL — runtime-enforced escalation)
 		await this.taskManager.reviewTask(group.taskId);
@@ -591,6 +641,8 @@ export class TaskGroupManager {
 		if (group.completedAt !== null) {
 			this.observer.unobserve(group.workerSessionId);
 			this.observer.unobserve(group.leaderSessionId);
+			// Already terminal - cleanup worktree if not done
+			await this.cleanupWorktree(group);
 			return group;
 		}
 
@@ -599,6 +651,9 @@ export class TaskGroupManager {
 
 		this.observer.unobserve(group.workerSessionId);
 		this.observer.unobserve(group.leaderSessionId);
+
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
 
 		return updated;
 	}
@@ -615,5 +670,48 @@ export class TaskGroupManager {
 		await this.taskManager.cancelTask(terminated.taskId);
 
 		return terminated;
+	}
+
+	/**
+	 * Archive a group - cleanup worktree regardless of state.
+	 *
+	 * Called when user archives a task via UI. This cleans up the worktree
+	 * to free disk space even for failed tasks (kept for debugging initially).
+	 *
+	 * Note: This only cleans up the worktree. Task archival (archivedAt timestamp)
+	 * is handled separately by TaskManager.archiveTask().
+	 */
+	async archiveGroup(groupId: string): Promise<SessionGroup | null> {
+		const group = this.groupRepo.getGroup(groupId);
+		if (!group) return null;
+
+		// Cleanup worktree (best-effort)
+		await this.cleanupWorktree(group);
+
+		return group;
+	}
+
+	/**
+	 * Cleanup worktree for a completed/failed/cancelled group.
+	 *
+	 * Worktrees are created for task isolation and should be removed when
+	 * the task reaches a terminal state to prevent disk space accumulation.
+	 *
+	 * Best-effort: logs errors but does not throw.
+	 */
+	private async cleanupWorktree(group: SessionGroup): Promise<void> {
+		// Skip if no workspace path or if it's the main repo (not a worktree)
+		if (!group.workspacePath || group.workspacePath === this.workspacePath) {
+			return;
+		}
+
+		try {
+			await this.sessionFactory.removeWorktree(group.workspacePath);
+		} catch (error) {
+			// Best-effort cleanup - don't fail the operation
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			// eslint-disable-next-line no-console
+			console.error(`[TaskGroupManager] Worktree cleanup failed for ${group.id}: ${errorMsg}`);
+		}
 	}
 }

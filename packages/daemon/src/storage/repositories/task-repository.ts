@@ -67,11 +67,18 @@ export class TaskRepository {
 	}
 
 	/**
-	 * List tasks for a room, optionally filtered
+	 * List tasks for a room, optionally filtered.
+	 * By default, archived tasks (archived_at IS NOT NULL) are excluded.
+	 * Use filter.includeArchived = true to include archived tasks.
 	 */
 	listTasks(roomId: string, filter?: TaskFilter): NeoTask[] {
 		let query = `SELECT * FROM tasks WHERE room_id = ?`;
 		const params: SQLiteValue[] = [roomId];
+
+		// Exclude archived tasks by default
+		if (!filter?.includeArchived) {
+			query += ` AND archived_at IS NULL`;
+		}
 
 		if (filter?.status) {
 			query += ` AND status = ?`;
@@ -113,7 +120,7 @@ export class TaskRepository {
 				values.push(Date.now());
 			} else if (
 				params.status === 'completed' ||
-				params.status === 'failed' ||
+				params.status === 'needs_attention' ||
 				params.status === 'cancelled'
 			) {
 				fields.push('completed_at = ?');
@@ -144,6 +151,32 @@ export class TaskRepository {
 			fields.push('depends_on = ?');
 			values.push(JSON.stringify(params.dependsOn));
 		}
+		if (params.activeSession !== undefined) {
+			fields.push('active_session = ?');
+			values.push(params.activeSession ?? null);
+		}
+		// Auto-clear active_session when task reaches a terminal status (unless already set explicitly)
+		if (
+			params.activeSession === undefined &&
+			(params.status === 'completed' ||
+				params.status === 'needs_attention' ||
+				params.status === 'cancelled')
+		) {
+			fields.push('active_session = ?');
+			values.push(null);
+		}
+		if (params.prUrl !== undefined) {
+			fields.push('pr_url = ?');
+			values.push(params.prUrl ?? null);
+		}
+		if (params.prNumber !== undefined) {
+			fields.push('pr_number = ?');
+			values.push(params.prNumber ?? null);
+		}
+		if (params.prCreatedAt !== undefined) {
+			fields.push('pr_created_at = ?');
+			values.push(params.prCreatedAt ?? null);
+		}
 		if (fields.length > 0) {
 			values.push(id);
 			const stmt = this.db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`);
@@ -159,6 +192,17 @@ export class TaskRepository {
 	deleteTask(id: string): void {
 		const stmt = this.db.prepare(`DELETE FROM tasks WHERE id = ?`);
 		stmt.run(id);
+	}
+
+	/**
+	 * Archive a task by setting archived_at timestamp.
+	 * Archived tasks are hidden from UI by default.
+	 * Returns the updated task or null if not found.
+	 */
+	archiveTask(id: string): NeoTask | null {
+		const stmt = this.db.prepare(`UPDATE tasks SET archived_at = ? WHERE id = ?`);
+		stmt.run(Date.now(), id);
+		return this.getTask(id);
 	}
 
 	/**
@@ -181,11 +225,11 @@ export class TaskRepository {
 	}
 
 	/**
-	 * Count all active (non-completed, non-failed, non-cancelled) tasks for a room
+	 * Count all active (non-completed, non-needs_attention, non-cancelled) tasks for a room
 	 */
 	countActiveTasks(roomId: string): number {
 		const stmt = this.db.prepare(
-			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')`
+			`SELECT COUNT(*) as count FROM tasks WHERE room_id = ? AND status NOT IN ('completed', 'needs_attention', 'cancelled')`
 		);
 		const result = stmt.get(roomId) as { count: number };
 		return result.count;
@@ -225,6 +269,11 @@ export class TaskRepository {
 			createdAt: row.created_at as number,
 			startedAt: (row.started_at as number | null) ?? undefined,
 			completedAt: (row.completed_at as number | null) ?? undefined,
+			archivedAt: (row.archived_at as number | null) ?? undefined,
+			activeSession: (row.active_session as 'worker' | 'leader' | null) ?? null,
+			prUrl: (row.pr_url as string | null) ?? undefined,
+			prNumber: (row.pr_number as number | null) ?? undefined,
+			prCreatedAt: (row.pr_created_at as number | null) ?? undefined,
 		};
 	}
 }
