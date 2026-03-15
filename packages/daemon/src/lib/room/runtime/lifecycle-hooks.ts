@@ -657,62 +657,32 @@ export async function runLeaderSubmitGate(
 /**
  * Run all applicable leader complete hooks for the given context.
  * Returns the first failing hook result, or { pass: true }.
+ *
+ * Gate order:
+ * 1. PR must be merged (universal — applies to all roles; fails open when gh unavailable,
+ *    allowing bypass/research-only tasks to proceed without a PR)
+ * 2. Planning tasks: draft tasks must exist (created by planner in Phase 2)
+ * 3. Coder/general with reviewer sub-agents: reviews must be posted on the PR
  */
 export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	// Human-approved tasks: verify merge for PR-based tasks and check reviewers if configured.
-	// For planning: verify draft tasks were created.
-	// For coder/general: verify PR was actually merged (leader handles merge after approval),
-	//   and if reviewer sub-agents are configured, they must have posted reviews.
-	if (ctx.approved) {
-		if (ctx.taskType === 'planning') {
-			return checkLeaderDraftsExist(ctx, opts);
-		}
-		if (ctx.workerRole === 'coder' || ctx.workerRole === 'general') {
-			const mergedResult = await checkLeaderPrMerged(ctx, opts);
-			if (!mergedResult.pass) return mergedResult;
-			if (ctx.hasReviewers) {
-				const reviewResult = await checkPrHasReviews(ctx, opts);
-				if (!reviewResult.pass) return reviewResult;
-			}
-			return { pass: true };
-		}
-		return { pass: true };
-	}
+	// Universal: always verify the PR was merged before completing.
+	// Fails open when gh is unavailable (e.g. bypass/research-only tasks with no PR).
+	const mergedResult = await checkLeaderPrMerged(ctx, opts);
+	if (!mergedResult.pass) return mergedResult;
 
-	// Defense-in-depth: the state machine gate in room-runtime.ts already blocks coder/general/planner
-	// tasks from reaching this point when approved=false. This branch remains as a safeguard in case
-	// the hook is called directly (e.g. unit tests) or the gate logic changes in the future.
-	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
-		if (ctx.workerRole === 'coder' || ctx.workerRole === 'general') {
-			// For coder/general: verify PR is merged, not just exists
-			const mergedResult = await checkLeaderPrMerged(ctx, opts);
-			if (!mergedResult.pass) {
-				return mergedResult;
-			}
-		} else {
-			// For planner: check PR exists (plan PR doesn't need to be merged at this point)
-			const prResult = await checkLeaderPrExists(ctx, opts);
-			if (!prResult.pass) {
-				return prResult;
-			}
-		}
-
-		if (ctx.hasReviewers) {
-			const reviewResult = await checkPrHasReviews(ctx, opts);
-			if (!reviewResult.pass) {
-				return reviewResult;
-			}
-		}
-	}
-
+	// Planning tasks: verify draft tasks were created from the merged plan.
 	if (ctx.taskType === 'planning') {
-		const result = await checkLeaderDraftsExist(ctx, opts);
-		if (!result.pass) {
-			return result;
-		}
+		const draftsResult = await checkLeaderDraftsExist(ctx, opts);
+		if (!draftsResult.pass) return draftsResult;
+	}
+
+	// Coder/general with reviewer sub-agents: verify reviews were posted on the PR.
+	if ((ctx.workerRole === 'coder' || ctx.workerRole === 'general') && ctx.hasReviewers) {
+		const reviewResult = await checkPrHasReviews(ctx, opts);
+		if (!reviewResult.pass) return reviewResult;
 	}
 
 	return { pass: true };

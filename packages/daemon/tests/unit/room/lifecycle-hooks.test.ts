@@ -767,15 +767,20 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('skips PR checks for phase 2 planning (approved=true) and passes with drafts', async () => {
-		// Phase 2: PR was already merged, no open PR — but approved skips PR checks
+	test('passes for phase 2 planning when PR is merged and drafts exist', async () => {
+		// Phase 2: planner merged the plan PR and created draft tasks
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'planner',
 				taskType: 'planning',
 				approved: true,
 				draftTaskCount: 3,
-			})
+			}),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -886,7 +891,7 @@ describe('runLeaderCompleteGate', () => {
 	});
 });
 
-describe('runLeaderCompleteGate — PR merge validation (non-approved path)', () => {
+describe('runLeaderCompleteGate — PR merge validation (all roles)', () => {
 	test('FAILS when PR is OPEN (not merged) for coder tasks', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
@@ -927,7 +932,7 @@ describe('runLeaderCompleteGate — PR merge validation (non-approved path)', ()
 		expect(result.bounceMessage).toContain('not merged');
 	});
 
-	test('PASSES when PR is MERGED for coder tasks without approval', async () => {
+	test('PASSES when PR is MERGED for coder tasks', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
@@ -939,7 +944,7 @@ describe('runLeaderCompleteGate — PR merge validation (non-approved path)', ()
 		expect(result.pass).toBe(true);
 	});
 
-	test('PASSES when PR is MERGED for general tasks without approval', async () => {
+	test('PASSES when PR is MERGED for general tasks', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research', exitCode: 0 },
 			'gh pr view feat/research --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
@@ -951,7 +956,7 @@ describe('runLeaderCompleteGate — PR merge validation (non-approved path)', ()
 		expect(result.pass).toBe(true);
 	});
 
-	test('PASSES gracefully when gh is unavailable for coder tasks (backward compat)', async () => {
+	test('PASSES gracefully when gh is unavailable (fail open)', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
@@ -963,35 +968,52 @@ describe('runLeaderCompleteGate — PR merge validation (non-approved path)', ()
 		expect(result.pass).toBe(true);
 	});
 
-	test('does NOT check merge state for planner tasks — only checks PR exists', async () => {
+	test('FAILS when PR is OPEN (not merged) for planner tasks', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
-			'gh pr list --head plan/new-feature --json number --state open': {
-				stdout: '[{"number":1}]',
-				exitCode: 0,
-			},
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
 		});
 		const result = await runLeaderCompleteGate(
-			makeLeaderCtx({ workerRole: 'planner', approved: false }),
-			opts
-		);
-		expect(result.pass).toBe(true);
-	});
-
-	test('planner tasks fail when no open PR exists', async () => {
-		const opts = mockRunner({
-			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
-			'gh pr list --head plan/new-feature --json number --state open': {
-				stdout: '[]',
-				exitCode: 0,
-			},
-		});
-		const result = await runLeaderCompleteGate(
-			makeLeaderCtx({ workerRole: 'planner', approved: false }),
+			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning', approved: false }),
 			opts
 		);
 		expect(result.pass).toBe(false);
 		expect(result.bounceMessage).toContain('send_to_worker');
+	});
+
+	test('PASSES when PR is MERGED for planner tasks but fails when no drafts exist', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'planner',
+				taskType: 'planning',
+				approved: false,
+				draftTaskCount: 0,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('create_task');
+	});
+
+	test('PASSES when PR is MERGED for planner tasks and drafts exist', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'planner',
+				taskType: 'planning',
+				approved: false,
+				draftTaskCount: 3,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
 	});
 });
 
