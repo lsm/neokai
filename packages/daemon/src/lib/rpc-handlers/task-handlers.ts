@@ -37,7 +37,7 @@ export type TaskManagerLike = Pick<
 	| 'cancelTask'
 	| 'setTaskStatus'
 	| 'archiveTask'
-  | 'updateTaskStatus'
+	| 'updateTaskStatus'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;

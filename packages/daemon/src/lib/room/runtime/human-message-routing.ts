@@ -3,7 +3,7 @@
  *
  * Routes a human message to the worker or leader session.
  * - Active groups: messages are injected directly
- * - Failed tasks: group is reset and task transitions to in_progress before injecting
+ * - needs_attention/cancelled tasks: group is reset and task transitions to in_progress before injecting
  */
 
 import type { TaskStatus } from '@neokai/shared';
@@ -13,7 +13,11 @@ import { VALID_STATUS_TRANSITIONS } from '../managers/task-manager';
 
 export interface TaskOperator {
 	getTask(taskId: string): Promise<{ status: TaskStatus } | null>;
-	setTaskStatus(taskId: string, status: TaskStatus, options?: { result?: string; error?: string }): Promise<unknown>;
+	setTaskStatus(
+		taskId: string,
+		status: TaskStatus,
+		options?: { result?: string; error?: string }
+	): Promise<unknown>;
 }
 
 export interface HumanMessageResult {
@@ -55,9 +59,9 @@ export async function routeHumanMessageToGroup(
 			return { success: false, error: 'Task not found' };
 		}
 
-		// Allow restarting failed (or cancelled) tasks - transition to in_progress
-		if (task.status === 'failed' || task.status === 'cancelled') {
-			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status as TaskStatus];
+		// Allow restarting needs_attention (failed) or cancelled tasks - transition to in_progress
+		if (task.status === 'needs_attention' || task.status === 'cancelled') {
+			const allowedTransitions = VALID_STATUS_TRANSITIONS[task.status];
 			if (!allowedTransitions.includes('in_progress')) {
 				return { success: false, error: `Task in '${task.status}' status cannot be restarted` };
 			}
