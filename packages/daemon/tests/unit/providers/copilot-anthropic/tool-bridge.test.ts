@@ -72,6 +72,30 @@ describe('ToolBridgeRegistry', () => {
 		);
 	});
 
+	it('rejectAll prevents stale microtask from writing after response is closed', async () => {
+		const reg = new ToolBridgeRegistry();
+		const writer = new AnthropicStreamWriter();
+		const { written, res } = makeRes();
+		writer.start(res, 'model');
+		reg.setActiveResponse(writer, res);
+
+		const p1 = reg.emitToolUseAndWait('tc_1', 'bash', {});
+		void p1.catch(() => {});
+
+		// rejectAll fires before the queueMicrotask flush runs
+		reg.rejectAll(new Error('disconnect'));
+
+		const writtenBefore = written.length;
+		// Allow the already-queued microtask to run
+		await Promise.resolve();
+		// No additional writes should have occurred after rejectAll
+		expect(written.length).toBe(writtenBefore);
+		// pendingEmissions must be cleared so future flushes are no-ops
+		expect(
+			(reg as unknown as Record<string, unknown>)['pendingEmissions'] as unknown[]
+		).toHaveLength(0);
+	});
+
 	it('rejectAll rejects all pending promises', async () => {
 		const reg = new ToolBridgeRegistry();
 		const writer = new AnthropicStreamWriter();

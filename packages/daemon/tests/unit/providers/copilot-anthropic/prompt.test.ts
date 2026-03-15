@@ -120,6 +120,26 @@ describe('formatAnthropicPrompt', () => {
 		expect(result).toBe('[Tool result for tu_1]: ');
 	});
 
+	it('formats tool_result with is_error=true using error prefix', () => {
+		const result = formatAnthropicPrompt([
+			{
+				role: 'user',
+				content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'timeout', is_error: true }],
+			},
+		]);
+		expect(result).toBe('[Tool error for tu_1]: timeout');
+	});
+
+	it('formats tool_result with is_error=false using result prefix', () => {
+		const result = formatAnthropicPrompt([
+			{
+				role: 'user',
+				content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'ok', is_error: false }],
+			},
+		]);
+		expect(result).toBe('[Tool result for tu_1]: ok');
+	});
+
 	it('returns empty string for empty messages array', () => {
 		expect(formatAnthropicPrompt([])).toBe('');
 	});
