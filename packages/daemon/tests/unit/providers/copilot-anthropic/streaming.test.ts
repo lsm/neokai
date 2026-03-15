@@ -236,14 +236,20 @@ describe('resumeSessionStreaming', () => {
 		const { req } = makeMockReq();
 		const registry = new ToolBridgeRegistry();
 
-		let resolveToolResult: ((v: string) => void) | undefined;
-		// Simulate a registered tool that is pending resolution
-		registry['pendingByToolUseId'] = new Map([
+		// Plant a real pending entry using the correct internal property name ('pending').
+		// This exercises the actual resolveToolResult() code path.
+		let resolvedWith: string | undefined;
+		const fakeTimer = setTimeout(() => {}, 100_000);
+		(registry as unknown as Record<string, unknown>)['pending'] = new Map([
 			[
 				'tc_1',
-				new Promise<string>((resolve) => {
-					resolveToolResult = resolve;
-				}),
+				{
+					resolve: (v: string) => {
+						resolvedWith = v;
+					},
+					reject: () => {},
+					timer: fakeTimer,
+				},
 			],
 		]);
 
@@ -256,11 +262,15 @@ describe('resumeSessionStreaming', () => {
 			[{ toolUseId: 'tc_1', result: 'result-value' }]
 		);
 		await Promise.resolve();
+		// resolveToolResult should have been called immediately by resumeSessionStreaming
+		expect(resolvedWith).toBe('result-value');
+
 		// After tool results are delivered, session should eventually idle
 		session.emit('session.idle');
 
 		const outcome = await p;
 		expect(outcome.kind).toBe('completed');
 		expect(session.disconnectCalled).toBe(true);
+		clearTimeout(fakeTimer);
 	});
 });

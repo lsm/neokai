@@ -78,14 +78,9 @@ describe('ToolBridgeRegistry', () => {
 		const { res } = makeRes();
 		writer.start(res, 'model');
 		reg.setActiveResponse(writer, res);
+		// Both calls buffer — microtask batching means neither clears the active
+		// response synchronously, so a single setActiveResponse is sufficient.
 		const p1 = reg.emitToolUseAndWait('tc_1', 'bash', {});
-
-		// emitToolUseAndWait cleared the active response after writing,
-		// so set it again for the second call.
-		const { res: res2 } = makeRes();
-		const writer2 = new AnthropicStreamWriter();
-		writer2.start(res2, 'model');
-		reg.setActiveResponse(writer2, res2);
 		const p2 = reg.emitToolUseAndWait('tc_2', 'read', {});
 
 		// Attach catch handlers before rejectAll to prevent unhandled-rejection throws in Bun.
@@ -111,10 +106,56 @@ describe('ToolBridgeRegistry', () => {
 		});
 
 		const promise = reg.emitToolUseAndWait('tc_x', 'myTool', {});
+		// onToolUseEmitted fires inside the microtask flush — await a tick first.
+		await Promise.resolve();
 		expect(emittedId).toBe('tc_x');
 
 		reg.resolveToolResult('tc_x', 'done');
 		await promise;
+	});
+
+	it('parallel tool calls are batched into a single SSE response', async () => {
+		const reg = new ToolBridgeRegistry();
+		const writer = new AnthropicStreamWriter();
+		const { written, res } = makeRes();
+		writer.start(res, 'model');
+		reg.setActiveResponse(writer, res);
+
+		let emittedId: string | null = null;
+		reg.setOnToolUseEmitted((id) => {
+			emittedId = id;
+		});
+
+		// Simulate two parallel tool handlers calling emitToolUseAndWait concurrently.
+		const p1 = reg.emitToolUseAndWait('tc_1', 'bash', { cmd: 'ls' });
+		const p2 = reg.emitToolUseAndWait('tc_2', 'read_file', { path: '/tmp' });
+
+		// Before microtask flush: both are pending, no SSE written yet.
+		expect(reg.hasPending()).toBe(true);
+		expect(reg.pendingIds()).toContain('tc_1');
+		expect(reg.pendingIds()).toContain('tc_2');
+		expect(emittedId).toBeNull();
+
+		// Allow microtask flush to run.
+		await Promise.resolve();
+
+		// After flush: onToolUseEmitted fired with the first tool call ID.
+		expect(emittedId).toBe('tc_1');
+
+		// Both tool_use blocks were written to the same response.
+		const output = written.join('');
+		expect(output).toContain('"tc_1"');
+		expect(output).toContain('"tc_2"');
+		expect(output).toContain('"bash"');
+		expect(output).toContain('"read_file"');
+
+		// Resolve both tool handlers.
+		expect(reg.resolveToolResult('tc_1', 'result1')).toBe(true);
+		expect(reg.resolveToolResult('tc_2', 'result2')).toBe(true);
+
+		expect(await p1).toBe('result1');
+		expect(await p2).toBe('result2');
+		expect(reg.hasPending()).toBe(false);
 	});
 
 	it('calls onPendingToolCall callback when tool call is suspended', async () => {

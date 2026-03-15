@@ -65,6 +65,22 @@ export class ToolBridgeRegistry {
 	/** Callback invoked when a pending tool call ID is registered. */
 	private onPendingToolCall: ((toolCallId: string) => void) | null = null;
 
+	/**
+	 * Buffer for tool calls waiting to be flushed to the SSE response.
+	 *
+	 * When the Copilot model emits parallel tool calls, all tool handlers fire
+	 * concurrently.  Each call to `emitToolUseAndWait` pushes an entry here
+	 * and schedules a single microtask flush via `queueMicrotask`.  The flush
+	 * writes all buffered `tool_use` blocks to the same HTTP response and ends
+	 * it once — correctly supporting N parallel tool calls in one turn.
+	 */
+	private pendingEmissions: Array<{
+		toolCallId: string;
+		toolName: string;
+		toolInput: unknown;
+	}> = [];
+	private flushScheduled = false;
+
 	// ---------------------------------------------------------------------------
 	// Response management
 	// ---------------------------------------------------------------------------
@@ -102,34 +118,30 @@ export class ToolBridgeRegistry {
 	/**
 	 * Called from a Copilot SDK tool handler.
 	 *
-	 * 1. Captures the active SSE writer/response.
-	 * 2. Emits a `tool_use` SSE block and ends the HTTP response.
-	 * 3. Suspends until `resolveToolResult()` is called with the matching ID.
-	 * 4. Returns the tool result string to the Copilot SDK so the model can continue.
+	 * Buffers the tool call and schedules a microtask flush.  If the Copilot
+	 * model emits parallel tool calls, all handlers call this method
+	 * concurrently before any microtask runs, so the flush will collect all
+	 * of them and emit every `tool_use` block in a single HTTP response.
+	 *
+	 * After the flush, this method suspends until `resolveToolResult()` is
+	 * called with the matching ID by the next HTTP request.
 	 */
 	async emitToolUseAndWait(
 		toolCallId: string,
 		toolName: string,
 		toolInput: unknown
 	): Promise<string> {
-		const writer = this.activeWriter;
-		const res = this.activeRes;
+		// Buffer this tool call — parallel tool handlers all push here before
+		// the microtask flush runs.
+		this.pendingEmissions.push({ toolCallId, toolName, toolInput });
 
-		if (!writer || !res) {
-			throw new Error(
-				`ToolBridgeRegistry: no active SSE response when tool "${toolName}" was called. ` +
-					'This is a bug — setActiveResponse() must be called before session.send().'
-			);
+		// Schedule a single microtask to flush all buffered emissions.
+		if (!this.flushScheduled) {
+			this.flushScheduled = true;
+			queueMicrotask(() => {
+				this.flushEmissions();
+			});
 		}
-
-		// Clear first so the close-handler on req cannot double-write.
-		this.clearActiveResponse();
-
-		// Write the tool_use SSE block and end the response.
-		writer.sendToolUse(res, toolCallId, toolName, toolInput);
-
-		// Notify the streaming loop that the response has been ended.
-		this.onToolUseEmitted?.(toolCallId);
 
 		// Suspend until the tool_result arrives from the next HTTP request.
 		return new Promise<string>((resolve, reject) => {
@@ -142,6 +154,56 @@ export class ToolBridgeRegistry {
 			// Notify ConversationManager so it can route the next request here.
 			this.onPendingToolCall?.(toolCallId);
 		});
+	}
+
+	/**
+	 * Flush all buffered tool-use emissions to the active SSE response.
+	 *
+	 * Writes every buffered `tool_use` block to the response and ends it once.
+	 * Called via `queueMicrotask` so all concurrent `emitToolUseAndWait` calls
+	 * in the same turn have had a chance to push their data before this runs.
+	 */
+	private flushEmissions(): void {
+		this.flushScheduled = false;
+		const emissions = this.pendingEmissions.splice(0);
+		if (emissions.length === 0) return;
+
+		const writer = this.activeWriter;
+		const res = this.activeRes;
+
+		if (!writer || !res) {
+			// The response was already closed (e.g. client disconnected, session
+			// aborted, or setActiveResponse was never called) before the flush ran.
+			// Reject each buffered tool handler immediately so it does not silently
+			// hang for the full TTL.
+			for (const { toolCallId, toolName } of emissions) {
+				const pending = this.pending.get(toolCallId);
+				if (pending) {
+					clearTimeout(pending.timer);
+					this.pending.delete(toolCallId);
+					pending.reject(
+						new Error(
+							`ToolBridgeRegistry: no active SSE response when tool "${toolName}" was called. ` +
+								'This is a bug — setActiveResponse() must be called before session.send().'
+						)
+					);
+				}
+			}
+			return;
+		}
+
+		// Clear first so any further activity (e.g. req 'close') cannot double-write.
+		this.clearActiveResponse();
+
+		// Write all tool_use blocks to the same response, then end it once.
+		for (const { toolCallId, toolName, toolInput } of emissions) {
+			writer.writeToolUseBlock(res, toolCallId, toolName, toolInput);
+		}
+		writer.sendToolUseEpilogue(res);
+
+		// Notify the streaming loop that the response has been ended.
+		// Any emitted tool call ID routes back to this session; use the first.
+		this.onToolUseEmitted?.(emissions[0].toolCallId);
 	}
 
 	// ---------------------------------------------------------------------------

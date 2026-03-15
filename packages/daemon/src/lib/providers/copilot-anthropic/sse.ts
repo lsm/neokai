@@ -66,6 +66,9 @@ export class AnthropicStreamWriter {
 	}
 
 	private sendEpilogue(res: ServerResponse, stopReason: string): void {
+		// output_tokens is always 0 because the Copilot SDK does not expose token
+		// counts.  Any NeoKai UI elements that display token usage will show 0 for
+		// Copilot-backed sessions — this is a known limitation of the bridge layer.
 		sendEvent(res, 'message_delta', {
 			type: 'message_delta',
 			delta: { stop_reason: stopReason, stop_sequence: null },
@@ -104,13 +107,17 @@ export class AnthropicStreamWriter {
 		}
 	}
 
-	/** Emit a `tool_use` content block and end the SSE stream with `stop_reason: "tool_use"`.
-	 *
-	 * After this call the HTTP response is ended (`res.end()` is called).  The
-	 * Copilot session remains alive — its tool handler is still suspended waiting
-	 * for the tool result that will arrive in the next HTTP request.
+	/**
+	 * Write one `tool_use` content block WITHOUT writing the epilogue or ending
+	 * the response.  Use this when multiple parallel tool calls need to be
+	 * emitted in the same response — call `sendToolUseEpilogue()` afterward.
 	 */
-	sendToolUse(res: ServerResponse, toolCallId: string, toolName: string, toolInput: unknown): void {
+	writeToolUseBlock(
+		res: ServerResponse,
+		toolCallId: string,
+		toolName: string,
+		toolInput: unknown
+	): void {
 		this.closeTextBlock(res);
 		const blockIndex = this.nextBlockIndex++;
 		sendEvent(res, 'content_block_start', {
@@ -124,8 +131,28 @@ export class AnthropicStreamWriter {
 			delta: { type: 'input_json_delta', partial_json: JSON.stringify(toolInput) },
 		});
 		sendEvent(res, 'content_block_stop', { type: 'content_block_stop', index: blockIndex });
+	}
+
+	/**
+	 * Write the `stop_reason: "tool_use"` epilogue and end the response.
+	 *
+	 * Call this once after all `writeToolUseBlock()` calls.  The Copilot
+	 * session remains alive — tool handlers are still suspended waiting for
+	 * tool results that will arrive in the next HTTP request.
+	 */
+	sendToolUseEpilogue(res: ServerResponse): void {
 		this.sendEpilogue(res, 'tool_use');
 		res.end();
+	}
+
+	/** Emit a single `tool_use` content block and end the SSE stream.
+	 *
+	 * Convenience wrapper around `writeToolUseBlock` + `sendToolUseEpilogue`
+	 * for the common single-tool case.
+	 */
+	sendToolUse(res: ServerResponse, toolCallId: string, toolName: string, toolInput: unknown): void {
+		this.writeToolUseBlock(res, toolCallId, toolName, toolInput);
+		this.sendToolUseEpilogue(res);
 	}
 
 	/**

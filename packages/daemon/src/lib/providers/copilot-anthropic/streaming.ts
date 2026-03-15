@@ -188,9 +188,13 @@ function streamSession(
 
 	// Pass writeFailed so startFn can emit a well-formed SSE epilogue using the
 	// original writer state (e.g. when session.send() rejects mid-stream).
+	// Guard with sessionDone: if session.idle already fired and ended the
+	// response before session.send() rejects, writing again would error.
 	startFn(finishCompleted, () => {
-		writer.sendFailed(res);
-		res.end();
+		if (!sessionDone) {
+			writer.sendFailed(res);
+			res.end();
+		}
 	});
 
 	return promise;
