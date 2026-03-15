@@ -113,14 +113,31 @@ describe('Dialog RPC Handlers', () => {
 			expect(handler).toBeDefined();
 		});
 
-		it('handler is an async function returning a Promise', () => {
+		it('handler is an async function returning a Promise with a path field', async () => {
+			setPlatform('darwin');
+			spawnSpy.mockImplementation(
+				() => createMockProcess('/Users/test/project\n') as unknown as ReturnType<typeof Bun.spawn>
+			);
 			const handler = messageHubData.handlers.get('dialog.pickFolder');
 			expect(handler).toBeDefined();
 			expect(typeof handler).toBe('function');
 			const result = handler!({}, {});
 			expect(result).toBeInstanceOf(Promise);
-			// Await so the mock process resolves cleanly (no unhandled promise warnings)
-			return result;
+			const resolved = await result;
+			expect(resolved).toEqual({ path: '/Users/test/project' });
+		});
+
+		it('returns null when Bun.spawn throws an error (error-handling path)', async () => {
+			setPlatform('darwin');
+			spawnSpy.mockImplementation(() => {
+				throw new Error('spawn failed');
+			});
+
+			const handler = messageHubData.handlers.get('dialog.pickFolder')!;
+			const result = await handler({}, {});
+
+			// pickFolder catches errors and returns null
+			expect(result).toEqual({ path: null });
 		});
 
 		describe('macOS (darwin)', () => {
