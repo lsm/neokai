@@ -119,7 +119,10 @@ export class AppServerConn {
 			cwd,
 			env: subEnv,
 			stdout: 'pipe',
-			stderr: 'pipe',
+			// Use 'inherit' so stderr flows to the parent process stderr instead of
+			// buffering in a pipe.  A full stderr pipe blocks the child when the kernel
+			// buffer fills up (typically 64 KB), which would deadlock the app-server.
+			stderr: 'inherit',
 			stdin: 'pipe',
 		}) as unknown as PipedProc;
 		return new AppServerConn(proc);
