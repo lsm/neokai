@@ -99,6 +99,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 25: Add PR fields to tasks table
 	runMigration25(db);
+
+	// Migration 26: Add input_draft column to tasks table for server-side draft persistence
+	runMigration26(db);
 }
 
 /**
@@ -1186,6 +1189,19 @@ function runMigration25(db: BunDatabase): void {
 	if (!tableHasColumn(db, 'tasks', 'pr_created_at')) {
 		db.exec(`ALTER TABLE tasks ADD COLUMN pr_created_at INTEGER`);
 	}
+}
+
+/**
+ * Migration 26: Add input_draft column to tasks table for server-side draft persistence
+ */
+function runMigration26(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (tableHasColumn(db, 'tasks', 'input_draft')) {
+		return;
+	}
+	db.exec(`ALTER TABLE tasks ADD COLUMN input_draft TEXT`);
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {

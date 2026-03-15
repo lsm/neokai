@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { useMessageHub } from '../../hooks/useMessageHub';
 import { useModal } from '../../hooks/useModal';
+import { useTaskInputDraft } from '../../hooks/useTaskInputDraft';
 import { navigateToRoom, navigateToRoomTask } from '../../lib/router';
 import { copyToClipboard } from '../../lib/utils';
 import { Dropdown, type DropdownMenuItem } from '../ui/Dropdown';
@@ -282,7 +283,12 @@ function HumanInputArea({
 	onMessageSentWithReload,
 }: HumanInputAreaProps) {
 	const { request } = useMessageHub();
-	const [messageText, setMessageText] = useState('');
+	const {
+		content: messageText,
+		setContent: setMessageText,
+		clear: clearDraft,
+		draftRestored,
+	} = useTaskInputDraft(roomId, taskId);
 	const [sending, setSending] = useState(false);
 	const [inputError, setInputError] = useState<string | null>(null);
 	const [target, setTarget] = useState<HumanMessageTarget>('worker');
@@ -314,7 +320,7 @@ function HumanInputArea({
 				message: messageText.trim(),
 				target,
 			});
-			setMessageText('');
+			clearDraft();
 			onMessageSentWithReload();
 		} catch (err) {
 			setInputError(err instanceof Error ? err.message : 'Failed to send message');
@@ -331,6 +337,22 @@ function HumanInputArea({
 
 	return (
 		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
+			{draftRestored && (
+				<div
+					class="flex items-center justify-between rounded bg-blue-900/30 border border-blue-700/40 px-3 py-1.5 text-xs text-blue-300"
+					data-testid="draft-restored-banner"
+				>
+					<span>Draft restored</span>
+					<button
+						type="button"
+						class="ml-2 text-blue-400 hover:text-blue-200 transition-colors"
+						onClick={clearDraft}
+						data-testid="draft-dismiss-button"
+					>
+						Discard draft
+					</button>
+				</div>
+			)}
 			<InputTextarea
 				content={messageText}
 				onContentChange={setMessageText}
@@ -880,6 +902,21 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 							<span class="text-xs text-gray-500 bg-dark-700 px-1.5 py-0.5 rounded">
 								{task.taskType}
 							</span>
+						)}
+						{/* PR link for non-review states (review bar shows it for review status) */}
+						{task.prUrl && task.status !== 'review' && (
+							<a
+								href={task.prUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded transition-colors"
+								title="View Pull Request"
+							>
+								<svg class="w-3 h-3" fill="currentColor" viewBox="0 0 16 16">
+									<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+								</svg>
+								<span>PR #{task.prNumber ?? '?'}</span>
+							</a>
 						)}
 					</div>
 					{group && (

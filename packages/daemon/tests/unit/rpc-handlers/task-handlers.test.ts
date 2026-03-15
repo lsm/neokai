@@ -78,13 +78,16 @@ const mockTask: NeoTask = {
 /** Build a minimal TaskManagerFactory that returns a controlled task. */
 function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
 	const cancelledTask = task ? { ...task, status: 'cancelled' as const } : null;
-	const failedTask = task ? { ...task, status: 'failed' as const } : null;
+	const failedTask = task ? { ...task, status: 'needs_attention' as const } : null;
+	const archivedTask = task ? { ...task, archivedAt: Date.now() } : null;
 	const manager = {
 		createTask: mock(async () => task!),
 		getTask: mock(async () => task),
 		listTasks: mock(async () => []),
 		failTask: mock(async () => failedTask!),
 		cancelTask: mock(async () => cancelledTask!),
+		setTaskStatus: mock(async () => task!),
+		archiveTask: mock(async () => archivedTask!),
 	};
 	return mock(() => manager);
 }
@@ -136,23 +139,27 @@ function makeDb(groupRow: Record<string, unknown> | null): Database {
 }
 
 /** Build a mock RoomRuntimeService with a runtime that can resume/inject. */
-function makeRuntimeService(resumeResult = true, injectResult = true) {
+function makeRuntimeService(resumeResult = true, injectResult = true, reviveResult = true) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
+	const reviveTaskForMessage = mock(async () => reviveResult);
 	const cancelTask = mock(async () => ({
 		success: injectResult,
 		cancelledTaskIds: injectResult ? ['task-1'] : [],
 	}));
 	const terminateTaskGroup = mock(async () => injectResult);
 	const interruptTaskSession = mock(async () => ({ success: injectResult }));
+	const archiveTaskGroup = mock(async () => true);
 	const runtime = {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
 		injectMessageToWorker,
+		reviveTaskForMessage,
 		cancelTask,
 		terminateTaskGroup,
 		interruptTaskSession,
+		archiveTaskGroup,
 	};
 	const service = {
 		getRuntime: mock(() => runtime),
@@ -318,6 +325,70 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
 			).rejects.toThrow('No active session group');
+		});
+
+		it('throws when task is cancelled (workspace cleaned up)', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			const { service } = makeRuntimeService();
+			setup({ task: cancelledTask, runtimeService: service });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+			).rejects.toThrow('cancelled');
+		});
+	});
+
+	describe('needs_attention task revival', () => {
+		it('revives the task to review status and returns success', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setup({ task: failedTask, runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'please retry' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			// Sets status to review before reviving
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please retry');
+		});
+
+		it('throws and rolls back status when reviveTaskForMessage returns false', async () => {
+			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, false);
+
+			// Build factory manually to expose setTaskStatus spy for rollback assertion
+			const setTaskStatus = mock(async () => needsAttentionTask);
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => needsAttentionTask),
+				getTask: mock(async () => needsAttentionTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => needsAttentionTask),
+				cancelTask: mock(async () => ({ ...needsAttentionTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				factory,
+				service
+			);
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
+			).rejects.toThrow('agent sessions could not be restored');
+
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry');
+			// Verify rollback: first transitioned to 'review', then rolled back to 'needs_attention'
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'review');
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'needs_attention');
 		});
 	});
 });
@@ -944,6 +1015,175 @@ describe('task.interruptSession RPC Handler', () => {
 			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
 				'Failed to interrupt task session'
 			);
+		});
+	});
+});
+
+// ─── task.archive Tests ───
+
+describe('task.archive RPC Handler', () => {
+	let hub: MessageHub;
+	let handlers: Map<string, RequestHandler>;
+
+	function makeArchiveTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
+		const archivedTask = task ? { ...task, archivedAt: Date.now() } : null;
+		const archiveTask = mock(async () => archivedTask!);
+		const manager = {
+			createTask: mock(async () => task!),
+			getTask: mock(async () => task),
+			listTasks: mock(async () => []),
+			failTask: mock(async () => task!),
+			cancelTask: mock(async () => task!),
+			setTaskStatus: mock(async () => task!),
+			archiveTask,
+		};
+		return Object.assign(
+			mock(() => manager),
+			{ _archiveTask: archiveTask, _manager: manager }
+		);
+	}
+
+	function setup(opts: {
+		task?: NeoTask | null;
+		runtimeService?: RoomRuntimeService;
+		taskManagerFactory?: TaskManagerFactory;
+	}) {
+		const { task = { ...mockTask, status: 'completed' as const }, runtimeService } = opts;
+		const mh = createMockMessageHub();
+		hub = mh.hub;
+		handlers = mh.handlers;
+		setupTaskHandlers(
+			hub,
+			mockRoomManager,
+			createMockDaemonHub(),
+			makeDb(makeGroupRow()),
+			opts.taskManagerFactory ?? makeTaskManagerFactory(task),
+			runtimeService
+		);
+	}
+
+	function getHandler(): RequestHandler {
+		const h = handlers.get('task.archive');
+		expect(h).toBeDefined();
+		return h!;
+	}
+
+	describe('parameter validation', () => {
+		beforeEach(() => {
+			setup({ runtimeService: makeNullRuntimeService() });
+		});
+
+		it('throws when roomId is missing', async () => {
+			await expect(getHandler()({ taskId: 'task-1' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when taskId is missing', async () => {
+			await expect(getHandler()({ roomId: 'room-1' }, {})).rejects.toThrow('Task ID is required');
+		});
+	});
+
+	describe('task state validation', () => {
+		it('throws when task is not found', async () => {
+			setup({ task: null, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				'Task not found'
+			);
+		});
+
+		it('throws when task is in_progress (non-terminal)', async () => {
+			const inProgressTask = { ...mockTask, status: 'in_progress' as const };
+			setup({ task: inProgressTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				"Cannot archive task in 'in_progress' state"
+			);
+		});
+
+		it('throws when task is pending (non-terminal)', async () => {
+			const pendingTask = { ...mockTask, status: 'pending' as const };
+			setup({ task: pendingTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				"Cannot archive task in 'pending' state"
+			);
+		});
+
+		it('throws when task is review (non-terminal)', async () => {
+			const reviewTask = { ...mockTask, status: 'review' as const };
+			setup({ task: reviewTask, runtimeService: makeNullRuntimeService() });
+			await expect(getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {})).rejects.toThrow(
+				"Cannot archive task in 'review' state"
+			);
+		});
+	});
+
+	describe('archive with runtime', () => {
+		it('delegates to runtime.archiveTaskGroup when runtime is available', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			const { service, runtime } = makeRuntimeService();
+			setup({ task: completedTask, runtimeService: service });
+
+			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+		});
+
+		it('allows archiving cancelled tasks via runtime', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			const { service, runtime } = makeRuntimeService();
+			setup({ task: cancelledTask, runtimeService: service });
+
+			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+		});
+
+		it('allows archiving needs_attention tasks via runtime', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService();
+			setup({ task: failedTask, runtimeService: service });
+
+			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+
+			expect(runtime.archiveTaskGroup).toHaveBeenCalledWith('task-1');
+		});
+	});
+
+	describe('archive without runtime — archivedAt must always be set', () => {
+		it('calls taskManager.archiveTask when runtimeService is absent', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			const factory = makeArchiveTaskManagerFactory(completedTask);
+			setup({ task: completedTask, runtimeService: undefined, taskManagerFactory: factory });
+
+			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+
+			// archiveTask must be called even without a runtime
+			expect(
+				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
+			).toHaveBeenCalledWith('task-1');
+		});
+
+		it('calls taskManager.archiveTask when runtime is not found for room', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			const factory = makeArchiveTaskManagerFactory(cancelledTask);
+			setup({
+				task: cancelledTask,
+				runtimeService: makeNullRuntimeService(),
+				taskManagerFactory: factory,
+			});
+
+			await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+
+			expect(
+				(factory as unknown as { _archiveTask: ReturnType<typeof mock> })._archiveTask
+			).toHaveBeenCalledWith('task-1');
+		});
+
+		it('returns the task after archiving without runtime', async () => {
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			setup({ task: completedTask, runtimeService: makeNullRuntimeService() });
+
+			const result = await getHandler()({ roomId: 'room-1', taskId: 'task-1' }, {});
+
+			expect(result).toMatchObject({ task: expect.objectContaining({ id: 'task-1' }) });
 		});
 	});
 });

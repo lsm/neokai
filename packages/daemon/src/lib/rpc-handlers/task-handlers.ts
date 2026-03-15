@@ -13,6 +13,7 @@
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
  * - task.sendHumanMessage - Send a human message to the active agent in a task group
+ * - task.updateDraft - Persist human input draft for a task (server-side, debounced by client)
  */
 
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
@@ -21,6 +22,7 @@ import type { Database } from '../../storage/database';
 import type { RoomManager } from '../room/managers/room-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { TaskManager, VALID_STATUS_TRANSITIONS } from '../room/managers/task-manager';
+import { TaskRepository } from '../../storage/repositories/task-repository';
 import { SessionGroupRepository } from '../room/state/session-group-repository';
 import { routeHumanMessageToGroup } from '../room/runtime/human-message-routing';
 import { SDKMessageRepository } from '../../storage/repositories/sdk-message-repository';
@@ -37,6 +39,7 @@ export type TaskManagerLike = Pick<
 	| 'cancelTask'
 	| 'setTaskStatus'
 	| 'archiveTask'
+	| 'updateTaskStatus'
 >;
 
 export type TaskManagerFactory = (db: Database, roomId: string) => TaskManagerLike;
@@ -163,6 +166,39 @@ export function setupTaskHandlers(
 		}
 
 		return { task };
+	});
+
+	// task.updateDraft - Persist human input draft for a task (server-side)
+	messageHub.onRequest('task.updateDraft', async (data) => {
+		const params = data as { roomId: string; taskId: string; draft: string | null };
+
+		if (!params.roomId) {
+			throw new Error('Room ID is required');
+		}
+		if (!params.taskId) {
+			throw new Error('Task ID is required');
+		}
+
+		if (typeof params.draft === 'string' && params.draft.length > 200_000) {
+			throw new Error('Draft is too long (max 200,000 characters)');
+		}
+
+		// Verify the task belongs to this room
+		const taskManager = taskManagerFactory(db, params.roomId);
+		const task = await taskManager.getTask(params.taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${params.taskId}`);
+		}
+
+		// Normalize: treat empty/whitespace strings as null to keep storage consistent
+		// with the hook's restore check (`if (draft)` treats '' as falsy)
+		const draft = typeof params.draft === 'string' ? params.draft.trim() || null : null;
+
+		// Update input_draft directly via repository (lightweight, no status side effects)
+		const taskRepo = new TaskRepository(db.getDatabase());
+		taskRepo.updateTask(params.taskId, { inputDraft: draft });
+
+		return { success: true };
 	});
 
 	// task.fail - Fail a task
@@ -302,15 +338,17 @@ export function setupTaskHandlers(
 			);
 		}
 
-		// If there's an active group with runtime, cleanup worktree
-		if (runtimeService) {
-			const runtime = runtimeService.getRuntime(params.roomId);
-			if (runtime) {
-				await runtime.archiveTaskGroup(params.taskId);
-			}
+		// If there's a runtime, delegate to it: it handles worktree cleanup AND sets archivedAt.
+		// Without a runtime, we still must set archivedAt so the task is hidden from the UI.
+		const runtime = runtimeService?.getRuntime(params.roomId);
+		if (runtime) {
+			await runtime.archiveTaskGroup(params.taskId);
+		} else {
+			// No runtime — set archivedAt directly. Worktree cleanup (if any) is skipped;
+			// orphaned worktrees must be reclaimed manually via the worktree.cleanup RPC.
+			await taskManager.archiveTask(params.taskId);
 		}
 
-		// Get the archived task (archiveTaskGroup already sets archivedAt)
 		const archivedTask = await taskManager.getTask(params.taskId);
 		if (archivedTask) {
 			emitTaskUpdate(params.roomId, archivedTask);
@@ -760,10 +798,51 @@ export function setupTaskHandlers(
 			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
 		}
 
+		// Cancelled tasks have their workspace cleaned up on cancellation.
+		// Restarting via session injection would point at a gone workspace.
+		// Direct the caller to use set_task_status to restart from scratch.
+		if (task.status === 'cancelled') {
+			throw new Error(
+				`Task ${params.taskId} is cancelled. Cancelled tasks cannot receive messages ` +
+					'because their workspace has been cleaned up. Use set_task_status to restart it ' +
+					'(e.g. status: "pending" or "in_progress").'
+			);
+		}
+
+		// needs_attention tasks: revive sessions and inject the message.
+		// Uses reviveTaskForMessage (lightweight revive via reviveGroup) which preserves
+		// metadata, conversation history, and uses the established session-restore path.
+		// This mirrors the agent-tool path in room-agent-tools.ts send_message_to_task.
+		if (task.status === 'needs_attention') {
+			try {
+				await taskManager.setTaskStatus(params.taskId, 'review');
+			} catch (err) {
+				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
+			}
+
+			const revived = await runtime.reviveTaskForMessage(params.taskId, params.message.trim());
+			if (!revived) {
+				// Rollback: restore task to needs_attention (review → needs_attention is a valid transition)
+				try {
+					await taskManager.setTaskStatus(params.taskId, 'needs_attention');
+				} catch {
+					// Best-effort rollback; swallow to avoid masking the revive error
+				}
+				throw new Error(
+					`Failed to revive task ${params.taskId}: agent sessions could not be restored. ` +
+						'Task status has been reset to needs_attention.'
+				);
+			}
+
+			// reviveTaskForMessage already emits task updates internally — no extra emit needed.
+			return { success: true };
+		}
+
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
+			taskManager,
 			params.taskId,
 			params.message.trim(),
 			target
@@ -771,6 +850,12 @@ export function setupTaskHandlers(
 
 		if (!result.success) {
 			throw new Error(result.error ?? 'Failed to send human message');
+		}
+
+		// Emit task update after successful message routing (may have changed status)
+		const updatedTask = await taskManager.getTask(params.taskId);
+		if (updatedTask) {
+			emitTaskUpdate(params.roomId, updatedTask);
 		}
 
 		return { success: true };

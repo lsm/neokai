@@ -2,6 +2,11 @@
 
 All notable changes to NeoKai will be documented in this file.
 
+## [0.7.1] - 2026-03-15
+
+### Fixed
+- Updated `optionalDependencies` in `npm/neokai/package.json` to reference `0.7.1` platform binaries
+
 ## [0.7.0] - 2026-03-14
 
 ### Added
