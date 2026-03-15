@@ -53,15 +53,13 @@ const logger = new Logger('copilot-anthropic-provider');
  * to avoid routing collisions. Use `copilot-anthropic-*` aliases to
  * explicitly route a query to this provider.
  *
- * - Claude IDs: also claimed by GitHubCopilotProvider and CopilotCliProvider
- * - gpt-5.3-codex, gpt-5-mini: also claimed by GitHubCopilotProvider (registered first)
- * - gemini-3-pro-preview: also claimed by CopilotCliProvider (registered before this)
+ * - Claude IDs: also claimed by GitHubCopilotProvider (registered before this)
+ * - gpt-5.3-codex, gpt-5-mini: also claimed by GitHubCopilotProvider (registered before this)
  */
 const SHARED_MODEL_IDS = new Set([
 	'claude-opus-4.6',
 	'claude-sonnet-4.6',
 	'gpt-5.3-codex',
-	'gemini-3-pro-preview',
 	'gpt-5-mini',
 ]);
 
