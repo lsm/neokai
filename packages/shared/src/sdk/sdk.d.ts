@@ -2,6 +2,7 @@ import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/mess
 import type { BetaRawMessageStreamEvent } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs';
 import type { BetaUsage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { MessageParam } from '@anthropic-ai/sdk/resources';
@@ -28,7 +29,7 @@ export declare type AccountInfo = {
 };
 
 /**
- * Definition for a custom subagent that can be invoked via the Task tool.
+ * Definition for a custom subagent that can be invoked via the Agent tool.
  */
 export declare type AgentDefinition = {
     /**
@@ -48,9 +49,9 @@ export declare type AgentDefinition = {
      */
     prompt: string;
     /**
-     * Model to use for this agent. If omitted or 'inherit', uses the main model
+     * Model alias (e.g. 'sonnet', 'opus', 'haiku') or full model ID (e.g. 'claude-opus-4-5'). If omitted or 'inherit', uses the main model
      */
-    model?: 'sonnet' | 'opus' | 'haiku' | 'inherit';
+    model?: string;
     mcpServers?: AgentMcpServerSpec[];
     /**
      * Experimental: Critical reminder added to system prompt
@@ -64,6 +65,24 @@ export declare type AgentDefinition = {
      * Maximum number of agentic turns (API round-trips) before stopping
      */
     maxTurns?: number;
+};
+
+/**
+ * Information about an available subagent that can be invoked via the Task tool.
+ */
+export declare type AgentInfo = {
+    /**
+     * Agent type identifier (e.g., "Explore")
+     */
+    name: string;
+    /**
+     * Description of when to use this agent
+     */
+    description: string;
+    /**
+     * Model alias this agent uses. If omitted, inherits the parent's model
+     */
+    model?: string;
 };
 
 export declare type AgentMcpServerSpec = string | Record<string, McpServerConfigForProcessTransport>;
@@ -82,6 +101,14 @@ export declare type BaseHookInput = {
     transcript_path: string;
     cwd: string;
     permission_mode?: string;
+    /**
+     * Subagent identifier. Present only when the hook fires from within a subagent (e.g., a tool called by an AgentTool worker). Absent for the main thread, even in --agent sessions. Use this field (not agent_type) to distinguish subagent calls from main-thread calls.
+     */
+    agent_id?: string;
+    /**
+     * Agent type name (e.g., "general-purpose", "code-reviewer"). Present when the hook fires from within a subagent (alongside agent_id), or on the main thread of a session started with --agent (without agent_id).
+     */
+    agent_type?: string;
 };
 
 export declare type BaseOutputFormat = {
@@ -155,6 +182,7 @@ declare namespace coreTypes {
         EXIT_REASONS,
         AccountInfo,
         AgentDefinition,
+        AgentInfo,
         AgentMcpServerSpec,
         ApiKeySource,
         AsyncHookJSONOutput,
@@ -162,10 +190,16 @@ declare namespace coreTypes {
         BaseOutputFormat,
         ConfigChangeHookInput,
         ConfigScope,
+        ElicitationHookInput,
+        ElicitationHookSpecificOutput,
+        ElicitationResultHookInput,
+        ElicitationResultHookSpecificOutput,
         ExitReason,
+        FastModeState,
         HookEvent,
         HookInput,
         HookJSONOutput,
+        InstructionsLoadedHookInput,
         JsonSchemaOutputFormat,
         McpClaudeAIProxyServerConfig,
         McpHttpServerConfig,
@@ -190,6 +224,7 @@ declare namespace coreTypes {
         PermissionRuleValue,
         PermissionUpdateDestination,
         PermissionUpdate,
+        PostCompactHookInput,
         PostToolUseFailureHookInput,
         PostToolUseFailureHookSpecificOutput,
         PostToolUseHookInput,
@@ -197,18 +232,26 @@ declare namespace coreTypes {
         PreCompactHookInput,
         PreToolUseHookInput,
         PreToolUseHookSpecificOutput,
+        PromptRequestOption,
+        PromptRequest,
+        PromptResponse,
         RewindFilesResult,
         SDKAssistantMessageError,
         SDKAssistantMessage,
         SDKAuthStatusMessage,
         SDKCompactBoundaryMessage,
+        SDKElicitationCompleteMessage,
         SDKFilesPersistedEvent,
         SDKHookProgressMessage,
         SDKHookResponseMessage,
         SDKHookStartedMessage,
+        SDKLocalCommandOutputMessage,
         SDKMessage,
         SDKPartialAssistantMessage,
         SDKPermissionDenial,
+        SDKPromptSuggestionMessage,
+        SDKRateLimitEvent,
+        SDKRateLimitInfo,
         SDKResultError,
         SDKResultMessage,
         SDKResultSuccess,
@@ -264,11 +307,163 @@ declare type CreateSdkMcpServerOptions = {
     tools?: Array<SdkMcpToolDefinition<any>>;
 };
 
+/**
+ * Hook input for the Elicitation event. Fired when an MCP server requests user input. Hooks can auto-respond (accept/decline) instead of showing the dialog.
+ */
+export declare type ElicitationHookInput = BaseHookInput & {
+    hook_event_name: 'Elicitation';
+    mcp_server_name: string;
+    message: string;
+    mode?: 'form' | 'url';
+    url?: string;
+    elicitation_id?: string;
+    requested_schema?: Record<string, unknown>;
+};
+
+/**
+ * Hook-specific output for the Elicitation event. Return this to programmatically accept or decline an MCP elicitation request.
+ */
+export declare type ElicitationHookSpecificOutput = {
+    hookEventName: 'Elicitation';
+    action?: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, unknown>;
+};
+
+/**
+ * Elicitation request from an MCP server, asking the SDK consumer for user input.
+ */
+export declare type ElicitationRequest = {
+    /** Name of the MCP server requesting elicitation */
+    serverName: string;
+    /** Message to display to the user */
+    message: string;
+    /** Elicitation mode: 'form' for structured input, 'url' for browser-based auth */
+    mode?: 'form' | 'url';
+    /** URL to open (only for 'url' mode) */
+    url?: string;
+    /** Elicitation ID for correlating URL elicitations with completion notifications (URL mode only) */
+    elicitationId?: string;
+    /** JSON Schema for the requested input (only for 'form' mode) */
+    requestedSchema?: Record<string, unknown>;
+};
+
+/**
+ * Elicitation response from the SDK consumer.
+ * Re-exported from the MCP SDK for convenience.
+ */
+export declare type ElicitationResult = ElicitResult;
+
+/**
+ * Hook input for the ElicitationResult event. Fired after the user responds to an MCP elicitation. Hooks can observe or override the response before it is sent to the server.
+ */
+export declare type ElicitationResultHookInput = BaseHookInput & {
+    hook_event_name: 'ElicitationResult';
+    mcp_server_name: string;
+    elicitation_id?: string;
+    mode?: 'form' | 'url';
+    action: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, unknown>;
+};
+
+/**
+ * Hook-specific output for the ElicitationResult event. Return this to override the action or content before the response is sent to the MCP server.
+ */
+export declare type ElicitationResultHookSpecificOutput = {
+    hookEventName: 'ElicitationResult';
+    action?: 'accept' | 'decline' | 'cancel';
+    content?: Record<string, unknown>;
+};
+
 export declare const EXIT_REASONS: readonly ["clear", "logout", "prompt_input_exit", "other", "bypass_permissions_disabled"];
 
 export declare type ExitReason = 'clear' | 'logout' | 'prompt_input_exit' | 'other' | 'bypass_permissions_disabled';
 
-export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted", "ConfigChange", "WorktreeCreate", "WorktreeRemove"];
+/**
+ * Fast mode state: off, in cooldown after rate limit, or actively enabled.
+ */
+export declare type FastModeState = 'off' | 'cooldown' | 'on';
+
+/**
+ * Fork a session into a new branch with fresh UUIDs.
+ *
+ * Copies transcript messages from the source session into a new session file,
+ * remapping every message UUID and preserving the parentUuid chain. Supports
+ * `upToMessageId` for branching from a specific point in the conversation.
+ *
+ * Forked sessions start without undo history (file-history snapshots are not
+ * copied).
+ *
+ * @param sessionId - UUID of the source session
+ * @param options - `{ dir?, upToMessageId?, title? }`
+ * @returns `{ sessionId }` — UUID of the new forked session
+ */
+export declare function forkSession(_sessionId: string, _options?: ForkSessionOptions): Promise<ForkSessionResult>;
+
+/**
+ * Options for forking a session into a new branch.
+ */
+export declare type ForkSessionOptions = SessionMutationOptions & {
+    /** Slice transcript up to this message UUID (inclusive). If omitted, full copy. */
+    upToMessageId?: string;
+    /** Custom title for the fork. If omitted, derives from original title + " (fork)". */
+    title?: string;
+};
+
+/**
+ * Result of a fork operation.
+ */
+export declare type ForkSessionResult = {
+    /** New session UUID. Resumable via `resumeSession(sessionId)`. */
+    sessionId: string;
+};
+
+/**
+ * Reads metadata for a single session by ID. Unlike `listSessions`, this only
+ * reads the single session file rather than every session in the project.
+ * Returns undefined if the session file is not found, is a sidechain session,
+ * or has no extractable summary.
+ *
+ * @param sessionId - UUID of the session
+ * @param options - `{ dir?: string }` project path; omit to search all project directories
+ */
+export declare function getSessionInfo(_sessionId: string, _options?: GetSessionInfoOptions): Promise<SDKSessionInfo | undefined>;
+
+/**
+ * Options for getSessionInfo.
+ */
+export declare type GetSessionInfoOptions = {
+    /**
+     * Project directory path (same semantics as `listSessions({ dir })`).
+     * When omitted, all project directories are searched for the session file.
+     */
+    dir?: string;
+};
+
+/**
+ * Reads a session's conversation messages from its JSONL transcript file.
+ *
+ * Parses the transcript, builds the conversation chain via parentUuid links,
+ * and returns user/assistant messages in chronological order.
+ *
+ * @param sessionId - UUID of the session to read
+ * @param options - Optional dir, limit, and offset
+ * @returns Array of user/assistant messages, or empty array if session not found
+ */
+export declare function getSessionMessages(_sessionId: string, _options?: GetSessionMessagesOptions): Promise<SessionMessage[]>;
+
+/**
+ * Options for retrieving session messages.
+ */
+export declare type GetSessionMessagesOptions = {
+    /** Project directory to find the session in. If omitted, searches all projects. */
+    dir?: string;
+    /** Maximum number of messages to return. */
+    limit?: number;
+    /** Number of messages to skip from the start. */
+    offset?: number;
+};
+
+export declare const HOOK_EVENTS: readonly ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Notification", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStart", "SubagentStop", "PreCompact", "PostCompact", "PermissionRequest", "Setup", "TeammateIdle", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "WorktreeCreate", "WorktreeRemove", "InstructionsLoaded"];
 
 /**
  * Hook callback function for responding to events during execution.
@@ -287,9 +482,9 @@ export declare interface HookCallbackMatcher {
     timeout?: number;
 }
 
-export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove';
+export declare type HookEvent = 'PreToolUse' | 'PostToolUse' | 'PostToolUseFailure' | 'Notification' | 'UserPromptSubmit' | 'SessionStart' | 'SessionEnd' | 'Stop' | 'SubagentStart' | 'SubagentStop' | 'PreCompact' | 'PostCompact' | 'PermissionRequest' | 'Setup' | 'TeammateIdle' | 'TaskCompleted' | 'Elicitation' | 'ElicitationResult' | 'ConfigChange' | 'WorktreeCreate' | 'WorktreeRemove' | 'InstructionsLoaded';
 
-export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput | ConfigChangeHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput;
+export declare type HookInput = PreToolUseHookInput | PostToolUseHookInput | PostToolUseFailureHookInput | NotificationHookInput | UserPromptSubmitHookInput | SessionStartHookInput | SessionEndHookInput | StopHookInput | SubagentStartHookInput | SubagentStopHookInput | PreCompactHookInput | PostCompactHookInput | PermissionRequestHookInput | SetupHookInput | TeammateIdleHookInput | TaskCompletedHookInput | ElicitationHookInput | ElicitationResultHookInput | ConfigChangeHookInput | InstructionsLoadedHookInput | WorktreeCreateHookInput | WorktreeRemoveHookInput;
 
 export declare type HookJSONOutput = AsyncHookJSONOutput | SyncHookJSONOutput;
 
@@ -298,6 +493,16 @@ export declare type InferShape<T extends AnyZodRawShape> = {
         _output: infer O;
     } ? O : never;
 } & {};
+
+export declare type InstructionsLoadedHookInput = BaseHookInput & {
+    hook_event_name: 'InstructionsLoaded';
+    file_path: string;
+    memory_type: 'User' | 'Project' | 'Local' | 'Managed';
+    load_reason: 'session_start' | 'nested_traversal' | 'path_glob_match' | 'include';
+    globs?: string[];
+    trigger_file_path?: string;
+    parent_file_path?: string;
+};
 
 export declare type JsonSchemaOutputFormat = {
     type: 'json_schema';
@@ -311,13 +516,16 @@ export declare type JsonSchemaOutputFormat = {
  * and its git worktrees. When omitted, returns sessions across all
  * projects.
  *
+ * Use `limit` and `offset` for pagination.
+ *
  * @example
  * ```typescript
  * // List sessions for a specific project
  * const sessions = await listSessions({ dir: '/path/to/project' })
  *
- * // List all sessions across all projects
- * const allSessions = await listSessions()
+ * // Paginate
+ * const page1 = await listSessions({ limit: 50 })
+ * const page2 = await listSessions({ limit: 50, offset: 50 })
  * ```
  */
 export declare function listSessions(_options?: ListSessionsOptions): Promise<SDKSessionInfo[]>;
@@ -328,12 +536,22 @@ export declare function listSessions(_options?: ListSessionsOptions): Promise<SD
 export declare type ListSessionsOptions = {
     /**
      * Directory to list sessions for. When provided, returns sessions for
-     * this project directory (and its git worktrees). When omitted, returns
-     * sessions across all projects.
+     * this project directory (and optionally its git worktrees). When omitted,
+     * returns sessions across all projects.
      */
     dir?: string;
     /** Maximum number of sessions to return. */
     limit?: number;
+    /**
+     * Number of sessions to skip from the start of the sorted result set.
+     * Use with `limit` for pagination. Defaults to 0.
+     */
+    offset?: number;
+    /**
+     * When `dir` is provided and the directory is inside a git repository,
+     * include sessions from all git worktree paths. Defaults to `true`.
+     */
+    includeWorktrees?: boolean;
 };
 
 export declare type McpClaudeAIProxyServerConfig = {
@@ -474,6 +692,14 @@ export declare type ModelInfo = {
      * Whether this model supports adaptive thinking (Claude decides when and how much to think)
      */
     supportsAdaptiveThinking?: boolean;
+    /**
+     * Whether this model supports fast mode
+     */
+    supportsFastMode?: boolean;
+    /**
+     * Whether this model supports auto mode
+     */
+    supportsAutoMode?: boolean;
 };
 
 export declare type ModelUsage = {
@@ -502,6 +728,14 @@ export declare type NotificationHookSpecificOutput = {
     hookEventName: 'Notification';
     additionalContext?: string;
 };
+
+/**
+ * Callback for handling MCP elicitation requests.
+ * Called when an MCP server requests user input and no hook handles it.
+ */
+export declare type OnElicitation = (request: ElicitationRequest, options: {
+    signal: AbortSignal;
+}) => Promise<ElicitationResult>;
 
 /**
  * Options for the query function.
@@ -538,7 +772,7 @@ export declare type Options = {
      */
     agent?: string;
     /**
-     * Programmatically define custom subagents that can be invoked via the Task tool.
+     * Programmatically define custom subagents that can be invoked via the Agent tool.
      * Keys are agent names, values are agent definitions.
      *
      * @example
@@ -633,6 +867,17 @@ export declare type Options = {
      */
     enableFileCheckpointing?: boolean;
     /**
+     * Per-tool configuration for built-in tools.
+     *
+     * @example
+     * ```typescript
+     * toolConfig: {
+     *   askUserQuestion: { previewFormat: 'html' }
+     * }
+     * ```
+     */
+    toolConfig?: ToolConfig;
+    /**
      * When true, resumed sessions will fork to a new session ID rather than
      * continuing the previous session. Use with `resume`.
      */
@@ -658,6 +903,27 @@ export declare type Options = {
      * ```
      */
     hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
+    /**
+     * Callback for handling MCP elicitation requests.
+     * Called when an MCP server requests user input (form fields, URL auth, etc.)
+     * and no hook handles the request first.
+     *
+     * If not provided, elicitation requests that aren't handled by hooks will
+     * be declined automatically.
+     *
+     * @example
+     * ```typescript
+     * onElicitation: async (request) => {
+     *   if (request.mode === 'url') {
+     *     // Handle URL-based auth
+     *     return { action: 'accept' }
+     *   }
+     *   // Provide form values
+     *   return { action: 'accept', content: { name: 'Test' } }
+     * }
+     * ```
+     */
+    onElicitation?: OnElicitation;
     /**
      * When false, disables session persistence to disk. Sessions will not be
      * saved to ~/.claude/projects/ and cannot be resumed later. Useful for
@@ -786,6 +1052,9 @@ export declare type Options = {
      * ```
      */
     plugins?: SdkPluginConfig[];
+
+
+
     /**
      * Enable prompt suggestions. When true, the agent emits a `prompt_suggestion`
      * message after each turn with a predicted next user prompt.
@@ -798,6 +1067,16 @@ export declare type Options = {
      * - Suggestions piggyback on the parent's prompt cache, making them nearly free.
      */
     promptSuggestions?: boolean;
+    /**
+     * Enable periodic AI-generated progress summaries for running subagents. When
+     * true, the subagent's conversation is forked every ~30s to produce a short
+     * present-tense description (e.g. "Analyzing authentication module"), emitted
+     * on `task_progress` events via the `summary` field. The fork reuses the
+     * subagent's model and prompt cache, so cost is typically minimal.
+     *
+     * Applies to both foreground and background subagents. Defaults to false.
+     */
+    agentProgressSummaries?: boolean;
     /**
      * Session ID to resume. Loads the conversation history from the specified session.
      */
@@ -850,6 +1129,24 @@ export declare type Options = {
      * @see https://docs.anthropic.com/en/docs/claude-code/settings#sandbox-settings
      */
     sandbox?: SandboxSettings;
+    /**
+     * Additional settings to apply. Accepts either a path to a settings JSON file
+     * or a settings object. These are loaded into the "flag settings" layer,
+     * which has the highest priority among user-controlled settings.
+     *
+     * Equivalent to the `--settings` CLI flag.
+     *
+     * @example Inline settings object
+     * ```typescript
+     * settings: { model: 'claude-sonnet-4-6', permissions: { allow: ['Bash(*)'] } }
+     * ```
+     *
+     * @example Path to settings file
+     * ```typescript
+     * settings: '/path/to/settings.json'
+     * ```
+     */
+    settings?: string | Settings;
     /**
      * Control which filesystem settings to load.
      * - `'user'` - Global user settings (`~/.claude/settings.json`)
@@ -1006,6 +1303,15 @@ export declare type PermissionUpdate = {
 
 export declare type PermissionUpdateDestination = 'userSettings' | 'projectSettings' | 'localSettings' | 'session' | 'cliArg';
 
+export declare type PostCompactHookInput = BaseHookInput & {
+    hook_event_name: 'PostCompact';
+    trigger: 'manual' | 'auto';
+    /**
+     * The conversation summary produced by compaction
+     */
+    compact_summary: string;
+};
+
 export declare type PostToolUseFailureHookInput = BaseHookInput & {
     hook_event_name: 'PostToolUseFailure';
     tool_name: string;
@@ -1053,6 +1359,47 @@ export declare type PreToolUseHookSpecificOutput = {
     permissionDecisionReason?: string;
     updatedInput?: Record<string, unknown>;
     additionalContext?: string;
+};
+
+export declare type PromptRequest = {
+    /**
+     * Request ID. Presence of this key marks the line as a prompt request.
+     */
+    prompt: string;
+    /**
+     * The prompt message to display to the user
+     */
+    message: string;
+    /**
+     * Available options for the user to choose from
+     */
+    options: PromptRequestOption[];
+};
+
+export declare type PromptRequestOption = {
+    /**
+     * Unique key for this option, returned in the response
+     */
+    key: string;
+    /**
+     * Display text for this option
+     */
+    label: string;
+    /**
+     * Optional description shown below the label
+     */
+    description?: string;
+};
+
+export declare type PromptResponse = {
+    /**
+     * The request ID from the corresponding prompt request
+     */
+    prompt_response: string;
+    /**
+     * The key of the selected option
+     */
+    selected: string;
 };
 
 /**
@@ -1121,6 +1468,12 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      */
     supportedModels(): Promise<ModelInfo[]>;
     /**
+     * Get the list of available subagents for the current session.
+     *
+     * @returns Array of available agents with their names, descriptions, and configuration
+     */
+    supportedAgents(): Promise<AgentInfo[]>;
+    /**
      * Get the current status of all configured MCP servers.
      *
      * @returns Array of MCP server statuses (connected, failed, needs-auth, pending)
@@ -1143,6 +1496,9 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
     rewindFiles(userMessageId: string, options?: {
         dryRun?: boolean;
     }): Promise<RewindFilesResult>;
+
+
+
     /**
      * Reconnect an MCP server by name.
      * Throws on failure.
@@ -1158,6 +1514,7 @@ export declare interface Query extends AsyncGenerator<SDKMessage, void> {
      * @param enabled - Whether the server should be enabled
      */
     toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
+
 
 
     /**
@@ -1205,6 +1562,14 @@ export declare function query(_params: {
 }): Query;
 
 /**
+ * Rename a session. Appends a custom-title entry to the session's JSONL file.
+ * @param sessionId - UUID of the session
+ * @param title - New title
+ * @param options - `{ dir?: string }` project path; omit to search all projects
+ */
+export declare function renameSession(_sessionId: string, _title: string, _options?: SessionMutationOptions): Promise<void>;
+
+/**
  * Result of a rewindFiles operation.
  */
 export declare type RewindFilesResult = {
@@ -1215,12 +1580,12 @@ export declare type RewindFilesResult = {
     deletions?: number;
 };
 
-export declare type SandboxFilesystemConfig = NonNullable<z.infer<typeof SandboxFilesystemConfigSchema>>;
+export declare type SandboxFilesystemConfig = NonNullable<z.infer<ReturnType<typeof SandboxFilesystemConfigSchema>>>;
 
 /**
  * Filesystem configuration schema for sandbox.
  */
-declare const SandboxFilesystemConfigSchema: z.ZodOptional<z.ZodObject<{
+declare const SandboxFilesystemConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
     denyWrite: z.ZodOptional<z.ZodArray<z.ZodString>>;
     denyRead: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -1228,12 +1593,12 @@ declare const SandboxFilesystemConfigSchema: z.ZodOptional<z.ZodObject<{
 
 export declare type SandboxIgnoreViolations = NonNullable<SandboxSettings['ignoreViolations']>;
 
-export declare type SandboxNetworkConfig = NonNullable<z.infer<typeof SandboxNetworkConfigSchema>>;
+export declare type SandboxNetworkConfig = NonNullable<z.infer<ReturnType<typeof SandboxNetworkConfigSchema>>>;
 
 /**
  * Network configuration schema for sandbox.
  */
-declare const SandboxNetworkConfigSchema: z.ZodOptional<z.ZodObject<{
+declare const SandboxNetworkConfigSchema: () => z.ZodOptional<z.ZodObject<{
     allowedDomains: z.ZodOptional<z.ZodArray<z.ZodString>>;
     allowManagedDomainsOnly: z.ZodOptional<z.ZodBoolean>;
     allowUnixSockets: z.ZodOptional<z.ZodArray<z.ZodString>>;
@@ -1243,12 +1608,12 @@ declare const SandboxNetworkConfigSchema: z.ZodOptional<z.ZodObject<{
     socksProxyPort: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>>;
 
-export declare type SandboxSettings = z.infer<typeof SandboxSettingsSchema>;
+export declare type SandboxSettings = z.infer<ReturnType<typeof SandboxSettingsSchema>>;
 
 /**
  * Sandbox settings schema.
  */
-declare const SandboxSettingsSchema: z.ZodObject<{
+declare const SandboxSettingsSchema: () => z.ZodObject<{
     enabled: z.ZodOptional<z.ZodBoolean>;
     autoAllowBashIfSandboxed: z.ZodOptional<z.ZodBoolean>;
     allowUnsandboxedCommands: z.ZodOptional<z.ZodBoolean>;
@@ -1268,6 +1633,7 @@ declare const SandboxSettingsSchema: z.ZodObject<{
     }, z.core.$strip>>;
     ignoreViolations: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodArray<z.ZodString>>>;
     enableWeakerNestedSandbox: z.ZodOptional<z.ZodBoolean>;
+    enableWeakerNetworkIsolation: z.ZodOptional<z.ZodBoolean>;
     excludedCommands: z.ZodOptional<z.ZodArray<z.ZodString>>;
     ripgrep: z.ZodOptional<z.ZodObject<{
         command: z.ZodString;
@@ -1303,6 +1669,14 @@ export declare type SDKCompactBoundaryMessage = {
     compact_metadata: {
         trigger: 'manual' | 'auto';
         pre_tokens: number;
+        /**
+         * Relink info for messagesToKeep. Loaders splice the preserved segment at anchor_uuid (summary for suffix-preserving, boundary for prefix-preserving partial compact) so resume includes preserved content. Unset when compaction summarizes everything (no messagesToKeep).
+         */
+        preserved_segment?: {
+            head_uuid: UUID;
+            anchor_uuid: UUID;
+            tail_uuid: UUID;
+        };
     };
     uuid: UUID;
     session_id: string;
@@ -1317,11 +1691,39 @@ declare type SDKControlApplyFlagSettingsRequest = {
 };
 
 /**
+ * Drops a pending async user message from the command queue by uuid. No-op if already dequeued for execution.
+ */
+declare type SDKControlCancelAsyncMessageRequest = {
+    subtype: 'cancel_async_message';
+    message_uuid: string;
+};
+
+/**
  * Cancels a currently open control request.
  */
 declare type SDKControlCancelRequest = {
     type: 'control_cancel_request';
     request_id: string;
+};
+
+/**
+ * Requests the SDK consumer to handle an MCP elicitation (user input request).
+ */
+declare type SDKControlElicitationRequest = {
+    subtype: 'elicitation';
+    mcp_server_name: string;
+    message: string;
+    mode?: 'form' | 'url';
+    url?: string;
+    elicitation_id?: string;
+    requested_schema?: Record<string, unknown>;
+};
+
+/**
+ * Returns the effective merged settings and the raw per-source settings.
+ */
+declare type SDKControlGetSettingsRequest = {
+    subtype: 'get_settings';
 };
 
 /**
@@ -1336,6 +1738,7 @@ declare type SDKControlInitializeRequest = {
     appendSystemPrompt?: string;
     agents?: Record<string, coreTypes.AgentDefinition>;
     promptSuggestions?: boolean;
+    agentProgressSummaries?: boolean;
 };
 
 /**
@@ -1343,6 +1746,7 @@ declare type SDKControlInitializeRequest = {
  */
 declare type SDKControlInitializeResponse = {
     commands: coreTypes.SlashCommand[];
+    agents: coreTypes.AgentInfo[];
     output_style: string;
     available_output_styles: string[];
     models: coreTypes.ModelInfo[];
@@ -1351,6 +1755,7 @@ declare type SDKControlInitializeResponse = {
      */
     account: coreTypes.AccountInfo;
 
+    fast_mode_state?: coreTypes.FastModeState;
 };
 
 /**
@@ -1422,7 +1827,7 @@ declare type SDKControlRequest = {
     request: SDKControlRequestInner;
 };
 
-declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest;
+declare type SDKControlRequestInner = SDKControlInterruptRequest | SDKControlPermissionRequest | SDKControlInitializeRequest | SDKControlSetPermissionModeRequest | SDKControlSetModelRequest | SDKControlSetMaxThinkingTokensRequest | SDKControlMcpStatusRequest | SDKHookCallbackRequest | SDKControlMcpMessageRequest | SDKControlRewindFilesRequest | SDKControlCancelAsyncMessageRequest | SDKControlMcpSetServersRequest | SDKControlMcpReconnectRequest | SDKControlMcpToggleRequest | SDKControlEndSessionRequest | SDKControlMcpAuthenticateRequest | SDKControlMcpClearAuthRequest | SDKControlMcpOAuthCallbackUrlRequest | SDKControlRemoteControlRequest | SDKControlSetProactiveRequest | SDKControlGenerateSessionTitleRequest | SDKControlStopTaskRequest | SDKControlApplyFlagSettingsRequest | SDKControlGetSettingsRequest | SDKControlElicitationRequest;
 
 declare type SDKControlResponse = {
     type: 'control_response';
@@ -1471,6 +1876,18 @@ declare type SDKControlSetPermissionModeRequest = {
 declare type SDKControlStopTaskRequest = {
     subtype: 'stop_task';
     task_id: string;
+};
+
+/**
+ * Emitted when an MCP server confirms that a URL-mode elicitation is complete.
+ */
+export declare type SDKElicitationCompleteMessage = {
+    type: 'system';
+    subtype: 'elicitation_complete';
+    mcp_server_name: string;
+    elicitation_id: string;
+    uuid: UUID;
+    session_id: string;
 };
 
 export declare type SDKFilesPersistedEvent = {
@@ -1554,6 +1971,17 @@ declare type SDKKeepAliveMessage = {
 };
 
 /**
+ * Output from a local slash command (e.g. /voice, /cost). Displayed as assistant-style text in the transcript.
+ */
+export declare type SDKLocalCommandOutputMessage = {
+    type: 'system';
+    subtype: 'local_command_output';
+    content: string;
+    uuid: UUID;
+    session_id: string;
+};
+
+/**
  * MCP tool definition for SDK servers.
  * Contains a handler function, so not serializable.
  * Supports both Zod 3 and Zod 4 schemas.
@@ -1566,7 +1994,7 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKPromptSuggestionMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -1596,6 +2024,44 @@ export declare type SdkPluginConfig = {
     path: string;
 };
 
+/**
+ * Predicted next user prompt, emitted after each turn when promptSuggestions is enabled.
+ */
+export declare type SDKPromptSuggestionMessage = {
+    type: 'prompt_suggestion';
+    suggestion: string;
+    uuid: UUID;
+    session_id: string;
+};
+
+/**
+ * Rate limit event emitted when rate limit info changes.
+ */
+export declare type SDKRateLimitEvent = {
+    type: 'rate_limit_event';
+    /**
+     * Rate limit information for claude.ai subscription users.
+     */
+    rate_limit_info: SDKRateLimitInfo;
+    uuid: UUID;
+    session_id: string;
+};
+
+/**
+ * Rate limit information for claude.ai subscription users.
+ */
+export declare type SDKRateLimitInfo = {
+    status: 'allowed' | 'allowed_warning' | 'rejected';
+    resetsAt?: number;
+    rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage';
+    utilization?: number;
+    overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
+    overageResetsAt?: number;
+    overageDisabledReason?: 'overage_not_provisioned' | 'org_level_disabled' | 'org_level_disabled_until' | 'out_of_credits' | 'seat_tier_level_disabled' | 'member_level_disabled' | 'seat_tier_zero_credit_limit' | 'group_zero_credit_limit' | 'member_zero_credit_limit' | 'org_service_level_disabled' | 'org_service_zero_credit_limit' | 'no_limits_configured' | 'unknown';
+    isUsingOverage?: boolean;
+    surpassedThreshold?: number;
+};
+
 export declare type SDKResultError = {
     type: 'result';
     subtype: 'error_during_execution' | 'error_max_turns' | 'error_max_budget_usd' | 'error_max_structured_output_retries';
@@ -1609,6 +2075,7 @@ export declare type SDKResultError = {
     modelUsage: Record<string, ModelUsage>;
     permission_denials: SDKPermissionDenial[];
     errors: string[];
+    fast_mode_state?: FastModeState;
     uuid: UUID;
     session_id: string;
 };
@@ -1629,6 +2096,7 @@ export declare type SDKResultSuccess = {
     modelUsage: Record<string, ModelUsage>;
     permission_denials: SDKPermissionDenial[];
     structured_output?: unknown;
+    fast_mode_state?: FastModeState;
     uuid: UUID;
     session_id: string;
 };
@@ -1657,7 +2125,7 @@ export declare interface SDKSession {
 }
 
 /**
- * Session metadata returned by listSessions.
+ * Session metadata returned by listSessions and getSessionInfo.
  */
 export declare type SDKSessionInfo = {
     /**
@@ -1673,9 +2141,9 @@ export declare type SDKSessionInfo = {
      */
     lastModified: number;
     /**
-     * Session file size in bytes.
+     * File size in bytes. Only populated for local JSONL storage.
      */
-    fileSize: number;
+    fileSize?: number;
     /**
      * User-set session title via /rename.
      */
@@ -1692,6 +2160,14 @@ export declare type SDKSessionInfo = {
      * Working directory for the session.
      */
     cwd?: string;
+    /**
+     * User-set session tag.
+     */
+    tag?: string;
+    /**
+     * Creation time in milliseconds since epoch, extracted from the first entry's timestamp.
+     */
+    createdAt?: number;
 };
 
 /**
@@ -1783,6 +2259,7 @@ export declare type SDKSystemMessage = {
         name: string;
         path: string;
     }[];
+    fast_mode_state?: FastModeState;
     uuid: UUID;
     session_id: string;
 };
@@ -1816,6 +2293,7 @@ export declare type SDKTaskProgressMessage = {
         duration_ms: number;
     };
     last_tool_name?: string;
+    summary?: string;
     uuid: UUID;
     session_id: string;
 };
@@ -1827,6 +2305,7 @@ export declare type SDKTaskStartedMessage = {
     tool_use_id?: string;
     description: string;
     task_type?: string;
+    prompt?: string;
     uuid: UUID;
     session_id: string;
 };
@@ -1842,23 +2321,6 @@ export declare type SDKToolProgressMessage = {
     session_id: string;
 };
 
-// SDK 0.2.55 omits this definition but still references it in the SDKMessage union.
-// Restored from SDK 0.2.47 to preserve type compatibility.
-export declare type SDKRateLimitEvent = {
-    type: 'rate_limit_event';
-    rate_limit_info: {
-        status: 'allowed' | 'rejected';
-        resetsAt?: number;
-        rateLimitType?: string;
-        overageStatus: 'allowed' | 'rejected';
-        overageDisabledReason: string | null;
-        isUsingOverage: boolean;
-    };
-    uuid: UUID;
-    session_id: string;
-    timestamp: number;
-};
-
 export declare type SDKToolUseSummaryMessage = {
     type: 'tool_use_summary';
     summary: string;
@@ -1872,8 +2334,8 @@ export declare type SDKUserMessage = {
     message: MessageParam;
     parent_tool_use_id: string | null;
     isSynthetic?: boolean;
-    sendStatus?: 'failed';
     tool_use_result?: unknown;
+    priority?: 'now' | 'next' | 'later';
     uuid?: UUID;
     session_id: string;
 };
@@ -1884,6 +2346,7 @@ export declare type SDKUserMessageReplay = {
     parent_tool_use_id: string | null;
     isSynthetic?: boolean;
     tool_use_result?: unknown;
+    priority?: 'now' | 'next' | 'later';
     uuid: UUID;
     session_id: string;
     isReplay: true;
@@ -1892,6 +2355,30 @@ export declare type SDKUserMessageReplay = {
 export declare type SessionEndHookInput = BaseHookInput & {
     hook_event_name: 'SessionEnd';
     reason: ExitReason;
+};
+
+/**
+ * A user or assistant message from a session transcript.
+ * Returned by `getSessionMessages` for reading historical session data.
+ */
+export declare type SessionMessage = {
+    type: 'user' | 'assistant';
+    uuid: string;
+    session_id: string;
+    message: unknown;
+    parent_tool_use_id: null;
+};
+
+/**
+ * Options shared by session mutation functions (renameSession, tagSession,
+ * deleteSession, forkSession).
+ */
+export declare type SessionMutationOptions = {
+    /**
+     * Project directory path (same semantics as `listSessions({ dir })`).
+     * When omitted, all project directories are searched for the session file.
+     */
+    dir?: string;
 };
 
 export declare type SessionStartHookInput = BaseHookInput & {
@@ -1905,6 +2392,855 @@ export declare type SessionStartHookSpecificOutput = {
     hookEventName: 'SessionStart';
     additionalContext?: string;
 };
+
+/**
+ * AUTO-GENERATED - DO NOT EDIT
+ *
+ * This file is auto-generated from the settings JSON schema.
+ * To modify these types, edit SettingsSchema in src/utils/settings/types.ts and run:
+ *
+ *   bun scripts/generate-sdk-types.ts
+ */
+export declare interface Settings {
+    /**
+     * JSON Schema reference for Claude Code settings
+     */
+    $schema?: 'https://json.schemastore.org/claude-code-settings.json';
+    /**
+     * Path to a script that outputs authentication values
+     */
+    apiKeyHelper?: string;
+    /**
+     * Path to a script that exports AWS credentials
+     */
+    awsCredentialExport?: string;
+    /**
+     * Path to a script that refreshes AWS authentication
+     */
+    awsAuthRefresh?: string;
+    /**
+     * Command to refresh GCP authentication (e.g., gcloud auth application-default login)
+     */
+    gcpAuthRefresh?: string;
+    /**
+     * Custom file suggestion configuration for \@ mentions
+     */
+    fileSuggestion?: {
+        type: 'command';
+        command: string;
+    };
+    /**
+     * Whether file picker should respect .gitignore files (default: true). Note: .ignore files are always respected.
+     */
+    respectGitignore?: boolean;
+    /**
+     * Number of days to retain chat transcripts (default: 30). Setting to 0 disables session persistence entirely: no transcripts are written and existing transcripts are deleted at startup.
+     */
+    cleanupPeriodDays?: number;
+    /**
+     * Environment variables to set for Claude Code sessions
+     */
+    env?: {
+        [k: string]: string;
+    };
+    /**
+     * Customize attribution text for commits and PRs. Each field defaults to the standard Claude Code attribution if not set.
+     */
+    attribution?: {
+        /**
+         * Attribution text for git commits, including any trailers. Empty string hides attribution.
+         */
+        commit?: string;
+        /**
+         * Attribution text for pull request descriptions. Empty string hides attribution.
+         */
+        pr?: string;
+    };
+    /**
+     * Deprecated: Use attribution instead. Whether to include Claude's co-authored by attribution in commits and PRs (defaults to true)
+     */
+    includeCoAuthoredBy?: boolean;
+    /**
+     * Include built-in commit and PR workflow instructions in Claude's system prompt (default: true)
+     */
+    includeGitInstructions?: boolean;
+    /**
+     * Tool usage permissions configuration
+     */
+    permissions?: {
+        /**
+         * List of permission rules for allowed operations
+         */
+        allow?: string[];
+        /**
+         * List of permission rules for denied operations
+         */
+        deny?: string[];
+        /**
+         * List of permission rules that should always prompt for confirmation
+         */
+        ask?: string[];
+        /**
+         * Default permission mode when Claude Code needs access
+         */
+        defaultMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'dontAsk' | 'plan';
+        /**
+         * Disable the ability to bypass permission prompts
+         */
+        disableBypassPermissionsMode?: 'disable';
+        /**
+         * Additional directories to include in the permission scope
+         */
+        additionalDirectories?: string[];
+        [k: string]: unknown;
+    };
+    /**
+     * Override the default model used by Claude Code
+     */
+    model?: string;
+    /**
+     * Allowlist of models that users can select. Accepts family aliases ("opus" allows any opus version), version prefixes ("opus-4-5" allows only that version), and full model IDs. If undefined, all models are available. If empty array, only the default model is available. Typically set in managed settings by enterprise administrators.
+     */
+    availableModels?: string[];
+    /**
+     * Override mapping from Anthropic model ID (e.g. "claude-opus-4-6") to provider-specific model ID (e.g. a Bedrock inference profile ARN). Typically set in managed settings by enterprise administrators.
+     */
+    modelOverrides?: {
+        [k: string]: string;
+    };
+    /**
+     * Whether to automatically approve all MCP servers in the project
+     */
+    enableAllProjectMcpServers?: boolean;
+    /**
+     * List of approved MCP servers from .mcp.json
+     */
+    enabledMcpjsonServers?: string[];
+    /**
+     * List of rejected MCP servers from .mcp.json
+     */
+    disabledMcpjsonServers?: string[];
+    /**
+     * Enterprise allowlist of MCP servers that can be used. Applies to all scopes including enterprise servers from managed-mcp.json. If undefined, all servers are allowed. If empty array, no servers are allowed. Denylist takes precedence - if a server is on both lists, it is denied.
+     */
+    allowedMcpServers?: {
+        /**
+         * Name of the MCP server that users are allowed to configure
+         */
+        serverName?: string;
+        /**
+         * Command array [command, ...args] to match exactly for allowed stdio servers
+         *
+         * \@minItems 1
+         */
+        serverCommand?: [string, ...string[]];
+        /**
+         * URL pattern with wildcard support (e.g., "https://*.example.com/*") for allowed remote MCP servers
+         */
+        serverUrl?: string;
+    }[];
+    /**
+     * Enterprise denylist of MCP servers that are explicitly blocked. If a server is on the denylist, it will be blocked across all scopes including enterprise. Denylist takes precedence over allowlist - if a server is on both lists, it is denied.
+     */
+    deniedMcpServers?: {
+        /**
+         * Name of the MCP server that is explicitly blocked
+         */
+        serverName?: string;
+        /**
+         * Command array [command, ...args] to match exactly for blocked stdio servers
+         *
+         * \@minItems 1
+         */
+        serverCommand?: [string, ...string[]];
+        /**
+         * URL pattern with wildcard support (e.g., "https://*.example.com/*") for blocked remote MCP servers
+         */
+        serverUrl?: string;
+    }[];
+    /**
+     * Custom commands to run before/after tool executions
+     */
+    hooks?: {
+        [k: string]: {
+            /**
+             * String pattern to match (e.g. tool names like "Write")
+             */
+            matcher?: string;
+            /**
+             * List of hooks to execute when the matcher matches
+             */
+            hooks: ({
+                /**
+                 * Bash command hook type
+                 */
+                type: 'command';
+                /**
+                 * Shell command to execute
+                 */
+                command: string;
+                /**
+                 * Timeout in seconds for this specific command
+                 */
+                timeout?: number;
+                /**
+                 * Custom status message to display in spinner while hook runs
+                 */
+                statusMessage?: string;
+                /**
+                 * If true, hook runs once and is removed after execution
+                 */
+                once?: boolean;
+                /**
+                 * If true, hook runs in background without blocking
+                 */
+                async?: boolean;
+                /**
+                 * If true, hook runs in background and wakes the model on exit code 2 (blocking error). Implies async.
+                 */
+                asyncRewake?: boolean;
+            } | {
+                /**
+                 * LLM prompt hook type
+                 */
+                type: 'prompt';
+                /**
+                 * Prompt to evaluate with LLM. Use $ARGUMENTS placeholder for hook input JSON.
+                 */
+                prompt: string;
+                /**
+                 * Timeout in seconds for this specific prompt evaluation
+                 */
+                timeout?: number;
+                /**
+                 * Model to use for this prompt hook (e.g., "claude-sonnet-4-6"). If not specified, uses the default small fast model.
+                 */
+                model?: string;
+                /**
+                 * Custom status message to display in spinner while hook runs
+                 */
+                statusMessage?: string;
+                /**
+                 * If true, hook runs once and is removed after execution
+                 */
+                once?: boolean;
+            } | {
+                /**
+                 * Agentic verifier hook type
+                 */
+                type: 'agent';
+                /**
+                 * Prompt describing what to verify (e.g. "Verify that unit tests ran and passed."). Use $ARGUMENTS placeholder for hook input JSON.
+                 */
+                prompt: string;
+                /**
+                 * Timeout in seconds for agent execution (default 60)
+                 */
+                timeout?: number;
+                /**
+                 * Model to use for this agent hook (e.g., "claude-sonnet-4-6"). If not specified, uses Haiku.
+                 */
+                model?: string;
+                /**
+                 * Custom status message to display in spinner while hook runs
+                 */
+                statusMessage?: string;
+                /**
+                 * If true, hook runs once and is removed after execution
+                 */
+                once?: boolean;
+            } | {
+                /**
+                 * HTTP hook type
+                 */
+                type: 'http';
+                /**
+                 * URL to POST the hook input JSON to
+                 */
+                url: string;
+                /**
+                 * Timeout in seconds for this specific request
+                 */
+                timeout?: number;
+                /**
+                 * Additional headers to include in the request. Values may reference environment variables using $VAR_NAME or ${VAR_NAME} syntax (e.g., "Authorization": "Bearer $MY_TOKEN"). Only variables listed in allowedEnvVars will be interpolated.
+                 */
+                headers?: {
+                    [k: string]: string;
+                };
+                /**
+                 * Explicit list of environment variable names that may be interpolated in header values. Only variables listed here will be resolved; all other $VAR references are left as empty strings. Required for env var interpolation to work.
+                 */
+                allowedEnvVars?: string[];
+                /**
+                 * Custom status message to display in spinner while hook runs
+                 */
+                statusMessage?: string;
+                /**
+                 * If true, hook runs once and is removed after execution
+                 */
+                once?: boolean;
+            })[];
+        }[];
+    };
+    /**
+     * Git worktree configuration for --worktree flag.
+     */
+    worktree?: {
+        /**
+         * Directories to symlink from main repository to worktrees to avoid disk bloat. Must be explicitly configured - no directories are symlinked by default. Common examples: "node_modules", ".cache", ".bin"
+         */
+        symlinkDirectories?: string[];
+        /**
+         * Directories to include when creating worktrees, via git sparse-checkout (cone mode). Dramatically faster in large monorepos — only the listed paths are written to disk.
+         */
+        sparsePaths?: string[];
+    };
+    /**
+     * Disable all hooks and statusLine execution
+     */
+    disableAllHooks?: boolean;
+    /**
+     * When true (and set in managed settings), only hooks from managed settings run. User, project, and local hooks are ignored.
+     */
+    allowManagedHooksOnly?: boolean;
+    /**
+     * Allowlist of URL patterns that HTTP hooks may target. Supports * as a wildcard (e.g. "https://hooks.example.com/*"). When set, HTTP hooks with non-matching URLs are blocked. If undefined, all URLs are allowed. If empty array, no HTTP hooks are allowed. Arrays merge across settings sources (same semantics as allowedMcpServers).
+     */
+    allowedHttpHookUrls?: string[];
+    /**
+     * Allowlist of environment variable names HTTP hooks may interpolate into headers. When set, each hook's effective allowedEnvVars is the intersection with this list. If undefined, no restriction is applied. Arrays merge across settings sources (same semantics as allowedMcpServers).
+     */
+    httpHookAllowedEnvVars?: string[];
+    /**
+     * When true (and set in managed settings), only permission rules (allow/deny/ask) from managed settings are respected. User, project, local, and CLI argument permission rules are ignored.
+     */
+    allowManagedPermissionRulesOnly?: boolean;
+    /**
+     * When true (and set in managed settings), allowedMcpServers is only read from managed settings. deniedMcpServers still merges from all sources, so users can deny servers for themselves. Users can still add their own MCP servers, but only the admin-defined allowlist applies.
+     */
+    allowManagedMcpServersOnly?: boolean;
+    /**
+     * Custom status line display configuration
+     */
+    statusLine?: {
+        type: 'command';
+        command: string;
+        padding?: number;
+    };
+    /**
+     * Enabled plugins using plugin-id\@marketplace-id format. Example: { "formatter\@anthropic-tools": true }. Also supports extended format with version constraints.
+     */
+    enabledPlugins?: {
+        [k: string]: string[] | boolean | {
+            [k: string]: unknown;
+        };
+    };
+    /**
+     * Additional marketplaces to make available for this repository. Typically used in repository .claude/settings.json to ensure team members have required plugin sources.
+     */
+    extraKnownMarketplaces?: {
+        [k: string]: {
+            /**
+             * Where to fetch the marketplace from
+             */
+            source: {
+                source: 'url';
+                /**
+                 * Direct URL to marketplace.json file
+                 */
+                url: string;
+                /**
+                 * Custom HTTP headers (e.g., for authentication)
+                 */
+                headers?: {
+                    [k: string]: string;
+                };
+            } | {
+                source: 'github';
+                /**
+                 * GitHub repository in owner/repo format
+                 */
+                repo: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+                 */
+                path?: string;
+                /**
+                 * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+                 */
+                sparsePaths?: string[];
+            } | {
+                source: 'git';
+                /**
+                 * Full git repository URL
+                 */
+                url: string;
+                /**
+                 * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+                 */
+                ref?: string;
+                /**
+                 * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+                 */
+                path?: string;
+                /**
+                 * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+                 */
+                sparsePaths?: string[];
+            } | {
+                source: 'npm';
+                /**
+                 * NPM package containing marketplace.json
+                 */
+                package: string;
+            } | {
+                source: 'file';
+                /**
+                 * Local file path to marketplace.json
+                 */
+                path: string;
+            } | {
+                source: 'directory';
+                /**
+                 * Local directory containing .claude-plugin/marketplace.json
+                 */
+                path: string;
+            } | {
+                source: 'hostPattern';
+                /**
+                 * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+                 */
+                hostPattern: string;
+            } | {
+                source: 'pathPattern';
+                /**
+                 * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
+                 */
+                pathPattern: string;
+            };
+            /**
+             * Local cache path where marketplace manifest is stored (auto-generated if not provided)
+             */
+            installLocation?: string;
+            /**
+             * Whether to automatically update this marketplace and its installed plugins on startup
+             */
+            autoUpdate?: boolean;
+        };
+    };
+    /**
+     * Enterprise strict list of allowed marketplace sources. When set in managed settings, ONLY these exact sources can be added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem. Note: this is a policy gate only — it does NOT register marketplaces. To pre-register allowed marketplaces for users, also set extraKnownMarketplaces.
+     */
+    strictKnownMarketplaces?: ({
+        source: 'url';
+        /**
+         * Direct URL to marketplace.json file
+         */
+        url: string;
+        /**
+         * Custom HTTP headers (e.g., for authentication)
+         */
+        headers?: {
+            [k: string]: string;
+        };
+    } | {
+        source: 'github';
+        /**
+         * GitHub repository in owner/repo format
+         */
+        repo: string;
+        /**
+         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+         */
+        ref?: string;
+        /**
+         * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+         */
+        path?: string;
+        /**
+         * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+         */
+        sparsePaths?: string[];
+    } | {
+        source: 'git';
+        /**
+         * Full git repository URL
+         */
+        url: string;
+        /**
+         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+         */
+        ref?: string;
+        /**
+         * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+         */
+        path?: string;
+        /**
+         * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+         */
+        sparsePaths?: string[];
+    } | {
+        source: 'npm';
+        /**
+         * NPM package containing marketplace.json
+         */
+        package: string;
+    } | {
+        source: 'file';
+        /**
+         * Local file path to marketplace.json
+         */
+        path: string;
+    } | {
+        source: 'directory';
+        /**
+         * Local directory containing .claude-plugin/marketplace.json
+         */
+        path: string;
+    } | {
+        source: 'hostPattern';
+        /**
+         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+         */
+        hostPattern: string;
+    } | {
+        source: 'pathPattern';
+        /**
+         * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
+         */
+        pathPattern: string;
+    })[];
+    /**
+     * Enterprise blocklist of marketplace sources. When set in managed settings, these exact sources are blocked from being added as marketplaces. The check happens BEFORE downloading, so blocked sources never touch the filesystem.
+     */
+    blockedMarketplaces?: ({
+        source: 'url';
+        /**
+         * Direct URL to marketplace.json file
+         */
+        url: string;
+        /**
+         * Custom HTTP headers (e.g., for authentication)
+         */
+        headers?: {
+            [k: string]: string;
+        };
+    } | {
+        source: 'github';
+        /**
+         * GitHub repository in owner/repo format
+         */
+        repo: string;
+        /**
+         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+         */
+        ref?: string;
+        /**
+         * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+         */
+        path?: string;
+        /**
+         * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+         */
+        sparsePaths?: string[];
+    } | {
+        source: 'git';
+        /**
+         * Full git repository URL
+         */
+        url: string;
+        /**
+         * Git branch or tag to use (e.g., "main", "v1.0.0"). Defaults to repository default branch.
+         */
+        ref?: string;
+        /**
+         * Path to marketplace.json within repo (defaults to .claude-plugin/marketplace.json)
+         */
+        path?: string;
+        /**
+         * Directories to include via git sparse-checkout (cone mode). Use for monorepos where the marketplace lives in a subdirectory. Example: [".claude-plugin", "plugins"]. If omitted, the full repository is cloned.
+         */
+        sparsePaths?: string[];
+    } | {
+        source: 'npm';
+        /**
+         * NPM package containing marketplace.json
+         */
+        package: string;
+    } | {
+        source: 'file';
+        /**
+         * Local file path to marketplace.json
+         */
+        path: string;
+    } | {
+        source: 'directory';
+        /**
+         * Local directory containing .claude-plugin/marketplace.json
+         */
+        path: string;
+    } | {
+        source: 'hostPattern';
+        /**
+         * Regex pattern to match the host/domain extracted from any marketplace source type. For github sources, matches against "github.com". For git sources (SSH or HTTPS), extracts the hostname from the URL. Use in strictKnownMarketplaces to allow all marketplaces from a specific host (e.g., "^github\.mycompany\.com$").
+         */
+        hostPattern: string;
+    } | {
+        source: 'pathPattern';
+        /**
+         * Regex pattern matched against the .path field of file and directory sources. Use in strictKnownMarketplaces to allow filesystem-based marketplaces alongside hostPattern restrictions for network sources. Use ".*" to allow all filesystem paths, or a narrower pattern (e.g., "^/opt/approved/") to restrict to specific directories.
+         */
+        pathPattern: string;
+    })[];
+    /**
+     * Force a specific login method: "claudeai" for Claude Pro/Max, "console" for Console billing
+     */
+    forceLoginMethod?: 'claudeai' | 'console';
+    /**
+     * Organization UUID to use for OAuth login
+     */
+    forceLoginOrgUUID?: string;
+    /**
+     * Path to a script that outputs OpenTelemetry headers
+     */
+    otelHeadersHelper?: string;
+    /**
+     * Controls the output style for assistant responses
+     */
+    outputStyle?: string;
+    /**
+     * Preferred language for Claude responses and voice dictation (e.g., "japanese", "spanish")
+     */
+    language?: string;
+    /**
+     * Skip the WebFetch blocklist check for enterprise environments with restrictive security policies
+     */
+    skipWebFetchPreflight?: boolean;
+    sandbox?: {
+        enabled?: boolean;
+        autoAllowBashIfSandboxed?: boolean;
+        /**
+         * Allow commands to run outside the sandbox via the dangerouslyDisableSandbox parameter. When false, the dangerouslyDisableSandbox parameter is completely ignored and all commands must run sandboxed. Default: true.
+         */
+        allowUnsandboxedCommands?: boolean;
+        network?: {
+            allowedDomains?: string[];
+            /**
+             * When true (and set in managed settings), only allowedDomains and WebFetch(domain:...) allow rules from managed settings are respected. User, project, local, and flag settings domains are ignored. Denied domains are still respected from all sources.
+             */
+            allowManagedDomainsOnly?: boolean;
+            /**
+             * macOS only: Unix socket paths to allow. Ignored on Linux (seccomp cannot filter by path).
+             */
+            allowUnixSockets?: string[];
+            /**
+             * If true, allow all Unix sockets (disables blocking on both platforms).
+             */
+            allowAllUnixSockets?: boolean;
+            allowLocalBinding?: boolean;
+            httpProxyPort?: number;
+            socksProxyPort?: number;
+        };
+        filesystem?: {
+            /**
+             * Additional paths to allow writing within the sandbox. Merged with paths from Edit(...) allow permission rules.
+             */
+            allowWrite?: string[];
+            /**
+             * Additional paths to deny writing within the sandbox. Merged with paths from Edit(...) deny permission rules.
+             */
+            denyWrite?: string[];
+            /**
+             * Additional paths to deny reading within the sandbox. Merged with paths from Read(...) deny permission rules.
+             */
+            denyRead?: string[];
+        };
+        ignoreViolations?: {
+            [k: string]: string[];
+        };
+        enableWeakerNestedSandbox?: boolean;
+        /**
+         * macOS only: Allow access to com.apple.trustd.agent in the sandbox. Needed for Go-based CLI tools (gh, gcloud, terraform, etc.) to verify TLS certificates when using httpProxyPort with a MITM proxy and custom CA. **Reduces security** — opens a potential data exfiltration vector through the trustd service. Default: false
+         */
+        enableWeakerNetworkIsolation?: boolean;
+        excludedCommands?: string[];
+        /**
+         * Custom ripgrep configuration for bundled ripgrep support
+         */
+        ripgrep?: {
+            command: string;
+            args?: string[];
+        };
+        [k: string]: unknown;
+    };
+    /**
+     * Probability (0–1) that the session quality survey appears when eligible. 0.05 is a reasonable starting point.
+     */
+    feedbackSurveyRate?: number;
+    /**
+     * Whether to show tips in the spinner
+     */
+    spinnerTipsEnabled?: boolean;
+    /**
+     * Customize spinner verbs. mode: "append" adds verbs to defaults, "replace" uses only your verbs.
+     */
+    spinnerVerbs?: {
+        mode: 'append' | 'replace';
+        verbs: string[];
+    };
+    /**
+     * Override spinner tips. tips: array of tip strings. excludeDefault: if true, only show custom tips (default: false).
+     */
+    spinnerTipsOverride?: {
+        excludeDefault?: boolean;
+        tips: string[];
+    };
+    /**
+     * Whether to disable syntax highlighting in diffs
+     */
+    syntaxHighlightingDisabled?: boolean;
+    /**
+     * Whether /rename updates the terminal tab title (defaults to true). Set to false to keep auto-generated topic titles.
+     */
+    terminalTitleFromRename?: boolean;
+    /**
+     * When false, thinking is disabled. When absent or true, thinking is enabled automatically for supported models.
+     */
+    alwaysThinkingEnabled?: boolean;
+    /**
+     * Persisted effort level for supported models.
+     */
+    effortLevel?: 'low' | 'medium' | 'high';
+    /**
+     * When true, fast mode is enabled. When absent or false, fast mode is off.
+     */
+    fastMode?: boolean;
+    /**
+     * When true, fast mode does not persist across sessions. Each session starts with fast mode off.
+     */
+    fastModePerSessionOptIn?: boolean;
+    /**
+     * When false, prompt suggestions are disabled. When absent or true, prompt suggestions are enabled.
+     */
+    promptSuggestionEnabled?: boolean;
+    /**
+     * Name of an agent (built-in or custom) to use for the main thread. Applies the agent's system prompt, tool restrictions, and model.
+     */
+    agent?: string;
+    /**
+     * Company announcements to display at startup (one will be randomly selected if multiple are provided)
+     */
+    companyAnnouncements?: string[];
+    /**
+     * Per-plugin configuration including MCP server user configs, keyed by plugin ID (plugin\@marketplace format)
+     */
+    pluginConfigs?: {
+        [k: string]: {
+            /**
+             * User configuration values for MCP servers keyed by server name
+             */
+            mcpServers?: {
+                [k: string]: {
+                    [k: string]: string | number | boolean | string[];
+                };
+            };
+            /**
+             * Non-sensitive option values from plugin manifest userConfig, keyed by option name. Sensitive values go to secure storage instead.
+             */
+            options?: {
+                [k: string]: string | number | boolean | string[];
+            };
+        };
+    };
+    /**
+     * Remote session configuration
+     */
+    remote?: {
+        /**
+         * Default environment ID to use for remote sessions
+         */
+        defaultEnvironmentId?: string;
+    };
+    /**
+     * Release channel for auto-updates (latest or stable)
+     */
+    autoUpdatesChannel?: 'latest' | 'stable';
+    /**
+     * Minimum version to stay on - prevents downgrades when switching to stable channel
+     */
+    minimumVersion?: string;
+    /**
+     * Custom directory for plan files, relative to project root. If not set, defaults to ~/.claude/plans/
+     */
+    plansDirectory?: string;
+    /**
+     * Reduce or disable animations for accessibility (spinner shimmer, flash effects, etc.)
+     */
+    prefersReducedMotion?: boolean;
+    /**
+     * Enable auto-memory for this project. When false, Claude will not read from or write to the auto-memory directory.
+     */
+    autoMemoryEnabled?: boolean;
+    /**
+     * Custom directory path for auto-memory storage. Supports ~/ prefix for home directory expansion. Ignored if set in projectSettings (checked-in .claude/settings.json) for security. When unset, defaults to ~/.claude/projects/<sanitized-cwd>/memory/.
+     */
+    autoMemoryDirectory?: string;
+    /**
+     * Show thinking summaries in the transcript view (ctrl+o). Default: false.
+     */
+    showThinkingSummaries?: boolean;
+    /**
+     * Whether the user has accepted the bypass permissions mode dialog
+     */
+    skipDangerousModePermissionPrompt?: boolean;
+    /**
+     * Disable auto mode
+     */
+    disableAutoMode?: 'disable';
+    /**
+     * SSH connection configurations for remote environments. Typically set in managed settings by enterprise administrators to pre-configure SSH connections for team members.
+     */
+    sshConfigs?: {
+        /**
+         * Unique identifier for this SSH config. Used to match configs across settings sources.
+         */
+        id: string;
+        /**
+         * Display name for the SSH connection
+         */
+        name: string;
+        /**
+         * SSH host in format "user\@hostname" or "hostname", or a host alias from ~/.ssh/config
+         */
+        sshHost: string;
+        /**
+         * SSH port (default: 22)
+         */
+        sshPort?: number;
+        /**
+         * Path to SSH identity file (private key)
+         */
+        sshIdentityFile?: string;
+        /**
+         * Default working directory on the remote host. Supports tilde expansion (e.g. ~/projects). If not specified, defaults to the remote user home directory. Can be overridden by the [dir] positional argument in `claude ssh <config> [dir]`.
+         */
+        startDirectory?: string;
+    }[];
+    /**
+     * Glob patterns or absolute paths of CLAUDE.md files to exclude from loading. Patterns are matched against absolute file paths using picomatch. Only applies to User, Project, and Local memory types (Managed/policy files cannot be excluded). Examples: "/home/user/monorepo/CLAUDE.md", "** /code/CLAUDE.md", "** /some-dir/.claude/rules/**"
+     */
+    claudeMdExcludes?: string[];
+    /**
+     * Custom message to append to the plugin trust warning shown before installation. Only read from policy settings (managed-settings.json / MDM). Useful for enterprise administrators to add organization-specific context (e.g., "All plugins from our internal marketplace are vetted and approved.").
+     */
+    pluginTrustMessage?: string;
+    [k: string]: unknown;
+}
 
 /**
  * Source for loading filesystem-based settings. 'user' - Global user settings (~/.claude/settings.json). 'project' - Project settings (.claude/settings.json). 'local' - Local settings (.claude/settings.local.json).
@@ -2041,8 +3377,17 @@ export declare type SyncHookJSONOutput = {
     decision?: 'approve' | 'block';
     systemMessage?: string;
     reason?: string;
-    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput;
+
+    hookSpecificOutput?: PreToolUseHookSpecificOutput | UserPromptSubmitHookSpecificOutput | SessionStartHookSpecificOutput | SetupHookSpecificOutput | SubagentStartHookSpecificOutput | PostToolUseHookSpecificOutput | PostToolUseFailureHookSpecificOutput | NotificationHookSpecificOutput | PermissionRequestHookSpecificOutput | ElicitationHookSpecificOutput | ElicitationResultHookSpecificOutput;
 };
+
+/**
+ * Tag a session. Pass null to clear the tag.
+ * @param sessionId - UUID of the session
+ * @param tag - Tag string, or null to clear
+ * @param options - `{ dir?: string }` project path; omit to search all projects
+ */
+export declare function tagSession(_sessionId: string, _tag: string | null, _options?: SessionMutationOptions): Promise<void>;
 
 export declare type TaskCompletedHookInput = BaseHookInput & {
     hook_event_name: 'TaskCompleted';
@@ -2089,6 +3434,26 @@ export declare type ThinkingEnabled = {
 export declare function tool<Schema extends AnyZodRawShape>(_name: string, _description: string, _inputSchema: Schema, _handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>, _extras?: {
     annotations?: ToolAnnotations;
 }): SdkMcpToolDefinition<Schema>;
+
+/**
+ * Per-tool configuration for built-in tools. Allows SDK consumers to
+ * customize tool behavior that the CLI hardcodes.
+ */
+export declare type ToolConfig = {
+    askUserQuestion?: {
+        /**
+         * Content format for the `preview` field on question options.
+         * Controls what the model is instructed to emit and how the field is
+         * described in the tool schema.
+         *
+         * - `'markdown'` — Markdown/ASCII content (CLI default, rendered in a monospace box)
+         * - `'html'` — Self-contained HTML fragments (for web-based SDK consumers)
+         *
+         * @default 'markdown'
+         */
+        previewFormat?: 'markdown' | 'html';
+    };
+};
 
 /**
  * Transport interface for Claude Code SDK communication

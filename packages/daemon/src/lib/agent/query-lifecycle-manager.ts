@@ -13,7 +13,7 @@
  * - Full reset with cost tracking, state management, and client notification
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { MessageContent, Session, MessageHub } from '@neokai/shared';
 import type { MessageQueue } from './message-queue';
 import type { ProcessingStateManager } from './processing-state-manager';

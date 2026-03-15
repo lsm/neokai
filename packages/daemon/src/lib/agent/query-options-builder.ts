@@ -18,7 +18,7 @@
  * - Hooks (output limiter)
  */
 
-import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Options, CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import type {
 	Session,
 	ThinkingLevel,

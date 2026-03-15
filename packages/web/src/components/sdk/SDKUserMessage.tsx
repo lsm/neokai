@@ -19,7 +19,7 @@ import { renderRewindCheckbox } from './RewindCheckbox.tsx';
 import { isHiddenCommandOutput, SlashCommandOutput } from './SlashCommandOutput.tsx';
 import { SyntheticMessageBlock } from './SyntheticMessageBlock.tsx';
 
-type UserMessage = Extract<SDKMessage, { type: 'user' }>;
+type UserMessage = Extract<SDKMessage, { type: 'user' }> & { sendStatus?: string };
 type SystemInitMessage = Extract<SDKMessage, { type: 'system'; subtype: 'init' }>;
 
 interface Props {

@@ -12,7 +12,7 @@
  * - State transitions during interrupt
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session, MessageHub } from '@neokai/shared';
 import type { Logger } from '../logger';
 import type { MessageQueue } from './message-queue';

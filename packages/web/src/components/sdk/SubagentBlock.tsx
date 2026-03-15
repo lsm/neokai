@@ -242,7 +242,7 @@ export function SubagentBlock({
 }: SubagentBlockProps) {
 	const [isExpanded, setIsExpanded] = useState(false);
 
-	const colors = getSubagentColors(input.subagent_type);
+	const colors = getSubagentColors(input.subagent_type ?? 'general-purpose');
 	const outputText = extractOutputText(output);
 
 	/**
@@ -284,7 +284,9 @@ export function SubagentBlock({
 			>
 				<div class="flex items-center gap-2 min-w-0 flex-1">
 					{/* Icon */}
-					<span class={colors.icon}>{getSubagentIcon(input.subagent_type)}</span>
+					<span class={colors.icon}>
+						{getSubagentIcon(input.subagent_type ?? 'general-purpose')}
+					</span>
 
 					{/* Subagent type badge */}
 					<span

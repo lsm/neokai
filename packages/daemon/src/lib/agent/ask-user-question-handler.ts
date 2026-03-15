@@ -19,7 +19,7 @@
 import type { PendingUserQuestion, QuestionDraftResponse, Session } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
-import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { ProcessingStateManager } from './processing-state-manager';
 import { Logger } from '../logger';
 

@@ -18,7 +18,7 @@ import type { Database } from '../../../src/storage/database';
 import type { ContextTracker } from '../../../src/lib/agent/context-tracker';
 import type { ProcessingStateManager } from '../../../src/lib/agent/processing-state-manager';
 import type { QueryLifecycleManager } from '../../../src/lib/agent/query-lifecycle-manager';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ErrorManager } from '../../../src/lib/error-manager';
 import type { Logger } from '../../../src/lib/logger';
 import { generateUUID } from '@neokai/shared';

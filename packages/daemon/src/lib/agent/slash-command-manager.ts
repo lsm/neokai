@@ -10,7 +10,7 @@
  * - Combining SDK commands with built-in commands
  */
 
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { Session } from '@neokai/shared';
 import type { SlashCommand } from '@neokai/shared/sdk';
 import type { DaemonHub } from '../daemon-hub';

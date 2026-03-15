@@ -10,7 +10,7 @@ import {
 	type SlashCommandManagerContext,
 } from '../../../src/lib/agent/slash-command-manager';
 import type { Session } from '@neokai/shared';
-import type { Query } from '@anthropic-ai/claude-agent-sdk/sdk';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { DaemonHub } from '../../../src/lib/daemon-hub';
 import type { Database } from '../../../src/storage/database';
 import type { Logger } from '../../../src/lib/logger';
