@@ -262,24 +262,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
-      - name: Install Dev Proxy (Linux)
+      - name: Setup Dev Proxy
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         uses: ./.github/actions/setup-devproxy
-
-      - name: Start Dev Proxy
-        if: matrix.mock_sdk == true
-        run: |
-          devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
-          DEVPROXY_PID=$!
-          echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
-          # Wait for proxy to be ready
-          for i in $(seq 1 30); do
-            if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
-              echo "Dev Proxy is ready"
-              break
-            fi
-            sleep 0.5
-          done
 
       - name: Install dependencies
         run: bun install
@@ -568,87 +553,25 @@ jobs:
           echo "✅ Coverage quality gate passed!"
 
   # ============================================
-  # BUILD PREREQUISITES
-  # Keep build dependencies non-skipped across trigger types.
-  # - push to dev: pass immediately (E2E-only path)
-  # - PR to main / push to main / workflow_dispatch: require tests to pass
-  # - PR to dev: no-op pass (build job is skipped anyway)
-  # ============================================
-
-  build-trigger:
-    name: Build Trigger
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - name: Trigger build
-        run: |
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "Build triggered for push to dev (E2E-only path)"
-          else
-            echo "Build trigger no-op for this event"
-          fi
-
-  build-wait-tests:
-    name: Build Wait for Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    if: always()
-    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
-    steps:
-      - name: Validate test prerequisites for build
-        run: |
-          # push to dev: we intentionally skip check/unit/online to run E2E-only.
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "push to dev: skipping test prerequisites before build"
-            exit 0
-          fi
-
-          # PR to dev: build is not part of this path; keep this job green as a no-op.
-          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.base_ref }}" == "dev" ]]; then
-            echo "PR to dev: build not required, skipping prerequisite checks"
-            exit 0
-          fi
-
-          FAILED=0
-
-          if [[ "${{ needs.check.result }}" != "success" ]]; then
-            echo "❌ check result: ${{ needs.check.result }}"
-            FAILED=1
-          fi
-          if [[ "${{ needs.test-daemon-online.result }}" != "success" ]]; then
-            echo "❌ test-daemon-online result: ${{ needs.test-daemon-online.result }}"
-            FAILED=1
-          fi
-          if [[ "${{ needs.test-daemon-shared-unit.result }}" != "success" ]]; then
-            echo "❌ test-daemon-shared-unit result: ${{ needs.test-daemon-shared-unit.result }}"
-            FAILED=1
-          fi
-          if [[ "${{ needs.test-web.result }}" != "success" ]]; then
-            echo "❌ test-web result: ${{ needs.test-web.result }}"
-            FAILED=1
-          fi
-          if [[ "${{ needs.test-cli.result }}" != "success" ]]; then
-            echo "❌ test-cli result: ${{ needs.test-cli.result }}"
-            FAILED=1
-          fi
-
-          if [[ "$FAILED" -eq 1 ]]; then
-            echo "One or more required test jobs failed; blocking build"
-            exit 1
-          fi
-
-          echo "All test prerequisites passed; proceeding to build"
-
-  # ============================================
   # BUILD - Compile linux-x64 binary + smoke test
   # Run on: PR to main, push to dev, push to main (skip on PR to dev)
+  # Waits for test jobs; proceeds if they passed or were skipped (push to dev).
   # ============================================
 
   build:
     name: Build Binary (linux-x64)
     runs-on: ubuntu-latest
-    needs: [build-trigger, build-wait-tests]
-    if: always() && (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch')
+    needs: [check, test-daemon-online, test-daemon-shared-unit, test-web, test-cli]
+    if: >-
+      always() &&
+      (github.event_name == 'pull_request' && github.base_ref == 'main' ||
+       github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') ||
+       github.event_name == 'workflow_dispatch') &&
+      contains(fromJSON('["success", "skipped"]'), needs.check.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-daemon-online.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-daemon-shared-unit.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-web.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.test-cli.result)
     timeout-minutes: 10
 
     steps:
@@ -769,9 +692,12 @@ jobs:
     name: E2E No-LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    # Run on: PR to main, push to dev, push to main, workflow_dispatch (skip on PR to dev)
-    # Skip release PRs to main to avoid blocking releases with flaky tests
-    if: always() && (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
+    # Runs when build succeeds; skip release PRs to avoid blocking releases with flaky tests
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.discover.result == 'success' &&
+      (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -867,9 +793,12 @@ jobs:
     name: E2E LLM (${{ matrix.test.name }})
     runs-on: ubuntu-latest
     needs: [build, discover]
-    # Run on: PR to main, push to dev, push to main, workflow_dispatch (skip on PR to dev)
-    # Skip release PRs to main to avoid blocking releases with flaky tests
-    if: always() && (github.event_name == 'pull_request' && github.base_ref == 'main' || github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch') && (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
+    # Runs when build succeeds; skip release PRs to avoid blocking releases with flaky tests
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.discover.result == 'success' &&
+      (github.event_name != 'pull_request' || !contains(github.event.pull_request.title, 'release'))
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -891,23 +820,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat
 
-      - name: Install Dev Proxy (Linux)
+      - name: Setup Dev Proxy
         if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
-
-      - name: Start Dev Proxy
-        run: |
-          devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
-          DEVPROXY_PID=$!
-          echo "DEVPROXY_PID=$DEVPROXY_PID" >> $GITHUB_ENV
-          # Wait for proxy to be ready
-          for i in $(seq 1 30); do
-            if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
-              echo "Dev Proxy is ready"
-              break
-            fi
-            sleep 0.5
-          done
 
       - name: Install dependencies
         run: |
@@ -1001,8 +916,6 @@ jobs:
       - test-web
       - test-cli
       - coverage-gate
-      - build-trigger
-      - build-wait-tests
       - build
       - discover
       - e2e-no-llm
@@ -1055,18 +968,6 @@ jobs:
             FAILED=1
           fi
 
-          # build-trigger: push to dev only
-          if [[ "${{ needs.build-trigger.result }}" == "failure" ]]; then
-            echo "❌ build-trigger failed"
-            FAILED=1
-          fi
-
-          # build-wait-tests: PR to main, push to main (skip on push to dev)
-          if [[ "${{ needs.build-wait-tests.result }}" == "failure" ]]; then
-            echo "❌ build-wait-tests failed"
-            FAILED=1
-          fi
-
           # build: PR to main, push to dev, push to main (skip on PR to dev)
           if [[ "${{ needs.build.result }}" == "failure" ]]; then
             echo "❌ build failed"
@@ -1101,8 +1002,6 @@ jobs:
             echo "  test-web: ${{ needs.test-web.result }}"
             echo "  test-cli: ${{ needs.test-cli.result }}"
             echo "  coverage-gate: ${{ needs.coverage-gate.result }}"
-            echo "  build-trigger: ${{ needs.build-trigger.result }}"
-            echo "  build-wait-tests: ${{ needs.build-wait-tests.result }}"
             echo "  build: ${{ needs.build.result }}"
             echo "  discover: ${{ needs.discover.result }}"
             echo "  e2e-no-llm: ${{ needs.e2e-no-llm.result }}"

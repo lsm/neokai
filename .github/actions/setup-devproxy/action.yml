@@ -1,5 +1,5 @@
 name: 'Setup Dev Proxy'
-description: 'Install Dev Proxy with GitHub Actions caching to avoid repeated downloads'
+description: 'Install Dev Proxy with GitHub Actions caching, then start it on port 8000'
 author: 'lsm'
 
 inputs:
@@ -123,3 +123,24 @@ runs:
         echo "Dev Proxy ready: $VERSION_OUT"
         echo "version=$VERSION_OUT" >> "$GITHUB_OUTPUT"
         echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}" >> "$GITHUB_OUTPUT"
+
+    # ── Step 5: Start Dev Proxy ────────────────────────────────────────────────
+    - name: Start Dev Proxy
+      shell: bash
+      run: |
+        set -euo pipefail
+        devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
+        echo "DEVPROXY_PID=$!" >> "$GITHUB_ENV"
+        READY=false
+        for i in $(seq 1 30); do
+          if nc -z 127.0.0.1 8000 2>/dev/null; then
+            echo "Dev Proxy is ready"
+            READY=true
+            break
+          fi
+          sleep 0.5
+        done
+        if [ "$READY" != "true" ]; then
+          echo "::error::Dev Proxy did not become ready within 15 seconds"
+          exit 1
+        fi
