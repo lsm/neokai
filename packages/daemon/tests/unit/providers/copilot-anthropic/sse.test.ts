@@ -120,6 +120,21 @@ describe('AnthropicStreamWriter', () => {
 				stop_reason: 'end_turn',
 			});
 		});
+
+		it('does not emit an empty text block when no text was flushed', () => {
+			const { written, res } = makeRes();
+			const writer = new AnthropicStreamWriter();
+			writer.start(res, 'model');
+			writer.sendCompleted(res);
+			const events = parseEvents(written);
+			const types = events.map((e) => e.type);
+			// No content_block_start/stop — response has zero content blocks (tool-only or silent turn)
+			expect(types).not.toContain('content_block_start');
+			expect(types).not.toContain('content_block_stop');
+			// Epilogue must still be present
+			expect(types).toContain('message_delta');
+			expect(types).toContain('message_stop');
+		});
 	});
 
 	describe('sendToolUse()', () => {

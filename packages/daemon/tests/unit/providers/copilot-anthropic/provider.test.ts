@@ -23,7 +23,7 @@ describe('CopilotAnthropicProvider', () => {
 	let provider: CopilotAnthropicProvider;
 
 	beforeEach(() => {
-		provider = new CopilotAnthropicProvider({});
+		provider = new CopilotAnthropicProvider('/tmp', {});
 	});
 
 	describe('basic properties', () => {
@@ -100,7 +100,7 @@ describe('CopilotAnthropicProvider', () => {
 
 	describe('isAvailable', () => {
 		it('returns false when copilot binary not found and no token', async () => {
-			const p = new CopilotAnthropicProvider({});
+			const p = new CopilotAnthropicProvider('/tmp', {});
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				null as never
 			);
@@ -108,7 +108,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('returns true when COPILOT_GITHUB_TOKEN is set and binary found', async () => {
-			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				'/usr/local/bin/copilot' as never
 			);
@@ -116,7 +116,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('returns true when GH_TOKEN is set and binary found', async () => {
-			const p = new CopilotAnthropicProvider({ GH_TOKEN: 'tok' });
+			const p = new CopilotAnthropicProvider('/tmp', { GH_TOKEN: 'tok' });
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				'/usr/local/bin/copilot' as never
 			);
@@ -126,7 +126,7 @@ describe('CopilotAnthropicProvider', () => {
 
 	describe('getAuthStatus', () => {
 		it('reports not authenticated when binary not found', async () => {
-			const p = new CopilotAnthropicProvider({});
+			const p = new CopilotAnthropicProvider('/tmp', {});
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				null as never
 			);
@@ -136,7 +136,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('reports authenticated when token env var is set', async () => {
-			const p = new CopilotAnthropicProvider({ GITHUB_TOKEN: 'tok' });
+			const p = new CopilotAnthropicProvider('/tmp', { GITHUB_TOKEN: 'tok' });
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				'/usr/local/bin/copilot' as never
 			);
@@ -157,7 +157,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('throws when embedded server has not been started', () => {
-			const p = new CopilotAnthropicProvider({});
+			const p = new CopilotAnthropicProvider('/tmp', {});
 			expect(() => p.buildSdkConfig('copilot-anthropic-sonnet')).toThrow(
 				'embedded server not started'
 			);
@@ -199,7 +199,7 @@ describe('CopilotAnthropicProvider', () => {
 
 	describe('getModels() pre-warms embedded server', () => {
 		it('calls ensureServerStarted when provider is available', async () => {
-			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				'/usr/local/bin/copilot' as never
 			);
@@ -211,7 +211,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('returns empty array when ensureServerStarted fails', async () => {
-			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				'/usr/local/bin/copilot' as never
 			);
@@ -223,7 +223,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('returns empty array when provider is not available', async () => {
-			const p = new CopilotAnthropicProvider({});
+			const p = new CopilotAnthropicProvider('/tmp', {});
 			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
 				null as never
 			);
@@ -234,7 +234,7 @@ describe('CopilotAnthropicProvider', () => {
 
 	describe('ensureServerStarted() retry-after-failure', () => {
 		it('clears serverStarting on rejection so the next call can retry', async () => {
-			const p = new CopilotAnthropicProvider({ COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			let callCount = 0;
 			spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
 				async () => {

@@ -71,6 +71,10 @@ export interface AnthropicRequest {
 	system?: string | TextBlock[];
 	stream?: boolean;
 	tools?: AnthropicTool[];
+	/**
+	 * Accepted for API compatibility but not forwarded to the Copilot SDK —
+	 * the SDK does not expose tool-choice control.
+	 */
 	tool_choice?: ToolChoice;
 }
 
