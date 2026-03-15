@@ -35,6 +35,7 @@ RPC_FILES=(
   rpc-session-workflow.test.ts
   rpc-settings-handlers.test.ts
   rpc-state-sync.test.ts
+  rpc-task-draft-handlers.test.ts
   session-handlers.test.ts
 )
 
