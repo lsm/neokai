@@ -12,7 +12,7 @@ import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
-import { CopilotAnthropicProvider } from './copilot-anthropic-provider.js';
+import { CopilotAnthropicProvider } from './copilot-anthropic/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';

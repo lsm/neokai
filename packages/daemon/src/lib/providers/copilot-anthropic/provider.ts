@@ -2,32 +2,32 @@
  * GitHub Copilot Anthropic Provider
  *
  * A NeoKai provider that starts an embedded Anthropic-compatible HTTP server
- * backed by the `@github/copilot-sdk`. The Claude Agent SDK is pointed at this
- * server via `ANTHROPIC_BASE_URL`, so Copilot becomes a fully native SDK
- * backend — multi-turn, streaming, tool use — with no custom generator bridging.
+ * backed by the `@github/copilot-sdk`.  The Claude Agent SDK is pointed at
+ * this server via `ANTHROPIC_BASE_URL`, so Copilot becomes a fully native SDK
+ * backend — multi-turn, streaming, and tool use — with no custom generator
+ * bridging.
  *
- * ## How it differs from CopilotSdkProvider
+ * ## How it works
  *
- * | Feature              | CopilotSdkProvider              | CopilotAnthropicProvider             |
- * |----------------------|---------------------------------|--------------------------------------|
- * | Integration point    | `createQuery()` generator       | `buildSdkConfig()` + embedded server |
- * | Claude Agent SDK     | Bypassed                        | Used natively                        |
- * | Tool use             | SDK-internal only               | Full SDK tool call cycle             |
- * | Extended thinking    | No                              | Passthrough (if Copilot supports)    |
- * | Server lifecycle     | None                            | One loopback server per provider     |
+ * The embedded server implements the Anthropic messages API (`POST /v1/messages`).
+ * Incoming tool definitions are registered as Copilot SDK external tools.
+ * When the Copilot model decides to call one of them the server emits an
+ * Anthropic `tool_use` SSE block, ends the response, and suspends the session.
+ * The next request (with `tool_result`) resumes the session via the
+ * `ConversationManager`.
  *
  * ## Authentication
  *
- * Same credential sources as CopilotCliProvider and CopilotSdkProvider:
- * - `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`
- * - Stored `gh auth login` credentials
+ * Credential sources (in priority order):
+ *   - `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`
+ *   - Stored `gh auth login` credentials
  *
  * ## Embedded server lifecycle
  *
  * The server is created lazily on the first `buildSdkConfig()` call and reused
- * for the lifetime of the provider instance (i.e. the daemon process). It binds
- * to `127.0.0.1:0` (OS-assigned port) and is never reachable from outside the
- * host.
+ * for the lifetime of the provider instance (i.e. the daemon process).  It
+ * binds to `127.0.0.1:0` (OS-assigned port) and is never reachable from
+ * outside the host.
  */
 
 import type {
@@ -40,21 +40,18 @@ import type {
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
 import { CopilotClient } from '@github/copilot-sdk';
-import { startEmbeddedServer, type EmbeddedServer } from './copilot-anthropic-server.js';
+import { startEmbeddedServer, type EmbeddedServer } from './server.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Logger } from '../logger.js';
+import { Logger } from '../../logger.js';
 
 const execFileAsync = promisify(execFile);
 const logger = new Logger('copilot-anthropic-provider');
 
 /**
- * Bare model IDs also claimed by other providers. Excluded from `ownsModel()`
- * to avoid routing collisions. Use `copilot-anthropic-*` aliases to
+ * Bare model IDs also claimed by other providers.  Excluded from `ownsModel()`
+ * to avoid routing collisions.  Use `copilot-anthropic-*` aliases to
  * explicitly route a query to this provider.
- *
- * - Claude IDs: also claimed by GitHubCopilotProvider (registered before this)
- * - gpt-5.3-codex, gpt-5-mini: also claimed by GitHubCopilotProvider (registered before this)
  */
 const SHARED_MODEL_IDS = new Set([
 	'claude-opus-4.6',
@@ -65,8 +62,8 @@ const SHARED_MODEL_IDS = new Set([
 
 /**
  * GitHub Copilot Anthropic model definitions.
- * Aliases use the `copilot-anthropic-` prefix to avoid conflicts with
- * `CopilotCliProvider` (`copilot-cli-*`) and `CopilotSdkProvider` (`copilot-sdk-*`).
+ * Aliases use the `copilot-anthropic-` prefix to avoid collisions with other
+ * Copilot-backed providers.
  */
 const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 	{
@@ -134,10 +131,12 @@ export class CopilotAnthropicProvider implements Provider {
 		streaming: true,
 		extendedThinking: false,
 		maxContextWindow: 272000,
-		// The embedded server ignores the `tools` array — the Copilot CLI runs its
-		// own internal agentic loop and returns plain text. The Claude Agent SDK's
-		// native tool loop is bypassed, so this must be false.
-		functionCalling: false,
+		/**
+		 * Full tool-use support: the embedded server registers incoming `tools`
+		 * as Copilot SDK external tools and bridges tool_use / tool_result across
+		 * consecutive HTTP requests via ConversationManager.
+		 */
+		functionCalling: true,
 		vision: false,
 	};
 
@@ -196,15 +195,12 @@ export class CopilotAnthropicProvider implements Provider {
 	 * Build SDK configuration for this provider.
 	 *
 	 * Returns env vars that point the Claude Agent SDK at the embedded server:
-	 * - `ANTHROPIC_BASE_URL` → `http://127.0.0.1:<port>` (loopback server URL)
-	 * - `ANTHROPIC_AUTH_TOKEN` → dummy token (server ignores auth on loopback)
+	 * - `ANTHROPIC_BASE_URL`        → `http://127.0.0.1:<port>`
+	 * - `ANTHROPIC_AUTH_TOKEN`      → dummy token (server ignores auth)
 	 * - `ANTHROPIC_DEFAULT_*_MODEL` → maps SDK tiers to Copilot model IDs
 	 *
 	 * **Precondition:** `getModels()` (or `ensureServerStarted()`) must be
-	 * awaited before calling this method. The embedded server is started
-	 * asynchronously in `getModels()`, which runs during provider initialisation
-	 * before any session can be created. If the server has not been started yet
-	 * this method throws rather than returning a silently-broken port-0 URL.
+	 * awaited before calling this method.
 	 */
 	buildSdkConfig(modelId: string, _sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		if (!this.serverCache) {
@@ -214,20 +210,15 @@ export class CopilotAnthropicProvider implements Provider {
 			);
 		}
 
-		// Resolve alias → bare model ID
 		const entry = COPILOT_ANTHROPIC_MODELS.find((m) => m.alias === modelId || m.id === modelId);
 		const resolvedId = entry?.id ?? modelId;
 
 		return {
 			envVars: {
 				ANTHROPIC_BASE_URL: this.serverCache.url,
-				// Dummy key — the embedded server does not validate auth
 				ANTHROPIC_AUTH_TOKEN: 'copilot-anthropic-proxy',
-				// Disable SDK telemetry to the real Anthropic API
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
-				// Extended timeout (copilot can be slow on first response)
 				API_TIMEOUT_MS: '300000',
-				// Map SDK model tiers to the resolved Copilot model ID
 				ANTHROPIC_DEFAULT_OPUS_MODEL:
 					resolvedId === 'claude-opus-4.6' ? 'claude-opus-4.6' : 'claude-sonnet-4.6',
 				ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
@@ -239,16 +230,10 @@ export class CopilotAnthropicProvider implements Provider {
 	}
 
 	/**
-	 * Shut down the embedded HTTP server and the underlying CopilotClient
-	 * subprocess. Called during daemon cleanup so the event loop can exit
-	 * cleanly. Safe to call when the server/client was never started.
+	 * Shut down the embedded HTTP server and the underlying CopilotClient subprocess.
 	 *
-	 * **IMPORTANT — call after `sessionManager.cleanup()`.**
-	 * The embedded HTTP server only closes once all existing connections are
-	 * done. Active NeoKai sessions hold open SSE connections to this server;
-	 * they must be terminated first (by sessionManager.cleanup()) before
-	 * shutdown() is called, otherwise `serverCache.stop()` will block until
-	 * those connections close on their own.
+	 * **Call after `sessionManager.cleanup()`** — active NeoKai sessions hold
+	 * open SSE connections to this server; they must be closed first.
 	 */
 	async shutdown(): Promise<void> {
 		if (this.serverCache) {
@@ -303,7 +288,6 @@ export class CopilotAnthropicProvider implements Provider {
 		try {
 			this.serverCache = await this.serverStarting;
 		} catch (err) {
-			// Clear the cached promise so the next call can retry.
 			this.serverStarting = undefined;
 			throw err;
 		}
