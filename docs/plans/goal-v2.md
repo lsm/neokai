@@ -251,14 +251,14 @@ Implement `semi_autonomous` mode for **coder and general tasks only**. Plan appr
    - Planning tasks (`workerRole === 'planner'`) are ALWAYS supervised regardless of autonomy level
    - Phase 2 planner gating (`isPlanApproved()` in `planner-agent.ts`) is unchanged — `approved` must still be set by human
 
-2. **Modify the approval flow** (`room-runtime.ts`, `runLeaderCompleteTaskChecks` around line 843):
+2. **Modify the approval flow** (`room-runtime.ts`, `runLeaderCompleteGate` around line 843):
    - Current flow: Leader calls `submit_for_review(prUrl)` -> task moves to `review` status, PR URL/number recorded via `taskManager.reviewTask()` -> human approves -> `approved = true` -> Leader calls `complete_task`
    - New flow for `semi_autonomous` AND `workerRole !== 'planner'`:
      - Leader still calls `submit_for_review(prUrl)` — this is kept because it records PR metadata (URL, PR number) on the task via `taskManager.reviewTask()`, which is needed for notification payloads and lifecycle hooks
      - But instead of waiting for human approval, runtime **auto-approves immediately**: sets `approved = true` and resumes the Leader without pausing for human input
      - Leader can then call `complete_task` in the same turn
      - Lifecycle hooks still run: `checkLeaderPrMerged()` / `checkWorkerPrMerged()` — PR must actually be merged
-   - Implementation: in `taskGroupManager.submitForReview()`, check `goal.autonomyLevel`; if `semi_autonomous` and non-planner, call `setApproved(groupId, true)` and resume Leader immediately instead of waiting for human
+   - Implementation: in `taskGroupManager.submitForReview()`, check `goal.autonomyLevel`; if `semi_autonomous` and non-planner, call `setApproved(groupId, true)` and resume Leader immediately instead of waiting for human. Update the response message accordingly (current message says "Waiting for human approval" which would be misleading in semi-auto mode)
 
 3. **Record approval source** in session group metadata:
    - Add `approvalSource?: 'human' | 'leader_semi_auto'` to `TaskGroupMetadata`
