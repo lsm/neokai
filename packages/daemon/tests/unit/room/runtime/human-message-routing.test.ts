@@ -2,9 +2,9 @@
  * Tests for routeHumanMessageToGroup
  *
  * Routing behavior:
- * - Active groups (completedAt = null): messages injected directly
- * - needs_attention tasks: group is reset and task transitions to in_progress
- * - Cancelled/completed tasks: messages are blocked (caller should use set_task_status to restart)
+ * - Active groups (completedAt = null): messages injected directly into worker or leader
+ * - Terminated groups (completedAt set): messages are blocked regardless of task status
+ *   (callers must pre-process via reviveTaskForMessage or set_task_status)
  */
 
 import { describe, expect, it, mock } from 'bun:test';
@@ -60,64 +60,37 @@ function makeTask(status: string): NeoTask {
 	};
 }
 
-function makeRuntime(
-	injectResult = true,
-	task?: NeoTask | null
-): {
+function makeRuntime(injectResult = true): {
 	runtime: RoomRuntime;
 	injectMessageToLeader: ReturnType<typeof mock>;
 	injectMessageToWorker: ReturnType<typeof mock>;
-	taskManager: {
-		getTask: ReturnType<typeof mock>;
-		setTaskStatus: ReturnType<typeof mock>;
-	};
 } {
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
-	const getTask = mock(async () => task ?? null);
-	const setTaskStatus = mock(async () => undefined);
-
-	const taskManager = {
-		getTask,
-		setTaskStatus,
-	};
 
 	const runtime = {
 		injectMessageToLeader,
 		injectMessageToWorker,
-		taskManager,
 	} as unknown as RoomRuntime;
 
-	return { runtime, injectMessageToLeader, injectMessageToWorker, taskManager };
+	return { runtime, injectMessageToLeader, injectMessageToWorker };
 }
 
-function makeGroupRepo(
-	group: SessionGroup | null,
-	resetGroupForRestartResult = true
-): {
-	groupRepo: SessionGroupRepository;
-	getGroupByTaskId: ReturnType<typeof mock>;
-	resetGroupForRestart: ReturnType<typeof mock>;
-	failGroup: ReturnType<typeof mock>;
-	failGroupCalls: { groupId: string; version: number }[];
-} {
-	const getGroupByTaskId = mock(() => group);
-	// Simulate the real DB behaviour: version is incremented by resetGroupForRestart
-	const resetGroup = group ? { ...group, version: group.version + 1 } : null;
-	const resetGroupForRestart = mock(() => (resetGroupForRestartResult ? resetGroup : null));
-	const failGroupCalls: { groupId: string; version: number }[] = [];
-	const failGroup = mock((groupId: string, version: number) => {
-		failGroupCalls.push({ groupId, version });
-		return group;
-	});
+function makeTaskOperator(task: NeoTask | null = null) {
+	return {
+		getTask: mock(async () => task),
+		setTaskStatus: mock(async () => undefined),
+	};
+}
 
+function makeGroupRepo(group: SessionGroup | null): {
+	groupRepo: SessionGroupRepository;
+} {
 	const groupRepo = {
-		getGroupByTaskId,
-		resetGroupForRestart,
-		failGroup,
+		getGroupByTaskId: mock(() => group),
 	} as unknown as SessionGroupRepository;
 
-	return { groupRepo, getGroupByTaskId, resetGroupForRestart, failGroup, failGroupCalls };
+	return { groupRepo };
 }
 
 describe('routeHumanMessageToGroup', () => {
@@ -127,10 +100,8 @@ describe('routeHumanMessageToGroup', () => {
 	describe('active group (completedAt = null)', () => {
 		describe('target=worker (default)', () => {
 			it('injects to worker and returns success', async () => {
-				const { runtime, injectMessageToWorker, taskManager } = makeRuntime(
-					true,
-					makeTask('in_progress')
-				);
+				const { runtime, injectMessageToWorker } = makeRuntime(true);
+				const taskManager = makeTaskOperator(makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
 				const result = await routeHumanMessageToGroup(
@@ -146,7 +117,8 @@ describe('routeHumanMessageToGroup', () => {
 			});
 
 			it('returns error when injectMessageToWorker fails', async () => {
-				const { runtime, taskManager } = makeRuntime(false, makeTask('in_progress'));
+				const { runtime } = makeRuntime(false);
+				const taskManager = makeTaskOperator(makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
 				const result = await routeHumanMessageToGroup(
@@ -164,10 +136,8 @@ describe('routeHumanMessageToGroup', () => {
 
 		describe('target=leader', () => {
 			it('injects to leader and returns success', async () => {
-				const { runtime, injectMessageToLeader, taskManager } = makeRuntime(
-					true,
-					makeTask('in_progress')
-				);
+				const { runtime, injectMessageToLeader } = makeRuntime(true);
+				const taskManager = makeTaskOperator(makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
 				const result = await routeHumanMessageToGroup(
@@ -184,7 +154,8 @@ describe('routeHumanMessageToGroup', () => {
 			});
 
 			it('returns error when injectMessageToLeader fails', async () => {
-				const { runtime, taskManager } = makeRuntime(false, makeTask('in_progress'));
+				const { runtime } = makeRuntime(false);
+				const taskManager = makeTaskOperator(makeTask('in_progress'));
 				const { groupRepo } = makeGroupRepo(makeGroup(null));
 
 				const result = await routeHumanMessageToGroup(
@@ -202,30 +173,15 @@ describe('routeHumanMessageToGroup', () => {
 		});
 	});
 
-	describe('needs_attention task (completedAt set, task status = needs_attention)', () => {
-		it('resets group, transitions to in_progress, and injects message', async () => {
-			const failedTask = makeTask('needs_attention');
-			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, failedTask);
-			const { groupRepo, resetGroupForRestart } = makeGroupRepo(makeGroup(Date.now()), true);
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskManager,
-				taskId,
-				message
-			);
-
-			expect(result.success).toBe(true);
-			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
-			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
-			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
-		});
-
-		it('returns error when resetGroupForRestart fails', async () => {
-			const failedTask = makeTask('needs_attention');
-			const { runtime, taskManager } = makeRuntime(true, failedTask);
-			const { groupRepo, resetGroupForRestart } = makeGroupRepo(makeGroup(Date.now()), false);
+	describe('terminated group (completedAt set)', () => {
+		it.each([
+			['needs_attention'],
+			['cancelled'],
+			['completed'],
+		])('blocks messages when task status is %s', async (status) => {
+			const { runtime, injectMessageToWorker } = makeRuntime(true);
+			const taskManager = makeTaskOperator(makeTask(status));
+			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()));
 
 			const result = await routeHumanMessageToGroup(
 				runtime,
@@ -236,100 +192,15 @@ describe('routeHumanMessageToGroup', () => {
 			);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to reset task group');
-			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-		});
-
-		it('returns error when setTaskStatus throws', async () => {
-			const failedTask = makeTask('needs_attention');
-			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, failedTask);
-			taskManager.setTaskStatus = mock(async () => {
-				throw new Error('Status update failed');
-			});
-			// Group starts at version 1; resetGroupForRestart bumps it to 2
-			const group = makeGroup(Date.now());
-			group.version = 1;
-			const { groupRepo, failGroup, failGroupCalls } = makeGroupRepo(group, true);
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskManager,
-				taskId,
-				message
-			);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to transition task to in_progress');
+			expect(result.error).toContain(`'${status}'`);
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
-			// Rollback uses the version returned by resetGroupForRestart (version 2)
-			expect(failGroup).toHaveBeenCalled();
-			expect(failGroupCalls).toEqual([{ groupId: 'group-1', version: 2 }]);
-		});
-
-		it('rolls back status and group when message injection fails', async () => {
-			const failedTask = makeTask('needs_attention');
-			// injectResult = false to simulate injection failure
-			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(false, failedTask);
-			// Group starts at version 1; resetGroupForRestart bumps it to 2
-			const group = makeGroup(Date.now());
-			group.version = 1;
-			const { groupRepo, resetGroupForRestart, failGroup, failGroupCalls } = makeGroupRepo(
-				group,
-				true
-			);
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskManager,
-				taskId,
-				message
-			);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Failed to inject message');
-			// Group was reset
-			expect(resetGroupForRestart).toHaveBeenCalledWith('group-1');
-			// Status was changed to in_progress
-			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'in_progress');
-			// Tried to inject
-			expect(injectMessageToWorker).toHaveBeenCalledWith(taskId, message);
-			// Rollback uses the version returned by resetGroupForRestart (version 2)
-			expect(failGroup).toHaveBeenCalled();
-			expect(failGroupCalls).toEqual([{ groupId: 'group-1', version: 2 }]);
-			// Status rolled back to needs_attention
-			expect(taskManager.setTaskStatus).toHaveBeenCalledWith(taskId, 'needs_attention');
-		});
-	});
-
-	describe('cancelled task (completedAt set, task status = cancelled)', () => {
-		it('returns failure - cancelled tasks cannot receive messages (workspace cleaned up)', async () => {
-			const cancelledTask = makeTask('cancelled');
-			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, cancelledTask);
-			const { groupRepo, resetGroupForRestart } = makeGroupRepo(makeGroup(Date.now()), true);
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskManager,
-				taskId,
-				message
-			);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain("'cancelled' status");
-			expect(resetGroupForRestart).not.toHaveBeenCalled();
 			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-			expect(injectMessageToWorker).not.toHaveBeenCalled();
 		});
-	});
 
-	describe('completed task (completedAt set, task status = completed)', () => {
-		it('returns failure - completed tasks cannot receive messages', async () => {
-			const completedTask = makeTask('completed');
-			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, completedTask);
-			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()), true);
+		it('returns error with terminated-state message when task not found', async () => {
+			const { runtime, injectMessageToWorker } = makeRuntime(true);
+			const taskManager = makeTaskOperator(null);
+			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()));
 
 			const result = await routeHumanMessageToGroup(
 				runtime,
@@ -340,35 +211,15 @@ describe('routeHumanMessageToGroup', () => {
 			);
 
 			expect(result.success).toBe(false);
-			expect(result.error).toContain("'completed' status");
-			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
-			expect(injectMessageToWorker).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('no task found (completedAt set)', () => {
-		it('returns failure when task not found', async () => {
-			const { runtime, injectMessageToWorker, taskManager } = makeRuntime(true, null);
-			const { groupRepo } = makeGroupRepo(makeGroup(Date.now()), true);
-
-			const result = await routeHumanMessageToGroup(
-				runtime,
-				groupRepo,
-				taskManager,
-				taskId,
-				message
-			);
-
-			expect(result.success).toBe(false);
-			expect(result.error).toContain('Task not found');
-			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect(result.error).toContain('terminated state');
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
 		});
 	});
 
 	describe('no group', () => {
 		it('returns failure when no group is found', async () => {
-			const { runtime, taskManager } = makeRuntime(true, makeTask('in_progress'));
+			const { runtime } = makeRuntime(true);
+			const taskManager = makeTaskOperator(makeTask('in_progress'));
 			const { groupRepo } = makeGroupRepo(null);
 
 			const result = await routeHumanMessageToGroup(
