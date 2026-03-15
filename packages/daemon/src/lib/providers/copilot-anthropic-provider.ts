@@ -134,7 +134,10 @@ export class CopilotAnthropicProvider implements Provider {
 		streaming: true,
 		extendedThinking: false,
 		maxContextWindow: 272000,
-		functionCalling: true,
+		// The embedded server ignores the `tools` array — the Copilot CLI runs its
+		// own internal agentic loop and returns plain text. The Claude Agent SDK's
+		// native tool loop is bypassed, so this must be false.
+		functionCalling: false,
 		vision: false,
 	};
 

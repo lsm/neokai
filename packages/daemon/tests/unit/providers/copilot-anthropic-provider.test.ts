@@ -176,8 +176,8 @@ describe('CopilotAnthropicProvider', () => {
 			expect(provider.capabilities.streaming).toBe(true);
 		});
 
-		it('has functionCalling=true (SDK handles tools natively)', () => {
-			expect(provider.capabilities.functionCalling).toBe(true);
+		it('has functionCalling=false (tools array is ignored; Copilot CLI runs its own agentic loop)', () => {
+			expect(provider.capabilities.functionCalling).toBe(false);
 		});
 
 		it('has vision=false', () => {
