@@ -199,7 +199,7 @@ jobs:
             test_path: tests/online/providers/github-copilot-provider.test.ts
           - module: providers-copilot-anthropic
             test_path: tests/online/providers/copilot-anthropic-provider.test.ts
-            timeout: 10
+            timeout: 15
           - module: rewind
             test_path: tests/online/rewind
             mock_sdk: true

@@ -5,10 +5,10 @@
  * using the gpt-5-mini model via the `copilot-anthropic-mini` alias.
  *
  * REQUIREMENTS:
- * - GitHub Copilot CLI (`copilot` binary) in PATH
- *   → Install: `gh extension install github/copilot`
  * - Authentication: set COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN,
  *   or run `gh auth login` with a GitHub account that has Copilot access.
+ * - No manual CLI install needed — @github/copilot is bundled as a runtime
+ *   dependency of @github/copilot-sdk and installed by `bun install`.
  *
  * HOW TO RUN:
  *   bun test packages/daemon/tests/online/providers/copilot-anthropic-provider.test.ts

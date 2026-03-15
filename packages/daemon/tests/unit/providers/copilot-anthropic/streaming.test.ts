@@ -6,7 +6,7 @@
  * and ServerResponse.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, jest } from 'bun:test';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { EventEmitter } from 'node:events';
 import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
@@ -203,29 +203,27 @@ describe('runSessionStreaming', () => {
 	});
 
 	it('times out and resolves completed if session never idles', async () => {
-		// Use a very short timeout by temporarily replacing the module constant.
-		// We test the timeout path by using a fake timer approach.
-		const session = new MockSession();
-		const { res } = makeMockRes();
-		const { req } = makeMockReq();
+		jest.useFakeTimers();
+		try {
+			const session = new MockSession();
+			const { res } = makeMockRes();
+			const { req } = makeMockReq();
 
-		// The actual STREAMING_TIMEOUT_MS is 5 minutes — we trust the constant exists
-		// and the timeout path wires up correctly. Verify the constant is exported.
-		expect(STREAMING_TIMEOUT_MS).toBeGreaterThan(0);
+			expect(STREAMING_TIMEOUT_MS).toBeGreaterThan(0);
 
-		// Start streaming — do NOT emit idle/error — the promise should not be
-		// pending indefinitely (it has a timeout guard, even if we can't wait 5min).
-		// We verify the timeout code path exists by checking the session is aborted
-		// when the promise is given sufficient time (tested via Bun fake timers below).
-		const p = runSessionStreaming(session as unknown as CopilotSession, 'x', 'model', req, res);
+			const p = runSessionStreaming(session as unknown as CopilotSession, 'x', 'model', req, res);
 
-		// Immediately close to resolve rather than waiting 5 minutes.
-		const { emitter } = makeMockReq();
-		(req as unknown as EventEmitter).emit('close');
+			// Advance the clock past the 5-minute timeout — the timeout handler fires.
+			jest.advanceTimersByTime(STREAMING_TIMEOUT_MS + 1);
 
-		const outcome = await p;
-		expect(outcome.kind).toBe('completed');
-		p; // suppress unused warning
+			const outcome = await p;
+			expect(outcome.kind).toBe('completed');
+			// Timeout path must abort and disconnect the session.
+			expect(session.abortCalled).toBe(true);
+			expect(session.disconnectCalled).toBe(true);
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 });
 

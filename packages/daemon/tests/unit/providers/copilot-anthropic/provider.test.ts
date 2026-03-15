@@ -193,9 +193,6 @@ describe('CopilotAnthropicProvider', () => {
 	describe('getModels() pre-warms embedded server', () => {
 		it('calls ensureServerStarted when provider is available', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				'/usr/local/bin/copilot' as never
-			);
 			const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
 				'http://127.0.0.1:9999' as never
 			);
@@ -205,9 +202,6 @@ describe('CopilotAnthropicProvider', () => {
 
 		it('returns empty array when ensureServerStarted fails', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				'/usr/local/bin/copilot' as never
-			);
 			spyOn(p, 'ensureServerStarted').mockImplementation(() =>
 				Promise.reject(new Error('port in use'))
 			);
