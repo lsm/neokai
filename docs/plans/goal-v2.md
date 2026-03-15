@@ -32,6 +32,7 @@ The existing system provides:
 - `RoomGoal.metrics?: Record<string, number>` -- existing metrics field for custom progress tracking
 - `RoomGoal.linkedTaskIds: string[]` -- tasks linked to goal, used for progress aggregation
 - `RoomGoal.planning_attempts?: number` -- lifetime counter, incremented per planning spawn
+- `RoomGoal.goal_review_attempts?: number` -- exists in type and DB (migration 17) but has zero runtime usages in `packages/daemon/src/lib/`; effectively dead. Not carried forward into new mission fields.
 - `NeoTask` with full lifecycle (`draft -> pending -> in_progress -> review -> completed/failed/cancelled`)
 - Session groups with metadata (`submittedForReview`, `approved`, `workerRole`, etc.) -- the runtime's unit of active work
 - Recovery via `findZombieGroups()` / `recoverZombieGroups()` on each tick -- re-registers sessions from DB
@@ -245,7 +246,7 @@ Implement `semi_autonomous` mode for **coder and general tasks only**. Plan appr
    - Planning tasks (`workerRole === 'planner'`) are ALWAYS supervised regardless of autonomy level
    - Phase 2 planner gating (`isPlanApproved()` in `planner-agent.ts`) is unchanged — `approved` must still be set by human
 
-2. **Modify the `complete_task` gate** (`room-runtime.ts` ~line 628):
+2. **Modify the `complete_task` gate** (`room-runtime.ts`, `runLeaderCompleteTaskChecks` around line 843):
    - Current: requires `submittedForReview === true` OR `approved === true`
    - New behavior when `goal.autonomyLevel === 'semi_autonomous'` AND `workerRole !== 'planner'`:
      - Leader can call `complete_task` without prior `submit_for_review`
@@ -275,7 +276,7 @@ Implement `semi_autonomous` mode for **coder and general tasks only**. Plan appr
 - Planning tasks always require human approval regardless of autonomy level
 - `approvalSource` is correctly recorded in session group metadata
 - Lifecycle hooks (`checkLeaderPrMerged`, `checkWorkerPrMerged`) still enforced
-- Escalation triggers after consecutive failures
+- Escalation triggers after consecutive failures; counter resets on success
 - Notification events emitted with correct payload
 - Unit tests for: gate behavior per autonomy level, planner exclusion, approval source recording, escalation counter
 - Online tests for semi-autonomous coder task completion flow
