@@ -208,6 +208,20 @@ export class CopilotSdkProvider implements Provider {
 	}
 
 	/**
+	 * Shut down the CopilotClient subprocess. Called during daemon cleanup so
+	 * the event loop can exit cleanly. Safe to call when the client was never
+	 * started.
+	 */
+	async shutdown(): Promise<void> {
+		if (this.clientCache) {
+			await this.clientCache.stop().catch((err: unknown) => {
+				logger.warn('Error stopping CopilotClient:', err);
+			});
+			this.clientCache = undefined;
+		}
+	}
+
+	/**
 	 * Create a Copilot SDK query generator.
 	 *
 	 * Returns null if:

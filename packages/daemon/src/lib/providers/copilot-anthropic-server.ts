@@ -224,10 +224,20 @@ class AnthropicStreamWriter {
 // Session streaming loop (adapted from copilot-sdk-proxy/shared/streaming-core.ts)
 // ---------------------------------------------------------------------------
 
-function runSessionStreaming(
+/**
+ * Stream a Copilot session as Anthropic SSE onto `res`.
+ *
+ * Exported for unit testing so tests can pass mock IncomingMessage / ServerResponse
+ * objects and directly emit `close` on the request to exercise the disconnect path
+ * (Bun's node:http does not propagate client-disconnect events after body read).
+ *
+ * @internal
+ */
+export function runSessionStreaming(
 	session: CopilotSession,
 	prompt: string,
 	model: string,
+	req: IncomingMessage,
 	res: ServerResponse
 ): Promise<boolean> {
 	const writer = new AnthropicStreamWriter();
@@ -282,11 +292,17 @@ function runSessionStreaming(
 		}
 	});
 
-	res.on('close', () => {
+	// Use req.on('close') instead of res.on('close') for compatibility with
+	// Bun's node:http implementation, where res.on('close') is not fired on
+	// client disconnect but req.on('close') is.
+	req.on('close', () => {
 		if (!sessionDone) {
 			sessionDone = true;
 			session.abort().catch(() => {});
 			finishSession(false);
+			// End the response so Bun's HTTP layer marks the request as
+			// complete. After socket destruction, res.end() fails silently.
+			res.end();
 		}
 	});
 
@@ -298,6 +314,7 @@ function runSessionStreaming(
 		sessionDone = true;
 		writer.sendFailed(res);
 		res.end();
+		session.abort().catch(() => {});
 		finishSession(false);
 	});
 
@@ -478,7 +495,7 @@ async function handleMessages(
 	}
 
 	try {
-		await runSessionStreaming(session, prompt, body.model, res);
+		await runSessionStreaming(session, prompt, body.model, req, res);
 	} catch (err) {
 		logger.error('Streaming failed:', err);
 		if (!res.headersSent) {
@@ -546,12 +563,23 @@ export function startEmbeddedServer(
 			resolve({
 				url,
 				stop: () =>
-					new Promise((res, rej) =>
+					new Promise<void>((res, rej) => {
+						// Register the close callback first so it fires as soon as all
+						// connections are gone. ERR_SERVER_NOT_RUNNING is treated as
+						// success: some Bun builds have closeAllConnections() also stop
+						// the server, causing the callback to fire with that code.
 						server.close((err) => {
-							if (err) rej(err);
-							else res();
-						})
-					),
+							if (err && (err as NodeJS.ErrnoException).code !== 'ERR_SERVER_NOT_RUNNING') {
+								rej(err);
+							} else {
+								res();
+							}
+						});
+						// Drain idle keep-alive sockets immediately so the close callback
+						// resolves without waiting for the Node.js keep-alive timeout
+						// (~5 s). Optional chaining for compatibility with older builds.
+						server.closeAllConnections?.();
+					}),
 			});
 		});
 

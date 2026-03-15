@@ -12,8 +12,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import { CopilotAnthropicProvider } from '../../../src/lib/providers/copilot-anthropic-provider';
-import { startEmbeddedServer } from '../../../src/lib/providers/copilot-anthropic-server';
+import {
+	startEmbeddedServer,
+	runSessionStreaming,
+} from '../../../src/lib/providers/copilot-anthropic-server';
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
 import { initializeProviders, resetProviderFactory } from '../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
@@ -31,6 +35,8 @@ class MockCopilotSession {
 	shouldError = false;
 	/** When true, send() rejects immediately (simulates connection failure). */
 	shouldRejectSend = false;
+	/** When true, send() emits one delta but never emits session.idle (hangs). */
+	shouldHang = false;
 	disconnectCalled = false;
 
 	on(handler: AnyEventHandler): () => void {
@@ -50,6 +56,15 @@ class MockCopilotSession {
 		this.capturedPrompt = opts.prompt;
 		if (this.shouldRejectSend) {
 			return Promise.reject(new Error('connection lost'));
+		}
+		if (this.shouldHang) {
+			// Emit delta + message to flush SSE data to the client, then hang
+			// (never emit session.idle) so the server keeps the stream open.
+			Promise.resolve().then(() => {
+				this.emit('assistant.message_delta', { deltaContent: 'Hanging...' });
+				this.emit('assistant.message', {});
+			});
+			return 'send-result';
 		}
 		if (this.shouldError) {
 			// Simulate error after microtask
@@ -663,6 +678,50 @@ describe('startEmbeddedServer', () => {
 
 		await new Promise((r) => setTimeout(r, 10));
 		expect(session.disconnectCalled).toBe(true);
+	});
+
+	it('calls session.disconnect() when req emits close mid-stream (req.on close path)', async () => {
+		// Bun's node:http does not propagate client-disconnect events to the
+		// IncomingMessage after the request body has been consumed, so we test
+		// the req.on('close') handler directly via runSessionStreaming() with a
+		// mock IncomingMessage that we can emit events on.
+		const hangSession = new MockCopilotSession();
+		hangSession.shouldHang = true;
+
+		// Minimal mock IncomingMessage — just needs to be an EventEmitter.
+		const mockReq = new EventEmitter() as unknown as import('node:http').IncomingMessage;
+
+		// Minimal mock ServerResponse — records writes and absorbs calls.
+		const writtenChunks: string[] = [];
+		const mockRes = {
+			headersSent: true,
+			writeHead: () => {},
+			write: (chunk: string) => {
+				writtenChunks.push(chunk);
+				return true;
+			},
+			end: () => {},
+		} as unknown as import('node:http').ServerResponse;
+
+		// Start the streaming promise (doesn't await — it hangs until close fires).
+		const streamPromise = runSessionStreaming(
+			hangSession as unknown as CopilotSession,
+			'test prompt',
+			'claude-sonnet-4.6',
+			mockReq,
+			mockRes
+		);
+
+		// Wait for the first SSE delta to be flushed (proof that streaming started).
+		await new Promise((r) => setTimeout(r, 20));
+		expect(writtenChunks.some((c) => c.includes('content_block_delta'))).toBe(true);
+
+		// Simulate client disconnect by emitting close on the mock req.
+		mockReq.emit('close');
+
+		// The stream should resolve and disconnect should be called.
+		await streamPromise;
+		expect(hangSession.disconnectCalled).toBe(true);
 	});
 
 	it('message_start event contains correct model', async () => {

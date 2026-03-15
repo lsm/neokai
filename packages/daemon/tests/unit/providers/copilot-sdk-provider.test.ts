@@ -630,6 +630,27 @@ describe('copilotSdkQueryGenerator (mock session events)', () => {
 // Factory registration
 // ---------------------------------------------------------------------------
 
+describe('CopilotSdkProvider shutdown()', () => {
+	it('stops the CopilotClient and clears clientCache', async () => {
+		const provider = new CopilotSdkProvider({});
+		let clientStopped = false;
+		(provider as unknown as Record<string, unknown>)['clientCache'] = {
+			stop: async () => {
+				clientStopped = true;
+				return [];
+			},
+		};
+		await provider.shutdown();
+		expect(clientStopped).toBe(true);
+		expect((provider as unknown as Record<string, unknown>)['clientCache']).toBeUndefined();
+	});
+
+	it('is safe to call when client was never started', async () => {
+		const provider = new CopilotSdkProvider({});
+		await expect(provider.shutdown()).resolves.toBeUndefined();
+	});
+});
+
 describe('CopilotSdkProvider factory registration', () => {
 	it('should be registered by initializeProviders()', async () => {
 		const { initializeProviders, resetProviderFactory } = await import(
