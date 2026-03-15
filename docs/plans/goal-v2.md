@@ -198,7 +198,7 @@ Implement recurring mission support with cron-based scheduling, execution identi
    **Lifecycle edge cases**:
    - **Precision/jitter**: Up to 30s (tick interval). Acceptable for `@hourly` and coarser. Documented.
    - **Daemon restart catch-up**: If `next_run_at` is in the past, fire once immediately. Calculate next `next_run_at` from current time (skip missed intervals).
-   - **Overlap prevention**: If `mission_executions` has `status = 'running'` for this goal, skip. Log a warning.
+   - **Overlap prevention**: If `mission_executions` has `status = 'running'` for this goal, skip AND advance `next_run_at` to the next scheduled interval (so subsequent ticks don't re-evaluate the same past-due time). Log a warning.
    - **Room runtime state**: Only fire when `RuntimeState === 'running'`. On resume, recalculate `next_run_at` from current time.
 
 5. **Per-execution task isolation** (critical for recurring missions):
@@ -287,10 +287,10 @@ Implement `semi_autonomous` mode for **coder and general tasks only**. Plan appr
 
 **Agent**: `coder`
 **Priority**: `normal`
-**Dependencies**: Task 2, Task 3, Task 4
+**Dependencies**: Task 1
 
 **Description**:
-Update the frontend to use "Mission" terminology and add type-specific UI. Backend RPCs and events stay as `goal.*`.
+Update the frontend to use "Mission" terminology and add type-specific UI. This task depends only on Task 1 (shared types) and can run in parallel with Tasks 2, 3, 4. The UI is built against the type definitions — form fields, conditional rendering, and type-specific displays work off the `MissionType`, `MissionMetric`, `CronSchedule`, and `AutonomyLevel` types. Data binding to actual backend values will work once the corresponding backend task is merged. Backend RPCs and events stay as `goal.*`.
 
 1. **Terminology rename in UI copy only**:
    - All user-visible text: "Goal" -> "Mission" (labels, headings, buttons, tooltips)
@@ -376,19 +376,16 @@ Comprehensive testing and documentation. Test scope follows repo rules: E2E cove
 
 ```
 Task 1 (Schema + Types)
-  ├─> Task 2 (Measurable) ──────────────┐
-  ├─> Task 3 (Recurring) ───────────────┤
-  └─> Task 4 (Semi-Autonomous) ─────────┤
-                                         v
-                                  Task 5 (UI)
-                                         │
-                                         v
-                                  Task 6 (Tests + Docs)
+  ├─> Task 2 (Measurable) ──┐
+  ├─> Task 3 (Recurring) ───┤
+  ├─> Task 4 (Semi-Auto) ───┤
+  └─> Task 5 (UI) ──────────┤
+                              v
+                       Task 6 (Tests + Docs)
 ```
 
-- Task 1 has no dependencies and unblocks all feature tasks
-- Tasks 2, 3, 4 can run in parallel after Task 1
-- Task 5 (UI) depends on Tasks 2, 3, 4 (needs all backend features)
+- Task 1 has no dependencies and unblocks everything
+- Tasks 2, 3, 4, 5 can ALL run in parallel after Task 1 (UI works off shared types, doesn't need backend to be complete)
 - Task 6 (tests) depends on Tasks 2, 3, 4, 5
 
 ## Future Work (Out of Scope for V2)
