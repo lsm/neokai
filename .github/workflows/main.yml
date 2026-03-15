@@ -276,7 +276,7 @@ jobs:
         run: npm install -g @openai/codex
 
       - name: Install GitHub Copilot CLI
-        if: startsWith(matrix.module, 'providers-copilot')
+        if: matrix.module == 'providers-copilot-anthropic'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -286,6 +286,10 @@ jobs:
           EXT_BIN=$(find "$HOME/.local/share/gh/extensions/gh-copilot" -maxdepth 1 -type f 2>/dev/null | head -1)
           if [ -n "$EXT_BIN" ]; then
             sudo ln -sf "$EXT_BIN" /usr/local/bin/copilot
+          else
+            echo "ERROR: could not locate copilot extension binary in $HOME/.local/share/gh/extensions/gh-copilot"
+            ls -la "$HOME/.local/share/gh/extensions/gh-copilot" 2>/dev/null || echo "(directory does not exist)"
+            exit 1
           fi
 
       - name: Run daemon online tests (${{ matrix.module }})
@@ -302,7 +306,9 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ (matrix.module == 'providers-openai' || matrix.module == 'providers-anthropic-to-codex-bridge') && secrets.OPENAI_API_KEY || '' }}
-          COPILOT_GITHUB_TOKEN: ${{ startsWith(matrix.module, 'providers-copilot') && secrets.GITHUB_TOKEN || '' }}
+          # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
+          # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
+          COPILOT_GITHUB_TOKEN: ${{ startsWith(matrix.module, 'providers-copilot') && secrets.COPILOT_GITHUB_TOKEN || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.
