@@ -14,6 +14,7 @@ import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-prov
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
 import { CopilotCliProvider } from './copilot-cli-provider.js';
 import { CopilotSdkProvider } from './copilot-sdk-provider.js';
+import { CopilotAnthropicProvider } from './copilot-anthropic-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -67,6 +68,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GitHub Copilot SDK provider (uses @github/copilot-sdk for JSON-RPC transport)
 	registry.register(new CopilotSdkProvider());
+
+	// Register GitHub Copilot Anthropic provider (embedded Anthropic-compatible server)
+	registry.register(new CopilotAnthropicProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
