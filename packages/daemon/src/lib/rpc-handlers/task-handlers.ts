@@ -303,15 +303,17 @@ export function setupTaskHandlers(
 			);
 		}
 
-		// If there's an active group with runtime, cleanup worktree
-		if (runtimeService) {
-			const runtime = runtimeService.getRuntime(params.roomId);
-			if (runtime) {
-				await runtime.archiveTaskGroup(params.taskId);
-			}
+		// If there's a runtime, delegate to it: it handles worktree cleanup AND sets archivedAt.
+		// Without a runtime, we still must set archivedAt so the task is hidden from the UI.
+		const runtime = runtimeService?.getRuntime(params.roomId);
+		if (runtime) {
+			await runtime.archiveTaskGroup(params.taskId);
+		} else {
+			// No runtime — set archivedAt directly. Worktree cleanup (if any) is skipped;
+			// orphaned worktrees must be reclaimed manually via the worktree.cleanup RPC.
+			await taskManager.archiveTask(params.taskId);
 		}
 
-		// Get the archived task (archiveTaskGroup already sets archivedAt)
 		const archivedTask = await taskManager.getTask(params.taskId);
 		if (archivedTask) {
 			emitTaskUpdate(params.roomId, archivedTask);
