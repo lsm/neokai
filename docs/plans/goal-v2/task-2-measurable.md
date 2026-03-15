@@ -15,8 +15,8 @@ Implement the measurable mission type with structured KPI tracking and adaptive 
 - `checkMetricTargets(goalId)`: Compare each metric's `current` against `target` using `direction`, return pass/fail
 - Progress for measurable missions depends on metric direction:
   - `increase` (default): `progress = average(min(current / target, 1.0) * 100)` — higher is better
-  - `decrease`: `progress = average(min(baseline / max(current, target), 1.0) * 100)` where progress = 100% when `current <= target`. Requires `baseline` to compute meaningful progress percentage.
-- Validation: reject `target <= 0` for `increase` direction, reject missing `baseline` for `decrease` direction, guard against divide-by-zero
+  - `decrease`: `progress = average(min((baseline - current) / (baseline - target), 1.0) * 100)` — lower is better. E.g., `baseline=100, target=50, current=75` → `(100-75)/(100-50) = 50%`. Requires `baseline > target` to compute meaningful progress.
+- Validation: reject `target <= 0` for `increase` direction; reject missing `baseline` for `decrease` direction; reject `baseline <= target` for `decrease` direction (would cause division by zero or inverted progress); guard against divide-by-zero
 - **Backward compatibility**: If a goal has legacy `metrics` but no `structured_metrics`, treat as one-shot (no targets, existing behavior preserved)
 
 ### 2. Runtime behavior for measurable missions in `RoomRuntime`
@@ -44,7 +44,7 @@ Implement the measurable mission type with structured KPI tracking and adaptive 
 - Measurable missions auto-replan when tasks complete but targets aren't met
 - Replanning stops after max attempts and escalates to `needs_human`
 - Both `increase` and `decrease` metric directions work correctly (progress, target checking)
-- Validation rejects `target <= 0` for increase, missing `baseline` for decrease
+- Validation rejects `target <= 0` for increase; missing `baseline` or `baseline <= target` for decrease
 - Unit tests for metric CRUD, target checking (both directions), replan triggering, attempt cap, legacy derivation, validation edge cases
 - Online tests for the full measure -> replan -> re-execute loop
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
