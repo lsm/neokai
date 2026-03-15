@@ -263,7 +263,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat
 
       - name: Setup Dev Proxy
-        if: matrix.mock_sdk == true
+        if: runner.os == 'Linux' && matrix.mock_sdk == true
         uses: ./.github/actions/setup-devproxy
 
       - name: Install dependencies
@@ -821,6 +821,7 @@ jobs:
           sudo apt-get install -y bubblewrap socat
 
       - name: Setup Dev Proxy
+        if: runner.os == 'Linux'
         uses: ./.github/actions/setup-devproxy
 
       - name: Install dependencies

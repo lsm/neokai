@@ -128,13 +128,19 @@ runs:
     - name: Start Dev Proxy
       shell: bash
       run: |
+        set -euo pipefail
         devproxy --port 8000 --config-file .devproxy/devproxyrc.json --no-first-run --record &
         echo "DEVPROXY_PID=$!" >> "$GITHUB_ENV"
-        # Wait for proxy to be ready
+        READY=false
         for i in $(seq 1 30); do
           if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
             echo "Dev Proxy is ready"
+            READY=true
             break
           fi
           sleep 0.5
         done
+        if [ "$READY" != "true" ]; then
+          echo "::error::Dev Proxy did not become ready within 15 seconds"
+          exit 1
+        fi
