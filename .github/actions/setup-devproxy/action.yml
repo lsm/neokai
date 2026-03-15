@@ -133,7 +133,7 @@ runs:
         echo "DEVPROXY_PID=$!" >> "$GITHUB_ENV"
         READY=false
         for i in $(seq 1 30); do
-          if curl -s http://127.0.0.1:8000/ > /dev/null 2>&1; then
+          if nc -z 127.0.0.1 8000 2>/dev/null; then
             echo "Dev Proxy is ready"
             READY=true
             break
