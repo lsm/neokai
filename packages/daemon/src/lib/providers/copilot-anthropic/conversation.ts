@@ -154,17 +154,21 @@ export class ConversationManager {
 	}
 
 	// ---------------------------------------------------------------------------
-	// Deliver tool results
+	// Acknowledge continuation (cleanup before resumeSessionStreaming)
 	// ---------------------------------------------------------------------------
 
 	/**
-	 * Route tool results from a follow-up HTTP request to the suspended handlers.
-	 * Removes the tool_call_id mapping after delivery.
+	 * Remove routing entries and cancel the TTL timer for a conversation that is
+	 * about to be resumed.  Must be called BEFORE `resumeSessionStreaming()` so
+	 * that (a) duplicate routing is prevented and (b) the TTL does not fire while
+	 * the tool result is being processed.
+	 *
+	 * Actual Promise resolution is left to `resumeSessionStreaming` (which calls
+	 * `registry.resolveToolResult()` AFTER setting up event listeners).
 	 */
-	deliverToolResults(conv: ActiveConversation, toolResults: ToolResult[]): void {
-		for (const { toolUseId, result } of toolResults) {
-			this.byToolCallId.delete(toolUseId);
-			conv.registry.resolveToolResult(toolUseId, result);
+	acknowledgeContinuation(conv: ActiveConversation, toolUseIds: string[]): void {
+		for (const id of toolUseIds) {
+			this.byToolCallId.delete(id);
 		}
 		// Cancel any TTL cleanup — the conversation is still active.
 		this.cancelCleanup(conv);
