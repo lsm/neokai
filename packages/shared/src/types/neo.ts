@@ -305,6 +305,7 @@ export interface SubagentConfig {
 	name?: string;
 	/** Optional description of what this sub-agent specializes in */
 	description?: string;
+}
 
 // ============================================================================
 // Runtime Types

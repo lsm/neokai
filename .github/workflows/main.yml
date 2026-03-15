@@ -227,6 +227,7 @@ jobs:
               tests/online/rpc/rpc-file-handlers.test.ts
               tests/online/rpc/rpc-interrupt-handlers.test.ts
               tests/online/rpc/rpc-mcp-toggle.test.ts
+              tests/online/rpc/rpc-task-draft-handlers.test.ts
             mock_sdk: true
           - module: rpc-2
             test_path: >-
