@@ -4,12 +4,20 @@
 
 Wire custom agent definitions from the data layer into the `TaskGroupManager` and `RoomRuntime` so that custom agents can execute tasks alongside the four built-in agents (Planner, Coder, General, Leader).
 
+## Key Design Decision: AgentType Preservation
+
+**`AgentType` is NOT widened to `string`.** The existing `AgentType = 'coder' | 'general'` union remains unchanged. Custom agents are referenced exclusively via the `customAgentId?: string` field on `NeoTask`. Resolution logic:
+- If `task.customAgentId` is set → resolve `CustomAgent` from `CustomAgentManager` and use `createCustomAgentInit()`
+- If `task.customAgentId` is not set → use existing `assignedAgent` (`AgentType`) resolution (no change)
+
+This preserves type safety across all existing exhaustive checks on `AgentType` in `room-runtime.ts`, `task-group-manager.ts`, and `lifecycle-hooks.ts`.
+
 ## Scope
 
 - New `createCustomAgentInit()` factory function
 - `TaskGroupManager.spawn()` learns to resolve custom agent definitions
 - `RoomRuntime.tick()` uses assigned agent (built-in or custom) when spawning groups
-- Update `AgentType` to support custom agent IDs
+- `NeoTask` gains `customAgentId` field (DB column added in consolidated Migration A from Task 1.2)
 - Unit and online tests for custom agent execution
 
 ---
@@ -34,7 +42,7 @@ Create a factory function that builds an `AgentSessionInit` from a `CustomAgent`
 
 2. Handle the three roles differently:
    - `worker` role: use `claude_code` preset with custom prompt appended, standard tool set from `customAgent.tools`
-   - `reviewer` role: will be used by Milestone 4 (workflow steps), for now just create the init with appropriate defaults
+   - `reviewer` role: same as worker but prompt includes review-specific instructions (produce structured review output). **Important**: the `reviewer` role does NOT replace the Leader. Reviewer agents are specialized Workers whose output is reviewed by the standard Leader. See 00-overview.md "WorkflowExecutor Operates at Goal Level".
    - `orchestrator` role: reserved for future use, for now treat same as worker
 
 3. Write unit tests:
@@ -42,6 +50,7 @@ Create a factory function that builds an `AgentSessionInit` from a `CustomAgent`
    - Verify system prompt includes git workflow instructions
    - Verify tool list from `CustomAgent` is propagated to session init
    - Verify model/provider from `CustomAgent` is used
+   - Verify reviewer role includes review-specific prompt additions
 
 **Acceptance criteria:**
 - `createCustomAgentInit()` produces a valid `AgentSessionInit` for custom agents
@@ -52,7 +61,7 @@ Create a factory function that builds an `AgentSessionInit` from a `CustomAgent`
 
 ---
 
-### Task 2.2: Extend AgentType and Task Assignment for Custom Agents
+### Task 2.2: Extend Task Assignment for Custom Agents
 
 **Agent:** coder
 **Priority:** high
@@ -60,34 +69,36 @@ Create a factory function that builds an `AgentSessionInit` from a `CustomAgent`
 
 **Description:**
 
-Currently `AgentType = 'coder' | 'general'` is a string union. Extend the system so tasks can be assigned to custom agents by their ID.
+Add `customAgentId` support to `NeoTask` so tasks can be assigned to custom agents. **AgentType is NOT changed** — the existing union remains `'coder' | 'general'`.
 
 **Subtasks:**
 
 1. In `packages/shared/src/types/neo.ts`:
-   - Change `AgentType` to `'coder' | 'general' | string` (keeping backward compat while allowing custom agent IDs)
-   - Add a `customAgentId?: string` field to `NeoTask` to explicitly reference a custom agent when `assignedAgent` is a custom ID
+   - Add `customAgentId?: string` field to `NeoTask` to reference a custom agent (this is the sole mechanism for custom agent assignment)
    - Add `customAgentId?: string` to `CreateTaskParams` and `UpdateTaskParams`
+   - **Do NOT change `AgentType`** — it remains `'coder' | 'general'`
 
-2. In `packages/daemon/src/storage/schema/migrations.ts`:
-   - Add migration to add `custom_agent_id TEXT` column to the `tasks` table
+2. In `packages/daemon/src/storage/repositories/task-repository.ts`:
+   - Handle the `custom_agent_id` column (already created in Migration A from Task 1.2) in create/update/read operations
+   - Update `rowToTask()` mapping function to include `customAgentId`
+   - Update all SQL INSERT/UPDATE statements for `tasks` table
 
-3. In `packages/daemon/src/storage/repositories/task-repository.ts`:
-   - Handle the new `custom_agent_id` column in create/update/read operations
-
-4. In the `TaskManager`:
+3. In the `TaskManager`:
    - When creating a task with `customAgentId`, validate the referenced custom agent exists in the same room
+   - When `customAgentId` is set, `assignedAgent` can be left at its default or set to any value — `customAgentId` takes precedence at runtime
 
-5. Write unit tests:
+4. Write unit tests:
    - Create task with custom agent assignment
-   - Validate custom agent reference
+   - Validate custom agent reference (exists, same room)
    - Read back task with customAgentId field
+   - Verify existing tasks without customAgentId work unchanged (regression)
 
 **Acceptance criteria:**
 - Tasks can reference custom agents via `customAgentId`
+- `AgentType` is unchanged — no type widening
 - Built-in agent types (`coder`, `general`) continue to work unchanged
 - Task creation validates custom agent existence
-- DB migration adds column cleanly
+- DB column was already created in Migration A — no additional migration needed
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -112,6 +123,7 @@ Update `TaskGroupManager` and `RoomRuntime` to resolve and use custom agent defi
    - When a task has `customAgentId` set, look up the `CustomAgent` from `CustomAgentManager`
    - Use `createCustomAgentInit()` and `buildCustomAgentTaskMessage()` instead of the built-in factories
    - Fall back to built-in `assignedAgent` resolution if `customAgentId` is not set
+   - **The Leader session is always created alongside the Worker** — custom agent workers do not change the Leader creation path
 
 3. In `TaskGroupManager.spawn()`:
    - Accept a `WorkerConfig` that can be built from either built-in or custom agents
@@ -124,12 +136,14 @@ Update `TaskGroupManager` and `RoomRuntime` to resolve and use custom agent defi
 5. Write integration tests:
    - Spawn a task group with a custom agent worker
    - Verify the session init uses the custom agent's model, tools, and prompt
+   - Verify a Leader session is created alongside the custom agent worker (same as built-in agents)
    - Verify built-in agents still work correctly (regression test)
 
 6. Write an online test that creates a room with a custom agent, creates a task assigned to it, and verifies the agent session starts correctly
 
 **Acceptance criteria:**
 - Tasks assigned to custom agents spawn with the correct session configuration
+- Leader is still created for every Worker group (no change to the Worker/Leader pair model)
 - Built-in agent flow is unchanged (no regression)
 - Model, tools, and system prompt from CustomAgent are used
 - Integration and online tests pass

@@ -4,6 +4,15 @@
 
 Implement export and import of custom agent definitions and workflow configurations as JSON. This creates a pure data layer that enables sharing between rooms and across installations, laying the groundwork for a future marketplace.
 
+## Version Migration Strategy
+
+The export format uses `version: 1` as a literal type for strict validation. When `version: 2` is introduced in the future:
+- **Import**: The importer will include transform functions (`v1ToV2`, etc.) that upgrade older formats on import. Importing always targets the current version.
+- **Export**: Always exports in the latest version format.
+- **Rejection**: Versions newer than the current runtime are rejected with a clear error ("This export was created by a newer version of NeoKai. Please upgrade to import it.").
+
+This strategy is documented here as a design decision. The actual transform functions will be implemented when v2 is needed.
+
 ## Scope
 
 - JSON export format for agents and workflows
@@ -31,7 +40,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
    ```typescript
    /** Exported agent definition (room-agnostic) */
    interface ExportedAgent {
-     /** Schema version for future compatibility */
+     /** Schema version for future compatibility. See version migration strategy in 08-export-import-sharing-foundation.md. */
      version: 1;
      type: 'agent';
      name: string;
@@ -46,6 +55,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
    /** Exported workflow definition (room-agnostic) */
    interface ExportedWorkflow {
+     /** Schema version for future compatibility. */
      version: 1;
      type: 'workflow';
      name: string;
@@ -92,15 +102,18 @@ Define a standardized JSON format for exporting and importing custom agents and 
    - `validateExportedWorkflow(data: unknown): ExportedWorkflow`
    - `validateExportBundle(data: unknown): ExportBundle`
    - Use zod schemas for validation
+   - **Version handling**: Accept `version: 1` only. If `version > 1`, reject with message: "This export requires a newer version of NeoKai." If version is missing or < 1, reject as invalid.
 
 4. Write unit tests:
    - Round-trip: export -> serialize -> deserialize -> validate
    - Validation rejects malformed data
    - Room-specific fields (id, roomId, timestamps) are stripped on export
+   - Version validation: accepts v1, rejects v2+, rejects missing version
 
 **Acceptance criteria:**
 - Export format is well-defined and versioned
 - Validation catches malformed imports
+- Version checking provides clear upgrade messages
 - Room-specific data is stripped on export
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -135,7 +148,7 @@ Add RPC handlers for exporting and importing agents and workflows.
 
 3. Handle cross-references:
    - Workflows referencing custom agents: if the referenced agent is in the bundle, map the new ID after import
-   - If the referenced agent is NOT in the bundle, flag it in the preview
+   - If the referenced agent is NOT in the bundle and not present in the target room, flag it in the preview as a warning (workflow step will reference a non-existent agent)
 
 4. Wire handlers in `app.ts`
 
@@ -144,11 +157,13 @@ Add RPC handlers for exporting and importing agents and workflows.
    - Import preview detects conflicts
    - Import with different conflict resolutions
    - Cross-reference mapping works
+   - Missing cross-references are flagged as warnings
    - Error handling for invalid bundles
+   - Version validation on import
 
 **Acceptance criteria:**
 - Export produces valid JSON bundles
-- Import preview accurately detects conflicts
+- Import preview accurately detects conflicts and missing cross-references
 - Conflict resolution options all work correctly
 - Cross-references between agents and workflows are handled
 - Unit tests pass
@@ -180,15 +195,18 @@ Add export and import UI actions to the custom agent and workflow list views.
    - Opens file picker for `.json` or `.neokai.json` files
    - After file selection, calls `import.preview` and shows preview dialog:
      - List of items to import with name, type, and conflict status
+     - Missing cross-reference warnings (e.g., "Workflow 'X' references agent 'Y' which is not in this room")
      - Conflict resolution options per item (skip/rename/replace)
      - "Import" and "Cancel" buttons
    - On confirm, calls `import.execute`
    - Shows success/error toast
+   - Version mismatch shows clear upgrade message
 
 3. Create `packages/web/src/components/room/ImportPreviewDialog.tsx`:
    - Modal showing import preview results
    - Checkbox per item to include/exclude
    - Conflict resolution dropdown per conflicting item
+   - Warning section for missing cross-references
    - Summary line: "Will create X agents and Y workflows"
 
 4. Write e2e tests:
@@ -200,6 +218,7 @@ Add export and import UI actions to the custom agent and workflow list views.
 **Acceptance criteria:**
 - Export downloads a valid JSON file
 - Import flow shows preview before executing
+- Missing cross-references are warned about
 - Conflict resolution works as expected
 - E2E tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
