@@ -1460,3 +1460,112 @@ describe('TaskView — draft-restored banner', () => {
 		expect(mockClearDraft).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe('TaskView — PR link in header', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockReset();
+		mockOnEvent.mockReturnValue(() => {});
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		mockShowScrollButton.value = false;
+		mockMessageCount.value = 0;
+		vi.mocked(useAutoScroll).mockClear();
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('shows PR link in header for in_progress task with prUrl', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get')
+				return {
+					task: {
+						...makeTask('task-1', 'in_progress'),
+						prUrl: 'https://github.com/org/repo/pull/42',
+						prNumber: 42,
+					},
+				};
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('PR #42');
+		});
+
+		const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/42"]');
+		expect(prLink).not.toBeNull();
+	});
+
+	it('does not show PR link in header for in_progress task without prUrl', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		expect(container.textContent).not.toContain('PR #');
+	});
+
+	it('does not show PR link in header for review task (review bar shows it instead)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get')
+				return {
+					task: {
+						...makeTask('task-1', 'review'),
+						prUrl: 'https://github.com/org/repo/pull/99',
+						prNumber: 99,
+					},
+				};
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).not.toContain('Loading task');
+		});
+
+		// The PR link should appear in the review bar but NOT in the header title area.
+		// Since the review bar and header both render, there will be exactly one PR link
+		// (in the review bar). The header div does not render a second PR badge.
+		const prLinks = container.querySelectorAll('a[href="https://github.com/org/repo/pull/99"]');
+		// Only the review bar link should exist (not a second one from the header)
+		expect(prLinks.length).toBe(1);
+	});
+
+	it('shows PR link in header for needs_attention task with prUrl', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get')
+				return {
+					task: {
+						...makeTask('task-1', 'needs_attention'),
+						prUrl: 'https://github.com/org/repo/pull/7',
+						prNumber: 7,
+					},
+				};
+			if (method === 'task.getGroup') return { group: null };
+			return {};
+		});
+
+		const { container } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(container.textContent).toContain('PR #7');
+		});
+
+		const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/7"]');
+		expect(prLink).not.toBeNull();
+	});
+});
