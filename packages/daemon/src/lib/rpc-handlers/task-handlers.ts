@@ -760,10 +760,51 @@ export function setupTaskHandlers(
 			throw new Error(`Task ${params.taskId} not found in room ${params.roomId}`);
 		}
 
+		// Cancelled tasks have their workspace cleaned up on cancellation.
+		// Restarting via session injection would point at a gone workspace.
+		// Direct the caller to use set_task_status to restart from scratch.
+		if (task.status === 'cancelled') {
+			throw new Error(
+				`Task ${params.taskId} is cancelled. Cancelled tasks cannot receive messages ` +
+					'because their workspace has been cleaned up. Use set_task_status to restart it ' +
+					'(e.g. status: "pending" or "in_progress").'
+			);
+		}
+
+		// needs_attention tasks: revive sessions and inject the message.
+		// Uses reviveTaskForMessage (lightweight revive via reviveGroup) which preserves
+		// metadata, conversation history, and uses the established session-restore path.
+		// This mirrors the agent-tool path in room-agent-tools.ts send_message_to_task.
+		if (task.status === 'needs_attention') {
+			try {
+				await taskManager.setTaskStatus(params.taskId, 'review');
+			} catch (err) {
+				throw new Error(`Failed to revive task ${params.taskId}: ${String(err)}`);
+			}
+
+			const revived = await runtime.reviveTaskForMessage(params.taskId, params.message.trim());
+			if (!revived) {
+				// Rollback: restore task to needs_attention (review → needs_attention is a valid transition)
+				try {
+					await taskManager.setTaskStatus(params.taskId, 'needs_attention');
+				} catch {
+					// Best-effort rollback; swallow to avoid masking the revive error
+				}
+				throw new Error(
+					`Failed to revive task ${params.taskId}: agent sessions could not be restored. ` +
+						'Task status has been reset to needs_attention.'
+				);
+			}
+
+			// reviveTaskForMessage already emits task updates internally — no extra emit needed.
+			return { success: true };
+		}
+
 		const groupRepo = new SessionGroupRepository(db.getDatabase());
 		const result = await routeHumanMessageToGroup(
 			runtime,
 			groupRepo,
+			taskManager,
 			params.taskId,
 			params.message.trim(),
 			target
@@ -771,6 +812,12 @@ export function setupTaskHandlers(
 
 		if (!result.success) {
 			throw new Error(result.error ?? 'Failed to send human message');
+		}
+
+		// Emit task update after successful message routing (may have changed status)
+		const updatedTask = await taskManager.getTask(params.taskId);
+		if (updatedTask) {
+			emitTaskUpdate(params.roomId, updatedTask);
 		}
 
 		return { success: true };

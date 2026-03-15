@@ -78,13 +78,14 @@ const mockTask: NeoTask = {
 /** Build a minimal TaskManagerFactory that returns a controlled task. */
 function makeTaskManagerFactory(task: NeoTask | null): TaskManagerFactory {
 	const cancelledTask = task ? { ...task, status: 'cancelled' as const } : null;
-	const failedTask = task ? { ...task, status: 'failed' as const } : null;
+	const failedTask = task ? { ...task, status: 'needs_attention' as const } : null;
 	const manager = {
 		createTask: mock(async () => task!),
 		getTask: mock(async () => task),
 		listTasks: mock(async () => []),
 		failTask: mock(async () => failedTask!),
 		cancelTask: mock(async () => cancelledTask!),
+		setTaskStatus: mock(async () => task!),
 	};
 	return mock(() => manager);
 }
@@ -136,10 +137,11 @@ function makeDb(groupRow: Record<string, unknown> | null): Database {
 }
 
 /** Build a mock RoomRuntimeService with a runtime that can resume/inject. */
-function makeRuntimeService(resumeResult = true, injectResult = true) {
+function makeRuntimeService(resumeResult = true, injectResult = true, reviveResult = true) {
 	const resumeWorkerFromHuman = mock(async () => resumeResult);
 	const injectMessageToLeader = mock(async () => injectResult);
 	const injectMessageToWorker = mock(async () => injectResult);
+	const reviveTaskForMessage = mock(async () => reviveResult);
 	const cancelTask = mock(async () => ({
 		success: injectResult,
 		cancelledTaskIds: injectResult ? ['task-1'] : [],
@@ -150,6 +152,7 @@ function makeRuntimeService(resumeResult = true, injectResult = true) {
 		resumeWorkerFromHuman,
 		injectMessageToLeader,
 		injectMessageToWorker,
+		reviveTaskForMessage,
 		cancelTask,
 		terminateTaskGroup,
 		interruptTaskSession,
@@ -318,6 +321,70 @@ describe('task.sendHumanMessage RPC Handler', () => {
 			await expect(
 				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
 			).rejects.toThrow('No active session group');
+		});
+
+		it('throws when task is cancelled (workspace cleaned up)', async () => {
+			const cancelledTask = { ...mockTask, status: 'cancelled' as const };
+			const { service } = makeRuntimeService();
+			setup({ task: cancelledTask, runtimeService: service });
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'hello' }, {})
+			).rejects.toThrow('cancelled');
+		});
+	});
+
+	describe('needs_attention task revival', () => {
+		it('revives the task to review status and returns success', async () => {
+			const failedTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, true);
+			setup({ task: failedTask, runtimeService: service });
+
+			const result = await getHandler()(
+				{ roomId: 'room-1', taskId: 'task-1', message: 'please retry' },
+				{}
+			);
+
+			expect(result).toEqual({ success: true });
+			// Sets status to review before reviving
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'please retry');
+		});
+
+		it('throws and rolls back status when reviveTaskForMessage returns false', async () => {
+			const needsAttentionTask = { ...mockTask, status: 'needs_attention' as const };
+			const { service, runtime } = makeRuntimeService(true, true, false);
+
+			// Build factory manually to expose setTaskStatus spy for rollback assertion
+			const setTaskStatus = mock(async () => needsAttentionTask);
+			const factory: TaskManagerFactory = mock(() => ({
+				createTask: mock(async () => needsAttentionTask),
+				getTask: mock(async () => needsAttentionTask),
+				listTasks: mock(async () => []),
+				failTask: mock(async () => needsAttentionTask),
+				cancelTask: mock(async () => ({ ...needsAttentionTask, status: 'cancelled' as const })),
+				setTaskStatus,
+			}));
+
+			const mh = createMockMessageHub();
+			hub = mh.hub;
+			handlers = mh.handlers;
+			setupTaskHandlers(
+				hub,
+				mockRoomManager,
+				createMockDaemonHub(),
+				makeDb(makeGroupRow()),
+				factory,
+				service
+			);
+
+			await expect(
+				getHandler()({ roomId: 'room-1', taskId: 'task-1', message: 'retry' }, {})
+			).rejects.toThrow('agent sessions could not be restored');
+
+			expect(runtime.reviveTaskForMessage).toHaveBeenCalledWith('task-1', 'retry');
+			// Verify rollback: first transitioned to 'review', then rolled back to 'needs_attention'
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'review');
+			expect(setTaskStatus).toHaveBeenCalledWith('task-1', 'needs_attention');
 		});
 	});
 });
