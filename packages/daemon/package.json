@@ -20,8 +20,9 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "0.2.55",
-		"@mariozechner/pi-ai": "^0.57.1",
+		"@github/copilot-sdk": "^0.1.32",
 		"@mariozechner/pi-agent-core": "^0.57.1",
+		"@mariozechner/pi-ai": "^0.57.1",
 		"@neokai/shared": "workspace:*",
 		"simple-git": "3.32.3",
 		"zod": "4.3.6"

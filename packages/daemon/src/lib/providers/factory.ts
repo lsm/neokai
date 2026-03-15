@@ -12,6 +12,7 @@ import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
+import { CopilotAnthropicProvider } from './copilot-anthropic/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -57,6 +58,10 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GitHub Copilot provider (will be available if OAuth token is configured)
 	registry.register(new GitHubCopilotProvider());
+
+	// Register GitHub Copilot Anthropic provider (embedded Anthropic-compatible server).
+	// Pass process.cwd() so sessions use the daemon's workspace root, not the launch dir.
+	registry.register(new CopilotAnthropicProvider(process.cwd()));
 
 	// Additional built-in providers can be registered here
 	// Example:
