@@ -162,7 +162,7 @@ describe('CopilotSdkProvider', () => {
 			// Claude IDs: also claimed by GitHubCopilotProvider and CopilotCliProvider
 			expect(provider.ownsModel('claude-opus-4.6')).toBe(false);
 			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(false);
-			// Non-Anthropic IDs: also claimed by CopilotCliProvider (registered first)
+			// Non-Anthropic IDs: gpt-5.3-codex/gpt-5-mini claimed by GitHubCopilotProvider (registered first); gemini-3-pro-preview by CopilotCliProvider
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(false);
 			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(false);
 			expect(provider.ownsModel('gpt-5-mini')).toBe(false);
