@@ -14,7 +14,7 @@
     },
     "packages/cli": {
       "name": "@neokai/cli",
-      "version": "0.5.3",
+      "version": "0.7.0",
       "bin": {
         "kai": "./main.ts",
       },
@@ -32,9 +32,10 @@
     },
     "packages/daemon": {
       "name": "@neokai/daemon",
-      "version": "0.5.3",
+      "version": "0.7.0",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "0.2.55",
+        "@github/copilot-sdk": "^0.1.32",
         "@mariozechner/pi-agent-core": "^0.57.1",
         "@mariozechner/pi-ai": "^0.57.1",
         "@neokai/shared": "workspace:*",
@@ -47,7 +48,7 @@
     },
     "packages/e2e": {
       "name": "@neokai/e2e",
-      "version": "0.5.3",
+      "version": "0.7.0",
       "devDependencies": {
         "@playwright/test": "1.57.0",
         "@types/node": "24.10.1",
@@ -56,14 +57,14 @@
     },
     "packages/shared": {
       "name": "@neokai/shared",
-      "version": "0.5.3",
+      "version": "0.7.0",
       "devDependencies": {
         "@types/bun": "latest",
       },
     },
     "packages/ui": {
       "name": "@neokai/ui",
-      "version": "0.5.3",
+      "version": "0.7.0",
       "dependencies": {
         "@floating-ui/dom": "^1.6.0",
         "preact": "10.28.4",
@@ -82,7 +83,7 @@
     },
     "packages/web": {
       "name": "@neokai/web",
-      "version": "0.5.3",
+      "version": "0.7.0",
       "dependencies": {
         "@preact/signals": "2.8.1",
         "clsx": "2.1.1",
@@ -303,6 +304,22 @@
     "@floating-ui/dom": ["@floating-ui/dom@1.7.5", "", { "dependencies": { "@floating-ui/core": "^1.7.4", "@floating-ui/utils": "^0.2.10" } }, "sha512-N0bD2kIPInNHUHehXhMke1rBGs1dwqvC9O9KYMyyjK7iXt7GAhnro7UlcuYcGdS/yYOlq0MAVgrow8IbWJwyqg=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.10", "", {}, "sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ=="],
+
+    "@github/copilot": ["@github/copilot@1.0.5", "", { "optionalDependencies": { "@github/copilot-darwin-arm64": "1.0.5", "@github/copilot-darwin-x64": "1.0.5", "@github/copilot-linux-arm64": "1.0.5", "@github/copilot-linux-x64": "1.0.5", "@github/copilot-win32-arm64": "1.0.5", "@github/copilot-win32-x64": "1.0.5" }, "bin": { "copilot": "npm-loader.js" } }, "sha512-lQGN1/qw7gJRT+lSW1U79Ltrf9rkF6UP8FcEb0hGEf9hq0K8/MaulzK+iDtH/gwXYweFXID29E3QlwSqbdsHqQ=="],
+
+    "@github/copilot-darwin-arm64": ["@github/copilot-darwin-arm64@1.0.5", "", { "os": "darwin", "cpu": "arm64", "bin": { "copilot-darwin-arm64": "copilot" } }, "sha512-XBwo8t5higPXzCvXVYkADImixt9k8P2XsflWup2b86x9KtcssYTcfEWWIg42AOCe8J/OJRJN2MMTQuWt5aeK9w=="],
+
+    "@github/copilot-darwin-x64": ["@github/copilot-darwin-x64@1.0.5", "", { "os": "darwin", "cpu": "x64", "bin": { "copilot-darwin-x64": "copilot" } }, "sha512-zUlMEKct5oPk/ImnYKz+fUjI9xfIwRE2/WI8BrpuDDe16aFDW2Co/6WFFr5rgYcXoGX2Jm8HT563UUxaFbnnOA=="],
+
+    "@github/copilot-linux-arm64": ["@github/copilot-linux-arm64@1.0.5", "", { "os": "linux", "cpu": "arm64", "bin": { "copilot-linux-arm64": "copilot" } }, "sha512-Rp5Key6IBcm00K3+yc8rga3IXaJKN7mwYtP/mpkCKaJJp7izpJK7Z7Dr1slb63Z3yCAyPwMeYlE+adFCwlnYUA=="],
+
+    "@github/copilot-linux-x64": ["@github/copilot-linux-x64@1.0.5", "", { "os": "linux", "cpu": "x64", "bin": { "copilot-linux-x64": "copilot" } }, "sha512-ZEKOi57SUo3Ds2ZeYkIkHJ9MJA0Im1i04i0vdAPKH5Xibb2AC6I2EHO2dU/MWwqIeXoK5QDRh0r0Gs+BkHA/dg=="],
+
+    "@github/copilot-sdk": ["@github/copilot-sdk@0.1.32", "", { "dependencies": { "@github/copilot": "^1.0.2", "vscode-jsonrpc": "^8.2.1", "zod": "^4.3.6" } }, "sha512-mPWM0fw1Gqc/SW8nl45K8abrFH+92fO7y6tRtRl5imjS5hGapLf/dkX5WDrgPtlsflD0c41lFXVUri5NVJwtoA=="],
+
+    "@github/copilot-win32-arm64": ["@github/copilot-win32-arm64@1.0.5", "", { "os": "win32", "cpu": "arm64", "bin": { "copilot-win32-arm64": "copilot.exe" } }, "sha512-pkhuKJZ1AcRAkVS2OO4BEBfMovGSuGWem4isBq+cgRDtuXRfRiZuc88Z9WcrtDCCwpdLx9rSYPVSWQG5fvupPQ=="],
+
+    "@github/copilot-win32-x64": ["@github/copilot-win32-x64@1.0.5", "", { "os": "win32", "cpu": "x64", "bin": { "copilot-win32-x64": "copilot.exe" } }, "sha512-x6PWG80uCuCI+IgCLD1fnBJtfuf9nMBzJwOcMlFwjRtHduV/V9OOW3c89ooGwh/lRhCatAP5GxZGTyC7AJR3kQ=="],
 
     "@google/genai": ["@google/genai@1.43.0", "", { "dependencies": { "google-auth-library": "^10.3.0", "p-retry": "^4.6.2", "protobufjs": "^7.5.4", "ws": "^8.18.0" }, "peerDependencies": { "@modelcontextprotocol/sdk": "^1.25.2" }, "optionalPeers": ["@modelcontextprotocol/sdk"] }, "sha512-hklCsJNdMlDM1IwcCVcGQFBg2izY0+t5BIGbRsxi2UnKi6AGKL7pqJqmBDNRbw0bYCs4y3NA7TB+fkKfP/Nrdw=="],
 
@@ -1347,6 +1364,8 @@
     "vite-prerender-plugin": ["vite-prerender-plugin@0.5.12", "", { "dependencies": { "kolorist": "^1.8.0", "magic-string": "0.x >= 0.26.0", "node-html-parser": "^6.1.12", "simple-code-frame": "^1.3.0", "source-map": "^0.7.4", "stack-trace": "^1.0.0-pre2" }, "peerDependencies": { "vite": "5.x || 6.x || 7.x" } }, "sha512-EiwhbMn+flg14EysbLTmZSzq8NGTxhytgK3bf4aGRF1evWLGwZiHiUJ1KZDvbxgKbMf2pG6fJWGEa3UZXOnR1g=="],
 
     "vitest": ["vitest@4.0.18", "", { "dependencies": { "@vitest/expect": "4.0.18", "@vitest/mocker": "4.0.18", "@vitest/pretty-format": "4.0.18", "@vitest/runner": "4.0.18", "@vitest/snapshot": "4.0.18", "@vitest/spy": "4.0.18", "@vitest/utils": "4.0.18", "es-module-lexer": "^1.7.0", "expect-type": "^1.2.2", "magic-string": "^0.30.21", "obug": "^2.1.1", "pathe": "^2.0.3", "picomatch": "^4.0.3", "std-env": "^3.10.0", "tinybench": "^2.9.0", "tinyexec": "^1.0.2", "tinyglobby": "^0.2.15", "tinyrainbow": "^3.0.3", "vite": "^6.0.0 || ^7.0.0", "why-is-node-running": "^2.3.0" }, "peerDependencies": { "@edge-runtime/vm": "*", "@opentelemetry/api": "^1.9.0", "@types/node": "^20.0.0 || ^22.0.0 || >=24.0.0", "@vitest/browser-playwright": "4.0.18", "@vitest/browser-preview": "4.0.18", "@vitest/browser-webdriverio": "4.0.18", "@vitest/ui": "4.0.18", "happy-dom": "*", "jsdom": "*" }, "optionalPeers": ["@edge-runtime/vm", "@opentelemetry/api", "@types/node", "@vitest/browser-playwright", "@vitest/browser-preview", "@vitest/browser-webdriverio", "@vitest/ui", "happy-dom", "jsdom"], "bin": { "vitest": "vitest.mjs" } }, "sha512-hOQuK7h0FGKgBAas7v0mSAsnvrIgAvWmRFjmzpJ7SwFHH3g1k2u37JtYwOwmEKhK6ZO3v9ggDBBm0La1LCK4uQ=="],
+
+    "vscode-jsonrpc": ["vscode-jsonrpc@8.2.1", "", {}, "sha512-kdjOSJ2lLIn7r1rtrMbbNCHjyMPfRnowdKjBQ+mGq6NAW5QY2bEZC/khaC5OR8svbbjvLEaIXkOq45e2X9BIbQ=="],
 
     "walk-up-path": ["walk-up-path@4.0.0", "", {}, "sha512-3hu+tD8YzSLGuFYtPRb48vdhKMi0KQV5sn+uWr8+7dMEq/2G/dtLrdDinkLjqq5TIbIBjYJ4Ax/n3YiaW7QM8A=="],
 

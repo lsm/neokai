@@ -13,6 +13,7 @@ import { MinimaxProvider } from './minimax-provider.js';
 import { OpenAiProvider } from './openai-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
 import { CopilotCliProvider } from './copilot-cli-provider.js';
+import { CopilotSdkProvider } from './copilot-sdk-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -61,6 +62,9 @@ export function initializeProviders(): ProviderRegistry {
 
 	// Register GitHub Copilot CLI provider (will be available if copilot binary + gh auth)
 	registry.register(new CopilotCliProvider());
+
+	// Register GitHub Copilot SDK provider (uses @github/copilot-sdk for JSON-RPC transport)
+	registry.register(new CopilotSdkProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
