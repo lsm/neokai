@@ -205,12 +205,16 @@ async function handleMessages(
 					}
 				);
 				if (outcome.kind === 'completed') {
-					await manager.releaseConversation(conv);
+					// streamSession already called session.disconnect() — use
+					// cleanupConversation (no disconnect) to avoid a double-disconnect.
+					manager.cleanupConversation(conv);
 				}
 				// outcome.kind === 'tool_use': registry already registered the new
 				// pending tool call ID so the next request will find the conversation.
 			} catch (err) {
 				logger.error('Error resuming conversation:', err);
+				// Error path: streamSession may not have disconnected — releaseConversation
+				// ensures the session is properly torn down.
 				await manager.releaseConversation(conv);
 				if (!res.headersSent) {
 					sendJsonError(res, 500, 'api_error', 'Failed to resume session');
@@ -279,12 +283,15 @@ async function handleNewToolConversation(
 			conv.registry
 		);
 		if (outcome.kind === 'completed') {
-			await manager.releaseConversation(conv);
+			// streamSession already called session.disconnect() — use
+			// cleanupConversation (no disconnect) to avoid a double-disconnect.
+			manager.cleanupConversation(conv);
 		}
 		// outcome.kind === 'tool_use': session stays alive, registry registered
 		// the pending tool call ID — next request will find it.
 	} catch (err) {
 		logger.error('Streaming failed:', err);
+		// Error path: releaseConversation ensures the session is disconnected.
 		await manager.releaseConversation(conv);
 		if (!res.headersSent) {
 			sendJsonError(res, 500, 'api_error', err instanceof Error ? err.message : 'Internal error');

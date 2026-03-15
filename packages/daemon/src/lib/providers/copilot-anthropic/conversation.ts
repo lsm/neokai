@@ -133,8 +133,10 @@ export class ConversationManager {
 		// assigned after createSession() returns — tool handlers are only called
 		// after session.send() which happens after createConversation() completes,
 		// so `conv` is always initialized by the time the callback fires.
-		let conv: ActiveConversation;
+		let conv: ActiveConversation | undefined;
 		registry.setOnPendingToolCall((toolCallId) => {
+			if (!conv)
+				throw new Error('[copilot-anthropic] tool call registered before conversation was created');
 			this.byToolCallId.set(toolCallId, conv);
 			this.scheduleCleanup(conv);
 		});
@@ -208,6 +210,22 @@ export class ConversationManager {
 		await conv.session.disconnect().catch((err: unknown) => {
 			logger.warn('Error disconnecting conversation session:', err);
 		});
+	}
+
+	/**
+	 * Clean up a conversation whose session was already disconnected by `streamSession`.
+	 *
+	 * Use this after `resumeSessionStreaming` / `runSessionStreaming` returns
+	 * `{ kind: 'completed' }` — the session has already been disconnected inside
+	 * `streamSession`, so calling `session.disconnect()` again is unnecessary.
+	 * Removes routing entries and rejects any leftover pending tool calls.
+	 */
+	cleanupConversation(conv: ActiveConversation): void {
+		this.cancelCleanup(conv);
+		for (const [id, c] of this.byToolCallId) {
+			if (c === conv) this.byToolCallId.delete(id);
+		}
+		conv.registry.rejectAll(new Error('Conversation complete'));
 	}
 
 	// ---------------------------------------------------------------------------

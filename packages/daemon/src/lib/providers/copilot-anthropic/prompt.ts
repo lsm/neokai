@@ -14,7 +14,7 @@ import type { AnthropicMessage, ContentBlock, TextBlock, ToolResultBlock } from 
 function extractToolResultText(content: string | TextBlock[] | undefined): string {
 	if (content == null) return '';
 	if (typeof content === 'string') return content;
-	return content.map((b) => b.text).join('');
+	return content.map((b) => b.text).join('\n');
 }
 
 function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts: string[]): void {
@@ -43,6 +43,13 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
  * Each turn is prefixed with `[User]:` or `[Assistant]:`.
  * Tool-use and tool-result blocks are inlined as human-readable annotations so
  * a fresh Copilot session can continue the conversation with full context.
+ *
+ * **Limitation**: the Copilot SDK accepts a single flat prompt string, not a
+ * structured message array.  Multi-turn history is therefore re-serialised as
+ * plain text on every request.  This is adequate for most conversational
+ * patterns but means the model receives a slightly different representation
+ * than a native Anthropic API call would provide (e.g. no per-turn token
+ * accounting, no vision content, no extended-thinking blocks).
  */
 export function formatAnthropicPrompt(messages: AnthropicMessage[]): string {
 	const parts: string[] = [];

@@ -37,6 +37,9 @@ import { Logger } from '../../logger.js';
 
 const logger = new Logger('copilot-anthropic-streaming');
 
+/** Per-request streaming timeout (ms). Fires if neither session.idle nor session.error arrives. */
+export const STREAMING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -81,6 +84,7 @@ function streamSession(
 
 	let sessionDone = false;
 	let pendingDeltas: string[] = [];
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
 	function flushDeltas(): void {
 		if (pendingDeltas.length === 0) return;
@@ -93,6 +97,7 @@ function streamSession(
 	function finishCompleted(): void {
 		if (sessionDone) return;
 		sessionDone = true;
+		clearTimeout(timeoutHandle);
 		unsubscribe();
 		registry?.clearActiveResponse();
 		onDone();
@@ -104,6 +109,7 @@ function streamSession(
 		if (sessionDone) return;
 		// Mark done so the req.on('close') handler does not abort the session.
 		sessionDone = true;
+		clearTimeout(timeoutHandle);
 		unsubscribe();
 		// Do NOT disconnect — session is still alive waiting for tool_result.
 		resolve({ kind: 'tool_use', toolCallId });
@@ -145,10 +151,29 @@ function streamSession(
 		}
 	});
 
+	// Guard: if neither session.idle nor session.error fires within the timeout
+	// window, abort the session and resolve to prevent the promise hanging forever.
+	timeoutHandle = setTimeout(() => {
+		if (!sessionDone) {
+			logger.warn(`Copilot streaming timed out after ${STREAMING_TIMEOUT_MS}ms — aborting session`);
+			sessionDone = true;
+			unsubscribe();
+			registry?.clearActiveResponse();
+			registry?.rejectAll(new Error('Streaming timeout'));
+			onDone();
+			session.abort().catch(() => {});
+			session.disconnect().catch(() => {});
+			writer.sendFailed(res);
+			res.end();
+			resolve({ kind: 'completed' });
+		}
+	}, STREAMING_TIMEOUT_MS);
+
 	// Detect client disconnect.  See file-level Bun note.
 	req.on('close', () => {
 		if (!sessionDone) {
 			sessionDone = true;
+			clearTimeout(timeoutHandle);
 			session.abort().catch(() => {});
 			registry?.rejectAll(new Error('Client disconnected'));
 			unsubscribe();

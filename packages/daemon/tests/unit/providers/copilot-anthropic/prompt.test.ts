@@ -107,7 +107,7 @@ describe('formatAnthropicPrompt', () => {
 				],
 			},
 		]);
-		expect(result).toBe('[Tool result for tu_1]: line1line2');
+		expect(result).toBe('[Tool result for tu_1]: line1\nline2');
 	});
 
 	it('formats tool_result with no content as empty string', () => {
