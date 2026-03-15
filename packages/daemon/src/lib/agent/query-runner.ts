@@ -199,7 +199,9 @@ export class QueryRunner {
 			if (!provider?.createQuery) {
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
+				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, {
+					workspacePath: session.workspacePath,
+				});
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 
@@ -225,7 +227,12 @@ export class QueryRunner {
 						typeof queryOptions.systemPrompt === 'string'
 							? queryOptions.systemPrompt
 							: (queryOptions.systemPrompt as { text?: string })?.text,
-					tools: [], // Tools are handled by SDK in standard mode; custom providers handle their own tools
+					// NOTE: tools: [] because queryOptions.tools holds the SDK-native tool spec
+					// (string[] | preset) which is incompatible with ProviderQueryOptions.tools: ToolDefinition[].
+					// To enable Codex App Server Dynamic Tools, MCP tool definitions must be threaded
+					// through from AgentSession (as ToolDefinition[] objects) once toolExecutor is wired.
+					// See docs/reports/codex-app-server-integration.md §6 for the full integration plan.
+					tools: [],
 					cwd: queryOptions.cwd || session.workspacePath,
 					maxTurns: queryOptions.maxTurns || 50,
 					permissionMode: queryOptions.permissionMode,
