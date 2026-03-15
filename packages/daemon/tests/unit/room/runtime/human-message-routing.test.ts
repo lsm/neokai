@@ -79,6 +79,10 @@ function makeRuntime(injectResult = true): {
 function makeTaskOperator(task: NeoTask | null = null) {
 	return {
 		getTask: mock(async () => task),
+<<<<<<< HEAD
+=======
+		setTaskStatus: mock(async () => undefined),
+>>>>>>> 292e1c36 (fix: align needs_attention handling between RPC and agent-tool paths)
 	};
 }
 
@@ -193,6 +197,10 @@ describe('routeHumanMessageToGroup', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toContain(`'${status}'`);
 			expect(injectMessageToWorker).not.toHaveBeenCalled();
+<<<<<<< HEAD
+=======
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+>>>>>>> 292e1c36 (fix: align needs_attention handling between RPC and agent-tool paths)
 		});
 
 		it('returns error with terminated-state message when task not found', async () => {
