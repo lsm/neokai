@@ -5,20 +5,27 @@
  * - Active: pending + in_progress
  * - Review: review status (awaiting human action)
  * - Done: completed
- * - Failed: failed + cancelled
+ * - Needs Attention: needs_attention + cancelled
  */
 
 import { signal, effect } from '@preact/signals';
 import type { TaskSummary } from '@neokai/shared';
 
 /** Tab filter types */
-export type TaskFilterTab = 'active' | 'review' | 'done' | 'failed';
+export type TaskFilterTab = 'active' | 'review' | 'done' | 'needs_attention';
 
 /** Get initial tab from localStorage */
 function getInitialTab(): TaskFilterTab {
 	if (typeof window === 'undefined') return 'active';
 	const stored = localStorage.getItem('neokai:room:taskFilterTab');
-	if (stored === 'active' || stored === 'review' || stored === 'done' || stored === 'failed') {
+	// Migrate old 'failed' tab value to 'needs_attention'
+	if (stored === 'failed') return 'needs_attention';
+	if (
+		stored === 'active' ||
+		stored === 'review' ||
+		stored === 'done' ||
+		stored === 'needs_attention'
+	) {
 		return stored;
 	}
 	return 'active';
@@ -48,7 +55,8 @@ function getTabCounts(tasks: TaskSummary[]) {
 		active: tasks.filter((t) => t.status === 'pending' || t.status === 'in_progress').length,
 		review: tasks.filter((t) => t.status === 'review').length,
 		done: tasks.filter((t) => t.status === 'completed').length,
-		failed: tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled').length,
+		needs_attention: tasks.filter((t) => t.status === 'needs_attention' || t.status === 'cancelled')
+			.length,
 	};
 }
 
@@ -61,8 +69,8 @@ function getFilteredTasks(tasks: TaskSummary[], tab: TaskFilterTab): TaskSummary
 			return tasks.filter((t) => t.status === 'review');
 		case 'done':
 			return tasks.filter((t) => t.status === 'completed');
-		case 'failed':
-			return tasks.filter((t) => t.status === 'failed' || t.status === 'cancelled');
+		case 'needs_attention':
+			return tasks.filter((t) => t.status === 'needs_attention' || t.status === 'cancelled');
 	}
 }
 
@@ -109,10 +117,10 @@ export function RoomTasks({ tasks, onTaskClick, onApprove, onView }: RoomTasksPr
 					variant="green"
 				/>
 				<TabButton
-					label="Failed"
-					count={tabCounts.failed}
-					isActive={selectedTab === 'failed'}
-					onClick={() => handleTabClick('failed')}
+					label="Needs Attention"
+					count={tabCounts.needs_attention}
+					isActive={selectedTab === 'needs_attention'}
+					onClick={() => handleTabClick('needs_attention')}
 					variant="red"
 				/>
 			</div>
@@ -203,9 +211,9 @@ function EmptyTabState({ tab }: { tab: TaskFilterTab }) {
 			title: 'No completed tasks',
 			description: 'Completed tasks will appear here',
 		},
-		failed: {
-			title: 'No failed tasks',
-			description: 'Failed and cancelled tasks will appear here',
+		needs_attention: {
+			title: 'No tasks needing attention',
+			description: 'Tasks needing attention and cancelled tasks will appear here',
 		},
 	};
 
@@ -238,7 +246,7 @@ function TaskList({
 	// For Active tab, group by in_progress and pending
 	// For Review tab - all are review status
 	// For Done tab - all are completed
-	// For Failed tab - group by failed and cancelled
+	// For Needs Attention tab - group by needs_attention and cancelled
 
 	if (tab === 'active') {
 		const inProgress = tasks.filter((t) => t.status === 'in_progress');
@@ -302,18 +310,18 @@ function TaskList({
 		);
 	}
 
-	// Failed tab
-	const failed = tasks.filter((t) => t.status === 'failed');
+	// Needs Attention tab
+	const needsAttention = tasks.filter((t) => t.status === 'needs_attention');
 	const cancelled = tasks.filter((t) => t.status === 'cancelled');
 
 	return (
 		<div class="space-y-4">
-			{failed.length > 0 && (
+			{needsAttention.length > 0 && (
 				<TaskGroup
-					title="Failed"
-					count={failed.length}
+					title="Needs Attention"
+					count={needsAttention.length}
 					variant="red"
-					tasks={failed}
+					tasks={needsAttention}
 					allTasks={allTasks}
 					onTaskClick={onTaskClick}
 					showAlert
@@ -449,6 +457,8 @@ function TaskItem({
 	const blocked = task.status === 'pending' && isBlocked(task, allTasks);
 	const hasDeps = task.dependsOn && task.dependsOn.length > 0;
 
+	const isWorking = task.status === 'review' && !!task.activeSession;
+
 	return (
 		<div
 			class={`px-4 py-3 ${isClickable ? 'cursor-pointer hover:bg-dark-800/50 transition-colors' : ''}`}
@@ -458,6 +468,12 @@ function TaskItem({
 				<div class="flex-1 min-w-0">
 					<div class="flex items-center gap-2">
 						<h4 class="text-sm font-medium text-gray-100 truncate">{task.title}</h4>
+						{isWorking && (
+							<span class="inline-flex items-center gap-1 text-xs font-medium text-blue-400 bg-blue-900/20 border border-blue-700/40 px-1.5 py-0.5 rounded-full flex-shrink-0">
+								<span class="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
+								{task.activeSession === 'worker' ? 'Worker' : 'Leader'} working
+							</span>
+						)}
 						{blocked && (
 							<span class="text-xs px-1.5 py-0.5 rounded bg-orange-900/20 text-orange-400 flex-shrink-0">
 								Blocked
@@ -468,6 +484,21 @@ function TaskItem({
 				<div class="ml-4 flex items-center gap-2 flex-shrink-0">
 					{task.progress !== undefined && (
 						<span class="text-xs text-gray-400">{task.progress}%</span>
+					)}
+					{task.prUrl && (
+						<a
+							href={task.prUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							onClick={(e) => e.stopPropagation()}
+							class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-purple-400 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded transition-colors"
+							title="View Pull Request"
+						>
+							<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 16 16">
+								<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+							</svg>
+							<span>PR #{task.prNumber ?? '?'}</span>
+						</a>
 					)}
 					{showApprove && (
 						<button
@@ -494,7 +525,7 @@ function TaskItem({
 					{isClickable && <span class="text-xs text-gray-600">&rarr;</span>}
 				</div>
 			</div>
-			{task.status === 'failed' && task.error && (
+			{task.status === 'needs_attention' && task.error && (
 				<p class="text-xs text-red-400 mt-1.5 line-clamp-2" title={task.error}>
 					{task.error}
 				</p>

@@ -39,8 +39,14 @@ export function createMockDaemonHub() {
 
 export function createMockSessionFactory() {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
+	/** Per-session processing state, configurable in tests for stuck worker scenarios */
+	const processingStates = new Map<
+		string,
+		'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input'
+	>();
 	return {
 		calls,
+		processingStates,
 		async createAndStartSession(init: unknown, role: string) {
 			calls.push({ method: 'createAndStartSession', args: [init, role] });
 		},
@@ -54,6 +60,11 @@ export function createMockSessionFactory() {
 		hasSession(_sessionId: string) {
 			return true;
 		},
+		getProcessingState(
+			sessionId: string
+		): 'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input' | undefined {
+			return processingStates.get(sessionId);
+		},
 		async answerQuestion(_sessionId: string, _answer: string) {
 			return false;
 		},
@@ -61,14 +72,26 @@ export function createMockSessionFactory() {
 			// Return a synthetic worktree path so isolation enforcement passes in tests
 			return `/tmp/worktrees/${sessionId}`;
 		},
+		async removeWorktree(_workspacePath: string) {
+			return true;
+		},
 		async restoreSession(sessionId: string) {
 			calls.push({ method: 'restoreSession', args: [sessionId] });
 			return true;
 		},
+		async interruptSession(sessionId: string) {
+			calls.push({ method: 'interruptSession', args: [sessionId] });
+		},
 		async stopSession(sessionId: string) {
 			calls.push({ method: 'stopSession', args: [sessionId] });
 		},
-	} satisfies SessionFactory & { calls: Array<{ method: string; args: unknown[] }> };
+	} satisfies SessionFactory & {
+		calls: Array<{ method: string; args: unknown[] }>;
+		processingStates: Map<
+			string,
+			'idle' | 'queued' | 'processing' | 'interrupted' | 'waiting_for_input'
+		>;
+	};
 }
 
 export function makeRoom(overrides?: Partial<Room>): Room {
@@ -108,7 +131,11 @@ const DB_SCHEMA = `
 		created_by_task_id TEXT,
 		assigned_agent TEXT DEFAULT 'coder',
 		created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
-		archived_at INTEGER
+		archived_at INTEGER,
+		active_session TEXT,
+		pr_url TEXT,
+		pr_number INTEGER,
+		pr_created_at INTEGER
 	);
 	CREATE TABLE session_groups (
 		id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
@@ -147,6 +174,11 @@ export interface RuntimeTestContextOptions {
 	room?: Partial<Room>;
 	maxConcurrentGroups?: number;
 	maxFeedbackIterations?: number;
+	/** Worker message provider for testing (bypass markers, envelope content, terminal errors) */
+	getWorkerMessages?: (
+		sessionId: string,
+		afterMessageId: string | null
+	) => Array<{ id: string; text: string; toolCallNames: string[] }>;
 }
 
 export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): RuntimeTestContext {
@@ -181,6 +213,7 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 			({
 				runCommand: async (_args: string[], _cwd: string) => ({ stdout: '', exitCode: 1 }),
 			} as const),
+		getWorkerMessages: opts?.getWorkerMessages,
 		// Fetch from managers (reads from DB) instead of caching objects
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),

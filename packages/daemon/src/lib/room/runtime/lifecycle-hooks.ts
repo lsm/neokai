@@ -12,10 +12,49 @@ import { Logger } from '../../logger';
 
 const log = new Logger('lifecycle-hooks');
 
+// --- Bypass Markers ---
+
+/**
+ * Special markers that workers can use to bypass git/PR gates
+ * for read-only tasks that produce no file changes.
+ * DOCUMENTATION_COMPLETE is intentionally excluded: writing docs requires file changes
+ * and should follow the normal git/PR workflow.
+ */
+export const BYPASS_GATES_MARKERS = {
+	RESEARCH_ONLY: 'RESEARCH_ONLY:',
+	VERIFICATION_COMPLETE: 'VERIFICATION_COMPLETE:',
+	INVESTIGATION_RESULT: 'INVESTIGATION_RESULT:',
+	ANALYSIS_COMPLETE: 'ANALYSIS_COMPLETE:',
+} as const;
+
+export type BypassMarker = (typeof BYPASS_GATES_MARKERS)[keyof typeof BYPASS_GATES_MARKERS];
+
+/**
+ * Check if worker output starts with a bypass marker.
+ * Only the first non-empty line of the output is checked to prevent false positives
+ * from markers mentioned inside code blocks, analysis text, or quoted content.
+ * Returns the marker if found, null otherwise.
+ */
+export function detectBypassMarker(workerOutput: string): BypassMarker | null {
+	const lines = workerOutput.split('\n');
+	const firstNonEmptyLine = lines.find((line) => line.trim().length > 0);
+	if (!firstNonEmptyLine) return null;
+
+	for (const marker of Object.values(BYPASS_GATES_MARKERS)) {
+		if (firstNonEmptyLine.trim().startsWith(marker)) {
+			return marker as BypassMarker;
+		}
+	}
+
+	return null;
+}
+
 // --- Types ---
 
 export interface HookResult {
 	pass: boolean;
+	/** Set to true when the worker used a bypass marker to skip git/PR gates */
+	bypassed?: boolean;
 	/** Human-readable reason (for logs/group timeline) */
 	reason?: string;
 	/** Message injected back to the agent to fix the issue */
@@ -37,6 +76,8 @@ export interface WorkerExitHookContext {
 	draftTaskCount?: number;
 	/** Whether a human has approved the task (plan or PR) */
 	approved?: boolean;
+	/** Worker's final output text (for detecting bypass markers) */
+	workerOutput?: string;
 }
 
 export interface LeaderCompleteHookContext {
@@ -49,8 +90,20 @@ export interface LeaderCompleteHookContext {
 	hasReviewers: boolean;
 	/** For planning tasks: how many draft tasks exist */
 	draftTaskCount?: number;
-	/** Whether a human has approved the task (plan or PR) */
+	/**
+	 * Whether a human has approved the task (plan or PR).
+	 * NOTE: runLeaderCompleteGate does not read this field — human approval is enforced
+	 * by the state machine gate in room-runtime.ts before this hook is reached.
+	 * The field is kept here for context/logging purposes only.
+	 */
 	approved?: boolean;
+	/**
+	 * Whether the worker used a bypass marker (RESEARCH_ONLY, VERIFICATION_COMPLETE, etc.)
+	 * to skip git/PR gates. When true, checkLeaderPrMerged fails open even with approved=true
+	 * because bypass tasks have no PR. When false/undefined and approved=true, gh failures
+	 * are treated as fail-closed to prevent completing a PR task without merge verification.
+	 */
+	workerBypassed?: boolean;
 }
 
 // --- Shell Command Helper ---
@@ -290,7 +343,22 @@ export async function checkLeaderPrMerged(
 		ctx.workspacePath
 	);
 	if (ghExit !== 0) {
-		log.debug(`checkLeaderPrMerged: gh command failed, skipping check`);
+		// Bypass tasks (RESEARCH_ONLY, VERIFICATION_COMPLETE, etc.) have no PR — fail open.
+		// For PR-based roles with human approval, fail closed: if gh is unavailable we cannot
+		// verify merge state, and allowing completion would silently skip the merge invariant.
+		if (ctx.approved && !ctx.workerBypassed) {
+			log.warn(`checkLeaderPrMerged: gh command failed and task is approved — failing closed`);
+			return {
+				pass: false,
+				reason:
+					'Cannot verify PR merge state: gh command failed. Merge verification is required when human approval is present.',
+				bounceMessage:
+					'Cannot verify whether the PR was merged — the `gh` command is unavailable or failed.\n\n' +
+					'This task has been approved by a human, so merge verification is required.\n' +
+					'Please ensure `gh` is installed and authenticated, then call `complete_task` again.',
+			};
+		}
+		log.debug(`checkLeaderPrMerged: gh command failed, skipping check (bypass/unapproved task)`);
 		return { pass: true };
 	}
 
@@ -520,7 +588,14 @@ export async function checkLeaderDraftsExist(
 		pass: false,
 		reason: 'No draft tasks exist for this planning task.',
 		bounceMessage:
-			'No draft tasks were created. Use `send_to_worker` to ask the planner to create tasks using `create_task`.',
+			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
+			'To fix this:\n' +
+			'1. Call `send_to_worker` (mode: "queue") with: "The plan is approved. Please:\n' +
+			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER> --merge`\n' +
+			'   2. Read the plan file under docs/plans/\n' +
+			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +
+			'   4. Finish your response after all tasks are created"\n' +
+			'2. After the planner exits with tasks created, call `complete_task` again.',
 	};
 }
 
@@ -551,6 +626,21 @@ export async function runWorkerExitGate(
 				if (!result.pass) return result;
 			}
 			return { pass: true };
+		}
+
+		// Check for bypass marker BEFORE running git/PR gates (only for PR-based roles).
+		// Planner bypass is intentionally unsupported: planners require draft task creation,
+		// and the leader gate cannot complete without tasks even in bypass mode.
+		if (isPrBasedRole && ctx.workerOutput) {
+			const bypassMarker = detectBypassMarker(ctx.workerOutput);
+			if (bypassMarker) {
+				log.info(`Worker output contains bypass marker ${bypassMarker} - skipping git/PR gates`);
+				return {
+					pass: true,
+					bypassed: true,
+					reason: `Bypassed git/PR gates: ${bypassMarker}`,
+				};
+			}
 		}
 
 		// Pre-approval: must create feature branch, PR, and push commits
@@ -594,43 +684,32 @@ export async function runLeaderSubmitGate(
 /**
  * Run all applicable leader complete hooks for the given context.
  * Returns the first failing hook result, or { pass: true }.
+ *
+ * Gate order:
+ * 1. PR must be merged (universal — applies to all roles; fails open when gh unavailable,
+ *    allowing bypass/research-only tasks to proceed without a PR)
+ * 2. Planning tasks: draft tasks must exist (created by planner in Phase 2)
+ * 3. Coder/general with reviewer sub-agents: reviews must be posted on the PR
  */
 export async function runLeaderCompleteGate(
 	ctx: LeaderCompleteHookContext,
 	opts?: HookOptions
 ): Promise<HookResult> {
-	// Human-approved tasks: skip PR/review checks but verify merge for PR-based tasks.
-	// For planning: verify draft tasks were created.
-	// For coder/general: verify PR was actually merged (leader handles merge after approval).
-	if (ctx.approved) {
-		if (ctx.taskType === 'planning') {
-			return checkLeaderDraftsExist(ctx, opts);
-		}
-		if (ctx.workerRole === 'coder' || ctx.workerRole === 'general') {
-			return checkLeaderPrMerged(ctx, opts);
-		}
-		return { pass: true };
-	}
+	// Universal: always verify the PR was merged before completing.
+	// Fails open when gh is unavailable (e.g. bypass/research-only tasks with no PR).
+	const mergedResult = await checkLeaderPrMerged(ctx, opts);
+	if (!mergedResult.pass) return mergedResult;
 
-	if (ctx.workerRole === 'coder' || ctx.workerRole === 'planner' || ctx.workerRole === 'general') {
-		const prResult = await checkLeaderPrExists(ctx, opts);
-		if (!prResult.pass) {
-			return prResult;
-		}
-
-		if (ctx.hasReviewers) {
-			const reviewResult = await checkPrHasReviews(ctx, opts);
-			if (!reviewResult.pass) {
-				return reviewResult;
-			}
-		}
-	}
-
+	// Planning tasks: verify draft tasks were created from the merged plan.
 	if (ctx.taskType === 'planning') {
-		const result = await checkLeaderDraftsExist(ctx, opts);
-		if (!result.pass) {
-			return result;
-		}
+		const draftsResult = await checkLeaderDraftsExist(ctx, opts);
+		if (!draftsResult.pass) return draftsResult;
+	}
+
+	// Coder/general with reviewer sub-agents: verify reviews were posted on the PR.
+	if ((ctx.workerRole === 'coder' || ctx.workerRole === 'general') && ctx.hasReviewers) {
+		const reviewResult = await checkPrHasReviews(ctx, opts);
+		if (!reviewResult.pass) return reviewResult;
 	}
 
 	return { pass: true };

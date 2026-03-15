@@ -112,7 +112,11 @@ describe('Runtime Recovery', () => {
 				created_by_task_id TEXT,
 				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
-				archived_at INTEGER
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -225,7 +229,7 @@ describe('Runtime Recovery', () => {
 		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('failed');
+		expect(task!.status).toBe('needs_attention');
 	});
 
 	it('should fail groups with lost leader sessions', async () => {
@@ -383,7 +387,7 @@ describe('Runtime Recovery', () => {
 		expect(updatedGroup!.completedAt).not.toBeNull();
 
 		const task = await taskManager.getTask(taskId);
-		expect(task!.status).toBe('failed');
+		expect(task!.status).toBe('needs_attention');
 	});
 
 	it('should restore sessions not live in cache for awaiting_worker', async () => {

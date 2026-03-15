@@ -93,9 +93,6 @@ function createMockLeaderCallbacks(): LeaderToolCallbacks {
 		async sendToWorker() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
-		async handoffToWorker() {
-			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
-		},
 		async completeTask() {
 			return { content: [{ type: 'text' as const, text: '{"success":true}' }] };
 		},
@@ -204,7 +201,11 @@ describe('TaskGroupManager', () => {
 				created_by_task_id TEXT,
 				assigned_agent TEXT DEFAULT 'coder',
 				created_at INTEGER NOT NULL, started_at INTEGER, completed_at INTEGER,
-				archived_at INTEGER
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY, group_type TEXT NOT NULL DEFAULT 'task',
@@ -376,6 +377,24 @@ describe('TaskGroupManager', () => {
 				leaderTaskContext: 'Goal context for leader',
 			});
 		});
+
+		it('should persist null goalId in deferred leader config for goal-free tasks', async () => {
+			const task = await createTask();
+			const callbacks = createMockLeaderCallbacks();
+
+			const group = await manager.spawn(
+				room,
+				task,
+				null, // no goal
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			const persisted = groupRepo.getGroup(group.id)!;
+			expect(persisted.deferredLeader?.goalId).toBeNull();
+		});
 	});
 
 	describe('routeWorkerToLeader', () => {
@@ -518,6 +537,44 @@ describe('TaskGroupManager', () => {
 			expect(refreshed.deferredLeader).toBeNull();
 		});
 
+		it('should create leader session for a goal-free task (goalId is null)', async () => {
+			const task = await createTask();
+			const callbacks = createMockLeaderCallbacks();
+
+			// Spawn with null goal — task has no linked goal
+			const group = await manager.spawn(
+				room,
+				task,
+				null,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Deferred leader config should store null goalId
+			const persisted = groupRepo.getGroup(group.id)!;
+			expect(persisted.deferredLeader?.goalId).toBeNull();
+
+			// Routing worker to leader should succeed — leader session is created
+			const result = await manager.routeWorkerToLeader(
+				group.id,
+				'Worker output for goal-free task',
+				(_groupId) => callbacks
+			);
+
+			expect(result).not.toBeNull();
+
+			const leaderCalls = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(leaderCalls).toHaveLength(1);
+
+			// Task should not be failed (leader creation succeeded without a goal)
+			const updatedTask = await taskManager.getTask(task.id);
+			expect(updatedTask!.status).toBe('in_progress');
+		});
+
 		it('should fail when leader session is missing and deferred metadata is absent', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
@@ -556,7 +613,7 @@ describe('TaskGroupManager', () => {
 			expect(result).toBeNull();
 
 			const failedTask = await taskManager.getTask(task.id);
-			expect(failedTask!.status).toBe('failed');
+			expect(failedTask!.status).toBe('needs_attention');
 			expect(failedTask!.error).toContain('Leader session lost during restart');
 		});
 	});
@@ -682,7 +739,7 @@ describe('TaskGroupManager', () => {
 			expect(updated!.completedAt).toBeDefined();
 
 			const taskResult = await taskManager.getTask(task.id);
-			expect(taskResult!.status).toBe('failed');
+			expect(taskResult!.status).toBe('needs_attention');
 		});
 
 		it('should stop observing sessions', async () => {
@@ -760,7 +817,7 @@ describe('TaskGroupManager', () => {
 	});
 
 	describe('cancel', () => {
-		it('should fail the group and mark the task as cancelled (not failed)', async () => {
+		it('should fail the group and mark the task with cancelled status (not needs_attention)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -777,7 +834,7 @@ describe('TaskGroupManager', () => {
 			const updated = await manager.cancel(group.id);
 
 			// Group becomes terminal and the underlying task status is 'cancelled'
-			// (semantically distinct from 'failed').
+			// (semantically distinct from 'needs_attention').
 			expect(updated!.completedAt).not.toBeNull();
 			const cancelledTask = await taskManager.getTask(task.id);
 			expect(cancelledTask?.status).toBe('cancelled');
@@ -825,7 +882,7 @@ describe('TaskGroupManager', () => {
 			expect(sessionFactory.removedWorktrees).not.toContain(group.workspacePath);
 		});
 
-		it('should cleanup worktree on archiveGroup (even for failed tasks)', async () => {
+		it('should cleanup worktree on archiveGroup (even for needs_attention tasks)', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();

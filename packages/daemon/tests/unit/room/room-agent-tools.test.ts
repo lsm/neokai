@@ -54,7 +54,11 @@ describe('Room Agent Tools', () => {
 				created_at INTEGER NOT NULL,
 				started_at INTEGER,
 				completed_at INTEGER,
-				archived_at INTEGER
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER
 			);
 			CREATE TABLE session_groups (
 				id TEXT PRIMARY KEY,
@@ -287,6 +291,31 @@ describe('Room Agent Tools', () => {
 			);
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Dependency task not found');
+		});
+
+		it('should reject task_type planning as it is reserved for internal use', async () => {
+			const result = parseResult(
+				await handlers.create_task({
+					title: 'Planning task',
+					description: 'This should be rejected',
+					task_type: 'planning' as never, // cast to bypass TS check
+				})
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain("'planning' is reserved for internal use");
+		});
+
+		it('should allow task_type coding, research, design, goal_review but not planning', async () => {
+			for (const taskType of ['coding', 'research', 'design', 'goal_review'] as const) {
+				const result = parseResult(
+					await handlers.create_task({
+						title: `${taskType} task`,
+						description: 'Should succeed',
+						task_type: taskType,
+					})
+				);
+				expect(result.success).toBe(true);
+			}
 		});
 	});
 
@@ -521,7 +550,7 @@ describe('Room Agent Tools', () => {
 			const cancelledTasks = parseResult(await handlers.list_tasks({ status: 'cancelled' }));
 			expect((cancelledTasks.tasks as unknown[]).length).toBe(1);
 
-			const failedTasks = parseResult(await handlers.list_tasks({ status: 'failed' }));
+			const failedTasks = parseResult(await handlers.list_tasks({ status: 'needs_attention' }));
 			expect((failedTasks.tasks as unknown[]).length).toBe(0);
 		});
 
@@ -556,6 +585,78 @@ describe('Room Agent Tools', () => {
 		});
 	});
 
+	describe('stop_session', () => {
+		it('should interrupt in_progress task (task stays active)', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			// Move task to in_progress
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			// Without runtime service, returns error (interrupt requires runtime)
+			const result = parseResult(await handlers.stop_session({ task_id: taskId }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('unavailable');
+
+			// Task should still be in_progress (not failed)
+			const task = await taskManager.getTask(taskId);
+			expect(task!.status).toBe('in_progress');
+		});
+
+		it('should use runtime.interruptTaskSession when runtime service is available', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			const taskId = created.taskId as string;
+			await taskManager.setTaskStatus(taskId, 'in_progress');
+
+			const calls: Array<string> = [];
+			const mockRuntime = {
+				interruptTaskSession: async (tid: string) => {
+					calls.push(tid);
+					return { success: true };
+				},
+			};
+			const runtimeHandlers = createRoomAgentToolHandlers({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+				runtimeService: { getRuntime: () => mockRuntime as never },
+			});
+
+			const result = parseResult(await runtimeHandlers.stop_session({ task_id: taskId }));
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('interrupted');
+			expect(calls).toEqual([taskId]);
+		});
+
+		it('should return error when task not found', async () => {
+			const result = parseResult(await handlers.stop_session({ task_id: 'no-such-task' }));
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task not found');
+		});
+
+		it('should return error for pending task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			// Task is pending by default
+			const result = parseResult(
+				await handlers.stop_session({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task cannot be interrupted');
+		});
+
+		it('should return error for completed task', async () => {
+			const created = parseResult(await handlers.create_task({ title: 'T', description: 'd' }));
+			await taskManager.setTaskStatus(created.taskId as string, 'in_progress');
+			await taskManager.completeTask(created.taskId as string, 'done');
+
+			const result = parseResult(
+				await handlers.stop_session({ task_id: created.taskId as string })
+			);
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Task cannot be interrupted');
+		});
+	});
+
 	describe('get_room_status', () => {
 		it('should return room overview', async () => {
 			await handlers.create_goal({ title: 'G1' });
@@ -576,16 +677,16 @@ describe('Room Agent Tools', () => {
 			expect(status.tasksNeedingReview).toEqual([]);
 		});
 
-		it('should count cancelled tasks separately from failed', async () => {
+		it('should count cancelled tasks separately from needs_attention tasks', async () => {
 			const t1 = parseResult(await handlers.create_task({ title: 'To cancel', description: 'd' }));
 			await handlers.cancel_task({ task_id: t1.taskId as string });
 
 			const result = parseResult(await handlers.get_room_status());
 			const status = result.status as {
-				tasks: { total: number; failed: number; cancelled: number };
+				tasks: { total: number; needsAttention: number; cancelled: number };
 			};
 			expect(status.tasks.total).toBe(1);
-			expect(status.tasks.failed).toBe(0);
+			expect(status.tasks.needsAttention).toBe(0);
 			expect(status.tasks.cancelled).toBe(1);
 		});
 
@@ -926,7 +1027,7 @@ describe('Room Agent Tools', () => {
 			expect(task!.status).toBe('cancelled');
 		});
 
-		it('should roll back task to failed when reviveTaskForMessage returns false', async () => {
+		it('should roll back task to needs_attention when reviveTaskForMessage returns false', async () => {
 			const mockRuntime = {
 				reviveTaskForMessage: async () => false,
 				injectMessageToWorker: async () => true,
@@ -949,11 +1050,11 @@ describe('Room Agent Tools', () => {
 				await h.send_message_to_task({ task_id: taskId, message: 'hello' })
 			);
 			expect(result.success).toBe(false);
-			expect(result.error).toContain('failed');
+			expect(result.error).toContain('needs_attention');
 
 			// Task status should be rolled back to failed (not left in review)
 			const task = await taskManager.getTask(taskId);
-			expect(task!.status).toBe('failed');
+			expect(task!.status).toBe('needs_attention');
 		});
 	});
 
@@ -1329,12 +1430,12 @@ describe('Room Agent Tools', () => {
 			const result = parseResult(
 				await handlers.set_task_status({
 					task_id: taskId,
-					status: 'failed',
+					status: 'needs_attention',
 					error: 'Tests failed',
 				})
 			);
 			expect(result.success).toBe(true);
-			expect(result.task.status).toBe('failed');
+			expect(result.task.status).toBe('needs_attention');
 			expect(result.task.error).toBe('Tests failed');
 		});
 

@@ -23,7 +23,7 @@ const GENERAL_FEATURES: SessionFeatures = {
 
 export interface GeneralAgentConfig {
 	task: NeoTask;
-	goal: RoomGoal;
+	goal: RoomGoal | null;
 	room: Room;
 	sessionId: string;
 	workspacePath: string;
@@ -79,6 +79,33 @@ export function buildGeneralSystemPrompt(): string {
 			`The runtime enforces this — you will be sent back if no feature branch and PR exist.`
 	);
 
+	// Bypass markers for research/verification tasks
+	sections.push(`\n## Bypassing Git/PR Gates for Research-Only Tasks\n`);
+	sections.push(
+		`For **research-only**, **verification-only**, or **investigation-only** tasks that do NOT modify any files, ` +
+			`you can bypass the git/PR requirements by starting your final output with one of these markers:`
+	);
+	sections.push(
+		`- \`RESEARCH_ONLY:\` — For pure research tasks (e.g., "Analyze and document X")\n` +
+			`- \`VERIFICATION_COMPLETE:\` — For verification tasks (e.g., "Verify Y is correct")\n` +
+			`- \`INVESTIGATION_RESULT:\` — For investigation tasks (e.g., "Investigate why Z fails")\n` +
+			`- \`ANALYSIS_COMPLETE:\` — For analysis tasks (e.g., "Analyze performance")`
+	);
+	sections.push(
+		`**Example**:\n` +
+			`\`\`\`\n` +
+			`RESEARCH_ONLY:\n\n` +
+			`I have researched the codebase and documented the following findings:\n` +
+			`1. The authentication module lives in packages/daemon/src/lib/auth\n` +
+			`2. It supports both API key and OAuth token flows\n\n` +
+			`No code changes are needed for this task.\n` +
+			`\`\`\``
+	);
+	sections.push(
+		`**Important**: Only use bypass markers when the task genuinely requires NO file changes. ` +
+			`If you need to create or modify any files, follow the normal git/PR workflow instead.`
+	);
+
 	// Review feedback handling
 	sections.push(`\n## Addressing Review Feedback\n`);
 	sections.push(
@@ -119,11 +146,13 @@ export function buildGeneralTaskMessage(config: GeneralAgentConfig): string {
 		sections.push(`**Priority:** ${task.priority}`);
 	}
 
-	// Goal context
-	sections.push(`\n## Goal Context\n`);
-	sections.push(`**Goal:** ${goal.title}`);
-	if (goal.description) {
-		sections.push(`**Description:** ${goal.description}`);
+	// Goal context (only if a goal is linked)
+	if (goal) {
+		sections.push(`\n## Goal Context\n`);
+		sections.push(`**Goal:** ${goal.title}`);
+		if (goal.description) {
+			sections.push(`**Description:** ${goal.description}`);
+		}
 	}
 
 	// Room context

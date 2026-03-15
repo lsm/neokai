@@ -13,6 +13,8 @@ import {
 	runWorkerExitGate,
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
+	detectBypassMarker,
+	BYPASS_GATES_MARKERS,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
 	type HookOptions,
@@ -458,6 +460,13 @@ describe('checkLeaderDraftsExist', () => {
 		const result = await checkLeaderDraftsExist(makeLeaderCtx({ draftTaskCount: 0 }));
 		expect(result.pass).toBe(false);
 	});
+
+	test('bounce message guides leader to send planner back for Phase 2', async () => {
+		const result = await checkLeaderDraftsExist(makeLeaderCtx({ draftTaskCount: 0 }));
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('send_to_worker');
+		expect(result.bounceMessage).toContain('create_task');
+	});
 });
 
 describe('checkWorkerPrMerged', () => {
@@ -563,12 +572,38 @@ describe('checkLeaderPrMerged', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('passes gracefully when gh fails', async () => {
+	test('fails closed when gh fails and task is approved (no workerBypassed)', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
 		});
 		const result = await checkLeaderPrMerged(makeLeaderCtx({ approved: true }), opts);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('gh command failed');
+		expect(result.bounceMessage).toContain('gh');
+	});
+
+	test('passes gracefully when gh fails and task used bypass marker (workerBypassed=true)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(
+			makeLeaderCtx({ approved: true, workerBypassed: true }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('passes gracefully when gh fails and task is not yet approved', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await checkLeaderPrMerged(
+			makeLeaderCtx({ approved: false, workerBypassed: false }),
+			opts
+		);
 		expect(result.pass).toBe(true);
 	});
 
@@ -672,13 +707,10 @@ describe('runWorkerExitGate', () => {
 });
 
 describe('runLeaderCompleteGate', () => {
-	test('checks PR for coder tasks and passes when PR exists', async () => {
+	test('passes for coder tasks when PR is MERGED (no reviewers)', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
-			'gh pr list --head feat/add-alerts --json number --state open': {
-				stdout: '[{"number":1}]',
-				exitCode: 0,
-			},
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
@@ -687,13 +719,10 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('checks reviews when hasReviewers is true and reviews exist', async () => {
+	test('checks reviews when hasReviewers is true and PR is MERGED with reviews', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
-			'gh pr list --head feat/add-alerts --json number --state open': {
-				stdout: '[{"number":1}]',
-				exitCode: 0,
-			},
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
 			'gh pr view feat/add-alerts --json reviews --jq .reviews | length': {
 				stdout: '2',
 				exitCode: 0,
@@ -709,10 +738,7 @@ describe('runLeaderCompleteGate', () => {
 	test('fails when no reviews and hasReviewers is true', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
-			'gh pr list --head feat/add-alerts --json number --state open': {
-				stdout: '[{"number":1}]',
-				exitCode: 0,
-			},
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
 			'gh pr view feat/add-alerts --json reviews --jq .reviews | length': {
 				stdout: '0',
 				exitCode: 0,
@@ -729,10 +755,7 @@ describe('runLeaderCompleteGate', () => {
 	test('skips review check when hasReviewers is false', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
-			'gh pr list --head feat/add-alerts --json number --state open': {
-				stdout: '[{"number":1}]',
-				exitCode: 0,
-			},
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
 		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({ workerRole: 'coder', hasReviewers: false }),
@@ -755,11 +778,11 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.pass).toBe(false);
 	});
 
-	test('checks PR for general tasks and passes when PR exists', async () => {
+	test('passes for general tasks when PR is MERGED', async () => {
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research-summary', exitCode: 0 },
-			'gh pr list --head feat/research-summary --json number --state open': {
-				stdout: '[{"number":1}]',
+			'gh pr view feat/research-summary --json state --jq .state': {
+				stdout: 'MERGED',
 				exitCode: 0,
 			},
 		});
@@ -770,15 +793,20 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.pass).toBe(true);
 	});
 
-	test('skips PR checks for phase 2 planning (approved=true) and passes with drafts', async () => {
-		// Phase 2: PR was already merged, no open PR — but approved skips PR checks
+	test('passes for phase 2 planning when PR is merged and drafts exist', async () => {
+		// Phase 2: planner merged the plan PR and created draft tasks
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
 		const result = await runLeaderCompleteGate(
 			makeLeaderCtx({
 				workerRole: 'planner',
 				taskType: 'planning',
 				approved: true,
 				draftTaskCount: 3,
-			})
+			}),
+			opts
 		);
 		expect(result.pass).toBe(true);
 	});
@@ -829,7 +857,10 @@ describe('runLeaderCompleteGate', () => {
 		expect(result.bounceMessage).toContain('send_to_worker');
 	});
 
-	test('passes gracefully for coder tasks with approved when gh unavailable', async () => {
+	test('fails closed for approved coder tasks when gh unavailable (no workerBypassed)', async () => {
+		// P1: once a human has approved a PR-based task, failing open would silently skip
+		// merge verification. The gate must fail closed so the leader is forced to fix the
+		// gh setup rather than completing the task without a verified merge.
 		const opts = mockRunner({
 			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
 			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
@@ -839,6 +870,194 @@ describe('runLeaderCompleteGate', () => {
 				workerRole: 'coder',
 				taskType: 'coding',
 				approved: true,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.reason).toContain('gh command failed');
+	});
+
+	test('passes gracefully for bypass tasks with approved when gh unavailable', async () => {
+		// Bypass tasks (RESEARCH_ONLY etc.) have no PR — fail open is correct even with approved=true.
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				workerBypassed: true,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('fails for approved coder tasks when reviewers configured but no reviews posted', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+			'gh pr view feat/add-alerts --json reviews --jq .reviews | length': {
+				stdout: '0',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				hasReviewers: true,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('reviewer sub-agents');
+	});
+
+	test('passes for approved coder tasks when reviewers configured and reviews posted', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+			'gh pr view feat/add-alerts --json reviews --jq .reviews | length': {
+				stdout: '2',
+				exitCode: 0,
+			},
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'coder',
+				taskType: 'coding',
+				approved: true,
+				hasReviewers: true,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+});
+
+describe('runLeaderCompleteGate — PR merge validation (all roles)', () => {
+	test('FAILS when PR is OPEN (not merged) for coder tasks', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'coder', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('not merged');
+		expect(result.bounceMessage).toContain('gh pr merge');
+	});
+
+	test('FAILS when PR is CLOSED (not merged) for coder tasks', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'CLOSED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'coder', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('CLOSED');
+	});
+
+	test('FAILS when PR is OPEN (not merged) for general tasks', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research', exitCode: 0 },
+			'gh pr view feat/research --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'general', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('not merged');
+	});
+
+	test('PASSES when PR is MERGED for coder tasks', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'coder', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('PASSES when PR is MERGED for general tasks', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/research', exitCode: 0 },
+			'gh pr view feat/research --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'general', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('PASSES gracefully when gh is unavailable (fail open)', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'feat/add-alerts', exitCode: 0 },
+			'gh pr view feat/add-alerts --json state --jq .state': { stdout: '', exitCode: 1 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'coder', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(true);
+	});
+
+	test('FAILS when PR is OPEN (not merged) for planner tasks', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'OPEN', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({ workerRole: 'planner', taskType: 'planning', approved: false }),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('send_to_worker');
+	});
+
+	test('PASSES when PR is MERGED for planner tasks but fails when no drafts exist', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'planner',
+				taskType: 'planning',
+				approved: false,
+				draftTaskCount: 0,
+			}),
+			opts
+		);
+		expect(result.pass).toBe(false);
+		expect(result.bounceMessage).toContain('create_task');
+	});
+
+	test('PASSES when PR is MERGED for planner tasks and drafts exist', async () => {
+		const opts = mockRunner({
+			'git rev-parse --abbrev-ref HEAD': { stdout: 'plan/new-feature', exitCode: 0 },
+			'gh pr view plan/new-feature --json state --jq .state': { stdout: 'MERGED', exitCode: 0 },
+		});
+		const result = await runLeaderCompleteGate(
+			makeLeaderCtx({
+				workerRole: 'planner',
+				taskType: 'planning',
+				approved: false,
+				draftTaskCount: 3,
 			}),
 			opts
 		);
@@ -1114,5 +1333,159 @@ describe('runLeaderSubmitGate', () => {
 			opts
 		);
 		expect(result.pass).toBe(true);
+	});
+});
+
+describe('detectBypassMarker', () => {
+	test('detects RESEARCH_ONLY marker at line start', () => {
+		const output = 'RESEARCH_ONLY:\n\nHere is my research...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.RESEARCH_ONLY);
+	});
+
+	test('detects VERIFICATION_COMPLETE marker', () => {
+		const output = 'VERIFICATION_COMPLETE:\n\nVerification complete...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.VERIFICATION_COMPLETE);
+	});
+
+	test('detects INVESTIGATION_RESULT marker', () => {
+		const output = 'INVESTIGATION_RESULT:\n\nInvestigation findings...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.INVESTIGATION_RESULT);
+	});
+
+	test('detects ANALYSIS_COMPLETE marker', () => {
+		const output = 'ANALYSIS_COMPLETE:\n\nAnalysis results...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.ANALYSIS_COMPLETE);
+	});
+
+	test('does NOT detect DOCUMENTATION_COMPLETE — writing docs requires file changes and must use git/PR', () => {
+		// DOCUMENTATION_COMPLETE is intentionally excluded from bypass markers.
+		// Documentation tasks involve writing/modifying files and must go through the normal workflow.
+		const output = 'DOCUMENTATION_COMPLETE:\n\nDocumentation done.';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('detects marker with leading whitespace', () => {
+		const output = '  VERIFICATION_COMPLETE:\n\nVerification complete...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.VERIFICATION_COMPLETE);
+	});
+
+	test('does NOT detect marker in the middle of output — only first non-empty line is checked', () => {
+		// Security: a marker buried in analysis text or a code block should not trigger bypass.
+		// Worker must explicitly start the response with the marker.
+		const output = 'Some preamble text\n\nRESEARCH_ONLY:\n\nResearch findings...';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('detects marker when first line is empty (skips blank lines)', () => {
+		// Leading blank lines are OK — the first *non-empty* line is checked
+		const output = '\n\nRESEARCH_ONLY:\n\nResearch findings...';
+		expect(detectBypassMarker(output)).toBe(BYPASS_GATES_MARKERS.RESEARCH_ONLY);
+	});
+
+	test('does NOT detect marker inside backtick code block on first line', () => {
+		const output = '`RESEARCH_ONLY:` is a marker used for bypass.';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('returns null when no marker present', () => {
+		const output = 'Regular worker output without any bypass marker';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+
+	test('returns null for empty string', () => {
+		expect(detectBypassMarker('')).toBeNull();
+	});
+
+	test('does not match partial marker (no colon)', () => {
+		const output = 'RESEARCH_ONLY This text has no colon after the marker';
+		expect(detectBypassMarker(output)).toBeNull();
+	});
+});
+
+describe('runWorkerExitGate with bypass markers', () => {
+	test('bypasses gate for coder role with RESEARCH_ONLY marker', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: 'RESEARCH_ONLY:\n\nResearch findings here.',
+		});
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
+		expect(result.reason).toContain('Bypassed');
+		expect(result.reason).toContain('RESEARCH_ONLY:');
+	});
+
+	test('bypasses gate for general role with VERIFICATION_COMPLETE marker', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'general',
+			approved: false,
+			workerOutput: 'VERIFICATION_COMPLETE:\n\nAll checks passed.',
+		});
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
+		expect(result.reason).toContain('Bypassed');
+	});
+
+	test('does NOT bypass when no marker present — runs normal git checks', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: 'I implemented the feature and created a PR.',
+		});
+		// No git responses → git commands fail gracefully → passes
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+	});
+
+	test('does NOT bypass when workerOutput is undefined', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: undefined,
+		});
+		// Gate runs normally; git fails gracefully → passes
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+	});
+
+	test('does NOT bypass for planner role — planner bypass is unsupported', async () => {
+		// Planners require draft task creation; bypassing the gate leaves the leader unable
+		// to complete_task (needs tasks). Bypass is intentionally restricted to coder/general.
+		const ctx = makeWorkerCtx({
+			workerRole: 'planner',
+			approved: false,
+			draftTaskCount: 0,
+			workerOutput: 'RESEARCH_ONLY:\n\nThis is a planning-related research task.',
+		});
+		// mockRunner({}) → git commands fail gracefully → normal planner pre-approval hooks pass
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBeFalsy();
+		expect(result.reason).toBeUndefined();
+	});
+
+	test('bypass not triggered when approved=true — post-approval path runs instead', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: true,
+			workerOutput: 'RESEARCH_ONLY:\n\nResearch findings.',
+		});
+		// Post-approval: checks PR merge state; git fails gracefully → passes
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+	});
+
+	test('bypasses gate with INVESTIGATION_RESULT marker and whitespace', async () => {
+		const ctx = makeWorkerCtx({
+			workerRole: 'coder',
+			approved: false,
+			workerOutput: '   INVESTIGATION_RESULT:   \n\nFound the root cause.',
+		});
+		const result = await runWorkerExitGate(ctx, mockRunner({}));
+		expect(result.pass).toBe(true);
+		expect(result.bypassed).toBe(true);
+		expect(result.reason).toContain('Bypassed');
 	});
 });

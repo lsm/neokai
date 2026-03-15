@@ -90,6 +90,15 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 22: Drop legacy session_groups.state column and index
 	runMigration22(db);
+
+	// Migration 23: Add active_session column to tasks table
+	runMigration23(db);
+
+	// Migration 24: Rename 'failed' task status to 'needs_attention' for better semantic clarity
+	runMigration24(db);
+
+	// Migration 25: Add PR fields to tasks table
+	runMigration25(db);
 }
 
 /**
@@ -1039,6 +1048,144 @@ function runMigration22(db: BunDatabase): void {
 	}
 
 	db.exec(`ALTER TABLE session_groups DROP COLUMN state`);
+}
+
+/**
+ * Migration 23: Add active_session column to tasks table.
+ * Tracks which agent session is currently generating output ('worker' | 'leader' | null).
+ * Allows the UI to show a "working" indicator even when the task status is 'review'.
+ */
+function runMigration23(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (tableHasColumn(db, 'tasks', 'active_session')) {
+		return;
+	}
+	db.exec(`ALTER TABLE tasks ADD COLUMN active_session TEXT`);
+}
+
+/**
+ * Migration 24: Rename 'failed' task status to 'needs_attention'.
+ *
+ * Uses the table-rebuild pattern required by SQLite's lack of ALTER CONSTRAINT support.
+ * Also updates any existing task rows with status='failed' to 'needs_attention'.
+ */
+function runMigration24(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+
+	// Check if migration is needed by inspecting the CHECK constraint.
+	const tableInfo = db
+		.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'`)
+		.get() as { sql: string } | null;
+	const needsMigration = tableInfo !== null && tableInfo.sql.includes("'failed'");
+
+	if (!needsMigration) return;
+
+	db.exec('PRAGMA foreign_keys = OFF');
+	try {
+		db.exec(`DROP TABLE IF EXISTS tasks_new`);
+
+		db.exec(`
+			CREATE TABLE tasks_new (
+				id TEXT PRIMARY KEY,
+				room_id TEXT NOT NULL,
+				title TEXT NOT NULL,
+				description TEXT NOT NULL,
+				status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+				priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+				progress INTEGER,
+				current_step TEXT,
+				result TEXT,
+				error TEXT,
+				depends_on TEXT DEFAULT '[]',
+				created_at INTEGER NOT NULL,
+				started_at INTEGER,
+				completed_at INTEGER,
+				task_type TEXT DEFAULT 'coding' CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'goal_review')),
+				assigned_agent TEXT DEFAULT 'coder',
+				created_by_task_id TEXT,
+				archived_at INTEGER,
+				active_session TEXT,
+				pr_url TEXT,
+				pr_number INTEGER,
+				pr_created_at INTEGER,
+				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+			)
+		`);
+
+		// Build column list dynamically for the INSERT SELECT (handles optional columns)
+		const baseCols = [
+			'id',
+			'room_id',
+			'title',
+			'description',
+			'priority',
+			'progress',
+			'current_step',
+			'result',
+			'error',
+			'depends_on',
+			'created_at',
+			'started_at',
+			'completed_at',
+		];
+		const optionalCols = [
+			'task_type',
+			'assigned_agent',
+			'created_by_task_id',
+			'archived_at',
+			'active_session',
+			'pr_url',
+			'pr_number',
+			'pr_created_at',
+		];
+		for (const col of optionalCols) {
+			if (tableHasColumn(db, 'tasks', col)) baseCols.push(col);
+		}
+
+		// Rename 'failed' → 'needs_attention' during the copy using CASE expression
+		const colsWithoutStatus = baseCols.join(', ');
+		db.exec(`PRAGMA ignore_check_constraints = 1`);
+		db.exec(`
+			INSERT INTO tasks_new (status, ${colsWithoutStatus})
+			SELECT
+				CASE WHEN status = 'failed' THEN 'needs_attention' ELSE status END,
+				${colsWithoutStatus}
+			FROM tasks
+		`);
+		db.exec(`PRAGMA ignore_check_constraints = 0`);
+
+		db.exec(`DROP TABLE tasks`);
+		db.exec(`ALTER TABLE tasks_new RENAME TO tasks`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room ON tasks(room_id)`);
+		db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`);
+	} finally {
+		db.exec('PRAGMA foreign_keys = ON');
+	}
+}
+
+/**
+ * Migration 25: Add PR fields to tasks table.
+ *
+ * Adds pr_url, pr_number, pr_created_at as first-class columns so PR data
+ * is no longer stored as a hack in current_step.
+ */
+function runMigration25(db: BunDatabase): void {
+	if (!tableExists(db, 'tasks')) {
+		return;
+	}
+	if (!tableHasColumn(db, 'tasks', 'pr_url')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN pr_url TEXT`);
+	}
+	if (!tableHasColumn(db, 'tasks', 'pr_number')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN pr_number INTEGER`);
+	}
+	if (!tableHasColumn(db, 'tasks', 'pr_created_at')) {
+		db.exec(`ALTER TABLE tasks ADD COLUMN pr_created_at INTEGER`);
+	}
 }
 
 function runMigrationRoomCleanup(db: BunDatabase): void {
