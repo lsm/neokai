@@ -20,9 +20,11 @@ describe('RoomRuntime leader tools', () => {
 	});
 
 	describe('handleLeaderTool', () => {
-		it('should handle complete_task after submit_for_review gate is satisfied', async () => {
+		it('should handle complete_task after human approval', async () => {
 			const { task, group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'general' });
+			// Both submittedForReview and approved must be true for human-approved flow
 			ctx.groupRepo.setSubmittedForReview(group.id, true);
+			ctx.groupRepo.setApproved(group.id, true);
 
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Health endpoint added',
@@ -33,6 +35,21 @@ describe('RoomRuntime leader tools', () => {
 
 			const updatedTask = await ctx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('completed');
+		});
+
+		it('should reject complete_task when submittedForReview=true but approved=false', async () => {
+			const { group } = await spawnAndRouteToLeader(ctx, { assignedAgent: 'coder' });
+			// Submitted for review but not yet approved by a human
+			ctx.groupRepo.setSubmittedForReview(group.id, true);
+
+			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
+				summary: 'Done',
+			});
+
+			const parsed = JSON.parse(result.content[0].text);
+			expect(parsed.success).toBe(false);
+			expect(parsed.error).toContain('Human approval');
+			expect(parsed.action_required).toContain('awaiting human review');
 		});
 
 		it('should handle fail_task', async () => {
@@ -71,7 +88,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(injectCalls[0].args[2]).toEqual({ deliveryMode: 'next_turn' });
 		});
 
-		it('should reject complete_task until submit_for_review is called', async () => {
+		it('should reject complete_task when not yet submitted for review or approved', async () => {
 			await createGoalAndTask(ctx);
 			ctx.runtime.start();
 			await ctx.runtime.tick();
@@ -79,14 +96,15 @@ describe('RoomRuntime leader tools', () => {
 			const groups = ctx.groupRepo.getActiveGroups('room-1');
 			const group = groups[0];
 
-			// Group is active but has not called submit_for_review yet.
+			// Group is active but has not submitted for review or been approved yet.
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Done',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('submit_for_review');
+			expect(parsed.error).toContain('Human approval');
+			expect(parsed.action_required).toContain('submit_for_review');
 		});
 
 		it('should reject for non-existent group', async () => {
@@ -148,7 +166,7 @@ describe('RoomRuntime leader tools', () => {
 			expect(updatedTask!.status).toBe('completed');
 		});
 
-		it('should reject complete_task for planning tasks without approved and without submit_for_review', async () => {
+		it('should reject complete_task for planning tasks without approved', async () => {
 			// Create a goal — tick() will auto-spawn a planning group
 			await ctx.goalManager.createGoal({
 				title: 'Build stock app',
@@ -168,14 +186,14 @@ describe('RoomRuntime leader tools', () => {
 				kind: 'idle',
 			});
 
-			// Leader calls complete_task — should fail (submit_for_review required for planners)
+			// Leader calls complete_task — should fail (human approval required for planners)
 			const result = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Plan done',
 			});
 
 			const parsed = JSON.parse(result.content[0].text);
 			expect(parsed.success).toBe(false);
-			expect(parsed.error).toContain('submit_for_review');
+			expect(parsed.error).toContain('Human approval');
 		});
 	});
 

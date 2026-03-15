@@ -146,6 +146,28 @@ describe('error-classifier', () => {
 			it('returns null for file-system errors', () => {
 				expect(classifyError('Error: ENOENT: no such file or directory')).toBeNull();
 			});
+
+			it('returns null when "API Error: NNN" appears mid-sentence (not at start of line)', () => {
+				expect(
+					classifyError('we now handle API Error: 400 from provider responses correctly')
+				).toBeNull();
+				expect(
+					classifyError('Fixed the issue where API Error: 422 was not being retried properly')
+				).toBeNull();
+			});
+
+			it('still classifies "API Error: NNN" when it is at the start of a line in multi-line output', () => {
+				const multiLineOutput = [
+					'Attempting to solve the task...',
+					'Running tests...',
+					'API Error: 400 {"error":{"message":"Invalid model: bad-model"}}',
+					'Exiting.',
+				].join('\n');
+				const result = classifyError(multiLineOutput);
+				expect(result).not.toBeNull();
+				expect(result!.class).toBe('terminal');
+				expect(result!.statusCode).toBe(400);
+			});
 		});
 
 		describe('reason field', () => {
