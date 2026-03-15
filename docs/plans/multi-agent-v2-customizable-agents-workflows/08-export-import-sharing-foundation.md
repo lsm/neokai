@@ -72,7 +72,13 @@ Define a standardized JSON format for exporting and importing custom agents and 
      rules: Array<{
        name: string;
        content: string;
-       appliesTo?: string[];
+       /**
+        * Step references in the export format use step **order indices** (0, 1, 2, ...),
+        * NOT step UUIDs. This is because step UUIDs are room-specific and stripped on export.
+        * The `exportWorkflow()` function remaps `appliesTo` from step IDs to order indices.
+        * The `importWorkflow()` function remaps order indices back to newly generated step IDs.
+        */
+       appliesTo?: number[];
      }>;
      tags: string[];
      config?: Record<string, unknown>;
@@ -93,7 +99,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 2. Create `packages/daemon/src/lib/room/data/export-format.ts`:
    - `exportAgent(agent: CustomAgent): ExportedAgent`
-   - `exportWorkflow(workflow: Workflow): ExportedWorkflow`
+   - `exportWorkflow(workflow: Workflow): ExportedWorkflow` — **must remap `rules[].appliesTo` from step UUIDs to step order indices** (build a `Map<stepId, order>` from the workflow steps, then replace each ID in `appliesTo` with its corresponding order index). This ensures rules survive the export/import round-trip since step UUIDs are regenerated on import.
    - `exportBundle(agents: CustomAgent[], workflows: Workflow[], name: string): ExportBundle`
    - Strip room-specific IDs and timestamps from exports
 
@@ -106,6 +112,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 4. Write unit tests:
    - Round-trip: export -> serialize -> deserialize -> validate
+   - **Rule appliesTo round-trip**: export a workflow with rules targeting specific steps -> verify `appliesTo` contains order indices (not UUIDs) in exported JSON -> import into new room -> verify rules target the correct new step IDs
    - Validation rejects malformed data
    - Room-specific fields (id, roomId, timestamps) are stripped on export
    - Version validation: accepts v1, rejects v2+, rejects missing version
@@ -146,9 +153,10 @@ Add RPC handlers for exporting and importing agents and workflows.
    - When `replace`: update existing agent/workflow
    - When `skip`: do not import
 
-3. Handle cross-references:
+3. Handle cross-references and ID remapping:
    - Workflows referencing custom agents: if the referenced agent is in the bundle, map the new ID after import
    - If the referenced agent is NOT in the bundle and not present in the target room, flag it in the preview as a warning (workflow step will reference a non-existent agent)
+   - **Step ID remapping for rules**: When importing a workflow, new step UUIDs are generated for each step. Remap `rules[].appliesTo` from order indices (in the export format) back to the newly generated step UUIDs using the `Map<order, newStepId>` built during step creation. This ensures rule-step associations survive the round-trip.
 
 4. Wire handlers in `app.ts`
 
@@ -157,7 +165,7 @@ Add RPC handlers for exporting and importing agents and workflows.
    - Import preview detects conflicts
    - Import preview surfaces gate validation errors (non-allowlisted quality_check commands, path traversal in custom gates)
    - Import with different conflict resolutions
-   - Cross-reference mapping works
+   - Cross-reference mapping works (agent ID remapping + step ID remapping for rules.appliesTo)
    - Missing cross-references are flagged as warnings
    - Error handling for invalid bundles
    - Version validation on import
