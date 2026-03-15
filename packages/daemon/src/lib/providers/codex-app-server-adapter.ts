@@ -63,7 +63,7 @@ export interface CodexAppServerAdapterConfig {
 
 /** Any message that can arrive from the server (discriminated via shape) */
 type AppServerIncoming =
-	| { id: number; method: string; params: unknown }
+	| { id: string | number; method: string; params: unknown }
 	| { method: string; params?: unknown }
 	| { id: number; result: unknown }
 	| { id: number; error: { message: string; code?: number } };
@@ -184,7 +184,7 @@ class AppServerConnection {
 	/** Registered notification handlers: method → sync handler */
 	private notificationHandlers = new Map<string, (params: unknown) => void>();
 
-	/** Background read loop — awaited on kill to drain cleanly */
+	/** Background read loop — resolves when stdout closes */
 	private readLoopPromise: Promise<void>;
 
 	private constructor(private readonly proc: PipedProc) {
@@ -258,6 +258,19 @@ class AppServerConnection {
 
 	async interruptTurn(threadId: string, turnId: string): Promise<void> {
 		await this.request<unknown>('turn/interrupt', { threadId, turnId });
+	}
+
+	// -------------------------------------------------------------------------
+	// Read loop completion signal
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Resolves when the read loop exits (stdout closed or error).
+	 * Callers can use this to unblock when the subprocess closes without sending
+	 * a `turn/completed` notification.
+	 */
+	get closed(): Promise<void> {
+		return this.readLoopPromise;
 	}
 
 	// -------------------------------------------------------------------------
@@ -346,22 +359,28 @@ class AppServerConnection {
 
 		if (hasMethod && hasId) {
 			// Server request — must respond
-			const serverReq = msg as { id: number; method: string; params: unknown };
+			const serverReq = msg as { id: string | number; method: string; params: unknown };
 			logger.debug(`AppServerConnection: server request method=${serverReq.method}`);
 			const handler = this.serverRequestHandlers.get(serverReq.method);
-			let result: unknown = {};
 			if (handler) {
 				try {
-					result = await handler(serverReq.params);
+					const result = await handler(serverReq.params);
+					this.write({ id: serverReq.id, result });
 				} catch (err) {
 					logger.error(`AppServerConnection: handler error for ${serverReq.method}:`, err);
+					const errMsg = err instanceof Error ? err.message : 'Internal handler error';
+					this.write({ id: serverReq.id, error: { code: -32603, message: errMsg } });
 				}
 			} else {
 				logger.debug(
 					`AppServerConnection: no handler for server request method=${serverReq.method}`
 				);
+				// No handler registered — send an error so the server isn't left waiting
+				this.write({
+					id: serverReq.id,
+					error: { code: -32601, message: `Method not found: ${serverReq.method}` },
+				});
 			}
-			this.write({ id: serverReq.id, result });
 		} else if (hasMethod) {
 			// Notification — no response needed
 			const notif = msg as { method: string; params?: unknown };
@@ -765,10 +784,34 @@ export async function* codexAppServerQueryGenerator(
 		});
 
 		// ------------------------------------------------------------------
+		// Guard against subprocess crash without turn/completed
+		// If stdout closes before the LLM sends turn/completed, push an error
+		// sentinel so the drain loop below is unblocked instead of hanging.
+		// ------------------------------------------------------------------
+
+		conn.closed.then(() => {
+			queue.push(new Error('AppServerConnection: subprocess closed unexpectedly'));
+		});
+
+		// ------------------------------------------------------------------
 		// Protocol handshake
 		// ------------------------------------------------------------------
 
-		await conn.initialize();
+		try {
+			await conn.initialize();
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : 'Failed to initialize codex app-server';
+			logger.error('Codex app-server: initialize failed:', err);
+			yield createResultMessage(
+				context.sessionId,
+				false,
+				Date.now() - startTime,
+				turnCount,
+				'',
+				msg
+			);
+			return;
+		}
 
 		// Yield system init before the turn begins
 		yield createSystemInitMessage(context.sessionId, options);
@@ -777,11 +820,41 @@ export async function* codexAppServerQueryGenerator(
 		// Start thread and turn
 		// ------------------------------------------------------------------
 
-		const threadId = await conn.startThread(config.model, options.cwd, options.tools);
+		let threadId: string;
+		try {
+			threadId = await conn.startThread(config.model, options.cwd, options.tools);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : 'Failed to start codex thread';
+			logger.error('Codex app-server: startThread failed:', err);
+			yield createResultMessage(
+				context.sessionId,
+				false,
+				Date.now() - startTime,
+				turnCount,
+				'',
+				msg
+			);
+			return;
+		}
 		currentThreadId = threadId;
 		logger.debug(`Codex app-server: thread started threadId=${threadId}`);
 
-		const turnId = await conn.startTurn(threadId, promptText);
+		let turnId: string;
+		try {
+			turnId = await conn.startTurn(threadId, promptText);
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : 'Failed to start codex turn';
+			logger.error('Codex app-server: startTurn failed:', err);
+			yield createResultMessage(
+				context.sessionId,
+				false,
+				Date.now() - startTime,
+				turnCount,
+				'',
+				msg
+			);
+			return;
+		}
 		currentTurnId = turnId;
 		logger.debug(`Codex app-server: turn started turnId=${turnId}`);
 
