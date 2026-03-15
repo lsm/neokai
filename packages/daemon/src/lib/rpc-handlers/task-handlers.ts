@@ -13,6 +13,7 @@
  * - task.getGroup - Get session group for a task
  * - task.getGroupMessages - Get messages for a session group
  * - task.sendHumanMessage - Send a human message to the active agent in a task group
+ * - task.updateDraft - Persist human input draft for a task (server-side, debounced by client)
  */
 
 import type { MessageHub, NeoTask, TaskPriority, TaskStatus } from '@neokai/shared';
@@ -188,9 +189,13 @@ export function setupTaskHandlers(
 			throw new Error(`Task not found: ${params.taskId}`);
 		}
 
+		// Normalize: treat empty/whitespace strings as null to keep storage consistent
+		// with the hook's restore check (`if (draft)` treats '' as falsy)
+		const draft = typeof params.draft === 'string' ? params.draft.trim() || null : null;
+
 		// Update input_draft directly via repository (lightweight, no status side effects)
 		const taskRepo = new TaskRepository(db.getDatabase());
-		taskRepo.updateTask(params.taskId, { inputDraft: params.draft ?? null });
+		taskRepo.updateTask(params.taskId, { inputDraft: draft });
 
 		return { success: true };
 	});
