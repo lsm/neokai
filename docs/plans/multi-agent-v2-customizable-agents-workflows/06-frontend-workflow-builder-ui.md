@@ -160,7 +160,7 @@ Add the rule editor to the workflow builder and integrate the entire workflow UI
    - Each rule has:
      - Name input
      - Content textarea (Markdown-friendly)
-     - "Applies to" multi-select of step names (empty = all steps)
+     - "Applies to" multi-select showing step display names but storing step **IDs** in `appliesTo` (IDs survive step renames; empty = all steps)
      - Remove button
    - Rules are stored as part of the workflow and saved together
 

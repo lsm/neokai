@@ -48,8 +48,15 @@ Add new shared types for custom agent definitions to `packages/shared/src/types/
 
 4. Export the new types from the shared package barrel exports
 
+5. **Define `KNOWN_TOOLS` constant** in `packages/shared/src/types/tools.ts` (new file):
+   - `export const KNOWN_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Task', 'TaskOutput', 'TaskStop'] as const;`
+   - `export type KnownTool = (typeof KNOWN_TOOLS)[number];`
+   - This is the **single source of truth** for the tool list, referenced by `CustomAgentManager` (Task 1.3) for validation and by `CustomAgentEditor` (Task 5.2) for the frontend tool picker
+   - Export from the shared package barrel
+
 **Acceptance criteria:**
 - Types are defined and exported from `@neokai/shared`
+- `KNOWN_TOOLS` constant is defined and exported as the single source of truth for tool names
 - Types include JSDoc documentation explaining each field and the role semantics (worker = specialized task executor, reviewer = produces review output for Leader to approve, orchestrator = reserved for future use)
 - `CustomAgent` has all fields needed for agent creation, configuration, and runtime use
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

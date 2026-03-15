@@ -50,16 +50,19 @@ Create the `WorkflowExecutor` class that manages the progression of a goal throu
 
 1. Create `packages/daemon/src/lib/room/runtime/workflow-executor.ts`:
    - `WorkflowExecutor` class with:
-     - Constructor takes: `workflow: Workflow`, `goalId: string`, `taskManager: TaskManager`, `customAgentManager: CustomAgentManager`, `workspacePath: string`
-     - `getCurrentStep(): WorkflowStep | null` -- returns the current active step based on goal/task state
+     - Constructor takes: `workflow: Workflow`, `goalId: string`, `currentStepIndex: number`, `taskManager: TaskManager`, `goalManager: GoalManager`, `customAgentManager: CustomAgentManager`, `workspacePath: string`
+     - `currentStepIndex` enables **restart rehydration**: when creating an executor from persisted state, pass the step index derived from the latest task's `current_workflow_step_id`. For new goals, pass `0`.
+     - `getCurrentStep(): WorkflowStep | null` -- returns `workflow.steps[currentStepIndex]`
      - `getNextStep(): WorkflowStep | null` -- returns the next step in sequence
      - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` -- evaluates the current step's exit gate
-     - `advance(): Promise<{ step: WorkflowStep; tasks: NeoTask[] }>` -- moves to the next step, creates tasks for the next agent
+     - `advance(): Promise<{ step: WorkflowStep; tasks: NeoTask[] }>` -- moves to the next step, increments `currentStepIndex`, creates tasks for the next agent, persists `current_workflow_step_id` on the new tasks
      - `isComplete(): boolean` -- returns true if all steps have been executed and gates passed
+   - **`GoalManager` dependency**: needed by `advance()` to read goal state (e.g., check goal is still active) and by `isComplete()` to verify goal status. If the executor only needs read access, `GoalRepository` can be used directly instead.
 
 2. Track workflow state on the goal:
    - Use `goals.workflow_id` (added in consolidated Migration B) to associate goals with workflows
    - Track current step via task metadata (latest task's `current_workflow_step_id`)
+   - The `currentStepIndex` in the executor is the in-memory representation; the persisted representation is `current_workflow_step_id` on the latest task for the goal
 
 3. Implement gate evaluation with security enforcement:
    - `evaluateGate(gate: WorkflowGate, context: GateContext): Promise<GateResult>`
@@ -111,31 +114,69 @@ Update `RoomRuntime` to resolve workflows for goals and spawn tasks using the `W
 
 **Subtasks:**
 
-1. Add `WorkflowManager` and `WorkflowExecutor` factory as dependencies in `RoomRuntimeConfig`
+1. Add `WorkflowManager`, `GoalManager`, and `WorkflowExecutor` factory as dependencies in `RoomRuntimeConfig`
 
-2. Add workflow resolution logic in the goal processing path:
+2. **Executor rehydration on runtime startup** (restart safety):
+   - When `RoomRuntime` initializes, query all in-progress goals that have a non-null `workflow_id`
+   - For each such goal, reconstruct a `WorkflowExecutor`:
+     - Load the `Workflow` from `WorkflowManager`
+     - Determine `currentStepIndex` from the latest task's `current_workflow_step_id` (find the step in the workflow by ID, get its `order` index)
+     - Create the executor with `new WorkflowExecutor(workflow, goalId, currentStepIndex, ...)`
+   - Populate the `Map<goalId, WorkflowExecutor>` with rehydrated executors
+   - **Without this**, any in-progress workflow goal will stall after a server restart (no executor in the map) or restart from step 1 (spawning duplicate tasks)
+
+3. Add workflow resolution logic in the goal processing path:
    - When a new goal is created or started, check if it has a `workflowId`
    - If no explicit `workflowId`, check room's default workflow
-   - If a workflow is found, create a `WorkflowExecutor` instance for the goal
-   - Store executors in a `Map<goalId, WorkflowExecutor>` on the runtime
+   - If a workflow is found, create a `WorkflowExecutor` instance for the goal with `currentStepIndex: 0`
+   - Store in the `Map<goalId, WorkflowExecutor>` on the runtime
 
-3. Update task creation for workflow goals:
-   - For the first step, create tasks assigned to the step's agent (using `customAgentId` for custom agents, `assignedAgent` for built-in)
-   - Set `task.workflowId` and `task.currentWorkflowStepId` on created tasks
+4. **Executor cleanup policy** (prevent memory leak):
+   - Remove executor from the map when:
+     - Goal completes (all steps done, goal marked complete)
+     - Goal fails (goes to `needs_attention` after gate failure)
+     - Goal is cancelled or archived
+   - Hook into existing goal state change handlers for cleanup
+   - Long-lived rooms with many processed goals must not accumulate stale executor entries
 
-4. Backward compatibility:
+5. **Task-type assignment and planning/execution integration for workflow steps:**
+
+   The existing `executeTick()` has a hard split between planning tasks and execution tasks:
+   - Planning: `getNextGoalForPlanning()` → `spawnPlanningGroup()` creates a task with `taskType: 'planning'`. The planner's `create_task` tool creates draft children with `taskType: 'coding'`. On completion, `promoteDraftTasksIfPlanning()` promotes drafts to pending.
+   - Execution: pending tasks with `taskType !== 'planning'` are picked up by the execution queue.
+
+   For workflow steps, the executor must integrate with this split:
+   - **Step with `agentRef: 'planner'` (builtin)**: Use the existing `spawnPlanningGroup()` path. Set `taskType: 'planning'` on the created task. Draft promotion still fires on completion. The planner's draft children inherit `workflowId` and `currentWorkflowStepId` from the parent planning task.
+   - **Step with `agentRef: 'coder'` or `agentRef: 'general'` (builtin)**: Create tasks with `taskType: 'coding'` and `status: 'pending'` directly. These enter the standard execution queue.
+   - **Step with custom agent (`agentRefType: 'custom'`)**: Create tasks with `taskType: 'coding'` and `customAgentId` set. Status: `pending`. The existing tick loop picks them up and resolves the custom agent (from Task 2.3).
+   - **Key invariant**: `advance()` must set the correct `taskType` based on the step's `agentRef`. A helper function `resolveTaskTypeForStep(step: WorkflowStep): 'planning' | 'coding'` maps step agent refs to task types.
+
+6. **Wire `seedDefaultWorkflow` call site** (from Task 3.5):
+   - In `room-manager.ts` room creation path, call `seedDefaultWorkflow()` for new rooms
+   - Idempotent: safe to call even if room already has a workflow
+
+7. Backward compatibility:
    - If no workflow is associated with a goal/room, use the existing hardcoded behavior (no behavior change)
    - The existing `taskType` and `assignedAgent` fields continue to work as before
    - **Explicit regression test**: verify that the entire existing flow (goal -> planner -> coder -> leader) works identically when no workflow is configured
 
-5. Write integration tests:
+8. Write integration tests:
    - Goal with workflow resolves to WorkflowExecutor
-   - First step tasks are created with correct agent assignment
+   - First step tasks are created with correct agent and task-type assignment
+   - Planning-step tasks use `spawnPlanningGroup()` path and draft promotion works
+   - Coding-step tasks are created as pending with `taskType: 'coding'`
+   - Custom-agent-step tasks are created with `customAgentId` set
+   - **Rehydration test**: simulate restart (clear executor map, reinitialize) and verify in-progress workflow goals resume from correct step
+   - **Cleanup test**: verify executor is removed from map after goal completion/failure/cancellation
    - Goals without workflows use existing behavior (regression test covering the full goal -> planner -> coder -> leader flow)
 
 **Acceptance criteria:**
 - Workflow resolution works for goals with explicit, room-default, and no workflows
-- Task creation uses the correct agent for the current workflow step
+- **Executors are rehydrated on runtime startup** — in-progress workflow goals resume from the correct step after restart
+- **Executors are cleaned up** — no stale entries accumulate in the map
+- Task creation uses the correct `taskType` based on workflow step agent ref (planning vs coding)
+- Planning-type workflow steps integrate with `spawnPlanningGroup()` and draft promotion
+- `seedDefaultWorkflow` is wired into room creation
 - Existing non-workflow goals are completely unaffected (comprehensive regression test)
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -164,7 +205,7 @@ Update the goal completion path in `RoomRuntime` to use `WorkflowExecutor` for g
 
 2. Inject workflow rules into agent system prompts:
    - When building the `WorkerConfig` for a workflow task, check the current step for associated rules
-   - Append applicable rules (filtered by `rule.appliesTo`) to the system prompt
+   - Append applicable rules (filtered by `rule.appliesTo` matching the current step's **ID**) to the system prompt
    - Rules with empty `appliesTo` are injected for all steps
 
 3. Write integration tests:
