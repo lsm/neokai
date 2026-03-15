@@ -70,6 +70,12 @@ interface TaskGroupMetadata {
 	waitingForQuestion?: boolean;
 	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
 	waitingSession?: 'worker' | 'leader' | null;
+	/**
+	 * Whether the worker used a bypass marker (RESEARCH_ONLY, VERIFICATION_COMPLETE, etc.)
+	 * to skip git/PR gates. When true, checkLeaderPrMerged fails open even with approved=true
+	 * because bypass tasks have no PR.
+	 */
+	workerBypassed?: boolean;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -126,6 +132,11 @@ export interface SessionGroup {
 	waitingForQuestion: boolean;
 	/** Which session is waiting for a question answer ('worker' | 'leader' | null) */
 	waitingSession: 'worker' | 'leader' | null;
+	/**
+	 * Whether the worker used a bypass marker to skip git/PR gates.
+	 * When true, checkLeaderPrMerged fails open even with approved=true (no PR exists).
+	 */
+	workerBypassed: boolean;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -469,6 +480,25 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set workerBypassed flag without version check.
+	 * Records that the worker used a bypass marker (RESEARCH_ONLY, etc.) to skip git/PR gates.
+	 * When set, checkLeaderPrMerged fails open even with approved=true (no PR exists).
+	 */
+	setWorkerBypassed(groupId: string, value: boolean): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, workerBypassed: value };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Set waitingForQuestion flag without version check.
 	 * When set, the group is paused waiting for a human answer to an agent question.
 	 */
@@ -710,6 +740,7 @@ export class SessionGroupRepository {
 			humanInterrupted: meta.humanInterrupted === true,
 			waitingForQuestion: meta.waitingForQuestion ?? false,
 			waitingSession: meta.waitingSession ?? null,
+			workerBypassed: meta.workerBypassed === true,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
