@@ -1377,8 +1377,8 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
 
-			// Step 3: complete_task succeeds (approved bypasses submit_for_review gate)
-			// Leader merges PR and completes directly
+			// Step 3: complete_task succeeds — state machine gate sees approved=true,
+			// runLeaderCompleteGate passes because git/gh is unavailable (fail-open).
 			const completeResult = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Implemented, reviewed, and merged',
 			});
@@ -2067,7 +2067,8 @@ describe('RoomRuntime flow', () => {
 			});
 			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 
-			// Leader can complete directly (approved bypasses submit_for_review gate)
+			// Leader can complete directly — state machine gate sees approved=true,
+			// runLeaderCompleteGate passes because git/gh is unavailable (fail-open)
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Code merged and deployed',
 			});
@@ -2104,17 +2105,17 @@ describe('RoomRuntime flow', () => {
 			expect(hookCtx.groupRepo.getGroup(group.id)!.submittedForReview).toBe(false);
 			expect(hookCtx.groupRepo.getGroup(group.id)!.approved).toBe(true);
 
-			// Leader attempts complete_task without merging (simulating merge failure)
+			// Leader attempts complete_task without merging (simulating merge failure).
 			// In a real scenario, the leader would try gh pr merge first and report the error.
 			// Here we test that the system remains in a consistent state.
-			// The leader can still call complete_task (approved bypasses gate),
-			// but in practice the leader would report the merge failure in its response.
+			// complete_task passes because: state machine gate sees approved=true, and
+			// runLeaderCompleteGate's checkLeaderPrMerged fails open (git/gh unavailable).
+			// The leader is responsible for accurately reporting what happened in the summary.
 			const result = await hookCtx.runtime.handleLeaderTool(group.id, 'complete_task', {
 				summary: 'Merge failed - needs manual intervention',
 			});
 
-			// Complete succeeds (approved bypasses the gate) - the leader is responsible
-			// for accurately reporting what happened in the summary
+			// Complete succeeds — gate passes gracefully (fail-open) since git/gh is unavailable
 			expect(JSON.parse(result.content[0].text).success).toBe(true);
 		});
 

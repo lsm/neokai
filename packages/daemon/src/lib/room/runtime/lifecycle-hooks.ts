@@ -90,7 +90,12 @@ export interface LeaderCompleteHookContext {
 	hasReviewers: boolean;
 	/** For planning tasks: how many draft tasks exist */
 	draftTaskCount?: number;
-	/** Whether a human has approved the task (plan or PR) */
+	/**
+	 * Whether a human has approved the task (plan or PR).
+	 * NOTE: runLeaderCompleteGate does not read this field — human approval is enforced
+	 * by the state machine gate in room-runtime.ts before this hook is reached.
+	 * The field is kept here for context/logging purposes only.
+	 */
 	approved?: boolean;
 }
 
