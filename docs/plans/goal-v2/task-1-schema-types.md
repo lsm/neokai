@@ -19,6 +19,8 @@ Add mission metadata columns to the existing `goals` table, create supporting ta
     target: number;
     current: number;
     unit?: string;
+    direction?: 'increase' | 'decrease'; // default: 'increase'
+    baseline?: number; // required for 'decrease' direction
   }
   ```
 - `MetricHistoryEntry`: `{ metricName: string; value: number; recordedAt: number }` -- unix timestamp, matches DB INTEGER
@@ -50,6 +52,7 @@ Add mission metadata columns to the existing `goals` table, create supporting ta
 
 - `id` (TEXT PK), `goal_id` (TEXT FK), `execution_number` (INTEGER NOT NULL), `started_at` (INTEGER), `completed_at` (INTEGER), `status` (TEXT), `result_summary` (TEXT), `task_ids` (TEXT/JSON), `planning_attempts` (INTEGER, default 0)
 - Unique constraint on `(goal_id, execution_number)`
+- Partial unique index on `(goal_id) WHERE status = 'running'` — DB-enforced at-most-one-running-execution invariant
 - `planning_attempts` is per-execution for recurring missions (see [Task 3](./task-3-recurring.md) per-execution storage model)
 
 ### 5. Update `GoalRepository` (keep class name)
