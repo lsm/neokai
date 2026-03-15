@@ -136,8 +136,8 @@ Add RPC handlers for exporting and importing agents and workflows.
    - `export.agents { roomId, agentIds? }` -> returns `{ bundle: ExportBundle }` (all or specific agents)
    - `export.workflows { roomId, workflowIds? }` -> returns `{ bundle: ExportBundle }` (all or specific workflows)
    - `export.bundle { roomId, agentIds?, workflowIds? }` -> returns full bundle
-   - `import.preview { bundle }` -> returns `{ agents: ImportPreview[], workflows: ImportPreview[] }` (dry run showing what will be created, with conflict detection)
-   - `import.execute { roomId, bundle, conflictResolution }` -> creates agents/workflows in target room
+   - `import.preview { bundle, roomId }` -> returns `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors: ValidationError[] }` (dry run showing what will be created, with conflict detection AND full `WorkflowManager` validation including gate security checks — non-allowlisted commands, path traversal, etc. Surface validation errors in the preview so users see them BEFORE committing to import)
+   - `import.execute { roomId, bundle, conflictResolution }` -> creates agents/workflows in target room (re-validates on execute as well)
 
 2. Implement conflict resolution:
    - `ImportPreview` includes: `name`, `action: 'create' | 'conflict'`, `existingId?: string`
@@ -155,6 +155,7 @@ Add RPC handlers for exporting and importing agents and workflows.
 5. Write unit tests:
    - Export includes correct data
    - Import preview detects conflicts
+   - Import preview surfaces gate validation errors (non-allowlisted quality_check commands, path traversal in custom gates)
    - Import with different conflict resolutions
    - Cross-reference mapping works
    - Missing cross-references are flagged as warnings
@@ -163,7 +164,8 @@ Add RPC handlers for exporting and importing agents and workflows.
 
 **Acceptance criteria:**
 - Export produces valid JSON bundles
-- Import preview accurately detects conflicts and missing cross-references
+- Import preview accurately detects conflicts, missing cross-references, AND gate validation errors
+- Gate security validation runs during preview (not deferred to execute)
 - Conflict resolution options all work correctly
 - Cross-references between agents and workflows are handled
 - Unit tests pass

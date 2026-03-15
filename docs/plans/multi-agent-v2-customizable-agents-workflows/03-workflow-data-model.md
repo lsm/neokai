@@ -99,7 +99,11 @@ Add new shared types for workflow definitions. A workflow is a sequence of steps
      name: string;
      /** Rule content -- injected into agent system prompts */
      content: string;
-     /** Which steps this rule applies to (empty = all steps) */
+     /**
+      * Which steps this rule applies to, by step **ID** (not step name).
+      * Using IDs ensures rules survive step renames in the workflow editor.
+      * Empty array = applies to all steps.
+      */
      appliesTo?: string[];
    }
 
@@ -317,15 +321,15 @@ Add RPC handlers for frontend access to workflow CRUD operations. Register new e
 
 ---
 
-### Task 3.5: Built-in Workflow Templates
+### Task 3.5: Built-in Workflow Templates (Definitions Only)
 
 **Agent:** coder
 **Priority:** normal
-**Depends on:** Task 3.3, Task 4.2 (deferred seeding until runtime is ready)
+**Depends on:** Task 3.3
 
 **Description:**
 
-Create built-in workflow templates that mirror the existing hardcoded behavior. These serve as defaults and examples for users building custom workflows. **Seeding is deferred until after M4** to avoid creating workflow records before the runtime can execute them.
+Create built-in workflow template definitions that mirror the existing hardcoded behavior. These serve as defaults and examples for users building custom workflows. **This task only defines templates and the seeding utility function.** The actual call site that seeds workflows during room creation is wired in Task 4.2a (M4), avoiding a circular M3 -> M4 dependency.
 
 **Subtasks:**
 
@@ -340,22 +344,19 @@ Create built-in workflow templates that mirror the existing hardcoded behavior. 
 
 3. Add a `getBuiltInWorkflows(): Workflow[]` export function that returns template definitions (without room-specific IDs)
 
-4. Create a `seedDefaultWorkflow(roomId: string, workflowManager: WorkflowManager): Promise<void>` function:
+4. Create a `seedDefaultWorkflow(roomId: string, workflowManager: WorkflowManager): Promise<void>` utility function:
    - Idempotent: checks if room already has a default workflow before seeding
    - Only seeds `CODING_WORKFLOW` as the default
-   - Called from room creation path in `room-manager.ts` ONLY when M4 runtime is available
-   - Does NOT run on server restart for existing rooms (only on new room creation)
+   - **Not wired into any call site in this task** — the call site in `room-manager.ts` is added in Task 4.2a after the runtime can execute workflows
 
 5. Write unit tests:
    - Verify template structure (correct steps, valid agent refs, valid gates)
    - Verify all agent references are valid built-in roles (no 'leader')
-   - Verify idempotent seeding (calling twice does not create duplicates)
-   - Verify existing rooms without workflows are unaffected
+   - Verify idempotent seeding logic (calling `seedDefaultWorkflow` twice does not create duplicates)
 
 **Acceptance criteria:**
 - Three built-in workflow templates are defined
 - Templates mirror existing runtime behavior accurately (Leader is implicit, not a step)
-- Seeding is idempotent and only applies to new rooms
-- Existing rooms are unaffected (no migration-time seeding)
+- `seedDefaultWorkflow` utility is implemented and tested but NOT wired into room creation (that's Task 4.2a)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

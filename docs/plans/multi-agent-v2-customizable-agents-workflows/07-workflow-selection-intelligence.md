@@ -35,7 +35,7 @@ Update the room agent tools to support workflow selection and assignment when cr
    - Update `rowToGoal()` mapping function to include `workflowId` from the `workflow_id` column
    - Update all SQL INSERT/UPDATE statements for `goals` table to read/write `workflow_id`
    - Update `CreateGoalParams` and `UpdateGoalParams` to include `workflowId?: string`
-   - Add validation in `GoalManager`: if `workflowId` is provided, verify the workflow exists and belongs to the same room
+   - Add validation in `GoalManager`: if `workflowId` is provided, verify the workflow exists and belongs to the same room. **This validation applies to external callers only** (RPC handlers, room agent tools). The `WorkflowExecutor` (M4) accesses `GoalManager`/`GoalRepository` directly for internal state updates (e.g., reading goal status during step advancement) and should NOT re-validate workflows it already loaded — this avoids redundant DB round-trips in the hot path. Provide a low-level `updateGoalWorkflowStep(goalId, stepId)` method that bypasses workflow existence validation for internal use.
 
 2. Update `create_goal` tool in `packages/daemon/src/lib/room/tools/room-agent-tools.ts`:
    - Add optional `workflowId` parameter
