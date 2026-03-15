@@ -178,8 +178,8 @@ export function setupTaskHandlers(
 			throw new Error('Task ID is required');
 		}
 
-		if (typeof params.draft === 'string' && params.draft.length > 100_000) {
-			throw new Error('Draft is too long (max 100,000 characters)');
+		if (typeof params.draft === 'string' && params.draft.length > 200_000) {
+			throw new Error('Draft is too long (max 200,000 characters)');
 		}
 
 		// Verify the task belongs to this room

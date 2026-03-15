@@ -3,7 +3,7 @@
  *
  * Tests for input draft persistence via task.updateDraft RPC:
  * - Successful draft save and retrieval via task.get
- * - Validation error when draft is too long (> 100,000 chars)
+ * - Validation error when draft is too long (> 200,000 chars)
  * - Error when task doesn't exist
  * - Error when task doesn't belong to the room
  */
@@ -126,11 +126,11 @@ describe('Task Draft RPC Handlers', () => {
 			expect(fetchedTask.inputDraft == null).toBe(true);
 		});
 
-		test('should accept draft at max length (100,000 chars)', async () => {
+		test('should accept draft at max length (200,000 chars)', async () => {
 			const roomId = await createRoom('draft-max-length');
 			const task = await createTask(roomId, 'Test task for max length');
 
-			const maxDraft = 'a'.repeat(100_000);
+			const maxDraft = 'a'.repeat(200_000);
 
 			const result = (await daemon.messageHub.request('task.updateDraft', {
 				roomId,
@@ -146,7 +146,7 @@ describe('Task Draft RPC Handlers', () => {
 	});
 
 	describe('task.updateDraft — validation errors', () => {
-		test('should reject draft longer than 100,000 characters', async () => {
+		test('should reject draft longer than 200,000 characters', async () => {
 			const roomId = await createRoom('draft-too-long');
 			const task = await createTask(roomId, 'Test task for too long draft');
 
@@ -158,7 +158,7 @@ describe('Task Draft RPC Handlers', () => {
 					taskId: task.id,
 					draft: tooLongDraft,
 				})
-			).rejects.toThrow('Draft is too long (max 100,000 characters)');
+			).rejects.toThrow('Draft is too long (max 200,000 characters)');
 		});
 
 		test('should reject when roomId is missing', async () => {

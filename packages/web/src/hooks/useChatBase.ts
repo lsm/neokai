@@ -127,7 +127,7 @@ export function useChatBase<T = ChatMessage>(options: UseChatBaseOptions<T>): Us
 		persistDraft = false,
 		loadDraft,
 		saveDraft,
-		maxChars = 100000,
+		maxChars = 200000,
 		onValidationError,
 	} = options;
 
