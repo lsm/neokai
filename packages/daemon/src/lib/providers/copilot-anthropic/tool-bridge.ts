@@ -59,8 +59,8 @@ export class ToolBridgeRegistry {
 	private activeWriter: AnthropicStreamWriter | null = null;
 	private activeRes: ServerResponse | null = null;
 
-	/** Callback invoked when a tool_use block has been emitted (and response ended). */
-	private onToolUseEmitted: ((toolCallId: string) => void) | null = null;
+	/** Callback invoked when all tool_use blocks for one turn have been emitted. */
+	private onToolUseEmitted: ((toolCallIds: string[]) => void) | null = null;
 
 	/** Callback invoked when a pending tool call ID is registered. */
 	private onPendingToolCall: ((toolCallId: string) => void) | null = null;
@@ -101,8 +101,8 @@ export class ToolBridgeRegistry {
 	// Callbacks used by the streaming loop
 	// ---------------------------------------------------------------------------
 
-	/** Register a callback to be notified when a tool_use is emitted (response ended). */
-	setOnToolUseEmitted(cb: (toolCallId: string) => void): void {
+	/** Register a callback to be notified when all tool_use blocks for one turn have been emitted. */
+	setOnToolUseEmitted(cb: (toolCallIds: string[]) => void): void {
 		this.onToolUseEmitted = cb;
 	}
 
@@ -201,9 +201,8 @@ export class ToolBridgeRegistry {
 		}
 		writer.sendToolUseEpilogue(res);
 
-		// Notify the streaming loop that the response has been ended.
-		// Any emitted tool call ID routes back to this session; use the first.
-		this.onToolUseEmitted?.(emissions[0].toolCallId);
+		// Notify the streaming loop with ALL emitted tool call IDs for this turn.
+		this.onToolUseEmitted?.(emissions.map((e) => e.toolCallId));
 	}
 
 	// ---------------------------------------------------------------------------
@@ -226,8 +225,14 @@ export class ToolBridgeRegistry {
 
 	/**
 	 * Reject all pending tool handlers (called on session error or release).
+	 *
+	 * Also clears the pending emissions buffer and cancels the scheduled
+	 * microtask flush, preventing stale SSE writes to a closed response.
 	 */
 	rejectAll(err: Error): void {
+		this.pendingEmissions = [];
+		this.flushScheduled = false;
+		this.clearActiveResponse();
 		for (const [, p] of this.pending) {
 			clearTimeout(p.timer);
 			p.reject(err);

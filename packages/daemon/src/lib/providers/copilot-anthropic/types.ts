@@ -30,6 +30,8 @@ export interface ToolResultBlock {
 	type: 'tool_result';
 	tool_use_id: string;
 	content?: string | TextBlock[];
+	/** When `true` the tool call failed; the model should be informed. */
+	is_error?: boolean;
 }
 
 export type ContentBlock = TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock;

@@ -47,8 +47,15 @@ export const STREAMING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 export type StreamingOutcome =
 	/** Session done — session.disconnect() was called. */
 	| { kind: 'completed' }
-	/** Tool-use emitted — session alive, waiting for tool_result. */
-	| { kind: 'tool_use'; toolCallId: string };
+	/**
+	 * Tool-use emitted — session alive, waiting for tool_result.
+	 *
+	 * `toolCallIds` contains ALL tool call IDs emitted in this turn.  For
+	 * single-tool responses it has one element; for parallel tool calls it has
+	 * multiple.  The `ConversationManager` routes the next request by any of
+	 * these IDs — the caller does not need to enumerate them.
+	 */
+	| { kind: 'tool_use'; toolCallIds: string[] };
 
 // ---------------------------------------------------------------------------
 // Shared streaming core
@@ -105,14 +112,14 @@ function streamSession(
 		resolve({ kind: 'completed' });
 	}
 
-	function finishToolUse(toolCallId: string): void {
+	function finishToolUse(toolCallIds: string[]): void {
 		if (sessionDone) return;
 		// Mark done so the req.on('close') handler does not abort the session.
 		sessionDone = true;
 		clearTimeout(timeoutHandle);
 		unsubscribe();
 		// Do NOT disconnect — session is still alive waiting for tool_result.
-		resolve({ kind: 'tool_use', toolCallId });
+		resolve({ kind: 'tool_use', toolCallIds });
 	}
 
 	// Set active response on registry so tool handlers can write SSE.
@@ -190,6 +197,12 @@ function streamSession(
 	// original writer state (e.g. when session.send() rejects mid-stream).
 	// Guard with sessionDone: if session.idle already fired and ended the
 	// response before session.send() rejects, writing again would error.
+	//
+	// Convention: startFn MUST call finishCompleted() immediately after
+	// writeFailed() in the same synchronous execution unit.  writeFailed()
+	// intentionally does NOT set sessionDone — finishCompleted() does the
+	// full teardown.  Both calls happen synchronously so no async event can
+	// fire between them.
 	startFn(finishCompleted, () => {
 		if (!sessionDone) {
 			writer.sendFailed(res);

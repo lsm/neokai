@@ -100,15 +100,15 @@ describe('ToolBridgeRegistry', () => {
 		writer.start(res, 'model');
 		reg.setActiveResponse(writer, res);
 
-		let emittedId: string | null = null;
-		reg.setOnToolUseEmitted((id) => {
-			emittedId = id;
+		let emittedIds: string[] | null = null;
+		reg.setOnToolUseEmitted((ids) => {
+			emittedIds = ids;
 		});
 
 		const promise = reg.emitToolUseAndWait('tc_x', 'myTool', {});
 		// onToolUseEmitted fires inside the microtask flush — await a tick first.
 		await Promise.resolve();
-		expect(emittedId).toBe('tc_x');
+		expect(emittedIds).toEqual(['tc_x']);
 
 		reg.resolveToolResult('tc_x', 'done');
 		await promise;
@@ -121,9 +121,9 @@ describe('ToolBridgeRegistry', () => {
 		writer.start(res, 'model');
 		reg.setActiveResponse(writer, res);
 
-		let emittedId: string | null = null;
-		reg.setOnToolUseEmitted((id) => {
-			emittedId = id;
+		let emittedIds: string[] | null = null;
+		reg.setOnToolUseEmitted((ids) => {
+			emittedIds = ids;
 		});
 
 		// Simulate two parallel tool handlers calling emitToolUseAndWait concurrently.
@@ -134,13 +134,13 @@ describe('ToolBridgeRegistry', () => {
 		expect(reg.hasPending()).toBe(true);
 		expect(reg.pendingIds()).toContain('tc_1');
 		expect(reg.pendingIds()).toContain('tc_2');
-		expect(emittedId).toBeNull();
+		expect(emittedIds).toBeNull();
 
 		// Allow microtask flush to run.
 		await Promise.resolve();
 
-		// After flush: onToolUseEmitted fired with the first tool call ID.
-		expect(emittedId).toBe('tc_1');
+		// After flush: onToolUseEmitted fired with all tool call IDs.
+		expect(emittedIds).toEqual(['tc_1', 'tc_2']);
 
 		// Both tool_use blocks were written to the same response.
 		const output = written.join('');

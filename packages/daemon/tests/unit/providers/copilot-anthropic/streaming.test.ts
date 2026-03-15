@@ -190,14 +190,14 @@ describe('runSessionStreaming', () => {
 		// streamSession calls registry.setOnToolUseEmitted(finishToolUse).
 		// Trigger finishToolUse directly via the stored callback.
 		const onToolUseEmitted = (
-			registry as unknown as { onToolUseEmitted: ((id: string) => void) | null }
+			registry as unknown as { onToolUseEmitted: ((ids: string[]) => void) | null }
 		).onToolUseEmitted;
 		expect(onToolUseEmitted).not.toBeNull();
-		onToolUseEmitted!('tc_1');
+		onToolUseEmitted!(['tc_1']);
 
 		const outcome = await p;
 		expect(outcome.kind).toBe('tool_use');
-		expect((outcome as { kind: 'tool_use'; toolCallId: string }).toolCallId).toBe('tc_1');
+		expect((outcome as { kind: 'tool_use'; toolCallIds: string[] }).toolCallIds).toEqual(['tc_1']);
 		// Session must NOT be disconnected for tool_use outcome
 		expect(session.disconnectCalled).toBe(false);
 	});

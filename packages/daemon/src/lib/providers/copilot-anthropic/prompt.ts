@@ -28,7 +28,8 @@ function formatBlocks(blocks: ContentBlock[], role: 'user' | 'assistant', parts:
 			parts.push(`[Assistant called tool ${block.name} with args: ${JSON.stringify(block.input)}]`);
 		} else if (block.type === 'tool_result') {
 			const r = block as ToolResultBlock;
-			parts.push(`[Tool result for ${r.tool_use_id}]: ${extractToolResultText(r.content)}`);
+			const prefix = r.is_error ? '[Tool error for' : '[Tool result for';
+			parts.push(`${prefix} ${r.tool_use_id}]: ${extractToolResultText(r.content)}`);
 		}
 	}
 }
