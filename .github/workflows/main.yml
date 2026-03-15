@@ -275,10 +275,6 @@ jobs:
         if: matrix.module == 'providers-anthropic-to-codex-bridge' || matrix.module == 'providers-openai'
         run: npm install -g @openai/codex
 
-      - name: Install GitHub Copilot CLI
-        if: matrix.module == 'providers-copilot-anthropic'
-        run: bun install -g @github/copilot
-
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}

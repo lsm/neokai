@@ -146,8 +146,6 @@ export class CopilotAnthropicProvider implements Provider {
 		vision: false,
 	};
 
-	/** Cached path to the `copilot` binary, or null if not found */
-	private copilotPathCache: string | null | undefined = undefined;
 	/** Singleton CopilotClient, created lazily */
 	private clientCache: CopilotClient | undefined = undefined;
 	/** Singleton embedded server, started lazily */
@@ -162,9 +160,8 @@ export class CopilotAnthropicProvider implements Provider {
 	) {}
 
 	async isAvailable(): Promise<boolean> {
-		const path = await this.findCopilotCli();
-		if (!path) return false;
-
+		// The @github/copilot CLI ships as an npm dependency of @github/copilot-sdk
+		// and is always present after `bun install` — no system-wide install needed.
 		if (this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN || this.env.GITHUB_TOKEN) {
 			return true;
 		}
@@ -261,14 +258,6 @@ export class CopilotAnthropicProvider implements Provider {
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-		const path = await this.findCopilotCli();
-		if (!path) {
-			return {
-				isAuthenticated: false,
-				error: 'GitHub Copilot CLI not installed. Run: gh extension install github/copilot',
-			};
-		}
-
 		if (this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN || this.env.GITHUB_TOKEN) {
 			return { isAuthenticated: true, needsRefresh: false };
 		}
@@ -310,30 +299,10 @@ export class CopilotAnthropicProvider implements Provider {
 	// ---------------------------------------------------------------------------
 
 	private async createServer(): Promise<EmbeddedServer> {
-		const cliPath = await this.findCopilotCli();
-		if (!cliPath) {
-			throw new Error('GitHub Copilot CLI not found — cannot start embedded server');
-		}
-		const client = this.getOrCreateClient(cliPath);
+		const client = this.getOrCreateClient();
 		const server = await startEmbeddedServer(client, this.cwd);
 		logger.debug(`Embedded Anthropic server started at ${server.url}`);
 		return server;
-	}
-
-	private async findCopilotCli(): Promise<string | null> {
-		if (this.copilotPathCache !== undefined) return this.copilotPathCache;
-
-		try {
-			const cmd = process.platform === 'win32' ? 'where' : 'which';
-			const { stdout } = await execFileAsync(cmd, ['copilot']);
-			const found = stdout.trim().split('\n')[0];
-			this.copilotPathCache = found || null;
-		} catch {
-			this.copilotPathCache = null;
-		}
-
-		logger.debug(`Copilot CLI path: ${this.copilotPathCache ?? 'not found'}`);
-		return this.copilotPathCache;
 	}
 
 	private async isGhAuthenticated(): Promise<boolean> {
@@ -349,15 +318,18 @@ export class CopilotAnthropicProvider implements Provider {
 		return this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN || this.env.GITHUB_TOKEN || undefined;
 	}
 
-	private getOrCreateClient(cliPath: string): CopilotClient {
+	private getOrCreateClient(): CopilotClient {
 		if (this.clientCache === undefined) {
+			// No cliPath — CopilotClient defaults to getBundledCliPath() which
+			// resolves the @github/copilot CLI from node_modules automatically.
+			// @github/copilot ships as a runtime dependency of @github/copilot-sdk
+			// so it is always present after `bun install`.
 			this.clientCache = new CopilotClient({
-				cliPath,
 				useStdio: true,
 				logLevel: 'error',
 				githubToken: this.resolveGitHubToken(),
 			});
-			logger.debug(`Created CopilotClient with cliPath=${cliPath}`);
+			logger.debug('Created CopilotClient (bundled CLI path)');
 		}
 		return this.clientCache;
 	}

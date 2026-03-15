@@ -99,47 +99,40 @@ describe('CopilotAnthropicProvider', () => {
 	});
 
 	describe('isAvailable', () => {
-		it('returns false when copilot binary not found and no token', async () => {
+		it('returns false when no token and gh auth fails', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', {});
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				null as never
-			);
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'isGhAuthenticated' as never
+			).mockResolvedValue(false as never);
 			expect(await p.isAvailable()).toBe(false);
 		});
 
-		it('returns true when COPILOT_GITHUB_TOKEN is set and binary found', async () => {
+		it('returns true when COPILOT_GITHUB_TOKEN is set', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				'/usr/local/bin/copilot' as never
-			);
 			expect(await p.isAvailable()).toBe(true);
 		});
 
-		it('returns true when GH_TOKEN is set and binary found', async () => {
+		it('returns true when GH_TOKEN is set', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', { GH_TOKEN: 'tok' });
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				'/usr/local/bin/copilot' as never
-			);
 			expect(await p.isAvailable()).toBe(true);
 		});
 	});
 
 	describe('getAuthStatus', () => {
-		it('reports not authenticated when binary not found', async () => {
+		it('reports not authenticated when no token and gh auth fails', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', {});
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				null as never
-			);
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'isGhAuthenticated' as never
+			).mockResolvedValue(false as never);
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(false);
-			expect(status.error).toContain('not installed');
+			expect(status.error).toContain('COPILOT_GITHUB_TOKEN');
 		});
 
 		it('reports authenticated when token env var is set', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', { GITHUB_TOKEN: 'tok' });
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				'/usr/local/bin/copilot' as never
-			);
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
 			expect(status.needsRefresh).toBe(false);
@@ -224,9 +217,10 @@ describe('CopilotAnthropicProvider', () => {
 
 		it('returns empty array when provider is not available', async () => {
 			const p = new CopilotAnthropicProvider('/tmp', {});
-			spyOn(p as unknown as Record<string, unknown>, 'findCopilotCli' as never).mockResolvedValue(
-				null as never
-			);
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'isGhAuthenticated' as never
+			).mockResolvedValue(false as never);
 			const models = await p.getModels();
 			expect(models).toEqual([]);
 		});
