@@ -199,9 +199,13 @@ async function handleMessages(
 					conv.registry,
 					toolResults,
 					() => {
-						// Release the conversation only when streaming is truly done.
-						// If another tool_use follows the onDone fires after that next
-						// tool_use outcome resolves, so we check hasPending first.
+						// Intentionally empty: no extra action is needed when the
+						// resumed session finishes.  If the model emits another
+						// tool_use, setOnPendingToolCall already registered the new
+						// tool call ID in the registry before onDone fires, so the
+						// next HTTP request will route correctly without any help here.
+						// Cleanup (cleanupConversation / releaseConversation) is handled
+						// below based on the StreamingOutcome kind.
 					}
 				);
 				if (outcome.kind === 'completed') {
