@@ -147,12 +147,6 @@ describe('CopilotSdkProvider', () => {
 	});
 
 	describe('ownsModel', () => {
-		it('should own SDK-exclusive model IDs', () => {
-			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
-			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(true);
-			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
-		});
-
 		it('should own all copilot-sdk-* aliases', () => {
 			expect(provider.ownsModel('copilot-sdk-opus')).toBe(true);
 			expect(provider.ownsModel('copilot-sdk-sonnet')).toBe(true);
@@ -161,10 +155,14 @@ describe('CopilotSdkProvider', () => {
 			expect(provider.ownsModel('copilot-sdk-mini')).toBe(true);
 		});
 
-		it('should NOT own shared model IDs to avoid shadowing other providers', () => {
-			// These are also claimed by GitHubCopilotProvider and CopilotCliProvider
+		it('should NOT own any bare model IDs shared with other providers', () => {
+			// Claude IDs: also claimed by GitHubCopilotProvider and CopilotCliProvider
 			expect(provider.ownsModel('claude-opus-4.6')).toBe(false);
 			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(false);
+			// Non-Anthropic IDs: also claimed by CopilotCliProvider (registered first)
+			expect(provider.ownsModel('gpt-5.3-codex')).toBe(false);
+			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(false);
+			expect(provider.ownsModel('gpt-5-mini')).toBe(false);
 		});
 
 		it('should not own copilot-cli-* aliases (those belong to CopilotCliProvider)', () => {
@@ -493,20 +491,6 @@ describe('copilotSdkQueryGenerator (mock session events)', () => {
 	it('should yield error result when session.error fires', async () => {
 		const session = new MockCopilotSession();
 
-		session.send = async (opts: unknown): Promise<string> => {
-			const result = await (
-				session as unknown as { send: (o: unknown) => Promise<string> }
-			).send.call(new MockCopilotSession(), opts);
-			queueMicrotask(() => {
-				session.emit('session.error', {
-					errorType: 'authentication',
-					message: 'Token expired',
-				});
-			});
-			return result;
-		};
-
-		// Re-implement send without calling original to avoid recursion
 		session.send = async (_opts: unknown): Promise<string> => {
 			queueMicrotask(() => {
 				session.emit('session.error', {
