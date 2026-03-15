@@ -95,7 +95,7 @@ const toolSessions = new Map<
 >();
 
 function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
-	return Bun.serve({
+	const bunServer = Bun.serve({
 		port: 0,
 		async fetch(req: Request): Promise<Response> {
 			const url = new URL(req.url);
@@ -235,7 +235,21 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 			});
 			return new Response(stream, { headers: sseHeaders });
 		},
-	}) as unknown as BridgeServer;
+	});
+
+	// Return a proper BridgeServer whose stop() mirrors the production server:
+	// clear TTL timers, kill suspended sessions, then stop the HTTP listener.
+	return {
+		port: bunServer.port,
+		stop(): void {
+			for (const [callId, stored] of toolSessions) {
+				clearTimeout(stored.cleanupTimer);
+				stored.session.kill();
+				toolSessions.delete(callId);
+			}
+			bunServer.stop();
+		},
+	} as BridgeServer;
 }
 
 // ---------------------------------------------------------------------------
@@ -567,5 +581,52 @@ describe('Bridge HTTP server', () => {
 		} finally {
 			ttlServer.stop();
 		}
+	});
+
+	// -------------------------------------------------------------------------
+	// stop() cleanup — suspended sessions killed (regression: issue #3b)
+	// -------------------------------------------------------------------------
+
+	it('stop() kills suspended tool sessions and clears their TTL timers', async () => {
+		let killCalled = false;
+
+		mockSessionFactory = () => {
+			const sess = new MockBridgeSession([
+				{
+					type: 'tool_call',
+					callId: 'call-stop-cleanup',
+					toolName: 'bash',
+					toolInput: { command: 'ls' },
+					provideResult: (_text: string) => {},
+				},
+			]);
+			sess.kill = () => {
+				killCalled = true;
+			};
+			return sess;
+		};
+
+		// Send a request that suspends on a tool call
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'ls' }],
+				stream: true,
+			}),
+		});
+		await readSSEEvents(resp.body);
+		expect(toolSessions.has('call-stop-cleanup')).toBe(true);
+
+		// stop() should clean up the suspended session immediately
+		server.stop();
+
+		expect(toolSessions.has('call-stop-cleanup')).toBe(false);
+		expect(killCalled).toBe(true);
+
+		// Prevent afterEach from calling stop() again on an already-stopped server
+		// by replacing server with a no-op
+		server = { port: 0, stop: () => {} } as BridgeServer & { port: number };
 	});
 });

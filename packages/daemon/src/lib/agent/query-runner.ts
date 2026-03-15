@@ -199,7 +199,9 @@ export class QueryRunner {
 			if (!provider?.createQuery) {
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId);
+				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, {
+					workspacePath: session.workspacePath,
+				});
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 

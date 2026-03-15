@@ -288,6 +288,15 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 	return {
 		port,
 		stop(): void {
+			// Clean up every suspended tool session before stopping the HTTP server.
+			// For each entry: cancel the TTL timer (so it doesn't fire after cleanup)
+			// and kill the underlying codex app-server subprocess.
+			for (const [callId, stored] of toolSessions) {
+				clearTimeout(stored.cleanupTimer);
+				stored.session.kill();
+				toolSessions.delete(callId);
+				logger.debug(`codex-bridge: cleaned up suspended session callId=${callId} on stop`);
+			}
 			server.stop();
 		},
 	};

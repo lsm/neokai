@@ -9,6 +9,11 @@
  * tool calls via Dynamic Tools (experimentalApi: true) and forwards them to
  * the Anthropic SDK as `tool_use` content blocks, completing the round-trip
  * when the SDK sends back `tool_result` blocks.
+ *
+ * Workspace isolation: each unique workspace path gets its own bridge server
+ * so that Codex is always rooted at the correct directory.  The bridge server
+ * is created lazily on first use and reused for subsequent turns in the same
+ * workspace.
  */
 
 import type {
@@ -17,6 +22,7 @@ import type {
 	ProviderSdkConfig,
 	ProviderSessionConfig,
 	ModelTier,
+	ProviderAuthStatusInfo,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
 import { type BridgeServer, createBridgeServer } from './codex-anthropic-bridge/server.js';
@@ -86,10 +92,38 @@ export class CodexBridgeProvider implements Provider {
 		vision: false,
 	};
 
-	private bridgeServer: BridgeServer | null = null;
+	/** Per-workspace bridge servers — keyed by absolute workspace path. */
+	private readonly bridgeServers = new Map<string, BridgeServer>();
 
 	isAvailable(): boolean {
 		return !!((process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY) && findCodexCli());
+	}
+
+	/**
+	 * Return authentication status for the CodexBridgeProvider.
+	 *
+	 * The provider requires one of OPENAI_API_KEY / CODEX_API_KEY and the
+	 * `codex` binary to be present on PATH.  Unlike Anthropic or GLM, it does
+	 * NOT require Anthropic credentials, so QueryRunner's fallback Anthropic/GLM
+	 * check must not fire for this provider — implementing getAuthStatus() here
+	 * causes QueryRunner to use this method instead of the fallback.
+	 */
+	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
+		const hasKey = !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY);
+		if (!hasKey) {
+			return {
+				isAuthenticated: false,
+				error: 'OPENAI_API_KEY or CODEX_API_KEY is required for the Codex Bridge provider.',
+			};
+		}
+		const codexPath = findCodexCli();
+		if (!codexPath) {
+			return {
+				isAuthenticated: false,
+				error: 'codex binary not found on PATH. Install Codex CLI to use this provider.',
+			};
+		}
+		return { isAuthenticated: true, method: 'api_key' };
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
@@ -116,24 +150,34 @@ export class CodexBridgeProvider implements Provider {
 	/**
 	 * Build SDK configuration.
 	 *
-	 * Starts the bridge server on first call (lazy) and returns env vars that
-	 * route the Anthropic SDK to the bridge's local HTTP endpoint.
+	 * Lazily starts a per-workspace bridge server and returns env vars that
+	 * route the Anthropic SDK to that bridge's local HTTP endpoint.
+	 *
+	 * Using per-workspace servers (keyed by workspacePath) ensures Codex is
+	 * always rooted in the correct directory and prevents cross-session
+	 * contamination when multiple sessions target different workspaces.
 	 */
-	buildSdkConfig(_modelId: string, _sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
-		if (!this.bridgeServer) {
+	buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+		const workspace = sessionConfig?.workspacePath ?? process.cwd();
+		let bridgeServer = this.bridgeServers.get(workspace);
+
+		if (!bridgeServer) {
 			const codexBinaryPath = findCodexCli() ?? 'codex';
 			const apiKey = process.env.OPENAI_API_KEY ?? process.env.CODEX_API_KEY ?? '';
-			this.bridgeServer = createBridgeServer({
+			bridgeServer = createBridgeServer({
 				codexBinaryPath,
 				apiKey,
-				cwd: process.cwd(),
+				cwd: workspace,
 			});
-			logger.info(`CodexBridgeProvider: bridge server started on port ${this.bridgeServer.port}`);
+			this.bridgeServers.set(workspace, bridgeServer);
+			logger.info(
+				`CodexBridgeProvider: bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
+			);
 		}
 
 		return {
 			envVars: {
-				ANTHROPIC_BASE_URL: `http://127.0.0.1:${this.bridgeServer.port}`,
+				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
 				ANTHROPIC_API_KEY: 'codex-bridge-placeholder',
 			},
 			isAnthropicCompatible: true,
@@ -141,9 +185,16 @@ export class CodexBridgeProvider implements Provider {
 		};
 	}
 
-	/** Stop the bridge server. Called at provider shutdown (e.g. tests). */
+	/** Stop all bridge servers. Called at provider shutdown (e.g. tests). */
+	stopAllBridgeServers(): void {
+		for (const server of this.bridgeServers.values()) {
+			server.stop();
+		}
+		this.bridgeServers.clear();
+	}
+
+	/** @deprecated Use stopAllBridgeServers(). Retained for backwards compatibility. */
 	stopBridgeServer(): void {
-		this.bridgeServer?.stop();
-		this.bridgeServer = null;
+		this.stopAllBridgeServers();
 	}
 }
