@@ -182,6 +182,12 @@ async function handleMessages(
 		const continuation = manager.findContinuation(body.messages);
 		if (continuation) {
 			const { conv, toolResults } = continuation;
+			// Remove routing entries and cancel the TTL timer before resuming.
+			// Actual Promise resolution happens inside resumeSessionStreaming.
+			manager.acknowledgeContinuation(
+				conv,
+				toolResults.map((r) => r.toolUseId)
+			);
 			try {
 				const outcome = await resumeSessionStreaming(
 					conv.session,
