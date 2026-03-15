@@ -573,8 +573,10 @@ describe('useTaskInputDraft', () => {
 			});
 		});
 
-		it('should not flush on unmount when content is empty', async () => {
-			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(null);
+		it('should not flush on unmount when content is empty (even with connected hub)', async () => {
+			// Hub IS connected — the guard must be the empty-content check, not hub availability
+			mockHub.request.mockResolvedValue({ task: {}, success: true });
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
 
 			const { unmount } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
 
@@ -582,9 +584,42 @@ describe('useTaskInputDraft', () => {
 				await vi.runAllTimersAsync();
 			});
 
+			// content is still '' — nothing was typed
+			mockHub.request.mockClear();
 			unmount();
 
-			expect(mockHub.request).not.toHaveBeenCalledWith('task.updateDraft', expect.anything());
+			const flushCalls = mockHub.request.mock.calls.filter((c) => c[0] === 'task.updateDraft');
+			expect(flushCalls.length).toBe(0);
+		});
+
+		it('should not flush on unmount during initial load (data-loss prevention)', async () => {
+			// Simulate a slow server response so isLoadingRef stays true when component unmounts
+			let resolveRequest!: (value: unknown) => void;
+			const pendingRequest = new Promise((resolve) => {
+				resolveRequest = resolve;
+			});
+
+			mockHub.request.mockImplementation((method) => {
+				if (method === 'task.get') return pendingRequest;
+				return Promise.resolve({ success: true });
+			});
+			vi.mocked(connectionManager.getHubIfConnected).mockReturnValue(mockHub as never);
+
+			const { unmount } = renderHook(() => useTaskInputDraft('room-1', 'task-1', 500));
+
+			// Unmount before the draft load completes (isLoadingRef.current is still true)
+			unmount();
+
+			// Resolve the pending request after unmount
+			resolveRequest({ task: { inputDraft: 'saved draft' } });
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			// Flush must NOT have fired — that would overwrite the server draft with null
+			const flushCalls = mockHub.request.mock.calls.filter((c) => c[0] === 'task.updateDraft');
+			expect(flushCalls.length).toBe(0);
 		});
 
 		it('should handle flush error gracefully', async () => {

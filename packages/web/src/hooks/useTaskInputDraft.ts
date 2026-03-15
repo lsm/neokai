@@ -104,24 +104,32 @@ export function useTaskInputDraft(
 		loadDraft();
 	}, [taskId, roomId, contentSignal, draftRestoredSignal]);
 
-	// Flush any pending debounced save on unmount so no keystroke is lost
+	// Flush any pending debounced save on unmount so no keystroke is lost.
+	// Two guards prevent wasteful / data-destructive flushes:
+	//   1. isLoadingRef.current — if we're still waiting for the server draft, content
+	//      is '' because we reset it for the new task, not because the user cleared it.
+	//      Flushing here would overwrite the server draft with null (data loss).
+	//   2. content.trim() === '' — nothing useful to save; skip the round-trip.
 	useEffect(() => {
 		return () => {
 			if (draftSaveTimeoutRef.current) {
 				clearTimeout(draftSaveTimeoutRef.current);
 				draftSaveTimeoutRef.current = null;
 			}
+			// Don't flush during initial load — content is '' from reset, not from user action
+			if (isLoadingRef.current) return;
 			const currentTaskId = taskIdRef.current;
 			const currentRoomId = roomIdRef.current;
 			const content = contentSignal.peek();
-			if (currentTaskId && currentRoomId) {
+			// Only flush when there is actual content to persist
+			if (currentTaskId && currentRoomId && content.trim()) {
 				const hub = connectionManager.getHubIfConnected();
 				if (hub) {
 					hub
 						.request('task.updateDraft', {
 							roomId: currentRoomId,
 							taskId: currentTaskId,
-							draft: content.trim() || null,
+							draft: content.trim(),
 						})
 						.catch(() => {
 							/* ignore flush errors */
@@ -212,26 +220,14 @@ export function useTaskInputDraft(
 		[contentSignal, draftRestoredSignal]
 	);
 
-	// Uses refs so the reference stays stable across task switches
+	// Uses refs so the reference stays stable across task switches.
+	// Setting contentSignal.value = '' triggers useSignalEffect synchronously,
+	// which sends task.updateDraft(null) immediately — no redundant explicit call needed.
+	// Clear the loading guard first so the signal effect fires even if called during load.
 	const clear = useCallback(() => {
+		isLoadingRef.current = false;
 		contentSignal.value = '';
 		draftRestoredSignal.value = false;
-		const currentTaskId = taskIdRef.current;
-		const currentRoomId = roomIdRef.current;
-		if (currentTaskId && currentRoomId) {
-			const hub = connectionManager.getHubIfConnected();
-			if (hub) {
-				hub
-					.request('task.updateDraft', {
-						roomId: currentRoomId,
-						taskId: currentTaskId,
-						draft: null,
-					})
-					.catch(() => {
-						/* ignore clear errors */
-					});
-			}
-		}
 	}, [contentSignal, draftRestoredSignal]);
 
 	return useMemo(
