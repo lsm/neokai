@@ -177,6 +177,28 @@ describe('AnthropicCopilotProvider', () => {
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(false);
 		});
+
+		it('rejects classic PATs (ghp_ prefix) with an actionable error', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_classictoken' });
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(false);
+			expect(status.error).toContain('Classic PATs');
+			expect(status.error).toContain('fine-grained PAT');
+		});
+
+		it('accepts fine-grained PATs (github_pat_ prefix)', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', {
+				COPILOT_GITHUB_TOKEN: 'github_pat_finegrained',
+			});
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+		});
+
+		it('accepts OAuth tokens (gho_ prefix)', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_oauthtoken' });
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+		});
 	});
 
 	describe('buildSdkConfig', () => {

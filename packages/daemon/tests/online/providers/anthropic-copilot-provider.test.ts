@@ -147,7 +147,9 @@ describe('AnthropicCopilotProvider (Online)', () => {
 		if (!provider?.isAuthenticated) {
 			throw new Error(
 				'anthropic-copilot provider is not authenticated. ' +
-					'Set COPILOT_GITHUB_TOKEN to a GitHub PAT with copilot_requests scope.'
+					'Set COPILOT_GITHUB_TOKEN to a fine-grained PAT (not a classic ghp_ PAT) with ' +
+					'Copilot access, or use the OAuth login flow. ' +
+					'See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token'
 			);
 		}
 	}
@@ -310,4 +312,19 @@ describe('AnthropicCopilotProvider (Online)', () => {
 		},
 		TEST_TIMEOUT
 	);
+
+	// -------------------------------------------------------------------------
+	// 4. Models list includes Copilot models
+	// -------------------------------------------------------------------------
+
+	test('models list: anthropic-copilot models are present when authenticated', async () => {
+		await assertCopilotAuthenticated();
+
+		const result = (await daemon.messageHub.request('models.list', { useCache: false })) as {
+			models: Array<{ id: string; provider: string }>;
+		};
+
+		const copilotModels = result.models.filter((m) => m.provider === 'anthropic-copilot');
+		expect(copilotModels.length).toBeGreaterThan(0);
+	});
 });

@@ -293,6 +293,17 @@ export class AnthropicCopilotProvider implements Provider {
 						'No GitHub token found. Set COPILOT_GITHUB_TOKEN, run `gh auth login`, or use NeoKai OAuth.',
 				};
 			}
+			// Classic PATs (ghp_) are explicitly rejected by the Copilot CLI internals.
+			// Returning isAuthenticated: false here gives an immediate, actionable error
+			// instead of a confusing "Not logged in" from the CLI subprocess.
+			if (token.startsWith('ghp_')) {
+				return {
+					isAuthenticated: false,
+					error:
+						'Classic PATs (ghp_…) are not supported by the GitHub Copilot CLI. ' +
+						'Use a fine-grained PAT with Copilot access, or run the OAuth login flow.',
+				};
+			}
 			return { isAuthenticated: true, needsRefresh: false };
 		} catch (error) {
 			return {
