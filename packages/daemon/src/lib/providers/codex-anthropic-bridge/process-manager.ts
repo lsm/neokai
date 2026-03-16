@@ -297,32 +297,60 @@ export class BridgeSession {
 
 		// Wire notification handlers
 		this.conn.onNotification('item/agentMessage/delta', (rawParams) => {
-			// DIAGNOSTIC: log raw params to stderr so CI can see exact protocol shape
-			process.stderr.write(`[codex-bridge-pm] delta raw: ${JSON.stringify(rawParams)}\n`);
-			const params = rawParams as {
-				delta?: { type?: string; text?: string };
-			};
-			// codex 0.114+ sends type 'output_text' (a ContentItem variant), not
-			// 'text_delta'.  Accept any delta with a non-empty text field so the
-			// bridge is resilient to future protocol changes.
-			const text = params?.delta?.text;
-			process.stderr.write(`[codex-bridge-pm] delta text=${JSON.stringify(text)}\n`);
+			// codex 0.114.0+ (v2 protocol): delta is a plain string, not an object.
+			// AgentMessageDeltaNotification = { threadId, turnId, itemId, delta: string }
+			const params = rawParams as { delta?: string | { type?: string; text?: string } };
+			let text: string | undefined;
+			if (typeof params?.delta === 'string') {
+				// Current v2 protocol: delta is the text directly
+				text = params.delta || undefined;
+			} else if (typeof params?.delta === 'object' && params.delta !== null) {
+				// Legacy protocol fallback: delta was { type: 'output_text', text: '...' }
+				text = params.delta.text || undefined;
+			}
+			logger.debug(`BridgeSession: agentMessage/delta text=${JSON.stringify(text)}`);
 			if (text) {
 				this.queue.push({ type: 'text_delta', text });
 			}
 		});
 
 		this.conn.onNotification('turn/completed', (rawParams) => {
-			// DIAGNOSTIC: log raw params to confirm usage field names
-			process.stderr.write(`[codex-bridge-pm] turn/completed raw: ${JSON.stringify(rawParams)}\n`);
+			// codex 0.114.0+ (v2 protocol):
+			//   TurnCompletedNotification = { threadId, turn: { id, items, status, error } }
+			// Token usage arrives separately in thread/tokenUsage/updated.
+			// We emit turn_done with 0 tokens here; the SSE layer tracks its own count.
 			const params = rawParams as {
+				turn?: { id?: string; status?: string; error?: { message?: string } | null };
 				usage?: { inputTokens?: number; outputTokens?: number };
 			};
-			this.queue.push({
-				type: 'turn_done',
-				inputTokens: params?.usage?.inputTokens ?? 0,
-				outputTokens: params?.usage?.outputTokens ?? 0,
-			});
+			const status = params?.turn?.status;
+			logger.debug(`BridgeSession: turn/completed status=${status}`);
+			if (status === 'failed') {
+				const msg = params?.turn?.error?.message ?? 'Turn failed';
+				this.queue.push({ type: 'error', message: msg });
+			} else {
+				this.queue.push({
+					type: 'turn_done',
+					// Legacy protocol had usage here; v2 sends it via thread/tokenUsage/updated
+					inputTokens: params?.usage?.inputTokens ?? 0,
+					outputTokens: params?.usage?.outputTokens ?? 0,
+				});
+			}
+		});
+
+		// Handle server-side error notifications (e.g. invalid model, API errors)
+		this.conn.onNotification('error', (rawParams) => {
+			const params = rawParams as {
+				error?: { message?: string };
+				willRetry?: boolean;
+			};
+			if (!params?.willRetry) {
+				const msg = params?.error?.message ?? 'Unknown codex error';
+				logger.error(`BridgeSession: codex error notification: ${msg}`);
+				// Only push if the error is not going to be retried automatically.
+				// turn/completed with status='failed' will also fire and is the canonical
+				// signal; this handler is belt-and-suspenders for errors that have no turn.
+			}
 		});
 
 		// Tool call interception — the core of the Dynamic Tools mechanism

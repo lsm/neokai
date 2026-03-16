@@ -43,28 +43,6 @@ const logger = new Logger('anthropic-codex-provider');
 
 const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 	{
-		id: 'codex-1',
-		name: 'Codex 1',
-		alias: 'codex-bridge',
-		family: 'codex',
-		provider: 'anthropic-codex',
-		contextWindow: 200000,
-		description: 'Codex 1 · Transparent Codex model via Anthropic-compatible bridge',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
-		id: 'o4-mini',
-		name: 'o4-mini',
-		alias: 'codex-mini',
-		family: 'codex',
-		provider: 'anthropic-codex',
-		contextWindow: 128000,
-		description: 'o4-mini · Fast Codex model via Anthropic-compatible bridge',
-		releaseDate: '2025-01-01',
-		available: true,
-	},
-	{
 		id: 'gpt-5.3-codex',
 		name: 'GPT-5.3 Codex',
 		alias: 'codex',
@@ -76,14 +54,25 @@ const ANTHROPIC_CODEX_MODELS: ModelInfo[] = [
 		available: true,
 	},
 	{
-		id: 'gpt-5-mini',
-		name: 'GPT-5 Mini',
-		alias: 'mini',
+		id: 'gpt-5.4',
+		name: 'GPT-5.4',
+		alias: 'codex-latest',
+		family: 'gpt',
+		provider: 'anthropic-codex',
+		contextWindow: 200000,
+		description: 'GPT-5.4 · Latest frontier agentic coding model',
+		releaseDate: '2026-01-01',
+		available: true,
+	},
+	{
+		id: 'gpt-5.1-codex-mini',
+		name: 'GPT-5.1 Codex Mini',
+		alias: 'codex-mini',
 		family: 'gpt',
 		provider: 'anthropic-codex',
 		contextWindow: 128000,
-		description: 'GPT-5 Mini · Fast and efficient for simpler tasks',
-		releaseDate: '2025-12-01',
+		description: 'GPT-5.1 Codex Mini · Fast and efficient for simpler tasks',
+		releaseDate: '2026-01-01',
 		available: true,
 	},
 ];
@@ -333,27 +322,17 @@ export class AnthropicCodexProvider implements Provider {
 	}
 
 	ownsModel(modelId: string): boolean {
-		const lower = modelId.toLowerCase();
-		// Own OpenAI reasoning model families (o1 / o3 / o4) — all served via Codex CLI.
-		if (lower.startsWith('o1-') || lower.startsWith('o3-') || lower.startsWith('o4-')) {
-			return true;
-		}
-		// Own the codex model family.
-		if (lower.startsWith('codex')) {
-			return true;
-		}
-		// For gpt-* models only claim IDs explicitly listed in our catalogue.
-		// This avoids hijacking gpt-4, gpt-4o, gpt-3.5-turbo etc. which the
-		// Codex bridge cannot serve.
+		// Only claim model IDs that are explicitly listed in our catalogue.
+		// This avoids hijacking other providers' models (e.g. gpt-4, gpt-4o).
 		return ANTHROPIC_CODEX_MODELS.some((m) => m.id === modelId || m.alias === modelId);
 	}
 
 	getModelForTier(tier: ModelTier): string | undefined {
 		const map: Record<ModelTier, string> = {
 			opus: 'gpt-5.3-codex',
-			sonnet: 'codex-1',
-			haiku: 'o4-mini',
-			default: 'codex-1',
+			sonnet: 'gpt-5.3-codex',
+			haiku: 'gpt-5.1-codex-mini',
+			default: 'gpt-5.3-codex',
 		};
 		return map[tier];
 	}

@@ -164,7 +164,7 @@ async function callBridge(
 	bridgeUrl: string,
 	messages: BridgeMessage[],
 	tools: BridgeTool[] = [],
-	model = 'o4-mini',
+	model = 'gpt-5.1-codex-mini',
 	system?: string
 ): Promise<SseEvent[]> {
 	const reqBody: Record<string, unknown> = {
@@ -223,7 +223,7 @@ describe('Codex Bridge (Online)', () => {
 		}
 
 		provider = new AnthropicCodexProvider();
-		const cfg = provider.buildSdkConfig('o4-mini', { workspacePath: process.cwd() });
+		const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 	}, 15000);
 
@@ -269,8 +269,8 @@ describe('Codex Bridge (Online)', () => {
 	test('tool use: bridge routes tool call and model uses result in reply', async () => {
 		if (skipIfNeeded('tool use')) return;
 
-		// Use gpt-4o for tool-use tests — reasoning models (o4-mini) may skip tools.
-		const TOOL_MODEL = 'gpt-4o';
+		// Use gpt-5.1-codex-mini for tool-use tests — confirmed to support dynamic tools.
+		const TOOL_MODEL = 'gpt-5.1-codex-mini';
 		// System prompt that forces tool use even with models that prefer self-answering.
 		const TOOL_SYSTEM =
 			'When the user asks you to call a tool, you MUST call that tool. ' +
@@ -364,8 +364,8 @@ describe('Codex Bridge (Online)', () => {
 	test('mcp tool: bridge handles MCP-style tool naming and call round-trip', async () => {
 		if (skipIfNeeded('mcp tool')) return;
 
-		// Use gpt-4o for tool-use tests — reasoning models (o4-mini) may skip tools.
-		const TOOL_MODEL = 'gpt-4o';
+		// Use gpt-5.1-codex-mini for tool-use tests — confirmed to support dynamic tools.
+		const TOOL_MODEL = 'gpt-5.1-codex-mini';
 		const TOOL_SYSTEM =
 			'When the user asks you to call a tool, you MUST call that tool. ' +
 			'Never answer the question yourself without first calling the requested tool.';

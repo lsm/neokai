@@ -271,26 +271,27 @@ describe('AnthropicCodexProvider', () => {
 			provider = makeProvider({});
 		});
 
-		it('owns gpt-5 catalogue models but not generic gpt-4/gpt-3', () => {
+		it('owns models explicitly listed in the catalogue', () => {
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
-			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
-			// gpt-4o and gpt-3.5 are NOT in the catalogue — bridge cannot serve them
+			expect(provider.ownsModel('gpt-5.4')).toBe(true);
+			expect(provider.ownsModel('gpt-5.1-codex-mini')).toBe(true);
+			// Aliases also owned
+			expect(provider.ownsModel('codex')).toBe(true);
+			expect(provider.ownsModel('codex-mini')).toBe(true);
+			expect(provider.ownsModel('codex-latest')).toBe(true);
+		});
+
+		it('does not own models not in the catalogue', () => {
+			// Old models removed from catalogue
+			expect(provider.ownsModel('codex-1')).toBe(false);
+			expect(provider.ownsModel('o4-mini')).toBe(false);
+			expect(provider.ownsModel('o1-preview')).toBe(false);
+			expect(provider.ownsModel('o3-mini')).toBe(false);
+			expect(provider.ownsModel('gpt-5-mini')).toBe(false);
+			// GPT-4 models the bridge cannot serve
 			expect(provider.ownsModel('gpt-4o')).toBe(false);
 			expect(provider.ownsModel('gpt-4')).toBe(false);
 			expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
-		});
-
-		it('owns o4- prefix models', () => {
-			expect(provider.ownsModel('o4-mini')).toBe(true);
-		});
-
-		it('owns o1- and o3- prefix models', () => {
-			expect(provider.ownsModel('o1-preview')).toBe(true);
-			expect(provider.ownsModel('o3-mini')).toBe(true);
-		});
-
-		it('owns codex- prefix models', () => {
-			expect(provider.ownsModel('codex-1')).toBe(true);
 		});
 
 		it('does not own claude- models', () => {

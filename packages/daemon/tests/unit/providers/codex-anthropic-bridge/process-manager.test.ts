@@ -85,21 +85,31 @@ function makeEventableStubConn() {
 }
 
 describe('BridgeSession item/agentMessage/delta', () => {
-	it('emits text_delta BridgeEvent for codex 0.114+ output_text format', async () => {
+	it('emits text_delta BridgeEvent for codex 0.114+ plain-string delta format', async () => {
 		const { conn, fireNotification } = makeEventableStubConn();
 		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
 		await session.initialize();
 
 		// Schedule notifications after the generator starts waiting
 		setTimeout(() => {
-			// codex 0.114+ sends type='output_text'
+			// codex 0.114.0+ v2 protocol: delta is a plain string
+			// AgentMessageDeltaNotification = { threadId, turnId, itemId, delta: string }
 			fireNotification('item/agentMessage/delta', {
-				delta: { type: 'output_text', text: 'hello' },
+				threadId: 'thread-1',
+				turnId: 'turn-1',
+				itemId: 'item-1',
+				delta: 'hello',
 			});
 			fireNotification('item/agentMessage/delta', {
-				delta: { type: 'output_text', text: ' world' },
+				threadId: 'thread-1',
+				turnId: 'turn-1',
+				itemId: 'item-1',
+				delta: ' world',
 			});
-			fireNotification('turn/completed', { usage: { inputTokens: 10, outputTokens: 5 } });
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
 		}, 5);
 
 		const gen = session.startTurn('test');
@@ -118,15 +128,52 @@ describe('BridgeSession item/agentMessage/delta', () => {
 		expect(doneEvents).toHaveLength(1);
 	});
 
-	it('does NOT emit a text_delta event for a delta with no text field', async () => {
+	it('emits text_delta BridgeEvent for legacy object delta format (backward compat)', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		// Schedule notifications after the generator starts waiting
+		setTimeout(() => {
+			// Legacy fallback: delta was { type: 'output_text', text: '...' }
+			fireNotification('item/agentMessage/delta', {
+				delta: { type: 'output_text', text: 'hello' },
+			});
+			fireNotification('item/agentMessage/delta', {
+				delta: { type: 'output_text', text: ' world' },
+			});
+			fireNotification('turn/completed', {
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const textEvents = events.filter((e) => e.type === 'text_delta');
+		expect(textEvents).toHaveLength(2);
+		expect((textEvents[0] as { type: 'text_delta'; text: string }).text).toBe('hello');
+		expect((textEvents[1] as { type: 'text_delta'; text: string }).text).toBe(' world');
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+	});
+
+	it('does NOT emit a text_delta event for an empty delta string', async () => {
 		const { conn, fireNotification } = makeEventableStubConn();
 		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
 		await session.initialize();
 
 		setTimeout(() => {
-			// Delta with no text — should be ignored
-			fireNotification('item/agentMessage/delta', { delta: { type: 'input_json_delta' } });
-			fireNotification('turn/completed', {});
+			// Empty string delta — should be ignored
+			fireNotification('item/agentMessage/delta', { delta: '' });
+			fireNotification('turn/completed', {
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
 		}, 5);
 
 		const gen = session.startTurn('test');
@@ -138,6 +185,62 @@ describe('BridgeSession item/agentMessage/delta', () => {
 
 		const textEvents = events.filter((e) => e.type === 'text_delta');
 		expect(textEvents).toHaveLength(0);
+	});
+
+	it('does NOT emit a text_delta event for a legacy delta with no text field', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Legacy delta with no text — should be ignored
+			fireNotification('item/agentMessage/delta', { delta: { type: 'input_json_delta' } });
+			fireNotification('turn/completed', {
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const textEvents = events.filter((e) => e.type === 'text_delta');
+		expect(textEvents).toHaveLength(0);
+	});
+
+	it('emits error BridgeEvent when turn/completed status is "failed"', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Simulate a failed turn (e.g. invalid model)
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: {
+					id: 'turn-1',
+					items: [],
+					status: 'failed',
+					error: { message: 'Model not supported' },
+				},
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const errorEvents = events.filter((e) => e.type === 'error');
+		expect(errorEvents).toHaveLength(1);
+		expect((errorEvents[0] as { type: 'error'; message: string }).message).toContain(
+			'Model not supported'
+		);
 	});
 });
 

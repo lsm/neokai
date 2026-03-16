@@ -13,7 +13,7 @@
  * is available rather than silently passing with skipped tests.
  *
  * MODELS:
- * - Uses gpt-5-mini (cheaper) and gpt-5.3-codex for testing
+ * - Uses gpt-5.1-codex-mini (cheaper) and gpt-5.3-codex for testing
  *
  * WHAT THESE TESTS PROVE:
  * - GPT model IDs are correctly owned and routed through AnthropicCodexProvider
@@ -114,7 +114,7 @@ describe('OpenAI Provider (Online)', () => {
 		{ timeout: 30000 }
 	);
 
-	test('should get correct answer via gpt-5-mini (bridge path)', async () => {
+	test('should get correct answer via gpt-5.1-codex-mini (bridge path)', async () => {
 		if (SKIP_REASON) {
 			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
@@ -124,9 +124,9 @@ describe('OpenAI Provider (Online)', () => {
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
-			title: 'OpenAI gpt-5-mini Test',
+			title: 'OpenAI gpt-5.1-codex-mini Test',
 			config: {
-				model: 'gpt-5-mini',
+				model: 'gpt-5.1-codex-mini',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
@@ -206,7 +206,7 @@ describe('OpenAI Provider (Online)', () => {
 			workspacePath: process.cwd(),
 			title: 'OpenAI Multi-turn Test',
 			config: {
-				model: 'gpt-5-mini',
+				model: 'gpt-5.1-codex-mini',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
