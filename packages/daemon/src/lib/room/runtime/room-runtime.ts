@@ -799,8 +799,14 @@ export class RoomRuntime {
 
 		// Classify any API errors in leader output.
 		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
-		// rate_limit → mirroring already set the backoff; the isRateLimited check above handles it
+		// rate_limit → mirroring sets the backoff for parseable-time 429s; for bare "API Error: 429"
+		//              (no parseable reset time) mirroring skips setRateLimit, so we must apply a
+		//              minimum backoff here to prevent the task stalling indefinitely.
 		// recoverable / null → fall through (leader finished without calling a tool — that's fine)
+		//
+		// Note: fetching with afterMessageId=null returns all leader messages since session start.
+		// Because terminal errors always fail the task immediately, earlier-iteration terminal errors
+		// cannot persist to later iterations — so false-positive re-detection is not a concern here.
 		{
 			const leaderMessages = this.getWorkerMessages
 				? this.getWorkerMessages(group.leaderSessionId, null)
@@ -826,6 +832,29 @@ export class RoomRuntime {
 					await this.emitTaskUpdateById(group.taskId);
 					await this.emitGoalProgressForTask(group.taskId);
 					this.scheduleTick();
+					return;
+				}
+				// Only apply backoff on first detection. After expiry, the recovery tick re-triggers
+				// this handler with the same old 429 message — fall through then so the leader can retry.
+				if (errorClass?.class === 'rate_limit' && !group.rateLimit) {
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(leaderOutputText, 'leader')
+						: null;
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'leader',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					log.info(
+						`Rate limit detected in leader output for group ${groupId}. Backoff until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`
+					);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Rate limit detected in leader. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'leader',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
 					return;
 				}
 			}

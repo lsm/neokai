@@ -162,11 +162,19 @@ describe('RoomRuntime - leader terminal error detection', () => {
 		});
 
 		it('does NOT fail task on HTTP 429 rate limit in leader output (rate_limit, not terminal)', async () => {
-			const { task } = await spawnAndSimulateLeaderOutput('API Error: 429 Too Many Requests');
+			const { task, group } = await spawnAndSimulateLeaderOutput(
+				'API Error: 429 Too Many Requests'
+			);
 
 			// 429 is rate_limit class, not terminal — task should not be failed
 			const updatedTask = await ctx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).not.toBe('needs_attention');
+
+			// Bare 429 (no parseable reset time) must set a minimum backoff to prevent indefinite stall
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).not.toBeNull();
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			expect(updatedGroup!.rateLimit!.sessionRole).toBe('leader');
 		});
 	});
 });
