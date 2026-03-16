@@ -89,6 +89,8 @@ export class AnthropicStreamWriter {
 				content: [],
 				model,
 				stop_reason: null,
+				// TODO: input_tokens is always 0 — the Copilot SDK does not expose
+				// per-request token counts on the prompt side.
 				usage: { input_tokens: 0, output_tokens: 0 },
 			},
 		});

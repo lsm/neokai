@@ -392,13 +392,18 @@ export class ProviderService {
 			return {};
 		}
 
-		// Build SDK config with session override
-		const sessionConfig = session.config.providerConfig
-			? {
-					apiKey: session.config.providerConfig.apiKey,
-					baseUrl: session.config.providerConfig.baseUrl,
-				}
-			: undefined;
+		// Build SDK config with session override.
+		// workspacePath is always forwarded so the embedded Copilot server can use
+		// the correct cwd per request (encoded in ANTHROPIC_AUTH_TOKEN by the provider).
+		const sessionConfig = {
+			workspacePath: session.workspacePath,
+			...(session.config.providerConfig
+				? {
+						apiKey: session.config.providerConfig.apiKey,
+						baseUrl: session.config.providerConfig.baseUrl,
+					}
+				: {}),
+		};
 
 		const modelId = session.config.model || 'default';
 		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);

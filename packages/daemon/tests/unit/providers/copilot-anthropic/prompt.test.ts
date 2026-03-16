@@ -8,6 +8,7 @@ import {
 	extractSystemText,
 	extractToolResultIds,
 	extractToolResultContent,
+	extractToolResultIsError,
 } from '../../../../src/lib/providers/copilot-anthropic/prompt';
 
 // ---------------------------------------------------------------------------
@@ -265,5 +266,52 @@ describe('extractToolResultContent', () => {
 				'tu_1'
 			)
 		).toBe('result');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// extractToolResultIsError
+// ---------------------------------------------------------------------------
+
+describe('extractToolResultIsError', () => {
+	it('returns false when id not found', () => {
+		expect(extractToolResultIsError([], 'tu_1')).toBe(false);
+	});
+
+	it('returns false when is_error is absent', () => {
+		expect(
+			extractToolResultIsError(
+				[{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu_1' }] }],
+				'tu_1'
+			)
+		).toBe(false);
+	});
+
+	it('returns true when is_error=true', () => {
+		expect(
+			extractToolResultIsError(
+				[
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'tu_1', is_error: true }],
+					},
+				],
+				'tu_1'
+			)
+		).toBe(true);
+	});
+
+	it('returns false when is_error=false', () => {
+		expect(
+			extractToolResultIsError(
+				[
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'tu_1', is_error: false }],
+					},
+				],
+				'tu_1'
+			)
+		).toBe(false);
 	});
 });

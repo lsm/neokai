@@ -61,7 +61,7 @@ describe('ToolBridgeRegistry', () => {
 		expect(resolved).toBe(true);
 
 		const result = await promise;
-		expect(result).toBe('output here');
+		expect(result).toEqual({ text: 'output here', isError: false });
 		expect(reg.hasPending()).toBe(false);
 	});
 
@@ -177,8 +177,8 @@ describe('ToolBridgeRegistry', () => {
 		expect(reg.resolveToolResult('tc_1', 'result1')).toBe(true);
 		expect(reg.resolveToolResult('tc_2', 'result2')).toBe(true);
 
-		expect(await p1).toBe('result1');
-		expect(await p2).toBe('result2');
+		expect(await p1).toEqual({ text: 'result1', isError: false });
+		expect(await p2).toEqual({ text: 'result2', isError: false });
 		expect(reg.hasPending()).toBe(false);
 	});
 
@@ -242,27 +242,47 @@ describe('mapAnthropicToolsToSdkTools', () => {
 		expect(sdkTools[0].description).toBe('Tool: anon');
 	});
 
-	it('tool handler calls emitToolUseAndWait and resolves with tool result', async () => {
+	it('tool handler resolves with resultType:success on success', async () => {
 		const tools: AnthropicTool[] = [{ name: 'bash', input_schema: {} }];
 		const reg = new ToolBridgeRegistry();
 		const sdkTools = mapAnthropicToolsToSdkTools(tools, reg);
 
-		// Set up active response
 		const writer = new AnthropicStreamWriter();
 		const { res } = makeRes();
 		writer.start(res, 'model');
 		reg.setActiveResponse(writer, res);
 
-		// Start the handler — it suspends
 		const handlerResult = sdkTools[0].handler(
 			{ command: 'echo hi' },
 			{ sessionId: 's1', toolCallId: 'tc_1', toolName: 'bash', arguments: { command: 'echo hi' } }
 		) as Promise<unknown>;
 
-		// Resolve it
 		reg.resolveToolResult('tc_1', 'hi\n');
 
 		const result = await handlerResult;
 		expect((result as Record<string, unknown>)['textResultForLlm']).toBe('hi\n');
+		expect((result as Record<string, unknown>)['resultType']).toBe('success');
+	});
+
+	it('tool handler resolves with resultType:failure when is_error=true', async () => {
+		const tools: AnthropicTool[] = [{ name: 'bash', input_schema: {} }];
+		const reg = new ToolBridgeRegistry();
+		const sdkTools = mapAnthropicToolsToSdkTools(tools, reg);
+
+		const writer = new AnthropicStreamWriter();
+		const { res } = makeRes();
+		writer.start(res, 'model');
+		reg.setActiveResponse(writer, res);
+
+		const handlerResult = sdkTools[0].handler(
+			{ command: 'bad' },
+			{ sessionId: 's1', toolCallId: 'tc_err', toolName: 'bash', arguments: { command: 'bad' } }
+		) as Promise<unknown>;
+
+		reg.resolveToolResult('tc_err', 'permission denied', true);
+
+		const result = await handlerResult;
+		expect((result as Record<string, unknown>)['textResultForLlm']).toBe('permission denied');
+		expect((result as Record<string, unknown>)['resultType']).toBe('failure');
 	});
 });

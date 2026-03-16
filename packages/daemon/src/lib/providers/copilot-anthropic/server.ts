@@ -86,6 +86,21 @@ function sendJsonError(
 // Session config for non-tool requests
 // ---------------------------------------------------------------------------
 
+/**
+ * Extract the per-request working directory from the `Authorization` header.
+ *
+ * `CopilotAnthropicProvider.buildSdkConfig()` encodes the session workspace as
+ * `copilot-anthropic-proxy:<path>` in `ANTHROPIC_AUTH_TOKEN`.  Parsing it here
+ * lets the singleton embedded server apply the correct `cwd` per HTTP request
+ * without rebuilding a new server for every session.
+ */
+function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): string {
+	const auth = (req.headers['authorization'] ?? '') as string;
+	const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+	const prefix = 'copilot-anthropic-proxy:';
+	return token.startsWith(prefix) ? token.slice(prefix.length) || defaultCwd : defaultCwd;
+}
+
 function buildPlainSessionConfig(
 	model: string,
 	systemMessage: string | undefined,
@@ -247,10 +262,20 @@ async function handleMessages(
 
 	const systemMessage = extractSystemText(body.system);
 
+	const requestCwd = resolveRequestCwd(req, cwd);
 	if (hasTools) {
-		await handleNewToolConversation(req, res, body, client, manager, systemMessage, prompt, cwd);
+		await handleNewToolConversation(
+			req,
+			res,
+			body,
+			client,
+			manager,
+			systemMessage,
+			prompt,
+			requestCwd
+		);
 	} else {
-		await handlePlainRequest(req, res, body, client, systemMessage, prompt, cwd);
+		await handlePlainRequest(req, res, body, client, systemMessage, prompt, requestCwd);
 	}
 }
 

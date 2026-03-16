@@ -62,7 +62,8 @@ export function initializeProviders(): ProviderRegistry {
 	registry.register(new GitHubCopilotProvider());
 
 	// Register GitHub Copilot Anthropic provider (embedded Anthropic-compatible server).
-	// Pass process.cwd() so sessions use the daemon's workspace root, not the launch dir.
+	// process.cwd() is the fallback cwd; per-session workspace is threaded via
+	// ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
 	registry.register(new CopilotAnthropicProvider(process.cwd()));
 
 	// Additional built-in providers can be registered here

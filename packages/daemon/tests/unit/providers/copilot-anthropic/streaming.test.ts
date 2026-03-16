@@ -66,7 +66,7 @@ function makeMockRes(): { written: string[]; ended: boolean; res: ServerResponse
 		},
 		headersSent: false,
 	} as unknown as ServerResponse;
-	return { written, ended: false, res };
+	return { written, ended, res };
 }
 
 function makeMockReq(): { emitter: EventEmitter; req: IncomingMessage } {
@@ -236,13 +236,13 @@ describe('resumeSessionStreaming', () => {
 
 		// Plant a real pending entry using the correct internal property name ('pending').
 		// This exercises the actual resolveToolResult() code path.
-		let resolvedWith: string | undefined;
+		let resolvedWith: { text: string; isError: boolean } | undefined;
 		const fakeTimer = setTimeout(() => {}, 100_000);
 		(registry as unknown as Record<string, unknown>)['pending'] = new Map([
 			[
 				'tc_1',
 				{
-					resolve: (v: string) => {
+					resolve: (v: { text: string; isError: boolean }) => {
 						resolvedWith = v;
 					},
 					reject: () => {},
@@ -261,7 +261,7 @@ describe('resumeSessionStreaming', () => {
 		);
 		await Promise.resolve();
 		// resolveToolResult should have been called immediately by resumeSessionStreaming
-		expect(resolvedWith).toBe('result-value');
+		expect(resolvedWith).toEqual({ text: 'result-value', isError: false });
 
 		// After tool results are delivered, session should eventually idle
 		session.emit('session.idle');

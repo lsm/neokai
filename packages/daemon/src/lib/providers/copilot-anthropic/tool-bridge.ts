@@ -50,7 +50,7 @@ export class ToolBridgeRegistry {
 	private pending = new Map<
 		string,
 		{
-			resolve: (result: string) => void;
+			resolve: (result: { text: string; isError: boolean }) => void;
 			reject: (err: Error) => void;
 			timer: ReturnType<typeof setTimeout>;
 		}
@@ -130,7 +130,7 @@ export class ToolBridgeRegistry {
 		toolCallId: string,
 		toolName: string,
 		toolInput: unknown
-	): Promise<string> {
+	): Promise<{ text: string; isError: boolean }> {
 		// Buffer this tool call — parallel tool handlers all push here before
 		// the microtask flush runs.
 		this.pendingEmissions.push({ toolCallId, toolName, toolInput });
@@ -144,7 +144,7 @@ export class ToolBridgeRegistry {
 		}
 
 		// Suspend until the tool_result arrives from the next HTTP request.
-		return new Promise<string>((resolve, reject) => {
+		return new Promise<{ text: string; isError: boolean }>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.pending.delete(toolCallId);
 				reject(new Error(`Tool call "${toolName}" (${toolCallId}) timed out waiting for result`));
@@ -214,12 +214,12 @@ export class ToolBridgeRegistry {
 	 *
 	 * @returns `true` if there was a matching pending handler, `false` otherwise.
 	 */
-	resolveToolResult(toolCallId: string, result: string): boolean {
+	resolveToolResult(toolCallId: string, result: string, isError = false): boolean {
 		const pending = this.pending.get(toolCallId);
 		if (!pending) return false;
 		clearTimeout(pending.timer);
 		this.pending.delete(toolCallId);
-		pending.resolve(result);
+		pending.resolve({ text: result, isError });
 		return true;
 	}
 
@@ -276,8 +276,15 @@ export function mapAnthropicToolsToSdkTools(
 		parameters: tool.input_schema,
 		overridesBuiltInTool: true,
 		handler: async (args: unknown, invocation: ToolInvocation) => {
-			const result = await registry.emitToolUseAndWait(invocation.toolCallId, tool.name, args);
-			return { textResultForLlm: result, resultType: 'success' as const };
+			const { text, isError } = await registry.emitToolUseAndWait(
+				invocation.toolCallId,
+				tool.name,
+				args
+			);
+			return {
+				textResultForLlm: text,
+				resultType: isError ? ('failure' as const) : ('success' as const),
+			};
 		},
 	}));
 }

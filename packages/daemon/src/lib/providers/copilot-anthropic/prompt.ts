@@ -97,6 +97,24 @@ export function extractToolResultIds(messages: AnthropicMessage[]): string[] {
 }
 
 /**
+ * Extract the `is_error` flag for a specific `tool_use_id` from messages.
+ * Returns `false` if not found or flag is absent.
+ */
+export function extractToolResultIsError(messages: AnthropicMessage[], toolUseId: string): boolean {
+	for (const msg of messages) {
+		if (msg.role !== 'user') continue;
+		if (typeof msg.content === 'string') continue;
+		for (const block of msg.content as ContentBlock[]) {
+			if (block.type !== 'tool_result') continue;
+			const r = block as ToolResultBlock;
+			if (r.tool_use_id !== toolUseId) continue;
+			return r.is_error === true;
+		}
+	}
+	return false;
+}
+
+/**
  * Extract the tool-result text for a specific `tool_use_id` from messages.
  * Returns `undefined` if not found.
  */

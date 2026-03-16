@@ -209,7 +209,7 @@ export class CopilotAnthropicProvider implements Provider {
 	 * **Precondition:** `getModels()` (or `ensureServerStarted()`) must be
 	 * awaited before calling this method.
 	 */
-	buildSdkConfig(modelId: string, _sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		if (!this.serverCache) {
 			throw new Error(
 				'CopilotAnthropicProvider: embedded server not started. ' +
@@ -219,11 +219,14 @@ export class CopilotAnthropicProvider implements Provider {
 
 		const entry = COPILOT_ANTHROPIC_MODELS.find((m) => m.alias === modelId || m.id === modelId);
 		const resolvedId = entry?.id ?? modelId;
+		// Per-session workspace path is encoded in the auth token so the embedded
+		// server (shared singleton) can apply the correct cwd per HTTP request.
+		const workspacePath = (sessionConfig?.workspacePath as string | undefined) ?? this.cwd;
 
 		return {
 			envVars: {
 				ANTHROPIC_BASE_URL: this.serverCache.url,
-				ANTHROPIC_AUTH_TOKEN: 'copilot-anthropic-proxy',
+				ANTHROPIC_AUTH_TOKEN: `copilot-anthropic-proxy:${workspacePath}`,
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 				API_TIMEOUT_MS: '300000',
 				ANTHROPIC_DEFAULT_OPUS_MODEL:

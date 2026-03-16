@@ -277,8 +277,8 @@ export function resumeSessionStreaming(
 		(_finish, _writeFailed) => {
 			// Deliver tool results AFTER the event subscription is live so we cannot
 			// miss events that fire immediately after resumption.
-			for (const { toolUseId, result } of toolResults) {
-				registry.resolveToolResult(toolUseId, result);
+			for (const { toolUseId, result, isError } of toolResults) {
+				registry.resolveToolResult(toolUseId, result, isError);
 			}
 		},
 		onDone

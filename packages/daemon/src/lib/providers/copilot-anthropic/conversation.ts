@@ -26,7 +26,11 @@
 
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
 import type { AnthropicMessage, AnthropicTool } from './types.js';
-import { extractToolResultIds, extractToolResultContent } from './prompt.js';
+import {
+	extractToolResultIds,
+	extractToolResultContent,
+	extractToolResultIsError,
+} from './prompt.js';
 import { mapAnthropicToolsToSdkTools, ToolBridgeRegistry } from './tool-bridge.js';
 import { Logger } from '../../logger.js';
 
@@ -47,6 +51,8 @@ export interface ActiveConversation {
 export interface ToolResult {
 	toolUseId: string;
 	result: string;
+	/** When `true` the tool call failed; passed to the Copilot SDK as `resultType: 'failure'`. */
+	isError?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +109,11 @@ export class ConversationManager {
 			if (this.byToolCallId.get(id) !== conv) continue;
 			const result = extractToolResultContent(messages, id);
 			if (result !== undefined) {
-				toolResults.push({ toolUseId: id, result });
+				toolResults.push({
+					toolUseId: id,
+					result,
+					isError: extractToolResultIsError(messages, id),
+				});
 			}
 		}
 		// If no tool results could be matched (malformed messages), treat as new conversation.
@@ -161,7 +171,20 @@ export class ConversationManager {
 			onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
 			onUserInputRequest: () =>
 				Promise.resolve({ answer: 'User input is not available in API mode.', wasFreeform: true }),
-			hooks: {},
+			hooks: {
+				onErrorOccurred: (input) => {
+					logger.warn(
+						`SDK error (${input.errorContext}, recoverable=${String(input.recoverable)}): ${String(input.error)}`
+					);
+					if (
+						input.recoverable &&
+						(input.errorContext === 'model_call' || input.errorContext === 'tool_execution')
+					) {
+						return { errorHandling: 'retry' as const, retryCount: 2 };
+					}
+					return undefined;
+				},
+			},
 		});
 
 		conv = { session, registry };
