@@ -301,8 +301,13 @@ async function handleNewToolConversation(
 	try {
 		conv = await manager.createConversation(client, body.model, systemMessage, body.tools!, cwd);
 	} catch (err) {
-		logger.error('Failed to create tool conversation:', err);
-		sendJsonError(res, 500, 'api_error', 'Failed to create session');
+		logger.error(`Failed to create tool conversation for model '${body.model}':`, err);
+		sendJsonError(
+			res,
+			500,
+			'api_error',
+			`Failed to create session for model '${body.model}'. ${err instanceof Error ? err.message : 'Internal error'}`
+		);
 		return;
 	}
 
@@ -351,8 +356,13 @@ async function handlePlainRequest(
 	try {
 		session = await client.createSession(sessionConfig);
 	} catch (err) {
-		logger.error('Failed to create Copilot session:', err);
-		sendJsonError(res, 500, 'api_error', 'Failed to create session');
+		logger.error(`Failed to create Copilot session for model '${body.model}':`, err);
+		sendJsonError(
+			res,
+			500,
+			'api_error',
+			`Failed to create session for model '${body.model}'. ${err instanceof Error ? err.message : 'Internal error'}`
+		);
 		return;
 	}
 

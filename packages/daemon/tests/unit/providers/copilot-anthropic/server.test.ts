@@ -364,6 +364,28 @@ describe('startEmbeddedServer', () => {
 	// Error paths
 	// -------------------------------------------------------------------------
 
+	it('returns 500 with model name when createSession throws (unknown/rejected model)', async () => {
+		// Simulate a backend rejection (e.g. unknown model ID) by making createSession throw.
+		const rejectClient = makeMockClient(() => {
+			throw new Error('model not found');
+		});
+		const rs = await startEmbeddedServer(rejectClient, '/tmp');
+		try {
+			const r = await postMessages(rs.url, {
+				model: 'copilot-unknown-model-xyz',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: 'hi' }],
+			});
+			expect(r.status).toBe(500);
+			const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+			const errMsg = ((body['error'] as Record<string, unknown>)['message'] as string) ?? '';
+			// Error message must include the model name so failures aren't opaque.
+			expect(errMsg).toContain('copilot-unknown-model-xyz');
+		} finally {
+			await rs.stop();
+		}
+	});
+
 	it('sends complete SSE epilogue on session error', async () => {
 		session.shouldError = true;
 		const r = await postMessages(serverUrl, {

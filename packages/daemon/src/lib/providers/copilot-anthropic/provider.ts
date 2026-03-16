@@ -64,6 +64,13 @@ const SHARED_MODEL_IDS = new Set([
  * GitHub Copilot Anthropic model definitions.
  * Aliases use the `copilot-anthropic-` prefix to avoid collisions with other
  * Copilot-backed providers.
+ *
+ * These model IDs are the identifiers the GitHub Copilot backend recognises
+ * and must be passed verbatim to `CopilotClient.createSession({ model })`.
+ * They mirror the IDs in `github-copilot-provider.ts` (`GITHUB_COPILOT_MODELS`)
+ * which is the authoritative reference for what the Copilot CLI accepts.
+ * The one intentional divergence is `gemini-3-pro-preview` vs the CLI provider's
+ * `gemini-3.1-pro-preview` — see the inline comment for the rationale.
  */
 const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 	{
