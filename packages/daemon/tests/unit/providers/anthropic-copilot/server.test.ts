@@ -868,7 +868,7 @@ describe('factory registration', () => {
 		resetProviderFactory();
 	});
 
-	it('registers AnthropicCopilotProvider with id anthropic-copilot', () => {
+	it('registers AnthropicToCopilotBridgeProvider with id anthropic-copilot', () => {
 		initializeProviders();
 		const registry = getProviderRegistry();
 		const p = registry.get('anthropic-copilot');

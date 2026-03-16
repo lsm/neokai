@@ -6,7 +6,7 @@
  *  - test files (white-box testing of internals)
  */
 
-export { AnthropicCopilotProvider } from './provider.js';
+export { AnthropicToCopilotBridgeProvider } from './provider.js';
 export { startEmbeddedServer, resolveRequestCwd, type EmbeddedServer } from './server.js';
 
 // Exported for unit tests only

@@ -177,7 +177,7 @@ interface TokenCacheEntry {
 
 const TOKEN_CACHE_TTL_MS = 5 * 60 * 1000;
 
-export class AnthropicCopilotProvider implements Provider {
+export class AnthropicToCopilotBridgeProvider implements Provider {
 	readonly id = 'anthropic-copilot';
 	readonly displayName = 'GitHub Copilot (Anthropic API)';
 
@@ -279,7 +279,7 @@ export class AnthropicCopilotProvider implements Provider {
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		if (!this.serverCache) {
 			throw new Error(
-				'AnthropicCopilotProvider: embedded server not started. ' +
+				'AnthropicToCopilotBridgeProvider: embedded server not started. ' +
 					'Await getModels() or ensureServerStarted() before calling buildSdkConfig().'
 			);
 		}

@@ -200,7 +200,7 @@ jobs:
           - module: providers-openai
             test_path: tests/online/providers/openai-provider.test.ts
           - module: providers-anthropic-copilot
-            test_path: tests/online/providers/anthropic-copilot-provider.test.ts
+            test_path: tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
             timeout: 15
           - module: rewind
             test_path: tests/online/rewind

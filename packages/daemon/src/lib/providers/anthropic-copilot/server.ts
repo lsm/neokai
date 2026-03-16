@@ -90,7 +90,7 @@ function sendJsonError(
 /**
  * Extract the per-request working directory from the `Authorization` header.
  *
- * `AnthropicCopilotProvider.buildSdkConfig()` encodes the session workspace as
+ * `AnthropicToCopilotBridgeProvider.buildSdkConfig()` encodes the session workspace as
  * `anthropic-copilot-proxy:<path>` in `ANTHROPIC_AUTH_TOKEN`.  Parsing it here
  * lets the singleton embedded server apply the correct `cwd` per HTTP request
  * without rebuilding a new server for every session.

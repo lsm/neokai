@@ -11,7 +11,7 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
-import { AnthropicCopilotProvider } from './anthropic-copilot/index.js';
+import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -60,7 +60,7 @@ export function initializeProviders(): ProviderRegistry {
 	// Register Anthropic Copilot provider (embedded Anthropic-compatible server).
 	// process.cwd() is the fallback cwd; per-session workspace is threaded via
 	// ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
-	registry.register(new AnthropicCopilotProvider(process.cwd()));
+	registry.register(new AnthropicToCopilotBridgeProvider(process.cwd()));
 
 	// Additional built-in providers can be registered here
 	// Example:

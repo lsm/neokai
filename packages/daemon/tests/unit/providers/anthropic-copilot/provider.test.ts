@@ -1,5 +1,5 @@
 /**
- * Unit tests for AnthropicCopilotProvider
+ * Unit tests for AnthropicToCopilotBridgeProvider
  *
  * Tests cover:
  * - Provider properties (id, capabilities, ownsModel, getModelForTier)
@@ -18,19 +18,19 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { AnthropicCopilotProvider } from '../../../../src/lib/providers/anthropic-copilot/index';
+import { AnthropicToCopilotBridgeProvider } from '../../../../src/lib/providers/anthropic-copilot/index';
 import { initializeProviders, resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 
 // ---------------------------------------------------------------------------
-// AnthropicCopilotProvider — unit tests
+// AnthropicToCopilotBridgeProvider — unit tests
 // ---------------------------------------------------------------------------
 
-describe('AnthropicCopilotProvider', () => {
-	let provider: AnthropicCopilotProvider;
+describe('AnthropicToCopilotBridgeProvider', () => {
+	let provider: AnthropicToCopilotBridgeProvider;
 
 	beforeEach(() => {
-		provider = new AnthropicCopilotProvider('/tmp', {});
+		provider = new AnthropicToCopilotBridgeProvider('/tmp', {});
 	});
 
 	describe('basic properties', () => {
@@ -106,7 +106,7 @@ describe('AnthropicCopilotProvider', () => {
 
 	describe('isAvailable', () => {
 		it('returns false when no token source resolves', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', {});
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'discoverGitHubToken' as never
@@ -115,19 +115,19 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('returns true when COPILOT_GITHUB_TOKEN is set', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			expect(await p.isAvailable()).toBe(true);
 		});
 
 		it('returns true when GH_TOKEN is set', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { GH_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'tok' });
 			expect(await p.isAvailable()).toBe(true);
 		});
 
 		it('does NOT treat GITHUB_TOKEN as a valid Copilot credential', async () => {
 			// GITHUB_TOKEN is the GitHub Actions token — it lacks Copilot access.
 			// Use a non-existent authDir so no ~/.neokai/auth.json is found.
-			const p = new AnthropicCopilotProvider(
+			const p = new AnthropicToCopilotBridgeProvider(
 				'/tmp',
 				{ GITHUB_TOKEN: 'gha-tok' },
 				'/tmp/no-auth-dir-' + Date.now()
@@ -145,20 +145,22 @@ describe('AnthropicCopilotProvider', () => {
 		it('returns false for classic PATs (ghp_ prefix) via COPILOT_GITHUB_TOKEN', async () => {
 			// Classic PATs are rejected by the Copilot CLI — isAvailable() must mirror
 			// getAuthStatus() to prevent models from appearing in the picker.
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_classicpat' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+				COPILOT_GITHUB_TOKEN: 'ghp_classicpat',
+			});
 			expect(await p.isAvailable()).toBe(false);
 		});
 
 		it('returns false for classic PATs (ghp_ prefix) via GH_TOKEN', async () => {
 			// The ghp_ guard applies regardless of which env var the token came from.
-			const p = new AnthropicCopilotProvider('/tmp', { GH_TOKEN: 'ghp_classicpat' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'ghp_classicpat' });
 			expect(await p.isAvailable()).toBe(false);
 		});
 	});
 
 	describe('getAuthStatus', () => {
 		it('reports not authenticated when no token source resolves', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', {});
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'discoverGitHubToken' as never
@@ -169,14 +171,14 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('reports authenticated when COPILOT_GITHUB_TOKEN env var is set', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
 			expect(status.needsRefresh).toBe(false);
 		});
 
 		it('does NOT report authenticated for GITHUB_TOKEN alone', async () => {
-			const p = new AnthropicCopilotProvider(
+			const p = new AnthropicToCopilotBridgeProvider(
 				'/tmp',
 				{ GITHUB_TOKEN: 'gha-tok' },
 				'/tmp/no-auth-dir-' + Date.now()
@@ -192,7 +194,9 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('rejects classic PATs (ghp_ prefix) with an actionable error', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_classictoken' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+				COPILOT_GITHUB_TOKEN: 'ghp_classictoken',
+			});
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(false);
 			expect(status.error).toContain('Classic PATs');
@@ -200,7 +204,7 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('accepts fine-grained PATs (github_pat_ prefix)', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {
 				COPILOT_GITHUB_TOKEN: 'github_pat_finegrained',
 			});
 			const status = await p.getAuthStatus();
@@ -208,14 +212,16 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('accepts OAuth tokens (gho_ prefix)', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_oauthtoken' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {
+				COPILOT_GITHUB_TOKEN: 'gho_oauthtoken',
+			});
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
 		});
 
 		it('rejects classic PATs (ghp_ prefix) via GH_TOKEN', async () => {
 			// The ghp_ guard applies to all credential sources, not just COPILOT_GITHUB_TOKEN.
-			const p = new AnthropicCopilotProvider('/tmp', { GH_TOKEN: 'ghp_classicpat' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'ghp_classicpat' });
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(false);
 			expect(status.error).toContain('Classic PATs');
@@ -233,7 +239,7 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('throws when embedded server has not been started', () => {
-			const p = new AnthropicCopilotProvider('/tmp', {});
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 			expect(() => p.buildSdkConfig('copilot-anthropic-sonnet')).toThrow(
 				'embedded server not started'
 			);
@@ -296,7 +302,7 @@ describe('AnthropicCopilotProvider', () => {
 
 	describe('getModels() pre-warms embedded server', () => {
 		it('calls ensureServerStarted when provider is available', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
 				'http://127.0.0.1:9999' as never
 			);
@@ -305,7 +311,7 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('returns empty array when ensureServerStarted fails', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			spyOn(p, 'ensureServerStarted').mockImplementation(() =>
 				Promise.reject(new Error('port in use'))
 			);
@@ -314,7 +320,7 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('returns empty array when provider is not available', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', {});
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
 				'discoverGitHubToken' as never
@@ -326,7 +332,7 @@ describe('AnthropicCopilotProvider', () => {
 
 	describe('ensureServerStarted() retry-after-failure', () => {
 		it('clears serverStarting on rejection so the next call can retry', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			let callCount = 0;
 			spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
 				async () => {
@@ -347,7 +353,7 @@ describe('AnthropicCopilotProvider', () => {
 		});
 
 		it('creates only one server when called concurrently', async () => {
-			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			let createCount = 0;
 			spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
 				async () => {
@@ -421,7 +427,7 @@ describe('AnthropicCopilotProvider', () => {
 
 describe('loadStoredGitHubToken', () => {
 	it('token from auth.json propagates through the chain to isAvailable()=true', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		// Source 1 returns a token (simulates auth.json with github-copilot credentials)
 		spyOn(
 			p as unknown as Record<string, unknown>,
@@ -438,7 +444,7 @@ describe('loadStoredGitHubToken', () => {
 	});
 
 	it('absent auth.json (source 1 returns undefined) falls through to sources 2-5', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		// Source 1 returns nothing
 		spyOn(
 			p as unknown as Record<string, unknown>,
@@ -455,7 +461,7 @@ describe('loadStoredGitHubToken', () => {
 	});
 
 	it('loadStoredGitHubToken is called before env-var sources (source 1 has priority)', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'env-tok' });
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'env-tok' });
 		const spy = spyOn(
 			p as unknown as Record<string, unknown>,
 			'loadStoredGitHubToken' as never
@@ -473,7 +479,7 @@ describe('loadStoredGitHubToken', () => {
 
 describe('tryGhHostsToken', () => {
 	it('token from hosts.yml propagates through the chain to isAvailable()=true', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		// Sources 1-4 all return nothing
 		spyOn(
 			p as unknown as Record<string, unknown>,
@@ -495,7 +501,7 @@ describe('tryGhHostsToken', () => {
 	});
 
 	it('invalid hosts.yml token (validateCopilotToken=false) does not grant access', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		spyOn(
 			p as unknown as Record<string, unknown>,
 			'loadStoredGitHubToken' as never
@@ -522,7 +528,7 @@ describe('tryGhHostsToken', () => {
 
 describe('logout()', () => {
 	it('invalidates the token cache so the next call re-discovers credentials', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 		// Prime the cache
 		expect(await p.isAvailable()).toBe(true);
 		// Verify cache exists
@@ -533,7 +539,7 @@ describe('logout()', () => {
 	});
 
 	it('calls loadStoredGitHubToken returns undefined after logout clears stored token', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		// Prime the cache with a stored token
 		spyOn(
 			p as unknown as Record<string, unknown>,
@@ -553,7 +559,7 @@ describe('logout()', () => {
 	});
 
 	it('is safe to call twice (idempotent)', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 		await p.logout();
 		await expect(p.logout()).resolves.toBeUndefined();
 	});
@@ -565,7 +571,7 @@ describe('logout()', () => {
 
 describe('startOAuthFlow()', () => {
 	it('returns ProviderOAuthFlowData with type=device and required fields', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 
 		// Mock the internal device flow fetch so no real network call is made
 		spyOn(p as unknown as Record<string, unknown>, 'startDeviceFlow' as never).mockResolvedValue({
@@ -590,7 +596,7 @@ describe('startOAuthFlow()', () => {
 	});
 
 	it('returns cached flow data if an in-progress flow already exists', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 
 		const startDeviceFlowSpy = spyOn(
 			p as unknown as Record<string, unknown>,
@@ -623,7 +629,7 @@ describe('startOAuthFlow()', () => {
 
 describe('startBackgroundPolling()', () => {
 	/** Helper: set activeOAuthFlow directly on the provider instance. */
-	function setActiveFlow(p: AnthropicCopilotProvider): void {
+	function setActiveFlow(p: AnthropicToCopilotBridgeProvider): void {
 		(p as unknown as Record<string, unknown>)['activeOAuthFlow'] = {
 			deviceCode: 'dev-code-abc',
 			userCode: 'ABCD-1234',
@@ -635,7 +641,7 @@ describe('startBackgroundPolling()', () => {
 	}
 
 	/** Helper: read activeOAuthFlow from the provider instance. */
-	function getActiveFlow(p: AnthropicCopilotProvider): {
+	function getActiveFlow(p: AnthropicToCopilotBridgeProvider): {
 		completed: boolean;
 		success: boolean;
 	} {
@@ -655,7 +661,7 @@ describe('startBackgroundPolling()', () => {
 	};
 
 	it('slow_down response backs off by 5 s and continues — not terminal', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		setActiveFlow(p);
 
 		// Suppress file I/O
@@ -715,7 +721,7 @@ describe('startBackgroundPolling()', () => {
 	});
 
 	it('non-slow_down error terminates the flow with completed=true success=false', async () => {
-		const p = new AnthropicCopilotProvider('/tmp', {});
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
 		setActiveFlow(p);
 
 		const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -751,7 +757,7 @@ describe('factory registration', () => {
 		resetProviderFactory();
 	});
 
-	it('registers AnthropicCopilotProvider with id anthropic-copilot', () => {
+	it('registers AnthropicToCopilotBridgeProvider with id anthropic-copilot', () => {
 		initializeProviders();
 		const registry = getProviderRegistry();
 		const p = registry.get('anthropic-copilot');

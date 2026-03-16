@@ -1,5 +1,5 @@
 /**
- * AnthropicCopilotProvider Online Tests
+ * AnthropicToCopilotBridgeProvider Online Tests
  *
  * Tests the embedded Anthropic-compatible HTTP server backed by the GitHub Copilot SDK.
  *
@@ -13,7 +13,7 @@
  *   intentional — CI must alert the team when Copilot credentials need attention.
  *
  * HOW TO RUN:
- *   bun test packages/daemon/tests/online/providers/anthropic-copilot-provider.test.ts
+ *   bun test packages/daemon/tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts
  *
  * WHAT THESE TESTS PROVE:
  *   1. basic-conversation  — embedded server routes requests to the Copilot model and
@@ -138,7 +138,7 @@ function hasToolUseBlock(sdkMessages: Array<Record<string, unknown>>, toolName?:
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('AnthropicCopilotProvider (Online)', () => {
+describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	let daemon: DaemonServerContext;
 	/**
 	 * The first available anthropic-copilot model ID, fetched dynamically in beforeAll.

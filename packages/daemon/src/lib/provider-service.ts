@@ -216,7 +216,7 @@ export class ProviderService {
 
 		// Build base URL from SDK config.
 		// buildSdkConfig may throw for providers that require lazy initialisation
-		// (e.g. AnthropicCopilotProvider throws when the embedded server has not
+		// (e.g. AnthropicToCopilotBridgeProvider throws when the embedded server has not
 		// been started yet).  Treat that as "no base URL" rather than a crash.
 		let baseUrl: string | undefined;
 		try {
@@ -523,7 +523,7 @@ export class ProviderService {
 		if (envVars.ANTHROPIC_API_KEY !== undefined) {
 			if (envVars.ANTHROPIC_API_KEY === '') {
 				// Empty string means "clear the key" — used by providers that set
-				// ANTHROPIC_BASE_URL to a local proxy (e.g. AnthropicCopilotProvider)
+				// ANTHROPIC_BASE_URL to a local proxy (e.g. AnthropicToCopilotBridgeProvider)
 				// to prevent the SDK subprocess from calling Anthropic directly with
 				// the user's real API key.
 				original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;

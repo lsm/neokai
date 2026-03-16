@@ -703,7 +703,7 @@ describe('ProviderService', () => {
 		});
 
 		it('deletes ANTHROPIC_API_KEY when provider returns empty-string sentinel, restores on restoreEnvVars', () => {
-			// Mirrors what AnthropicCopilotProvider does: returning ANTHROPIC_API_KEY: ''
+			// Mirrors what AnthropicToCopilotBridgeProvider does: returning ANTHROPIC_API_KEY: ''
 			// prevents the SDK subprocess from calling api.anthropic.com with the real key.
 			registry.register(new CopilotMockProvider());
 			process.env.ANTHROPIC_API_KEY = 'real-key';
