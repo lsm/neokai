@@ -767,6 +767,40 @@ export class RoomRuntime {
 			return;
 		}
 
+		// Classify any API errors in leader output.
+		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
+		// rate_limit → mirroring already set the backoff; the isRateLimited check above handles it
+		// recoverable / null → fall through (leader finished without calling a tool — that's fine)
+		{
+			const leaderMessages = this.getWorkerMessages
+				? this.getWorkerMessages(group.leaderSessionId, null)
+				: [];
+			const leaderOutputText =
+				leaderMessages.length > 0
+					? leaderMessages
+							.map((m) => m.text)
+							.filter(Boolean)
+							.join('\n\n')
+					: '';
+			if (leaderOutputText) {
+				const errorClass = classifyError(leaderOutputText);
+				if (errorClass?.class === 'terminal') {
+					log.info(
+						`Terminal API error in leader output for group ${groupId}: ${errorClass.reason}`
+					);
+					this.appendGroupEvent(groupId, 'status', {
+						text: `Terminal error in leader: ${errorClass.reason}`,
+					});
+					await this.taskGroupManager.fail(groupId, errorClass.reason);
+					this.cleanupMirroring(groupId, `Terminal API error in leader: ${errorClass.reason}`);
+					await this.emitTaskUpdateById(group.taskId);
+					await this.emitGoalProgressForTask(group.taskId);
+					this.scheduleTick();
+					return;
+				}
+			}
+		}
+
 		// Leader can finish without calling a tool - that's fine.
 		// No contract violation logic needed.
 	}
