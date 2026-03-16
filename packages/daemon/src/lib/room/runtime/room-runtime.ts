@@ -502,10 +502,11 @@ export class RoomRuntime {
 		//
 		// Why here?  The rate-limit check above only catches errors that mirroring already
 		// persisted to the group.  When the rate limit expires and recoverStuckWorkers
-		// re-triggers this handler, the group-level flag is gone.  If the worker's output
-		// still contains a 429 (or a 4xx terminal error), running the worktree gate next
-		// would bounce the worker straight back into another failing API call — creating a
-		// rapid bounce loop.  Detecting the error first prevents that.
+		// re-triggers this handler, the group-level flag is expired-but-non-null (the timer
+		// intentionally does NOT clear it — the sentinel is only cleared in send_to_worker).
+		// If the worker's output still contains a 429 (or a 4xx terminal error), running the
+		// worktree gate next would bounce the worker straight back into another failing API
+		// call — creating a rapid bounce loop.  Detecting the error first prevents that.
 		//
 		// terminal   → fail task immediately (4xx — unrecoverable, no point bouncing)
 		// rate_limit → set initial backoff and pause (only on first detection; re-triggers fall through)
@@ -834,8 +835,13 @@ export class RoomRuntime {
 					this.scheduleTick();
 					return;
 				}
-				// Only apply backoff on first detection. After expiry, the recovery tick re-triggers
-				// this handler with the same old 429 message — fall through then so the leader can retry.
+				// Only apply backoff on first detection.
+				// Unlike the worker path (where recoverStuckWorkers re-triggers onWorkerTerminalState
+				// after expiry), there is no recoverStuckLeaders mechanism that re-calls this handler.
+				// The !group.rateLimit guard is a defensive check: it prevents the backoff from being
+				// reset if this handler is somehow called again while a rate limit is already recorded.
+				// A full leader retry after 429 would require re-injecting the worker message into the
+				// leader session — tracked as a future improvement (out of scope for this fix).
 				if (errorClass?.class === 'rate_limit' && !group.rateLimit) {
 					const rateLimitBackoff = errorClass.resetsAt
 						? createRateLimitBackoff(leaderOutputText, 'leader')
