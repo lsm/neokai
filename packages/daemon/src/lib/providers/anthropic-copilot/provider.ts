@@ -522,18 +522,32 @@ export class AnthropicCopilotProvider implements Provider {
 	 *
 	 * Only called for tokens from `gh auth token` (source 4) and hosts.yml (source 5).
 	 * COPILOT_GITHUB_TOKEN and GH_TOKEN env-var tokens are trusted without validation.
+	 *
+	 * Cold-path only: called once per daemon restart per credential source, then cached
+	 * for 5 minutes by `resolveGitHubToken`. Expected latency: 3–15 s (subprocess spawn
+	 * + OAuth exchange). A 20 s hard timeout prevents indefinite hangs on slow networks.
+	 *
+	 * Note: uses `gpt-4o-mini` as the validation model. If Copilot ever removes that
+	 * model, validation will spuriously return false (prompting the user to re-authenticate
+	 * via OAuth rather than silently succeeding).
 	 */
 	private async validateCopilotToken(token: string): Promise<boolean> {
+		const TIMEOUT_MS = 20_000;
 		const client = new CopilotClient({
 			useStdio: true,
 			logLevel: 'error',
 			env: { ...this.env, COPILOT_GITHUB_TOKEN: token },
 		});
 		try {
-			const session = await client.createSession({
-				model: 'gpt-4o-mini',
-				onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
-			});
+			const session = await Promise.race([
+				client.createSession({
+					model: 'gpt-4o-mini',
+					onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
+				}),
+				new Promise<never>((_, reject) =>
+					setTimeout(() => reject(new Error('validateCopilotToken timed out')), TIMEOUT_MS)
+				),
+			]);
 			await session.disconnect();
 			return true;
 		} catch {
