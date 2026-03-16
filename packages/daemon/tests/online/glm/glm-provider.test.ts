@@ -43,6 +43,7 @@ describe('GLM Provider Integration', () => {
 
 			// GLM models start with "glm-"
 			expect(providerService.isGlmModel('glm-5')).toBe(true);
+			expect(providerService.isGlmModel('glm-5-turbo')).toBe(true);
 			expect(providerService.isGlmModel('glm-4')).toBe(true);
 			expect(providerService.isGlmModel('GLM-4.7')).toBe(true); // case insensitive
 
@@ -57,6 +58,7 @@ describe('GLM Provider Integration', () => {
 			const providerService = new ProviderService();
 
 			expect(providerService.detectProviderFromModel('glm-5')).toBe('glm');
+			expect(providerService.detectProviderFromModel('glm-5-turbo')).toBe('glm');
 			expect(providerService.detectProviderFromModel('GLM-4')).toBe('glm');
 			expect(providerService.detectProviderFromModel('default')).toBe('anthropic');
 			expect(providerService.detectProviderFromModel('opus')).toBe('anthropic');
@@ -120,6 +122,33 @@ describe('GLM Provider Integration', () => {
 				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
 				// Extended timeout
 				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
+			} finally {
+				if (originalGlmKey !== undefined) {
+					process.env.GLM_API_KEY = originalGlmKey;
+				} else {
+					delete process.env.GLM_API_KEY;
+				}
+			}
+		});
+
+		it('should return correct env vars for glm-5-turbo model ID', () => {
+			const providerService = new ProviderService();
+
+			const originalGlmKey = process.env.GLM_API_KEY;
+			process.env.GLM_API_KEY = 'test-glm-api-key';
+
+			try {
+				const envVars = providerService.getEnvVarsForModel('glm-5-turbo');
+
+				expect(envVars.ANTHROPIC_BASE_URL).toBe('https://open.bigmodel.cn/api/anthropic');
+				expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('test-glm-api-key');
+				expect(envVars.ANTHROPIC_API_KEY).toBeUndefined();
+				expect(envVars.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBe('1');
+				expect(envVars.API_TIMEOUT_MS).toBe('3000000');
+				// glm-5-turbo routes haiku/sonnet to itself, opus stays on glm-5
+				expect(envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5-turbo');
+				expect(envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5-turbo');
+				expect(envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5');
 			} finally {
 				if (originalGlmKey !== undefined) {
 					process.env.GLM_API_KEY = originalGlmKey;
@@ -543,6 +572,55 @@ describe('GLM Provider Integration', () => {
 	});
 
 	describe('GLM API Call', () => {
+		it('should make actual API call to GLM with glm-5-turbo', async () => {
+			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
+
+			if (!glmApiKey) {
+				console.log('Skipping GLM-5-Turbo API call test - no GLM_API_KEY set');
+				return;
+			}
+
+			const baseUrl = 'https://open.bigmodel.cn/api/anthropic';
+
+			const response = await fetch(`${baseUrl}/v1/messages`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'x-api-key': glmApiKey!,
+					'anthropic-version': '2023-06-01',
+				},
+				body: JSON.stringify({
+					model: 'glm-5-turbo',
+					max_tokens: 100,
+					messages: [
+						{
+							role: 'user',
+							content: 'Say "Hello from GLM-5-Turbo" in exactly 6 words.',
+						},
+					],
+				}),
+			});
+
+			if (!response.ok) {
+				const errorText = await response.text();
+				throw new Error(`GLM API error: ${response.status} ${errorText}`);
+			}
+
+			const data = (await response.json()) as {
+				content: Array<{ type: string; text?: string }>;
+				stop_reason: string;
+			};
+
+			expect(data.content).toBeDefined();
+			expect(data.content.length).toBeGreaterThan(0);
+
+			const textContent = data.content.find((c) => c.type === 'text');
+			expect(textContent).toBeDefined();
+			console.log('GLM-5-Turbo Response:', textContent?.text);
+
+			expect(data.stop_reason).toBe('end_turn');
+		}, 30000);
+
 		it('should make actual API call to GLM', async () => {
 			const glmApiKey = process.env.GLM_API_KEY || process.env.ZHIPU_API_KEY;
 
