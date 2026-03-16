@@ -298,10 +298,14 @@ export class BridgeSession {
 		// Wire notification handlers
 		this.conn.onNotification('item/agentMessage/delta', (rawParams) => {
 			const params = rawParams as {
-				delta: { type: string; text?: string };
+				delta?: { type?: string; text?: string };
 			};
-			if (params?.delta?.type === 'text_delta' && params.delta.text) {
-				this.queue.push({ type: 'text_delta', text: params.delta.text });
+			// codex 0.114+ sends type 'output_text' (a ContentItem variant), not
+			// 'text_delta'.  Accept any delta with a non-empty text field so the
+			// bridge is resilient to future protocol changes.
+			const text = params?.delta?.text;
+			if (text) {
+				this.queue.push({ type: 'text_delta', text });
 			}
 		});
 

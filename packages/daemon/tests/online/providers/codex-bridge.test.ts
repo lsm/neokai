@@ -166,7 +166,7 @@ async function callBridge(
 	tools: BridgeTool[] = []
 ): Promise<SseEvent[]> {
 	const reqBody: Record<string, unknown> = {
-		model: 'o4-mini',
+		model: 'codex-1',
 		messages,
 		stream: true,
 		max_tokens: 512,
@@ -249,8 +249,13 @@ describe('Codex Bridge (Online)', () => {
 			{ role: 'user', content: 'Reply with exactly: PONG' },
 		]);
 
-		expect(getStopReason(events)).toBe('end_turn');
-		expect(extractText(events).toUpperCase()).toContain('PONG');
+		const stopReason = getStopReason(events);
+		const text = extractText(events);
+		if (stopReason !== 'end_turn' || !text.toUpperCase().includes('PONG')) {
+			console.log('[diag] basic-conversation events:', JSON.stringify(events, null, 2));
+		}
+		expect(stopReason).toBe('end_turn');
+		expect(text.toUpperCase()).toContain('PONG');
 	}, 120_000);
 
 	// -------------------------------------------------------------------------
@@ -284,7 +289,11 @@ describe('Codex Bridge (Online)', () => {
 			[getGreetingTool]
 		);
 
-		expect(getStopReason(turn1)).toBe('tool_use');
+		const stopReason1 = getStopReason(turn1);
+		if (stopReason1 !== 'tool_use') {
+			console.log('[diag] tool-use turn1 events:', JSON.stringify(turn1, null, 2));
+		}
+		expect(stopReason1).toBe('tool_use');
 
 		const toolUse = getToolUseBlock(turn1);
 		expect(toolUse).not.toBeNull();
@@ -367,7 +376,11 @@ describe('Codex Bridge (Online)', () => {
 			[mcpEchoTool]
 		);
 
-		expect(getStopReason(turn1)).toBe('tool_use');
+		const stopReason1mcp = getStopReason(turn1);
+		if (stopReason1mcp !== 'tool_use') {
+			console.log('[diag] mcp-tool turn1 events:', JSON.stringify(turn1, null, 2));
+		}
+		expect(stopReason1mcp).toBe('tool_use');
 
 		const toolUse = getToolUseBlock(turn1);
 		expect(toolUse).not.toBeNull();
