@@ -382,8 +382,13 @@ export class ProviderService {
 			return {};
 		}
 
-		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-		return sdkConfigToEnvVars(sdkConfig);
+		try {
+			const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
+			return sdkConfigToEnvVars(sdkConfig);
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started)
+			return {};
+		}
 	}
 
 	/**
@@ -418,8 +423,13 @@ export class ProviderService {
 		};
 
 		const modelId = session.config.model || 'default';
-		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-		return sdkConfigToEnvVars(sdkConfig);
+		try {
+			const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
+			return sdkConfigToEnvVars(sdkConfig);
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started)
+			return {};
+		}
 	}
 
 	/**

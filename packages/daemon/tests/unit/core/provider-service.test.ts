@@ -494,6 +494,14 @@ describe('ProviderService', () => {
 			const envVars = service.getEnvVarsForModel('unknown-model');
 			expect(envVars).toEqual({});
 		});
+
+		it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+			registry.register(new ThrowingMockProvider());
+
+			// Must not throw
+			const envVars = service.getEnvVarsForModel('throwing-model');
+			expect(envVars).toEqual({});
+		});
 	});
 
 	describe('getProviderEnvVars', () => {
