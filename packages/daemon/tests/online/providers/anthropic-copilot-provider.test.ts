@@ -5,10 +5,12 @@
  * using the gpt-5-mini model via the `copilot-anthropic-mini` alias.
  *
  * REQUIREMENTS:
- * - Authentication: set COPILOT_GITHUB_TOKEN or GH_TOKEN,
- *   or run `gh auth login` with a GitHub account that has Copilot access.
+ * - Authentication: set COPILOT_GITHUB_TOKEN to a PAT with the `copilot_requests` scope,
+ *   or set GH_TOKEN, or run `gh auth login` with a GitHub account that has Copilot access.
  * - No manual CLI install needed — @github/copilot is bundled as a runtime
  *   dependency of @github/copilot-sdk and installed by `bun install`.
+ * - If credentials are absent or non-functional, these tests FAIL (not skip). This is
+ *   intentional — CI must alert the team when Copilot credentials need attention.
  *
  * HOW TO RUN:
  *   bun test packages/daemon/tests/online/providers/anthropic-copilot-provider.test.ts
@@ -132,16 +134,21 @@ describe('AnthropicCopilotProvider (Online)', () => {
 		}
 	}, SETUP_TIMEOUT);
 
-	/** Returns true when the anthropic-copilot provider reports authenticated. */
-	async function isAnthropicCopilotAvailable(): Promise<boolean> {
-		try {
-			const result = (await daemon.messageHub.request('auth.providers', {})) as {
-				providers: Array<{ id: string; isAuthenticated: boolean }>;
-			};
-			const p = result.providers.find((x) => x.id === 'anthropic-copilot');
-			return p?.isAuthenticated ?? false;
-		} catch {
-			return false;
+	/**
+	 * Asserts that the anthropic-copilot provider is authenticated.
+	 * Throws a descriptive error (hard-fail) if credentials are missing or invalid.
+	 * Per CLAUDE.md policy: online tests must FAIL, not skip, when credentials are absent.
+	 */
+	async function assertCopilotAuthenticated(): Promise<void> {
+		const result = (await daemon.messageHub.request('auth.providers', {})) as {
+			providers: Array<{ id: string; isAuthenticated: boolean }>;
+		};
+		const provider = result.providers.find((x) => x.id === 'anthropic-copilot');
+		if (!provider?.isAuthenticated) {
+			throw new Error(
+				'anthropic-copilot provider is not authenticated. ' +
+					'Set COPILOT_GITHUB_TOKEN to a GitHub PAT with copilot_requests scope.'
+			);
 		}
 	}
 
@@ -152,13 +159,7 @@ describe('AnthropicCopilotProvider (Online)', () => {
 	test(
 		'basic conversation: model responds correctly via gpt-5-mini',
 		async () => {
-			if (!(await isAnthropicCopilotAvailable())) {
-				console.log(
-					'Skipping — anthropic-copilot not authenticated. ' +
-						'Set COPILOT_GITHUB_TOKEN to a PAT with copilot_requests scope.'
-				);
-				return;
-			}
+			await assertCopilotAuthenticated();
 
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
@@ -200,10 +201,7 @@ describe('AnthropicCopilotProvider (Online)', () => {
 	test(
 		'tool use: bridge routes tool_use/tool_result correctly',
 		async () => {
-			if (!(await isAnthropicCopilotAvailable())) {
-				console.log('Skipping — anthropic-copilot not authenticated.');
-				return;
-			}
+			await assertCopilotAuthenticated();
 
 			// Create a workspace with a known file the model will read.
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-tool-${Date.now()}`);
@@ -254,10 +252,7 @@ describe('AnthropicCopilotProvider (Online)', () => {
 	test(
 		'custom MCP: tool from .mcp.json is exposed and called by the model',
 		async () => {
-			if (!(await isAnthropicCopilotAvailable())) {
-				console.log('Skipping — anthropic-copilot not authenticated.');
-				return;
-			}
+			await assertCopilotAuthenticated();
 
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
