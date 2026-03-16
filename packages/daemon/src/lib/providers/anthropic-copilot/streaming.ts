@@ -35,7 +35,7 @@ import type { ToolResult } from './conversation.js';
 import { AnthropicStreamWriter } from './sse.js';
 import { Logger } from '../../logger.js';
 
-const logger = new Logger('copilot-anthropic-streaming');
+const logger = new Logger('anthropic-copilot-streaming');
 
 /** Per-request streaming timeout (ms). Fires if neither session.idle nor session.error arrives. */
 export const STREAMING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes

@@ -382,7 +382,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 			}
 
 			// Stop all agent sessions first — this closes any open SSE connections
-			// that are held by providers (e.g. CopilotAnthropicProvider's embedded
+			// that are held by providers (e.g. AnthropicCopilotProvider's embedded
 			// HTTP server). Provider shutdown must follow so server.close() is not
 			// blocked waiting for those connections to drain.
 			await sessionManager.cleanup();

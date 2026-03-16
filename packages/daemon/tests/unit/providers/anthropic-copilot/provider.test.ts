@@ -1,9 +1,9 @@
 /**
- * Unit tests for CopilotAnthropicProvider
+ * Unit tests for AnthropicCopilotProvider
  *
  * Tests cover:
  * - Provider properties (id, capabilities, ownsModel, getModelForTier)
- * - Availability checks (binary + auth)
+ * - Availability checks (credential discovery chain)
  * - buildSdkConfig env-var shape (requires pre-warmed serverCache)
  * - getModels() pre-warms the embedded server
  * - shutdown() stops the embedded server and CopilotClient
@@ -11,24 +11,24 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { CopilotAnthropicProvider } from '../../../../src/lib/providers/copilot-anthropic/index';
+import { AnthropicCopilotProvider } from '../../../../src/lib/providers/anthropic-copilot/index';
 import { initializeProviders, resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 
 // ---------------------------------------------------------------------------
-// CopilotAnthropicProvider — unit tests
+// AnthropicCopilotProvider — unit tests
 // ---------------------------------------------------------------------------
 
-describe('CopilotAnthropicProvider', () => {
-	let provider: CopilotAnthropicProvider;
+describe('AnthropicCopilotProvider', () => {
+	let provider: AnthropicCopilotProvider;
 
 	beforeEach(() => {
-		provider = new CopilotAnthropicProvider('/tmp', {});
+		provider = new AnthropicCopilotProvider('/tmp', {});
 	});
 
 	describe('basic properties', () => {
 		it('has correct id', () => {
-			expect(provider.id).toBe('github-copilot-anthropic');
+			expect(provider.id).toBe('anthropic-copilot');
 		});
 
 		it('has correct displayName', () => {
@@ -61,16 +61,15 @@ describe('CopilotAnthropicProvider', () => {
 			expect(provider.ownsModel('copilot-anthropic-mini')).toBe(true);
 		});
 
-		it('does NOT own bare model IDs shared with other providers', () => {
-			// Claude IDs: also claimed by GitHubCopilotProvider (registered before this)
-			expect(provider.ownsModel('claude-opus-4.6')).toBe(false);
-			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(false);
-			// gpt-5.3-codex/gpt-5-mini: also claimed by GitHubCopilotProvider
-			expect(provider.ownsModel('gpt-5.3-codex')).toBe(false);
-			expect(provider.ownsModel('gpt-5-mini')).toBe(false);
+		it('owns all bare model IDs in the model list', () => {
+			// Since GitHubCopilotProvider is removed, no collision — bare IDs are owned
+			expect(provider.ownsModel('claude-opus-4.6')).toBe(true);
+			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(true);
+			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
+			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
 		});
 
-		it('owns gemini-3-pro-preview bare ID (no collision partner)', () => {
+		it('owns gemini-3-pro-preview bare ID', () => {
 			expect(provider.ownsModel('gemini-3-pro-preview')).toBe(true);
 		});
 
@@ -99,43 +98,77 @@ describe('CopilotAnthropicProvider', () => {
 	});
 
 	describe('isAvailable', () => {
-		it('returns false when no token and gh auth fails', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', {});
+		it('returns false when no token source resolves', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
-				'isGhAuthenticated' as never
-			).mockResolvedValue(false as never);
+				'discoverGitHubToken' as never
+			).mockResolvedValue(undefined as never);
 			expect(await p.isAvailable()).toBe(false);
 		});
 
 		it('returns true when COPILOT_GITHUB_TOKEN is set', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			expect(await p.isAvailable()).toBe(true);
 		});
 
 		it('returns true when GH_TOKEN is set', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', { GH_TOKEN: 'tok' });
+			const p = new AnthropicCopilotProvider('/tmp', { GH_TOKEN: 'tok' });
 			expect(await p.isAvailable()).toBe(true);
+		});
+
+		it('does NOT treat GITHUB_TOKEN as a valid Copilot credential', async () => {
+			// GITHUB_TOKEN is the GitHub Actions token — it lacks Copilot access.
+			// Use a non-existent authDir so no ~/.neokai/auth.json is found.
+			const p = new AnthropicCopilotProvider(
+				'/tmp',
+				{ GITHUB_TOKEN: 'gha-tok' },
+				'/tmp/no-auth-dir-' + Date.now()
+			);
+			// Mock gh CLI and hosts.yml sources so only env vars are tested
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			expect(await p.isAvailable()).toBe(false);
 		});
 	});
 
 	describe('getAuthStatus', () => {
-		it('reports not authenticated when no token and gh auth fails', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', {});
+		it('reports not authenticated when no token source resolves', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
-				'isGhAuthenticated' as never
-			).mockResolvedValue(false as never);
+				'discoverGitHubToken' as never
+			).mockResolvedValue(undefined as never);
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(false);
 			expect(status.error).toContain('COPILOT_GITHUB_TOKEN');
 		});
 
-		it('reports authenticated when token env var is set', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', { GITHUB_TOKEN: 'tok' });
+		it('reports authenticated when COPILOT_GITHUB_TOKEN env var is set', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
 			expect(status.needsRefresh).toBe(false);
+		});
+
+		it('does NOT report authenticated for GITHUB_TOKEN alone', async () => {
+			const p = new AnthropicCopilotProvider(
+				'/tmp',
+				{ GITHUB_TOKEN: 'gha-tok' },
+				'/tmp/no-auth-dir-' + Date.now()
+			);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(false);
 		});
 	});
 
@@ -150,7 +183,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('throws when embedded server has not been started', () => {
-			const p = new CopilotAnthropicProvider('/tmp', {});
+			const p = new AnthropicCopilotProvider('/tmp', {});
 			expect(() => p.buildSdkConfig('copilot-anthropic-sonnet')).toThrow(
 				'embedded server not started'
 			);
@@ -161,22 +194,22 @@ describe('CopilotAnthropicProvider', () => {
 			expect(cfg.isAnthropicCompatible).toBe(true);
 		});
 
-		it('sets ANTHROPIC_AUTH_TOKEN dummy key', () => {
+		it('sets ANTHROPIC_AUTH_TOKEN', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			expect(cfg.envVars['ANTHROPIC_AUTH_TOKEN']).toBeDefined();
 		});
 
-		it('encodes workspacePath in ANTHROPIC_AUTH_TOKEN', () => {
+		it('encodes workspacePath in ANTHROPIC_AUTH_TOKEN with anthropic-copilot-proxy prefix', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet', {
 				workspacePath: '/my/workspace',
 			});
-			expect(cfg.envVars['ANTHROPIC_AUTH_TOKEN']).toBe('copilot-anthropic-proxy:/my/workspace');
+			expect(cfg.envVars['ANTHROPIC_AUTH_TOKEN']).toBe('anthropic-copilot-proxy:/my/workspace');
 		});
 
 		it('falls back to provider cwd when workspacePath is absent', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			const token = cfg.envVars['ANTHROPIC_AUTH_TOKEN'] as string;
-			expect(token.startsWith('copilot-anthropic-proxy:')).toBe(true);
+			expect(token.startsWith('anthropic-copilot-proxy:')).toBe(true);
 		});
 
 		it('ANTHROPIC_BASE_URL uses the injected server URL', () => {
@@ -205,7 +238,7 @@ describe('CopilotAnthropicProvider', () => {
 
 	describe('getModels() pre-warms embedded server', () => {
 		it('calls ensureServerStarted when provider is available', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			const ensureSpy = spyOn(p, 'ensureServerStarted').mockResolvedValue(
 				'http://127.0.0.1:9999' as never
 			);
@@ -214,7 +247,7 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('returns empty array when ensureServerStarted fails', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			spyOn(p, 'ensureServerStarted').mockImplementation(() =>
 				Promise.reject(new Error('port in use'))
 			);
@@ -223,11 +256,11 @@ describe('CopilotAnthropicProvider', () => {
 		});
 
 		it('returns empty array when provider is not available', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', {});
+			const p = new AnthropicCopilotProvider('/tmp', {});
 			spyOn(
 				p as unknown as Record<string, unknown>,
-				'isGhAuthenticated' as never
-			).mockResolvedValue(false as never);
+				'discoverGitHubToken' as never
+			).mockResolvedValue(undefined as never);
 			const models = await p.getModels();
 			expect(models).toEqual([]);
 		});
@@ -235,7 +268,7 @@ describe('CopilotAnthropicProvider', () => {
 
 	describe('ensureServerStarted() retry-after-failure', () => {
 		it('clears serverStarting on rejection so the next call can retry', async () => {
-			const p = new CopilotAnthropicProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
 			let callCount = 0;
 			spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
 				async () => {
@@ -308,11 +341,11 @@ describe('factory registration', () => {
 		resetProviderFactory();
 	});
 
-	it('registers CopilotAnthropicProvider with id github-copilot-anthropic', () => {
+	it('registers AnthropicCopilotProvider with id anthropic-copilot', () => {
 		initializeProviders();
 		const registry = getProviderRegistry();
-		const p = registry.get('github-copilot-anthropic');
+		const p = registry.get('anthropic-copilot');
 		expect(p).toBeDefined();
-		expect(p?.id).toBe('github-copilot-anthropic');
+		expect(p?.id).toBe('anthropic-copilot');
 	});
 });

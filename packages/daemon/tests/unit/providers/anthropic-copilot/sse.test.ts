@@ -1,10 +1,10 @@
 /**
- * Tests for copilot-anthropic/sse.ts
+ * Tests for anthropic-copilot/sse.ts
  */
 
 import { describe, expect, it } from 'bun:test';
 import type { ServerResponse } from 'node:http';
-import { AnthropicStreamWriter } from '../../../../src/lib/providers/copilot-anthropic/sse';
+import { AnthropicStreamWriter } from '../../../../src/lib/providers/anthropic-copilot/sse';
 
 // ---------------------------------------------------------------------------
 // Mock ServerResponse

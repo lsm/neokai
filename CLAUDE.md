@@ -222,6 +222,17 @@ make self-test TEST=tests/core/navigation-3-column.e2e.ts
 - **`main`**: Production-ready. Only accepts PRs from `dev` (enforced by CI). Full test suite on PR.
 - Feature branches are created from `dev`.
 
+### Credential-Dependent Online Tests — Hard Fail Rule
+
+**Online tests that require real provider credentials must FAIL, not skip, when those credentials are absent or non-functional.**
+
+- Do NOT add `if (!process.env.SOME_TOKEN) { return; }` skip guards in online tests.
+- Do NOT silently skip tests because a secret is unset — that masks misconfiguration.
+- If a required secret (e.g., `COPILOT_GITHUB_TOKEN`, `GLM_API_KEY`) is not configured in CI, the test must fail. That failure is intentional: it tells the team to configure the secret.
+- The CI workflow is the contract. If a test module appears in the matrix, it is expected to pass. Secrets must be provisioned accordingly.
+
+This rule ensures CI always verifies that external API credentials are properly set up and working, not just that the test code compiles.
+
 | Event | Tests Run |
 |-------|-----------|
 | PR → `dev` | Lint, type check, unit tests, integration tests (fast) |

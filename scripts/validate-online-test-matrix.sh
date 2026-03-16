@@ -59,10 +59,9 @@ FEATURES_FILES=(
 )
 
 PROVIDERS_FILES=(
+  anthropic-copilot-provider.test.ts
   anthropic-provider.test.ts
   codex-bridge.test.ts
-  copilot-anthropic-provider.test.ts
-  github-copilot-provider.test.ts
   model-switch-system-init.test.ts
   openai-provider.test.ts
 )

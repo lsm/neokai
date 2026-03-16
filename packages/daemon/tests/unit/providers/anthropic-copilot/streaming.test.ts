@@ -1,5 +1,5 @@
 /**
- * Unit tests for copilot-anthropic/streaming.ts
+ * Unit tests for anthropic-copilot/streaming.ts
  *
  * Exercises runSessionStreaming / resumeSessionStreaming without a real HTTP
  * server by using minimal mock objects for CopilotSession, IncomingMessage,
@@ -14,8 +14,8 @@ import {
 	runSessionStreaming,
 	resumeSessionStreaming,
 	STREAMING_TIMEOUT_MS,
-} from '../../../../src/lib/providers/copilot-anthropic/streaming';
-import { ToolBridgeRegistry } from '../../../../src/lib/providers/copilot-anthropic/tool-bridge';
+} from '../../../../src/lib/providers/anthropic-copilot/streaming';
+import { ToolBridgeRegistry } from '../../../../src/lib/providers/anthropic-copilot/tool-bridge';
 
 // ---------------------------------------------------------------------------
 // Mock helpers

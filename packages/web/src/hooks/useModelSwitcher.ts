@@ -76,6 +76,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 	glm: 'GLM',
 	minimax: 'MiniMax',
 	openai: 'OpenAI',
+	'anthropic-copilot': 'Copilot',
 	'github-copilot': 'Copilot',
 	google: 'Google',
 };

@@ -128,8 +128,7 @@ jobs:
           - providers-anthropic
           - providers-anthropic-to-codex-bridge
           - providers-openai
-          - providers-copilot
-          - providers-copilot-anthropic
+          - providers-anthropic-copilot
           - rewind
           # Room tests temporarily disabled during refactoring
           # - room-1
@@ -195,10 +194,8 @@ jobs:
             test_path: tests/online/providers/codex-bridge.test.ts
           - module: providers-openai
             test_path: tests/online/providers/openai-provider.test.ts
-          - module: providers-copilot
-            test_path: tests/online/providers/github-copilot-provider.test.ts
-          - module: providers-copilot-anthropic
-            test_path: tests/online/providers/copilot-anthropic-provider.test.ts
+          - module: providers-anthropic-copilot
+            test_path: tests/online/providers/anthropic-copilot-provider.test.ts
             timeout: 15
           - module: rewind
             test_path: tests/online/rewind
@@ -291,7 +288,8 @@ jobs:
           OPENAI_API_KEY: ${{ (matrix.module == 'providers-openai' || matrix.module == 'providers-anthropic-to-codex-bridge') && secrets.OPENAI_API_KEY || '' }}
           # Requires a PAT with the `copilot_requests` scope stored as COPILOT_GITHUB_TOKEN.
           # secrets.GITHUB_TOKEN is a repo-scoped installation token and cannot authenticate Copilot API calls.
-          COPILOT_GITHUB_TOKEN: ${{ startsWith(matrix.module, 'providers-copilot') && secrets.COPILOT_GITHUB_TOKEN || '' }}
+          # If the secret is absent the env var is empty, isAvailable() returns false, and tests skip.
+          COPILOT_GITHUB_TOKEN: ${{ matrix.module == 'providers-anthropic-copilot' && secrets.COPILOT_GITHUB_TOKEN || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.

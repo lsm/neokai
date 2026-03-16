@@ -1,17 +1,17 @@
 /**
- * CopilotAnthropicProvider Online Tests
+ * AnthropicCopilotProvider Online Tests
  *
  * Tests the embedded Anthropic-compatible HTTP server backed by the GitHub Copilot SDK,
  * using the gpt-5-mini model via the `copilot-anthropic-mini` alias.
  *
  * REQUIREMENTS:
- * - Authentication: set COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN,
+ * - Authentication: set COPILOT_GITHUB_TOKEN or GH_TOKEN,
  *   or run `gh auth login` with a GitHub account that has Copilot access.
  * - No manual CLI install needed — @github/copilot is bundled as a runtime
  *   dependency of @github/copilot-sdk and installed by `bun install`.
  *
  * HOW TO RUN:
- *   bun test packages/daemon/tests/online/providers/copilot-anthropic-provider.test.ts
+ *   bun test packages/daemon/tests/online/providers/anthropic-copilot-provider.test.ts
  *
  * WHAT THESE TESTS PROVE:
  *   1. basic-conversation  — embedded server routes requests to the Copilot model and
@@ -38,7 +38,7 @@ import {
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-/** Model alias for gpt-5-mini routed through CopilotAnthropicProvider. */
+/** Model alias for gpt-5-mini routed through AnthropicCopilotProvider. */
 const MODEL = 'copilot-anthropic-mini';
 
 /** Per-turn idle timeout. The Copilot API can take 60-90 s per turn. */
@@ -118,7 +118,7 @@ function hasToolUseBlock(sdkMessages: Array<Record<string, unknown>>, toolName?:
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('CopilotAnthropicProvider (Online)', () => {
+describe('AnthropicCopilotProvider (Online)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeEach(async () => {
@@ -132,13 +132,13 @@ describe('CopilotAnthropicProvider (Online)', () => {
 		}
 	}, SETUP_TIMEOUT);
 
-	/** Returns true when the github-copilot-anthropic provider reports authenticated. */
-	async function isCopilotAnthropicAvailable(): Promise<boolean> {
+	/** Returns true when the anthropic-copilot provider reports authenticated. */
+	async function isAnthropicCopilotAvailable(): Promise<boolean> {
 		try {
 			const result = (await daemon.messageHub.request('auth.providers', {})) as {
 				providers: Array<{ id: string; isAuthenticated: boolean }>;
 			};
-			const p = result.providers.find((x) => x.id === 'github-copilot-anthropic');
+			const p = result.providers.find((x) => x.id === 'anthropic-copilot');
 			return p?.isAuthenticated ?? false;
 		} catch {
 			return false;
@@ -152,9 +152,9 @@ describe('CopilotAnthropicProvider (Online)', () => {
 	test(
 		'basic conversation: model responds correctly via gpt-5-mini',
 		async () => {
-			if (!(await isCopilotAnthropicAvailable())) {
+			if (!(await isAnthropicCopilotAvailable())) {
 				console.log(
-					'Skipping — github-copilot-anthropic not authenticated. ' +
+					'Skipping — anthropic-copilot not authenticated. ' +
 						'Set COPILOT_GITHUB_TOKEN to a PAT with copilot_requests scope.'
 				);
 				return;
@@ -200,8 +200,8 @@ describe('CopilotAnthropicProvider (Online)', () => {
 	test(
 		'tool use: bridge routes tool_use/tool_result correctly',
 		async () => {
-			if (!(await isCopilotAnthropicAvailable())) {
-				console.log('Skipping — github-copilot-anthropic not authenticated.');
+			if (!(await isAnthropicCopilotAvailable())) {
+				console.log('Skipping — anthropic-copilot not authenticated.');
 				return;
 			}
 
@@ -254,8 +254,8 @@ describe('CopilotAnthropicProvider (Online)', () => {
 	test(
 		'custom MCP: tool from .mcp.json is exposed and called by the model',
 		async () => {
-			if (!(await isCopilotAnthropicAvailable())) {
-				console.log('Skipping — github-copilot-anthropic not authenticated.');
+			if (!(await isAnthropicCopilotAvailable())) {
+				console.log('Skipping — anthropic-copilot not authenticated.');
 				return;
 			}
 

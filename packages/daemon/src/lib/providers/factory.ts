@@ -11,8 +11,7 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
-import { GitHubCopilotProvider } from './github-copilot-provider.js';
-import { CopilotAnthropicProvider } from './copilot-anthropic/index.js';
+import { AnthropicCopilotProvider } from './anthropic-copilot/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -58,13 +57,10 @@ export function initializeProviders(): ProviderRegistry {
 	// ~/.neokai/auth.json, and one-time import from ~/.codex/auth.json.
 	registry.register(new AnthropicToCodexBridgeProvider());
 
-	// Register GitHub Copilot provider (will be available if OAuth token is configured)
-	registry.register(new GitHubCopilotProvider());
-
-	// Register GitHub Copilot Anthropic provider (embedded Anthropic-compatible server).
+	// Register Anthropic Copilot provider (embedded Anthropic-compatible server).
 	// process.cwd() is the fallback cwd; per-session workspace is threaded via
 	// ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
-	registry.register(new CopilotAnthropicProvider(process.cwd()));
+	registry.register(new AnthropicCopilotProvider(process.cwd()));
 
 	// Additional built-in providers can be registered here
 	// Example:

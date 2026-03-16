@@ -1,5 +1,5 @@
 /**
- * Unit tests for copilot-anthropic/conversation.ts
+ * Unit tests for anthropic-copilot/conversation.ts
  *
  * Tests cover:
  *  - findContinuation: routing, historical IDs, empty toolResults guard
@@ -13,13 +13,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
-import { ConversationManager } from '../../../../src/lib/providers/copilot-anthropic/conversation';
-import type { ActiveConversation } from '../../../../src/lib/providers/copilot-anthropic/conversation';
+import { ConversationManager } from '../../../../src/lib/providers/anthropic-copilot/conversation';
+import type { ActiveConversation } from '../../../../src/lib/providers/anthropic-copilot/conversation';
 import type {
 	AnthropicMessage,
 	AnthropicTool,
-} from '../../../../src/lib/providers/copilot-anthropic/types';
-import { ToolBridgeRegistry } from '../../../../src/lib/providers/copilot-anthropic/tool-bridge';
+} from '../../../../src/lib/providers/anthropic-copilot/types';
+import { ToolBridgeRegistry } from '../../../../src/lib/providers/anthropic-copilot/tool-bridge';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -271,7 +271,7 @@ describe('ConversationManager.createConversation runtime guard', () => {
 		const callbackWithGuard = (toolCallId: string): void => {
 			let innerConv: ActiveConversation | undefined;
 			if (!innerConv)
-				throw new Error('[copilot-anthropic] tool call registered before conversation was created');
+				throw new Error('[anthropic-copilot] tool call registered before conversation was created');
 			// unreachable
 			(manager as unknown as Record<string, unknown>)['byToolCallId'] = new Map([
 				[toolCallId, innerConv],

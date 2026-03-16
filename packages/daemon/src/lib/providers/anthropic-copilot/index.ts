@@ -1,12 +1,12 @@
 /**
- * copilot-anthropic — public surface area
+ * anthropic-copilot — public surface area
  *
  * Everything needed by:
  *  - factory.ts (provider registration)
  *  - test files (white-box testing of internals)
  */
 
-export { CopilotAnthropicProvider } from './provider.js';
+export { AnthropicCopilotProvider } from './provider.js';
 export { startEmbeddedServer, resolveRequestCwd, type EmbeddedServer } from './server.js';
 
 // Exported for unit tests only

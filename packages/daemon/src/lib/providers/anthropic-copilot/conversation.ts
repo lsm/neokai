@@ -34,7 +34,7 @@ import {
 import { mapAnthropicToolsToSdkTools, ToolBridgeRegistry } from './tool-bridge.js';
 import { Logger } from '../../logger.js';
 
-const logger = new Logger('copilot-anthropic-conversation');
+const logger = new Logger('anthropic-copilot-conversation');
 
 /** Inactive conversations are released after this many ms with no activity. */
 const CONVERSATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -146,7 +146,7 @@ export class ConversationManager {
 		let conv: ActiveConversation | undefined;
 		registry.setOnPendingToolCall((toolCallId) => {
 			if (!conv)
-				throw new Error('[copilot-anthropic] tool call registered before conversation was created');
+				throw new Error('[anthropic-copilot] tool call registered before conversation was created');
 			this.byToolCallId.set(toolCallId, conv);
 			this.scheduleCleanup(conv);
 		});
@@ -155,7 +155,7 @@ export class ConversationManager {
 		const toolNames = tools.map((t) => t.name);
 
 		const session = await client.createSession({
-			clientName: 'neokai-copilot-anthropic',
+			clientName: 'neokai-anthropic-copilot',
 			model,
 			streaming: true,
 			// No disk persistence for bridged sessions — state is managed here.

@@ -212,7 +212,7 @@ export class ProviderService {
 
 		// Build base URL from SDK config.
 		// buildSdkConfig may throw for providers that require lazy initialisation
-		// (e.g. CopilotAnthropicProvider throws when the embedded server has not
+		// (e.g. AnthropicCopilotProvider throws when the embedded server has not
 		// been started yet).  Treat that as "no base URL" rather than a crash.
 		let baseUrl: string | undefined;
 		try {

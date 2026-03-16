@@ -39,7 +39,7 @@ import { ConversationManager } from './conversation.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
 import { Logger } from '../../logger.js';
 
-const logger = new Logger('copilot-anthropic-server');
+const logger = new Logger('anthropic-copilot-server');
 
 /** Maximum request body size (10 MB). */
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -90,8 +90,8 @@ function sendJsonError(
 /**
  * Extract the per-request working directory from the `Authorization` header.
  *
- * `CopilotAnthropicProvider.buildSdkConfig()` encodes the session workspace as
- * `copilot-anthropic-proxy:<path>` in `ANTHROPIC_AUTH_TOKEN`.  Parsing it here
+ * `AnthropicCopilotProvider.buildSdkConfig()` encodes the session workspace as
+ * `anthropic-copilot-proxy:<path>` in `ANTHROPIC_AUTH_TOKEN`.  Parsing it here
  * lets the singleton embedded server apply the correct `cwd` per HTTP request
  * without rebuilding a new server for every session.
  */
@@ -99,7 +99,7 @@ function sendJsonError(
 export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): string {
 	const auth = (req.headers['authorization'] ?? '') as string;
 	const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-	const prefix = 'copilot-anthropic-proxy:';
+	const prefix = 'anthropic-copilot-proxy:';
 	if (!token.startsWith(prefix)) return defaultCwd;
 	const resolved = token.slice(prefix.length);
 	if (!resolved || !isAbsolute(resolved)) return defaultCwd;
@@ -114,7 +114,7 @@ function buildPlainSessionConfig(
 	cwd: string
 ): SessionConfig {
 	return {
-		clientName: 'neokai-copilot-anthropic',
+		clientName: 'neokai-anthropic-copilot',
 		model,
 		streaming: true,
 		infiniteSessions: { enabled: true },

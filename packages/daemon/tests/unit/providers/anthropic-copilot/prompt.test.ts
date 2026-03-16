@@ -1,5 +1,5 @@
 /**
- * Tests for copilot-anthropic/prompt.ts
+ * Tests for anthropic-copilot/prompt.ts
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -9,7 +9,7 @@ import {
 	extractToolResultIds,
 	extractToolResultContent,
 	extractToolResultIsError,
-} from '../../../../src/lib/providers/copilot-anthropic/prompt';
+} from '../../../../src/lib/providers/anthropic-copilot/prompt';
 
 // ---------------------------------------------------------------------------
 // formatAnthropicPrompt

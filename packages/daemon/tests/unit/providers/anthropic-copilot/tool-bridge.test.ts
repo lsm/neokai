@@ -1,5 +1,5 @@
 /**
- * Tests for copilot-anthropic/tool-bridge.ts
+ * Tests for anthropic-copilot/tool-bridge.ts
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -7,9 +7,9 @@ import type { ServerResponse } from 'node:http';
 import {
 	ToolBridgeRegistry,
 	mapAnthropicToolsToSdkTools,
-} from '../../../../src/lib/providers/copilot-anthropic/tool-bridge';
-import type { AnthropicTool } from '../../../../src/lib/providers/copilot-anthropic/types';
-import { AnthropicStreamWriter } from '../../../../src/lib/providers/copilot-anthropic/sse';
+} from '../../../../src/lib/providers/anthropic-copilot/tool-bridge';
+import type { AnthropicTool } from '../../../../src/lib/providers/anthropic-copilot/types';
+import { AnthropicStreamWriter } from '../../../../src/lib/providers/anthropic-copilot/sse';
 
 // ---------------------------------------------------------------------------
 // Helpers

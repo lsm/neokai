@@ -16,7 +16,7 @@ import {
 	startEmbeddedServer,
 	runSessionStreaming,
 	resolveRequestCwd,
-} from '../../../../src/lib/providers/copilot-anthropic/index';
+} from '../../../../src/lib/providers/anthropic-copilot/index';
 import { initializeProviders, resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
 
@@ -821,8 +821,8 @@ describe('resolveRequestCwd', () => {
 		} as unknown as import('node:http').IncomingMessage;
 	}
 
-	it('returns the path from a valid copilot-anthropic-proxy token', () => {
-		const req = makeReq('Bearer copilot-anthropic-proxy:/my/workspace');
+	it('returns the path from a valid anthropic-copilot-proxy token', () => {
+		const req = makeReq('Bearer anthropic-copilot-proxy:/my/workspace');
 		expect(resolveRequestCwd(req, '/default')).toBe('/my/workspace');
 	});
 
@@ -832,7 +832,7 @@ describe('resolveRequestCwd', () => {
 	});
 
 	it('falls back to defaultCwd when the path after prefix is empty', () => {
-		const req = makeReq('Bearer copilot-anthropic-proxy:');
+		const req = makeReq('Bearer anthropic-copilot-proxy:');
 		expect(resolveRequestCwd(req, '/default')).toBe('/default');
 	});
 
@@ -847,12 +847,12 @@ describe('resolveRequestCwd', () => {
 	});
 
 	it('falls back to defaultCwd when path is relative (not absolute)', () => {
-		const req = makeReq('Bearer copilot-anthropic-proxy:relative/path');
+		const req = makeReq('Bearer anthropic-copilot-proxy:relative/path');
 		expect(resolveRequestCwd(req, '/default')).toBe('/default');
 	});
 
 	it('normalises dot-dot segments so traversal attempts are collapsed', () => {
-		const req = makeReq('Bearer copilot-anthropic-proxy:/foo/bar/../../baz');
+		const req = makeReq('Bearer anthropic-copilot-proxy:/foo/bar/../../baz');
 		// /foo/bar/../../baz normalises to /baz — still absolute, so it is accepted
 		expect(resolveRequestCwd(req, '/default')).toBe('/baz');
 	});
@@ -868,11 +868,11 @@ describe('factory registration', () => {
 		resetProviderFactory();
 	});
 
-	it('registers CopilotAnthropicProvider with id github-copilot-anthropic', () => {
+	it('registers AnthropicCopilotProvider with id anthropic-copilot', () => {
 		initializeProviders();
 		const registry = getProviderRegistry();
-		const p = registry.get('github-copilot-anthropic');
+		const p = registry.get('anthropic-copilot');
 		expect(p).toBeDefined();
-		expect(p?.id).toBe('github-copilot-anthropic');
+		expect(p?.id).toBe('anthropic-copilot');
 	});
 });
