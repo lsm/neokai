@@ -141,6 +141,19 @@ describe('AnthropicCopilotProvider', () => {
 			);
 			expect(await p.isAvailable()).toBe(false);
 		});
+
+		it('returns false for classic PATs (ghp_ prefix) via COPILOT_GITHUB_TOKEN', async () => {
+			// Classic PATs are rejected by the Copilot CLI — isAvailable() must mirror
+			// getAuthStatus() to prevent models from appearing in the picker.
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'ghp_classicpat' });
+			expect(await p.isAvailable()).toBe(false);
+		});
+
+		it('returns false for classic PATs (ghp_ prefix) via GH_TOKEN', async () => {
+			// The ghp_ guard applies regardless of which env var the token came from.
+			const p = new AnthropicCopilotProvider('/tmp', { GH_TOKEN: 'ghp_classicpat' });
+			expect(await p.isAvailable()).toBe(false);
+		});
 	});
 
 	describe('getAuthStatus', () => {
@@ -198,6 +211,14 @@ describe('AnthropicCopilotProvider', () => {
 			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_oauthtoken' });
 			const status = await p.getAuthStatus();
 			expect(status.isAuthenticated).toBe(true);
+		});
+
+		it('rejects classic PATs (ghp_ prefix) via GH_TOKEN', async () => {
+			// The ghp_ guard applies to all credential sources, not just COPILOT_GITHUB_TOKEN.
+			const p = new AnthropicCopilotProvider('/tmp', { GH_TOKEN: 'ghp_classicpat' });
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(false);
+			expect(status.error).toContain('Classic PATs');
 		});
 	});
 

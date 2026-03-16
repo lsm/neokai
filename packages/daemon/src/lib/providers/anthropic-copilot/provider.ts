@@ -208,10 +208,18 @@ export class AnthropicCopilotProvider implements Provider {
 
 	async isAvailable(): Promise<boolean> {
 		const token = await this.resolveGitHubToken();
-		return token !== undefined;
+		// Classic PATs (ghp_) are rejected by the Copilot CLI — mirror the same guard
+		// as getAuthStatus() so that isAvailable() and getAuthStatus() are consistent.
+		// Without this, a ghp_ token causes models to appear in the picker while the
+		// provider is simultaneously marked unauthenticated in the auth panel.
+		if (!token || token.startsWith('ghp_')) return false;
+		return true;
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
+		// isAvailable() applies the full validity check (token present AND not a classic PAT).
+		// getAuthStatus() mirrors the same logic, so if isAvailable() returns true, the
+		// provider is considered authenticated and models are safe to expose.
 		if (!(await this.isAvailable())) return [];
 		// Pre-warm the embedded server so buildSdkConfig() has a valid URL by
 		// the time the user picks a model and starts a session.
