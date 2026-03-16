@@ -4,10 +4,17 @@
  * Tests cover:
  * - Provider properties (id, capabilities, ownsModel, getModelForTier)
  * - Availability checks (credential discovery chain)
+ * - Credential sources: loadStoredGitHubToken, tryGhHostsToken
+ * - logout() removes stored credentials and invalidates the token cache
+ * - startOAuthFlow() returns ProviderOAuthFlowData with correct shape
  * - buildSdkConfig env-var shape (requires pre-warmed serverCache)
  * - getModels() pre-warms the embedded server
  * - shutdown() stops the embedded server and CopilotClient
  * - ensureServerStarted() retry-after-failure
+ *
+ * NOTE: All tests that touch credential storage use spies on private methods rather
+ * than real file I/O. This avoids interference from `mock.module('node:fs/promises', ...)`
+ * calls in other test files (e.g. mcp-handlers.test.ts) that leak across the test run.
  */
 
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
@@ -328,6 +335,211 @@ describe('AnthropicCopilotProvider', () => {
 			await provider.shutdown();
 			await expect(provider.shutdown()).resolves.toBeUndefined();
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// loadStoredGitHubToken — source 1 of the credential discovery chain
+//
+// Tests use spies on the private method rather than real file I/O so they are
+// resilient to `mock.module('node:fs/promises', ...)` leaks from other test files.
+// ---------------------------------------------------------------------------
+
+describe('loadStoredGitHubToken', () => {
+	it('token from auth.json propagates through the chain to isAvailable()=true', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		// Source 1 returns a token (simulates auth.json with github-copilot credentials)
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'loadStoredGitHubToken' as never
+		).mockResolvedValue('stored-gh-token-abc' as never);
+		// Sources 2-3 absent (empty env); sources 4-5 blocked
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		expect(await p.isAvailable()).toBe(true);
+	});
+
+	it('absent auth.json (source 1 returns undefined) falls through to sources 2-5', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		// Source 1 returns nothing
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'loadStoredGitHubToken' as never
+		).mockResolvedValue(undefined as never);
+		// All other sources also blocked
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		expect(await p.isAvailable()).toBe(false);
+	});
+
+	it('loadStoredGitHubToken is called before env-var sources (source 1 has priority)', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'env-tok' });
+		const spy = spyOn(
+			p as unknown as Record<string, unknown>,
+			'loadStoredGitHubToken' as never
+		).mockResolvedValue('stored-tok' as never);
+		await p.isAvailable();
+		// loadStoredGitHubToken must be called even when COPILOT_GITHUB_TOKEN is set,
+		// because source 1 is checked first in discoverGitHubToken().
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// tryGhHostsToken — source 5 of the credential discovery chain
+// ---------------------------------------------------------------------------
+
+describe('tryGhHostsToken', () => {
+	it('token from hosts.yml propagates through the chain to isAvailable()=true', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		// Sources 1-4 all return nothing
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'loadStoredGitHubToken' as never
+		).mockResolvedValue(undefined as never);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		// Source 5 returns a valid token (simulates ~/.config/gh/hosts.yml)
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+			'hosts-token-xyz' as never
+		);
+		// Copilot validation succeeds
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'validateCopilotToken' as never
+		).mockResolvedValue(true as never);
+		expect(await p.isAvailable()).toBe(true);
+	});
+
+	it('invalid hosts.yml token (validateCopilotToken=false) does not grant access', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'loadStoredGitHubToken' as never
+		).mockResolvedValue(undefined as never);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+			'bad-token' as never
+		);
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'validateCopilotToken' as never
+		).mockResolvedValue(false as never);
+		expect(await p.isAvailable()).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// logout()
+//
+// Tests use spies so they are resilient to mock.module leaks from other files.
+// ---------------------------------------------------------------------------
+
+describe('logout()', () => {
+	it('invalidates the token cache so the next call re-discovers credentials', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		// Prime the cache
+		expect(await p.isAvailable()).toBe(true);
+		// Verify cache exists
+		expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeDefined();
+		// logout() must clear the cache
+		await p.logout();
+		expect((p as unknown as Record<string, unknown>)['tokenCache']).toBeNull();
+	});
+
+	it('calls loadStoredGitHubToken returns undefined after logout clears stored token', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		// Prime the cache with a stored token
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'loadStoredGitHubToken' as never
+		).mockResolvedValueOnce('stored-tok' as never);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+			undefined as never
+		);
+		expect(await p.isAvailable()).toBe(true);
+		// Simulate logout clearing auth.json (source 1 no longer available)
+		await p.logout();
+		// After logout the cache is cleared; next call falls through all sources to false
+		expect(await p.isAvailable()).toBe(false);
+	});
+
+	it('is safe to call twice (idempotent)', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		await p.logout();
+		await expect(p.logout()).resolves.toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// startOAuthFlow()
+// ---------------------------------------------------------------------------
+
+describe('startOAuthFlow()', () => {
+	it('returns ProviderOAuthFlowData with type=device and required fields', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+
+		// Mock the internal device flow fetch so no real network call is made
+		spyOn(p as unknown as Record<string, unknown>, 'startDeviceFlow' as never).mockResolvedValue({
+			device_code: 'dev-code-123',
+			user_code: 'ABCD-EFGH',
+			verification_uri: 'https://github.com/login/device',
+			expires_in: 900,
+			interval: 5,
+		} as never);
+
+		// Prevent background polling from running in the test
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'startBackgroundPolling' as never
+		).mockResolvedValue(undefined as never);
+
+		const result = await p.startOAuthFlow();
+		expect(result.type).toBe('device');
+		expect(result.userCode).toBe('ABCD-EFGH');
+		expect(result.verificationUri).toBe('https://github.com/login/device');
+		expect(typeof result.message).toBe('string');
+	});
+
+	it('returns cached flow data if an in-progress flow already exists', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+
+		const startDeviceFlowSpy = spyOn(
+			p as unknown as Record<string, unknown>,
+			'startDeviceFlow' as never
+		).mockResolvedValue({
+			device_code: 'dev-code-123',
+			user_code: 'ABCD-EFGH',
+			verification_uri: 'https://github.com/login/device',
+			expires_in: 900,
+			interval: 5,
+		} as never);
+
+		spyOn(
+			p as unknown as Record<string, unknown>,
+			'startBackgroundPolling' as never
+		).mockResolvedValue(undefined as never);
+
+		const first = await p.startOAuthFlow();
+		const second = await p.startOAuthFlow();
+
+		// startDeviceFlow called only once — second call returns cached data
+		expect(startDeviceFlowSpy).toHaveBeenCalledTimes(1);
+		expect(second.userCode).toBe(first.userCode);
 	});
 });
 

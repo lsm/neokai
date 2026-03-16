@@ -285,9 +285,6 @@ export class AnthropicCopilotProvider implements Provider {
 	 */
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
 		try {
-			if (this.serverStarting) {
-				return { isAuthenticated: true, needsRefresh: false };
-			}
 			const token = await this.resolveGitHubToken();
 			if (!token) {
 				return {
@@ -566,7 +563,7 @@ export class AnthropicCopilotProvider implements Provider {
 				Accept: 'application/json',
 				'User-Agent': 'GitHubCopilotChat/0.35.0',
 			},
-			body: JSON.stringify({ client_id: clientId, scope: 'read:user' }),
+			body: JSON.stringify({ client_id: clientId, scope: 'read:user copilot' }),
 		});
 
 		if (!response.ok) {

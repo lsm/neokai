@@ -328,7 +328,7 @@ describe('Session RPC Handlers (API-dependent)', () => {
 		});
 
 		test('should include GitHub Copilot models when authenticated', async () => {
-			// First check if GitHub Copilot is authenticated
+			// Verify anthropic-copilot provider is authenticated — hard-fail per CLAUDE.md policy.
 			const { ws: authWs, firstMessagePromise: authFirstMessagePromise } =
 				createWebSocketWithFirstMessage(daemon.baseUrl);
 			await waitForWebSocketState(authWs, WebSocket.OPEN);
@@ -356,12 +356,14 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			};
 
 			expect(authResponse.type).toBe('RSP');
-			const copilot = authResponse.data.providers.find((p) => p.id === 'github-copilot');
+			const copilot = authResponse.data.providers.find((p) => p.id === 'anthropic-copilot');
 			authWs.close();
 
 			if (!copilot?.isAuthenticated) {
-				console.log('Skipping - GitHub Copilot not authenticated');
-				return;
+				throw new Error(
+					'anthropic-copilot provider is not authenticated. ' +
+						'Set COPILOT_GITHUB_TOKEN to a GitHub PAT with copilot_requests scope.'
+				);
 			}
 
 			// Now fetch models list
@@ -393,8 +395,8 @@ describe('Session RPC Handlers (API-dependent)', () => {
 			expect(response.type).toBe('RSP');
 			const models = response.data.models;
 
-			// Verify GitHub Copilot models are present
-			const copilotModels = models.filter((m) => m.provider === 'github-copilot');
+			// Verify anthropic-copilot models are present
+			const copilotModels = models.filter((m) => m.provider === 'anthropic-copilot');
 			expect(copilotModels.length).toBeGreaterThan(0);
 
 			ws.close();
