@@ -2,7 +2,7 @@
  * Codex Bridge Online Integration Tests
  *
  * Exercises the full Codex bridge pipeline end-to-end:
- *   AnthropicCodexProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
+ *   AnthropicToCodexBridgeProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
  *
  * REQUIREMENTS:
  * - OPENAI_API_KEY or CODEX_API_KEY must be set
@@ -19,7 +19,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { AnthropicCodexProvider } from '../../../src/lib/providers/anthropic-codex-provider';
+import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 // ---------------------------------------------------------------------------
 // SSE parsing helpers
@@ -169,11 +169,11 @@ async function callBridge(
 // ---------------------------------------------------------------------------
 
 describe('Codex Bridge (Online)', () => {
-	let provider: AnthropicCodexProvider;
+	let provider: AnthropicToCodexBridgeProvider;
 	let bridgeUrl: string;
 
 	beforeAll(async () => {
-		provider = new AnthropicCodexProvider();
+		provider = new AnthropicToCodexBridgeProvider();
 		await provider.getAuthStatus();
 		const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;

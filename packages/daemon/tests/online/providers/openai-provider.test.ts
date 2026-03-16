@@ -4,14 +4,14 @@
  * REQUIREMENTS:
  * - OPENAI_API_KEY or CODEX_API_KEY must be set
  * - Requires the `codex` binary on PATH (models are now served via the
- *   AnthropicCodexProvider bridge, which wraps codex app-server)
+ *   AnthropicToCodexBridgeProvider bridge, which wraps codex app-server)
  * - Makes real API calls (costs money, uses rate limits)
  *
  * MODELS:
  * - Uses gpt-5.1-codex-mini (cheaper) and gpt-5.3-codex for testing
  *
  * WHAT THESE TESTS PROVE:
- * - GPT model IDs are correctly owned and routed through AnthropicCodexProvider
+ * - GPT model IDs are correctly owned and routed through AnthropicToCodexBridgeProvider
  * - Content verification ensures the response came from a real model call via the bridge
  * - Multi-turn test proves sequential queries work through the bridge
  *

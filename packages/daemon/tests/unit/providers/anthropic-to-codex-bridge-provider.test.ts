@@ -1,5 +1,5 @@
 /**
- * Unit tests for AnthropicCodexProvider
+ * Unit tests for AnthropicToCodexBridgeProvider
  *
  * Covers:
  *  - getAuthStatus(): env var, file-based auth, missing credentials, missing binary
@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { AnthropicCodexProvider } from '../../../src/lib/providers/anthropic-codex-provider';
+import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,8 +23,8 @@ function makeProvider(
 	env: Record<string, string | undefined> = {},
 	authDir?: string,
 	codexAuthDir?: string
-): AnthropicCodexProvider {
-	return new AnthropicCodexProvider(env, authDir, codexAuthDir);
+): AnthropicToCodexBridgeProvider {
+	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir);
 }
 
 /** Write a NeoKai auth.json with an openai entry to a temp dir. */
@@ -51,8 +51,8 @@ async function writeCodexAuth(
 // getAuthStatus() — auth gate
 // ---------------------------------------------------------------------------
 
-describe('AnthropicCodexProvider', () => {
-	let provider: AnthropicCodexProvider;
+describe('AnthropicToCodexBridgeProvider', () => {
+	let provider: AnthropicToCodexBridgeProvider;
 
 	afterEach(() => {
 		provider?.stopAllBridgeServers();

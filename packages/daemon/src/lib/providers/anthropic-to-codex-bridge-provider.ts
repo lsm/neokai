@@ -1,7 +1,7 @@
 /**
- * Anthropic Codex Provider
+ * Anthropic-to-Codex Bridge Provider
  *
- * Replaces the pi-mono based OpenAI provider.  Starts a local HTTP server that
+ * Replaces the pi-mono based OpenAI provider. Starts a local HTTP server that
  * speaks the Anthropic Messages API (POST /v1/messages with SSE streaming)
  * backed by `codex app-server`.
  *
@@ -39,7 +39,7 @@ import * as os from 'os';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
-const logger = new Logger('anthropic-codex-provider');
+const logger = new Logger('anthropic-to-codex-bridge-provider');
 
 // ---------------------------------------------------------------------------
 // Model catalogue
@@ -135,22 +135,22 @@ export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAu
 		});
 		if (!response.ok) {
 			logger.warn(
-				`AnthropicCodexProvider: token refresh HTTP ${response.status}: ${await response.text()}`
+				`AnthropicToCodexBridgeProvider: token refresh HTTP ${response.status}: ${await response.text()}`
 			);
 			return null;
 		}
 		const parsed = (await response.json()) as OpenAIOAuthToken;
 		if (!parsed.access_token || typeof parsed.access_token !== 'string') {
-			logger.warn('AnthropicCodexProvider: token refresh response missing access_token');
+			logger.warn('AnthropicToCodexBridgeProvider: token refresh response missing access_token');
 			return null;
 		}
 		if (typeof parsed.expires_in !== 'number') {
-			logger.warn('AnthropicCodexProvider: token refresh response missing expires_in');
+			logger.warn('AnthropicToCodexBridgeProvider: token refresh response missing expires_in');
 			return null;
 		}
 		return parsed;
 	} catch (error) {
-		logger.warn('AnthropicCodexProvider: token refresh network error:', error);
+		logger.warn('AnthropicToCodexBridgeProvider: token refresh network error:', error);
 		return null;
 	}
 }
@@ -184,10 +184,10 @@ function findCodexCli(codexPath = 'codex'): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// AnthropicCodexProvider
+// Anthropic-to-Codex Bridge Provider
 // ---------------------------------------------------------------------------
 
-export class AnthropicCodexProvider implements Provider {
+export class AnthropicToCodexBridgeProvider implements Provider {
 	readonly id = 'anthropic-codex';
 	readonly displayName = 'OpenAI (Codex)';
 
@@ -340,7 +340,7 @@ export class AnthropicCodexProvider implements Provider {
 
 		const tokens = await this.tryRefreshCodexToken(credentials.refresh);
 		if (!tokens) {
-			logger.warn('AnthropicCodexProvider: OAuth token refresh failed');
+			logger.warn('AnthropicToCodexBridgeProvider: OAuth token refresh failed');
 			return undefined;
 		}
 
@@ -454,7 +454,7 @@ export class AnthropicCodexProvider implements Provider {
 			bridgeServer = createBridgeServer({ codexBinaryPath, auth, cwd: workspace });
 			this.bridgeServers.set(workspace, bridgeServer);
 			logger.info(
-				`AnthropicCodexProvider: bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
+				`AnthropicToCodexBridgeProvider: bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
 			);
 		}
 
@@ -783,7 +783,7 @@ export class AnthropicCodexProvider implements Provider {
 			this.cachedCredentials = creds;
 			this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
 			this.cachedApiKey = creds.access ?? '';
-			logger.info('AnthropicCodexProvider: imported API key from ~/.codex/auth.json');
+			logger.info('AnthropicToCodexBridgeProvider: imported API key from ~/.codex/auth.json');
 			return;
 		}
 
@@ -803,11 +803,11 @@ export class AnthropicCodexProvider implements Provider {
 				refreshToken = refreshed.refresh_token || refreshToken;
 				expires = Date.now() + refreshed.expires_in * 1000;
 				logger.info(
-					'AnthropicCodexProvider: imported refreshed OAuth token from ~/.codex/auth.json'
+					'AnthropicToCodexBridgeProvider: imported refreshed OAuth token from ~/.codex/auth.json'
 				);
 			} else {
 				logger.warn(
-					'AnthropicCodexProvider: Codex token refresh failed; importing existing ~/.codex/auth.json token'
+					'AnthropicToCodexBridgeProvider: Codex token refresh failed; importing existing ~/.codex/auth.json token'
 				);
 			}
 		}
@@ -824,7 +824,7 @@ export class AnthropicCodexProvider implements Provider {
 		this.cachedCredentials = creds;
 		this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
 		this.cachedApiKey = creds.access ?? '';
-		logger.info('AnthropicCodexProvider: imported OAuth token from ~/.codex/auth.json');
+		logger.info('AnthropicToCodexBridgeProvider: imported OAuth token from ~/.codex/auth.json');
 	}
 
 	/**
