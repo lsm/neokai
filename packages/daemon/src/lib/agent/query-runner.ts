@@ -199,9 +199,10 @@ export class QueryRunner {
 			if (!provider?.createQuery) {
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, {
-					workspacePath: session.workspacePath,
-				});
+				// Pass explicitProviderId so providers whose model IDs are also claimed by
+				// Anthropic (e.g. AnthropicCopilotProvider uses claude-opus-4.6) are not
+				// incorrectly routed to Anthropic by detectProvider().
+				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, explicitProviderId);
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 

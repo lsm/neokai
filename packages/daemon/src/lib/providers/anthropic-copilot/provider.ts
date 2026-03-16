@@ -275,6 +275,10 @@ export class AnthropicCopilotProvider implements Provider {
 			envVars: {
 				ANTHROPIC_BASE_URL: this.serverCache.url,
 				ANTHROPIC_AUTH_TOKEN: `anthropic-copilot-proxy:${workspacePath}`,
+				// Clear the real Anthropic API key so the SDK subprocess does not bypass
+				// the embedded proxy and call api.anthropic.com directly.
+				// Auth is provided via ANTHROPIC_AUTH_TOKEN (the workspace-encoded proxy token).
+				ANTHROPIC_API_KEY: '',
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 				API_TIMEOUT_MS: '300000',
 				ANTHROPIC_DEFAULT_OPUS_MODEL:
