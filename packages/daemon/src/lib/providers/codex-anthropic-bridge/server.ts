@@ -11,7 +11,9 @@
  *   3. Next request carries tool_result → resume generator → continue streaming.
  */
 
-import { BridgeSession, AppServerConn } from './process-manager.js';
+import { BridgeSession, AppServerConn, type AppServerAuth } from './process-manager.js';
+
+export type { AppServerAuth } from './process-manager.js';
 import {
 	type AnthropicRequest,
 	buildDynamicTools,
@@ -179,8 +181,8 @@ async function drainToSSE(
 export type BridgeServerConfig = {
 	/** Path to the `codex` binary. */
 	codexBinaryPath: string;
-	/** OpenAI API key passed to the Codex subprocess. */
-	apiKey: string;
+	/** Auth passed to codex app-server (API key or ChatGPT OAuth tokens). */
+	auth?: AppServerAuth;
 	/** Working directory for Codex subprocess. */
 	cwd: string;
 	/** Milliseconds before an unresolved tool-call session is abandoned (default 5 min). */
@@ -270,8 +272,15 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 
 			let session: BridgeSession;
 			try {
-				const conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.apiKey);
-				session = new BridgeSession(conn, model, dynamicTools, config.cwd, originalToolNames);
+				const conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.auth);
+				session = new BridgeSession(
+					conn,
+					model,
+					dynamicTools,
+					config.cwd,
+					config.auth,
+					originalToolNames
+				);
 				await session.initialize();
 			} catch (err) {
 				logger.error('codex-bridge: failed to start BridgeSession:', err);

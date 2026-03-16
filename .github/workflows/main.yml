@@ -290,7 +290,6 @@ jobs:
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           OPENAI_API_KEY: ${{ (matrix.module == 'providers-openai' || matrix.module == 'providers-codex') && secrets.OPENAI_API_KEY || '' }}
-          CODEX_REFRESH_TOKEN: ${{ (matrix.module == 'providers-openai' || matrix.module == 'providers-codex') && secrets.CODEX_REFRESH_TOKEN || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.

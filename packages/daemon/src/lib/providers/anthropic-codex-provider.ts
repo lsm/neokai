@@ -8,7 +8,7 @@
  * Authentication is discovered in priority order:
  *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable
  *   2. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
- *   3. ~/.codex/auth.json   — Codex CLI auth (for users who ran `codex login`)
+ *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
  *
  * OAuth credentials obtained through NeoKai's login flow are written to
  * ~/.neokai/auth.json so they persist across sessions.
@@ -27,7 +27,11 @@ import type {
 	ProviderOAuthFlowData,
 } from '@neokai/shared/provider';
 import type { ModelInfo } from '@neokai/shared';
-import { type BridgeServer, createBridgeServer } from './codex-anthropic-bridge/server.js';
+import {
+	type AppServerAuth,
+	type BridgeServer,
+	createBridgeServer,
+} from './codex-anthropic-bridge/server.js';
 import { Logger } from '../logger.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -101,6 +105,7 @@ interface StoredCredentials {
 	refresh?: string;
 	expires?: number; // Unix timestamp in ms
 	accountId?: string;
+	planType?: string;
 }
 
 /** Raw OAuth token response from auth.openai.com. */
@@ -109,12 +114,13 @@ export interface OpenAIOAuthToken {
 	refresh_token: string;
 	expires_in: number;
 	token_type: string;
+	id_token?: string;
 }
 
 /**
  * Exchange a Codex/OpenAI OAuth refresh token for a new access token.
  * Returns the full token response, or null if the exchange fails for any reason.
- * Exported so online test suites can exchange CODEX_REFRESH_TOKEN before running.
+ * Exported for provider auth discovery and online test setup helpers.
  */
 export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
 	try {
@@ -206,9 +212,14 @@ export class AnthropicCodexProvider implements Provider {
 	private cachedCredentials: StoredCredentials | null = null;
 
 	/**
-	 * Cached resolved API key from the last getApiKey() call.
-	 * undefined = not yet resolved; '' = resolved but no key found; non-empty = usable key.
-	 * Allows the synchronous buildSdkConfig() to use the key discovered by async getApiKey().
+	 * Cached resolved bridge auth.
+	 * undefined = unresolved, null = resolved but unavailable.
+	 */
+	private cachedBridgeAuth: AppServerAuth | null | undefined = undefined;
+
+	/**
+	 * Backward-compatibility cache for the legacy getApiKey() return path.
+	 * undefined = unresolved, '' = resolved unavailable, non-empty = resolved.
 	 */
 	private cachedApiKey: string | undefined = undefined;
 
@@ -232,8 +243,8 @@ export class AnthropicCodexProvider implements Provider {
 
 	async isAvailable(): Promise<boolean> {
 		if (!findCodexCli()) return false;
-		const key = await this.getApiKey();
-		return !!key;
+		const auth = await this.getBridgeAuth();
+		return !!auth;
 	}
 
 	// -------------------------------------------------------------------------
@@ -241,44 +252,122 @@ export class AnthropicCodexProvider implements Provider {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Return the best available API key, following the discovery chain:
+	 * Return provider credentials for codex app-server, following discovery order:
 	 *   1. OPENAI_API_KEY / CODEX_API_KEY env var
-	 *   2. ~/.neokai/auth.json["openai"].access  (normal path after first import)
-	 *   3. One-time migration from ~/.codex/auth.json — imports + refreshes, then
-	 *      writes to ~/.neokai/auth.json so step 2 handles all future calls.
+	 *   2. ~/.neokai/auth.json["openai"]
+	 *   3. One-time migration from ~/.codex/auth.json into ~/.neokai/auth.json
 	 */
-	async getApiKey(): Promise<string | undefined> {
-		if (this.env.OPENAI_API_KEY) return this.env.OPENAI_API_KEY;
-		if (this.env.CODEX_API_KEY) return this.env.CODEX_API_KEY;
-
-		// For file-based sources, return the cached value if already resolved.
-		// '' means we looked but found nothing; skip the file I/O on repeat calls.
-		if (this.cachedApiKey !== undefined) {
-			return this.cachedApiKey || undefined;
+	private async getBridgeAuth(): Promise<AppServerAuth | undefined> {
+		if (this.env.OPENAI_API_KEY) {
+			return { type: 'api_key', apiKey: this.env.OPENAI_API_KEY };
+		}
+		if (this.env.CODEX_API_KEY) {
+			return { type: 'api_key', apiKey: this.env.CODEX_API_KEY };
 		}
 
-		// Try NeoKai auth file (normal path after first migration)
+		if (this.cachedBridgeAuth !== undefined) {
+			return this.cachedBridgeAuth ?? undefined;
+		}
+
 		const neokaiCreds = await this.loadCredentials();
 		if (neokaiCreds?.access) {
+			const auth = this.toBridgeAuth(neokaiCreds);
+			this.cachedBridgeAuth = auth ?? null;
 			this.cachedApiKey = neokaiCreds.access;
-			return neokaiCreds.access;
+			return auth;
 		}
 
-		// One-time migration: import credentials from ~/.codex/auth.json into
-		// ~/.neokai/auth.json so subsequent calls use the NeoKai store only.
-		const imported = await this.importFromCodexAuth();
-		this.cachedApiKey = imported ?? '';
-		return imported;
+		await this.importFromCodexAuth();
+		const importedCreds = await this.loadCredentials();
+		if (importedCreds?.access) {
+			const auth = this.toBridgeAuth(importedCreds);
+			this.cachedBridgeAuth = auth ?? null;
+			this.cachedApiKey = importedCreds.access;
+			return auth;
+		}
+
+		this.cachedBridgeAuth = null;
+		this.cachedApiKey = '';
+		return undefined;
+	}
+
+	/**
+	 * Backward-compatible helper used by call sites that still ask for "api key".
+	 * For OAuth mode this returns the OAuth access token.
+	 */
+	async getApiKey(): Promise<string | undefined> {
+		const auth = await this.getBridgeAuth();
+		if (!auth) return undefined;
+		return auth.type === 'api_key' ? auth.apiKey : auth.accessToken;
+	}
+
+	private toBridgeAuth(credentials: StoredCredentials): AppServerAuth | undefined {
+		if (!credentials.access) return undefined;
+		if (credentials.type === 'api_key') {
+			return { type: 'api_key', apiKey: credentials.access };
+		}
+
+		const chatgptAccountId = credentials.accountId ?? this.extractAccountId(credentials.access);
+		if (!chatgptAccountId) {
+			// Fallback for legacy malformed entries: treat unknown oauth "access" as API key.
+			return { type: 'api_key', apiKey: credentials.access };
+		}
+
+		return {
+			type: 'chatgpt',
+			accessToken: credentials.access,
+			chatgptAccountId,
+			chatgptPlanType: credentials.planType ?? this.extractPlanType(credentials.access),
+			refreshAuthTokens: async () => {
+				const refreshed = await this.refreshStoredOauthCredentials();
+				if (!refreshed?.access) return null;
+				const refreshedAccountId = refreshed.accountId ?? this.extractAccountId(refreshed.access);
+				if (!refreshedAccountId) return null;
+				return {
+					accessToken: refreshed.access,
+					chatgptAccountId: refreshedAccountId,
+					chatgptPlanType: refreshed.planType ?? this.extractPlanType(refreshed.access),
+				};
+			},
+		};
+	}
+
+	private async refreshStoredOauthCredentials(): Promise<StoredCredentials | undefined> {
+		const credentials = await this.loadCredentials();
+		if (!credentials || credentials.type !== 'oauth' || !credentials.refresh) {
+			return undefined;
+		}
+
+		const tokens = await this.tryRefreshCodexToken(credentials.refresh);
+		if (!tokens) {
+			logger.warn('AnthropicCodexProvider: OAuth token refresh failed');
+			return undefined;
+		}
+
+		const newCreds: StoredCredentials = {
+			type: 'oauth',
+			access: tokens.access_token,
+			refresh: tokens.refresh_token || credentials.refresh,
+			expires: Date.now() + tokens.expires_in * 1000,
+			accountId: this.extractAccountId(tokens.access_token) ?? credentials.accountId,
+			planType: this.extractPlanType(tokens.access_token) ?? credentials.planType,
+		};
+
+		await this.saveCredentials(newCreds);
+		this.cachedCredentials = newCreds;
+		this.cachedBridgeAuth = this.toBridgeAuth(newCreds) ?? null;
+		this.cachedApiKey = newCreds.access ?? '';
+		return newCreds;
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-		const apiKey = await this.getApiKey();
+		const auth = await this.getBridgeAuth();
 
-		if (!apiKey) {
+		if (!auth) {
 			return {
 				isAuthenticated: false,
 				error:
-					'No credentials found. Set OPENAI_API_KEY, run `kai openai login`, or log in via `codex login`.',
+					'No credentials found. Set OPENAI_API_KEY or CODEX_API_KEY, run `kai openai login`, or log in via `codex login`.',
 			};
 		}
 
@@ -290,13 +379,12 @@ export class AnthropicCodexProvider implements Provider {
 			};
 		}
 
-		// Determine auth method
-		if (this.env.OPENAI_API_KEY || this.env.CODEX_API_KEY) {
+		if (auth.type === 'api_key') {
 			return { isAuthenticated: true, method: 'api_key' };
 		}
 
 		const neokaiCreds = await this.loadCredentials();
-		if (neokaiCreds?.access) {
+		if (neokaiCreds?.type === 'oauth') {
 			if (neokaiCreds.expires) {
 				const bufferMs = 5 * 60 * 1000;
 				if (Date.now() >= neokaiCreds.expires - bufferMs) {
@@ -309,11 +397,10 @@ export class AnthropicCodexProvider implements Provider {
 				}
 				return { isAuthenticated: true, method: 'oauth', expiresAt: neokaiCreds.expires };
 			}
-			return { isAuthenticated: true, method: neokaiCreds.type };
+			return { isAuthenticated: true, method: 'oauth' };
 		}
 
-		// Must have come from Codex auth file
-		return { isAuthenticated: true, method: 'api_key' };
+		return { isAuthenticated: true, method: 'oauth' };
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
@@ -354,11 +441,17 @@ export class AnthropicCodexProvider implements Provider {
 		if (!bridgeServer) {
 			const codexBinaryPath = findCodexCli() ?? 'codex';
 			// buildSdkConfig() is synchronous per the Provider interface.  The async
-			// getApiKey() discovery chain populates this.cachedApiKey when isAvailable()
-			// or getAuthStatus() is called first (which is always the case in QueryRunner).
-			// Fall through the same priority order: env var → file-based cache → empty.
-			const apiKey = this.env.OPENAI_API_KEY || this.env.CODEX_API_KEY || this.cachedApiKey || '';
-			bridgeServer = createBridgeServer({ codexBinaryPath, apiKey, cwd: workspace });
+			// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
+			const envAuth = this.env.OPENAI_API_KEY
+				? ({ type: 'api_key', apiKey: this.env.OPENAI_API_KEY } as const)
+				: this.env.CODEX_API_KEY
+					? ({ type: 'api_key', apiKey: this.env.CODEX_API_KEY } as const)
+					: undefined;
+			const fileAuth = this.cachedCredentials
+				? this.toBridgeAuth(this.cachedCredentials)
+				: undefined;
+			const auth = envAuth ?? this.cachedBridgeAuth ?? fileAuth ?? undefined;
+			bridgeServer = createBridgeServer({ codexBinaryPath, auth, cwd: workspace });
 			this.bridgeServers.set(workspace, bridgeServer);
 			logger.info(
 				`AnthropicCodexProvider: bridge server started on port ${bridgeServer.port} for workspace=${workspace}`
@@ -487,9 +580,12 @@ export class AnthropicCodexProvider implements Provider {
 							refresh: tokens.refresh_token,
 							expires: Date.now() + tokens.expires_in * 1000,
 							accountId: this.extractAccountId(tokens.access_token),
+							planType: this.extractPlanType(tokens.access_token),
 						};
 						return this.saveCredentials(credentials).then(() => {
 							this.cachedCredentials = credentials;
+							this.cachedBridgeAuth = this.toBridgeAuth(credentials) ?? null;
+							this.cachedApiKey = credentials.access ?? '';
 							if (this.activeOAuthFlow) {
 								this.activeOAuthFlow.completed = true;
 								this.activeOAuthFlow.success = true;
@@ -573,10 +669,12 @@ export class AnthropicCodexProvider implements Provider {
 				refresh: tokens.refresh_token || credentials.refresh,
 				expires: Date.now() + tokens.expires_in * 1000,
 				accountId: credentials.accountId ?? this.extractAccountId(tokens.access_token),
+				planType: credentials.planType ?? this.extractPlanType(tokens.access_token),
 			};
 
 			await this.saveCredentials(newCreds);
 			this.cachedCredentials = newCreds;
+			this.cachedBridgeAuth = this.toBridgeAuth(newCreds) ?? null;
 			this.cachedApiKey = newCreds.access; // sync so buildSdkConfig() picks up the new token
 			return true;
 		} catch (error) {
@@ -587,6 +685,7 @@ export class AnthropicCodexProvider implements Provider {
 
 	async logout(): Promise<void> {
 		this.cachedCredentials = null;
+		this.cachedBridgeAuth = undefined;
 		this.cachedApiKey = undefined; // reset so the next getApiKey() re-reads from disk
 		try {
 			const content = await fs.readFile(this.authPath, 'utf-8');
@@ -663,18 +762,15 @@ export class AnthropicCodexProvider implements Provider {
 
 	/**
 	 * One-time migration: read credentials from ~/.codex/auth.json, optionally
-	 * refresh the access token, write to ~/.neokai/auth.json, and return the key.
-	 *
-	 * Returns undefined and writes nothing if the refresh fails or no credentials
-	 * are found — the caller should fall through to prompting NeoKai OAuth.
+	 * refresh the access token, and write to ~/.neokai/auth.json.
 	 */
-	private async importFromCodexAuth(): Promise<string | undefined> {
+	private async importFromCodexAuth(): Promise<void> {
 		let codexData: CodexAuthFile;
 		try {
 			const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
 			codexData = JSON.parse(raw) as CodexAuthFile;
 		} catch {
-			return undefined; // file missing or malformed
+			return; // file missing or malformed
 		}
 
 		// Case 1: explicit API key (not an OAuth token) — import directly.
@@ -685,45 +781,50 @@ export class AnthropicCodexProvider implements Provider {
 			};
 			await this.saveCredentials(creds);
 			this.cachedCredentials = creds;
+			this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
+			this.cachedApiKey = creds.access ?? '';
 			logger.info('AnthropicCodexProvider: imported API key from ~/.codex/auth.json');
-			return codexData.OPENAI_API_KEY;
+			return;
 		}
 
 		// Case 2: OAuth tokens.
-		if (!codexData.tokens?.access_token) return undefined;
+		if (!codexData.tokens?.access_token) return;
 
-		if (codexData.tokens.refresh_token) {
-			// Try to get a fresh token before importing, so we never store a stale one.
-			const refreshed = await this.tryRefreshCodexToken(codexData.tokens.refresh_token);
-			if (!refreshed) {
-				logger.warn(
-					'AnthropicCodexProvider: Codex token refresh failed; skipping ~/.codex/auth.json import'
+		let accessToken = codexData.tokens.access_token;
+		let refreshToken = codexData.tokens.refresh_token;
+		let expires: number | undefined;
+
+		if (refreshToken) {
+			// Prefer a fresh token before importing; if refresh fails, still import
+			// existing tokens so NeoKai remains decoupled from ~/.codex/auth.json.
+			const refreshed = await this.tryRefreshCodexToken(refreshToken);
+			if (refreshed) {
+				accessToken = refreshed.access_token;
+				refreshToken = refreshed.refresh_token || refreshToken;
+				expires = Date.now() + refreshed.expires_in * 1000;
+				logger.info(
+					'AnthropicCodexProvider: imported refreshed OAuth token from ~/.codex/auth.json'
 				);
-				return undefined;
+			} else {
+				logger.warn(
+					'AnthropicCodexProvider: Codex token refresh failed; importing existing ~/.codex/auth.json token'
+				);
 			}
-			const creds: StoredCredentials = {
-				type: 'oauth',
-				access: refreshed.access_token,
-				refresh: refreshed.refresh_token || codexData.tokens.refresh_token,
-				expires: Date.now() + refreshed.expires_in * 1000,
-				accountId: this.extractAccountId(refreshed.access_token) ?? codexData.tokens.account_id,
-			};
-			await this.saveCredentials(creds);
-			this.cachedCredentials = creds;
-			logger.info('AnthropicCodexProvider: imported refreshed OAuth token from ~/.codex/auth.json');
-			return refreshed.access_token;
 		}
 
-		// No refresh token — import the access token as-is.
 		const creds: StoredCredentials = {
 			type: 'oauth',
-			access: codexData.tokens.access_token,
-			accountId: codexData.tokens.account_id,
+			access: accessToken,
+			refresh: refreshToken,
+			expires,
+			accountId: this.extractAccountId(accessToken) ?? codexData.tokens.account_id,
+			planType: this.extractPlanType(accessToken),
 		};
 		await this.saveCredentials(creds);
 		this.cachedCredentials = creds;
-		logger.info('AnthropicCodexProvider: imported OAuth access token from ~/.codex/auth.json');
-		return codexData.tokens.access_token;
+		this.cachedBridgeAuth = this.toBridgeAuth(creds) ?? null;
+		this.cachedApiKey = creds.access ?? '';
+		logger.info('AnthropicCodexProvider: imported OAuth token from ~/.codex/auth.json');
 	}
 
 	/**
@@ -752,18 +853,30 @@ export class AnthropicCodexProvider implements Provider {
 		return crypto.createHash('sha256').update(verifier).digest().toString('base64url');
 	}
 
-	private extractAccountId(accessToken: string): string | undefined {
+	private parseTokenPayload(accessToken: string): Record<string, unknown> | undefined {
 		try {
 			const parts = accessToken.split('.');
 			if (parts.length !== 3) return undefined;
-			const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8')) as Record<
+			return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<
 				string,
 				unknown
 			>;
-			const auth = payload['https://api.openai.com/auth'] as Record<string, string> | undefined;
-			return auth?.chatgpt_account_id ?? (payload.sub as string | undefined);
 		} catch {
 			return undefined;
 		}
+	}
+
+	private extractAccountId(accessToken: string): string | undefined {
+		const payload = this.parseTokenPayload(accessToken);
+		if (!payload) return undefined;
+		const auth = payload['https://api.openai.com/auth'] as Record<string, string> | undefined;
+		return auth?.chatgpt_account_id ?? (payload.sub as string | undefined);
+	}
+
+	private extractPlanType(accessToken: string): string | undefined {
+		const payload = this.parseTokenPayload(accessToken);
+		if (!payload) return undefined;
+		const auth = payload['https://api.openai.com/auth'] as Record<string, string> | undefined;
+		return auth?.chatgpt_plan_type;
 	}
 }

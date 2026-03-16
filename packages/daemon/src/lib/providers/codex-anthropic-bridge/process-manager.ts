@@ -91,6 +91,20 @@ type PipedProc = {
 	readonly stdin: { write(data: string): void; flush(): void };
 };
 
+export type AppServerAuth =
+	| { type: 'api_key'; apiKey: string }
+	| {
+			type: 'chatgpt';
+			accessToken: string;
+			chatgptAccountId: string;
+			chatgptPlanType?: string;
+			refreshAuthTokens?: () => Promise<{
+				accessToken: string;
+				chatgptAccountId: string;
+				chatgptPlanType?: string;
+			} | null>;
+	  };
+
 // ---------------------------------------------------------------------------
 // AppServerConn — low-level JSON-RPC connection to one codex app-server process
 // ---------------------------------------------------------------------------
@@ -109,11 +123,11 @@ export class AppServerConn {
 		void this.readLoop();
 	}
 
-	static create(codexPath: string, cwd: string, apiKey: string): AppServerConn {
+	static create(codexPath: string, cwd: string, auth?: AppServerAuth): AppServerConn {
 		const subEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-		if (apiKey) {
-			subEnv['OPENAI_API_KEY'] = apiKey;
-			subEnv['CODEX_API_KEY'] = apiKey;
+		if (auth?.type === 'api_key' && auth.apiKey) {
+			subEnv['OPENAI_API_KEY'] = auth.apiKey;
+			subEnv['CODEX_API_KEY'] = auth.apiKey;
 		}
 		logger.debug(`AppServerConn: spawning ${codexPath} app-server`);
 		const proc = Bun.spawn([codexPath, 'app-server'], {
@@ -271,6 +285,7 @@ export class BridgeSession {
 		private readonly model: string,
 		private readonly tools: CodexDynamicTool[],
 		private readonly cwd: string,
+		private readonly auth?: AppServerAuth,
 		originalToolNames: string[] = []
 	) {
 		this.toolNameReverseMap = buildToolNameReverseMap(originalToolNames);
@@ -285,6 +300,36 @@ export class BridgeSession {
 			capabilities: { experimentalApi: true },
 		});
 		this.conn.notify('initialized');
+
+		if (this.auth?.type === 'chatgpt') {
+			const refreshAuthTokens = this.auth.refreshAuthTokens;
+			const chatgptAuth = {
+				accessToken: this.auth.accessToken,
+				chatgptAccountId: this.auth.chatgptAccountId,
+				chatgptPlanType: this.auth.chatgptPlanType,
+			};
+
+			await this.conn.request<unknown>('account/login/start', {
+				type: 'chatgptAuthTokens',
+				accessToken: chatgptAuth.accessToken,
+				chatgptAccountId: chatgptAuth.chatgptAccountId,
+				chatgptPlanType: chatgptAuth.chatgptPlanType ?? null,
+			});
+
+			this.conn.onServerRequest('account/chatgptAuthTokens/refresh', async () => {
+				const refreshed = await refreshAuthTokens?.();
+				if (refreshed) {
+					chatgptAuth.accessToken = refreshed.accessToken;
+					chatgptAuth.chatgptAccountId = refreshed.chatgptAccountId;
+					chatgptAuth.chatgptPlanType = refreshed.chatgptPlanType;
+				}
+				return {
+					accessToken: chatgptAuth.accessToken,
+					chatgptAccountId: chatgptAuth.chatgptAccountId,
+					chatgptPlanType: chatgptAuth.chatgptPlanType ?? null,
+				};
+			});
+		}
 
 		const res = await this.conn.request<ThreadStartResult>('thread/start', {
 			model: this.model,

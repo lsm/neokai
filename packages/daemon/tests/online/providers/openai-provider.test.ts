@@ -2,9 +2,7 @@
  * OpenAI Provider Online Tests
  *
  * REQUIREMENTS:
- * - One of the following credentials must be set:
- *     OPENAI_API_KEY               — used directly as the API key
- *     CODEX_REFRESH_TOKEN          — exchanged for a fresh access token in beforeAll
+ * - OPENAI_API_KEY or CODEX_API_KEY must be set
  * - Requires the `codex` binary on PATH (models are now served via the
  *   AnthropicCodexProvider bridge, which wraps codex app-server)
  * - Makes real API calls (costs money, uses rate limits)
@@ -19,20 +17,17 @@
  *
  * Run with:
  *   OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
- *   # or via refresh token:
- *   CODEX_REFRESH_TOKEN=<token> bun test packages/daemon/tests/online/providers/openai-provider.test.ts
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../../helpers/daemon-server';
-import { createDaemonServer } from '../../helpers/daemon-server';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+	getProcessingState,
 	sendMessage,
 	waitForIdle,
-	getProcessingState,
 	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
-import { refreshCodexToken } from '../../../src/lib/providers/anthropic-codex-provider';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 
 /**
  * Extract text from an SDK assistant message
@@ -53,21 +48,6 @@ function extractAssistantText(msg: Record<string, unknown>): string {
 
 describe('OpenAI Provider (Online)', () => {
 	let daemon: DaemonServerContext;
-
-	beforeAll(async () => {
-		// Exchange CODEX_REFRESH_TOKEN for a live access token when no direct key is present.
-		if (
-			!process.env.OPENAI_API_KEY &&
-			!process.env.CODEX_API_KEY &&
-			process.env.CODEX_REFRESH_TOKEN
-		) {
-			const token = await refreshCodexToken(process.env.CODEX_REFRESH_TOKEN);
-			if (!token) {
-				throw new Error('[openai-provider] CODEX_REFRESH_TOKEN exchange failed');
-			}
-			process.env.OPENAI_API_KEY = token.access_token;
-		}
-	}, 15000);
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();

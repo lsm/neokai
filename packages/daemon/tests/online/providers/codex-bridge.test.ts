@@ -5,9 +5,7 @@
  *   AnthropicCodexProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
  *
  * REQUIREMENTS:
- * - One of the following credentials must be set:
- *     OPENAI_API_KEY or CODEX_API_KEY  — used directly as the API key
- *     CODEX_REFRESH_TOKEN              — exchanged for a fresh access token in beforeAll
+ * - OPENAI_API_KEY or CODEX_API_KEY must be set
  * - The `codex` binary must be installed and on PATH
  *
  * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
@@ -18,16 +16,10 @@
  * Run with:
  *   OPENAI_API_KEY=sk-xxx bun test \
  *     packages/daemon/tests/online/providers/codex-bridge.test.ts
- *   # or via refresh token:
- *   CODEX_REFRESH_TOKEN=<token> bun test \
- *     packages/daemon/tests/online/providers/codex-bridge.test.ts
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import {
-	AnthropicCodexProvider,
-	refreshCodexToken,
-} from '../../../src/lib/providers/anthropic-codex-provider';
+import { AnthropicCodexProvider } from '../../../src/lib/providers/anthropic-codex-provider';
 
 // ---------------------------------------------------------------------------
 // SSE parsing helpers
@@ -181,20 +173,8 @@ describe('Codex Bridge (Online)', () => {
 	let bridgeUrl: string;
 
 	beforeAll(async () => {
-		// Exchange CODEX_REFRESH_TOKEN for a live access token when no direct key is present.
-		if (
-			!process.env.OPENAI_API_KEY &&
-			!process.env.CODEX_API_KEY &&
-			process.env.CODEX_REFRESH_TOKEN
-		) {
-			const token = await refreshCodexToken(process.env.CODEX_REFRESH_TOKEN);
-			if (!token) {
-				throw new Error('[codex-bridge] CODEX_REFRESH_TOKEN exchange failed');
-			}
-			process.env.OPENAI_API_KEY = token.access_token;
-		}
-
 		provider = new AnthropicCodexProvider();
+		await provider.getAuthStatus();
 		const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 	}, 15000);

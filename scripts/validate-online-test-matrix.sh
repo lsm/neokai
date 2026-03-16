@@ -6,11 +6,7 @@
 # files that were added but not included in any shard.
 #
 # CI SECRET REQUIREMENTS for providers-codex and providers-openai shards:
-#   CODEX_REFRESH_TOKEN — OAuth refresh token from ~/.codex/auth.json; exchanged
-#                         for a live access token at test-run time. Preferred over
-#                         a static OPENAI_API_KEY secret.
-#   OPENAI_API_KEY      — Optional static API key fallback (used when set).
-# At least one of the two must be configured in the repo for these shards to run.
+#   OPENAI_API_KEY      — required for these shards.
 #
 # Usage: bash scripts/validate-online-test-matrix.sh
 

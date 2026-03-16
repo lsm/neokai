@@ -53,7 +53,8 @@ export function initializeProviders(): ProviderRegistry {
 	registry.register(new MinimaxProvider());
 
 	// Register Anthropic Codex provider — replaces pi-mono OpenAI provider.
-	// Discovers credentials from env, ~/.neokai/auth.json, and ~/.codex/auth.json.
+	// Discovers credentials from env (OPENAI_API_KEY/CODEX_API_KEY),
+	// ~/.neokai/auth.json, and one-time import from ~/.codex/auth.json.
 	registry.register(new AnthropicCodexProvider());
 
 	// Register GitHub Copilot provider (will be available if OAuth token is configured)
