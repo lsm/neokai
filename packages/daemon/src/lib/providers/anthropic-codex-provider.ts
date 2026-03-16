@@ -560,6 +560,7 @@ export class AnthropicCodexProvider implements Provider {
 
 			await this.saveCredentials(newCreds);
 			this.cachedCredentials = newCreds;
+			this.cachedApiKey = newCreds.access; // sync so buildSdkConfig() picks up the new token
 			return true;
 		} catch (error) {
 			logger.error('Token refresh failed:', error);
@@ -569,6 +570,7 @@ export class AnthropicCodexProvider implements Provider {
 
 	async logout(): Promise<void> {
 		this.cachedCredentials = null;
+		this.cachedApiKey = undefined; // reset so the next getApiKey() re-reads from disk
 		try {
 			const content = await fs.readFile(this.authPath, 'utf-8');
 			const data = JSON.parse(content) as Record<string, unknown>;
@@ -577,7 +579,16 @@ export class AnthropicCodexProvider implements Provider {
 			if (Object.keys(data).length === 0) {
 				await fs.unlink(this.authPath);
 			} else {
-				await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+				// Atomic write to avoid partial-write corruption (same pattern as saveCredentials)
+				const json = JSON.stringify(data, null, 2);
+				const tmpPath = `${this.authPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+				try {
+					await fs.writeFile(tmpPath, json, { mode: 0o600 });
+					await fs.rename(tmpPath, this.authPath);
+				} catch (err) {
+					await fs.unlink(tmpPath).catch(() => {});
+					throw err;
+				}
 			}
 		} catch {
 			// file does not exist — nothing to do
@@ -719,7 +730,16 @@ export class AnthropicCodexProvider implements Provider {
 				);
 				return null;
 			}
-			return response.json() as Promise<OpenAIOAuthToken>;
+			const parsed = (await response.json()) as OpenAIOAuthToken;
+			if (!parsed.access_token || typeof parsed.access_token !== 'string') {
+				logger.warn('AnthropicCodexProvider: token refresh response missing access_token');
+				return null;
+			}
+			if (typeof parsed.expires_in !== 'number') {
+				logger.warn('AnthropicCodexProvider: token refresh response missing expires_in');
+				return null;
+			}
+			return parsed;
 		} catch (error) {
 			logger.warn('AnthropicCodexProvider: token refresh network error:', error);
 			return null;

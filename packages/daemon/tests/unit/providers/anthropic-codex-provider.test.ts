@@ -8,7 +8,7 @@
  *  - buildSdkConfig(): per-workspace bridge server isolation and reuse
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -412,20 +412,28 @@ describe('AnthropicCodexProvider', () => {
 			p.stopAllBridgeServers();
 		});
 
-		it('Test 4: second call reads from ~/.neokai/auth.json only (no codex file touched)', async () => {
+		it('Test 4: second call uses in-memory cachedApiKey (no further file I/O)', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
 
 			// Pre-populate ~/.neokai/auth.json (simulates already-imported state)
 			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'already-imported-token' });
-			// Also write a different token to ~/.codex/auth.json to confirm it's not read
-			await writeCodexAuth(codexDir, { OPENAI_API_KEY: 'should-not-be-used' });
 
 			const p = makeProvider({}, neokaiDir, codexDir);
-			const key = await p.getApiKey();
 
-			expect(key).toBe('already-imported-token');
-			// fetch should NOT have been called
+			// First call — reads from ~/.neokai/auth.json and populates cachedApiKey
+			const key1 = await p.getApiKey();
+			expect(key1).toBe('already-imported-token');
+
+			// Delete the neokai auth file; no codex file exists either.
+			// Any further disk read would find nothing and return undefined.
+			await fs.unlink(path.join(neokaiDir, 'auth.json'));
+
+			// Second call — must return the key from in-memory cache, not from disk.
+			const key2 = await p.getApiKey();
+			expect(key2).toBe('already-imported-token');
+
+			// fetch should NOT have been called at any point (no migration attempt)
 			expect(fetchSpy).not.toHaveBeenCalled();
 			p.stopAllBridgeServers();
 		});
