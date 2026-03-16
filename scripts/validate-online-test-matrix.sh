@@ -5,7 +5,7 @@
 # features) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
-# CI SECRET REQUIREMENTS for providers-codex and providers-openai shards:
+# CI SECRET REQUIREMENTS for providers-anthropic-to-codex-bridge and providers-openai shards:
 #   OPENAI_API_KEY      — required for these shards.
 #
 # Usage: bash scripts/validate-online-test-matrix.sh

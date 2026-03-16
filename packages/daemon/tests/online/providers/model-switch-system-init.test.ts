@@ -106,15 +106,19 @@ async function waitForSDKMessage(
 			const addedMessages = delta.added || [];
 
 			for (const msg of addedMessages) {
-				if (msg.type === messageType) {
-					// Check subtype if specified
-					if (messageSubtype && msg.subtype !== messageSubtype) {
-						continue;
-					}
-					cleanup();
-					resolve(msg);
-					return;
+				if (msg.type !== messageType) continue;
+				// Check subtype if specified
+				if (messageSubtype && msg.subtype !== messageSubtype) {
+					continue;
 				}
+				// Ignore replayed historical messages (e.g. room-join backfill).
+				const ts = msg.timestamp;
+				if (typeof ts !== 'number' || ts < startedAt) {
+					continue;
+				}
+				cleanup();
+				resolve(msg);
+				return;
 			}
 		});
 
