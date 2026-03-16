@@ -556,6 +556,19 @@ async function createInProcessDaemonServer(
 		standalone: false,
 	});
 
+	// Optional CI/test optimization: disable sandbox by default for sessions created
+	// in online tests. This avoids requiring bubblewrap/socat on Linux runners for
+	// test shards that only exercise message/query flows, not sandbox enforcement.
+	if (process.env.NEOKAI_TEST_DISABLE_SANDBOX === '1') {
+		const current = daemonContext.settingsManager.getGlobalSettings();
+		daemonContext.settingsManager.updateGlobalSettings({
+			sandbox: {
+				...(current.sandbox ?? {}),
+				enabled: false,
+			},
+		});
+	}
+
 	// Connect to the daemon's WebSocket server (just like a real client)
 	const wsUrl = `ws://127.0.0.1:${userPort}/ws`;
 	const transport = new WebSocketClientTransport({

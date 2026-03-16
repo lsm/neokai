@@ -260,12 +260,6 @@ jobs:
         with:
           bun-version: 1.3.10
 
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
-
       - name: Setup Dev Proxy
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         uses: ./.github/actions/setup-devproxy
@@ -284,6 +278,7 @@ jobs:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
