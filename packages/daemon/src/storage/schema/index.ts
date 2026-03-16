@@ -185,7 +185,47 @@ export function createTables(db: BunDatabase): void {
         completed_at INTEGER,
         planning_attempts INTEGER DEFAULT 0,
         goal_review_attempts INTEGER DEFAULT 0,
+        mission_type TEXT NOT NULL DEFAULT 'one_shot'
+          CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+        autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+          CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+        schedule TEXT,
+        schedule_paused INTEGER NOT NULL DEFAULT 0,
+        next_run_at INTEGER,
+        structured_metrics TEXT,
+        max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+        max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Mission metric history table
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS mission_metric_history (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL,
+        metric_name TEXT NOT NULL,
+        value REAL NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+      )
+    `);
+
+	// Mission executions table
+	db.exec(`
+      CREATE TABLE IF NOT EXISTS mission_executions (
+        id TEXT PRIMARY KEY,
+        goal_id TEXT NOT NULL,
+        execution_number INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        status TEXT NOT NULL DEFAULT 'running',
+        result_summary TEXT,
+        task_ids TEXT NOT NULL DEFAULT '[]',
+        planning_attempts INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+        UNIQUE(goal_id, execution_number)
       )
     `);
 
@@ -302,6 +342,15 @@ function createIndexes(db: BunDatabase): void {
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_room_updated ON tasks(room_id, updated_at DESC)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_room ON goals(room_id)`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler ON goals(mission_type, schedule_paused, next_run_at)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup ON mission_metric_history(goal_id, metric_name, recorded_at)`
+	);
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running ON mission_executions(goal_id) WHERE status = 'running'`
+	);
 
 	// GitHub integration indexes
 	db.exec(

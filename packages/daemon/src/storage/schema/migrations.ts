@@ -105,6 +105,10 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 
 	// Migration 27: Add updated_at column to tasks table for sorting by most recently updated
 	runMigration27(db);
+
+	// Migration 28: Add mission metadata columns to goals table, create mission_metric_history
+	// and mission_executions tables for Goal V2 / Mission System
+	runMigration28(db);
 }
 
 /**
@@ -1319,4 +1323,112 @@ function runMigrationRoomCleanup(db: BunDatabase): void {
 	} finally {
 		db.exec(`PRAGMA foreign_keys = ON`);
 	}
+}
+
+/**
+ * Migration 28: Add mission metadata columns to goals table and create
+ * mission_metric_history and mission_executions tables.
+ *
+ * New columns on goals:
+ * - mission_type, autonomy_level (with CHECK constraints)
+ * - schedule (JSON), schedule_paused, next_run_at
+ * - structured_metrics (JSON)
+ * - max_consecutive_failures, max_planning_attempts, consecutive_failures
+ *
+ * New tables:
+ * - mission_metric_history: metric data points per goal
+ * - mission_executions: execution runs per goal (with partial unique index
+ *   on (goal_id) WHERE status = 'running' for at-most-one-running invariant)
+ *
+ * Backfills existing goals: mission_type = 'one_shot', autonomy_level = 'supervised'
+ */
+function runMigration28(db: BunDatabase): void {
+	// --- Add columns to goals table ---
+	if (tableExists(db, 'goals')) {
+		if (!tableHasColumn(db, 'goals', 'mission_type')) {
+			db.exec(
+				`ALTER TABLE goals ADD COLUMN mission_type TEXT NOT NULL DEFAULT 'one_shot'` +
+					` CHECK(mission_type IN ('one_shot', 'measurable', 'recurring'))`
+			);
+			// Backfill existing rows (ALTER TABLE DEFAULT already handles it, but be explicit)
+			db.exec(`UPDATE goals SET mission_type = 'one_shot' WHERE mission_type IS NULL`);
+		}
+		if (!tableHasColumn(db, 'goals', 'autonomy_level')) {
+			db.exec(
+				`ALTER TABLE goals ADD COLUMN autonomy_level TEXT NOT NULL DEFAULT 'supervised'` +
+					` CHECK(autonomy_level IN ('supervised', 'semi_autonomous'))`
+			);
+			db.exec(`UPDATE goals SET autonomy_level = 'supervised' WHERE autonomy_level IS NULL`);
+		}
+		if (!tableHasColumn(db, 'goals', 'schedule')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN schedule TEXT`);
+		}
+		if (!tableHasColumn(db, 'goals', 'schedule_paused')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN schedule_paused INTEGER NOT NULL DEFAULT 0`);
+		}
+		if (!tableHasColumn(db, 'goals', 'next_run_at')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN next_run_at INTEGER`);
+		}
+		if (!tableHasColumn(db, 'goals', 'structured_metrics')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN structured_metrics TEXT`);
+		}
+		if (!tableHasColumn(db, 'goals', 'max_consecutive_failures')) {
+			db.exec(
+				`ALTER TABLE goals ADD COLUMN max_consecutive_failures INTEGER NOT NULL DEFAULT 3`
+			);
+		}
+		if (!tableHasColumn(db, 'goals', 'max_planning_attempts')) {
+			db.exec(
+				`ALTER TABLE goals ADD COLUMN max_planning_attempts INTEGER NOT NULL DEFAULT 5`
+			);
+		}
+		if (!tableHasColumn(db, 'goals', 'consecutive_failures')) {
+			db.exec(
+				`ALTER TABLE goals ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`
+			);
+		}
+		// Composite index for efficient scheduler queries
+		db.exec(
+			`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler` +
+				` ON goals(mission_type, schedule_paused, next_run_at)`
+		);
+	}
+
+	// --- Create mission_metric_history table ---
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mission_metric_history (
+			id TEXT PRIMARY KEY,
+			goal_id TEXT NOT NULL,
+			metric_name TEXT NOT NULL,
+			value REAL NOT NULL,
+			recorded_at INTEGER NOT NULL,
+			FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup` +
+			` ON mission_metric_history(goal_id, metric_name, recorded_at)`
+	);
+
+	// --- Create mission_executions table ---
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS mission_executions (
+			id TEXT PRIMARY KEY,
+			goal_id TEXT NOT NULL,
+			execution_number INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			status TEXT NOT NULL DEFAULT 'running',
+			result_summary TEXT,
+			task_ids TEXT NOT NULL DEFAULT '[]',
+			planning_attempts INTEGER NOT NULL DEFAULT 0,
+			FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+			UNIQUE(goal_id, execution_number)
+		)
+	`);
+	// Partial unique index: at most one running execution per goal
+	db.exec(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running` +
+			` ON mission_executions(goal_id) WHERE status = 'running'`
+	);
 }
