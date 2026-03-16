@@ -52,6 +52,7 @@ import type {
 	ProviderSessionConfig,
 } from '@neokai/shared/provider';
 import { initializeProviders } from './providers/factory.js';
+import { Logger } from './logger.js';
 
 /**
  * Convert new ProviderInfo to legacy ProviderInfo
@@ -123,6 +124,8 @@ function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
 }
 
 export class ProviderService {
+	private readonly logger = new Logger('provider-service');
+
 	/**
 	 * Ensure provider system is initialized
 	 */
@@ -306,8 +309,15 @@ export class ProviderService {
 			const sdkConfig = provider.buildSdkConfig(modelId);
 			baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
 			apiVersion = sdkConfig.apiVersion || apiVersion;
-		} catch {
+		} catch (err) {
 			// provider not yet initialised (e.g. embedded server not started); use defaults
+			// Log a warning so this is diagnosable: without it, a Copilot session whose
+			// embedded server was not pre-warmed would silently call api.anthropic.com with
+			// an empty auth token, producing an opaque 401 error during title generation.
+			this.logger.warn(
+				`[ProviderService] getTitleGenerationConfig: buildSdkConfig failed for provider` +
+					` '${providerId}' — falling back to Anthropic defaults. Cause: ${err}`
+			);
 		}
 
 		return { modelId, baseUrl, apiVersion };

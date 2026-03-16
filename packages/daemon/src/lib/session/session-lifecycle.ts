@@ -17,7 +17,7 @@ import type { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
 import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
-import { getProviderService } from '../provider-service';
+import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
 import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
 
@@ -611,7 +611,6 @@ export class SessionLifecycle {
 			// Cast to string: 'anthropic-copilot' is valid at runtime but not in the legacy Provider union.
 			const { title, isFallback } = await this.generateTitleFromMessage(
 				userMessageText,
-				session.workspacePath,
 				session.config.model,
 				session.config.provider as string | undefined
 			);
@@ -707,7 +706,6 @@ export class SessionLifecycle {
 	 */
 	private async generateTitleFromMessage(
 		messageText: string,
-		_sessionWorkspacePath: string,
 		sessionModel?: string,
 		sessionProviderId?: string
 	): Promise<{ title: string; isFallback: boolean }> {
@@ -723,10 +721,13 @@ export class SessionLifecycle {
 			provider = await providerService.getDefaultProvider();
 		}
 
-		// For providers that rely on an API key (Anthropic, GLM, MiniMax) verify the key
-		// is present before attempting title generation.  Copilot-backed providers
-		// authenticate via the embedded proxy and have no traditional API key, so for
-		// them we use isProviderAvailable() instead.
+		// Providers whose credentials are managed by getProviderApiKey() (ANTHROPIC_API_KEY,
+		// GLM_API_KEY, MINIMAX_API_KEY).  For these we can do a fast, synchronous key check.
+		//
+		// All other providers — 'openai' (OPENAI_API_KEY), 'anthropic-copilot' (GitHub token),
+		// or future ones — are NOT listed here because getProviderApiKey() does not handle
+		// their credentials.  They use the isProviderAvailable() path below instead, which
+		// delegates to each provider's own isAvailable() implementation.
 		const legacyKeyProviders: string[] = ['anthropic', 'glm', 'minimax'];
 		if (legacyKeyProviders.includes(provider)) {
 			const apiKey = providerService.getProviderApiKey(provider as 'anthropic' | 'glm' | 'minimax');
@@ -966,6 +967,5 @@ export function generateBranchName(title: string, sessionId: string): string {
  * @returns Merged environment variables object
  */
 function buildSdkQueryEnv(providerEnvVars: Record<string, string | undefined>): NodeJS.ProcessEnv {
-	const { mergeProviderEnvVars } = require('../provider-service');
 	return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
 }

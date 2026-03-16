@@ -144,9 +144,8 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
  * Stored credentials format for GitHub Copilot in ~/.neokai/auth.json
  */
 interface StoredCopilotCredentials {
+	/** The GitHub OAuth access token (used as the Copilot session token). */
 	refresh: string;
-	access: string;
-	expires: number;
 	enterpriseUrl?: string;
 }
 
@@ -694,8 +693,6 @@ export class AnthropicCopilotProvider implements Provider {
 				// handles the Copilot session token exchange internally.
 				const credentials: StoredCopilotCredentials = {
 					refresh: data.access_token,
-					access: '',
-					expires: 0,
 					enterpriseUrl: enterpriseDomain,
 				};
 
