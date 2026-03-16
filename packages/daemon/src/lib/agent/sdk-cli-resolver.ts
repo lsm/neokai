@@ -28,6 +28,19 @@ export function isBundledBinary(): boolean {
 	return import.meta.url.includes('/$bunfs/root/');
 }
 
+/**
+ * Check if we're running under the Bun runtime (dev, test, or compiled binary mode).
+ *
+ * When running under Bun, SDK subprocesses should also use Bun to avoid
+ * Node.js version mismatches. For example, `node:sqlite` was added in
+ * Node.js v22.5.0 but is available in Bun via its Node.js compat layer.
+ * CI runners may have an older Node.js (e.g. v20) on PATH; using 'bun'
+ * ensures the subprocess gets the same compat surface as the parent process.
+ */
+export function isRunningUnderBun(): boolean {
+	return typeof globalThis.Bun !== 'undefined';
+}
+
 /** Virtual path set from the embedded file import in prod-entry.ts */
 let embeddedCliPath: string | undefined;
 

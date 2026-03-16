@@ -19,7 +19,7 @@ import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
 import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
-import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -831,7 +831,7 @@ ${messageText.slice(0, 2000)}`;
 					settingSources: [],
 					tools: [],
 					pathToClaudeCodeExecutable: cliPath,
-					executable: isBundledBinary() ? 'bun' : undefined,
+					executable: isRunningUnderBun() ? 'bun' : undefined,
 					env: mergedEnv,
 				},
 			});

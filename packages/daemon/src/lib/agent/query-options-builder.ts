@@ -32,7 +32,7 @@ import { THINKING_LEVEL_TOKENS } from '@neokai/shared';
 import type { PermissionMode } from '@neokai/shared/types/settings';
 import type { SettingsManager } from '../settings-manager';
 import { getProviderContextManager } from '../providers/factory.js';
-import { resolveSDKCliPath, isBundledBinary } from './sdk-cli-resolver.js';
+import { resolveSDKCliPath, isRunningUnderBun } from './sdk-cli-resolver.js';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -158,9 +158,11 @@ export class QueryOptionsBuilder {
 			cwd: this.getCwd(),
 			additionalDirectories,
 			env: mergedEnv,
-			// In bundled binaries, process.execPath is the binary itself, not a JS runtime.
-			// Default to 'bun' so the SDK finds the runtime from PATH.
-			executable: config.executable ?? (isBundledBinary() ? 'bun' : undefined),
+			// When running under Bun (dev, test, or compiled binary), set the subprocess
+			// runtime to 'bun' so it shares the same Node.js compat layer (e.g. node:sqlite
+			// requires v22.5+ but is available in Bun). Without this, CI runners with an
+			// older Node.js on PATH would fail when spawning the SDK's cli.js subprocess.
+			executable: config.executable ?? (isRunningUnderBun() ? 'bun' : undefined),
 			executableArgs: config.executableArgs,
 			pathToClaudeCodeExecutable: sdkCliPath,
 
