@@ -612,7 +612,13 @@ export class AnthropicCopilotProvider implements Provider {
 	}
 
 	private getClientId(): string {
-		return this.env.GITHUB_COPILOT_CLIENT_ID || atob('SXYxLmI1MDdhMDhjODdlY2ZlOTg=');
+		// 'Iv1.b507a08c87ecfe98' is the public GitHub OAuth client ID used by the
+		// official GitHub Copilot Chat VS Code extension (publicly listed at
+		// https://github.com/settings/connections/applications/Iv1.b507a08c87ecfe98).
+		// Using it here follows the same pattern as other open-source Copilot clients
+		// (e.g. copilot.vim, CopilotChat.nvim).  Set GITHUB_COPILOT_CLIENT_ID to
+		// override with a custom OAuth app client ID.
+		return this.env.GITHUB_COPILOT_CLIENT_ID || 'Iv1.b507a08c87ecfe98';
 	}
 
 	private async startDeviceFlow(enterpriseDomain?: string): Promise<DeviceFlowResponse> {

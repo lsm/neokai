@@ -178,7 +178,7 @@ export class ProviderService {
 	 *
 	 * Delegates to provider.isAvailable()
 	 */
-	async isProviderAvailable(providerId: Provider): Promise<boolean> {
+	async isProviderAvailable(providerId: string): Promise<boolean> {
 		const registry = this.getRegistry();
 		const provider = registry.get(providerId);
 
@@ -277,7 +277,7 @@ export class ProviderService {
 	 * Get title generation configuration for a provider
 	 * Returns the model ID, base URL, and API version to use for direct API calls
 	 */
-	async getTitleGenerationConfig(providerId: Provider): Promise<{
+	async getTitleGenerationConfig(providerId: string): Promise<{
 		modelId: string;
 		baseUrl: string;
 		apiVersion: string;
@@ -475,7 +475,7 @@ export class ProviderService {
 	 * @param modelId - The model ID for setting tier mappings
 	 * @returns Original env vars that should be restored after SDK query
 	 */
-	applyEnvVarsToProcessForProvider(providerId: Provider, modelId?: string): OriginalEnvVars {
+	applyEnvVarsToProcessForProvider(providerId: string, modelId?: string): OriginalEnvVars {
 		const registry = this.getRegistry();
 		const provider = registry.get(providerId);
 

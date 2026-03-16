@@ -9,7 +9,7 @@
  * - Title generation and branch renaming
  */
 
-import type { Session, WorktreeMetadata, MessageHub, Provider } from '@neokai/shared';
+import type { Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
@@ -608,10 +608,12 @@ export class SessionLifecycle {
 
 		try {
 			// Step 1: Generate title from user message using session's model
+			// Cast to string: 'anthropic-copilot' is valid at runtime but not in the legacy Provider union.
 			const { title, isFallback } = await this.generateTitleFromMessage(
 				userMessageText,
 				session.workspacePath,
-				session.config.model
+				session.config.model,
+				session.config.provider as string | undefined
 			);
 
 			// Step 2: Rename branch if we have a worktree
@@ -706,21 +708,49 @@ export class SessionLifecycle {
 	private async generateTitleFromMessage(
 		messageText: string,
 		_sessionWorkspacePath: string,
-		sessionModel?: string
+		sessionModel?: string,
+		sessionProviderId?: string
 	): Promise<{ title: string; isFallback: boolean }> {
-		// Get provider service to detect provider and get API configuration
 		const providerService = getProviderService();
-		const provider = await providerService.getDefaultProvider();
-		const apiKey = providerService.getProviderApiKey(provider);
 
-		if (!apiKey) {
-			this.logger.warn(
-				`[SessionLifecycle] No API key for provider ${provider}, using fallback title`
-			);
-			return {
-				title: messageText.substring(0, 50).trim() || 'New Session',
-				isFallback: true,
-			};
+		// Determine which provider to use for title generation.
+		// When the session has an explicit provider ID (e.g. 'anthropic-copilot'), use that
+		// directly.  Otherwise fall back to the default configured provider.
+		let provider: string;
+		if (sessionProviderId) {
+			provider = sessionProviderId;
+		} else {
+			provider = await providerService.getDefaultProvider();
+		}
+
+		// For providers that rely on an API key (Anthropic, GLM, MiniMax) verify the key
+		// is present before attempting title generation.  Copilot-backed providers
+		// authenticate via the embedded proxy and have no traditional API key, so for
+		// them we use isProviderAvailable() instead.
+		const legacyKeyProviders: string[] = ['anthropic', 'glm', 'minimax'];
+		if (legacyKeyProviders.includes(provider)) {
+			const apiKey = providerService.getProviderApiKey(provider as 'anthropic' | 'glm' | 'minimax');
+			if (!apiKey) {
+				this.logger.warn(
+					`[SessionLifecycle] No API key for provider ${provider}, using fallback title`
+				);
+				return {
+					title: messageText.substring(0, 50).trim() || 'New Session',
+					isFallback: true,
+				};
+			}
+		} else {
+			// For non-legacy providers (e.g. 'anthropic-copilot'), fall back if unavailable.
+			const available = await providerService.isProviderAvailable(provider);
+			if (!available) {
+				this.logger.warn(
+					`[SessionLifecycle] Provider ${provider} not available, using fallback title`
+				);
+				return {
+					title: messageText.substring(0, 50).trim() || 'New Session',
+					isFallback: true,
+				};
+			}
 		}
 
 		// Use session model if provided, otherwise fall back to title generation config
@@ -752,7 +782,7 @@ export class SessionLifecycle {
 	 * then calls the SDK's query function to generate the title.
 	 */
 	private async generateTitleWithSdk(
-		provider: Provider,
+		provider: string,
 		modelId: string,
 		messageText: string
 	): Promise<string> {
