@@ -23,12 +23,6 @@ describe('AnthropicProvider (Online)', () => {
 
 	describe('getModels with API credentials', () => {
 		it('should load models from SDK when credentials are available', async () => {
-			// This test requires real credentials
-			if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-				console.log('Skipping - no API credentials');
-				return;
-			}
-
 			// Clear cache to force SDK load
 			provider.clearModelCache();
 
@@ -53,12 +47,6 @@ describe('AnthropicProvider (Online)', () => {
 		}, 30000);
 
 		it('should filter duplicate model IDs', async () => {
-			// This test requires real credentials
-			if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-				console.log('Skipping - no API credentials');
-				return;
-			}
-
 			// Clear cache to force SDK load
 			provider.clearModelCache();
 
@@ -71,12 +59,6 @@ describe('AnthropicProvider (Online)', () => {
 		}, 30000);
 
 		it('should complete SDK call within timeout', async () => {
-			// This test requires real credentials
-			if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-				console.log('Skipping - no API credentials');
-				return;
-			}
-
 			// Clear cache to force SDK load
 			provider.clearModelCache();
 

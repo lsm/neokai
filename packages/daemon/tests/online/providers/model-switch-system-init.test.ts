@@ -53,6 +53,11 @@ async function waitForSDKMessage(
 ): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
 		const startedAt = Date.now();
+		const isSystemInitWait = messageType === 'system' && messageSubtype === 'init';
+		// For system:init waits, only resolve after a new user message has been
+		// persisted since this waiter started. This avoids accidentally matching
+		// system:init emitted by model-switch restarts before the next user turn.
+		let latestUserTsSinceStart = Number.NEGATIVE_INFINITY;
 		let unsubscribe: (() => void) | undefined;
 		let resolved = false;
 		let poller: ReturnType<typeof setInterval> | undefined;
@@ -74,11 +79,28 @@ async function waitForSDKMessage(
 					limit: 200,
 				})) as { sdkMessages?: Array<Record<string, unknown>> };
 				const sdkMessages = result.sdkMessages || [];
-				const match = sdkMessages.find((msg) => {
+
+				if (isSystemInitWait) {
+					for (const msg of sdkMessages) {
+						if (msg.type !== 'user') continue;
+						const ts = msg.timestamp;
+						if (typeof ts === 'number' && ts >= startedAt && ts > latestUserTsSinceStart) {
+							latestUserTsSinceStart = ts;
+						}
+					}
+					// Don't resolve a system:init until we have observed a user message
+					// for the current turn.
+					if (!Number.isFinite(latestUserTsSinceStart)) {
+						return;
+					}
+				}
+
+				const minTargetTs = isSystemInitWait ? latestUserTsSinceStart : startedAt;
+				const match = [...sdkMessages].reverse().find((msg) => {
 					if (msg.type !== messageType) return false;
 					if (messageSubtype && msg.subtype !== messageSubtype) return false;
 					const ts = msg.timestamp;
-					return typeof ts !== 'number' || ts >= startedAt - 1000;
+					return typeof ts === 'number' && ts >= minTargetTs;
 				});
 				if (match) {
 					cleanup();
@@ -106,15 +128,30 @@ async function waitForSDKMessage(
 			const addedMessages = delta.added || [];
 
 			for (const msg of addedMessages) {
-				if (msg.type === messageType) {
-					// Check subtype if specified
-					if (messageSubtype && msg.subtype !== messageSubtype) {
-						continue;
-					}
-					cleanup();
-					resolve(msg);
-					return;
+				const ts = msg.timestamp;
+				if (msg.type === 'user' && typeof ts === 'number' && ts >= startedAt) {
+					latestUserTsSinceStart = Math.max(latestUserTsSinceStart, ts);
+					continue;
 				}
+
+				if (msg.type !== messageType) continue;
+				// Check subtype if specified
+				if (messageSubtype && msg.subtype !== messageSubtype) {
+					continue;
+				}
+				// Ignore replayed historical messages (e.g. room-join backfill).
+				if (typeof ts !== 'number' || ts < startedAt) {
+					continue;
+				}
+				if (isSystemInitWait && !Number.isFinite(latestUserTsSinceStart)) {
+					continue;
+				}
+				if (isSystemInitWait && ts < latestUserTsSinceStart) {
+					continue;
+				}
+				cleanup();
+				resolve(msg);
+				return;
 			}
 		});
 
@@ -138,21 +175,11 @@ async function waitForSDKMessage(
 describe('Model Switch System Init Message', () => {
 	let daemon: DaemonServerContext;
 
-	// Skip all tests if no Anthropic credentials (model switching requires Claude SDK)
-	const hasAnthropicCredentials =
-		process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
 	beforeEach(async () => {
-		if (!hasAnthropicCredentials) {
-			return; // Skip setup if no credentials
-		}
 		daemon = await createDaemonServer();
 	}, 30000);
 
 	afterEach(async () => {
-		if (!hasAnthropicCredentials) {
-			return; // Skip cleanup if no credentials
-		}
 		if (daemon) {
 			daemon.kill('SIGTERM');
 			await daemon.waitForExit();
@@ -160,10 +187,6 @@ describe('Model Switch System Init Message', () => {
 	}, 20000);
 
 	test('should show correct model in system:init after switching to opus', async () => {
-		if (!hasAnthropicCredentials) {
-			console.log('Skipping - no Anthropic API credentials');
-			return;
-		}
 		// 1. Create session with Sonnet model (default)
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-model-switch-system-init-${Date.now()}`,
@@ -227,10 +250,6 @@ describe('Model Switch System Init Message', () => {
 	}, 90000);
 
 	test('should show correct model in system:init when switching from sonnet to haiku', async () => {
-		if (!hasAnthropicCredentials) {
-			console.log('Skipping - no Anthropic API credentials');
-			return;
-		}
 		// Create session with Sonnet
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-sonnet-to-haiku-${Date.now()}`,
@@ -275,10 +294,6 @@ describe('Model Switch System Init Message', () => {
 	}, 90000);
 
 	test('should show correct model when switching before first message', async () => {
-		if (!hasAnthropicCredentials) {
-			console.log('Skipping - no Anthropic API credentials');
-			return;
-		}
 		// Create session
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-before-first-message-${Date.now()}`,
@@ -317,12 +332,7 @@ describe('Model Switch System Init Message', () => {
 		await waitForIdle(daemon, sessionId, 60000);
 	}, 90000);
 
-	// Skip: Flaky test due to API rate limits/timing issues in CI
-	test.skip('should show correct model when switching AFTER query is already running', async () => {
-		if (!hasAnthropicCredentials) {
-			console.log('Skipping - no Anthropic API credentials');
-			return;
-		}
+	test('should show correct model when switching AFTER query is already running', async () => {
 		// Create session with Sonnet
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-switch-after-running-${Date.now()}`,
@@ -387,9 +397,7 @@ describe('Model Switch System Init Message', () => {
 		await waitForIdle(daemon, sessionId, 60000);
 	}, 120000);
 
-	// TODO: Re-enable when GLM API connectivity is stable
-	// These tests are flaky due to GLM API timeouts in CI
-	describe.skip('Cross-Provider Switching', () => {
+	describe('Cross-Provider Switching', () => {
 		test('should show correct model when switching from Claude to GLM', async () => {
 			// Create session with Claude Sonnet
 			const createResult = (await daemon.messageHub.request('session.create', {

@@ -46,7 +46,11 @@
  */
 
 import type { Provider, ProviderInfo, Session } from '@neokai/shared';
-import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
+import type {
+	ProviderSdkConfig,
+	ProviderInfo as NewProviderInfo,
+	ProviderSessionConfig,
+} from '@neokai/shared/provider';
 import { initializeProviders } from './providers/factory.js';
 
 /**
@@ -354,7 +358,7 @@ export class ProviderService {
 	 *
 	 * Delegates to provider.buildSdkConfig()
 	 */
-	getEnvVarsForModel(modelId: string): ProviderEnvVars {
+	getEnvVarsForModel(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderEnvVars {
 		const registry = this.getRegistry();
 		const provider = registry.detectProvider(modelId);
 
@@ -366,7 +370,7 @@ export class ProviderService {
 			return {};
 		}
 
-		const sdkConfig = provider.buildSdkConfig(modelId);
+		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
 		return sdkConfigToEnvVars(sdkConfig);
 	}
 
@@ -412,8 +416,8 @@ export class ProviderService {
 	 * @param modelId - The model ID to get env vars for
 	 * @returns Original env vars that should be restored after SDK query
 	 */
-	applyEnvVarsToProcess(modelId: string): OriginalEnvVars {
-		const envVars = this.getEnvVarsForModel(modelId);
+	applyEnvVarsToProcess(modelId: string, sessionConfig?: ProviderSessionConfig): OriginalEnvVars {
+		const envVars = this.getEnvVarsForModel(modelId, sessionConfig);
 
 		// For Anthropic (or any non-overriding provider), explicitly clear routing
 		// overrides that may have leaked from a previous GLM query.

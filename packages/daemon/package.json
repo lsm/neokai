@@ -14,7 +14,7 @@
 	"scripts": {
 		"dev": "bun run --watch main.ts",
 		"start": "NODE_ENV=production bun run main.ts",
-		"test": "bun test tests/unit tests/providers tests/online",
+		"test": "bun run test:unit && bun run test:online",
 		"test:unit": "bun test --preload=./tests/unit/setup.ts --coverage --coverage-reporter=text ./tests/unit",
 		"test:online": "bun test --coverage --coverage-reporter=text ./tests/online"
 	},

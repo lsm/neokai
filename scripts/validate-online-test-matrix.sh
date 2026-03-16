@@ -5,6 +5,9 @@
 # features) into shards with explicit file lists. This script catches new test
 # files that were added but not included in any shard.
 #
+# CI SECRET REQUIREMENTS for providers-anthropic-to-codex-bridge and providers-openai shards:
+#   OPENAI_API_KEY      — required for these shards.
+#
 # Usage: bash scripts/validate-online-test-matrix.sh
 
 set -euo pipefail
@@ -57,6 +60,7 @@ FEATURES_FILES=(
 
 PROVIDERS_FILES=(
   anthropic-provider.test.ts
+  codex-bridge.test.ts
   github-copilot-provider.test.ts
   model-switch-system-init.test.ts
   openai-provider.test.ts

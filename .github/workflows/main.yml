@@ -126,6 +126,7 @@ jobs:
           - lifecycle
           - mcp
           - providers-anthropic
+          - providers-anthropic-to-codex-bridge
           - providers-openai
           - providers-copilot
           - rewind
@@ -189,6 +190,8 @@ jobs:
             test_path: >-
               tests/online/providers/anthropic-provider.test.ts
               tests/online/providers/model-switch-system-init.test.ts
+          - module: providers-anthropic-to-codex-bridge
+            test_path: tests/online/providers/codex-bridge.test.ts
           - module: providers-openai
             test_path: tests/online/providers/openai-provider.test.ts
           - module: providers-copilot
@@ -257,18 +260,16 @@ jobs:
         with:
           bun-version: 1.3.10
 
-      - name: Install sandbox dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap socat
-
       - name: Setup Dev Proxy
         if: runner.os == 'Linux' && matrix.mock_sdk == true
         uses: ./.github/actions/setup-devproxy
 
       - name: Install dependencies
         run: bun install
+
+      - name: Install Codex CLI (providers-anthropic-to-codex-bridge and providers-openai shards)
+        if: matrix.module == 'providers-anthropic-to-codex-bridge' || matrix.module == 'providers-openai'
+        run: npm install -g @openai/codex
 
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
@@ -277,12 +278,13 @@ jobs:
           # Use Dev Proxy for mock_sdk tests by setting ANTHROPIC_BASE_URL
           # This avoids proxy env var issues and TLS interception problems
           NEOKAI_USE_DEV_PROXY: ${{ matrix.mock_sdk == true && '1' || '' }}
+          NEOKAI_TEST_DISABLE_SANDBOX: '1'
           ANTHROPIC_BASE_URL: ${{ matrix.mock_sdk == true && 'http://127.0.0.1:8000' || '' }}
           # For Dev Proxy tests, never pass real Anthropic credentials.
           ANTHROPIC_API_KEY: ${{ matrix.mock_sdk == true && 'sk-devproxy-test-key' || ((startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.ANTHROPIC_API_KEY || '') }}
           ANTHROPIC_AUTH_TOKEN: ""
           CLAUDE_CODE_OAUTH_TOKEN: ${{ matrix.mock_sdk != true && (startsWith(matrix.module, 'features') || startsWith(matrix.module, 'room') || matrix.module == 'providers-anthropic') && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
-          OPENAI_API_KEY: ${{ matrix.module == 'providers-openai' && secrets.OPENAI_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ (matrix.module == 'providers-openai' || matrix.module == 'providers-anthropic-to-codex-bridge') && secrets.OPENAI_API_KEY || '' }}
           GLM_API_KEY: ${{ matrix.mock_sdk != true && secrets.GLM_API_KEY || '' }}
           MINIMAX_API_KEY: ${{ matrix.mock_sdk != true && secrets.MINIMAX_API_KEY || '' }}
           # Prefer MiniMax for online tests when available; fallback to GLM.

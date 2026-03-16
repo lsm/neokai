@@ -2,29 +2,32 @@
  * OpenAI Provider Online Tests
  *
  * REQUIREMENTS:
- * - Requires OPENAI_API_KEY environment variable
+ * - OPENAI_API_KEY or CODEX_API_KEY must be set
+ * - Requires the `codex` binary on PATH (models are now served via the
+ *   AnthropicToCodexBridgeProvider bridge, which wraps codex app-server)
  * - Makes real API calls (costs money, uses rate limits)
  *
  * MODELS:
- * - Uses gpt-5-mini (cheaper) and gpt-5.3-codex for testing
+ * - Uses gpt-5.1-codex-mini (cheaper) and gpt-5.3-codex for testing
  *
  * WHAT THESE TESTS PROVE:
- * - The pi-mono code path (OpenAI provider's createQuery) is exercised
- * - Content verification ensures the response came from a real model call
- * - Multi-turn test proves sequential queries work on the pi-mono path
+ * - GPT model IDs are correctly owned and routed through AnthropicToCodexBridgeProvider
+ * - Content verification ensures the response came from a real model call via the bridge
+ * - Multi-turn test proves sequential queries work through the bridge
  *
- * Run with: OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
+ * Run with:
+ *   OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import type { DaemonServerContext } from '../../helpers/daemon-server';
-import { createDaemonServer } from '../../helpers/daemon-server';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
+	getProcessingState,
 	sendMessage,
 	waitForIdle,
-	getProcessingState,
 	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
 
 /**
  * Extract text from an SDK assistant message
@@ -60,18 +63,13 @@ describe('OpenAI Provider (Online)', () => {
 		{ timeout: 30000 }
 	);
 
-	test('should get correct answer via gpt-5-mini (pi-mono path)', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
-			return;
-		}
-
+	test('should get correct answer via gpt-5.1-codex-mini (bridge path)', async () => {
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
-			title: 'OpenAI gpt-5-mini Test',
+			title: 'OpenAI gpt-5.1-codex-mini Test',
 			config: {
-				model: 'gpt-5-mini',
+				model: 'gpt-5.1-codex-mini',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
@@ -87,7 +85,7 @@ describe('OpenAI Provider (Online)', () => {
 		const state = await getProcessingState(daemon, sessionId);
 		expect(state.status).toBe('idle');
 
-		// Verify response content — proves pi-mono path returned a real model response
+		// Verify response content — proves bridge path returned a real model response
 		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
 		const assistantMessages = messages.sdkMessages.filter(
 			(msg) => (msg as { type?: string }).type === 'assistant'
@@ -99,12 +97,7 @@ describe('OpenAI Provider (Online)', () => {
 		expect(responseText).toContain('4');
 	}, 60000);
 
-	test('should get correct answer via gpt-5.3-codex (pi-mono path)', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
-			return;
-		}
-
+	test('should get correct answer via gpt-5.3-codex (bridge path)', async () => {
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
@@ -126,7 +119,7 @@ describe('OpenAI Provider (Online)', () => {
 		const state = await getProcessingState(daemon, sessionId);
 		expect(state.status).toBe('idle');
 
-		// Verify response content — proves pi-mono path returned a real model response
+		// Verify response content — proves bridge path returned a real model response
 		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
 		const assistantMessages = messages.sdkMessages.filter(
 			(msg) => (msg as { type?: string }).type === 'assistant'
@@ -138,18 +131,13 @@ describe('OpenAI Provider (Online)', () => {
 		expect(responseText).toContain('6');
 	}, 60000);
 
-	test('should handle sequential queries (multi-turn pi-mono path)', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
-			return;
-		}
-
+	test('should handle sequential queries (multi-turn bridge path)', async () => {
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
 			title: 'OpenAI Multi-turn Test',
 			config: {
-				model: 'gpt-5-mini',
+				model: 'gpt-5.1-codex-mini',
 				permissionMode: 'acceptEdits',
 			},
 		})) as { sessionId: string };
@@ -166,7 +154,7 @@ describe('OpenAI Provider (Online)', () => {
 		expect(result1.messageId).toBeString();
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Second query: another math question — proves sequential queries work on pi-mono path
+		// Second query: another math question — proves sequential queries work on bridge path
 		const result2 = await sendMessage(
 			daemon,
 			sessionId,

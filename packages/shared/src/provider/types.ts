@@ -57,6 +57,8 @@ export interface ProviderSessionConfig {
 	apiKey?: string;
 	/** Custom base URL override */
 	baseUrl?: string;
+	/** Workspace/working directory for this session (used for workspace-scoped providers) */
+	workspacePath?: string;
 	/** Additional provider-specific settings */
 	[key: string]: unknown;
 }
