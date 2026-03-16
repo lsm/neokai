@@ -618,6 +618,112 @@ describe('startOAuthFlow()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// startBackgroundPolling()
+// ---------------------------------------------------------------------------
+
+describe('startBackgroundPolling()', () => {
+	/** Helper: set activeOAuthFlow directly on the provider instance. */
+	function setActiveFlow(p: AnthropicCopilotProvider): void {
+		(p as unknown as Record<string, unknown>)['activeOAuthFlow'] = {
+			deviceCode: 'dev-code-abc',
+			userCode: 'ABCD-1234',
+			verificationUri: 'https://github.com/login/device',
+			expiresAt: Date.now() + 60_000,
+			completed: false,
+			success: false,
+		};
+	}
+
+	/** Helper: read activeOAuthFlow from the provider instance. */
+	function getActiveFlow(p: AnthropicCopilotProvider): {
+		completed: boolean;
+		success: boolean;
+	} {
+		return (p as unknown as Record<string, unknown>)['activeOAuthFlow'] as {
+			completed: boolean;
+			success: boolean;
+		};
+	}
+
+	/** Minimal DeviceFlowResponse used in all sub-tests. */
+	const device = {
+		device_code: 'dev-code-abc',
+		user_code: 'ABCD-1234',
+		verification_uri: 'https://github.com/login/device',
+		expires_in: 60,
+		interval: 0, // 0-second poll delay so tests complete immediately
+	};
+
+	// After slow_down, pollIntervalSec += 5 (RFC 8628), so the next sleep is 5 s.
+	// Allow 10 s to cover the RFC-mandated 5-second backoff.
+	it('slow_down response backs off by 5 s and continues — not terminal', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		setActiveFlow(p);
+
+		// Suppress file I/O
+		spyOn(p as unknown as Record<string, unknown>, 'saveCredentials' as never).mockResolvedValue(
+			undefined as never
+		);
+
+		// First call: slow_down — second call: success
+		let callCount = 0;
+		const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => {
+			callCount++;
+			const body =
+				callCount === 1
+					? JSON.stringify({ error: 'slow_down' })
+					: JSON.stringify({ access_token: 'gho_tok123' });
+			return new Response(body, {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		});
+
+		try {
+			const callPoll = (
+				p as unknown as {
+					startBackgroundPolling: (d: object, e?: string) => Promise<void>;
+				}
+			).startBackgroundPolling;
+			await callPoll.call(p, device, undefined);
+
+			// slow_down is NOT terminal — fetch called twice, flow succeeds
+			expect(callCount).toBe(2);
+			expect(getActiveFlow(p).completed).toBe(true);
+			expect(getActiveFlow(p).success).toBe(true);
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	}, 10_000);
+
+	it('non-slow_down error terminates the flow with completed=true success=false', async () => {
+		const p = new AnthropicCopilotProvider('/tmp', {});
+		setActiveFlow(p);
+
+		const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify({ error: 'access_denied' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			})
+		);
+
+		try {
+			const callPoll = (
+				p as unknown as {
+					startBackgroundPolling: (d: object, e?: string) => Promise<void>;
+				}
+			).startBackgroundPolling;
+			await callPoll.call(p, device, undefined);
+
+			expect(getActiveFlow(p).completed).toBe(true);
+			expect(getActiveFlow(p).success).toBe(false);
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Factory registration
 // ---------------------------------------------------------------------------
 

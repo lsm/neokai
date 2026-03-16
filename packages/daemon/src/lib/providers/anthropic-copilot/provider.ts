@@ -655,11 +655,17 @@ export class AnthropicCopilotProvider implements Provider {
 		const githubOAuthUrl = this.getGitHubOAuthUrl(enterpriseDomain);
 		const startTime = Date.now();
 		const expiresMs = device.expires_in * 1000;
+		// Mutable polling interval: slow_down responses require adding 5 s (RFC 8628 §3.5)
+		let pollIntervalSec = device.interval;
 
 		while (Date.now() - startTime < expiresMs) {
 			if (!this.activeOAuthFlow || this.activeOAuthFlow.completed) return;
 
-			await new Promise((resolve) => setTimeout(resolve, device.interval * 1000));
+			await new Promise<void>((resolve) => {
+				const t = setTimeout(resolve, pollIntervalSec * 1000);
+				// Allow the process to exit naturally if the daemon shuts down mid-flow.
+				t.unref();
+			});
 
 			try {
 				const response = await fetch(`${githubOAuthUrl}/login/oauth/access_token`, {
@@ -683,6 +689,12 @@ export class AnthropicCopilotProvider implements Provider {
 				};
 
 				if (data.error === 'authorization_pending') continue;
+
+				// RFC 8628 §3.5: slow_down means back off by 5 s and retry — NOT a terminal error.
+				if (data.error === 'slow_down') {
+					pollIntervalSec += 5;
+					continue;
+				}
 
 				if (data.error) {
 					logger.error('OAuth polling error:', data.error);

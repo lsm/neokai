@@ -175,6 +175,8 @@ function streamSession(
 			resolve({ kind: 'completed' });
 		}
 	}, STREAMING_TIMEOUT_MS);
+	// Allow the process to exit naturally even while a streaming request is in-flight.
+	timeoutHandle.unref();
 
 	// Detect client disconnect.  See file-level Bun note.
 	req.on('close', () => {
