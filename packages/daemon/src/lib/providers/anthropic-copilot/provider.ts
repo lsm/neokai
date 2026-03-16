@@ -573,15 +573,20 @@ export class AnthropicCopilotProvider implements Provider {
 			env: buildCopilotEnv({ ...this.env, COPILOT_GITHUB_TOKEN: token }),
 		});
 		try {
+			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 			const session = await Promise.race([
 				client.createSession({
 					model: 'gpt-4o-mini',
 					onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
 				}),
-				new Promise<never>((_, reject) =>
-					setTimeout(() => reject(new Error('validateCopilotToken timed out')), TIMEOUT_MS)
-				),
+				new Promise<never>((_, reject) => {
+					timeoutHandle = setTimeout(
+						() => reject(new Error('validateCopilotToken timed out')),
+						TIMEOUT_MS
+					);
+				}),
 			]);
+			clearTimeout(timeoutHandle);
 			await session.disconnect();
 			return true;
 		} catch {

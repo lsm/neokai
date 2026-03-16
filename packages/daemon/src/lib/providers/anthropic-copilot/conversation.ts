@@ -281,6 +281,8 @@ export class ConversationManager {
 			logger.warn('Conversation TTL expired — releasing stale session');
 			this.releaseConversation(conv).catch(() => {});
 		}, CONVERSATION_TTL_MS);
+		// Allow the process to exit naturally even if this timer is still pending.
+		timer.unref();
 		this.cleanupTimers.set(conv, timer);
 	}
 

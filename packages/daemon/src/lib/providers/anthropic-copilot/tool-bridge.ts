@@ -149,6 +149,8 @@ export class ToolBridgeRegistry {
 				this.pending.delete(toolCallId);
 				reject(new Error(`Tool call "${toolName}" (${toolCallId}) timed out waiting for result`));
 			}, TOOL_RESULT_TIMEOUT_MS);
+			// Allow the process to exit naturally if nothing else is pending.
+			timer.unref();
 
 			this.pending.set(toolCallId, { resolve, reject, timer });
 			// Notify ConversationManager so it can route the next request here.

@@ -103,7 +103,9 @@ export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): str
 	if (!token.startsWith(prefix)) return defaultCwd;
 	const resolved = token.slice(prefix.length);
 	if (!resolved || !isAbsolute(resolved)) return defaultCwd;
-	// Normalise to collapse any dot-dot segments that could escape the intended root.
+	// Normalise the path (collapses dot-dot segments). The value originates from
+	// buildSdkConfig() which encodes the trusted workspacePath — no root boundary
+	// enforcement is needed here.
 	const normalised = normalize(resolved);
 	return isAbsolute(normalised) ? normalised : defaultCwd;
 }

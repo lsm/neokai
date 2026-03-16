@@ -345,6 +345,29 @@ describe('AnthropicCopilotProvider', () => {
 			const url = await p.ensureServerStarted();
 			expect(url).toBe('http://127.0.0.1:9999');
 		});
+
+		it('creates only one server when called concurrently', async () => {
+			const p = new AnthropicCopilotProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+			let createCount = 0;
+			spyOn(p as unknown as Record<string, unknown>, 'createServer' as never).mockImplementation(
+				async () => {
+					createCount++;
+					return { url: 'http://127.0.0.1:9999', stop: async () => {} };
+				}
+			);
+
+			// Fire three concurrent calls — only one createServer() should occur
+			const [url1, url2, url3] = await Promise.all([
+				p.ensureServerStarted(),
+				p.ensureServerStarted(),
+				p.ensureServerStarted(),
+			]);
+
+			expect(createCount).toBe(1);
+			expect(url1).toBe('http://127.0.0.1:9999');
+			expect(url2).toBe('http://127.0.0.1:9999');
+			expect(url3).toBe('http://127.0.0.1:9999');
+		});
 	});
 
 	describe('shutdown()', () => {
