@@ -22,7 +22,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { CodexBridgeProvider } from '../../../src/lib/providers/codex-bridge-provider';
+import { AnthropicCodexProvider } from '../../../src/lib/providers/anthropic-codex-provider';
 
 // ---------------------------------------------------------------------------
 // Skip-condition check — evaluated once at module load time
@@ -180,13 +180,13 @@ async function callBridge(
 // ---------------------------------------------------------------------------
 
 describe('Codex Bridge (Online)', () => {
-	let provider: CodexBridgeProvider;
+	let provider: AnthropicCodexProvider;
 	let bridgeUrl: string;
 
 	beforeAll(() => {
 		if (SKIP_REASON) return; // do nothing; each test returns early
 
-		provider = new CodexBridgeProvider();
+		provider = new AnthropicCodexProvider();
 		const cfg = provider.buildSdkConfig('o4-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 	}, 15000);

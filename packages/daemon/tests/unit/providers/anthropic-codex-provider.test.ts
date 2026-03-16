@@ -164,6 +164,16 @@ describe('AnthropicCodexProvider', () => {
 			expect(await provider.getApiKey()).toBeUndefined();
 		});
 
+		it('empty-string env var falls through to file-based auth', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const codexDir = path.join(tmpDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'neokai-fallback-token' });
+
+			// OPENAI_API_KEY='' is falsy — should not block file-based lookup
+			provider = makeProvider({ OPENAI_API_KEY: '' }, neokaiDir, codexDir);
+			expect(await provider.getApiKey()).toBe('neokai-fallback-token');
+		});
+
 		it('env var takes priority over both auth files', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
@@ -213,6 +223,25 @@ describe('AnthropicCodexProvider', () => {
 			expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-placeholder');
 			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 		});
+
+		it('buildSdkConfig() uses cached API key resolved by prior getApiKey() call', async () => {
+			// Set up a provider with only file-based auth (no env var)
+			const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-build-cfg-test-'));
+			try {
+				const neokaiDir = path.join(tmpDir, 'neokai');
+				await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-based-token' });
+				const p = makeProvider({}, neokaiDir, path.join(tmpDir, 'codex'));
+				// Warm the cache as isAvailable() / getAuthStatus() would in QueryRunner
+				await p.getApiKey();
+				// buildSdkConfig() is synchronous but should use the cached key
+				const cfg = p.buildSdkConfig('codex-1', { workspacePath: '/tmp/file-auth-ws' });
+				expect(cfg.isAnthropicCompatible).toBe(true);
+				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+				p.stopAllBridgeServers();
+			} finally {
+				await fs.rm(tmpDir, { recursive: true, force: true });
+			}
+		});
 	});
 
 	// -------------------------------------------------------------------------
@@ -224,10 +253,13 @@ describe('AnthropicCodexProvider', () => {
 			provider = makeProvider({});
 		});
 
-		it('owns gpt- prefix models', () => {
+		it('owns gpt-5 catalogue models but not generic gpt-4/gpt-3', () => {
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);
 			expect(provider.ownsModel('gpt-5-mini')).toBe(true);
-			expect(provider.ownsModel('gpt-4o')).toBe(true);
+			// gpt-4o and gpt-3.5 are NOT in the catalogue — bridge cannot serve them
+			expect(provider.ownsModel('gpt-4o')).toBe(false);
+			expect(provider.ownsModel('gpt-4')).toBe(false);
+			expect(provider.ownsModel('gpt-3.5-turbo')).toBe(false);
 		});
 
 		it('owns o4- prefix models', () => {

@@ -178,6 +178,13 @@ export class AnthropicCodexProvider implements Provider {
 	/** In-memory cache of credentials read from the NeoKai auth file. */
 	private cachedCredentials: StoredCredentials | null = null;
 
+	/**
+	 * Cached resolved API key from the last getApiKey() call.
+	 * undefined = not yet resolved; '' = resolved but no key found; non-empty = usable key.
+	 * Allows the synchronous buildSdkConfig() to use the key discovered by async getApiKey().
+	 */
+	private cachedApiKey: string | undefined = undefined;
+
 	/** Active OAuth flow state (PKCE flow). */
 	private activeOAuthFlow: {
 		state: string;
@@ -196,8 +203,10 @@ export class AnthropicCodexProvider implements Provider {
 		this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
 	}
 
-	isAvailable(): boolean {
-		return !!(this.env.OPENAI_API_KEY || this.env.CODEX_API_KEY) && !!findCodexCli();
+	async isAvailable(): Promise<boolean> {
+		if (!findCodexCli()) return false;
+		const key = await this.getApiKey();
+		return !!key;
 	}
 
 	// -------------------------------------------------------------------------
@@ -216,12 +225,23 @@ export class AnthropicCodexProvider implements Provider {
 		if (this.env.OPENAI_API_KEY) return this.env.OPENAI_API_KEY;
 		if (this.env.CODEX_API_KEY) return this.env.CODEX_API_KEY;
 
+		// For file-based sources, return the cached value if already resolved.
+		// '' means we looked but found nothing; skip the file I/O on repeat calls.
+		if (this.cachedApiKey !== undefined) {
+			return this.cachedApiKey || undefined;
+		}
+
 		// Try NeoKai auth file
 		const neokaiCreds = await this.loadCredentials();
-		if (neokaiCreds?.access) return neokaiCreds.access;
+		if (neokaiCreds?.access) {
+			this.cachedApiKey = neokaiCreds.access;
+			return neokaiCreds.access;
+		}
 
 		// Try Codex CLI auth file
-		return this.loadCodexApiKey();
+		const codexKey = await this.loadCodexApiKey();
+		this.cachedApiKey = codexKey ?? '';
+		return codexKey;
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
@@ -276,16 +296,17 @@ export class AnthropicCodexProvider implements Provider {
 
 	ownsModel(modelId: string): boolean {
 		const lower = modelId.toLowerCase();
-		// Own all GPT / OpenAI reasoning model prefixes
-		if (
-			lower.startsWith('gpt-') ||
-			lower.startsWith('o1-') ||
-			lower.startsWith('o3-') ||
-			lower.startsWith('o4-') ||
-			lower.startsWith('codex')
-		) {
+		// Own OpenAI reasoning model families (o1 / o3 / o4) — all served via Codex CLI.
+		if (lower.startsWith('o1-') || lower.startsWith('o3-') || lower.startsWith('o4-')) {
 			return true;
 		}
+		// Own the codex model family.
+		if (lower.startsWith('codex')) {
+			return true;
+		}
+		// For gpt-* models only claim IDs explicitly listed in our catalogue.
+		// This avoids hijacking gpt-4, gpt-4o, gpt-3.5-turbo etc. which the
+		// Codex bridge cannot serve.
 		return ANTHROPIC_CODEX_MODELS.some((m) => m.id === modelId || m.alias === modelId);
 	}
 
@@ -315,8 +336,12 @@ export class AnthropicCodexProvider implements Provider {
 
 		if (!bridgeServer) {
 			const codexBinaryPath = findCodexCli() ?? 'codex';
-			// getApiKey() is async; fall back to env sync for buildSdkConfig
-			const apiKey = this.env.OPENAI_API_KEY ?? this.env.CODEX_API_KEY ?? '';
+			// buildSdkConfig() is synchronous per the Provider interface.  The async
+			// getApiKey() discovery chain populates this.cachedApiKey when isAvailable()
+			// or getAuthStatus() is called first (which is always the case in QueryRunner).
+			// Fall through the same priority order: env var → file-based cache → empty.
+			const apiKey =
+				this.env.OPENAI_API_KEY ?? this.env.CODEX_API_KEY ?? (this.cachedApiKey || '') ?? '';
 			bridgeServer = createBridgeServer({ codexBinaryPath, apiKey, cwd: workspace });
 			this.bridgeServers.set(workspace, bridgeServer);
 			logger.info(
@@ -419,6 +444,7 @@ export class AnthropicCodexProvider implements Provider {
 				if (state !== expectedState) {
 					res.writeHead(400, { 'Content-Type': 'text/plain' });
 					res.end('Invalid state parameter');
+					server.close();
 					reject(new Error('Invalid state parameter'));
 					return;
 				}
@@ -426,6 +452,7 @@ export class AnthropicCodexProvider implements Provider {
 				if (!code) {
 					res.writeHead(400, { 'Content-Type': 'text/plain' });
 					res.end('No authorization code received');
+					server.close();
 					reject(new Error('No authorization code received'));
 					return;
 				}

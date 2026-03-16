@@ -813,7 +813,7 @@ ${messageText.slice(0, 2000)}`;
 						(b: { type: string }) => b.type === 'text'
 					);
 					title = textBlocks
-						.map((b) => (b as { text?: string }).text)
+						.map((b: { text?: string }) => b.text)
 						.join(' ')
 						.trim();
 

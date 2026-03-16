@@ -12,7 +12,7 @@
  *
  * WHAT THESE TESTS PROVE:
  * - GPT model IDs are correctly owned and routed through AnthropicCodexProvider
- * - Content verification ensures the response came from a real model call
+ * - Content verification ensures the response came from a real model call via the bridge
  * - Multi-turn test proves sequential queries work through the bridge
  *
  * Run with: OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
@@ -75,7 +75,7 @@ describe('OpenAI Provider (Online)', () => {
 		{ timeout: 30000 }
 	);
 
-	test('should get correct answer via gpt-5-mini (pi-mono path)', async () => {
+	test('should get correct answer via gpt-5-mini (bridge path)', async () => {
 		if (SKIP_REASON) {
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
@@ -102,7 +102,7 @@ describe('OpenAI Provider (Online)', () => {
 		const state = await getProcessingState(daemon, sessionId);
 		expect(state.status).toBe('idle');
 
-		// Verify response content — proves pi-mono path returned a real model response
+		// Verify response content — proves bridge path returned a real model response
 		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
 		const assistantMessages = messages.sdkMessages.filter(
 			(msg) => (msg as { type?: string }).type === 'assistant'
@@ -114,7 +114,7 @@ describe('OpenAI Provider (Online)', () => {
 		expect(responseText).toContain('4');
 	}, 60000);
 
-	test('should get correct answer via gpt-5.3-codex (pi-mono path)', async () => {
+	test('should get correct answer via gpt-5.3-codex (bridge path)', async () => {
 		if (SKIP_REASON) {
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
@@ -141,7 +141,7 @@ describe('OpenAI Provider (Online)', () => {
 		const state = await getProcessingState(daemon, sessionId);
 		expect(state.status).toBe('idle');
 
-		// Verify response content — proves pi-mono path returned a real model response
+		// Verify response content — proves bridge path returned a real model response
 		const messages = await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
 		const assistantMessages = messages.sdkMessages.filter(
 			(msg) => (msg as { type?: string }).type === 'assistant'
@@ -153,7 +153,7 @@ describe('OpenAI Provider (Online)', () => {
 		expect(responseText).toContain('6');
 	}, 60000);
 
-	test('should handle sequential queries (multi-turn pi-mono path)', async () => {
+	test('should handle sequential queries (multi-turn bridge path)', async () => {
 		if (SKIP_REASON) {
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
@@ -181,7 +181,7 @@ describe('OpenAI Provider (Online)', () => {
 		expect(result1.messageId).toBeString();
 		await waitForIdle(daemon, sessionId, 30000);
 
-		// Second query: another math question — proves sequential queries work on pi-mono path
+		// Second query: another math question — proves sequential queries work on bridge path
 		const result2 = await sendMessage(
 			daemon,
 			sessionId,
