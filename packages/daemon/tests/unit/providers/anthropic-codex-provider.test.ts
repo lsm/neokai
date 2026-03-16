@@ -4,10 +4,11 @@
  * Covers:
  *  - getAuthStatus(): env var, file-based auth, missing credentials, missing binary
  *  - getApiKey(): full discovery chain (env → ~/.neokai/auth.json → ~/.codex/auth.json)
+ *  - importFromCodexAuth(): one-time migration scenarios (API key, OAuth with/without refresh)
  *  - buildSdkConfig(): per-workspace bridge server isolation and reuse
  */
 
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -298,6 +299,135 @@ describe('AnthropicCodexProvider', () => {
 
 		it('does not own arbitrary unrecognised model IDs', () => {
 			expect(provider.ownsModel('unknown-model-xyz')).toBe(false);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// importFromCodexAuth() — one-time migration from ~/.codex/auth.json
+	// -------------------------------------------------------------------------
+
+	describe('importFromCodexAuth() — one-time migration', () => {
+		let tmpDir: string;
+		let fetchSpy: ReturnType<typeof spyOn>;
+
+		beforeEach(async () => {
+			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-import-test-'));
+			// Spy on global fetch to intercept token refresh calls.
+			// Default: simulate a network error so tests that don't set up a mock fail clearly.
+			fetchSpy = spyOn(globalThis, 'fetch').mockRejectedValue(
+				new Error('fetch not mocked for this test')
+			);
+		});
+
+		afterEach(async () => {
+			fetchSpy.mockRestore();
+			await fs.rm(tmpDir, { recursive: true, force: true });
+		});
+
+		it('Test 1: imports API key directly from ~/.codex/auth.json into ~/.neokai/auth.json', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const codexDir = path.join(tmpDir, 'codex');
+			await writeCodexAuth(codexDir, { OPENAI_API_KEY: 'sk-codex-api-key' });
+
+			const p = makeProvider({}, neokaiDir, codexDir);
+			const key = await p.getApiKey();
+
+			expect(key).toBe('sk-codex-api-key');
+
+			// Credentials should now be written to ~/.neokai/auth.json
+			const neokaiAuth = JSON.parse(
+				await fs.readFile(path.join(neokaiDir, 'auth.json'), 'utf-8')
+			) as { openai: { type: string; access: string } };
+			expect(neokaiAuth.openai.type).toBe('api_key');
+			expect(neokaiAuth.openai.access).toBe('sk-codex-api-key');
+
+			// fetch should NOT have been called (API key import needs no refresh)
+			expect(fetchSpy).not.toHaveBeenCalled();
+			p.stopAllBridgeServers();
+		});
+
+		it('Test 2: refreshes expired token + imports into ~/.neokai/auth.json', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const codexDir = path.join(tmpDir, 'codex');
+			await writeCodexAuth(codexDir, {
+				tokens: { access_token: 'old-expired-token', refresh_token: 'valid-refresh-token' },
+			});
+
+			// Mock a successful token refresh response
+			fetchSpy.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						access_token: 'new-fresh-token',
+						refresh_token: 'new-refresh-token',
+						expires_in: 3600,
+						token_type: 'Bearer',
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+
+			const p = makeProvider({}, neokaiDir, codexDir);
+			const key = await p.getApiKey();
+
+			expect(key).toBe('new-fresh-token');
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+			// Verify the refreshed token was written to ~/.neokai/auth.json
+			const neokaiAuth = JSON.parse(
+				await fs.readFile(path.join(neokaiDir, 'auth.json'), 'utf-8')
+			) as { openai: { type: string; access: string; refresh: string } };
+			expect(neokaiAuth.openai.type).toBe('oauth');
+			expect(neokaiAuth.openai.access).toBe('new-fresh-token');
+			expect(neokaiAuth.openai.refresh).toBe('new-refresh-token');
+			p.stopAllBridgeServers();
+		});
+
+		it('Test 3: returns undefined and writes nothing when refresh fails', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const codexDir = path.join(tmpDir, 'codex');
+			await writeCodexAuth(codexDir, {
+				tokens: { access_token: 'expired-token', refresh_token: 'invalid-refresh' },
+			});
+
+			// Mock a failed token refresh response (401)
+			fetchSpy.mockResolvedValueOnce(
+				new Response('{"error":"invalid_grant"}', {
+					status: 401,
+					headers: { 'Content-Type': 'application/json' },
+				})
+			);
+
+			const p = makeProvider({}, neokaiDir, codexDir);
+			const key = await p.getApiKey();
+
+			expect(key).toBeUndefined();
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+			// ~/.neokai/auth.json must NOT have been written
+			const neokaiAuthExists = await fs
+				.access(path.join(neokaiDir, 'auth.json'))
+				.then(() => true)
+				.catch(() => false);
+			expect(neokaiAuthExists).toBe(false);
+			p.stopAllBridgeServers();
+		});
+
+		it('Test 4: second call reads from ~/.neokai/auth.json only (no codex file touched)', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const codexDir = path.join(tmpDir, 'codex');
+
+			// Pre-populate ~/.neokai/auth.json (simulates already-imported state)
+			await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'already-imported-token' });
+			// Also write a different token to ~/.codex/auth.json to confirm it's not read
+			await writeCodexAuth(codexDir, { OPENAI_API_KEY: 'should-not-be-used' });
+
+			const p = makeProvider({}, neokaiDir, codexDir);
+			const key = await p.getApiKey();
+
+			expect(key).toBe('already-imported-token');
+			// fetch should NOT have been called
+			expect(fetchSpy).not.toHaveBeenCalled();
+			p.stopAllBridgeServers();
 		});
 	});
 });

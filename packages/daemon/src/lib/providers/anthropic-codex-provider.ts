@@ -215,11 +215,10 @@ export class AnthropicCodexProvider implements Provider {
 
 	/**
 	 * Return the best available API key, following the discovery chain:
-	 *   1. OPENAI_API_KEY env var
-	 *   2. CODEX_API_KEY env var
-	 *   3. ~/.neokai/auth.json → data["openai"].access
-	 *   4. ~/.codex/auth.json  → OPENAI_API_KEY field (if non-null string)
-	 *   5. ~/.codex/auth.json  → tokens.access_token
+	 *   1. OPENAI_API_KEY / CODEX_API_KEY env var
+	 *   2. ~/.neokai/auth.json["openai"].access  (normal path after first import)
+	 *   3. One-time migration from ~/.codex/auth.json — imports + refreshes, then
+	 *      writes to ~/.neokai/auth.json so step 2 handles all future calls.
 	 */
 	async getApiKey(): Promise<string | undefined> {
 		if (this.env.OPENAI_API_KEY) return this.env.OPENAI_API_KEY;
@@ -231,17 +230,18 @@ export class AnthropicCodexProvider implements Provider {
 			return this.cachedApiKey || undefined;
 		}
 
-		// Try NeoKai auth file
+		// Try NeoKai auth file (normal path after first migration)
 		const neokaiCreds = await this.loadCredentials();
 		if (neokaiCreds?.access) {
 			this.cachedApiKey = neokaiCreds.access;
 			return neokaiCreds.access;
 		}
 
-		// Try Codex CLI auth file
-		const codexKey = await this.loadCodexApiKey();
-		this.cachedApiKey = codexKey ?? '';
-		return codexKey;
+		// One-time migration: import credentials from ~/.codex/auth.json into
+		// ~/.neokai/auth.json so subsequent calls use the NeoKai store only.
+		const imported = await this.importFromCodexAuth();
+		this.cachedApiKey = imported ?? '';
+		return imported;
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
@@ -605,39 +605,125 @@ export class AnthropicCodexProvider implements Provider {
 		return null;
 	}
 
-	private async loadCodexApiKey(): Promise<string | undefined> {
-		try {
-			const content = await fs.readFile(this.codexAuthPath, 'utf-8');
-			const data = JSON.parse(content) as CodexAuthFile;
-
-			// Prefer an explicit API key stored by the CLI
-			if (data.OPENAI_API_KEY && typeof data.OPENAI_API_KEY === 'string') {
-				return data.OPENAI_API_KEY;
-			}
-			// Fall back to OAuth bearer token
-			if (data.tokens?.access_token) {
-				return data.tokens.access_token;
-			}
-		} catch {
-			// file missing or malformed — not an error
-		}
-		return undefined;
-	}
-
 	private async saveCredentials(credentials: StoredCredentials): Promise<void> {
 		const dir = path.dirname(this.authPath);
 		await fs.mkdir(dir, { recursive: true });
 
 		let data: Record<string, unknown> = {};
 		try {
-			const content = await fs.readFile(this.authPath, 'utf-8');
-			data = JSON.parse(content) as Record<string, unknown>;
+			const existing = await fs.readFile(this.authPath, 'utf-8');
+			data = JSON.parse(existing) as Record<string, unknown>;
 		} catch {
 			// file does not exist yet
 		}
 
 		data['openai'] = credentials;
-		await fs.writeFile(this.authPath, JSON.stringify(data, null, 2), { mode: 0o600 });
+		const json = JSON.stringify(data, null, 2);
+
+		// Atomic write: write to a temp file then rename so partial writes never
+		// corrupt the auth store.
+		const tmpPath = `${this.authPath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+		try {
+			await fs.writeFile(tmpPath, json, { mode: 0o600 });
+			await fs.rename(tmpPath, this.authPath);
+		} catch (err) {
+			// Clean up the temp file on failure
+			await fs.unlink(tmpPath).catch(() => {});
+			throw err;
+		}
+	}
+
+	/**
+	 * One-time migration: read credentials from ~/.codex/auth.json, optionally
+	 * refresh the access token, write to ~/.neokai/auth.json, and return the key.
+	 *
+	 * Returns undefined and writes nothing if the refresh fails or no credentials
+	 * are found — the caller should fall through to prompting NeoKai OAuth.
+	 */
+	private async importFromCodexAuth(): Promise<string | undefined> {
+		let codexData: CodexAuthFile;
+		try {
+			const raw = await fs.readFile(this.codexAuthPath, 'utf-8');
+			codexData = JSON.parse(raw) as CodexAuthFile;
+		} catch {
+			return undefined; // file missing or malformed
+		}
+
+		// Case 1: explicit API key (not an OAuth token) — import directly.
+		if (codexData.OPENAI_API_KEY && typeof codexData.OPENAI_API_KEY === 'string') {
+			const creds: StoredCredentials = {
+				type: 'api_key',
+				access: codexData.OPENAI_API_KEY,
+			};
+			await this.saveCredentials(creds);
+			this.cachedCredentials = creds;
+			logger.info('AnthropicCodexProvider: imported API key from ~/.codex/auth.json');
+			return codexData.OPENAI_API_KEY;
+		}
+
+		// Case 2: OAuth tokens.
+		if (!codexData.tokens?.access_token) return undefined;
+
+		if (codexData.tokens.refresh_token) {
+			// Try to get a fresh token before importing, so we never store a stale one.
+			const refreshed = await this.tryRefreshCodexToken(codexData.tokens.refresh_token);
+			if (!refreshed) {
+				logger.warn(
+					'AnthropicCodexProvider: Codex token refresh failed; skipping ~/.codex/auth.json import'
+				);
+				return undefined;
+			}
+			const creds: StoredCredentials = {
+				type: 'oauth',
+				access: refreshed.access_token,
+				refresh: refreshed.refresh_token || codexData.tokens.refresh_token,
+				expires: Date.now() + refreshed.expires_in * 1000,
+				accountId: this.extractAccountId(refreshed.access_token) ?? codexData.tokens.account_id,
+			};
+			await this.saveCredentials(creds);
+			this.cachedCredentials = creds;
+			logger.info('AnthropicCodexProvider: imported refreshed OAuth token from ~/.codex/auth.json');
+			return refreshed.access_token;
+		}
+
+		// No refresh token — import the access token as-is.
+		const creds: StoredCredentials = {
+			type: 'oauth',
+			access: codexData.tokens.access_token,
+			accountId: codexData.tokens.account_id,
+		};
+		await this.saveCredentials(creds);
+		this.cachedCredentials = creds;
+		logger.info('AnthropicCodexProvider: imported OAuth access token from ~/.codex/auth.json');
+		return codexData.tokens.access_token;
+	}
+
+	/**
+	 * Attempt to refresh a Codex/OpenAI OAuth token.
+	 * Returns the new token response, or null if the refresh fails.
+	 */
+	private async tryRefreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
+		try {
+			const response = await fetch(OAUTH_CONFIG.tokenUrl, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					grant_type: 'refresh_token',
+					refresh_token: refreshToken,
+					client_id: OAUTH_CONFIG.clientId,
+				}),
+			});
+			if (!response.ok) {
+				logger.warn(
+					`AnthropicCodexProvider: token refresh HTTP ${response.status}: ${await response.text()}`
+				);
+				return null;
+			}
+			return response.json() as Promise<OpenAIOAuthToken>;
+		} catch (error) {
+			logger.warn('AnthropicCodexProvider: token refresh network error:', error);
+			return null;
+		}
 	}
 
 	// -------------------------------------------------------------------------
