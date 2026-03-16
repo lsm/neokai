@@ -333,10 +333,14 @@ describe('AnthropicCopilotProvider (Online)', () => {
 			expect(state.status).toBe('idle');
 
 			// PRIMARY assertion: the Agent SDK initialised the MCP server.
-			// The MCP server writes this flag when it receives a tools/list request,
-			// which happens only when the SDK has spawned it and is registering tools.
-			// If this flag is absent, .mcp.json was not discovered or the subprocess
-			// failed — the bridge is broken.
+			// The MCP server writes the flag when it receives a tools/list request,
+			// which precedes the first model inference.  By the time waitForIdle
+			// returns the flag should already exist, but we poll for up to 5 s to
+			// absorb any OS file-visibility latency on slow CI runners.
+			const flagDeadline = Date.now() + 5_000;
+			while (!existsSync(toolsListedFlag) && Date.now() < flagDeadline) {
+				await new Promise((r) => setTimeout(r, 100));
+			}
 			expect(existsSync(toolsListedFlag)).toBe(true);
 
 			// SECONDARY assertion (informational): if the Copilot model chose to call
