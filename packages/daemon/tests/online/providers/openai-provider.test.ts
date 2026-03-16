@@ -3,15 +3,17 @@
  *
  * REQUIREMENTS:
  * - Requires OPENAI_API_KEY environment variable
+ * - Requires the `codex` binary on PATH (models are now served via the
+ *   AnthropicCodexProvider bridge, which wraps codex app-server)
  * - Makes real API calls (costs money, uses rate limits)
  *
  * MODELS:
  * - Uses gpt-5-mini (cheaper) and gpt-5.3-codex for testing
  *
  * WHAT THESE TESTS PROVE:
- * - The pi-mono code path (OpenAI provider's createQuery) is exercised
+ * - GPT model IDs are correctly owned and routed through AnthropicCodexProvider
  * - Content verification ensures the response came from a real model call
- * - Multi-turn test proves sequential queries work on the pi-mono path
+ * - Multi-turn test proves sequential queries work through the bridge
  *
  * Run with: OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
  */
@@ -43,6 +45,19 @@ function extractAssistantText(msg: Record<string, unknown>): string {
 	return '';
 }
 
+/**
+ * Evaluate skip conditions once at module load.
+ * Models formerly owned by OpenAiProvider are now served through
+ * AnthropicCodexProvider (Codex bridge), so the codex binary is required.
+ */
+const SKIP_REASON: string | null = (() => {
+	if (!process.env.OPENAI_API_KEY) return 'OPENAI_API_KEY not set';
+	const which = Bun.spawnSync(['which', 'codex'], { stderr: 'pipe' });
+	if (which.exitCode !== 0)
+		return 'codex binary not found on PATH (required by AnthropicCodexProvider)';
+	return null;
+})();
+
 describe('OpenAI Provider (Online)', () => {
 	let daemon: DaemonServerContext;
 
@@ -61,8 +76,8 @@ describe('OpenAI Provider (Online)', () => {
 	);
 
 	test('should get correct answer via gpt-5-mini (pi-mono path)', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
+		if (SKIP_REASON) {
+			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
 		}
 
@@ -100,8 +115,8 @@ describe('OpenAI Provider (Online)', () => {
 	}, 60000);
 
 	test('should get correct answer via gpt-5.3-codex (pi-mono path)', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
+		if (SKIP_REASON) {
+			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
 		}
 
@@ -139,8 +154,8 @@ describe('OpenAI Provider (Online)', () => {
 	}, 60000);
 
 	test('should handle sequential queries (multi-turn pi-mono path)', async () => {
-		if (!process.env.OPENAI_API_KEY) {
-			console.log('Skipping - OPENAI_API_KEY not set');
+		if (SKIP_REASON) {
+			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
 		}
 

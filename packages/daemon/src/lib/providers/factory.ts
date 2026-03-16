@@ -10,9 +10,8 @@
 import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
-import { OpenAiProvider } from './openai-provider.js';
+import { AnthropicCodexProvider } from './anthropic-codex-provider.js';
 import { GitHubCopilotProvider } from './github-copilot-provider.js';
-import { CodexBridgeProvider } from './codex-bridge-provider.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -53,14 +52,12 @@ export function initializeProviders(): ProviderRegistry {
 	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
 	registry.register(new MinimaxProvider());
 
-	// Register OpenAI provider (will be available if OPENAI_API_KEY is set)
-	registry.register(new OpenAiProvider());
+	// Register Anthropic Codex provider — replaces pi-mono OpenAI provider.
+	// Discovers credentials from env, ~/.neokai/auth.json, and ~/.codex/auth.json.
+	registry.register(new AnthropicCodexProvider());
 
 	// Register GitHub Copilot provider (will be available if OAuth token is configured)
 	registry.register(new GitHubCopilotProvider());
-
-	// Register Codex Bridge provider (Anthropic-compatible HTTP bridge backed by codex app-server)
-	registry.register(new CodexBridgeProvider());
 
 	// Additional built-in providers can be registered here
 	// Example:
