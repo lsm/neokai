@@ -1,12 +1,12 @@
 /**
  * AnthropicCopilotProvider Online Tests
  *
- * Tests the embedded Anthropic-compatible HTTP server backed by the GitHub Copilot SDK,
- * using the gpt-5-mini model via the `copilot-anthropic-mini` alias.
+ * Tests the embedded Anthropic-compatible HTTP server backed by the GitHub Copilot SDK.
  *
  * REQUIREMENTS:
- * - Authentication: set COPILOT_GITHUB_TOKEN to a PAT with the `copilot_requests` scope,
+ * - Authentication: set COPILOT_GITHUB_TOKEN to a fine-grained PAT with Copilot access,
  *   or set GH_TOKEN, or run `gh auth login` with a GitHub account that has Copilot access.
+ *   Classic PATs (ghp_…) are NOT supported by the Copilot CLI.
  * - No manual CLI install needed — @github/copilot is bundled as a runtime
  *   dependency of @github/copilot-sdk and installed by `bun install`.
  * - If credentials are absent or non-functional, these tests FAIL (not skip). This is
@@ -24,9 +24,10 @@
  *                            tool locally → sends tool_result → suspended session resumes.
  *   3. custom-mcp          — tools registered via .mcp.json in the workspace are loaded by
  *                            the Agent SDK and exposed to the model through the same bridge.
+ *   4. models-list         — the anthropic-copilot provider exposes its models when authenticated.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
@@ -40,12 +41,9 @@ import {
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 
-/** Model alias for gpt-5-mini routed through AnthropicCopilotProvider. */
-const MODEL = 'copilot-anthropic-mini';
-
 /** Per-turn idle timeout. The Copilot API can take 60-90 s per turn. */
 const IDLE_TIMEOUT = 120_000;
-const SETUP_TIMEOUT = 30_000;
+const SETUP_TIMEOUT = 60_000; // includes server start + models.list warm-up
 const TEST_TIMEOUT = IDLE_TIMEOUT + 30_000;
 
 // ---------------------------------------------------------------------------
@@ -122,28 +120,21 @@ function hasToolUseBlock(sdkMessages: Array<Record<string, unknown>>, toolName?:
 
 describe('AnthropicCopilotProvider (Online)', () => {
 	let daemon: DaemonServerContext;
-
-	beforeEach(async () => {
-		daemon = await createDaemonServer();
-	}, SETUP_TIMEOUT);
-
-	afterEach(async () => {
-		if (daemon) {
-			daemon.kill('SIGTERM');
-			await daemon.waitForExit();
-		}
-	}, SETUP_TIMEOUT);
-
 	/**
-	 * Asserts that the anthropic-copilot provider is authenticated.
-	 * Throws a descriptive error (hard-fail) if credentials are missing or invalid.
-	 * Per CLAUDE.md policy: online tests must FAIL, not skip, when credentials are absent.
+	 * The first available anthropic-copilot model ID, fetched dynamically in beforeAll.
+	 * Using a dynamic ID avoids hardcoding model names that may not exist in all
+	 * Copilot plans or that Copilot may deprecate.
 	 */
-	async function assertCopilotAuthenticated(): Promise<void> {
-		const result = (await daemon.messageHub.request('auth.providers', {})) as {
+	let testModelId: string;
+
+	beforeAll(async () => {
+		daemon = await createDaemonServer();
+
+		// Hard-fail if credentials are absent or invalid — per CLAUDE.md policy.
+		const authResult = (await daemon.messageHub.request('auth.providers', {})) as {
 			providers: Array<{ id: string; isAuthenticated: boolean }>;
 		};
-		const provider = result.providers.find((x) => x.id === 'anthropic-copilot');
+		const provider = authResult.providers.find((x) => x.id === 'anthropic-copilot');
 		if (!provider?.isAuthenticated) {
 			throw new Error(
 				'anthropic-copilot provider is not authenticated. ' +
@@ -152,24 +143,43 @@ describe('AnthropicCopilotProvider (Online)', () => {
 					'See: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token'
 			);
 		}
-	}
+
+		// Call models.list to start the embedded Anthropic server (mirrors production
+		// flow where the UI always fetches models before creating a session).
+		const modelsResult = (await daemon.messageHub.request('models.list', {})) as {
+			models: Array<{ id: string; provider: string }>;
+		};
+		const copilotModels = modelsResult.models.filter((m) => m.provider === 'anthropic-copilot');
+		if (copilotModels.length === 0) {
+			throw new Error(
+				'No anthropic-copilot models returned by models.list — ' +
+					'authentication succeeded but the embedded server failed to start.'
+			);
+		}
+		testModelId = copilotModels[0].id;
+	}, SETUP_TIMEOUT);
+
+	afterAll(async () => {
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, SETUP_TIMEOUT);
 
 	// -------------------------------------------------------------------------
 	// 1. Basic conversation
 	// -------------------------------------------------------------------------
 
 	test(
-		'basic conversation: model responds correctly via gpt-5-mini',
+		'basic conversation: model responds correctly',
 		async () => {
-			await assertCopilotAuthenticated();
-
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-basic-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
 
 			const { sessionId } = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Copilot Anthropic Basic Test',
-				config: { model: MODEL, permissionMode: 'acceptEdits' },
+				config: { model: testModelId, permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 			daemon.trackSession(sessionId);
 
@@ -203,8 +213,6 @@ describe('AnthropicCopilotProvider (Online)', () => {
 	test(
 		'tool use: bridge routes tool_use/tool_result correctly',
 		async () => {
-			await assertCopilotAuthenticated();
-
 			// Create a workspace with a known file the model will read.
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-tool-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
@@ -213,7 +221,7 @@ describe('AnthropicCopilotProvider (Online)', () => {
 			const { sessionId } = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Copilot Anthropic Tool-Use Test',
-				config: { model: MODEL, permissionMode: 'acceptEdits' },
+				config: { model: testModelId, permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 			daemon.trackSession(sessionId);
 
@@ -254,8 +262,6 @@ describe('AnthropicCopilotProvider (Online)', () => {
 	test(
 		'custom MCP: tool from .mcp.json is exposed and called by the model',
 		async () => {
-			await assertCopilotAuthenticated();
-
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
 
@@ -281,7 +287,7 @@ describe('AnthropicCopilotProvider (Online)', () => {
 			const { sessionId } = (await daemon.messageHub.request('session.create', {
 				workspacePath,
 				title: 'Copilot Anthropic MCP Test',
-				config: { model: MODEL, permissionMode: 'acceptEdits' },
+				config: { model: testModelId, permissionMode: 'acceptEdits' },
 			})) as { sessionId: string };
 			daemon.trackSession(sessionId);
 
@@ -318,13 +324,8 @@ describe('AnthropicCopilotProvider (Online)', () => {
 	// -------------------------------------------------------------------------
 
 	test('models list: anthropic-copilot models are present when authenticated', async () => {
-		await assertCopilotAuthenticated();
-
-		const result = (await daemon.messageHub.request('models.list', { useCache: false })) as {
-			models: Array<{ id: string; provider: string }>;
-		};
-
-		const copilotModels = result.models.filter((m) => m.provider === 'anthropic-copilot');
-		expect(copilotModels.length).toBeGreaterThan(0);
+		// testModelId is set in beforeAll from the models.list call — if we reach here,
+		// the embedded server is running and at least one copilot model was returned.
+		expect(testModelId).toBeTruthy();
 	});
 });
