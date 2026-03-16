@@ -189,7 +189,19 @@ describe('TaskGroupManager', () => {
 				description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
 				priority TEXT NOT NULL DEFAULT 'normal', progress INTEGER DEFAULT 0,
 				linked_task_ids TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}',
-				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0, goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT NOT NULL DEFAULT 'one_shot'
+					CHECK(mission_type IN ('one_shot', 'measurable', 'recurring')),
+				autonomy_level TEXT NOT NULL DEFAULT 'supervised'
+					CHECK(autonomy_level IN ('supervised', 'semi_autonomous')),
+				schedule TEXT,
+				schedule_paused INTEGER NOT NULL DEFAULT 0,
+				next_run_at INTEGER,
+				structured_metrics TEXT,
+				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
+				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+				consecutive_failures INTEGER NOT NULL DEFAULT 0
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY, room_id TEXT NOT NULL, title TEXT NOT NULL,
