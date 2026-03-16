@@ -53,6 +53,11 @@ async function waitForSDKMessage(
 ): Promise<Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
 		const startedAt = Date.now();
+		const isSystemInitWait = messageType === 'system' && messageSubtype === 'init';
+		// For system:init waits, only resolve after a new user message has been
+		// persisted since this waiter started. This avoids accidentally matching
+		// system:init emitted by model-switch restarts before the next user turn.
+		let latestUserTsSinceStart = Number.NEGATIVE_INFINITY;
 		let unsubscribe: (() => void) | undefined;
 		let resolved = false;
 		let poller: ReturnType<typeof setInterval> | undefined;
@@ -74,11 +79,28 @@ async function waitForSDKMessage(
 					limit: 200,
 				})) as { sdkMessages?: Array<Record<string, unknown>> };
 				const sdkMessages = result.sdkMessages || [];
-				const match = sdkMessages.find((msg) => {
+
+				if (isSystemInitWait) {
+					for (const msg of sdkMessages) {
+						if (msg.type !== 'user') continue;
+						const ts = msg.timestamp;
+						if (typeof ts === 'number' && ts >= startedAt && ts > latestUserTsSinceStart) {
+							latestUserTsSinceStart = ts;
+						}
+					}
+					// Don't resolve a system:init until we have observed a user message
+					// for the current turn.
+					if (!Number.isFinite(latestUserTsSinceStart)) {
+						return;
+					}
+				}
+
+				const minTargetTs = isSystemInitWait ? latestUserTsSinceStart : startedAt;
+				const match = [...sdkMessages].reverse().find((msg) => {
 					if (msg.type !== messageType) return false;
 					if (messageSubtype && msg.subtype !== messageSubtype) return false;
 					const ts = msg.timestamp;
-					return typeof ts !== 'number' || ts >= startedAt - 1000;
+					return typeof ts === 'number' && ts >= minTargetTs;
 				});
 				if (match) {
 					cleanup();
@@ -106,14 +128,25 @@ async function waitForSDKMessage(
 			const addedMessages = delta.added || [];
 
 			for (const msg of addedMessages) {
+				const ts = msg.timestamp;
+				if (msg.type === 'user' && typeof ts === 'number' && ts >= startedAt) {
+					latestUserTsSinceStart = Math.max(latestUserTsSinceStart, ts);
+					continue;
+				}
+
 				if (msg.type !== messageType) continue;
 				// Check subtype if specified
 				if (messageSubtype && msg.subtype !== messageSubtype) {
 					continue;
 				}
 				// Ignore replayed historical messages (e.g. room-join backfill).
-				const ts = msg.timestamp;
 				if (typeof ts !== 'number' || ts < startedAt) {
+					continue;
+				}
+				if (isSystemInitWait && !Number.isFinite(latestUserTsSinceStart)) {
+					continue;
+				}
+				if (isSystemInitWait && ts < latestUserTsSinceStart) {
 					continue;
 				}
 				cleanup();
