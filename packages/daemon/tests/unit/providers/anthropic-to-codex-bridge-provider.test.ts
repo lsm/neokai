@@ -383,7 +383,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			p.stopAllBridgeServers();
 		});
 
-		it('Test 3: returns undefined and writes nothing when refresh fails', async () => {
+		it('Test 3: falls back to importing existing token when refresh fails', async () => {
 			const neokaiDir = path.join(tmpDir, 'neokai');
 			const codexDir = path.join(tmpDir, 'codex');
 			await writeCodexAuth(codexDir, {
@@ -401,15 +401,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const p = makeProvider({}, neokaiDir, codexDir);
 			const key = await p.getApiKey();
 
-			expect(key).toBeUndefined();
+			// Refresh failure should still import existing codex token into ~/.neokai/auth.json
+			expect(key).toBe('expired-token');
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-			// ~/.neokai/auth.json must NOT have been written
-			const neokaiAuthExists = await fs
-				.access(path.join(neokaiDir, 'auth.json'))
-				.then(() => true)
-				.catch(() => false);
-			expect(neokaiAuthExists).toBe(false);
+			const neokaiAuth = JSON.parse(
+				await fs.readFile(path.join(neokaiDir, 'auth.json'), 'utf-8')
+			) as {
+				openai: { type: string; access: string; refresh?: string };
+			};
+			expect(neokaiAuth.openai.type).toBe('oauth');
+			expect(neokaiAuth.openai.access).toBe('expired-token');
+			expect(neokaiAuth.openai.refresh).toBe('invalid-refresh');
 			p.stopAllBridgeServers();
 		});
 
