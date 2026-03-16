@@ -34,7 +34,7 @@ Implement `semi_autonomous` autonomy level for coder and general tasks: the Lead
 
 4. Update `resumeWorkerFromHuman` (where human approvals set `approved = true`) to also set `approvalSource = 'human'` in group metadata.
 
-5. Add `DaemonEventMap` entry for `goal.task.auto_completed` in `packages/daemon/src/lib/daemon-hub.ts`:
+5. (**`DaemonEventMap` entry is added in Milestone 6**, not here — to avoid merge conflicts when Milestones 3–5 run in parallel.) In `autoApproveTask`, emit the `goal.task.auto_completed` event using the existing hub emit pattern. The event shape (defined in Milestone 6) is:
    ```ts
    'goal.task.auto_completed': {
      sessionId: string;  // 'room:${roomId}'
@@ -46,6 +46,7 @@ Implement `semi_autonomous` autonomy level for coder and general tasks: the Lead
      approvalSource: 'leader_semi_auto';
    };
    ```
+   The TypeScript type is registered in `DaemonEventMap` by Milestone 6; this milestone's task only emits — it does NOT modify `daemon-hub.ts`.
 
 6. Emit `goal.task.auto_completed` in `autoApproveTask` after the resume call succeeds.
 

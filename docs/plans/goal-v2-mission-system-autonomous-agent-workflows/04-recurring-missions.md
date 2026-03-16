@@ -14,11 +14,12 @@ Implement cron-based scheduling for recurring missions inside `RoomRuntime`, cre
 **Subtasks** (ordered implementation steps):
 
 1. Add a cron parsing utility at `packages/daemon/src/lib/room/runtime/cron-utils.ts`:
-   - Parse cron expressions (five-field `* * * * *` syntax)
-   - Support presets: `@hourly`, `@daily`, `@weekly`, `@monthly`
-   - Calculate `nextRunAt(expression, timezone, fromDate?)`: returns the next unix timestamp after `fromDate` (defaults to `Date.now()`)
-   - Input validation: reject malformed expressions; throw a descriptive error
-   - This file should have NO external cron library dependencies; implement a minimal parser for the five-field standard or use Bun's built-in date facilities
+   - **Use the `croner` npm package** (`bun add croner`). It is a lightweight, battle-tested library with IANA timezone and DST support, no transitive dependencies, and ESM/CJS dual-format. Do NOT hand-roll a cron parser.
+   - Wrap `croner` in a thin module-local helper:
+     - `nextRunAt(expression: string, timezone: string, fromDate?: Date): number` — returns the next unix timestamp (ms) after `fromDate` (defaults to `new Date()`)
+     - `validateCron(expression: string, timezone: string): void` — throws a descriptive `Error` if the expression or timezone is invalid (let `croner` surface the error; re-throw with context)
+   - Support presets: `@hourly`, `@daily`, `@weekly`, `@monthly` (croner handles these natively)
+   - The public API of `cron-utils.ts` is the two functions above; callers never import `croner` directly
 
 2. In `packages/daemon/src/types/task-group.ts` (or wherever `TaskGroupMetadata` is defined), add optional field:
    ```ts
@@ -76,7 +77,7 @@ Implement cron-based scheduling for recurring missions inside `RoomRuntime`, cre
 - Partial unique index prevents two `'running'` executions for the same goal; app-level check provides the first gate
 - Daemon restart correctly recovers execution identity from group metadata
 - `linked_task_ids` is scoped per execution; previous execution's tasks are preserved in `mission_executions.task_ids`
-- `planning_attempts` resets per execution (uses `mission_executions.planning_attempts`)
+- For recurring missions: runtime reads `mission_executions.planning_attempts` (not goal-level) for the replanning guard; this resets automatically per new execution row
 - `schedule_paused` prevents scheduler from firing; resume recalculates `next_run_at` from current time
 - Catch-up after restart fires once immediately then advances to next interval
 - All unit and online tests pass

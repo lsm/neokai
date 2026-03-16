@@ -117,7 +117,7 @@ Update all user-facing "Goal" text to "Mission" in the frontend. Add type-specif
    - Show "Next run: <formatted date>" from `goal.nextRunAt` (or "Paused" if `schedulePaused = true`)
    - Show "Schedule: <expression> (<timezone>)" from `goal.schedule`
    - Add "Pause schedule" / "Resume schedule" button that calls `goal.update` with `schedulePaused` toggled
-   - Show execution history list: fetch from a new `goal.list_executions` RPC or derive from cached state (see note below)
+   - Show execution history list: fetch via `goal.list_executions` RPC (defined in Milestone 6, Subtask 5). Add a `RoomStore.listExecutions(goalId)` method that calls this RPC and returns `MissionExecution[]`. Display the last 10 executions with status badge (running/completed/failed), start time, and result summary.
 
 5. Add `RoomStore.updateKpi(goalId, metricName, value)` method that calls `goal.update_kpi` RPC and refreshes goals.
 

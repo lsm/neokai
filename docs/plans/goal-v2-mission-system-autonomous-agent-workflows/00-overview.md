@@ -33,14 +33,14 @@ Feature branches are created from `dev`. All PRs target `dev`.
 ```
 Milestone 1 (Types)
   -> Milestone 2 (Schema)
-       -> Milestone 3 (Measurable)
-       -> Milestone 4 (Recurring)
-       -> Milestone 5 (Semi-Auto)
-       -> Milestone 6 (RPC)
-            -> Milestone 7 (UI)
+       -> Milestone 3 (Measurable)  ─┐
+       -> Milestone 4 (Recurring)   ─┤-> Milestone 6 (RPC)
+       -> Milestone 5 (Semi-Auto)   ─┘      -> Milestone 7 (UI)
 ```
 
-Milestones 3, 4, 5, and 6 all depend on Milestones 1 and 2 and can run in parallel. Milestone 7 depends on Milestone 6 (RPCs must accept new fields before UI forms can function end-to-end).
+Milestones 3, 4, and 5 all depend on Milestones 1 and 2 and can run in parallel with each other. Milestone 6 depends on Milestones 3, 4, and 5 (it consolidates `DaemonEventMap` entries from those milestones and references their manager methods). Milestone 7 depends on Milestone 6 (RPCs must accept new fields before UI forms can function end-to-end).
+
+**Note on `DaemonEventMap`**: The `goal.task.auto_completed` event entry is defined exclusively in Milestone 6 (not in Milestone 5) to avoid merge conflicts when 3–5 run on parallel branches.
 
 ## Key Design Decisions
 
@@ -54,4 +54,4 @@ Milestones 3, 4, 5, and 6 all depend on Milestones 1 and 2 and can run in parall
 
 ## Estimated Task Count
 
-7 milestones, 15 total tasks.
+7 milestones, 10 total tasks (1.1, 2.1, 2.2, 3.1, 4.1, 5.1, 6.1, 7.1, 7.2, 7.3).

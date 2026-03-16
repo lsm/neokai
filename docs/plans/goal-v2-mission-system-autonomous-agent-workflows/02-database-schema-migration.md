@@ -26,6 +26,7 @@ Add new mission V2 columns to the `goals` table via a numbered migration, create
       - `max_consecutive_failures INTEGER DEFAULT 3`
       - `max_planning_attempts INTEGER DEFAULT 5`
       - `consecutive_failures INTEGER DEFAULT 0`
+      - `replan_count INTEGER DEFAULT 0` (lifetime counter; incremented on every manual or automatic replan trigger; never reset)
 
    b. Create `mission_metric_history` table (IF NOT EXISTS):
       ```sql
@@ -120,12 +121,16 @@ Add new mission V2 columns to the `goals` table via a numbered migration, create
 
    a. Expose thin async wrappers for all new repository methods (metric history insert/query, execution CRUD). Keep the same async pattern as existing manager methods.
 
-   b. Implement `getEffectiveMaxPlanningAttempts(goalId, roomConfig)`:
-      - Fetch the goal
+   b. Implement `getEffectiveMaxPlanningAttempts(goal, roomConfig)`:
       - If `goal.maxPlanningAttempts` is set (>= 1), return it
       - Else if `roomConfig?.maxPlanningRetries` is set, return `roomConfig.maxPlanningRetries + 1`
       - Else return 5 (hardcoded default)
-      - Export this as a standalone helper function (not just a method) so it can be called with a `RoomGoal` object directly (for use in runtime without a manager instance)
+      - Export as a standalone helper (not just a method) so it can be called with a `RoomGoal` object directly
+
+   **`planning_attempts` scope rule** (critical for recurring missions):
+   - For `mission_type = 'recurring'`: the runtime's replanning guard reads `mission_executions.planning_attempts` (the current execution row), NOT any goal-level field. This ensures the counter resets automatically each new execution.
+   - For `mission_type = 'one_shot'` or `'measurable'`: the runtime reads the goal-level `planning_attempts` field (already present on `goals` table from earlier migrations).
+   - `getEffectiveMaxPlanningAttempts` returns the ceiling for both paths — callers are responsible for reading the correct current-attempt counter.
 
    c. Add `linkTaskToExecution(goalId, executionId, taskId)` method:
       - Atomically updates both `mission_executions.task_ids` (via `appendExecutionTaskId`) and `goals.linked_task_ids` (via `linkTaskToGoal`) in a single SQLite transaction

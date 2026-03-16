@@ -82,14 +82,15 @@ Extend the `RoomGoal` interface and shared type system with all mission V2 metad
    - `maxConsecutiveFailures?: number`
    - `maxPlanningAttempts?: number`
    - `consecutiveFailures?: number`
+   - `replanCount?: number` (lifetime counter of replanning events across all executions; incremented by `goal.trigger_replan` and by the auto-replan logic in Milestone 3; distinct from `mission_executions.planning_attempts` which is per-execution)
 
 9. Add `type Mission = RoomGoal` type alias and export it from `packages/shared/src/types/neo.ts`.
 
 10. Export all new types from `packages/shared/src/mod.ts` (or wherever shared exports are re-exported).
 
-11. Update `CreateGoalParams` in `packages/daemon/src/storage/repositories/goal-repository.ts` to accept the new optional fields: `missionType`, `autonomyLevel`, `structuredMetrics`, `schedule`, `schedulePaused`, `nextRunAt`, `maxConsecutiveFailures`, `maxPlanningAttempts`.
+11. Update `CreateGoalParams` in `packages/daemon/src/storage/repositories/goal-repository.ts` to accept the new optional fields: `missionType`, `autonomyLevel`, `structuredMetrics`, `schedule`, `schedulePaused`, `nextRunAt`, `maxConsecutiveFailures`, `maxPlanningAttempts`, `replanCount`.
 
-12. Update `UpdateGoalParams` in the same file to accept the same optional fields plus `consecutiveFailures`.
+12. Update `UpdateGoalParams` in the same file to accept the same optional fields plus `consecutiveFailures` and `replanCount`.
 
 13. Verify TypeScript compiles with zero new errors: `bun run typecheck`.
 
