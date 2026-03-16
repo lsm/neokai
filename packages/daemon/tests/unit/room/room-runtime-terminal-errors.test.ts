@@ -229,25 +229,32 @@ describe('RoomRuntime - terminal error detection', () => {
 		});
 
 		it('does NOT re-set rate limit when group already has one (re-trigger after expiry)', async () => {
-			// Regression: after rate limit expires, recoverStuckWorkers re-triggers
-			// onWorkerTerminalState.  The old 429 message is still in the worker output.
-			// The fix: skip rate_limit detection when group.rateLimit is already set,
-			// allowing the worker to fall through to the worktree check (and attempt cleanup).
+			// Production flow (after fix):
+			//   1. Initial 429 → setRateLimit(60s) → scheduleTickAfterRateLimitReset
+			//   2. Timer fires ~65s later → does NOT clearRateLimit (removed to preserve sentinel)
+			//      → scheduleTick
+			//   3. executeTick → recoverStuckWorkers calls onWorkerTerminalState again
+			//      with the same 429 still in output
+			//   4. group.rateLimit is non-null (expired but present) → !group.rateLimit is false
+			//      → skip re-detection → fall through to worktree check → route to leader
+			//
+			// We simulate step 2-3: override rateLimit to expired (time has passed) then
+			// re-trigger the handler.
 			ctx = createRuntimeTestContext({
 				getWorkerMessages: () => [makeWorkerMessage('API Error: 429 Too Many Requests')],
 			});
 
 			const { group } = await spawnAndSimulateWorkerOutput('');
 
-			// Simulate the rate limit having already expired
-			const expiredResetsAt = Date.now() - 1;
+			// Simulate the rate limit having already expired (timer fired, resetsAt now in past,
+			// but rateLimit is still non-null because the timer no longer calls clearRateLimit).
 			ctx.groupRepo.setRateLimit(group.id, {
 				detectedAt: Date.now() - 120_000,
-				resetsAt: expiredResetsAt,
+				resetsAt: Date.now() - 1,
 				sessionRole: 'worker',
 			});
 
-			// Re-trigger as recoverStuckWorkers would
+			// Re-trigger as recoverStuckWorkers would (feedbackIteration=0, isRateLimited=false)
 			await ctx.runtime.onWorkerTerminalState(group.id, {
 				sessionId: group.workerSessionId,
 				kind: 'idle',

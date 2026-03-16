@@ -2587,8 +2587,12 @@ export class RoomRuntime {
 		);
 
 		setTimeout(() => {
-			// Clear the rate limit backoff since it should be expired now
-			this.groupRepo.clearRateLimit(groupId);
+			// Do NOT clearRateLimit here.  The expired (non-null) rateLimit object serves as the
+			// re-detection sentinel in onWorkerTerminalState / onLeaderTerminalState: the
+			// `!group.rateLimit` guard uses it to distinguish "first detection" from "re-trigger
+			// after expiry", preventing an infinite 60-second bounce loop.
+			// The rate limit is cleared at the right place: in `send_to_worker` when a new worker
+			// iteration genuinely starts, at which point fresh 429s should be re-detected.
 			this.scheduleTick();
 		}, delayMs);
 	}
