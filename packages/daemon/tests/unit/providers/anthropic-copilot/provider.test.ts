@@ -654,8 +654,6 @@ describe('startBackgroundPolling()', () => {
 		interval: 0, // 0-second poll delay so tests complete immediately
 	};
 
-	// After slow_down, pollIntervalSec += 5 (RFC 8628), so the next sleep is 5 s.
-	// Allow 10 s to cover the RFC-mandated 5-second backoff.
 	it('slow_down response backs off by 5 s and continues — not terminal', async () => {
 		const p = new AnthropicCopilotProvider('/tmp', {});
 		setActiveFlow(p);
@@ -663,6 +661,19 @@ describe('startBackgroundPolling()', () => {
 		// Suppress file I/O
 		spyOn(p as unknown as Record<string, unknown>, 'saveCredentials' as never).mockResolvedValue(
 			undefined as never
+		);
+
+		// Capture all setTimeout delays; run callbacks immediately (0 ms) to avoid
+		// the real 5-second wall-clock wait mandated by the RFC 8628 slow_down backoff.
+		// This also lets us assert the backoff magnitude was exactly +5 s (5000 ms).
+		const sleepDelays: number[] = [];
+		const origSetTimeout = globalThis.setTimeout;
+		const setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(
+			(fn: TimerHandler, delay?: number, ...args: unknown[]) => {
+				sleepDelays.push(delay ?? 0);
+				// Run the callback at the next tick but without the real delay.
+				return origSetTimeout(fn as () => void, 0, ...(args as []));
+			}
 		);
 
 		// First call: slow_down — second call: success
@@ -691,10 +702,17 @@ describe('startBackgroundPolling()', () => {
 			expect(callCount).toBe(2);
 			expect(getActiveFlow(p).completed).toBe(true);
 			expect(getActiveFlow(p).success).toBe(true);
+
+			// RFC 8628 §3.5: each slow_down must add exactly 5 s to the polling interval.
+			// With device.interval=0, the second sleep must be 0+5=5000 ms.
+			expect(sleepDelays).toHaveLength(2);
+			expect(sleepDelays[0]).toBe(0); // first iteration: interval=0
+			expect(sleepDelays[1]).toBe(5000); // after slow_down: interval=0+5 s
 		} finally {
+			setTimeoutSpy.mockRestore();
 			fetchSpy.mockRestore();
 		}
-	}, 10_000);
+	});
 
 	it('non-slow_down error terminates the flow with completed=true success=false', async () => {
 		const p = new AnthropicCopilotProvider('/tmp', {});
