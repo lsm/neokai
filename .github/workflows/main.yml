@@ -273,6 +273,10 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Install Codex CLI (providers-codex and providers-openai shards)
+        if: matrix.module == 'providers-codex' || matrix.module == 'providers-openai'
+        run: npm install -g @openai/codex
+
       - name: Run daemon online tests (${{ matrix.module }})
         working-directory: packages/daemon
         run: bun test ${{ matrix.test_path }} --coverage --coverage-reporter=lcov --coverage-dir=coverage-online-${{ matrix.module }}

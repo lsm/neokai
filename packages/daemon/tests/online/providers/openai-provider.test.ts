@@ -94,11 +94,11 @@ describe('OpenAI Provider (Online)', () => {
 			if (!token) {
 				SKIP_REASON = 'CODEX_REFRESH_TOKEN exchange failed';
 				if (CI) throw new Error(`[openai-provider] ${SKIP_REASON}`);
-			} else {
-				process.env.OPENAI_API_KEY = token.access_token;
+				return;
 			}
+			process.env.OPENAI_API_KEY = token.access_token;
 		}
-	});
+	}, 15000);
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
