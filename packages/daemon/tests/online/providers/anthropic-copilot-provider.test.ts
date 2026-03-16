@@ -49,11 +49,21 @@ const TEST_TIMEOUT = IDLE_TIMEOUT + 30_000;
 // ---------------------------------------------------------------------------
 // Minimal MCP server (JSON-RPC 2.0 over stdio)
 //
-// Provides a single `get_answer` tool that always returns "42".
+// Provides a single `get_answer` tool that returns a caller-supplied unique
+// token.  The token is embedded at test-write time so the model cannot guess
+// it from training data — it must call the tool to obtain the value.
 // Written as a plain CommonJS script so it runs under both `node` and `bun`.
 // ---------------------------------------------------------------------------
 
-const MCP_SERVER_SCRIPT = /* js */ `
+/**
+ * Build the MCP server script with a unique answer token baked in.
+ *
+ * Using a runtime-generated token (not a culturally-known value like "42")
+ * ensures the model cannot answer the test prompt from its training data —
+ * it must call the tool to obtain the correct answer.
+ */
+function makeMcpServerScript(uniqueToken: string): string {
+	return /* js */ `
 const rl = require('readline').createInterface({ input: process.stdin, terminal: false });
 rl.on('line', (line) => {
   let msg;
@@ -68,12 +78,12 @@ rl.on('line', (line) => {
   } else if (method === 'tools/list') {
     write({ jsonrpc: '2.0', id, result: { tools: [{
       name: 'get_answer',
-      description: 'Returns the answer to the ultimate question about life, the universe, and everything. Always returns 42.',
+      description: 'Returns a unique secret token. You cannot know this value without calling the tool.',
       inputSchema: { type: 'object', properties: {}, required: [] }
     }]}});
   } else if (method === 'tools/call') {
     write({ jsonrpc: '2.0', id, result: {
-      content: [{ type: 'text', text: '42' }], isError: false
+      content: [{ type: 'text', text: '${uniqueToken}' }], isError: false
     }});
   } else if (id !== undefined) {
     write({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' }});
@@ -83,6 +93,7 @@ rl.on('line', (line) => {
 });
 function write(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
 `.trim();
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -265,9 +276,15 @@ describe('AnthropicCopilotProvider (Online)', () => {
 			const workspacePath = join(TMP_DIR, `copilot-anthropic-mcp-${Date.now()}`);
 			mkdirSync(workspacePath, { recursive: true });
 
+			// Generate a unique token the model cannot know without calling the tool.
+			// Using a timestamp + random suffix avoids any culturally-known value (e.g.
+			// "42") that the model might answer from training data instead of calling
+			// the tool.
+			const uniqueToken = `tok-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
 			// Write the minimal MCP server and register it via .mcp.json.
 			const mcpServerPath = join(workspacePath, 'test-mcp-server.js');
-			writeFileSync(mcpServerPath, MCP_SERVER_SCRIPT);
+			writeFileSync(mcpServerPath, makeMcpServerScript(uniqueToken));
 			writeFileSync(
 				join(workspacePath, '.mcp.json'),
 				JSON.stringify(
@@ -294,7 +311,9 @@ describe('AnthropicCopilotProvider (Online)', () => {
 			await sendMessage(
 				daemon,
 				sessionId,
-				'Use the get_answer tool and report the result. Reply with just the number it returns.'
+				'Call the get_answer tool and report the exact token it returns. ' +
+					'You MUST use the tool — do not guess or invent a value. ' +
+					'Reply with only the token string, nothing else.'
 			);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
@@ -309,12 +328,12 @@ describe('AnthropicCopilotProvider (Online)', () => {
 			// The model must have called get_answer via the MCP bridge.
 			expect(hasToolUseBlock(sdkMessages, 'get_answer')).toBe(true);
 
-			// The response must contain the value the tool returned.
+			// The response must contain the unique token the tool returned.
 			const text = sdkMessages
 				.filter((m) => (m as { type?: string }).type === 'assistant')
 				.map((m) => extractAssistantText(m as Record<string, unknown>))
 				.join('');
-			expect(text).toContain('42');
+			expect(text).toContain(uniqueToken);
 		},
 		TEST_TIMEOUT
 	);
