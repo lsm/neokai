@@ -9,9 +9,6 @@
  *   AnthropicCodexProvider bridge, which wraps codex app-server)
  * - Makes real API calls (costs money, uses rate limits)
  *
- * CI behaviour: when running with CI=true, the shard fails hard if no credential
- * is available rather than silently passing with skipped tests.
- *
  * MODELS:
  * - Uses gpt-5.1-codex-mini (cheaper) and gpt-5.3-codex for testing
  *
@@ -54,36 +51,10 @@ function extractAssistantText(msg: Record<string, unknown>): string {
 	return '';
 }
 
-/**
- * Evaluate skip conditions once at module load.
- * Models formerly owned by OpenAiProvider are now served through
- * AnthropicCodexProvider (Codex bridge), so the codex binary is required.
- * CODEX_REFRESH_TOKEN is accepted in place of a direct API key; the token
- * is exchanged for a live access token in beforeAll.
- */
-const CI = process.env.CI === 'true';
-
-let SKIP_REASON: string | null = (() => {
-	const hasDirectKey = !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY);
-	const hasRefreshToken = !!process.env.CODEX_REFRESH_TOKEN;
-	if (!hasDirectKey && !hasRefreshToken)
-		return 'OPENAI_API_KEY, CODEX_API_KEY, or CODEX_REFRESH_TOKEN not set';
-	const which = Bun.spawnSync(['which', 'codex'], { stderr: 'pipe' });
-	if (which.exitCode !== 0)
-		return 'codex binary not found on PATH (required by AnthropicCodexProvider)';
-	return null;
-})();
-
 describe('OpenAI Provider (Online)', () => {
 	let daemon: DaemonServerContext;
 
 	beforeAll(async () => {
-		// In CI, fail hard if no credential is available.
-		if (SKIP_REASON) {
-			if (CI) throw new Error(`[openai-provider] Credential check failed: ${SKIP_REASON}`);
-			return;
-		}
-
 		// Exchange CODEX_REFRESH_TOKEN for a live access token when no direct key is present.
 		if (
 			!process.env.OPENAI_API_KEY &&
@@ -92,9 +63,7 @@ describe('OpenAI Provider (Online)', () => {
 		) {
 			const token = await refreshCodexToken(process.env.CODEX_REFRESH_TOKEN);
 			if (!token) {
-				SKIP_REASON = 'CODEX_REFRESH_TOKEN exchange failed';
-				if (CI) throw new Error(`[openai-provider] ${SKIP_REASON}`);
-				return;
+				throw new Error('[openai-provider] CODEX_REFRESH_TOKEN exchange failed');
 			}
 			process.env.OPENAI_API_KEY = token.access_token;
 		}
@@ -115,12 +84,6 @@ describe('OpenAI Provider (Online)', () => {
 	);
 
 	test('should get correct answer via gpt-5.1-codex-mini (bridge path)', async () => {
-		if (SKIP_REASON) {
-			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
-			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
-			return;
-		}
-
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
@@ -155,12 +118,6 @@ describe('OpenAI Provider (Online)', () => {
 	}, 60000);
 
 	test('should get correct answer via gpt-5.3-codex (bridge path)', async () => {
-		if (SKIP_REASON) {
-			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
-			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
-			return;
-		}
-
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),
@@ -195,12 +152,6 @@ describe('OpenAI Provider (Online)', () => {
 	}, 60000);
 
 	test('should handle sequential queries (multi-turn bridge path)', async () => {
-		if (SKIP_REASON) {
-			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
-			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
-			return;
-		}
-
 		// Create session with OpenAI model
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: process.cwd(),

@@ -10,9 +10,6 @@
  *     CODEX_REFRESH_TOKEN              — exchanged for a fresh access token in beforeAll
  * - The `codex` binary must be installed and on PATH
  *
- * CI behaviour: when running with CI=true, the shard fails hard if no credential
- * is available rather than silently passing with skipped tests.
- *
  * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
  * The bridge uses its own random-port HTTP server; Anthropic API traffic
  * interception at port 8000 has no effect here.  Tests always hit the real
@@ -31,23 +28,6 @@ import {
 	AnthropicCodexProvider,
 	refreshCodexToken,
 } from '../../../src/lib/providers/anthropic-codex-provider';
-
-// ---------------------------------------------------------------------------
-// Credential check — mutable so beforeAll can update after token exchange
-// ---------------------------------------------------------------------------
-
-const CI = process.env.CI === 'true';
-
-let skipReason: string | null = (() => {
-	const hasDirectKey = !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY);
-	const hasRefreshToken = !!process.env.CODEX_REFRESH_TOKEN;
-	if (!hasDirectKey && !hasRefreshToken) {
-		return 'OPENAI_API_KEY, CODEX_API_KEY, or CODEX_REFRESH_TOKEN not set';
-	}
-	const which = Bun.spawnSync(['which', 'codex'], { stderr: 'pipe' });
-	if (which.exitCode !== 0) return 'codex binary not found on PATH';
-	return null;
-})();
 
 // ---------------------------------------------------------------------------
 // SSE parsing helpers
@@ -73,7 +53,7 @@ function parseSseEvents(text: string): SseEvent[] {
 		try {
 			events.push({ event: eventName, data: JSON.parse(dataStr) as Record<string, unknown> });
 		} catch {
-			// skip unparseable lines
+			// ignore unparseable lines
 		}
 	}
 	return events;
@@ -201,12 +181,6 @@ describe('Codex Bridge (Online)', () => {
 	let bridgeUrl: string;
 
 	beforeAll(async () => {
-		// In CI, fail hard if no credential is available — a skipped shard gives false confidence.
-		if (skipReason) {
-			if (CI) throw new Error(`[codex-bridge] Credential check failed: ${skipReason}`);
-			return;
-		}
-
 		// Exchange CODEX_REFRESH_TOKEN for a live access token when no direct key is present.
 		if (
 			!process.env.OPENAI_API_KEY &&
@@ -215,9 +189,7 @@ describe('Codex Bridge (Online)', () => {
 		) {
 			const token = await refreshCodexToken(process.env.CODEX_REFRESH_TOKEN);
 			if (!token) {
-				skipReason = 'CODEX_REFRESH_TOKEN exchange failed';
-				if (CI) throw new Error(`[codex-bridge] ${skipReason}`);
-				return;
+				throw new Error('[codex-bridge] CODEX_REFRESH_TOKEN exchange failed');
 			}
 			process.env.OPENAI_API_KEY = token.access_token;
 		}
@@ -232,24 +204,9 @@ describe('Codex Bridge (Online)', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Helper: return early when prerequisites are missing.
-	// In CI throws instead of skipping so the shard fails visibly.
-	// -------------------------------------------------------------------------
-	function skipIfNeeded(label: string): boolean {
-		if (skipReason) {
-			if (CI) throw new Error(`[codex-bridge] "${label}" — ${skipReason}`);
-			console.log(`[codex-bridge] Skipping "${label}" — ${skipReason}`);
-			return true;
-		}
-		return false;
-	}
-
-	// -------------------------------------------------------------------------
 	// Test 1: Basic conversation
 	// -------------------------------------------------------------------------
 	test('basic conversation: user message → assistant text reply', async () => {
-		if (skipIfNeeded('basic conversation')) return;
-
 		const events = await callBridge(bridgeUrl, [
 			{ role: 'user', content: 'Reply with exactly: PONG' },
 		]);
@@ -267,8 +224,6 @@ describe('Codex Bridge (Online)', () => {
 	// Test 2: Tool use round-trip
 	// -------------------------------------------------------------------------
 	test('tool use: bridge routes tool call and model uses result in reply', async () => {
-		if (skipIfNeeded('tool use')) return;
-
 		// Use gpt-5.1-codex-mini for tool-use tests — confirmed to support dynamic tools.
 		const TOOL_MODEL = 'gpt-5.1-codex-mini';
 		// System prompt that forces tool use even with models that prefer self-answering.
@@ -362,8 +317,6 @@ describe('Codex Bridge (Online)', () => {
 	// Test 3: MCP-style tool (in-process mock MCP server)
 	// -------------------------------------------------------------------------
 	test('mcp tool: bridge handles MCP-style tool naming and call round-trip', async () => {
-		if (skipIfNeeded('mcp tool')) return;
-
 		// Use gpt-5.1-codex-mini for tool-use tests — confirmed to support dynamic tools.
 		const TOOL_MODEL = 'gpt-5.1-codex-mini';
 		const TOOL_SYSTEM =

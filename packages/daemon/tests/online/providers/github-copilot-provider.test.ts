@@ -59,29 +59,7 @@ describe('GitHub Copilot Provider (Online)', () => {
 		}
 	}, 30000);
 
-	/**
-	 * Helper to check if GitHub Copilot is authenticated
-	 */
-	async function isGitHubCopilotAuthenticated(): Promise<boolean> {
-		try {
-			const result = (await daemon.messageHub.request('auth.providers', {})) as {
-				providers: Array<{ id: string; isAuthenticated: boolean }>;
-			};
-
-			const copilotProvider = result.providers.find((p) => p.id === 'github-copilot');
-			return copilotProvider?.isAuthenticated ?? false;
-		} catch {
-			return false;
-		}
-	}
-
 	test('should get correct answer via copilot-sonnet (pi-mono path)', async () => {
-		// Check if GitHub Copilot is authenticated
-		if (!(await isGitHubCopilotAuthenticated())) {
-			console.log('Skipping - GitHub Copilot not authenticated. Login via Settings.');
-			return;
-		}
-
 		// Use copilot-sonnet alias — only GitHubCopilotProvider owns this, guaranteeing
 		// the pi-mono path is exercised (not AnthropicProvider which also owns claude-*)
 		const createResult = (await daemon.messageHub.request('session.create', {
@@ -117,12 +95,6 @@ describe('GitHub Copilot Provider (Online)', () => {
 	}, 60000);
 
 	test('should get correct answer via copilot-mini (pi-mono path)', async () => {
-		// Check if GitHub Copilot is authenticated
-		if (!(await isGitHubCopilotAuthenticated())) {
-			console.log('Skipping - GitHub Copilot not authenticated. Login via Settings.');
-			return;
-		}
-
 		// Use copilot-mini alias — only GitHubCopilotProvider owns this, guaranteeing
 		// the pi-mono path is exercised (not OpenAiProvider which also owns gpt-*)
 		const createResult = (await daemon.messageHub.request('session.create', {
@@ -158,12 +130,6 @@ describe('GitHub Copilot Provider (Online)', () => {
 	}, 60000);
 
 	test('should handle sequential queries (multi-turn pi-mono path)', async () => {
-		// Check if GitHub Copilot is authenticated
-		if (!(await isGitHubCopilotAuthenticated())) {
-			console.log('Skipping - GitHub Copilot not authenticated. Login via Settings.');
-			return;
-		}
-
 		// Use copilot-sonnet alias to ensure GitHub Copilot pi-mono path is used
 		const createResult = (await daemon.messageHub.request('session.create', {
 			workspacePath: `${TMP_DIR}/test-github-copilot-multi-turn-${Date.now()}`,
