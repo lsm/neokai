@@ -2,10 +2,15 @@
  * OpenAI Provider Online Tests
  *
  * REQUIREMENTS:
- * - Requires OPENAI_API_KEY environment variable
+ * - One of the following credentials must be set:
+ *     OPENAI_API_KEY               — used directly as the API key
+ *     CODEX_REFRESH_TOKEN          — exchanged for a fresh access token in beforeAll
  * - Requires the `codex` binary on PATH (models are now served via the
  *   AnthropicCodexProvider bridge, which wraps codex app-server)
  * - Makes real API calls (costs money, uses rate limits)
+ *
+ * CI behaviour: when running with CI=true, the shard fails hard if no credential
+ * is available rather than silently passing with skipped tests.
  *
  * MODELS:
  * - Uses gpt-5-mini (cheaper) and gpt-5.3-codex for testing
@@ -15,10 +20,13 @@
  * - Content verification ensures the response came from a real model call via the bridge
  * - Multi-turn test proves sequential queries work through the bridge
  *
- * Run with: OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
+ * Run with:
+ *   OPENAI_API_KEY=xxx bun test packages/daemon/tests/online/providers/openai-provider.test.ts
+ *   # or via refresh token:
+ *   CODEX_REFRESH_TOKEN=<token> bun test packages/daemon/tests/online/providers/openai-provider.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'bun:test';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
 import {
@@ -27,6 +35,7 @@ import {
 	getProcessingState,
 	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
+import { refreshCodexToken } from '../../../src/lib/providers/anthropic-codex-provider';
 
 /**
  * Extract text from an SDK assistant message
@@ -49,9 +58,16 @@ function extractAssistantText(msg: Record<string, unknown>): string {
  * Evaluate skip conditions once at module load.
  * Models formerly owned by OpenAiProvider are now served through
  * AnthropicCodexProvider (Codex bridge), so the codex binary is required.
+ * CODEX_REFRESH_TOKEN is accepted in place of a direct API key; the token
+ * is exchanged for a live access token in beforeAll.
  */
-const SKIP_REASON: string | null = (() => {
-	if (!process.env.OPENAI_API_KEY) return 'OPENAI_API_KEY not set';
+const CI = process.env.CI === 'true';
+
+let SKIP_REASON: string | null = (() => {
+	const hasDirectKey = !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY);
+	const hasRefreshToken = !!process.env.CODEX_REFRESH_TOKEN;
+	if (!hasDirectKey && !hasRefreshToken)
+		return 'OPENAI_API_KEY, CODEX_API_KEY, or CODEX_REFRESH_TOKEN not set';
 	const which = Bun.spawnSync(['which', 'codex'], { stderr: 'pipe' });
 	if (which.exitCode !== 0)
 		return 'codex binary not found on PATH (required by AnthropicCodexProvider)';
@@ -60,6 +76,29 @@ const SKIP_REASON: string | null = (() => {
 
 describe('OpenAI Provider (Online)', () => {
 	let daemon: DaemonServerContext;
+
+	beforeAll(async () => {
+		// In CI, fail hard if no credential is available.
+		if (SKIP_REASON) {
+			if (CI) throw new Error(`[openai-provider] Credential check failed: ${SKIP_REASON}`);
+			return;
+		}
+
+		// Exchange CODEX_REFRESH_TOKEN for a live access token when no direct key is present.
+		if (
+			!process.env.OPENAI_API_KEY &&
+			!process.env.CODEX_API_KEY &&
+			process.env.CODEX_REFRESH_TOKEN
+		) {
+			const token = await refreshCodexToken(process.env.CODEX_REFRESH_TOKEN);
+			if (!token) {
+				SKIP_REASON = 'CODEX_REFRESH_TOKEN exchange failed';
+				if (CI) throw new Error(`[openai-provider] ${SKIP_REASON}`);
+			} else {
+				process.env.OPENAI_API_KEY = token.access_token;
+			}
+		}
+	});
 
 	beforeEach(async () => {
 		daemon = await createDaemonServer();
@@ -77,6 +116,7 @@ describe('OpenAI Provider (Online)', () => {
 
 	test('should get correct answer via gpt-5-mini (bridge path)', async () => {
 		if (SKIP_REASON) {
+			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
 		}
@@ -116,6 +156,7 @@ describe('OpenAI Provider (Online)', () => {
 
 	test('should get correct answer via gpt-5.3-codex (bridge path)', async () => {
 		if (SKIP_REASON) {
+			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
 		}
@@ -155,6 +196,7 @@ describe('OpenAI Provider (Online)', () => {
 
 	test('should handle sequential queries (multi-turn bridge path)', async () => {
 		if (SKIP_REASON) {
+			if (CI) throw new Error(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			console.log(`[openai-provider] Skipping — ${SKIP_REASON}`);
 			return;
 		}

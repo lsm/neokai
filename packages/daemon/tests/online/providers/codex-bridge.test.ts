@@ -5,11 +5,13 @@
  *   AnthropicCodexProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
  *
  * REQUIREMENTS:
- * - OPENAI_API_KEY or CODEX_API_KEY must be set
+ * - One of the following credentials must be set:
+ *     OPENAI_API_KEY or CODEX_API_KEY  — used directly as the API key
+ *     CODEX_REFRESH_TOKEN              — exchanged for a fresh access token in beforeAll
  * - The `codex` binary must be installed and on PATH
  *
- * Tests skip automatically when either requirement is missing, consistent with
- * other provider online tests (openai-provider.test.ts, github-copilot-provider.test.ts).
+ * CI behaviour: when running with CI=true, the shard fails hard if no credential
+ * is available rather than silently passing with skipped tests.
  *
  * NOTE: Dev Proxy (NEOKAI_USE_DEV_PROXY=1) does NOT apply to these tests.
  * The bridge uses its own random-port HTTP server; Anthropic API traffic
@@ -19,18 +21,28 @@
  * Run with:
  *   OPENAI_API_KEY=sk-xxx bun test \
  *     packages/daemon/tests/online/providers/codex-bridge.test.ts
+ *   # or via refresh token:
+ *   CODEX_REFRESH_TOKEN=<token> bun test \
+ *     packages/daemon/tests/online/providers/codex-bridge.test.ts
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { AnthropicCodexProvider } from '../../../src/lib/providers/anthropic-codex-provider';
+import {
+	AnthropicCodexProvider,
+	refreshCodexToken,
+} from '../../../src/lib/providers/anthropic-codex-provider';
 
 // ---------------------------------------------------------------------------
-// Skip-condition check — evaluated once at module load time
+// Credential check — mutable so beforeAll can update after token exchange
 // ---------------------------------------------------------------------------
 
-const SKIP_REASON: string | null = (() => {
-	if (!process.env.OPENAI_API_KEY && !process.env.CODEX_API_KEY) {
-		return 'OPENAI_API_KEY or CODEX_API_KEY not set';
+const CI = process.env.CI === 'true';
+
+let skipReason: string | null = (() => {
+	const hasDirectKey = !!(process.env.OPENAI_API_KEY || process.env.CODEX_API_KEY);
+	const hasRefreshToken = !!process.env.CODEX_REFRESH_TOKEN;
+	if (!hasDirectKey && !hasRefreshToken) {
+		return 'OPENAI_API_KEY, CODEX_API_KEY, or CODEX_REFRESH_TOKEN not set';
 	}
 	const which = Bun.spawnSync(['which', 'codex'], { stderr: 'pipe' });
 	if (which.exitCode !== 0) return 'codex binary not found on PATH';
@@ -183,8 +195,27 @@ describe('Codex Bridge (Online)', () => {
 	let provider: AnthropicCodexProvider;
 	let bridgeUrl: string;
 
-	beforeAll(() => {
-		if (SKIP_REASON) return; // do nothing; each test returns early
+	beforeAll(async () => {
+		// In CI, fail hard if no credential is available — a skipped shard gives false confidence.
+		if (skipReason) {
+			if (CI) throw new Error(`[codex-bridge] Credential check failed: ${skipReason}`);
+			return;
+		}
+
+		// Exchange CODEX_REFRESH_TOKEN for a live access token when no direct key is present.
+		if (
+			!process.env.OPENAI_API_KEY &&
+			!process.env.CODEX_API_KEY &&
+			process.env.CODEX_REFRESH_TOKEN
+		) {
+			const token = await refreshCodexToken(process.env.CODEX_REFRESH_TOKEN);
+			if (!token) {
+				skipReason = 'CODEX_REFRESH_TOKEN exchange failed';
+				if (CI) throw new Error(`[codex-bridge] ${skipReason}`);
+				return;
+			}
+			process.env.OPENAI_API_KEY = token.access_token;
+		}
 
 		provider = new AnthropicCodexProvider();
 		const cfg = provider.buildSdkConfig('o4-mini', { workspacePath: process.cwd() });
@@ -196,11 +227,13 @@ describe('Codex Bridge (Online)', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Helper: return early with a console note when prerequisites are missing
+	// Helper: return early when prerequisites are missing.
+	// In CI throws instead of skipping so the shard fails visibly.
 	// -------------------------------------------------------------------------
 	function skipIfNeeded(label: string): boolean {
-		if (SKIP_REASON) {
-			console.log(`[codex-bridge] Skipping "${label}" — ${SKIP_REASON}`);
+		if (skipReason) {
+			if (CI) throw new Error(`[codex-bridge] "${label}" — ${skipReason}`);
+			console.log(`[codex-bridge] Skipping "${label}" — ${skipReason}`);
 			return true;
 		}
 		return false;

@@ -115,11 +115,49 @@ interface StoredCredentials {
 }
 
 /** Raw OAuth token response from auth.openai.com. */
-interface OpenAIOAuthToken {
+export interface OpenAIOAuthToken {
 	access_token: string;
 	refresh_token: string;
 	expires_in: number;
 	token_type: string;
+}
+
+/**
+ * Exchange a Codex/OpenAI OAuth refresh token for a new access token.
+ * Returns the full token response, or null if the exchange fails for any reason.
+ * Exported so online test suites can exchange CODEX_REFRESH_TOKEN before running.
+ */
+export async function refreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
+	try {
+		const response = await fetch(OAUTH_CONFIG.tokenUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				grant_type: 'refresh_token',
+				refresh_token: refreshToken,
+				client_id: OAUTH_CONFIG.clientId,
+			}),
+		});
+		if (!response.ok) {
+			logger.warn(
+				`AnthropicCodexProvider: token refresh HTTP ${response.status}: ${await response.text()}`
+			);
+			return null;
+		}
+		const parsed = (await response.json()) as OpenAIOAuthToken;
+		if (!parsed.access_token || typeof parsed.access_token !== 'string') {
+			logger.warn('AnthropicCodexProvider: token refresh response missing access_token');
+			return null;
+		}
+		if (typeof parsed.expires_in !== 'number') {
+			logger.warn('AnthropicCodexProvider: token refresh response missing expires_in');
+			return null;
+		}
+		return parsed;
+	} catch (error) {
+		logger.warn('AnthropicCodexProvider: token refresh network error:', error);
+		return null;
+	}
 }
 
 /** Shape of ~/.codex/auth.json as written by the Codex CLI. */
@@ -711,39 +749,10 @@ export class AnthropicCodexProvider implements Provider {
 
 	/**
 	 * Attempt to refresh a Codex/OpenAI OAuth token.
-	 * Returns the new token response, or null if the refresh fails.
+	 * Delegates to the exported module-level refreshCodexToken() function.
 	 */
-	private async tryRefreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
-		try {
-			const response = await fetch(OAUTH_CONFIG.tokenUrl, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					grant_type: 'refresh_token',
-					refresh_token: refreshToken,
-					client_id: OAUTH_CONFIG.clientId,
-				}),
-			});
-			if (!response.ok) {
-				logger.warn(
-					`AnthropicCodexProvider: token refresh HTTP ${response.status}: ${await response.text()}`
-				);
-				return null;
-			}
-			const parsed = (await response.json()) as OpenAIOAuthToken;
-			if (!parsed.access_token || typeof parsed.access_token !== 'string') {
-				logger.warn('AnthropicCodexProvider: token refresh response missing access_token');
-				return null;
-			}
-			if (typeof parsed.expires_in !== 'number') {
-				logger.warn('AnthropicCodexProvider: token refresh response missing expires_in');
-				return null;
-			}
-			return parsed;
-		} catch (error) {
-			logger.warn('AnthropicCodexProvider: token refresh network error:', error);
-			return null;
-		}
+	private tryRefreshCodexToken(refreshToken: string): Promise<OpenAIOAuthToken | null> {
+		return refreshCodexToken(refreshToken);
 	}
 
 	// -------------------------------------------------------------------------
