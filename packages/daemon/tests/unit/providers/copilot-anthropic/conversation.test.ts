@@ -135,6 +135,74 @@ describe('ConversationManager.findContinuation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// createConversation — onErrorOccurred hook
+// ---------------------------------------------------------------------------
+
+describe('ConversationManager.createConversation onErrorOccurred hook', () => {
+	it('returns retry for recoverable model_call errors', async () => {
+		const manager = new ConversationManager();
+		let capturedHooks: Record<string, unknown> | undefined;
+		const mockSession = new MockSession();
+		const client: CopilotClient = {
+			async createSession(cfg: unknown): Promise<import('@github/copilot-sdk').CopilotSession> {
+				capturedHooks = (cfg as Record<string, unknown>)['hooks'] as Record<string, unknown>;
+				return mockSession as unknown as import('@github/copilot-sdk').CopilotSession;
+			},
+		} as unknown as CopilotClient;
+
+		const tools: AnthropicTool[] = [
+			{ name: 'bash', description: 'run', input_schema: { type: 'object' } },
+		];
+		await manager.createConversation(client, 'model', undefined, tools, '/tmp');
+
+		expect(capturedHooks).toBeDefined();
+		const onErrorOccurred = capturedHooks!['onErrorOccurred'] as (input: {
+			error: Error;
+			errorContext: string;
+			recoverable: boolean;
+		}) => unknown;
+		expect(typeof onErrorOccurred).toBe('function');
+
+		const result = onErrorOccurred({
+			error: new Error('model fail'),
+			errorContext: 'model_call',
+			recoverable: true,
+		});
+		expect(result).toEqual({ errorHandling: 'retry', retryCount: 2 });
+	});
+
+	it('returns undefined for non-recoverable errors', async () => {
+		const manager = new ConversationManager();
+		let capturedHooks: Record<string, unknown> | undefined;
+		const mockSession = new MockSession();
+		const client: CopilotClient = {
+			async createSession(cfg: unknown): Promise<import('@github/copilot-sdk').CopilotSession> {
+				capturedHooks = (cfg as Record<string, unknown>)['hooks'] as Record<string, unknown>;
+				return mockSession as unknown as import('@github/copilot-sdk').CopilotSession;
+			},
+		} as unknown as CopilotClient;
+
+		const tools: AnthropicTool[] = [
+			{ name: 'bash', description: 'run', input_schema: { type: 'object' } },
+		];
+		await manager.createConversation(client, 'model', undefined, tools, '/tmp');
+
+		const onErrorOccurred = capturedHooks!['onErrorOccurred'] as (input: {
+			error: Error;
+			errorContext: string;
+			recoverable: boolean;
+		}) => unknown;
+
+		const result = onErrorOccurred({
+			error: new Error('fatal'),
+			errorContext: 'model_call',
+			recoverable: false,
+		});
+		expect(result).toBeUndefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // createConversation runtime guard
 // ---------------------------------------------------------------------------
 

@@ -166,6 +166,19 @@ describe('CopilotAnthropicProvider', () => {
 			expect(cfg.envVars['ANTHROPIC_AUTH_TOKEN']).toBeDefined();
 		});
 
+		it('encodes workspacePath in ANTHROPIC_AUTH_TOKEN', () => {
+			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet', {
+				workspacePath: '/my/workspace',
+			});
+			expect(cfg.envVars['ANTHROPIC_AUTH_TOKEN']).toBe('copilot-anthropic-proxy:/my/workspace');
+		});
+
+		it('falls back to provider cwd when workspacePath is absent', () => {
+			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
+			const token = cfg.envVars['ANTHROPIC_AUTH_TOKEN'] as string;
+			expect(token.startsWith('copilot-anthropic-proxy:')).toBe(true);
+		});
+
 		it('ANTHROPIC_BASE_URL uses the injected server URL', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			const parsedUrl = new URL(cfg.envVars['ANTHROPIC_BASE_URL'] as string);

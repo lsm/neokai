@@ -94,7 +94,8 @@ function sendJsonError(
  * lets the singleton embedded server apply the correct `cwd` per HTTP request
  * without rebuilding a new server for every session.
  */
-function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): string {
+/** @internal exported for unit tests only */
+export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): string {
 	const auth = (req.headers['authorization'] ?? '') as string;
 	const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 	const prefix = 'copilot-anthropic-proxy:';

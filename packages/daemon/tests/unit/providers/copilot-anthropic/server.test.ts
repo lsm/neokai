@@ -15,6 +15,7 @@ import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
 import {
 	startEmbeddedServer,
 	runSessionStreaming,
+	resolveRequestCwd,
 } from '../../../../src/lib/providers/copilot-anthropic/index';
 import { initializeProviders, resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
@@ -784,6 +785,43 @@ describe('startEmbeddedServer', () => {
 		} finally {
 			await ts2.stop();
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// resolveRequestCwd — unit tests
+// ---------------------------------------------------------------------------
+
+describe('resolveRequestCwd', () => {
+	function makeReq(authHeader?: string): import('node:http').IncomingMessage {
+		return {
+			headers: authHeader !== undefined ? { authorization: authHeader } : {},
+		} as unknown as import('node:http').IncomingMessage;
+	}
+
+	it('returns the path from a valid copilot-anthropic-proxy token', () => {
+		const req = makeReq('Bearer copilot-anthropic-proxy:/my/workspace');
+		expect(resolveRequestCwd(req, '/default')).toBe('/my/workspace');
+	});
+
+	it('falls back to defaultCwd when the token has no prefix', () => {
+		const req = makeReq('Bearer some-other-token');
+		expect(resolveRequestCwd(req, '/default')).toBe('/default');
+	});
+
+	it('falls back to defaultCwd when the path after prefix is empty', () => {
+		const req = makeReq('Bearer copilot-anthropic-proxy:');
+		expect(resolveRequestCwd(req, '/default')).toBe('/default');
+	});
+
+	it('falls back to defaultCwd when Authorization header is absent', () => {
+		const req = makeReq(undefined);
+		expect(resolveRequestCwd(req, '/default')).toBe('/default');
+	});
+
+	it('falls back to defaultCwd for non-Bearer auth schemes', () => {
+		const req = makeReq('Basic dXNlcjpwYXNz');
+		expect(resolveRequestCwd(req, '/default')).toBe('/default');
 	});
 });
 

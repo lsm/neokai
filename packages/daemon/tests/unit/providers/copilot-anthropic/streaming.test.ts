@@ -52,9 +52,9 @@ class MockSession {
 	}
 }
 
-function makeMockRes(): { written: string[]; ended: boolean; res: ServerResponse } {
+function makeMockRes(): { written: string[]; state: { ended: boolean }; res: ServerResponse } {
 	const written: string[] = [];
-	let ended = false;
+	const state = { ended: false };
 	const res = {
 		writeHead: () => {},
 		write: (chunk: string) => {
@@ -62,11 +62,11 @@ function makeMockRes(): { written: string[]; ended: boolean; res: ServerResponse
 			return true;
 		},
 		end: () => {
-			ended = true;
+			state.ended = true;
 		},
 		headersSent: false,
 	} as unknown as ServerResponse;
-	return { written, ended, res };
+	return { written, state, res };
 }
 
 function makeMockReq(): { emitter: EventEmitter; req: IncomingMessage } {

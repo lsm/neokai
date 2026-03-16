@@ -7,7 +7,7 @@
  */
 
 export { CopilotAnthropicProvider } from './provider.js';
-export { startEmbeddedServer, type EmbeddedServer } from './server.js';
+export { startEmbeddedServer, resolveRequestCwd, type EmbeddedServer } from './server.js';
 
 // Exported for unit tests only
 export { runSessionStreaming, resumeSessionStreaming, type StreamingOutcome } from './streaming.js';

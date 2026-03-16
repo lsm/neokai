@@ -172,6 +172,8 @@ export class ConversationManager {
 			onUserInputRequest: () =>
 				Promise.resolve({ answer: 'User input is not available in API mode.', wasFreeform: true }),
 			hooks: {
+				onPreToolUse: () => Promise.resolve({ permissionDecision: 'allow' as const }),
+				onPostToolUse: () => {},
 				onErrorOccurred: (input) => {
 					logger.warn(
 						`SDK error (${input.errorContext}, recoverable=${String(input.recoverable)}): ${String(input.error)}`
