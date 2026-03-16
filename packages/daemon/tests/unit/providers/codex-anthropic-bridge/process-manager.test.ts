@@ -32,6 +32,22 @@ function makeStubConn(): AppServerConn {
 }
 
 // ---------------------------------------------------------------------------
+// BridgeSession.initialize() — protocol shape regression guard
+// ---------------------------------------------------------------------------
+
+describe('BridgeSession.initialize()', () => {
+	it('extracts threadId from codex 0.114+ result.thread.id shape', async () => {
+		const conn = makeStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+		// Access private field via type cast — this is a regression guard for the
+		// codex 0.114+ response shape change (result.thread.id vs result.threadId).
+		const sessionState = session as unknown as { threadId: string | null };
+		expect(sessionState.threadId).toBe('thread-1');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // BridgeSession single-use guard (regression: P1 fix)
 // ---------------------------------------------------------------------------
 

@@ -83,11 +83,27 @@ export function toCodexToolName(name: string): string {
 /**
  * Build a map from codex tool name → original tool name for reverse lookup on
  * tool call interception. Only names that were translated (contained `__`) are included.
+ *
+ * Throws if two original names produce the same Codex name after translation (fail-fast
+ * collision detection).  Example of a collision: `mcp__a_b__c` and `mcp__a__b_c` both
+ * translate to `mcp_a_b_c`.  Callers must rename one of the conflicting tools before
+ * registering them with the bridge.
  */
 export function buildToolNameReverseMap(originalNames: string[]): Map<string, string> {
 	const map = new Map<string, string>();
+	/** codexName → first original name that produced it (for collision messages) */
+	const seen = new Map<string, string>();
+
 	for (const name of originalNames) {
 		const codexName = toCodexToolName(name);
+		const existing = seen.get(codexName);
+		if (existing !== undefined && existing !== name) {
+			throw new Error(
+				`Tool name collision: "${existing}" and "${name}" both translate to ` +
+					`"${codexName}" for Codex. Rename one of the tools to avoid the conflict.`
+			);
+		}
+		seen.set(codexName, name);
 		if (codexName !== name) {
 			map.set(codexName, name);
 		}

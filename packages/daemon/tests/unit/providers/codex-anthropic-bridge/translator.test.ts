@@ -108,6 +108,21 @@ describe('buildToolNameReverseMap', () => {
 		expect(map.get('mcp_other_fn')).toBe('mcp__other__fn');
 		expect(map.has('bash')).toBe(false);
 	});
+
+	it('throws on collision when two names translate to the same codex name', () => {
+		// mcp__a_b__c → mcp_a_b_c
+		// mcp__a__b_c → mcp_a_b_c (same result — collision)
+		expect(() => buildToolNameReverseMap(['mcp__a_b__c', 'mcp__a__b_c'])).toThrow(
+			/collision.*mcp_a_b_c/
+		);
+	});
+
+	it('throws when a translated name conflicts with an untranslated name', () => {
+		// mcp__server__tool → mcp_server_tool (collision with existing unchanged name)
+		expect(() => buildToolNameReverseMap(['mcp_server_tool', 'mcp__server__tool'])).toThrow(
+			/collision.*mcp_server_tool/
+		);
+	});
 });
 
 // ---------------------------------------------------------------------------
