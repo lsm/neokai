@@ -6,7 +6,7 @@
  * fails the task immediately instead of routing to the leader.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, it, afterEach } from 'bun:test';
 import {
 	createRuntimeTestContext,
 	createGoalAndTask,
@@ -206,6 +206,67 @@ describe('RoomRuntime - terminal error detection', () => {
 			// Placeholder text does not match terminal error patterns
 			const updatedTask = await ctx.taskManager.getTask(task.id);
 			expect(updatedTask!.status).toBe('in_progress');
+		});
+	});
+
+	describe('rate limit bounce prevention', () => {
+		it('sets a rate limit backoff on first bare-429 detection (prevents rapid bounce loop)', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [makeWorkerMessage('API Error: 429 Too Many Requests')],
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should not be failed (429 is rate_limit, not terminal)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('needs_attention');
+
+			// Group must be rate-limited so the worker is NOT immediately bounced back
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).not.toBeNull();
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			expect(updatedGroup!.rateLimit!.sessionRole).toBe('worker');
+		});
+
+		it('does NOT re-set rate limit when group already has one (re-trigger after expiry)', async () => {
+			// Production flow (after fix):
+			//   1. Initial 429 → setRateLimit(60s) → scheduleTickAfterRateLimitReset
+			//   2. Timer fires ~65s later → does NOT clearRateLimit (removed to preserve sentinel)
+			//      → scheduleTick
+			//   3. executeTick → recoverStuckWorkers calls onWorkerTerminalState again
+			//      with the same 429 still in output
+			//   4. group.rateLimit is non-null (expired but present) → !group.rateLimit is false
+			//      → skip re-detection → fall through to worktree check → route to leader
+			//
+			// We simulate step 2-3: override rateLimit to expired (time has passed) then
+			// re-trigger the handler.
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [makeWorkerMessage('API Error: 429 Too Many Requests')],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Simulate the rate limit having already expired (timer fired, resetsAt now in past,
+			// but rateLimit is still non-null because the timer no longer calls clearRateLimit).
+			ctx.groupRepo.setRateLimit(group.id, {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: Date.now() - 1,
+				sessionRole: 'worker',
+			});
+
+			// Re-trigger as recoverStuckWorkers would (feedbackIteration=0, isRateLimited=false)
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Rate limit must NOT have been pushed to a new future timestamp
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+
+			// Worker should have been routed to leader (worktree is clean in tests).
+			// Routing is confirmed by feedbackIteration incrementing to 1.
+			expect(updatedGroup!.feedbackIteration).toBe(1);
 		});
 	});
 });
