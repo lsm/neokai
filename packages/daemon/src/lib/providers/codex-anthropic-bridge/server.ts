@@ -259,12 +259,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			const model = body.model;
 			const system = extractSystemText(body.system);
 			const userText = buildConversationText(body.messages, system);
-			const dynamicTools = buildDynamicTools(body.tools ?? []);
+			const anthropicTools = body.tools ?? [];
+			const dynamicTools = buildDynamicTools(anthropicTools);
+			const originalToolNames = anthropicTools.map((t) => t.name);
 
 			let session: BridgeSession;
 			try {
 				const conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.apiKey);
-				session = new BridgeSession(conn, model, dynamicTools, config.cwd);
+				session = new BridgeSession(conn, model, dynamicTools, config.cwd, originalToolNames);
 				await session.initialize();
 			} catch (err) {
 				logger.error('codex-bridge: failed to start BridgeSession:', err);

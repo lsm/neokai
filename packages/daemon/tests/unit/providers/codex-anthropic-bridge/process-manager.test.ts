@@ -19,8 +19,10 @@ function makeStubConn(): AppServerConn {
 		closed: new Promise<void>(() => {}),
 		kill: () => {},
 		request: async (method: string) => {
-			if (method === 'thread/start') return { threadId: 'thread-1' };
-			if (method === 'turn/start') return { turnId: 'turn-1' };
+			// codex 0.114+: thread/start returns { thread: { id } }
+			if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+			// codex 0.114+: turn/start returns { turn: { id } }
+			if (method === 'turn/start') return { turn: { id: 'turn-1' } };
 			return {};
 		},
 		notify: () => {},

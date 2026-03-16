@@ -8,6 +8,7 @@
  */
 
 import type { CodexDynamicTool } from './translator.js';
+import { buildToolNameReverseMap } from './translator.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-process-manager');
@@ -250,20 +251,29 @@ export class AppServerConn {
 // BridgeSession — one Codex thread producing BridgeEvents for one turn
 // ---------------------------------------------------------------------------
 
-type ThreadStartResult = { threadId: string };
-type TurnStartResult = { turnId: string };
+// codex 0.114+: thread/start returns { thread: { id: "..." }, ... }
+type ThreadStartResult = { thread: { id: string } };
+// codex 0.114+: turn/start returns { turn: { id: "..." }, ... }
+type TurnStartResult = { turn: { id: string } };
 
 export class BridgeSession {
 	private threadId: string | null = null;
 	private readonly queue = new AsyncQueue<BridgeEvent | Error>();
 	private turnStarted = false;
+	/**
+	 * Reverse map: codex tool name (single-underscore) → original Anthropic tool name.
+	 * Used to restore `mcp_server_tool` → `mcp__server__tool` on tool call interception.
+	 */
+	private readonly toolNameReverseMap: Map<string, string>;
 
 	constructor(
 		private readonly conn: AppServerConn,
 		private readonly model: string,
 		private readonly tools: CodexDynamicTool[],
-		private readonly cwd: string
+		private readonly cwd: string,
+		originalToolNames: string[] = []
 	) {
+		this.toolNameReverseMap = buildToolNameReverseMap(originalToolNames);
 		conn.closed.then(() =>
 			this.queue.push(new Error('codex app-server subprocess closed unexpectedly'))
 		);
@@ -282,7 +292,7 @@ export class BridgeSession {
 			dynamicTools: this.tools,
 			sandboxPolicy: { type: 'readOnly' },
 		});
-		this.threadId = res.threadId;
+		this.threadId = res.thread.id;
 		logger.debug(`BridgeSession: thread started threadId=${this.threadId}`);
 
 		// Wire notification handlers
@@ -313,11 +323,14 @@ export class BridgeSession {
 				tool: string;
 				arguments: Record<string, unknown>;
 			};
+			// Restore the original Anthropic tool name (e.g. mcp_server_tool →
+			// mcp__server__tool) so callers see the name they registered.
+			const originalToolName = this.toolNameReverseMap.get(params.tool) ?? params.tool;
 			const deferred = new Deferred<string>();
 			this.queue.push({
 				type: 'tool_call',
 				callId: params.callId,
-				toolName: params.tool,
+				toolName: originalToolName,
 				toolInput: params.arguments,
 				provideResult: (text: string) => deferred.resolve(text),
 			});
@@ -344,9 +357,10 @@ export class BridgeSession {
 
 		const res = await this.conn.request<TurnStartResult>('turn/start', {
 			threadId: this.threadId,
-			input: { type: 'text', text: userText },
+			// input must be an array of content blocks (codex 0.114+ protocol)
+			input: [{ type: 'text', text: userText }],
 		});
-		logger.debug(`BridgeSession: turn started turnId=${res.turnId}`);
+		logger.debug(`BridgeSession: turn started turnId=${res.turn.id}`);
 
 		while (true) {
 			const item = await this.queue.next();

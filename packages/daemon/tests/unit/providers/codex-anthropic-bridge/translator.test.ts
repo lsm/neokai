@@ -5,6 +5,8 @@
 import { describe, expect, it } from 'bun:test';
 import {
 	buildDynamicTools,
+	toCodexToolName,
+	buildToolNameReverseMap,
 	extractSystemText,
 	extractContentText,
 	isToolResultContinuation,
@@ -54,6 +56,57 @@ describe('buildDynamicTools', () => {
 
 	it('returns empty array for empty input', () => {
 		expect(buildDynamicTools([])).toEqual([]);
+	});
+
+	it('translates MCP tool names with __ to single _ for Codex', () => {
+		const tools: AnthropicTool[] = [
+			{
+				name: 'mcp__mockserver__echo',
+				description: 'Echo a message',
+				input_schema: { type: 'object' },
+			},
+		];
+		const [tool] = buildDynamicTools(tools);
+		// Codex rejects __ (double underscore) as reserved; translate to single _
+		expect(tool.name).toBe('mcp_mockserver_echo');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// toCodexToolName
+// ---------------------------------------------------------------------------
+
+describe('toCodexToolName', () => {
+	it('leaves names without __ unchanged', () => {
+		expect(toCodexToolName('bash')).toBe('bash');
+		expect(toCodexToolName('read_file')).toBe('read_file');
+	});
+
+	it('replaces __ with _ in MCP-style names', () => {
+		expect(toCodexToolName('mcp__server__tool')).toBe('mcp_server_tool');
+		expect(toCodexToolName('mcp__mockserver__echo')).toBe('mcp_mockserver_echo');
+	});
+
+	it('replaces all occurrences of __', () => {
+		expect(toCodexToolName('a__b__c')).toBe('a_b_c');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildToolNameReverseMap
+// ---------------------------------------------------------------------------
+
+describe('buildToolNameReverseMap', () => {
+	it('returns empty map when no names contain __', () => {
+		const map = buildToolNameReverseMap(['bash', 'read_file']);
+		expect(map.size).toBe(0);
+	});
+
+	it('maps codex name back to original for MCP tools', () => {
+		const map = buildToolNameReverseMap(['bash', 'mcp__server__tool', 'mcp__other__fn']);
+		expect(map.get('mcp_server_tool')).toBe('mcp__server__tool');
+		expect(map.get('mcp_other_fn')).toBe('mcp__other__fn');
+		expect(map.has('bash')).toBe(false);
 	});
 });
 

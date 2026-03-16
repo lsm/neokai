@@ -67,10 +67,38 @@ export type CodexDynamicTool = {
 // Conversion helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Codex app-server reserves tool name prefixes that contain `__` (double underscore).
+ * MCP tool names use the convention `mcp__<server>__<tool>` which triggers this
+ * restriction. Translate `__` → `_` before registering with Codex and reverse the
+ * mapping when Codex calls the tool back.
+ *
+ * Example: `mcp__myserver__echo` → registered as `mcp_myserver_echo`
+ *          Codex calls back with `mcp_myserver_echo` → restored to `mcp__myserver__echo`
+ */
+export function toCodexToolName(name: string): string {
+	return name.replaceAll('__', '_');
+}
+
+/**
+ * Build a map from codex tool name → original tool name for reverse lookup on
+ * tool call interception. Only names that were translated (contained `__`) are included.
+ */
+export function buildToolNameReverseMap(originalNames: string[]): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const name of originalNames) {
+		const codexName = toCodexToolName(name);
+		if (codexName !== name) {
+			map.set(codexName, name);
+		}
+	}
+	return map;
+}
+
 /** Convert Anthropic tools to Codex Dynamic Tools format. */
 export function buildDynamicTools(tools: AnthropicTool[]): CodexDynamicTool[] {
 	return tools.map((t) => ({
-		name: t.name,
+		name: toCodexToolName(t.name),
 		description: t.description ?? '',
 		inputSchema: t.input_schema,
 		deferLoading: false,
