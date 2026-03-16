@@ -406,9 +406,9 @@ export class GoalRepository {
 	 * Get a single execution by ID
 	 */
 	getExecution(id: string): MissionExecution | null {
-		const row = this.db
-			.prepare(`SELECT * FROM mission_executions WHERE id = ?`)
-			.get(id) as Record<string, unknown> | undefined;
+		const row = this.db.prepare(`SELECT * FROM mission_executions WHERE id = ?`).get(id) as
+			| Record<string, unknown>
+			| undefined;
 		if (!row) return null;
 		return this.rowToExecution(row);
 	}
@@ -469,9 +469,7 @@ export class GoalRepository {
 	 */
 	getActiveExecution(goalId: string): MissionExecution | null {
 		const row = this.db
-			.prepare(
-				`SELECT * FROM mission_executions WHERE goal_id = ? AND status = 'running' LIMIT 1`
-			)
+			.prepare(`SELECT * FROM mission_executions WHERE goal_id = ? AND status = 'running' LIMIT 1`)
 			.get(goalId) as Record<string, unknown> | undefined;
 		if (!row) return null;
 		return this.rowToExecution(row);
@@ -508,9 +506,7 @@ export class GoalRepository {
 					? (JSON.parse(row.structured_metrics as string) as MissionMetric[])
 					: undefined,
 			schedule:
-				row.schedule != null
-					? (JSON.parse(row.schedule as string) as CronSchedule)
-					: undefined,
+				row.schedule != null ? (JSON.parse(row.schedule as string) as CronSchedule) : undefined,
 			schedulePaused: row.schedule_paused === 1,
 			nextRunAt: (row.next_run_at as number | null) ?? undefined,
 			maxConsecutiveFailures: (row.max_consecutive_failures as number | null) ?? 3,

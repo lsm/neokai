@@ -1373,19 +1373,13 @@ function runMigration28(db: BunDatabase): void {
 			db.exec(`ALTER TABLE goals ADD COLUMN structured_metrics TEXT`);
 		}
 		if (!tableHasColumn(db, 'goals', 'max_consecutive_failures')) {
-			db.exec(
-				`ALTER TABLE goals ADD COLUMN max_consecutive_failures INTEGER NOT NULL DEFAULT 3`
-			);
+			db.exec(`ALTER TABLE goals ADD COLUMN max_consecutive_failures INTEGER NOT NULL DEFAULT 3`);
 		}
 		if (!tableHasColumn(db, 'goals', 'max_planning_attempts')) {
-			db.exec(
-				`ALTER TABLE goals ADD COLUMN max_planning_attempts INTEGER NOT NULL DEFAULT 5`
-			);
+			db.exec(`ALTER TABLE goals ADD COLUMN max_planning_attempts INTEGER NOT NULL DEFAULT 5`);
 		}
 		if (!tableHasColumn(db, 'goals', 'consecutive_failures')) {
-			db.exec(
-				`ALTER TABLE goals ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`
-			);
+			db.exec(`ALTER TABLE goals ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`);
 		}
 		// Composite index for efficient scheduler queries
 		db.exec(

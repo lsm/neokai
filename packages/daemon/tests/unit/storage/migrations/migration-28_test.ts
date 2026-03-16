@@ -120,7 +120,9 @@ describe('Migration 28: mission metadata schema additions', () => {
 		// goals table should not exist yet (created by createTables, not migrations)
 		// But the new support tables should exist after runMigrations
 		const mmhExists = db
-			.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='mission_metric_history'`)
+			.prepare(
+				`SELECT name FROM sqlite_master WHERE type='table' AND name='mission_metric_history'`
+			)
 			.get();
 		const meExists = db
 			.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='mission_executions'`)
@@ -506,9 +508,9 @@ describe('GoalRepository: mission_executions', () => {
 // ---------------------------------------------------------------------------
 
 describe('getEffectiveMaxPlanningAttempts', () => {
-	function makeGoal(maxPlanningAttempts?: number): Parameters<
-		typeof getEffectiveMaxPlanningAttempts
-	>[0] {
+	function makeGoal(
+		maxPlanningAttempts?: number
+	): Parameters<typeof getEffectiveMaxPlanningAttempts>[0] {
 		return {
 			id: 'g-1',
 			roomId: 'r-1',
