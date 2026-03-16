@@ -340,8 +340,7 @@ export class AnthropicCodexProvider implements Provider {
 			// getApiKey() discovery chain populates this.cachedApiKey when isAvailable()
 			// or getAuthStatus() is called first (which is always the case in QueryRunner).
 			// Fall through the same priority order: env var → file-based cache → empty.
-			const apiKey =
-				this.env.OPENAI_API_KEY ?? this.env.CODEX_API_KEY ?? (this.cachedApiKey || '') ?? '';
+			const apiKey = this.env.OPENAI_API_KEY || this.env.CODEX_API_KEY || this.cachedApiKey || '';
 			bridgeServer = createBridgeServer({ codexBinaryPath, apiKey, cwd: workspace });
 			this.bridgeServers.set(workspace, bridgeServer);
 			logger.info(

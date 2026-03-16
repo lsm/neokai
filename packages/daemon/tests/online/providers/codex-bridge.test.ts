@@ -2,7 +2,7 @@
  * Codex Bridge Online Integration Tests
  *
  * Exercises the full Codex bridge pipeline end-to-end:
- *   CodexBridgeProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
+ *   AnthropicCodexProvider.buildSdkConfig → HTTP bridge server → codex app-server → Codex API
  *
  * REQUIREMENTS:
  * - OPENAI_API_KEY or CODEX_API_KEY must be set

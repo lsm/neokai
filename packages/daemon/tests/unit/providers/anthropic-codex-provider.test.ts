@@ -242,6 +242,23 @@ describe('AnthropicCodexProvider', () => {
 				await fs.rm(tmpDir, { recursive: true, force: true });
 			}
 		});
+
+		it('buildSdkConfig() uses cached key even when OPENAI_API_KEY is empty string', async () => {
+			// Empty-string env var must not block the cached file-based key
+			const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-build-cfg-empty-'));
+			try {
+				const neokaiDir = path.join(tmpDir, 'neokai');
+				await writeNeokaiAuth(neokaiDir, { type: 'oauth', access: 'file-token-not-empty' });
+				const p = makeProvider({ OPENAI_API_KEY: '' }, neokaiDir, path.join(tmpDir, 'codex'));
+				await p.getApiKey(); // populates cachedApiKey
+				const cfg = p.buildSdkConfig('codex-1', { workspacePath: '/tmp/empty-env-ws' });
+				expect(cfg.isAnthropicCompatible).toBe(true);
+				expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+				p.stopAllBridgeServers();
+			} finally {
+				await fs.rm(tmpDir, { recursive: true, force: true });
+			}
+		});
 	});
 
 	// -------------------------------------------------------------------------
