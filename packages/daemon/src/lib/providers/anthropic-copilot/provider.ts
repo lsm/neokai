@@ -54,7 +54,6 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { Logger } from '../../logger.js';
-import { buildCopilotEnv } from './bun-node-wrapper.js';
 
 const execFileAsync = promisify(execFile);
 const logger = new Logger('anthropic-copilot-provider');
@@ -570,7 +569,7 @@ export class AnthropicCopilotProvider implements Provider {
 		const client = new CopilotClient({
 			useStdio: true,
 			logLevel: 'error',
-			env: buildCopilotEnv({ ...this.env, COPILOT_GITHUB_TOKEN: token }),
+			env: { ...this.env, COPILOT_GITHUB_TOKEN: token },
 		});
 		try {
 			let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -783,7 +782,7 @@ export class AnthropicCopilotProvider implements Provider {
 			this.clientCache = new CopilotClient({
 				useStdio: true,
 				logLevel: 'error',
-				env: buildCopilotEnv(env),
+				env,
 			});
 			logger.debug('Created CopilotClient (bundled CLI path)');
 		}
