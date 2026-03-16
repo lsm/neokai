@@ -25,7 +25,11 @@ import {
 	MAX_CONCURRENT_GROUPS_LIMIT,
 	MAX_REVIEW_ROUNDS_LIMIT,
 } from '@neokai/shared';
-import type { SessionGroupRepository, SessionGroup } from '../state/session-group-repository';
+import type {
+	SessionGroupRepository,
+	SessionGroup,
+	RateLimitBackoff,
+} from '../state/session-group-repository';
 import type { TaskManager } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
 import type { SessionObserver, TerminalState } from '../state/session-observer';
@@ -468,11 +472,92 @@ export class RoomRuntime {
 			return;
 		}
 
-		// Check rate limit backoff
+		// Check rate limit backoff (set by mirroring on each incoming message)
 		if (this.groupRepo.isRateLimited(groupId)) {
 			log.info(`[Worker→Leader] Group ${groupId}: rate limited — pausing routing to Leader`);
 			this.scheduleTickAfterRateLimitReset(groupId);
 			return;
+		}
+
+		// Collect Worker messages since last forwarded message.
+		// Done early — before any bounce gate — so API errors in the output can be
+		// detected and short-circuit the worktree / exit-gate bounces below.
+		// (A worker that hit a 429 or 4xx should not be bounced back into another API call.)
+		const workerMessages = this.getWorkerMessages
+			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
+			: [];
+
+		// Build worker output text once — used for error detection, bypass detection, and the
+		// leader envelope.  For empty messages use a sentinel string (it won't match any error
+		// pattern, so the classification below is a no-op for silent terminal exits).
+		const workerOutputText =
+			workerMessages.length > 0
+				? workerMessages
+						.map((m) => m.text)
+						.filter(Boolean)
+						.join('\n\n')
+				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
+
+		// Classify any API errors in worker output BEFORE the worktree / exit-gate checks.
+		//
+		// Why here?  The rate-limit check above only catches errors that mirroring already
+		// persisted to the group.  When the rate limit expires and recoverStuckWorkers
+		// re-triggers this handler, the group-level flag is gone.  If the worker's output
+		// still contains a 429 (or a 4xx terminal error), running the worktree gate next
+		// would bounce the worker straight back into another failing API call — creating a
+		// rapid bounce loop.  Detecting the error first prevents that.
+		//
+		// terminal   → fail task immediately (4xx — unrecoverable, no point bouncing)
+		// rate_limit → set initial backoff and pause (only on first detection; re-triggers fall through)
+		// recoverable / null → fall through to worktree check and exit gate
+		{
+			const errorClass = classifyError(workerOutputText);
+			if (errorClass?.class === 'terminal') {
+				log.info(`Terminal API error in worker output for group ${groupId}: ${errorClass.reason}`);
+				this.appendGroupEvent(groupId, 'status', {
+					text: `Terminal error: ${errorClass.reason}`,
+				});
+				await this.taskGroupManager.fail(groupId, errorClass.reason);
+				this.cleanupMirroring(groupId, `Terminal API error: ${errorClass.reason}`);
+				await this.emitTaskUpdateById(group.taskId);
+				await this.emitGoalProgressForTask(group.taskId);
+				this.scheduleTick();
+				return;
+			}
+			if (errorClass?.class === 'rate_limit') {
+				// Only set backoff on first detection (group.rateLimit is null).
+				// After the initial backoff expires, recoverStuckWorkers re-triggers this handler
+				// with the same old 429 message still in the worker output.  Skipping re-detection
+				// here lets the worker fall through to the worktree check and attempt cleanup/retry.
+				// If the retry hits a new 429, mirroring will re-establish the backoff.
+				if (!group.rateLimit) {
+					const rateLimitBackoff = errorClass.resetsAt
+						? createRateLimitBackoff(workerOutputText, 'worker')
+						: null;
+					// For bare "API Error: 429" with no parseable reset time, apply a 1-minute
+					// minimum backoff so the worker is not immediately bounced into another
+					// failing API call.
+					const backoff: RateLimitBackoff = rateLimitBackoff ?? {
+						detectedAt: Date.now(),
+						resetsAt: Date.now() + 60 * 1000,
+						sessionRole: 'worker',
+					};
+					this.groupRepo.setRateLimit(groupId, backoff);
+					log.info(
+						`Rate limit detected in worker output for group ${groupId}. ` +
+							`Backoff until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`
+					);
+					this.appendGroupEvent(groupId, 'rate_limited', {
+						text: `Rate limit detected. Pausing until ${new Date(backoff.resetsAt).toLocaleTimeString()}.`,
+						resetsAt: backoff.resetsAt,
+						sessionRole: 'worker',
+					});
+					this.scheduleTickAfterRateLimitReset(groupId);
+					return;
+				}
+				// group.rateLimit already set (even if expired): re-trigger after expiry.
+				// Fall through to the worktree check so the worker can attempt cleanup/retry.
+			}
 		}
 
 		// Worktree cleanliness gate: check for uncommitted changes before routing to leader.
@@ -512,22 +597,6 @@ export class RoomRuntime {
 				return; // Keep worker turn active
 			}
 		}
-
-		// Collect Worker messages since last forwarded message (needed for bypass marker detection)
-		const workerMessages = this.getWorkerMessages
-			? this.getWorkerMessages(group.workerSessionId, group.lastForwardedMessageId)
-			: [];
-
-		// Build worker output text once — used both for bypass detection and leader envelope.
-		// For empty messages, use a sentinel string for the envelope but pass undefined to the
-		// gate so bypass detection is skipped (no output means no marker).
-		const workerOutputText =
-			workerMessages.length > 0
-				? workerMessages
-						.map((m) => m.text)
-						.filter(Boolean)
-						.join('\n\n')
-				: `[Worker session ${group.workerSessionId} reached terminal state: ${terminalState.kind}]`;
 
 		// Lifecycle hooks: Worker Exit Gate
 		// Validates preconditions before routing to leader (branch/PR for coder/general, tasks for planners)
@@ -597,45 +666,6 @@ export class RoomRuntime {
 					log.info(
 						`Bypass detected for ${group.workerRole} group ${groupId} — pre-setting submittedForReview, human approval still required`
 					);
-				}
-			}
-		}
-
-		// Classify any API errors in worker output.
-		// terminal   → fail task immediately (4xx, invalid model, etc. — won't fix on retry)
-		// rate_limit → pause with timed backoff (429 / usage limit)
-		// recoverable / null → fall through to normal leader routing
-		{
-			const errorClass = classifyError(workerOutputText);
-			if (errorClass?.class === 'terminal') {
-				log.info(`Terminal API error in worker output for group ${groupId}: ${errorClass.reason}`);
-				this.appendGroupEvent(groupId, 'status', {
-					text: `Terminal error: ${errorClass.reason}`,
-				});
-				await this.taskGroupManager.fail(groupId, errorClass.reason);
-				this.cleanupMirroring(groupId, `Terminal API error: ${errorClass.reason}`);
-				await this.emitTaskUpdateById(group.taskId);
-				await this.emitGoalProgressForTask(group.taskId);
-				this.scheduleTick();
-				return;
-			}
-			if (errorClass?.class === 'rate_limit') {
-				const rateLimitBackoff = errorClass.resetsAt
-					? createRateLimitBackoff(workerOutputText, 'worker')
-					: null;
-				if (rateLimitBackoff) {
-					this.groupRepo.setRateLimit(groupId, rateLimitBackoff);
-					log.info(
-						`Rate limit detected in worker output for group ${groupId}. ` +
-							`Backoff until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`
-					);
-					this.appendGroupEvent(groupId, 'rate_limited', {
-						text: `Rate limit detected. Pausing until ${new Date(rateLimitBackoff.resetsAt).toLocaleTimeString()}.`,
-						resetsAt: rateLimitBackoff.resetsAt,
-						sessionRole: 'worker',
-					});
-					this.scheduleTickAfterRateLimitReset(groupId);
-					return;
 				}
 			}
 		}

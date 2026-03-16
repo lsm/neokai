@@ -208,4 +208,58 @@ describe('RoomRuntime - terminal error detection', () => {
 			expect(updatedTask!.status).toBe('in_progress');
 		});
 	});
+
+	describe('rate limit bounce prevention', () => {
+		it('sets a rate limit backoff on first bare-429 detection (prevents rapid bounce loop)', async () => {
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [makeWorkerMessage('API Error: 429 Too Many Requests')],
+			});
+
+			const { group, task } = await spawnAndSimulateWorkerOutput('');
+
+			// Task should not be failed (429 is rate_limit, not terminal)
+			const updatedTask = await ctx.taskManager.getTask(task.id);
+			expect(updatedTask!.status).not.toBe('needs_attention');
+
+			// Group must be rate-limited so the worker is NOT immediately bounced back
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit).not.toBeNull();
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeGreaterThan(Date.now());
+			expect(updatedGroup!.rateLimit!.sessionRole).toBe('worker');
+		});
+
+		it('does NOT re-set rate limit when group already has one (re-trigger after expiry)', async () => {
+			// Regression: after rate limit expires, recoverStuckWorkers re-triggers
+			// onWorkerTerminalState.  The old 429 message is still in the worker output.
+			// The fix: skip rate_limit detection when group.rateLimit is already set,
+			// allowing the worker to fall through to the worktree check (and attempt cleanup).
+			ctx = createRuntimeTestContext({
+				getWorkerMessages: () => [makeWorkerMessage('API Error: 429 Too Many Requests')],
+			});
+
+			const { group } = await spawnAndSimulateWorkerOutput('');
+
+			// Simulate the rate limit having already expired
+			const expiredResetsAt = Date.now() - 1;
+			ctx.groupRepo.setRateLimit(group.id, {
+				detectedAt: Date.now() - 120_000,
+				resetsAt: expiredResetsAt,
+				sessionRole: 'worker',
+			});
+
+			// Re-trigger as recoverStuckWorkers would
+			await ctx.runtime.onWorkerTerminalState(group.id, {
+				sessionId: group.workerSessionId,
+				kind: 'idle',
+			});
+
+			// Rate limit must NOT have been pushed to a new future timestamp
+			const updatedGroup = ctx.groupRepo.getGroup(group.id);
+			expect(updatedGroup!.rateLimit!.resetsAt).toBeLessThanOrEqual(Date.now());
+
+			// Worker should have been routed to leader (worktree is clean in tests).
+			// Routing is confirmed by feedbackIteration incrementing to 1.
+			expect(updatedGroup!.feedbackIteration).toBe(1);
+		});
+	});
 });
