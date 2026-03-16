@@ -85,6 +85,11 @@ describe('ensureBunNodeWrapper (running under Bun in bun test)', () => {
 	});
 });
 
+// On Linux, buildCopilotEnv() returns the base env unchanged because Bun on
+// Linux does not support node:sqlite.  Tests are split by platform so they
+// assert the correct behaviour on both Linux CI and macOS dev machines.
+const isLinux = process.platform === 'linux';
+
 describe('buildCopilotEnv (running under Bun in bun test)', () => {
 	afterEach(() => {
 		// Clean up wrapper dir created by tests
@@ -100,7 +105,8 @@ describe('buildCopilotEnv (running under Bun in bun test)', () => {
 		}
 	});
 
-	it('prepends the bun-node-wrapper dir to PATH', () => {
+	it('prepends the bun-node-wrapper dir to PATH (non-Linux only)', () => {
+		if (isLinux) return; // wrapper disabled on Linux — tested separately
 		const base = { PATH: '/usr/bin:/bin', OTHER: 'value' };
 		const result = buildCopilotEnv(base);
 		expect(result.PATH).toMatch(
@@ -108,26 +114,37 @@ describe('buildCopilotEnv (running under Bun in bun test)', () => {
 		);
 	});
 
-	it('preserves the existing PATH after the wrapper dir', () => {
+	it('returns base env unchanged on Linux (Bun lacks node:sqlite)', () => {
+		if (!isLinux) return; // Linux-specific behaviour
+		const base = { PATH: '/usr/bin:/bin', OTHER: 'value' };
+		const result = buildCopilotEnv(base);
+		expect(result).toBe(base); // exact same reference — no copy made
+	});
+
+	it('preserves the existing PATH after the wrapper dir (non-Linux only)', () => {
+		if (isLinux) return;
 		const base = { PATH: '/usr/bin:/bin' };
 		const result = buildCopilotEnv(base);
 		expect(result.PATH).toContain('/usr/bin:/bin');
 	});
 
-	it('preserves all other env vars unchanged', () => {
+	it('preserves all other env vars unchanged (non-Linux only)', () => {
+		if (isLinux) return;
 		const base = { PATH: '/usr/bin', FOO: 'bar', BAZ: '42' };
 		const result = buildCopilotEnv(base);
 		expect(result.FOO).toBe('bar');
 		expect(result.BAZ).toBe('42');
 	});
 
-	it('does not mutate the base env object', () => {
+	it('does not mutate the base env object (non-Linux only)', () => {
+		if (isLinux) return;
 		const base = { PATH: '/usr/bin' };
 		buildCopilotEnv(base);
 		expect(base.PATH).toBe('/usr/bin');
 	});
 
-	it('uses process.env.PATH as fallback when base.PATH is absent', () => {
+	it('uses process.env.PATH as fallback when base.PATH is absent (non-Linux only)', () => {
+		if (isLinux) return;
 		const base: NodeJS.ProcessEnv = { FOO: 'bar' };
 		const result = buildCopilotEnv(base);
 		// PATH should start with the wrapper dir
