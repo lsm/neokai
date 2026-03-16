@@ -143,7 +143,7 @@ describe('useModelSwitcher', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
 			expect(getProviderLabel('openai')).toBe('OpenAI');
-			expect(getProviderLabel('github-copilot')).toBe('Copilot');
+			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
 			expect(getProviderLabel('google')).toBe('Google');
 		});
 
