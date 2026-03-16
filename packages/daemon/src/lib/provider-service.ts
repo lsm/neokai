@@ -299,11 +299,15 @@ export class ProviderService {
 		const modelId = provider.getModelForTier('haiku') || models[0]?.id || 'default';
 
 		// Get base URL from SDK config
-		const sdkConfig = provider.buildSdkConfig(modelId);
-		const baseUrl = sdkConfig.envVars.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
-
-		// API version (currently all providers use v1)
-		const apiVersion = sdkConfig.apiVersion || 'v1';
+		let baseUrl = 'https://api.anthropic.com';
+		let apiVersion = 'v1';
+		try {
+			const sdkConfig = provider.buildSdkConfig(modelId);
+			baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
+			apiVersion = sdkConfig.apiVersion || apiVersion;
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started); use defaults
+		}
 
 		return { modelId, baseUrl, apiVersion };
 	}
@@ -463,7 +467,13 @@ export class ProviderService {
 		}
 
 		const sessionConfig = modelId ? { apiKey: undefined } : undefined;
-		const sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
+		let sdkConfig;
+		try {
+			sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started); skip env-var injection
+			return {};
+		}
 		const envVars = sdkConfigToEnvVars(sdkConfig);
 
 		return this.applyEnvVars(envVars);

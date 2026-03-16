@@ -90,6 +90,17 @@ class MockProvider implements Provider {
 	}
 }
 
+// Provider whose buildSdkConfig always throws (simulates embedded-server-not-started)
+class ThrowingMockProvider extends MockProvider {
+	constructor() {
+		super('throwing', 'Throwing Provider', true, 'throwing-');
+	}
+
+	buildSdkConfig(): ProviderSdkConfig {
+		throw new Error('embedded server not started');
+	}
+}
+
 // GLM-like provider for testing
 class GlmMockProvider extends MockProvider {
 	readonly id = 'glm' as const;
@@ -388,6 +399,16 @@ describe('ProviderService', () => {
 			expect(config.baseUrl).toBe('https://api.anthropic.com');
 			expect(config.apiVersion).toBe('v1');
 		});
+
+		it('should return defaults when buildSdkConfig throws (e.g. server not yet started)', async () => {
+			registry.register(new ThrowingMockProvider());
+
+			const config = await service.getTitleGenerationConfig('throwing' as unknown as ProviderId);
+
+			// Should not throw; should fall back to safe defaults
+			expect(config.baseUrl).toBe('https://api.anthropic.com');
+			expect(config.apiVersion).toBe('v1');
+		});
 	});
 
 	describe('isModelValidForProvider', () => {
@@ -636,6 +657,16 @@ describe('ProviderService', () => {
 
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 			expect(original).toBeDefined();
+		});
+
+		it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+			registry.register(new ThrowingMockProvider());
+
+			// Must not throw
+			const original = service.applyEnvVarsToProcessForProvider(
+				'throwing' as unknown as ProviderId
+			);
+			expect(original).toEqual({});
 		});
 	});
 

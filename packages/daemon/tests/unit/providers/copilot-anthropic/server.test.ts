@@ -850,6 +850,12 @@ describe('resolveRequestCwd', () => {
 		const req = makeReq('Bearer copilot-anthropic-proxy:relative/path');
 		expect(resolveRequestCwd(req, '/default')).toBe('/default');
 	});
+
+	it('normalises dot-dot segments so traversal attempts are collapsed', () => {
+		const req = makeReq('Bearer copilot-anthropic-proxy:/foo/bar/../../baz');
+		// /foo/bar/../../baz normalises to /baz — still absolute, so it is accepted
+		expect(resolveRequestCwd(req, '/default')).toBe('/baz');
+	});
 });
 
 // ---------------------------------------------------------------------------
