@@ -210,11 +210,19 @@ export class ProviderService {
 		const available = await provider.isAvailable();
 		const models = await provider.getModels();
 
-		// Build base URL from SDK config
-		const sdkConfig = provider.buildSdkConfig(models[0]?.id || 'default');
-		const baseUrl = Object.keys(sdkConfig.envVars).includes('ANTHROPIC_BASE_URL')
-			? sdkConfig.envVars.ANTHROPIC_BASE_URL
-			: undefined;
+		// Build base URL from SDK config.
+		// buildSdkConfig may throw for providers that require lazy initialisation
+		// (e.g. CopilotAnthropicProvider throws when the embedded server has not
+		// been started yet).  Treat that as "no base URL" rather than a crash.
+		let baseUrl: string | undefined;
+		try {
+			const sdkConfig = provider.buildSdkConfig(models[0]?.id || 'default');
+			baseUrl = Object.keys(sdkConfig.envVars).includes('ANTHROPIC_BASE_URL')
+				? (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined)
+				: undefined;
+		} catch {
+			baseUrl = undefined;
+		}
 
 		return {
 			id: provider.id as Provider,

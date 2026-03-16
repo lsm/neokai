@@ -823,6 +823,11 @@ describe('resolveRequestCwd', () => {
 		const req = makeReq('Basic dXNlcjpwYXNz');
 		expect(resolveRequestCwd(req, '/default')).toBe('/default');
 	});
+
+	it('falls back to defaultCwd when path is relative (not absolute)', () => {
+		const req = makeReq('Bearer copilot-anthropic-proxy:relative/path');
+		expect(resolveRequestCwd(req, '/default')).toBe('/default');
+	});
 });
 
 // ---------------------------------------------------------------------------

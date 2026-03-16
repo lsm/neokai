@@ -135,6 +135,45 @@ describe('ConversationManager.findContinuation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// createConversation — onPreToolUse / onPostToolUse hooks
+// ---------------------------------------------------------------------------
+
+describe('ConversationManager.createConversation permission hooks', () => {
+	async function captureHooks(): Promise<Record<string, unknown>> {
+		const manager = new ConversationManager();
+		let capturedHooks: Record<string, unknown> | undefined;
+		const mockSession = new MockSession();
+		const client: CopilotClient = {
+			async createSession(cfg: unknown): Promise<import('@github/copilot-sdk').CopilotSession> {
+				capturedHooks = (cfg as Record<string, unknown>)['hooks'] as Record<string, unknown>;
+				return mockSession as unknown as import('@github/copilot-sdk').CopilotSession;
+			},
+		} as unknown as CopilotClient;
+		const tools: AnthropicTool[] = [
+			{ name: 'bash', description: 'run', input_schema: { type: 'object' } },
+		];
+		await manager.createConversation(client, 'model', undefined, tools, '/tmp');
+		return capturedHooks!;
+	}
+
+	it('onPreToolUse is present and returns allow', async () => {
+		const hooks = await captureHooks();
+		const onPreToolUse = hooks['onPreToolUse'] as () => Promise<{ permissionDecision: string }>;
+		expect(typeof onPreToolUse).toBe('function');
+		const result = await onPreToolUse();
+		expect(result).toEqual({ permissionDecision: 'allow' });
+	});
+
+	it('onPostToolUse is present and is a no-op function', async () => {
+		const hooks = await captureHooks();
+		const onPostToolUse = hooks['onPostToolUse'] as () => void;
+		expect(typeof onPostToolUse).toBe('function');
+		// Should not throw
+		expect(() => onPostToolUse()).not.toThrow();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // createConversation — onErrorOccurred hook
 // ---------------------------------------------------------------------------
 

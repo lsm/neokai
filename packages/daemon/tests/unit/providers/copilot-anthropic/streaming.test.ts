@@ -161,14 +161,7 @@ describe('runSessionStreaming', () => {
 
 		const outcome = await p;
 		expect(outcome.kind).toBe('completed');
-		// disconnect called exactly once (by finishCompleted)
-		let disconnectCount = 0;
-		const origDisconnect = session.disconnect.bind(session);
-		session.disconnect = async () => {
-			disconnectCount++;
-			return origDisconnect();
-		};
-		// already called once above — just verify session state
+		// disconnect called exactly once (by finishCompleted, not by the close handler)
 		expect(session.disconnectCalled).toBe(true);
 	});
 

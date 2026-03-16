@@ -31,6 +31,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { isAbsolute } from 'node:path';
 import type { CopilotClient, SessionConfig } from '@github/copilot-sdk';
 import { isAnthropicRequest, type AnthropicRequest } from './types.js';
 import { formatAnthropicPrompt, extractSystemText, extractToolResultIds } from './prompt.js';
@@ -99,7 +100,9 @@ export function resolveRequestCwd(req: IncomingMessage, defaultCwd: string): str
 	const auth = (req.headers['authorization'] ?? '') as string;
 	const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
 	const prefix = 'copilot-anthropic-proxy:';
-	return token.startsWith(prefix) ? token.slice(prefix.length) || defaultCwd : defaultCwd;
+	if (!token.startsWith(prefix)) return defaultCwd;
+	const resolved = token.slice(prefix.length);
+	return resolved && isAbsolute(resolved) ? resolved : defaultCwd;
 }
 
 function buildPlainSessionConfig(
