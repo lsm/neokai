@@ -123,23 +123,22 @@ export class AppServerConn {
 		void this.readLoop();
 	}
 
-	static create(codexPath: string, cwd: string, auth?: AppServerAuth): AppServerConn {
+	static create(codexPath: string, cwd: string, _auth?: AppServerAuth): AppServerConn {
 		const subEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-		if (auth?.type === 'api_key' && auth.apiKey) {
-			subEnv['OPENAI_API_KEY'] = auth.apiKey;
-			subEnv['CODEX_API_KEY'] = auth.apiKey;
-		}
 		logger.debug(`AppServerConn: spawning ${codexPath} app-server`);
-		const proc = Bun.spawn([codexPath, 'app-server'], {
-			cwd,
-			env: subEnv,
-			stdout: 'pipe',
-			// Use 'inherit' so stderr flows to the parent process stderr instead of
-			// buffering in a pipe.  A full stderr pipe blocks the child when the kernel
-			// buffer fills up (typically 64 KB), which would deadlock the app-server.
-			stderr: 'inherit',
-			stdin: 'pipe',
-		}) as unknown as PipedProc;
+		const proc = Bun.spawn(
+			[codexPath, 'app-server', '-c', 'cli_auth_credentials_store="ephemeral"'],
+			{
+				cwd,
+				env: subEnv,
+				stdout: 'pipe',
+				// Use 'inherit' so stderr flows to the parent process stderr instead of
+				// buffering in a pipe.  A full stderr pipe blocks the child when the kernel
+				// buffer fills up (typically 64 KB), which would deadlock the app-server.
+				stderr: 'inherit',
+				stdin: 'pipe',
+			}
+		) as unknown as PipedProc;
 		return new AppServerConn(proc);
 	}
 
@@ -301,7 +300,12 @@ export class BridgeSession {
 		});
 		this.conn.notify('initialized');
 
-		if (this.auth?.type === 'chatgpt') {
+		if (this.auth?.type === 'api_key') {
+			await this.conn.request<unknown>('account/login/start', {
+				type: 'apiKey',
+				apiKey: this.auth.apiKey,
+			});
+		} else if (this.auth?.type === 'chatgpt') {
 			const refreshAuthTokens = this.auth.refreshAuthTokens;
 			const chatgptAuth = {
 				accessToken: this.auth.accessToken,
