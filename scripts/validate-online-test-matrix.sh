@@ -59,7 +59,7 @@ FEATURES_FILES=(
 )
 
 PROVIDERS_FILES=(
-  anthropic-copilot-provider.test.ts
+  anthropic-to-copilot-bridge-provider.test.ts
   anthropic-provider.test.ts
   codex-bridge.test.ts
   model-switch-system-init.test.ts
