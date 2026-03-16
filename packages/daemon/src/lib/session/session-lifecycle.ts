@@ -811,9 +811,9 @@ ${messageText.slice(0, 2000)}`;
 				if (isSDKAssistantMessage(message)) {
 					const textBlocks = message.message.content.filter(
 						(b: { type: string }) => b.type === 'text'
-					);
+					) as Array<{ text?: string }>;
 					title = textBlocks
-						.map((b: { text?: string }) => b.text)
+						.map((b) => b.text ?? '')
 						.join(' ')
 						.trim();
 
