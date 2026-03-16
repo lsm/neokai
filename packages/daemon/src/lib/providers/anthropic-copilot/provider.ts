@@ -65,6 +65,17 @@ const logger = new Logger('anthropic-copilot-provider');
  *
  * These model IDs are the identifiers the GitHub Copilot backend recognises
  * and must be passed verbatim to `CopilotClient.createSession({ model })`.
+ *
+ * NOTE — intentional model ID collision with the Anthropic provider:
+ * The `id` fields below (e.g. `claude-opus-4.6`) are also claimed by the
+ * Anthropic provider. `registry.detectProvider(modelId)` will therefore
+ * return Anthropic (registered first in factory.ts) for these IDs. This is
+ * by design: every `anthropic-copilot` session stores its provider ID
+ * explicitly in `session.config.provider`, and `applyEnvVarsToProcess` /
+ * `getEnvVarsForModel` accept an optional `providerId` argument that
+ * bypasses auto-detection. All callers that need Copilot routing MUST pass
+ * the explicit provider ID; callers that rely on `detectProvider` alone will
+ * silently route to Anthropic.
  */
 const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 	{

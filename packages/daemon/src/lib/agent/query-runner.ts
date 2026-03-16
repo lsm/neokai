@@ -43,6 +43,7 @@ const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
  * Original environment variables for restoration after SDK query
  */
 export interface OriginalEnvVars {
+	ANTHROPIC_API_KEY?: string;
 	ANTHROPIC_AUTH_TOKEN?: string;
 	ANTHROPIC_BASE_URL?: string;
 	API_TIMEOUT_MS?: string;

@@ -284,6 +284,14 @@ describe('AnthropicCopilotProvider', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			expect(cfg.envVars['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC']).toBe('1');
 		});
+
+		it('sets ANTHROPIC_API_KEY to empty string to clear real Anthropic key', () => {
+			// An empty-string sentinel tells applyEnvVars() to delete process.env.ANTHROPIC_API_KEY,
+			// preventing the SDK subprocess from bypassing the embedded proxy and calling
+			// api.anthropic.com directly with the user's real key.
+			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
+			expect(cfg.envVars['ANTHROPIC_API_KEY']).toBe('');
+		});
 	});
 
 	describe('getModels() pre-warms embedded server', () => {

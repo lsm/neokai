@@ -776,9 +776,11 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 User's request:
 ${messageText.slice(0, 2000)}`;
 
-			// Get the environment variables to pass explicitly to SDK subprocess
-			// This ensures env vars are properly inherited when spawning subprocess
-			const providerEnvVars = providerService.getEnvVarsForModel(modelId);
+			// Get the environment variables to pass explicitly to SDK subprocess.
+			// Pass the provider ID so that providers whose model IDs overlap with
+			// Anthropic (e.g. anthropic-copilot using claude-opus-4.6) are looked up
+			// by ID rather than auto-detected, which would return the wrong provider.
+			const providerEnvVars = providerService.getEnvVarsForModel(modelId, provider);
 
 			const cliPath = resolveSDKCliPath();
 
