@@ -163,15 +163,18 @@ type BridgeTool = {
 async function callBridge(
 	bridgeUrl: string,
 	messages: BridgeMessage[],
-	tools: BridgeTool[] = []
+	tools: BridgeTool[] = [],
+	model = 'o4-mini',
+	system?: string
 ): Promise<SseEvent[]> {
 	const reqBody: Record<string, unknown> = {
-		model: 'codex-1',
+		model,
 		messages,
 		stream: true,
 		max_tokens: 512,
 	};
 	if (tools.length > 0) reqBody.tools = tools;
+	if (system) reqBody.system = system;
 
 	const response = await fetch(`${bridgeUrl}/v1/messages`, {
 		method: 'POST',
@@ -184,6 +187,8 @@ async function callBridge(
 	}
 
 	const text = await response.text();
+	// DIAGNOSTIC: always log raw SSE bytes to stderr for CI debugging
+	console.log(`[codex-bridge-test] raw-sse (${text.length} bytes):`, text.slice(0, 2000));
 	return parseSseEvents(text);
 }
 
@@ -264,6 +269,13 @@ describe('Codex Bridge (Online)', () => {
 	test('tool use: bridge routes tool call and model uses result in reply', async () => {
 		if (skipIfNeeded('tool use')) return;
 
+		// Use gpt-4o for tool-use tests — reasoning models (o4-mini) may skip tools.
+		const TOOL_MODEL = 'gpt-4o';
+		// System prompt that forces tool use even with models that prefer self-answering.
+		const TOOL_SYSTEM =
+			'When the user asks you to call a tool, you MUST call that tool. ' +
+			'Never answer the question yourself without first calling the requested tool.';
+
 		const getGreetingTool: BridgeTool = {
 			name: 'get_greeting',
 			description: 'Get a personalised greeting for a person by name.',
@@ -276,17 +288,19 @@ describe('Codex Bridge (Online)', () => {
 			},
 		};
 
-		// Turn 1 — expect Codex to call the tool
+		// Turn 1 — expect the model to call the tool
 		const turn1 = await callBridge(
 			bridgeUrl,
 			[
 				{
 					role: 'user',
 					content:
-						'Use the get_greeting tool with person_name "Alice", then tell me what it returned.',
+						'Call the get_greeting tool with person_name "Alice", then tell me what it returned.',
 				},
 			],
-			[getGreetingTool]
+			[getGreetingTool],
+			TOOL_MODEL,
+			TOOL_SYSTEM
 		);
 
 		const stopReason1 = getStopReason(turn1);
@@ -310,7 +324,7 @@ describe('Codex Bridge (Online)', () => {
 				{
 					role: 'user',
 					content:
-						'Use the get_greeting tool with person_name "Alice", then tell me what it returned.',
+						'Call the get_greeting tool with person_name "Alice", then tell me what it returned.',
 				},
 				{
 					role: 'assistant',
@@ -334,7 +348,9 @@ describe('Codex Bridge (Online)', () => {
 					],
 				},
 			],
-			[getGreetingTool]
+			[getGreetingTool],
+			TOOL_MODEL,
+			TOOL_SYSTEM
 		);
 
 		expect(getStopReason(turn2)).toBe('end_turn');
@@ -347,6 +363,12 @@ describe('Codex Bridge (Online)', () => {
 	// -------------------------------------------------------------------------
 	test('mcp tool: bridge handles MCP-style tool naming and call round-trip', async () => {
 		if (skipIfNeeded('mcp tool')) return;
+
+		// Use gpt-4o for tool-use tests — reasoning models (o4-mini) may skip tools.
+		const TOOL_MODEL = 'gpt-4o';
+		const TOOL_SYSTEM =
+			'When the user asks you to call a tool, you MUST call that tool. ' +
+			'Never answer the question yourself without first calling the requested tool.';
 
 		// MCP tools use the naming convention: mcp__<server-name>__<tool-name>
 		// This simulates a tool registered by a (mock) in-process MCP server.
@@ -364,7 +386,7 @@ describe('Codex Bridge (Online)', () => {
 
 		const SECRET = 'BRIDGE_MCP_TEST_42';
 
-		// Turn 1 — expect Codex to call the MCP echo tool
+		// Turn 1 — expect the model to call the MCP echo tool
 		const turn1 = await callBridge(
 			bridgeUrl,
 			[
@@ -373,7 +395,9 @@ describe('Codex Bridge (Online)', () => {
 					content: `Call the mcp__mockserver__echo tool with message "${SECRET}", then repeat exactly what it returned.`,
 				},
 			],
-			[mcpEchoTool]
+			[mcpEchoTool],
+			TOOL_MODEL,
+			TOOL_SYSTEM
 		);
 
 		const stopReason1mcp = getStopReason(turn1);
@@ -419,7 +443,9 @@ describe('Codex Bridge (Online)', () => {
 					],
 				},
 			],
-			[mcpEchoTool]
+			[mcpEchoTool],
+			TOOL_MODEL,
+			TOOL_SYSTEM
 		);
 
 		expect(getStopReason(turn2)).toBe('end_turn');

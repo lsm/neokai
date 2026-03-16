@@ -297,6 +297,8 @@ export class BridgeSession {
 
 		// Wire notification handlers
 		this.conn.onNotification('item/agentMessage/delta', (rawParams) => {
+			// DIAGNOSTIC: log raw params to stderr so CI can see exact protocol shape
+			process.stderr.write(`[codex-bridge-pm] delta raw: ${JSON.stringify(rawParams)}\n`);
 			const params = rawParams as {
 				delta?: { type?: string; text?: string };
 			};
@@ -304,12 +306,15 @@ export class BridgeSession {
 			// 'text_delta'.  Accept any delta with a non-empty text field so the
 			// bridge is resilient to future protocol changes.
 			const text = params?.delta?.text;
+			process.stderr.write(`[codex-bridge-pm] delta text=${JSON.stringify(text)}\n`);
 			if (text) {
 				this.queue.push({ type: 'text_delta', text });
 			}
 		});
 
 		this.conn.onNotification('turn/completed', (rawParams) => {
+			// DIAGNOSTIC: log raw params to confirm usage field names
+			process.stderr.write(`[codex-bridge-pm] turn/completed raw: ${JSON.stringify(rawParams)}\n`);
 			const params = rawParams as {
 				usage?: { inputTokens?: number; outputTokens?: number };
 			};
