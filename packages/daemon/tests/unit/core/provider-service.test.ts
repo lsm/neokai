@@ -591,6 +591,37 @@ describe('ProviderService', () => {
 			const envVars = service.getProviderEnvVars(session);
 			expect(envVars.ANTHROPIC_AUTH_TOKEN).toBe('custom-api-key');
 		});
+
+		it('should return {} without throwing when buildSdkConfig throws (e.g. server not yet started)', () => {
+			registry.register(new ThrowingMockProvider());
+
+			const session: Session = {
+				id: 'test-session',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'throwing-1',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'throwing' as unknown as import('@neokai/shared/provider').ProviderId,
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Must not throw
+			const envVars = service.getProviderEnvVars(session);
+			expect(envVars).toEqual({});
+		});
 	});
 
 	describe('applyEnvVarsToProcess', () => {
