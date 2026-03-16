@@ -510,17 +510,23 @@ export class AnthropicCopilotProvider implements Provider {
 	}
 
 	/**
-	 * Validate that a GitHub token has Copilot access via a lightweight HTTP
-	 * check against the Copilot token exchange endpoint.
+	 * Validate that a GitHub OAuth token has Copilot API access.
+	 *
+	 * Uses the GitHub Copilot internal token exchange endpoint — the authoritative
+	 * check for copilot_requests scope. Returns true only if the token can exchange
+	 * for a Copilot session token (200 OK). The GitHub Actions GITHUB_TOKEN gets
+	 * 401/403 from this endpoint, preventing false-positive auth in CI.
 	 */
 	private async validateCopilotToken(token: string): Promise<boolean> {
 		try {
 			const resp = await fetch('https://api.github.com/copilot_internal/v2/token', {
 				headers: {
-					Authorization: `token ${token}`,
-					'User-Agent': 'GitHubCopilotChat/0.35.0',
+					Authorization: `Bearer ${token}`,
+					'Editor-Version': 'vscode/1.99.0',
+					'Copilot-Integration-Id': 'vscode-chat',
+					Accept: 'application/json',
 				},
-				signal: AbortSignal.timeout(5000),
+				signal: AbortSignal.timeout(8000),
 			});
 			return resp.ok;
 		} catch {
