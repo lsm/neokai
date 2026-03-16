@@ -512,25 +512,34 @@ export class AnthropicCopilotProvider implements Provider {
 	/**
 	 * Validate that a GitHub OAuth token has Copilot API access.
 	 *
-	 * Uses the GitHub Copilot internal token exchange endpoint — the authoritative
-	 * check for copilot_requests scope. Returns true only if the token can exchange
-	 * for a Copilot session token (200 OK). The GitHub Actions GITHUB_TOKEN gets
-	 * 401/403 from this endpoint, preventing false-positive auth in CI.
+	 * Uses the SDK to attempt a real Copilot session. The CLI subprocess handles
+	 * the OAuth→session-token exchange internally when COPILOT_GITHUB_TOKEN is set
+	 * in its env. This gives a definitive answer: if the CLI can create a session,
+	 * the token has the required Copilot access.
+	 *
+	 * The GitHub Actions GITHUB_TOKEN has no Copilot access, so its session attempt
+	 * fails, preventing false-positive authentication in CI.
+	 *
+	 * Only called for tokens from `gh auth token` (source 4) and hosts.yml (source 5).
+	 * COPILOT_GITHUB_TOKEN and GH_TOKEN env-var tokens are trusted without validation.
 	 */
 	private async validateCopilotToken(token: string): Promise<boolean> {
+		const client = new CopilotClient({
+			useStdio: true,
+			logLevel: 'error',
+			env: { ...this.env, COPILOT_GITHUB_TOKEN: token },
+		});
 		try {
-			const resp = await fetch('https://api.github.com/copilot_internal/v2/token', {
-				headers: {
-					Authorization: `Bearer ${token}`,
-					'Editor-Version': 'vscode/1.99.0',
-					'Copilot-Integration-Id': 'vscode-chat',
-					Accept: 'application/json',
-				},
-				signal: AbortSignal.timeout(8000),
+			const session = await client.createSession({
+				model: 'gpt-4o-mini',
+				onPermissionRequest: () => Promise.resolve({ kind: 'approved' as const }),
 			});
-			return resp.ok;
+			await session.disconnect();
+			return true;
 		} catch {
 			return false;
+		} finally {
+			await client.stop().catch(() => {});
 		}
 	}
 
@@ -691,14 +700,21 @@ export class AnthropicCopilotProvider implements Provider {
 
 	private getOrCreateClient(token?: string): CopilotClient {
 		if (this.clientCache === undefined) {
-			// No cliPath — CopilotClient defaults to getBundledCliPath() which
-			// resolves the @github/copilot CLI from node_modules automatically.
-			// @github/copilot ships as a runtime dependency of @github/copilot-sdk
-			// so it is always present after `bun install`.
+			// Pass the GitHub OAuth token as COPILOT_GITHUB_TOKEN in the subprocess env.
+			// The CLI will exchange it for a Copilot session token internally.
+			//
+			// Do NOT use the `githubToken` option — that sets COPILOT_SDK_AUTH_TOKEN,
+			// which expects a pre-exchanged session token (tid=... format), not a GitHub
+			// OAuth token (ghp_/gho_). Passing an OAuth token there causes the CLI to
+			// reject it with "OAuth token has expired".
+			const env: NodeJS.ProcessEnv = { ...this.env };
+			if (token) {
+				env.COPILOT_GITHUB_TOKEN = token;
+			}
 			this.clientCache = new CopilotClient({
 				useStdio: true,
 				logLevel: 'error',
-				githubToken: token,
+				env,
 			});
 			logger.debug('Created CopilotClient (bundled CLI path)');
 		}
