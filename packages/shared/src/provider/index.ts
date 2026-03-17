@@ -19,10 +19,10 @@ export type {
 	ProviderQueryOptions,
 	ProviderQueryContext,
 	ToolDefinition,
-	PiMonoContentBlock,
-	PiMonoUserMessage,
-	PiMonoAssistantMessage,
-	PiMonoMessage,
+	CustomProviderContentBlock,
+	CustomProviderUserMessage,
+	CustomProviderAssistantMessage,
+	CustomProviderMessage,
 } from './query-types.js';
 
 export type {

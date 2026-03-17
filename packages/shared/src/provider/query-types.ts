@@ -50,36 +50,36 @@ export interface ProviderQueryContext {
 }
 
 /**
- * Message content block types for pi-mono translation
+ * Message content block types for custom provider translation
  */
-export type PiMonoContentBlock =
+export type CustomProviderContentBlock =
 	| { type: 'text'; text: string }
 	| { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
 	| { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
 	| {
 			type: 'tool_result';
 			tool_use_id: string;
-			content: string | PiMonoContentBlock[];
+			content: string | CustomProviderContentBlock[];
 			is_error?: boolean;
 	  };
 
 /**
- * User message format for pi-mono
+ * User message format for custom provider translation
  */
-export interface PiMonoUserMessage {
+export interface CustomProviderUserMessage {
 	role: 'user';
-	content: string | PiMonoContentBlock[];
+	content: string | CustomProviderContentBlock[];
 }
 
 /**
- * Assistant message format for pi-mono
+ * Assistant message format for custom provider translation
  */
-export interface PiMonoAssistantMessage {
+export interface CustomProviderAssistantMessage {
 	role: 'assistant';
-	content: string | PiMonoContentBlock[];
+	content: string | CustomProviderContentBlock[];
 }
 
 /**
- * Message format for pi-mono conversations
+ * Message format for custom provider conversations
  */
-export type PiMonoMessage = PiMonoUserMessage | PiMonoAssistantMessage;
+export type CustomProviderMessage = CustomProviderUserMessage | CustomProviderAssistantMessage;

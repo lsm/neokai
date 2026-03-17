@@ -106,9 +106,10 @@ export class ModelSwitchHandler {
 			}
 
 			// Get model info from the ORIGINAL alias to preserve provider context.
-			// Resolving alias first (e.g., 'copilot-sonnet' → 'claude-sonnet-4.6') and then
-			// calling getModelInfo loses the provider — two providers can share the same
-			// canonical ID (e.g., Anthropic and GitHub Copilot both have 'claude-sonnet-4.6').
+			// Resolving alias first (e.g., 'copilot-anthropic-sonnet' → 'claude-sonnet-4.6')
+			// and then calling getModelInfo loses the provider — two providers can share
+			// the same canonical ID (e.g., Anthropic and anthropic-copilot both have
+			// 'claude-sonnet-4.6').
 			const modelInfo = await getModelInfo(newModel);
 			const resolvedModel = modelInfo?.id ?? (await resolveModelAlias(newModel));
 
@@ -142,8 +143,8 @@ export class ModelSwitchHandler {
 			// Detect new provider instance to keep provider config aligned with the model
 			const providerRegistry = getProviderRegistry();
 			// Use provider from model info to correctly handle shared canonical IDs
-			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and GitHub Copilot).
-			// detectProvider() would always return Anthropic for 'claude-sonnet-4.6'.
+			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
+			// detectProvider() would otherwise return Anthropic for 'claude-sonnet-4.6'.
 			const newProviderInstance = modelInfo?.provider
 				? (providerRegistry.get(modelInfo.provider) ??
 					providerRegistry.detectProvider(resolvedModel))

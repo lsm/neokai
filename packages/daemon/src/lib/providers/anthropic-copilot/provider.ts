@@ -102,13 +102,6 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 		available: true,
 	},
 	{
-		// NOTE — intentional model ID collision with OpenAiProvider:
-		// `gpt-5.3-codex` is also claimed by OpenAiProvider.
-		// detectProvider() returns OpenAiProvider for this ID (registered first
-		// in factory.ts).  All copilot sessions for this model use explicit
-		// provider-ID routing (session.config.provider = 'anthropic-copilot')
-		// rather than relying on detectProvider.  See the Claude ID comment
-		// above for the full design rationale.
 		id: 'gpt-5.3-codex',
 		name: 'GPT-5.3 Codex (Copilot)',
 		alias: 'copilot-anthropic-codex',
@@ -136,7 +129,6 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 		available: true,
 	},
 	{
-		// NOTE — same OpenAiProvider collision as gpt-5.3-codex above.
 		id: 'gpt-5-mini',
 		name: 'GPT-5 Mini (Copilot)',
 		alias: 'copilot-anthropic-mini',

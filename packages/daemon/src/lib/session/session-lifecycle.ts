@@ -176,8 +176,8 @@ export class SessionLifecycle {
 				coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
 				permissionMode: params.config?.permissionMode,
 				// Provider: Allow explicit override; fall back to resolved provider from model alias.
-				// Critical for pi-mono providers (GitHub Copilot, OpenAI) whose models may share
-				// canonical IDs with Anthropic (e.g., copilot-sonnet → claude-sonnet-4.6).
+				// Critical when providers share canonical IDs (e.g., Anthropic and
+				// anthropic-copilot both owning claude-sonnet-4.6).
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				provider: (params.config?.provider ?? resolvedProvider) as any,
 				// Tools config: Use global defaults for new sessions
@@ -722,12 +722,12 @@ export class SessionLifecycle {
 		}
 
 		// Providers whose credentials are managed by getProviderApiKey() (ANTHROPIC_API_KEY,
-		// GLM_API_KEY, MINIMAX_API_KEY).  For these we can do a fast, synchronous key check.
+		// GLM_API_KEY, MINIMAX_API_KEY). For these we can do a fast, synchronous key check.
 		//
-		// All other providers — 'openai' (OPENAI_API_KEY), 'anthropic-copilot' (GitHub token),
-		// or future ones — are NOT listed here because getProviderApiKey() does not handle
-		// their credentials.  They use the isProviderAvailable() path below instead, which
-		// delegates to each provider's own isAvailable() implementation.
+		// All other providers (e.g. 'anthropic-copilot' with GitHub auth) are NOT listed
+		// here because getProviderApiKey() does not handle their credentials. They use
+		// the isProviderAvailable() path below instead, which delegates to each
+		// provider's own isAvailable() implementation.
 		const legacyKeyProviders: string[] = ['anthropic', 'glm', 'minimax'];
 		if (legacyKeyProviders.includes(provider)) {
 			const apiKey = providerService.getProviderApiKey(provider as 'anthropic' | 'glm' | 'minimax');
@@ -886,8 +886,8 @@ ${messageText.slice(0, 2000)}`;
 	 * Falls back to static model if dynamic loading failed or is unavailable
 	 *
 	 * Returns both the canonical model ID and the provider that owns it.
-	 * The provider is needed to correctly route pi-mono providers (GitHub Copilot, OpenAI)
-	 * whose models may share canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
+	 * The provider is needed to correctly route providers whose models may share
+	 * canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
 	 */
 	private async getValidatedModelId(
 		requestedModel?: string

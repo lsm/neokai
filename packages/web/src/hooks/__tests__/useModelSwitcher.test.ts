@@ -295,7 +295,7 @@ describe('useModelSwitcher', () => {
 			expect(gptModel?.family).toBe('gpt');
 		});
 
-		it('should detect gpt family and github-copilot provider for Copilot GPT models', async () => {
+		it('should detect gpt family and anthropic-copilot provider for Copilot GPT models', async () => {
 			const mockHub = {
 				request: vi
 					.fn()
@@ -309,7 +309,7 @@ describe('useModelSwitcher', () => {
 								id: 'gpt-5.3-codex',
 								display_name: 'GPT-5.3 Codex (Copilot)',
 								description: '',
-								provider: 'github-copilot',
+								provider: 'anthropic-copilot',
 							},
 						],
 					}),
@@ -323,25 +323,25 @@ describe('useModelSwitcher', () => {
 			});
 
 			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
-			expect(gptModel?.provider).toBe('github-copilot');
+			expect(gptModel?.provider).toBe('anthropic-copilot');
 			expect(gptModel?.family).toBe('gpt');
 		});
 
-		it('should detect gemini family and github-copilot provider for Copilot Gemini models', async () => {
+		it('should detect gemini family and anthropic-copilot provider for Copilot Gemini models', async () => {
 			const mockHub = {
 				request: vi
 					.fn()
 					.mockResolvedValueOnce({
-						currentModel: 'gemini-3.1-pro-preview',
+						currentModel: 'gemini-3-pro-preview',
 						modelInfo: null,
 					})
 					.mockResolvedValueOnce({
 						models: [
 							{
-								id: 'gemini-3.1-pro-preview',
+								id: 'gemini-3-pro-preview',
 								display_name: 'Gemini 3.1 Pro (Copilot)',
 								description: '',
-								provider: 'github-copilot',
+								provider: 'anthropic-copilot',
 							},
 						],
 					}),
@@ -355,9 +355,9 @@ describe('useModelSwitcher', () => {
 			});
 
 			const geminiModel = result.current.availableModels.find(
-				(m) => m.id === 'gemini-3.1-pro-preview'
+				(m) => m.id === 'gemini-3-pro-preview'
 			);
-			expect(geminiModel?.provider).toBe('github-copilot');
+			expect(geminiModel?.provider).toBe('anthropic-copilot');
 			expect(geminiModel?.family).toBe('gemini');
 		});
 
@@ -375,8 +375,8 @@ describe('useModelSwitcher', () => {
 								id: 'claude-opus-4.6',
 								display_name: 'Claude Opus 4.6 (Copilot)',
 								description: '',
-								provider: 'github-copilot',
-								alias: 'copilot-opus',
+								provider: 'anthropic-copilot',
+								alias: 'copilot-anthropic-opus',
 							},
 						],
 					}),
@@ -390,7 +390,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			const claudeModel = result.current.availableModels.find((m) => m.id === 'claude-opus-4.6');
-			expect(claudeModel?.provider).toBe('github-copilot');
+			expect(claudeModel?.provider).toBe('anthropic-copilot');
 			expect(claudeModel?.family).toBe('opus');
 		});
 
@@ -833,8 +833,8 @@ describe('useModelSwitcher', () => {
 								id: 'claude-opus-4-5-20251101',
 								display_name: 'Opus',
 								description: '',
-								alias: 'copilot-opus',
-								provider: 'github-copilot',
+								alias: 'copilot-anthropic-opus',
+								provider: 'anthropic-copilot',
 							},
 						],
 					}),
@@ -848,7 +848,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			// Server-provided alias is used directly
-			expect(result.current.availableModels[0].alias).toBe('copilot-opus');
+			expect(result.current.availableModels[0].alias).toBe('copilot-anthropic-opus');
 		});
 	});
 });
