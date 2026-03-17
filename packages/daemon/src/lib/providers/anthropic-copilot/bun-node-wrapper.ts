@@ -1,34 +1,50 @@
 /**
  * Bun → Node.js wrapper for CopilotClient subprocess.
  *
- * @github/copilot-sdk's getNodeExecPath() returns the string "node" (not
- * process.execPath) when process.versions.bun is truthy. When the system
- * "node" on PATH is older than v22.5.0 (which introduced node:sqlite), the
- * Copilot CLI subprocess crashes with ERR_UNKNOWN_BUILTIN_MODULE.
+ * @github/copilot-sdk resolves its CLI executable as "node" when running
+ * under Bun. We can optionally prepend a temp directory containing a `node`
+ * symlink to Bun (process.execPath), so the Copilot CLI subprocess runs under
+ * Bun instead of system Node.
  *
- * Fix (macOS / Windows): when running under Bun, create a temp directory with
- * a "node" symlink pointing to process.execPath (the Bun binary) and prepend
- * it to the PATH passed to CopilotClient. Bun supports node:sqlite on these
- * platforms, so the subprocess works.
- *
- * Linux exception: Bun on Linux x64 does NOT support node:sqlite (as of
- * v1.3.x). buildCopilotEnv() skips the wrapper on Linux and relies on the
- * system node being >= v22.5.0. In CI, actions/setup-node installs Node.js
- * 24, which satisfies this requirement. For local Linux development, Node.js
- * >= 22.5 must be on PATH when running the anthropic-copilot provider.
+ * Important: this only works when the current Bun build supports `node:sqlite`.
+ * If Bun lacks that built-in module, forcing the subprocess onto Bun causes
+ * startup failure and downstream online-test timeouts. In that case we leave
+ * PATH unchanged so system Node (>=22.5) is used.
  */
 
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, symlinkSync, readlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { isRunningUnderBun } from '../../agent/sdk-cli-resolver.js';
 
+let bunSupportsNodeSqliteCache: boolean | undefined;
+
 /**
- * Ensure a temp directory exists that contains a 'node' symlink pointing to
- * the Bun binary (process.execPath).
+ * Returns true when the current Bun binary can import `node:sqlite`.
  *
- * @returns The wrapper directory path on success, or undefined if not running
- *   under Bun or if the symlink cannot be created.
+ * We probe once by spawning `process.execPath` with a tiny script and cache
+ * the result for the process lifetime.
+ */
+function bunSupportsNodeSqlite(): boolean {
+	if (!isRunningUnderBun()) return false;
+	if (bunSupportsNodeSqliteCache !== undefined) return bunSupportsNodeSqliteCache;
+	try {
+		execFileSync(
+			process.execPath,
+			['-e', "import('node:sqlite').then(() => process.exit(0)).catch(() => process.exit(1))"],
+			{ stdio: 'ignore' }
+		);
+		bunSupportsNodeSqliteCache = true;
+	} catch {
+		bunSupportsNodeSqliteCache = false;
+	}
+	return bunSupportsNodeSqliteCache;
+}
+
+/**
+ * Ensure a temp directory exists that contains a `node` symlink pointing to
+ * the Bun binary (process.execPath).
  */
 export function ensureBunNodeWrapper(): string | undefined {
 	if (!isRunningUnderBun()) return undefined;
@@ -41,13 +57,13 @@ export function ensureBunNodeWrapper(): string | undefined {
 		try {
 			needsSymlink = readlinkSync(nodePath) !== bunPath;
 		} catch {
-			// Symlink does not exist yet — needs to be created
+			// Symlink does not exist yet — needs to be created.
 		}
 		if (needsSymlink) {
 			try {
 				unlinkSync(nodePath);
 			} catch {
-				// Ignore — may not exist
+				// Ignore — may not exist.
 			}
 			symlinkSync(bunPath, nodePath);
 		}
@@ -58,17 +74,14 @@ export function ensureBunNodeWrapper(): string | undefined {
 }
 
 /**
- * Build the env object for a CopilotClient so that its CLI subprocess runs
- * under Bun (not system Node.js) when the parent process is running under Bun.
+ * Build env for CopilotClient subprocesses.
  *
- * Skipped on Linux because Bun on Linux does not support node:sqlite (see
- * module header). No-op on Node.js or when the wrapper directory cannot be
- * created.
+ * If running under Bun and Bun supports `node:sqlite`, prepend the wrapper dir
+ * so Copilot's internal `node` resolution points to Bun. Otherwise leave PATH
+ * unchanged and rely on system Node.
  */
 export function buildCopilotEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-	// Bun on Linux x64 lacks node:sqlite — skip the wrapper and let the
-	// system node (must be >= 22.5) handle the subprocess.
-	if (process.platform === 'linux') return base;
+	if (!bunSupportsNodeSqlite()) return base;
 	const wrapperDir = ensureBunNodeWrapper();
 	if (!wrapperDir) return base;
 	const existingPath = base.PATH ?? process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin';
