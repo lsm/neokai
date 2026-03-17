@@ -647,5 +647,53 @@ describe('RoomTasks', () => {
 
 			expect(container.textContent).toContain('PR #99');
 		});
+
+		it('should render PR button for in_progress task with prUrl', () => {
+			selectedTabSignal.value = 'active';
+			const tasks = [
+				createTask('t1', 'in_progress', {
+					prUrl: 'https://github.com/org/repo/pull/10',
+					prNumber: 10,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/10"]');
+			expect(prLink).toBeTruthy();
+			expect(container.textContent).toContain('PR #10');
+		});
+
+		it('should render PR button for completed task with prUrl', () => {
+			selectedTabSignal.value = 'done';
+			const tasks = [
+				createTask('t1', 'completed', {
+					prUrl: 'https://github.com/org/repo/pull/20',
+					prNumber: 20,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/20"]');
+			expect(prLink).toBeTruthy();
+			expect(container.textContent).toContain('PR #20');
+		});
+
+		it('should render PR button for needs_attention task with prUrl', () => {
+			selectedTabSignal.value = 'needs_attention';
+			const tasks = [
+				createTask('t1', 'needs_attention', {
+					prUrl: 'https://github.com/org/repo/pull/30',
+					prNumber: 30,
+				}),
+			];
+
+			const { container } = render(<RoomTasks tasks={tasks} />);
+
+			const prLink = container.querySelector('a[href="https://github.com/org/repo/pull/30"]');
+			expect(prLink).toBeTruthy();
+			expect(container.textContent).toContain('PR #30');
+		});
 	});
 });
