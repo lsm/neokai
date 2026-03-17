@@ -34,6 +34,7 @@ export interface CreateGoalParams {
 	nextRunAt?: number;
 	maxConsecutiveFailures?: number;
 	maxPlanningAttempts?: number;
+	consecutiveFailures?: number;
 	replanCount?: number;
 }
 
@@ -114,7 +115,7 @@ export class GoalRepository {
 			params.structuredMetrics ? JSON.stringify(params.structuredMetrics) : null,
 			params.maxConsecutiveFailures ?? 3,
 			params.maxPlanningAttempts ?? 5,
-			0,
+			params.consecutiveFailures ?? 0,
 			params.replanCount ?? 0
 		);
 

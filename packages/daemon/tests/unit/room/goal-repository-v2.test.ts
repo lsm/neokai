@@ -58,7 +58,11 @@ describe('GoalRepository — V2 Mission fields', () => {
 			const metrics: MissionMetric[] = [
 				{ name: 'test_coverage', target: 80, current: 60, unit: '%', direction: 'increase' },
 			];
-			const goal = repo.createGoal({ roomId, title: 'Measurable Mission', structuredMetrics: metrics });
+			const goal = repo.createGoal({
+				roomId,
+				title: 'Measurable Mission',
+				structuredMetrics: metrics,
+			});
 
 			const fetched = repo.getGoal(goal.id);
 			expect(fetched?.structuredMetrics).toHaveLength(1);
@@ -114,24 +118,27 @@ describe('GoalRepository — V2 Mission fields', () => {
 			expect(fetched?.replanCount).toBe(0);
 		});
 
-		it('should leave V2 fields undefined when not provided', () => {
+		it('should use V2 defaults when not provided', () => {
 			const goal = repo.createGoal({ roomId, title: 'Simple Goal' });
 
 			const fetched = repo.getGoal(goal.id);
-			expect(fetched?.missionType).toBeUndefined();
-			expect(fetched?.autonomyLevel).toBeUndefined();
+			// Non-nullable fields get their schema defaults
+			expect(fetched?.missionType).toBe('one_shot');
+			expect(fetched?.autonomyLevel).toBe('supervised');
+			expect(fetched?.maxConsecutiveFailures).toBe(3);
+			expect(fetched?.maxPlanningAttempts).toBe(5);
+			// Nullable fields remain undefined when not provided
 			expect(fetched?.structuredMetrics).toBeUndefined();
 			expect(fetched?.schedule).toBeUndefined();
 			expect(fetched?.nextRunAt).toBeUndefined();
-			expect(fetched?.maxConsecutiveFailures).toBeUndefined();
-			expect(fetched?.maxPlanningAttempts).toBeUndefined();
 		});
 	});
 
 	describe('updateGoal with V2 params', () => {
 		it('should update missionType and autonomyLevel', () => {
 			const goal = repo.createGoal({ roomId, title: 'Mission' });
-			expect(goal.missionType).toBeUndefined();
+			// Default is 'one_shot' — override via updateGoal
+			expect(goal.missionType).toBe('one_shot');
 
 			const updated = repo.updateGoal(goal.id, {
 				missionType: 'measurable',
@@ -146,7 +153,14 @@ describe('GoalRepository — V2 Mission fields', () => {
 			const goal = repo.createGoal({ roomId, title: 'Measurable' });
 
 			const metrics: MissionMetric[] = [
-				{ name: 'latency_p99', target: 100, current: 250, unit: 'ms', direction: 'decrease', baseline: 300 },
+				{
+					name: 'latency_p99',
+					target: 100,
+					current: 250,
+					unit: 'ms',
+					direction: 'decrease',
+					baseline: 300,
+				},
 			];
 			const updated = repo.updateGoal(goal.id, { structuredMetrics: metrics });
 
