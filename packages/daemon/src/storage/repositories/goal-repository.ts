@@ -88,9 +88,10 @@ export class GoalRepository {
 				id, room_id, title, description, status, priority, progress, linked_task_ids,
 				metrics, created_at, updated_at,
 				mission_type, autonomy_level, schedule, schedule_paused, next_run_at,
-				structured_metrics, max_consecutive_failures, max_planning_attempts, consecutive_failures
+				structured_metrics, max_consecutive_failures, max_planning_attempts, consecutive_failures,
+				replan_count
 			)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -113,7 +114,8 @@ export class GoalRepository {
 			params.structuredMetrics ? JSON.stringify(params.structuredMetrics) : null,
 			params.maxConsecutiveFailures ?? 3,
 			params.maxPlanningAttempts ?? 5,
-			0
+			0,
+			params.replanCount ?? 0
 		);
 
 		return this.getGoal(id)!;
