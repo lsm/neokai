@@ -903,8 +903,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 								{task.taskType}
 							</span>
 						)}
-						{/* PR link for non-review states (review bar shows it for review status) */}
-						{task.prUrl && task.status !== 'review' && (
+						{/* PR link — shown for all statuses once the PR has been created */}
+						{task.prUrl && (
 							<a
 								href={task.prUrl}
 								target="_blank"
