@@ -760,3 +760,71 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 }
 
 export type RoomAgentMcpServer = ReturnType<typeof createRoomAgentMcpServer>;
+
+/**
+ * Narrow config type for the leader context MCP server.
+ * Excludes daemonHub and runtimeService since read-only tools do not need them.
+ */
+export type LeaderContextMcpConfig = Pick<
+	RoomAgentToolsConfig,
+	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo'
+>;
+
+/**
+ * Create a minimal read-only MCP server for the Leader agent.
+ *
+ * Registered as `'leader-context'` (distinct from `'room-agent'` used by the full server).
+ * Exposes only 4 read-only tools: list_goals, list_tasks, get_task_detail, get_room_status.
+ *
+ * The leader only needs context tools — it should NOT have write or human-only tools.
+ * Excluded tools and reasons:
+ *   - approve_task / reject_task: human-only decisions
+ *   - create_goal / update_goal: not the leader's role
+ *   - create_task / update_task: leader delegates to worker via send_to_worker
+ *   - cancel_task / stop_session: not the leader's role
+ *   - set_task_status: leader uses complete_task / fail_task from leader-agent-tools instead
+ *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
+ */
+export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
+	const handlers = createRoomAgentToolHandlers(config);
+
+	const tools = [
+		tool('list_goals', 'List all goals in this room', {}, () => handlers.list_goals()),
+		tool(
+			'list_tasks',
+			'List tasks in this room, optionally filtered by goal',
+			{
+				goal_id: z.string().optional().describe('Filter to tasks linked to this goal'),
+				status: z
+					.enum([
+						'draft',
+						'pending',
+						'in_progress',
+						'review',
+						'completed',
+						'needs_attention',
+						'cancelled',
+					])
+					.optional()
+					.describe('Filter by status'),
+			},
+			(args) => handlers.list_tasks(args)
+		),
+		tool(
+			'get_task_detail',
+			'Get full details for a task including group session IDs and whether it is awaiting human review',
+			{ task_id: z.string().describe('ID of the task to get details for') },
+			(args) => handlers.get_task_detail(args)
+		),
+		tool(
+			'get_room_status',
+			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
+			{},
+			() => handlers.get_room_status()
+		),
+	];
+
+	return createSdkMcpServer({ name: 'leader-context', tools });
+}
+
+export type LeaderContextMcpServer = ReturnType<typeof createLeaderContextMcpServer>;

@@ -3,7 +3,11 @@ import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
-import { createRoomAgentToolHandlers } from '../../../src/lib/room/tools/room-agent-tools';
+import {
+	createRoomAgentToolHandlers,
+	createRoomAgentMcpServer,
+	createLeaderContextMcpServer,
+} from '../../../src/lib/room/tools/room-agent-tools';
 
 describe('Room Agent Tools', () => {
 	let db: Database;
@@ -1572,6 +1576,72 @@ describe('Room Agent Tools', () => {
 			);
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('completed');
+		});
+	});
+
+	describe('createLeaderContextMcpServer', () => {
+		/**
+		 * Helper: return the registered tool names from an SDK MCP server.
+		 * The SDK stores registered tools in `instance._registeredTools` keyed by tool name.
+		 */
+		function getRegisteredToolNames(server: {
+			instance: { _registeredTools: Record<string, unknown> };
+		}): string[] {
+			return Object.keys(server.instance._registeredTools).sort();
+		}
+
+		it('should expose exactly the 4 read-only context tools', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			expect(names).toEqual(['get_room_status', 'get_task_detail', 'list_goals', 'list_tasks']);
+		});
+
+		it('should NOT expose approve_task', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			expect(names).not.toContain('approve_task');
+		});
+
+		it('should NOT expose reject_task', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			expect(names).not.toContain('reject_task');
+		});
+
+		it('should NOT expose any write tools', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(server as never);
+			const writeTools = [
+				'create_goal',
+				'update_goal',
+				'create_task',
+				'update_task',
+				'cancel_task',
+				'stop_session',
+				'set_task_status',
+				'send_message_to_task',
+			];
+			for (const w of writeTools) {
+				expect(names).not.toContain(w);
+			}
+		});
+
+		it('should use the distinct MCP server name "leader-context"', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			expect(server.name).toBe('leader-context');
+		});
+
+		it('full room-agent server name should remain "room-agent"', () => {
+			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			expect(fullServer.name).toBe('room-agent');
+		});
+
+		it('full server exposes all 14 tools', () => {
+			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			const names = getRegisteredToolNames(fullServer as never);
+			expect(names).toHaveLength(14);
+			expect(names).toContain('approve_task');
+			expect(names).toContain('reject_task');
 		});
 	});
 });
