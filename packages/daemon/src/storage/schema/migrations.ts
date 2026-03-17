@@ -1381,6 +1381,9 @@ function runMigration28(db: BunDatabase): void {
 		if (!tableHasColumn(db, 'goals', 'consecutive_failures')) {
 			db.exec(`ALTER TABLE goals ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`);
 		}
+		if (!tableHasColumn(db, 'goals', 'replan_count')) {
+			db.exec(`ALTER TABLE goals ADD COLUMN replan_count INTEGER NOT NULL DEFAULT 0`);
+		}
 		// Composite index for efficient scheduler queries
 		db.exec(
 			`CREATE INDEX IF NOT EXISTS idx_goals_mission_scheduler` +

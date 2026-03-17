@@ -50,6 +50,12 @@ describe('GoalManager', () => {
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL,
 				completed_at INTEGER,
+				planning_attempts INTEGER DEFAULT 0,
+				goal_review_attempts INTEGER DEFAULT 0,
+				mission_type TEXT, autonomy_level TEXT, structured_metrics TEXT, schedule TEXT,
+				schedule_paused INTEGER DEFAULT 0, next_run_at INTEGER,
+				max_consecutive_failures INTEGER, max_planning_attempts INTEGER,
+				consecutive_failures INTEGER DEFAULT 0, replan_count INTEGER DEFAULT 0,
 				FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
 			)
 		`);

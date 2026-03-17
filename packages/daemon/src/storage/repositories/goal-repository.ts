@@ -34,6 +34,8 @@ export interface CreateGoalParams {
 	nextRunAt?: number;
 	maxConsecutiveFailures?: number;
 	maxPlanningAttempts?: number;
+	consecutiveFailures?: number;
+	replanCount?: number;
 }
 
 export interface UpdateGoalParams {
@@ -54,6 +56,7 @@ export interface UpdateGoalParams {
 	maxConsecutiveFailures?: number;
 	maxPlanningAttempts?: number;
 	consecutiveFailures?: number;
+	replanCount?: number;
 }
 
 export interface CreateExecutionParams {
@@ -86,9 +89,10 @@ export class GoalRepository {
 				id, room_id, title, description, status, priority, progress, linked_task_ids,
 				metrics, created_at, updated_at,
 				mission_type, autonomy_level, schedule, schedule_paused, next_run_at,
-				structured_metrics, max_consecutive_failures, max_planning_attempts, consecutive_failures
+				structured_metrics, max_consecutive_failures, max_planning_attempts, consecutive_failures,
+				replan_count
 			)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 		);
 
 		stmt.run(
@@ -111,7 +115,8 @@ export class GoalRepository {
 			params.structuredMetrics ? JSON.stringify(params.structuredMetrics) : null,
 			params.maxConsecutiveFailures ?? 3,
 			params.maxPlanningAttempts ?? 5,
-			0
+			params.consecutiveFailures ?? 0,
+			params.replanCount ?? 0
 		);
 
 		return this.getGoal(id)!;
@@ -229,6 +234,10 @@ export class GoalRepository {
 		if (params.consecutiveFailures !== undefined) {
 			fields.push('consecutive_failures = ?');
 			values.push(params.consecutiveFailures);
+		}
+		if (params.replanCount !== undefined) {
+			fields.push('replan_count = ?');
+			values.push(params.replanCount);
 		}
 
 		if (fields.length === 0) {
@@ -512,6 +521,7 @@ export class GoalRepository {
 			maxConsecutiveFailures: (row.max_consecutive_failures as number | null) ?? 3,
 			maxPlanningAttempts: (row.max_planning_attempts as number | null) ?? 5,
 			consecutiveFailures: (row.consecutive_failures as number | null) ?? 0,
+			replanCount: (row.replan_count as number | null) ?? undefined,
 		};
 	}
 
