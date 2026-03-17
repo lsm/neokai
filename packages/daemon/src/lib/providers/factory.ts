@@ -52,7 +52,7 @@ export function initializeProviders(): ProviderRegistry {
 	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
 	registry.register(new MinimaxProvider());
 
-	// Register Anthropic-to-Codex bridge provider — replaces pi-mono OpenAI provider.
+	// Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
 	// Discovers credentials from env (OPENAI_API_KEY/CODEX_API_KEY),
 	// ~/.neokai/auth.json, and one-time import from ~/.codex/auth.json.
 	registry.register(new AnthropicToCodexBridgeProvider());

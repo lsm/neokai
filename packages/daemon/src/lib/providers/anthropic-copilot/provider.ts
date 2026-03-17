@@ -114,10 +114,10 @@ const COPILOT_ANTHROPIC_MODELS: ModelInfo[] = [
 	},
 	{
 		// Intentionally "gemini-3-pro-preview" (not "gemini-3.1-pro-preview").
-		// GitHubCopilotProvider used "gemini-3.1-pro-preview" because that provider
-		// passed the ID directly to the Copilot CLI. This provider passes the ID
-		// as a hint to the embedded HTTP server which maps it to the Copilot SDK
-		// session; the version suffix matters for routing.
+		// The legacy CLI path used "gemini-3.1-pro-preview" because it passed IDs
+		// directly to Copilot CLI. This provider passes IDs as hints to the embedded
+		// HTTP server, which maps them to Copilot SDK sessions; the version suffix
+		// matters for routing.
 		id: 'gemini-3-pro-preview',
 		name: 'Gemini 3 Pro (Copilot)',
 		alias: 'copilot-anthropic-gemini',

@@ -69,7 +69,7 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 		});
 
 		it('owns all bare model IDs in the model list', () => {
-			// Since GitHubCopilotProvider is removed, no collision — bare IDs are owned
+			// No legacy CLI provider collision — bare IDs are owned by this provider
 			expect(provider.ownsModel('claude-opus-4.6')).toBe(true);
 			expect(provider.ownsModel('claude-sonnet-4.6')).toBe(true);
 			expect(provider.ownsModel('gpt-5.3-codex')).toBe(true);

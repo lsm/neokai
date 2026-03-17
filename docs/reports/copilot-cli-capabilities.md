@@ -242,8 +242,8 @@ The Copilot CLI has its own built-in tools that it executes autonomously:
 
 With `--allow-all`, all tool executions are auto-approved without prompts.
 
-**Key difference from pi-mono:** The CLI executes tools internally; NeoKai does NOT
-intercept or execute them. This is a "black box" approach to tool execution.
+**Key difference from the legacy callback adapter:** The CLI executes tools internally;
+NeoKai does NOT intercept or execute them. This is a "black box" approach to tool execution.
 
 ---
 

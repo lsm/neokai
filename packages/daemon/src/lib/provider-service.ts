@@ -46,11 +46,7 @@
  */
 
 import type { Provider, ProviderInfo, Session } from '@neokai/shared';
-import type {
-	ProviderSdkConfig,
-	ProviderInfo as NewProviderInfo,
-	ProviderSessionConfig,
-} from '@neokai/shared/provider';
+import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
 import { initializeProviders } from './providers/factory.js';
 import { Logger } from './logger.js';
 

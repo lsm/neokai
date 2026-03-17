@@ -68,9 +68,9 @@ User-provided system prompts are best treated as prefix context.
 
 ### Tool Definitions → Not Applicable
 
-The pi-mono adapter converts NeoKai `ToolDefinition[]` to pi-agent-core tool format and
-executes them via callback. The **Copilot CLI does not accept external tool definitions**.
-Instead:
+The legacy callback-based adapter converted NeoKai `ToolDefinition[]` into an intermediate
+tool format and executed callbacks inside NeoKai. The **Copilot CLI does not accept external
+tool definitions**. Instead:
 - The CLI has its own built-in tool set (bash, file ops, GitHub API)
 - Tool execution is automatic with `--allow-all`
 - NeoKai tools are not invocable by Copilot CLI
@@ -78,7 +78,7 @@ Instead:
 This is the key architectural difference:
 | Approach | Tool Execution |
 |----------|---------------|
-| Pi-mono adapter | NeoKai provides tools + executes callbacks |
+| Callback-based adapter | NeoKai provides tools + executes callbacks |
 | Copilot CLI | CLI has built-in tools, executes autonomously |
 
 ---
@@ -252,10 +252,10 @@ invocation.
 
 ## Multimodal Input
 
-| Content Type | Pi-Mono Adapter | Copilot CLI Adapter |
-|-------------|----------------|---------------------|
+| Content Type | Legacy Callback Adapter | Copilot CLI Adapter |
+|-------------|--------------------------|---------------------|
 | Text | ✅ | ✅ |
-| Images (base64) | ✅ (via pi-ai ImageContent) | ❌ (v1.0.2, planned for ACP) |
+| Images (base64) | ✅ (via legacy image content mapping) | ❌ (v1.0.2, planned for ACP) |
 | File references | ❌ | ✅ (CLI reads files directly) |
 | Screenshots | ✅ (converted to base64) | ❌ (v1.0.2) |
 
@@ -264,7 +264,7 @@ invocation.
 ## Context Window Management
 
 The Copilot CLI manages its own context window internally. Key differences:
-- **Pi-mono:** NeoKai passes full conversation history; pi-agent-core manages it
+- **Legacy callback adapter:** NeoKai passes full conversation history and the adapter manages it
 - **Copilot CLI:** Context is maintained server-side in the Copilot session. The CLI
   handles `/compact` internally if context fills up.
 

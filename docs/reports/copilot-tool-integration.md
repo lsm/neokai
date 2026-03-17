@@ -31,7 +31,7 @@ all tools execute without user confirmation.
 
 ### Direct Execution vs. Tool Call Returns
 
-Unlike pi-agent-core which calls back to NeoKai for tool execution, the Copilot CLI:
+Unlike the legacy callback adapter (which calls back to NeoKai for tool execution), the Copilot CLI:
 1. **Decides** which tool to use (internally)
 2. **Executes** the tool immediately (e.g., writes a file to disk)
 3. **Uses the result** to continue the response
@@ -43,17 +43,17 @@ NeoKai never sees or approves individual tool calls — it receives only the fin
 
 ## Tool Execution Callback Flow
 
-### Pi-Mono Approach (Current)
+### Legacy Callback-Based Approach
 ```
-NeoKai               pi-agent-core              LLM
-  │──createQuery()──→ │                            │
-  │                   │──messages──────────────→   │
-  │                   │←─────────────── tool_call─ │
-  │←─tool_execution_* │                            │
-  │──tool result─────→│                            │
-  │                   │──tool_result───────────→   │
-  │                   │←─────────────── response─  │
-  │←─SDKMessages─────│                            │
+NeoKai            Legacy Adapter               LLM
+  │──createQuery()──→ │                           │
+  │                   │──messages──────────────→  │
+  │                   │←────────────── tool_call─ │
+  │←─tool_execution_* │                           │
+  │──tool result─────→│                           │
+  │                   │──tool_result──────────→   │
+  │                   │←────────────── response─  │
+  │←─SDKMessages─────│                           │
 ```
 
 ### Copilot CLI Approach (This Adapter)
@@ -96,7 +96,7 @@ all file operations in NeoKai's worktree context work naturally.
 
 ### GitHub API Integration
 
-The Copilot CLI has native GitHub API tools that are NOT available in pi-mono:
+The Copilot CLI has native GitHub API tools that are NOT available in the legacy callback adapter:
 
 | Copilot CLI Tool | GitHub Operation |
 |-----------------|-----------------|
@@ -194,5 +194,5 @@ Given a NeoKai task: "Fix the authentication bug in auth.ts and add tests"
 
 4. Files are actually modified on disk — NeoKai doesn't need to apply patches separately.
 
-**This is fundamentally different from pi-mono:** The CLI is a complete agent that
-delivers results, not just API calls that NeoKai must orchestrate.
+**This is fundamentally different from the legacy callback adapter:** The CLI is a complete
+agent that delivers results, not just API calls that NeoKai must orchestrate.
