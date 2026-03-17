@@ -51,7 +51,8 @@ describe('Room Agent Tools', () => {
 				structured_metrics TEXT,
 				max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
 				max_planning_attempts INTEGER NOT NULL DEFAULT 5,
-				consecutive_failures INTEGER NOT NULL DEFAULT 0
+				consecutive_failures INTEGER NOT NULL DEFAULT 0,
+		replan_count INTEGER NOT NULL DEFAULT 0
 			);
 			CREATE TABLE tasks (
 				id TEXT PRIMARY KEY,
