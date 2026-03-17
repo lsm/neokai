@@ -34,6 +34,7 @@ export interface CreateGoalParams {
 	nextRunAt?: number;
 	maxConsecutiveFailures?: number;
 	maxPlanningAttempts?: number;
+	replanCount?: number;
 }
 
 export interface UpdateGoalParams {
@@ -54,6 +55,7 @@ export interface UpdateGoalParams {
 	maxConsecutiveFailures?: number;
 	maxPlanningAttempts?: number;
 	consecutiveFailures?: number;
+	replanCount?: number;
 }
 
 export interface CreateExecutionParams {
@@ -229,6 +231,10 @@ export class GoalRepository {
 		if (params.consecutiveFailures !== undefined) {
 			fields.push('consecutive_failures = ?');
 			values.push(params.consecutiveFailures);
+		}
+		if (params.replanCount !== undefined) {
+			fields.push('replan_count = ?');
+			values.push(params.replanCount);
 		}
 
 		if (fields.length === 0) {
@@ -512,6 +518,7 @@ export class GoalRepository {
 			maxConsecutiveFailures: (row.max_consecutive_failures as number | null) ?? 3,
 			maxPlanningAttempts: (row.max_planning_attempts as number | null) ?? 5,
 			consecutiveFailures: (row.consecutive_failures as number | null) ?? 0,
+			replanCount: (row.replan_count as number | null) ?? undefined,
 		};
 	}
 

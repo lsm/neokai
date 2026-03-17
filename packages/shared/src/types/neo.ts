@@ -191,6 +191,8 @@ export interface RoomGoal {
 	maxPlanningAttempts?: number;
 	/** Current count of consecutive failures */
 	consecutiveFailures?: number;
+	/** Lifetime replan counter (distinct from per-execution planning_attempts) */
+	replanCount?: number;
 }
 
 /**
