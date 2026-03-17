@@ -28,8 +28,6 @@ import type {
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
-import type { DaemonHub } from '../../daemon-hub';
-import type { RoomRuntime } from '../runtime/room-runtime';
 import { createLeaderContextMcpServer } from '../tools/room-agent-tools';
 
 const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-5-20250929';
@@ -78,12 +76,6 @@ export interface LeaderAgentConfig {
 	goalManager?: GoalManager;
 	taskManager?: TaskManager;
 	groupRepo?: SessionGroupRepository;
-	/** Optional: DaemonHub for emitting events (used for UI notifications) */
-	daemonHub?: DaemonHub;
-	/** Optional: Runtime service for runtime operations */
-	runtimeService?: {
-		getRuntime(roomId: string): RoomRuntime | null;
-	};
 }
 
 /**
@@ -1093,7 +1085,7 @@ export function createLeaderAgentInit(
 			},
 			mcpServers: {
 				'leader-agent-tools': mcpServer as unknown as McpServerConfig,
-				...(roomAgentTools ? { 'room-agent-tools': roomAgentTools } : {}),
+				...(roomAgentTools ? { 'leader-context-tools': roomAgentTools } : {}),
 			},
 			features: LEADER_FEATURES,
 			context: { roomId: config.room.id },
@@ -1116,7 +1108,7 @@ export function createLeaderAgentInit(
 		},
 		mcpServers: {
 			'leader-agent-tools': mcpServer as unknown as McpServerConfig,
-			...(roomAgentTools ? { 'room-agent-tools': roomAgentTools } : {}),
+			...(roomAgentTools ? { 'leader-context-tools': roomAgentTools } : {}),
 		},
 		features: LEADER_FEATURES,
 		context: { roomId: config.room.id },

@@ -402,14 +402,24 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
 		});
 
-		it('should include room-agent-tools MCP server for read-only context', () => {
+		it('should include leader-context-tools MCP server for read-only context', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.mcpServers).toBeDefined();
-			expect(init.mcpServers!['room-agent-tools']).toBeDefined();
+			const ctxServer = init.mcpServers!['leader-context-tools'] as unknown as {
+				name: string;
+				instance: { _registeredTools: Record<string, unknown> };
+			};
+			expect(ctxServer).toBeDefined();
+			// Verify it is the narrow leader-context server, not the full room-agent server
+			expect(ctxServer.name).toBe('leader-context');
+			const toolNames = Object.keys(ctxServer.instance._registeredTools).sort();
+			expect(toolNames).toEqual(
+				['get_room_status', 'get_task_detail', 'list_goals', 'list_tasks'].sort()
+			);
 		});
 
-		it('should NOT include room-agent-tools when dependencies are missing', () => {
+		it('should NOT include leader-context-tools when dependencies are missing', () => {
 			const callbacks = makeCallbacks();
 			// Create config without goalManager, taskManager, groupRepo
 			const init = createLeaderAgentInit(
@@ -424,10 +434,10 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			expect(init.mcpServers).toBeDefined();
-			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+			expect(init.mcpServers!['leader-context-tools']).toBeUndefined();
 		});
 
-		it('should NOT include room-agent-tools when only partial dependencies provided', () => {
+		it('should NOT include leader-context-tools when only partial dependencies provided', () => {
 			const callbacks = makeCallbacks();
 			// Provide only goalManager, but not taskManager and groupRepo
 			const init = createLeaderAgentInit(
@@ -443,12 +453,12 @@ describe('Leader Agent', () => {
 				callbacks
 			);
 			expect(init.mcpServers).toBeDefined();
-			expect(init.mcpServers!['room-agent-tools']).toBeUndefined();
+			expect(init.mcpServers!['leader-context-tools']).toBeUndefined();
 		});
 
-		it('should still include leader-agent-tools regardless of room-agent-tools availability', () => {
+		it('should still include leader-agent-tools regardless of leader-context-tools availability', () => {
 			const callbacks = makeCallbacks();
-			// Config without room-agent-tools dependencies
+			// Config without leader-context-tools dependencies
 			const init = createLeaderAgentInit(
 				{
 					task: makeTask(),

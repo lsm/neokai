@@ -5,6 +5,7 @@ import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
 import {
 	createRoomAgentToolHandlers,
+	createRoomAgentMcpServer,
 	createLeaderContextMcpServer,
 } from '../../../src/lib/room/tools/room-agent-tools';
 
@@ -1631,13 +1632,11 @@ describe('Room Agent Tools', () => {
 		});
 
 		it('full room-agent server name should remain "room-agent"', () => {
-			const { createRoomAgentMcpServer } = require('../../../src/lib/room/tools/room-agent-tools');
 			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			expect(fullServer.name).toBe('room-agent');
 		});
 
 		it('full server exposes all 14 tools', () => {
-			const { createRoomAgentMcpServer } = require('../../../src/lib/room/tools/room-agent-tools');
 			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			const names = getRegisteredToolNames(fullServer as never);
 			expect(names).toHaveLength(14);
