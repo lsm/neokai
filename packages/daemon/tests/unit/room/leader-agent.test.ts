@@ -848,10 +848,10 @@ describe('Leader Agent', () => {
 			expect(agent.prompt).toContain('--autopilot');
 		});
 
-		it('should use one-shot pi command with github-copilot provider', () => {
+		it('should use one-shot pi command with anthropic-copilot provider', () => {
 			const agents = buildReviewerAgents([{ model: 'pi', type: 'cli' }]);
 			const agent = agents['reviewer-pi'];
-			expect(agent.prompt).toContain('pi -p --no-session --provider github-copilot');
+			expect(agent.prompt).toContain('pi -p --no-session --provider anthropic-copilot');
 			expect(agent.prompt).toContain('--tools read,bash,grep,find,ls');
 			expect(agent.prompt).toContain('Do NOT pass `--model`');
 		});
@@ -859,7 +859,7 @@ describe('Leader Agent', () => {
 		it('should pass selected model to pi cli reviewer prompt', () => {
 			const agents = buildReviewerAgents([{ model: 'pi', type: 'cli', cliModel: 'gpt-5.3-codex' }]);
 			const agent = agents['reviewer-pi'];
-			expect(agent.prompt).toContain('--provider github-copilot --model gpt-5.3-codex');
+			expect(agent.prompt).toContain('--provider anthropic-copilot --model gpt-5.3-codex');
 			expect(agent.prompt).toContain('**Model:** gpt-5.3-codex');
 		});
 

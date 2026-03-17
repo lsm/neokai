@@ -12,6 +12,7 @@ import { setupRPCHandlers } from './lib/rpc-handlers';
 import { WebSocketServerTransport } from './lib/websocket-server-transport';
 import { createWebSocketHandlers } from './routes/setup-websocket';
 import { createGitHubService, type GitHubService } from './lib/github/github-service';
+import { getProviderRegistry } from './lib/providers/registry.js';
 import { createReactiveDatabase } from './storage/reactive-database';
 import { LiveQueryEngine } from './storage/live-query';
 
@@ -380,8 +381,19 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 				logInfo('[Daemon] GitHub service stopped');
 			}
 
-			// Stop all agent sessions
+			// Stop all agent sessions first — this closes any open SSE connections
+			// that are held by providers (e.g. AnthropicToCopilotBridgeProvider's embedded
+			// HTTP server). Provider shutdown must follow so server.close() is not
+			// blocked waiting for those connections to drain.
 			await sessionManager.cleanup();
+
+			// Shut down providers that hold background resources (e.g. embedded
+			// HTTP servers and CLI subprocesses). Runs after sessionManager.cleanup()
+			// so all active connections are already closed.
+			const providerRegistry = getProviderRegistry();
+			await Promise.allSettled(
+				providerRegistry.getAll().flatMap((p) => (p.shutdown ? [p.shutdown()] : []))
+			);
 
 			// Close database
 			db.close();

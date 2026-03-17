@@ -9,7 +9,7 @@
  * - Title generation and branch renaming
  */
 
-import type { Session, WorktreeMetadata, MessageHub, Provider } from '@neokai/shared';
+import type { Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
@@ -17,9 +17,9 @@ import type { WorktreeManager } from '../worktree-manager';
 import { Logger } from '../logger';
 import type { SessionCache, AgentSessionFactory } from './session-cache';
 import type { ToolsConfigManager } from './tools-config';
-import { getProviderService } from '../provider-service';
+import { getProviderService, mergeProviderEnvVars } from '../provider-service';
 import { deleteSDKSessionFiles } from '../sdk-session-file-manager';
-import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver.js';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver.js';
 
 export interface SessionLifecycleConfig {
 	defaultModel: string;
@@ -176,8 +176,8 @@ export class SessionLifecycle {
 				coordinatorMode: params.config?.coordinatorMode ?? globalSettings.coordinatorMode,
 				permissionMode: params.config?.permissionMode,
 				// Provider: Allow explicit override; fall back to resolved provider from model alias.
-				// Critical for pi-mono providers (GitHub Copilot, OpenAI) whose models may share
-				// canonical IDs with Anthropic (e.g., copilot-sonnet → claude-sonnet-4.6).
+				// Critical when providers share canonical IDs (e.g., Anthropic and
+				// anthropic-copilot both owning claude-sonnet-4.6).
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				provider: (params.config?.provider ?? resolvedProvider) as any,
 				// Tools config: Use global defaults for new sessions
@@ -608,10 +608,11 @@ export class SessionLifecycle {
 
 		try {
 			// Step 1: Generate title from user message using session's model
+			// Cast to string: 'anthropic-copilot' is valid at runtime but not in the legacy Provider union.
 			const { title, isFallback } = await this.generateTitleFromMessage(
 				userMessageText,
-				session.workspacePath,
-				session.config.model
+				session.config.model,
+				session.config.provider as string | undefined
 			);
 
 			// Step 2: Rename branch if we have a worktree
@@ -705,22 +706,52 @@ export class SessionLifecycle {
 	 */
 	private async generateTitleFromMessage(
 		messageText: string,
-		_sessionWorkspacePath: string,
-		sessionModel?: string
+		sessionModel?: string,
+		sessionProviderId?: string
 	): Promise<{ title: string; isFallback: boolean }> {
-		// Get provider service to detect provider and get API configuration
 		const providerService = getProviderService();
-		const provider = await providerService.getDefaultProvider();
-		const apiKey = providerService.getProviderApiKey(provider);
 
-		if (!apiKey) {
-			this.logger.warn(
-				`[SessionLifecycle] No API key for provider ${provider}, using fallback title`
-			);
-			return {
-				title: messageText.substring(0, 50).trim() || 'New Session',
-				isFallback: true,
-			};
+		// Determine which provider to use for title generation.
+		// When the session has an explicit provider ID (e.g. 'anthropic-copilot'), use that
+		// directly.  Otherwise fall back to the default configured provider.
+		let provider: string;
+		if (sessionProviderId) {
+			provider = sessionProviderId;
+		} else {
+			provider = await providerService.getDefaultProvider();
+		}
+
+		// Providers whose credentials are managed by getProviderApiKey() (ANTHROPIC_API_KEY,
+		// GLM_API_KEY, MINIMAX_API_KEY). For these we can do a fast, synchronous key check.
+		//
+		// All other providers (e.g. 'anthropic-copilot' with GitHub auth) are NOT listed
+		// here because getProviderApiKey() does not handle their credentials. They use
+		// the isProviderAvailable() path below instead, which delegates to each
+		// provider's own isAvailable() implementation.
+		const legacyKeyProviders: string[] = ['anthropic', 'glm', 'minimax'];
+		if (legacyKeyProviders.includes(provider)) {
+			const apiKey = providerService.getProviderApiKey(provider as 'anthropic' | 'glm' | 'minimax');
+			if (!apiKey) {
+				this.logger.warn(
+					`[SessionLifecycle] No API key for provider ${provider}, using fallback title`
+				);
+				return {
+					title: messageText.substring(0, 50).trim() || 'New Session',
+					isFallback: true,
+				};
+			}
+		} else {
+			// For non-legacy providers (e.g. 'anthropic-copilot'), fall back if unavailable.
+			const available = await providerService.isProviderAvailable(provider);
+			if (!available) {
+				this.logger.warn(
+					`[SessionLifecycle] Provider ${provider} not available, using fallback title`
+				);
+				return {
+					title: messageText.substring(0, 50).trim() || 'New Session',
+					isFallback: true,
+				};
+			}
 		}
 
 		// Use session model if provided, otherwise fall back to title generation config
@@ -752,7 +783,7 @@ export class SessionLifecycle {
 	 * then calls the SDK's query function to generate the title.
 	 */
 	private async generateTitleWithSdk(
-		provider: Provider,
+		provider: string,
 		modelId: string,
 		messageText: string
 	): Promise<string> {
@@ -776,9 +807,11 @@ IMPORTANT: Return ONLY the title text itself, with NO formatting whatsoever:
 User's request:
 ${messageText.slice(0, 2000)}`;
 
-			// Get the environment variables to pass explicitly to SDK subprocess
-			// This ensures env vars are properly inherited when spawning subprocess
-			const providerEnvVars = providerService.getEnvVarsForModel(modelId);
+			// Get the environment variables to pass explicitly to SDK subprocess.
+			// Pass the provider ID so that providers whose model IDs overlap with
+			// Anthropic (e.g. anthropic-copilot using claude-opus-4.6) are looked up
+			// by ID rather than auto-detected, which would return the wrong provider.
+			const providerEnvVars = providerService.getEnvVarsForModel(modelId, provider);
 
 			const cliPath = resolveSDKCliPath();
 
@@ -798,7 +831,7 @@ ${messageText.slice(0, 2000)}`;
 					settingSources: [],
 					tools: [],
 					pathToClaudeCodeExecutable: cliPath,
-					executable: isBundledBinary() ? 'bun' : undefined,
+					executable: isRunningUnderBun() ? 'bun' : undefined,
 					env: mergedEnv,
 				},
 			});
@@ -853,8 +886,8 @@ ${messageText.slice(0, 2000)}`;
 	 * Falls back to static model if dynamic loading failed or is unavailable
 	 *
 	 * Returns both the canonical model ID and the provider that owns it.
-	 * The provider is needed to correctly route pi-mono providers (GitHub Copilot, OpenAI)
-	 * whose models may share canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
+	 * The provider is needed to correctly route providers whose models may share
+	 * canonical IDs with Anthropic (e.g., claude-sonnet-4.6).
 	 */
 	private async getValidatedModelId(
 		requestedModel?: string
@@ -934,6 +967,5 @@ export function generateBranchName(title: string, sessionId: string): string {
  * @returns Merged environment variables object
  */
 function buildSdkQueryEnv(providerEnvVars: Record<string, string | undefined>): NodeJS.ProcessEnv {
-	const { mergeProviderEnvVars } = require('../provider-service');
 	return mergeProviderEnvVars(providerEnvVars as Record<string, string>);
 }

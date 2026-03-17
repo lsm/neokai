@@ -47,7 +47,7 @@ The bridge can:
 
 Covered by:
 
-- `packages/daemon/tests/online/providers/codex-bridge.test.ts`
+- `packages/daemon/tests/online/providers/anthropic-to-codex-bridge-provider.test.ts`
 - `packages/daemon/tests/unit/providers/codex-anthropic-bridge/server.test.ts`
 
 ### 3. API-key auth now works correctly

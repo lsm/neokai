@@ -799,18 +799,18 @@ copilot -s --autopilot --yolo --no-ask-user --max-autopilot-continues 10${modelF
 	}
 
 	if (tool === 'pi') {
-		return `### Pi CLI (GitHub Copilot Provider)
+		return `### Pi CLI (Copilot Bridge Provider)
 
-Run Pi in one-shot mode to review the code via the GitHub Copilot provider:
+Run Pi in one-shot mode to review the code via the Copilot bridge provider:
 
 \`\`\`bash
-pi -p --no-session --provider github-copilot${modelFlag} \\
+pi -p --no-session --provider anthropic-copilot${modelFlag} \\
   --tools read,bash,grep,find,ls \\
   "<YOUR REVIEW PROMPT HERE>" 2>&1
 \`\`\`
 
 - \`-p\` runs one-shot and exits; \`--no-session\` keeps it ephemeral.
-- \`--provider github-copilot\` ensures parity with native Copilot CLI model routing.
+- \`--provider anthropic-copilot\` routes through the new Copilot SDK bridge path.
 - \`--tools read,bash,grep,find,ls\` keeps the review read-only.${cliModel ? '' : '\n- Do NOT pass `--model` — Pi uses the provider default model.'}
 - Capture stdout — the final review output is printed there.`;
 	}
@@ -937,7 +937,7 @@ function resolveProvider(reviewer: SubagentConfig): string {
 		if (provider === 'glm') return 'GLM';
 		if (provider === 'minimax') return 'MiniMax';
 		if (provider === 'openai') return 'OpenAI';
-		if (provider === 'github-copilot' || provider === 'github') return 'GitHub';
+		if (provider === 'anthropic-copilot' || provider === 'github') return 'GitHub';
 		if (provider === 'google') return 'Google';
 		return reviewer.provider;
 	}
@@ -964,7 +964,7 @@ function resolveModelId(reviewer: SubagentConfig): string {
 	if (m === 'sonnet') return 'claude-sonnet-4-6';
 	if (m === 'haiku') return 'claude-haiku-4-5';
 	if (m === 'codex' || m === 'codex-review') return 'gpt-5.3-codex';
-	if (m === 'pi') return 'github-copilot';
+	if (m === 'pi') return 'anthropic-copilot';
 	return reviewer.model;
 }
 

@@ -693,7 +693,7 @@ export class SDKMessageHandler {
 		// /context produces its own result message, so we must skip queuing another
 		// Note: flag is reset when we process the result message (see early return above)
 		//
-		// SKIP for custom query providers (pi-mono based) because:
+		// SKIP for custom query providers because:
 		// - Their generator completes immediately after yielding the result message
 		// - Nothing will consume the queued /context command
 		// - This would cause a deadlock where session state never transitions to idle
@@ -826,9 +826,9 @@ export class SDKMessageHandler {
 	/**
 	 * Update ContextInfo directly from result message usage for custom query providers.
 	 *
-	 * Custom providers (pi-mono based) cannot use the /context command because their
-	 * generator completes immediately after yielding the result message. Instead, we
-	 * build a ContextInfo directly from the usage data in the result message.
+	 * Custom providers cannot use the /context command because their generator
+	 * completes immediately after yielding the result message. Instead, we build a
+	 * ContextInfo directly from the usage data in the result message.
 	 */
 	private async updateContextInfoFromUsage(
 		message: SDKMessage,
@@ -839,7 +839,7 @@ export class SDKMessageHandler {
 		const { session, daemonHub, contextTracker, db } = this.ctx;
 		const usage = message.usage;
 
-		// Get model context info if available (pi-mono provides this)
+		// Get model context info if available
 		const modelUsage = message.modelUsage;
 		const modelUsageKeys = modelUsage ? Object.keys(modelUsage) : [];
 		const firstModelUsage = modelUsageKeys.length > 0 ? modelUsage[modelUsageKeys[0]!] : undefined;

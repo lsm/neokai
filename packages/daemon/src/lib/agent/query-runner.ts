@@ -43,6 +43,7 @@ const STARTUP_TIMEOUT_MS = getStartupTimeoutMs();
  * Original environment variables for restoration after SDK query
  */
 export interface OriginalEnvVars {
+	ANTHROPIC_API_KEY?: string;
 	ANTHROPIC_AUTH_TOKEN?: string;
 	ANTHROPIC_BASE_URL?: string;
 	API_TIMEOUT_MS?: string;
@@ -131,14 +132,14 @@ export class QueryRunner {
 			const providerRegistry = initializeProviders();
 			const modelId = session.config.model || 'sonnet';
 			// Check explicit provider first (stored during session creation when model alias is resolved).
-			// This is critical for pi-mono providers whose canonical model IDs (e.g., claude-sonnet-4.6)
-			// are also claimed by Anthropic, causing incorrect routing if we only use detectProvider().
+			// This is critical when canonical model IDs are shared across providers
+			// (e.g., claude-sonnet-4.6), which would be misrouted if we only used detectProvider().
 			const explicitProviderId = session.config.provider as string | undefined;
 			const provider = explicitProviderId
 				? (providerRegistry.get(explicitProviderId) ?? providerRegistry.detectProvider(modelId))
 				: providerRegistry.detectProvider(modelId);
 
-			// Check if the provider supports getAuthStatus (OAuth providers like OpenAI, GitHub Copilot)
+			// Check if the provider supports getAuthStatus (OAuth-style providers)
 			if (provider?.getAuthStatus) {
 				const authStatus = await provider.getAuthStatus();
 				if (!authStatus.isAuthenticated) {
@@ -199,9 +200,10 @@ export class QueryRunner {
 			if (!provider?.createQuery) {
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, {
-					workspacePath: session.workspacePath,
-				});
+				// Pass explicitProviderId so providers whose model IDs are also claimed by
+				// Anthropic (e.g. AnthropicToCopilotBridgeProvider uses claude-opus-4.6) are not
+				// incorrectly routed to Anthropic by detectProvider().
+				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, explicitProviderId);
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 
@@ -210,8 +212,8 @@ export class QueryRunner {
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
 
-			// Check for custom query provider (pi-mono based)
-			// Some providers (OpenAI, GitHub Copilot) bypass the SDK entirely
+			// Check for custom query provider
+			// Some providers may bypass the SDK entirely
 			if (provider?.createQuery) {
 				logger.info(`Using custom query provider: ${provider.id} for model: ${modelId}`);
 

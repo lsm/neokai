@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
 	isBundledBinary,
+	isRunningUnderBun,
 	setEmbeddedCliPath,
 	resolveSDKCliPath,
 	_resetForTesting,
@@ -21,6 +22,13 @@ describe('sdk-cli-resolver', () => {
 	describe('isBundledBinary', () => {
 		it('returns false in non-bundled environment', () => {
 			expect(isBundledBinary()).toBe(false);
+		});
+	});
+
+	describe('isRunningUnderBun', () => {
+		it('returns true when running under Bun (bun test)', () => {
+			// This test runs via `bun test`, so Bun global is present
+			expect(isRunningUnderBun()).toBe(true);
 		});
 	});
 

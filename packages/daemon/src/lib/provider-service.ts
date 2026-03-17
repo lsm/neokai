@@ -46,12 +46,9 @@
  */
 
 import type { Provider, ProviderInfo, Session } from '@neokai/shared';
-import type {
-	ProviderSdkConfig,
-	ProviderInfo as NewProviderInfo,
-	ProviderSessionConfig,
-} from '@neokai/shared/provider';
+import type { ProviderSdkConfig, ProviderInfo as NewProviderInfo } from '@neokai/shared/provider';
 import { initializeProviders } from './providers/factory.js';
+import { Logger } from './logger.js';
 
 /**
  * Convert new ProviderInfo to legacy ProviderInfo
@@ -90,6 +87,7 @@ export interface ProviderEnvVars {
  * Stores original environment variable values for restoration
  */
 interface OriginalEnvVars {
+	ANTHROPIC_API_KEY?: string;
 	ANTHROPIC_AUTH_TOKEN?: string;
 	ANTHROPIC_BASE_URL?: string;
 	API_TIMEOUT_MS?: string;
@@ -122,6 +120,8 @@ function sdkConfigToEnvVars(sdkConfig: ProviderSdkConfig): ProviderEnvVars {
 }
 
 export class ProviderService {
+	private readonly logger = new Logger('provider-service');
+
 	/**
 	 * Ensure provider system is initialized
 	 */
@@ -177,7 +177,7 @@ export class ProviderService {
 	 *
 	 * Delegates to provider.isAvailable()
 	 */
-	async isProviderAvailable(providerId: Provider): Promise<boolean> {
+	async isProviderAvailable(providerId: string): Promise<boolean> {
 		const registry = this.getRegistry();
 		const provider = registry.get(providerId);
 
@@ -210,11 +210,19 @@ export class ProviderService {
 		const available = await provider.isAvailable();
 		const models = await provider.getModels();
 
-		// Build base URL from SDK config
-		const sdkConfig = provider.buildSdkConfig(models[0]?.id || 'default');
-		const baseUrl = Object.keys(sdkConfig.envVars).includes('ANTHROPIC_BASE_URL')
-			? sdkConfig.envVars.ANTHROPIC_BASE_URL
-			: undefined;
+		// Build base URL from SDK config.
+		// buildSdkConfig may throw for providers that require lazy initialisation
+		// (e.g. AnthropicToCopilotBridgeProvider throws when the embedded server has not
+		// been started yet).  Treat that as "no base URL" rather than a crash.
+		let baseUrl: string | undefined;
+		try {
+			const sdkConfig = provider.buildSdkConfig(models[0]?.id || 'default');
+			baseUrl = Object.keys(sdkConfig.envVars).includes('ANTHROPIC_BASE_URL')
+				? (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined)
+				: undefined;
+		} catch {
+			baseUrl = undefined;
+		}
 
 		return {
 			id: provider.id as Provider,
@@ -268,7 +276,7 @@ export class ProviderService {
 	 * Get title generation configuration for a provider
 	 * Returns the model ID, base URL, and API version to use for direct API calls
 	 */
-	async getTitleGenerationConfig(providerId: Provider): Promise<{
+	async getTitleGenerationConfig(providerId: string): Promise<{
 		modelId: string;
 		baseUrl: string;
 		apiVersion: string;
@@ -291,11 +299,22 @@ export class ProviderService {
 		const modelId = provider.getModelForTier('haiku') || models[0]?.id || 'default';
 
 		// Get base URL from SDK config
-		const sdkConfig = provider.buildSdkConfig(modelId);
-		const baseUrl = sdkConfig.envVars.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
-
-		// API version (currently all providers use v1)
-		const apiVersion = sdkConfig.apiVersion || 'v1';
+		let baseUrl = 'https://api.anthropic.com';
+		let apiVersion = 'v1';
+		try {
+			const sdkConfig = provider.buildSdkConfig(modelId);
+			baseUrl = (sdkConfig.envVars.ANTHROPIC_BASE_URL as string | undefined) || baseUrl;
+			apiVersion = sdkConfig.apiVersion || apiVersion;
+		} catch (err) {
+			// provider not yet initialised (e.g. embedded server not started); use defaults
+			// Log a warning so this is diagnosable: without it, a Copilot session whose
+			// embedded server was not pre-warmed would silently call api.anthropic.com with
+			// an empty auth token, producing an opaque 401 error during title generation.
+			this.logger.warn(
+				`[ProviderService] getTitleGenerationConfig: buildSdkConfig failed for provider` +
+					` '${providerId}' — falling back to Anthropic defaults. Cause: ${err}`
+			);
+		}
 
 		return { modelId, baseUrl, apiVersion };
 	}
@@ -357,10 +376,17 @@ export class ProviderService {
 	 * Get environment variables for SDK subprocess based on model ID
 	 *
 	 * Delegates to provider.buildSdkConfig()
+	 *
+	 * @param modelId - The model ID to get env vars for
+	 * @param providerId - When supplied, look up provider by ID instead of auto-detecting from
+	 *   modelId. Required when model IDs are shared across providers (e.g. claude-opus-4.6 is
+	 *   claimed by both Anthropic and AnthropicCopilot).
 	 */
-	getEnvVarsForModel(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderEnvVars {
+	getEnvVarsForModel(modelId: string, providerId?: string): ProviderEnvVars {
 		const registry = this.getRegistry();
-		const provider = registry.detectProvider(modelId);
+		const provider = providerId
+			? (registry.get(providerId) ?? registry.detectProvider(modelId))
+			: registry.detectProvider(modelId);
 
 		if (!provider || provider.id === 'anthropic') {
 			// When Dev Proxy is enabled, route Anthropic API calls through the proxy
@@ -370,8 +396,13 @@ export class ProviderService {
 			return {};
 		}
 
-		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-		return sdkConfigToEnvVars(sdkConfig);
+		try {
+			const sdkConfig = provider.buildSdkConfig(modelId);
+			return sdkConfigToEnvVars(sdkConfig);
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started)
+			return {};
+		}
 	}
 
 	/**
@@ -392,17 +423,27 @@ export class ProviderService {
 			return {};
 		}
 
-		// Build SDK config with session override
-		const sessionConfig = session.config.providerConfig
-			? {
-					apiKey: session.config.providerConfig.apiKey,
-					baseUrl: session.config.providerConfig.baseUrl,
-				}
-			: undefined;
+		// Build SDK config with session override.
+		// workspacePath is always forwarded so the embedded Copilot server can use
+		// the correct cwd per request (encoded in ANTHROPIC_AUTH_TOKEN by the provider).
+		const sessionConfig = {
+			workspacePath: session.workspacePath,
+			...(session.config.providerConfig
+				? {
+						apiKey: session.config.providerConfig.apiKey,
+						baseUrl: session.config.providerConfig.baseUrl,
+					}
+				: {}),
+		};
 
 		const modelId = session.config.model || 'default';
-		const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
-		return sdkConfigToEnvVars(sdkConfig);
+		try {
+			const sdkConfig = provider.buildSdkConfig(modelId, sessionConfig);
+			return sdkConfigToEnvVars(sdkConfig);
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started)
+			return {};
+		}
 	}
 
 	/**
@@ -414,10 +455,12 @@ export class ProviderService {
 	 * This method saves the original values and returns them for restoration.
 	 *
 	 * @param modelId - The model ID to get env vars for
+	 * @param providerId - When supplied, look up provider by ID instead of auto-detecting from
+	 *   modelId. Required when model IDs are shared across providers.
 	 * @returns Original env vars that should be restored after SDK query
 	 */
-	applyEnvVarsToProcess(modelId: string, sessionConfig?: ProviderSessionConfig): OriginalEnvVars {
-		const envVars = this.getEnvVarsForModel(modelId, sessionConfig);
+	applyEnvVarsToProcess(modelId: string, providerId?: string): OriginalEnvVars {
+		const envVars = this.getEnvVarsForModel(modelId, providerId);
 
 		// For Anthropic (or any non-overriding provider), explicitly clear routing
 		// overrides that may have leaked from a previous GLM query.
@@ -438,7 +481,7 @@ export class ProviderService {
 	 * @param modelId - The model ID for setting tier mappings
 	 * @returns Original env vars that should be restored after SDK query
 	 */
-	applyEnvVarsToProcessForProvider(providerId: Provider, modelId?: string): OriginalEnvVars {
+	applyEnvVarsToProcessForProvider(providerId: string, modelId?: string): OriginalEnvVars {
 		const registry = this.getRegistry();
 		const provider = registry.get(providerId);
 
@@ -450,7 +493,13 @@ export class ProviderService {
 		}
 
 		const sessionConfig = modelId ? { apiKey: undefined } : undefined;
-		const sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
+		let sdkConfig;
+		try {
+			sdkConfig = provider.buildSdkConfig(modelId || 'default', sessionConfig);
+		} catch {
+			// provider not yet initialised (e.g. embedded server not started); skip env-var injection
+			return {};
+		}
 		const envVars = sdkConfigToEnvVars(sdkConfig);
 
 		return this.applyEnvVars(envVars);
@@ -468,9 +517,18 @@ export class ProviderService {
 			process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_AUTH_TOKEN;
 		}
 		if (envVars.ANTHROPIC_API_KEY !== undefined) {
-			// Save as ANTHROPIC_AUTH_TOKEN for consistency
-			original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
-			process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
+			if (envVars.ANTHROPIC_API_KEY === '') {
+				// Empty string means "clear the key" — used by providers that set
+				// ANTHROPIC_BASE_URL to a local proxy (e.g. AnthropicToCopilotBridgeProvider)
+				// to prevent the SDK subprocess from calling Anthropic directly with
+				// the user's real API key.
+				original.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+				delete process.env.ANTHROPIC_API_KEY;
+			} else {
+				// Non-empty: map API key value to ANTHROPIC_AUTH_TOKEN (legacy behaviour)
+				original.ANTHROPIC_AUTH_TOKEN = process.env.ANTHROPIC_AUTH_TOKEN;
+				process.env.ANTHROPIC_AUTH_TOKEN = envVars.ANTHROPIC_API_KEY;
+			}
 		}
 		if (envVars.ANTHROPIC_BASE_URL !== undefined) {
 			original.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL;
@@ -611,6 +669,13 @@ export class ProviderService {
 
 		// Restore only keys captured in `original`.
 		// This prevents unrelated vars from being cleared when a caller only changed a subset.
+		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_API_KEY')) {
+			if (original.ANTHROPIC_API_KEY !== undefined) {
+				process.env.ANTHROPIC_API_KEY = original.ANTHROPIC_API_KEY;
+			} else {
+				delete process.env.ANTHROPIC_API_KEY;
+			}
+		}
 		if (Object.prototype.hasOwnProperty.call(original, 'ANTHROPIC_AUTH_TOKEN')) {
 			if (original.ANTHROPIC_AUTH_TOKEN !== undefined) {
 				process.env.ANTHROPIC_AUTH_TOKEN = original.ANTHROPIC_AUTH_TOKEN;

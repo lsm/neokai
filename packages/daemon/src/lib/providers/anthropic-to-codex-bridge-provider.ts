@@ -1,7 +1,7 @@
 /**
  * Anthropic-to-Codex Bridge Provider
  *
- * Replaces the pi-mono based OpenAI provider. Starts a local HTTP server that
+ * Provides an Anthropic-compatible bridge for OpenAI/Codex-backed models.
  * speaks the Anthropic Messages API (POST /v1/messages with SSE streaming)
  * backed by `codex app-server`.
  *

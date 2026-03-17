@@ -76,7 +76,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 	glm: 'GLM',
 	minimax: 'MiniMax',
 	openai: 'OpenAI',
-	'github-copilot': 'Copilot',
+	'anthropic-copilot': 'Copilot',
 	google: 'Google',
 };
 
@@ -150,7 +150,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 				return {
 					id: m.id,
 					name: m.display_name,
-					// Use server-provided alias (unique per provider, e.g. 'copilot-sonnet' for GitHub Copilot)
+					// Use server-provided alias (unique per provider, e.g. 'copilot-anthropic-sonnet' for Copilot bridge)
 					alias: m.alias || m.id,
 					family,
 					// Use server-provided provider for correct routing

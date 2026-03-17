@@ -14,7 +14,7 @@ import type { SecurityCheckResult } from '@neokai/shared';
 import type { SecurityClassification } from './prompts/security-prompt';
 import { SECURITY_AGENT_SYSTEM_PROMPT } from './prompts/security-prompt';
 import { Logger } from '../logger';
-import { resolveSDKCliPath, isBundledBinary } from '../agent/sdk-cli-resolver';
+import { resolveSDKCliPath, isRunningUnderBun } from '../agent/sdk-cli-resolver';
 
 const logger = new Logger('security-agent');
 
@@ -228,7 +228,7 @@ export class SecurityAgent {
 				systemPrompt: SECURITY_AGENT_SYSTEM_PROMPT,
 				// NO tools array - truly sandboxed
 				pathToClaudeCodeExecutable: resolveSDKCliPath(),
-				executable: isBundledBinary() ? 'bun' : undefined,
+				executable: isRunningUnderBun() ? 'bun' : undefined,
 			},
 		});
 

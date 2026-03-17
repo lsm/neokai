@@ -11,7 +11,7 @@ import { AnthropicProvider } from './anthropic-provider.js';
 import { GlmProvider } from './glm-provider.js';
 import { MinimaxProvider } from './minimax-provider.js';
 import { AnthropicToCodexBridgeProvider } from './anthropic-to-codex-bridge-provider.js';
-import { GitHubCopilotProvider } from './github-copilot-provider.js';
+import { AnthropicToCopilotBridgeProvider } from './anthropic-copilot/index.js';
 import { getProviderRegistry, type ProviderRegistry } from './registry.js';
 export { getProviderRegistry };
 import { ProviderContextManager } from './context-manager.js';
@@ -52,13 +52,15 @@ export function initializeProviders(): ProviderRegistry {
 	// Register MiniMax provider (will be available if MINIMAX_API_KEY is set)
 	registry.register(new MinimaxProvider());
 
-	// Register Anthropic-to-Codex bridge provider — replaces pi-mono OpenAI provider.
+	// Register Anthropic-to-Codex bridge provider for OpenAI/Codex-backed models.
 	// Discovers credentials from env (OPENAI_API_KEY/CODEX_API_KEY),
 	// ~/.neokai/auth.json, and one-time import from ~/.codex/auth.json.
 	registry.register(new AnthropicToCodexBridgeProvider());
 
-	// Register GitHub Copilot provider (will be available if OAuth token is configured)
-	registry.register(new GitHubCopilotProvider());
+	// Register Anthropic Copilot provider (embedded Anthropic-compatible server).
+	// process.cwd() is the fallback cwd; per-session workspace is threaded via
+	// ANTHROPIC_AUTH_TOKEN (encoded by buildSdkConfig) and parsed per-request in server.ts.
+	registry.register(new AnthropicToCopilotBridgeProvider(process.cwd()));
 
 	// Additional built-in providers can be registered here
 	// Example:
