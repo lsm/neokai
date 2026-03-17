@@ -74,7 +74,7 @@ export interface LeaderAgentConfig {
 	model?: string;
 	/** What type of work is being reviewed */
 	reviewContext?: ReviewContext;
-	/** Dependencies for room-agent-tools MCP server (optional - only needed when creating MCP server) */
+	/** Dependencies for the leader context MCP server (optional - only needed when creating MCP server) */
 	goalManager?: GoalManager;
 	taskManager?: TaskManager;
 	groupRepo?: SessionGroupRepository;
@@ -1035,7 +1035,8 @@ export function createLeaderAgentInit(
 	const mcpServer = createLeaderMcpServer(config.groupId, callbacks);
 
 	// Create a read-only context MCP server for the leader (list/get tools only).
-	// Deliberately excludes write tools and human-only tools (approve_task, reject_task).
+	// Deliberately excludes write tools, human-only tools (approve_task, reject_task),
+	// and write-capable dependencies (daemonHub, runtimeService).
 	const roomAgentTools =
 		config.goalManager && config.taskManager && config.groupRepo
 			? (createLeaderContextMcpServer({
@@ -1043,8 +1044,6 @@ export function createLeaderAgentInit(
 					goalManager: config.goalManager,
 					taskManager: config.taskManager,
 					groupRepo: config.groupRepo,
-					daemonHub: config.daemonHub,
-					runtimeService: config.runtimeService,
 				}) as unknown as McpServerConfig)
 			: undefined;
 

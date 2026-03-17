@@ -762,7 +762,19 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 export type RoomAgentMcpServer = ReturnType<typeof createRoomAgentMcpServer>;
 
 /**
+ * Narrow config type for the leader context MCP server.
+ * Excludes daemonHub and runtimeService since read-only tools do not need them.
+ */
+export type LeaderContextMcpConfig = Pick<
+	RoomAgentToolsConfig,
+	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo'
+>;
+
+/**
  * Create a minimal read-only MCP server for the Leader agent.
+ *
+ * Registered as `'leader-context'` (distinct from `'room-agent'` used by the full server).
+ * Exposes only 4 read-only tools: list_goals, list_tasks, get_task_detail, get_room_status.
  *
  * The leader only needs context tools — it should NOT have write or human-only tools.
  * Excluded tools and reasons:
@@ -773,7 +785,7 @@ export type RoomAgentMcpServer = ReturnType<typeof createRoomAgentMcpServer>;
  *   - set_task_status: leader uses complete_task / fail_task from leader-agent-tools instead
  *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
  */
-export function createLeaderContextMcpServer(config: RoomAgentToolsConfig) {
+export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 	const handlers = createRoomAgentToolHandlers(config);
 
 	const tools = [
@@ -812,7 +824,7 @@ export function createLeaderContextMcpServer(config: RoomAgentToolsConfig) {
 		),
 	];
 
-	return createSdkMcpServer({ name: 'room-agent', tools });
+	return createSdkMcpServer({ name: 'leader-context', tools });
 }
 
 export type LeaderContextMcpServer = ReturnType<typeof createLeaderContextMcpServer>;
