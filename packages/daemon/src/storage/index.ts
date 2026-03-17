@@ -35,7 +35,13 @@ import { JobQueueRepository } from './repositories/job-queue-repository';
 export type { SendStatus } from './repositories/sdk-message-repository';
 export type { SQLiteValue } from './types';
 export type { CreateInboxItemParams, InboxItemFilter } from './repositories/inbox-item-repository';
-export type { CreateGoalParams, UpdateGoalParams } from './repositories/goal-repository';
+export type {
+	CreateGoalParams,
+	UpdateGoalParams,
+	CreateExecutionParams,
+	UpdateExecutionParams,
+} from './repositories/goal-repository';
+export { getEffectiveMaxPlanningAttempts } from './repositories/goal-repository';
 export type { Job, EnqueueParams } from './repositories/job-queue-repository';
 export { JobQueueProcessor } from './job-queue-processor';
 export type { JobHandler, JobQueueProcessorOptions } from './job-queue-processor';
