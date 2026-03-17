@@ -172,20 +172,6 @@ export interface Provider {
 	translateModelIdForSdk?(modelId: string): string;
 
 	/**
-	 * Optional: Create custom query generator for non-SDK providers.
-	 * Return null to use standard Claude Agent SDK query().
-	 * This allows providers like OpenAI/GitHub Copilot to bypass the SDK entirely.
-	 */
-	createQuery?(
-		prompt: AsyncGenerator<import('../sdk/sdk.d.ts').SDKUserMessage>,
-		options: import('./query-types.js').ProviderQueryOptions,
-		context: import('./query-types.js').ProviderQueryContext
-	):
-		| Promise<AsyncGenerator<import('../sdk/sdk.d.ts').SDKMessage> | null>
-		| AsyncGenerator<import('../sdk/sdk.d.ts').SDKMessage>
-		| null;
-
-	/**
 	 * Optional: Get authentication status for this provider.
 	 * Returns detailed auth info including method, expiration, and user info.
 	 */

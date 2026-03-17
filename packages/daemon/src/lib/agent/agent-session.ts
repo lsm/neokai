@@ -218,9 +218,6 @@ export class AgentSession
 	firstMessageReceived = false;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 	originalEnvVars: OriginalEnvVars = {};
-	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
-	// Set by QueryRunner when it detects a provider with createQuery method
-	isCustomQueryProvider = false;
 	// Whether to auto-queue /context after each turn (default: true)
 	// Disabled for room-managed agents to prevent interleaved messages after terminal state
 	contextAutoQueueEnabled = true;
