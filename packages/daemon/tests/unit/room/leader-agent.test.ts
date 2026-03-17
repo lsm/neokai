@@ -402,7 +402,7 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
 		});
 
-		it('should include room-agent-tools MCP server for task/goal management', () => {
+		it('should include room-agent-tools MCP server for read-only context', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.mcpServers).toBeDefined();

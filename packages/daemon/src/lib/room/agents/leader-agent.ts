@@ -30,7 +30,7 @@ import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import type { RoomRuntime } from '../runtime/room-runtime';
-import { createRoomAgentMcpServer } from '../tools/room-agent-tools';
+import { createLeaderContextMcpServer } from '../tools/room-agent-tools';
 
 const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-5-20250929';
 
@@ -1034,10 +1034,11 @@ export function createLeaderAgentInit(
 ): AgentSessionInit {
 	const mcpServer = createLeaderMcpServer(config.groupId, callbacks);
 
-	// Create room-agent-tools MCP server for task/goal management (if dependencies provided)
+	// Create a read-only context MCP server for the leader (list/get tools only).
+	// Deliberately excludes write tools and human-only tools (approve_task, reject_task).
 	const roomAgentTools =
 		config.goalManager && config.taskManager && config.groupRepo
-			? (createRoomAgentMcpServer({
+			? (createLeaderContextMcpServer({
 					roomId: config.room.id,
 					goalManager: config.goalManager,
 					taskManager: config.taskManager,

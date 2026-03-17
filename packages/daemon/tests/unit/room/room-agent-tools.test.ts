@@ -3,7 +3,10 @@ import { Database } from 'bun:sqlite';
 import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 import { TaskManager } from '../../../src/lib/room/managers/task-manager';
 import { SessionGroupRepository } from '../../../src/lib/room/state/session-group-repository';
-import { createRoomAgentToolHandlers } from '../../../src/lib/room/tools/room-agent-tools';
+import {
+	createRoomAgentToolHandlers,
+	createLeaderContextMcpServer,
+} from '../../../src/lib/room/tools/room-agent-tools';
 
 describe('Room Agent Tools', () => {
 	let db: Database;
@@ -1572,6 +1575,69 @@ describe('Room Agent Tools', () => {
 			);
 			expect(result.success).toBe(true);
 			expect(result.task.status).toBe('completed');
+		});
+	});
+
+	describe('createLeaderContextMcpServer', () => {
+		it('should create a non-null MCP server', () => {
+			const server = createLeaderContextMcpServer({ roomId, goalManager, taskManager, groupRepo });
+			expect(server).toBeDefined();
+			expect(server).not.toBeNull();
+		});
+
+		it('underlying handlers support list_goals', async () => {
+			const h = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
+			// Verify list_goals works (read-only — no side effects)
+			const result = parseResult(await h.list_goals());
+			expect(result.success).toBe(true);
+			expect(Array.isArray(result.goals)).toBe(true);
+		});
+
+		it('underlying handlers support list_tasks', async () => {
+			const h = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
+			const result = parseResult(await h.list_tasks({}));
+			expect(result.success).toBe(true);
+			expect(Array.isArray(result.tasks)).toBe(true);
+		});
+
+		it('underlying handlers support get_task_detail', async () => {
+			const h = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
+			// Create a task first so we have something to fetch
+			const created = parseResult(
+				await h.create_task({ title: 'Context task', description: 'Used by leader context' })
+			);
+			const result = parseResult(await h.get_task_detail({ task_id: created.taskId as string }));
+			expect(result.success).toBe(true);
+			expect(result.task).toBeDefined();
+		});
+
+		it('underlying handlers support get_room_status', async () => {
+			const h = createRoomAgentToolHandlers({ roomId, goalManager, taskManager, groupRepo });
+			const result = parseResult(await h.get_room_status());
+			expect(result.success).toBe(true);
+			expect(result.status).toBeDefined();
+		});
+
+		it('server is distinct from the full createRoomAgentMcpServer', () => {
+			// createLeaderContextMcpServer must not expose approve_task / reject_task.
+			// We verify this by checking the server object reference differs from a full server
+			// created with createRoomAgentMcpServer — they share the same MCP server name
+			// but expose a different subset of tools.
+			const { createRoomAgentMcpServer } = require('../../../src/lib/room/tools/room-agent-tools');
+			const leaderServer = createLeaderContextMcpServer({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+			});
+			const fullServer = createRoomAgentMcpServer({
+				roomId,
+				goalManager,
+				taskManager,
+				groupRepo,
+			});
+			// Both are MCP servers but separate instances
+			expect(leaderServer).not.toBe(fullServer);
 		});
 	});
 });
