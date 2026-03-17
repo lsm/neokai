@@ -30,7 +30,11 @@ Make both providers fully selectable in the UI. Support create, resume, switch, 
    - Render provider group headers using `getProviderLabel()`.
    - Add a visual separator between provider groups.
    - Show a green/gray availability dot in the provider group header based on whether the provider has authenticated.
-4. When a user selects a model from a different provider, pass the `provider` field from the model info along with the model ID in the `session.model.switch` call. (The daemon already handles this via model info lookup, but explicit is better.)
+4. **Cross-provider model switching requires an RPC interface change.** Currently `session.model.switch` only sends `{ sessionId, model: newModelId }` (see `packages/web/src/hooks/useModelSwitcher.ts` lines 195-202), and the daemon's `ModelSwitchHandler.switchModel()` infers provider from the alias via `modelInfo?.provider`. To support explicit cross-provider switching:
+   - In `packages/shared/`, update the `session.model.switch` RPC request type to include an optional `provider?: Provider` field.
+   - In `packages/daemon/src/lib/agent/model-switch-handler.ts`, update `switchModel()` to accept and prefer the explicit `provider` parameter when present (falling back to alias inference if absent, for backwards compatibility).
+   - In `packages/web/src/hooks/useModelSwitcher.ts`, when the selected model's `provider` field differs from the current session's provider, include `provider` in the `session.model.switch` RPC call.
+   - This is a non-trivial interface change that touches shared types, daemon handler, and web client. It depends on Task 2.2 (provider ID flow) being complete.
 5. Run `bun run typecheck` and `bun run lint`.
 6. Run web tests: `cd packages/web && bunx vitest run`.
 7. Write a test in `packages/web/src/hooks/__tests__/useModelSwitcher.test.ts` for the `groupModelsByProvider` helper.

@@ -85,12 +85,16 @@ Add comprehensive test coverage for all changes: unit tests for type changes and
 **Subtasks:**
 1. Run `bun install` at the worktree root.
 2. Create a new test file `packages/e2e/tests/features/provider-model-switching.e2e.ts`.
-3. Test scenarios (all via UI interactions, no RPC calls):
-   - Create a new session -- verify the model name is visible in the session status bar.
-   - Open the model picker dropdown -- verify models are grouped by provider with provider headers.
-   - Switch to a model from a different provider (if multiple providers are available) -- verify the provider badge updates.
-   - Verify the session continues working after provider switch (send a message, verify response).
-4. Since E2E tests require real providers, guard the provider-switching test with a check for whether multiple providers show models in the picker. If only one provider is available, skip the cross-provider switch but still test the model picker rendering.
+3. Create **two separate test suites** in the file to avoid masking configuration gaps:
+   - **Suite A: "Model picker UI rendering"** (works with any single provider):
+     - Create a new session -- verify the model name is visible in the session status bar.
+     - Open the model picker dropdown -- verify models are grouped by provider with provider headers.
+     - Verify provider labels appear as group headers.
+   - **Suite B: "Cross-provider model switching"** (requires multiple providers):
+     - Switch to a model from a different provider -- verify the provider badge updates.
+     - Verify the session continues working after provider switch (send a message, verify response).
+     - This suite must **fail clearly** (not skip) if only one provider is available, following the hard-fail spirit from CLAUDE.md. Use a `test.fail` or `expect` assertion like `expect(providerGroups.length).toBeGreaterThan(1)` with a clear error message: "Cross-provider switch test requires at least 2 configured providers."
+4. This separation ensures Suite A always runs (verifying UI rendering) while Suite B explicitly fails when the test environment lacks required providers — no silent skipping.
 5. Follow all E2E test rules from CLAUDE.md:
    - All actions through the UI (clicks, typing).
    - All assertions on visible DOM state.

@@ -16,28 +16,33 @@ Ensure collision-safe provider routing when model IDs are shared between provide
 
 ### Task 2.1: Make detectProvider Provider-Aware with Collision Logging
 
-**Description:** Update `ProviderRegistry.detectProvider` to log warnings when multiple providers claim the same model ID. Add a `detectProviderForModel(modelId, preferredProviderId?)` method that prefers the explicit provider when available.
+**Description:** Add a `detectProviderForModel(modelId, preferredProviderId?)` method to `ProviderRegistry` that prefers an explicit provider when available and logs warnings on collisions. Then update `detectProvider` to delegate to it.
 
 **Agent type:** coder
+
+**Important implementation note:** The existing `detectProvider` short-circuits via `for...of` and returns on the first match. The new `detectProviderForModel` must instead **collect all matching providers** before returning, so it can detect and log collisions. When `detectProvider` delegates to the new method (with no preference), the **return value stays the same** (first registered match), but the **internal behavior changes**: it now iterates all providers to check for collisions and logs a warning if multiple providers claim the same model ID. This is an intentional behavioral change needed for collision detection.
 
 **Subtasks:**
 1. Run `bun install` at the worktree root.
 2. In `packages/daemon/src/lib/providers/registry.ts`, add a new method `detectProviderForModel(modelId: string, preferredProviderId?: string)`:
-   - If `preferredProviderId` is provided and that provider claims the model, return it.
-   - Otherwise, iterate all providers that claim the model. If more than one, log a warning with the colliding provider IDs.
-   - Return the first match (preserving existing behavior for backwards compatibility).
-3. Update `detectProvider` to call the new method with no preference (no behavioral change).
+   - Iterate **all** registered providers, collecting those whose `ownsModel(modelId)` returns true.
+   - If `preferredProviderId` is provided and exists in the match set, return it.
+   - If more than one provider claims the model, log a warning with all colliding provider IDs (e.g., `"Model 'claude-opus-4.6' claimed by multiple providers: anthropic, anthropic-copilot. Using anthropic."`).
+   - Return the first match from the collected set (preserving existing ordering for backwards compatibility).
+3. Update `detectProvider` to delegate to `detectProviderForModel(modelId)` with no preference. The return value is unchanged, but collision warnings will now fire.
 4. Write unit tests in `packages/daemon/tests/unit/providers/provider-registry.test.ts`:
    - Test that `detectProviderForModel('claude-opus-4.6', 'anthropic-copilot')` returns the copilot provider.
-   - Test that `detectProviderForModel('claude-opus-4.6')` returns the first registered (anthropic).
+   - Test that `detectProviderForModel('claude-opus-4.6')` returns the first registered (anthropic) and logs a collision warning.
    - Test that `detectProviderForModel('gpt-5.3-codex', 'anthropic-codex')` returns the codex provider.
+   - Test that `detectProvider('claude-opus-4.6')` still returns the same result as before (backwards-compatible).
 5. Run `bun run typecheck` and `bun run lint`.
 6. Run `cd packages/daemon && bun test tests/unit/providers/provider-registry.test.ts`.
 7. Changes must be on a feature branch with a GitHub PR created via `gh pr create`.
 
 **Acceptance criteria:**
 - `detectProviderForModel` correctly resolves to the preferred provider when specified.
-- Collision case logs a warning but still returns a result.
+- Collision case logs a warning listing all colliding provider IDs, then returns the first match.
+- `detectProvider` delegates to `detectProviderForModel` and returns the same value as before (first match), but now also logs collision warnings.
 - All existing registry tests pass plus new tests for collision handling.
 - `bun run typecheck` and `bun run lint` pass.
 
@@ -58,7 +63,7 @@ Ensure collision-safe provider routing when model IDs are shared between provide
 4. In `packages/daemon/src/lib/agent/model-switch-handler.ts`:
    - When looking up the new provider, use `detectProviderForModel` (from Task 2.1) with the current session's provider as a hint.
    - This prevents switching from `copilot-anthropic-sonnet` to `claude-sonnet-4.6` from losing the Copilot provider context.
-5. In `packages/daemon/src/lib/provider-service.ts`, update `getEnvVarsForModel` to use the new `detectProviderForModel` when `providerId` is provided.
+5. **Note:** `getEnvVarsForModel` in `packages/daemon/src/lib/provider-service.ts` (lines 385-406) already accepts an optional `providerId` parameter and uses `registry.get(providerId)` when supplied — no change needed to the method itself. Instead, audit its callers (e.g., `query-runner.ts`, `model-switch-handler.ts`) and ensure they pass `session.config.provider` as the `providerId` argument so the existing logic is actually exercised.
 6. Write unit tests for the model-switch-handler that cover:
    - Switching between models within the same provider (e.g., copilot opus -> copilot sonnet).
    - Switching between providers (e.g., anthropic sonnet -> copilot sonnet).

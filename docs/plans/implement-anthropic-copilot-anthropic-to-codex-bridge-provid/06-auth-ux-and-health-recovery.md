@@ -56,7 +56,8 @@ Add first-class auth status indicators in the chat UI so users can see at a glan
 1. Run `bun install` at the worktree root.
 2. In the daemon's error handling layer (likely `packages/daemon/src/lib/error-manager.ts` or the agent session error handler):
    - Detect provider-specific errors: authentication failures (401/403), bridge server unreachable (ECONNREFUSED), Copilot SDK errors.
-   - Map these to a new `ErrorCategory` like `PROVIDER_AUTH_ERROR` or `PROVIDER_UNAVAILABLE`.
+   - Add new values to the `ErrorCategory` enum: `PROVIDER_AUTH_ERROR` and `PROVIDER_UNAVAILABLE`.
+   - **Important:** Before adding new enum values, search for exhaustive `switch` statements or type narrowing on `ErrorCategory` throughout the codebase (`grep -r "ErrorCategory" packages/`). Any exhaustive switch will break at compile time — update all exhaustive handlers to cover the new categories. This prevents TypeScript build failures downstream.
 3. In the web chat UI error display:
    - When a `PROVIDER_AUTH_ERROR` is received, show a banner with:
      - "Authentication with [Provider Name] has expired. Click here to re-authenticate."
