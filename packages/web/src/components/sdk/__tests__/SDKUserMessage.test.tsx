@@ -20,16 +20,7 @@ vi.mock('../../../lib/utils.ts', async (importOriginal) => {
 	};
 });
 
-// Mock the toast module
-vi.mock('../../../lib/toast.ts', () => ({
-	toast: {
-		success: vi.fn(),
-		error: vi.fn(),
-	},
-}));
-
 import { copyToClipboard } from '../../../lib/utils.ts';
-import { toast } from '../../../lib/toast.ts';
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -390,7 +381,7 @@ describe('SDKUserMessage', () => {
 			expect(copyButton).toBeTruthy();
 		});
 
-		it('should show success toast when copy succeeds', async () => {
+		it('should show inline green check when copy succeeds', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(true);
 
 			const message = createTextMessage('Hello world');
@@ -402,11 +393,14 @@ describe('SDKUserMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+				// Button should now show "Copied!" title and green color
+				const copiedButton = container.querySelector('button[title="Copied!"]');
+				expect(copiedButton).toBeTruthy();
+				expect(copiedButton?.className).toContain('text-green-400');
 			});
 		});
 
-		it('should show error toast when copy fails', async () => {
+		it('should not show green check when copy fails', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(false);
 
 			const message = createTextMessage('Hello world');
@@ -418,7 +412,8 @@ describe('SDKUserMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
+				// Button should remain showing "Copy message" (not switched to Copied!)
+				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
 			});
 		});
 	});
