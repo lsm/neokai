@@ -294,6 +294,13 @@ function HumanInputArea({
 	const [target, setTarget] = useState<HumanMessageTarget>('leader');
 	const [menuOpen, setMenuOpen] = useState(false);
 	const menuRef = useRef<HTMLDivElement>(null);
+	const isTouchDeviceRef = useRef(false);
+
+	useEffect(() => {
+		isTouchDeviceRef.current =
+			window.matchMedia('(pointer: coarse)').matches ||
+			('ontouchstart' in window && window.innerWidth < 768);
+	}, []);
 
 	useEffect(() => {
 		if (!menuOpen) return;
@@ -329,11 +336,12 @@ function HumanInputArea({
 		}
 	};
 
+	const targetLabel = target === 'leader' ? 'leader' : 'worker';
 	const placeholder = !hasGroup
 		? 'No active agent group yet — input will activate once a group starts.'
-		: target === 'leader'
-			? 'Send a message to the leader… (Enter to send, Shift+Enter for newline)'
-			: 'Send a message to the worker… (Enter to send, Shift+Enter for newline)';
+		: isTouchDeviceRef.current
+			? `Send a message to the ${targetLabel}…`
+			: `Send a message to the ${targetLabel}… (Enter to send, Shift+Enter for newline)`;
 
 	return (
 		<div class="border-t border-dark-700 bg-dark-850 flex-shrink-0 px-4 py-3 space-y-2">
@@ -358,10 +366,7 @@ function HumanInputArea({
 				onContentChange={setMessageText}
 				onKeyDown={(e) => {
 					if (e.key === 'Enter') {
-						const isTouchDevice =
-							window.matchMedia('(pointer: coarse)').matches ||
-							('ontouchstart' in window && window.innerWidth < 768);
-						if (e.metaKey || e.ctrlKey || (!e.shiftKey && !isTouchDevice)) {
+						if (e.metaKey || e.ctrlKey || (!e.shiftKey && !isTouchDeviceRef.current)) {
 							e.preventDefault();
 							void sendMessage();
 						}
