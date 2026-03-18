@@ -20,12 +20,22 @@ import { TaskConversationRenderer } from './TaskConversationRenderer';
 
 const mockRequest = vi.fn();
 let deltaHandler: ((event: { added: unknown[]; timestamp: number }) => void) | null = null;
-const mockOnEvent = vi.fn((eventName: string, handler: (event: unknown) => void) => {
-	if (eventName === 'state.groupMessages.delta') {
-		deltaHandler = handler;
+
+// state.session handlers keyed by the channel passed when the handler fires,
+// allowing tests to fire session-state events scoped to a specific session channel.
+type SessionStateHandler = (data: unknown, context: { channel?: string }) => void;
+const sessionStateHandlers: SessionStateHandler[] = [];
+
+const mockOnEvent = vi.fn(
+	(eventName: string, handler: (data: unknown, context?: { channel?: string }) => void) => {
+		if (eventName === 'state.groupMessages.delta') {
+			deltaHandler = handler as (event: { added: unknown[]; timestamp: number }) => void;
+		} else if (eventName === 'state.session') {
+			sessionStateHandlers.push(handler as SessionStateHandler);
+		}
+		return () => {};
 	}
-	return () => {};
-});
+);
 const mockJoinRoom = vi.fn();
 const mockLeaveRoom = vi.fn();
 
@@ -38,12 +48,38 @@ vi.mock('../../hooks/useMessageHub.ts', () => ({
 	}),
 }));
 
-// SDKMessageRenderer minimal mock
+// SDKMessageRenderer mock that captures rendered props for inspection
+type CapturedRendererProps = {
+	uuid: string;
+	sessionId: string | undefined;
+	pendingQuestion: unknown;
+	resolvedQuestions: unknown;
+};
+const capturedSDKProps: CapturedRendererProps[] = [];
+
 vi.mock('../sdk/SDKMessageRenderer.tsx', () => ({
-	SDKMessageRenderer: ({ message }: { message: { uuid?: string } }) => (
-		<div data-testid={`msg-${message.uuid ?? 'unknown'}`} />
-	),
+	SDKMessageRenderer: (props: {
+		message: { uuid?: string };
+		sessionId?: string;
+		pendingQuestion?: unknown;
+		resolvedQuestions?: unknown;
+	}) => {
+		capturedSDKProps.push({
+			uuid: props.message?.uuid ?? 'unknown',
+			sessionId: props.sessionId,
+			pendingQuestion: props.pendingQuestion,
+			resolvedQuestions: props.resolvedQuestions,
+		});
+		return <div data-testid={`msg-${props.message?.uuid ?? 'unknown'}`} />;
+	},
 }));
+
+/** Fire a state.session event on the given channel to all registered handlers */
+function fireSessionStateEvent(channel: string, data: unknown): void {
+	for (const handler of sessionStateHandlers) {
+		handler(data, { channel });
+	}
+}
 
 // -------------------------------------------------------
 // Helpers
@@ -100,6 +136,8 @@ describe('TaskConversationRenderer — onMessageCountChange', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		deltaHandler = null;
+		sessionStateHandlers.length = 0;
+		capturedSDKProps.length = 0;
 	});
 
 	afterEach(() => {
@@ -403,6 +441,8 @@ describe('TaskConversationRenderer — pagination', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		deltaHandler = null;
+		sessionStateHandlers.length = 0;
+		capturedSDKProps.length = 0;
 	});
 
 	afterEach(() => {
@@ -636,6 +676,8 @@ describe('TaskConversationRenderer — session question state props', () => {
 		mockJoinRoom.mockReset();
 		mockLeaveRoom.mockReset();
 		deltaHandler = null;
+		sessionStateHandlers.length = 0;
+		capturedSDKProps.length = 0;
 	});
 
 	afterEach(() => {
@@ -646,43 +688,29 @@ describe('TaskConversationRenderer — session question state props', () => {
 		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
 		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
-		let threw = false;
-		try {
-			const { container } = render(
-				<TaskConversationRenderer
-					groupId="group-1"
-					leaderSessionId="leader-session-123"
-					workerSessionId="worker-session-456"
-					onMessageCountChange={vi.fn()}
-				/>
-			);
-			await waitFor(() => {
-				expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
-			});
-		} catch {
-			threw = true;
-		}
-
-		expect(threw).toBe(false);
+		const { container } = render(
+			<TaskConversationRenderer
+				groupId="group-1"
+				leaderSessionId="leader-session-123"
+				workerSessionId="worker-session-456"
+				onMessageCountChange={vi.fn()}
+			/>
+		);
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
+		});
 	});
 
 	it('renders without leaderSessionId or workerSessionId (backward-compatible)', async () => {
 		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
 		mockRequest.mockImplementation(async () => makeApiResponse(messages));
 
-		let threw = false;
-		try {
-			const { container } = render(
-				<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
-			);
-			await waitFor(() => {
-				expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
-			});
-		} catch {
-			threw = true;
-		}
-
-		expect(threw).toBe(false);
+		const { container } = render(
+			<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+		);
+		await waitFor(() => {
+			expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
+		});
 	});
 
 	it('joins session channels for leader and worker when both session IDs provided', async () => {
@@ -699,7 +727,6 @@ describe('TaskConversationRenderer — session question state props', () => {
 		);
 
 		await waitFor(() => {
-			// TaskConversationRenderer joins group channel; useSessionQuestionState joins session channels
 			const joinedRooms = mockJoinRoom.mock.calls.map((c: string[]) => c[0]);
 			expect(joinedRooms).toContain('group:group-1');
 			expect(joinedRooms).toContain('session:leader-session-123');
@@ -707,8 +734,7 @@ describe('TaskConversationRenderer — session question state props', () => {
 		});
 	});
 
-	it('renders messages with _taskMeta.authorSessionId set correctly', async () => {
-		// Craft a message with _taskMeta.authorSessionId set to a leader session
+	it('passes sessionId from authorSessionId to SDKMessageRenderer', async () => {
 		const leaderMsg = makeRawMessage(1, 'assistant', 'uuid-leader');
 		const parsed = JSON.parse(leaderMsg.content);
 		parsed._taskMeta = {
@@ -721,7 +747,7 @@ describe('TaskConversationRenderer — session question state props', () => {
 
 		mockRequest.mockImplementation(async () => makeApiResponse([leaderMsg]));
 
-		const { container } = render(
+		render(
 			<TaskConversationRenderer
 				groupId="group-1"
 				leaderSessionId="leader-session-123"
@@ -731,8 +757,106 @@ describe('TaskConversationRenderer — session question state props', () => {
 		);
 
 		await waitFor(() => {
-			// The message renders — the SDKMessageRenderer mock renders a div with the uuid
-			expect(container.querySelector('[data-testid="msg-uuid-leader"]')).not.toBeNull();
+			const leaderProps = capturedSDKProps.find((p) => p.uuid === 'uuid-leader');
+			expect(leaderProps).toBeDefined();
+			expect(leaderProps?.sessionId).toBe('leader-session-123');
+		});
+	});
+
+	it('passes pendingQuestion to SDKMessageRenderer for the correct session after state.session event', async () => {
+		// Leader message
+		const leaderMsg = makeRawMessage(1, 'assistant', 'uuid-leader');
+		const parsedLeader = JSON.parse(leaderMsg.content);
+		parsedLeader._taskMeta = {
+			authorRole: 'leader',
+			authorSessionId: 'leader-session-123',
+			turnId: 'turn-1',
+			iteration: 0,
+		};
+		leaderMsg.content = JSON.stringify(parsedLeader);
+
+		// Worker message
+		const workerMsg = makeRawMessage(2, 'assistant', 'uuid-worker');
+		const parsedWorker = JSON.parse(workerMsg.content);
+		parsedWorker._taskMeta = {
+			authorRole: 'coder',
+			authorSessionId: 'worker-session-456',
+			turnId: 'turn-2',
+			iteration: 0,
+		};
+		workerMsg.content = JSON.stringify(parsedWorker);
+
+		mockRequest.mockImplementation(async () => makeApiResponse([leaderMsg, workerMsg]));
+
+		render(
+			<TaskConversationRenderer
+				groupId="group-1"
+				leaderSessionId="leader-session-123"
+				workerSessionId="worker-session-456"
+				onMessageCountChange={vi.fn()}
+			/>
+		);
+
+		// Wait for initial render
+		await waitFor(() => {
+			expect(capturedSDKProps.length).toBeGreaterThanOrEqual(2);
+		});
+
+		capturedSDKProps.length = 0; // Reset to capture fresh render
+
+		// Fire a state.session event for the LEADER session with waiting_for_input
+		const leaderPendingQuestion = {
+			toolUseId: 'tool-123',
+			questions: [
+				{ question: 'How should I proceed?', header: 'Decision', options: [], multiSelect: false },
+			],
+			askedAt: Date.now(),
+		};
+		await act(async () => {
+			fireSessionStateEvent('session:leader-session-123', {
+				agentState: { status: 'waiting_for_input', pendingQuestion: leaderPendingQuestion },
+				sessionInfo: null,
+			});
+		});
+
+		await waitFor(() => {
+			const leaderProps = capturedSDKProps.find((p) => p.uuid === 'uuid-leader');
+			const workerProps = capturedSDKProps.find((p) => p.uuid === 'uuid-worker');
+			// Leader message should receive the pending question
+			expect(leaderProps?.pendingQuestion).toEqual(leaderPendingQuestion);
+			// Worker message should NOT receive the leader's pending question (no cross-session contamination)
+			expect(workerProps?.pendingQuestion).toBeNull();
+		});
+	});
+
+	it('uses no-op question state for messages with unknown authorSessionId', async () => {
+		const unknownMsg = makeRawMessage(1, 'assistant', 'uuid-unknown');
+		const parsedUnknown = JSON.parse(unknownMsg.content);
+		parsedUnknown._taskMeta = {
+			authorRole: 'general',
+			authorSessionId: 'unknown-session-xyz',
+			turnId: 'turn-1',
+			iteration: 0,
+		};
+		unknownMsg.content = JSON.stringify(parsedUnknown);
+
+		mockRequest.mockImplementation(async () => makeApiResponse([unknownMsg]));
+
+		render(
+			<TaskConversationRenderer
+				groupId="group-1"
+				leaderSessionId="leader-session-123"
+				workerSessionId="worker-session-456"
+				onMessageCountChange={vi.fn()}
+			/>
+		);
+
+		await waitFor(() => {
+			const props = capturedSDKProps.find((p) => p.uuid === 'uuid-unknown');
+			expect(props).toBeDefined();
+			// Unknown session should get no-op state: no sessionId from question state but
+			// authorSessionId is still passed as sessionId prop to allow form rendering for known tools
+			expect(props?.pendingQuestion).toBeNull();
 		});
 	});
 });

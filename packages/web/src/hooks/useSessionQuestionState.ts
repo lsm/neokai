@@ -26,6 +26,31 @@ export interface SessionQuestionState {
 }
 
 /**
+ * Extracts pending question and resolved questions from a SessionState snapshot.
+ * Shared between the real-time event handler and the initial fetch to avoid duplication.
+ */
+function applySessionState(
+	sessionState: SessionState,
+	setPendingQuestion: (q: PendingUserQuestion | null) => void,
+	setResolvedQuestions: (map: Map<string, ResolvedQuestion>) => void
+): void {
+	if (sessionState.agentState.status === 'waiting_for_input') {
+		setPendingQuestion(sessionState.agentState.pendingQuestion);
+	} else {
+		setPendingQuestion(null);
+	}
+
+	const resolvedRaw = sessionState.sessionInfo?.metadata?.resolvedQuestions;
+	if (resolvedRaw) {
+		const map = new Map<string, ResolvedQuestion>();
+		for (const [toolUseId, resolved] of Object.entries(resolvedRaw)) {
+			map.set(toolUseId, resolved as ResolvedQuestion);
+		}
+		setResolvedQuestions(map);
+	}
+}
+
+/**
  * Subscribes to session:{sessionId} channel and tracks question state.
  * Returns pendingQuestion, resolvedQuestions, and onQuestionResolved callback.
  * When sessionId is undefined, returns empty/no-op state.
@@ -49,26 +74,14 @@ export function useSessionQuestionState(sessionId: string | undefined): SessionQ
 		joinRoom(channel);
 		let cancelled = false;
 
-		// Subscribe to state.session events for real-time updates
-		const unsub = onEvent<SessionState>('state.session', (event) => {
+		// Subscribe to state.session events for real-time updates.
+		// Filter by context.channel to avoid cross-session contamination: both the
+		// leader and worker hooks subscribe to the same 'state.session' method name,
+		// but only process events that originated from their own session's channel.
+		const unsub = onEvent<SessionState>('state.session', (event, context) => {
 			if (cancelled) return;
-
-			// Update pending question from agent state
-			if (event.agentState.status === 'waiting_for_input') {
-				setPendingQuestion(event.agentState.pendingQuestion);
-			} else {
-				setPendingQuestion(null);
-			}
-
-			// Sync resolved questions from session metadata
-			const resolvedRaw = event.sessionInfo?.metadata?.resolvedQuestions;
-			if (resolvedRaw) {
-				const map = new Map<string, ResolvedQuestion>();
-				for (const [toolUseId, resolved] of Object.entries(resolvedRaw)) {
-					map.set(toolUseId, resolved as ResolvedQuestion);
-				}
-				setResolvedQuestions(map);
-			}
+			if (context.channel !== channel) return;
+			applySessionState(event, setPendingQuestion, setResolvedQuestions);
 		});
 
 		// Fetch initial state — state.session RPC returns SessionState directly
@@ -76,20 +89,7 @@ export function useSessionQuestionState(sessionId: string | undefined): SessionQ
 			try {
 				const sessionState = await request<SessionState>('state.session', { sessionId });
 				if (!cancelled && sessionState) {
-					if (sessionState.agentState.status === 'waiting_for_input') {
-						setPendingQuestion(sessionState.agentState.pendingQuestion);
-					} else {
-						setPendingQuestion(null);
-					}
-
-					const resolvedRaw = sessionState.sessionInfo?.metadata?.resolvedQuestions;
-					if (resolvedRaw) {
-						const map = new Map<string, ResolvedQuestion>();
-						for (const [toolUseId, resolved] of Object.entries(resolvedRaw)) {
-							map.set(toolUseId, resolved as ResolvedQuestion);
-						}
-						setResolvedQuestions(map);
-					}
+					applySessionState(sessionState, setPendingQuestion, setResolvedQuestions);
 				}
 			} catch {
 				// Fetch failure is non-fatal — question state will be empty until next event

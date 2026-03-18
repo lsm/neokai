@@ -17,9 +17,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useMessageHub } from '../../hooks/useMessageHub';
-import { useSessionQuestionState } from '../../hooks/useSessionQuestionState';
+import {
+	useSessionQuestionState,
+	type SessionQuestionState,
+} from '../../hooks/useSessionQuestionState';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
+
+/** Empty question state used as a safe fallback for messages with unknown session IDs */
+const NO_OP_QUESTION_STATE: SessionQuestionState = {
+	pendingQuestion: null,
+	resolvedQuestions: new Map(),
+	onQuestionResolved: () => {},
+};
 
 interface TaskMeta {
 	authorRole: 'planner' | 'coder' | 'general' | 'leader' | 'craft' | 'lead' | 'human' | 'system';
@@ -379,13 +389,15 @@ export function TaskConversationRenderer({
 				// Insert a role transition divider when the agent changes
 				const showTransition = roleTransitions.has(i);
 
-				// Look up the question state for the session that authored this message
+				// Look up the question state for the session that authored this message.
+				// Fall back to a no-op state for messages whose authorSessionId does not
+				// match either known session, to avoid rendering incorrect question forms.
 				const authorSessionId = meta?.authorSessionId;
-				let questionState = leaderQuestionState;
-				if (authorSessionId && workerSessionId && authorSessionId === workerSessionId) {
-					questionState = workerQuestionState;
-				} else if (authorSessionId && leaderSessionId && authorSessionId === leaderSessionId) {
+				let questionState: SessionQuestionState = NO_OP_QUESTION_STATE;
+				if (authorSessionId && leaderSessionId && authorSessionId === leaderSessionId) {
 					questionState = leaderQuestionState;
+				} else if (authorSessionId && workerSessionId && authorSessionId === workerSessionId) {
+					questionState = workerQuestionState;
 				}
 
 				return (
