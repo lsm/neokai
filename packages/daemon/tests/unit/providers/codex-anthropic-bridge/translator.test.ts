@@ -349,14 +349,15 @@ describe('SSE builders', () => {
 	});
 
 	it('messageDeltaSSE emits stop_reason and output tokens', () => {
-		const { data } = parseSSE(messageDeltaSSE('end_turn', 42));
+		const { data } = parseSSE(messageDeltaSSE('end_turn', { outputTokens: 42 }));
 		expect((data as { delta: { stop_reason: string } }).delta.stop_reason).toBe('end_turn');
 		expect((data as { usage: { output_tokens: number } }).usage.output_tokens).toBe(42);
 	});
 
 	it('messageDeltaSSE emits tool_use stop_reason', () => {
-		const { data } = parseSSE(messageDeltaSSE('tool_use', 10));
+		const { data } = parseSSE(messageDeltaSSE('tool_use', { outputTokens: 10 }));
 		expect((data as { delta: { stop_reason: string } }).delta.stop_reason).toBe('tool_use');
+		expect((data as { usage: { output_tokens: number } }).usage.output_tokens).toBe(10);
 	});
 
 	it('messageStopSSE emits message_stop', () => {

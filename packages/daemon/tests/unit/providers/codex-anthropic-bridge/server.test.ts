@@ -166,7 +166,8 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 							enc.encode(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)))
 						);
 						controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
-						controller.enqueue(enc.encode(messageDeltaSSE('tool_use', outputTokens)));
+						// Mirror real server: at tool_call time tokenUsage hasn't arrived yet — always use heuristic.
+						controller.enqueue(enc.encode(messageDeltaSSE('tool_use', { outputTokens })));
 						controller.enqueue(enc.encode(messageStopSSE()));
 						const callId = event.callId;
 						const cleanupTimer = setTimeout(() => {
@@ -188,7 +189,23 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
 							textOpen = false;
 						}
-						controller.enqueue(enc.encode(messageDeltaSSE('end_turn', outputTokens)));
+						// Mirror real server: prefer actual token count from turn_done, fall back to heuristic.
+						const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
+						controller.enqueue(
+							enc.encode(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }))
+						);
+						controller.enqueue(enc.encode(messageStopSSE()));
+						sessionArg?.kill();
+						controller.close();
+						return;
+					} else if (event.type === 'error') {
+						if (textOpen) {
+							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
+							textOpen = false;
+						}
+						controller.enqueue(
+							enc.encode(messageDeltaSSE('end_turn', { outputTokens: outputTokens }))
+						);
 						controller.enqueue(enc.encode(messageStopSSE()));
 						sessionArg?.kill();
 						controller.close();
@@ -205,7 +222,7 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 					}
 				}
 				if (textOpen) controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
-				controller.enqueue(enc.encode(messageDeltaSSE('end_turn', outputTokens)));
+				controller.enqueue(enc.encode(messageDeltaSSE('end_turn', { outputTokens: outputTokens })));
 				controller.enqueue(enc.encode(messageStopSSE()));
 				sessionArg?.kill();
 				controller.close();
@@ -899,6 +916,71 @@ describe('Bridge HTTP server', () => {
 		// Prevent afterEach from calling stop() again on an already-stopped server
 		// by replacing server with a no-op
 		server = { port: 0, stop: () => {} } as BridgeServer & { port: number };
+	});
+
+	// -------------------------------------------------------------------------
+	// Token usage wiring — actual counts from turn_done
+	// -------------------------------------------------------------------------
+
+	it('message_delta uses actual outputTokens from turn_done when > 0', async () => {
+		// Simulate v2 protocol: thread/tokenUsage/updated populated turn_done with real counts.
+		// The mock yields turn_done.outputTokens = 55; the heuristic for "Hi" would be 1.
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{ type: 'text_delta', text: 'Hi' },
+				{ type: 'turn_done', inputTokens: 120, outputTokens: 55 },
+			]);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hi' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		expect(msgDelta).toBeDefined();
+		const usageOutputTokens = (msgDelta?.data as { usage?: { output_tokens?: number } })?.usage
+			?.output_tokens;
+		// Should use actual count (55), not heuristic (which would be 1 for "Hi")
+		expect(usageOutputTokens).toBe(55);
+	});
+
+	it('message_delta falls back to heuristic outputTokens when turn_done has 0 tokens', async () => {
+		// Simulate no thread/tokenUsage/updated notification — turn_done carries 0 tokens
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{ type: 'text_delta', text: 'Hello' },
+				{ type: 'text_delta', text: ' world' },
+				{ type: 'turn_done', inputTokens: 0, outputTokens: 0 },
+			]);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hello' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		expect(msgDelta).toBeDefined();
+		const usageOutputTokens = (msgDelta?.data as { usage?: { output_tokens?: number } })?.usage
+			?.output_tokens;
+		// The mock drainGen increments outputTokens++ per text_delta event (not per character).
+		// Two text_delta events → heuristic count of 2.
+		expect(usageOutputTokens).toBe(2);
 	});
 });
 
