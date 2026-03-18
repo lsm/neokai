@@ -16,6 +16,7 @@ import { BridgeSession, AppServerConn, type AppServerAuth } from './process-mana
 export type { AppServerAuth } from './process-manager.js';
 import {
 	type AnthropicRequest,
+	type AnthropicErrorType,
 	buildDynamicTools,
 	buildConversationText,
 	extractSystemText,
@@ -30,10 +31,30 @@ import {
 	contentBlockStopSSE,
 	messageDeltaSSE,
 	messageStopSSE,
+	errorSSE,
 } from './translator.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
+
+// ---------------------------------------------------------------------------
+// Anthropic JSON error envelope
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a JSON Response with an Anthropic-format error envelope body.
+ * Shape: {"type":"error","error":{"type":"<errorType>","message":"<message>"}}
+ */
+export function createAnthropicError(
+	httpStatus: number,
+	type: AnthropicErrorType,
+	message: string
+): Response {
+	return new Response(JSON.stringify({ type: 'error', error: { type, message } }), {
+		status: httpStatus,
+		headers: { 'Content-Type': 'application/json' },
+	});
+}
 
 /** Default TTL before an unresolved tool-call session is abandoned (5 min). */
 export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
@@ -63,7 +84,7 @@ function generateMsgId(): string {
 // SSE drain loop — shared between new turns and tool continuations
 // ---------------------------------------------------------------------------
 
-async function drainToSSE(
+export async function drainToSSE(
 	gen: AsyncGenerator<import('./process-manager.js').BridgeEvent>,
 	session: BridgeSession,
 	model: string,
@@ -149,14 +170,13 @@ async function drainToSSE(
 			return;
 		} else if (event.type === 'error') {
 			logger.error('codex-bridge: BridgeSession error:', event.message);
-			// Emit a minimal error text block so the SDK gets a response
-			if (!textBlockOpen) {
-				send(contentBlockStartTextSSE(blockIndex));
+			// Close any open text block before emitting the error event
+			if (textBlockOpen) {
+				send(contentBlockStopSSE(blockIndex));
+				textBlockOpen = false;
 			}
-			send(textDeltaSSE(blockIndex, `[Codex error: ${event.message}]`));
-			send(contentBlockStopSSE(blockIndex));
-			send(messageDeltaSSE('end_turn', outputTokens));
-			send(messageStopSSE());
+			// Emit an Anthropic-format error SSE event then close the stream
+			send(errorSSE('api_error', event.message));
 			session.kill();
 			controller.close();
 			return;
@@ -209,14 +229,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			}
 
 			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
-				return new Response('Not Found', { status: 404 });
+				return createAnthropicError(404, 'not_found_error', 'Not found');
 			}
 
 			let body: AnthropicRequest;
 			try {
 				body = (await req.json()) as AnthropicRequest;
 			} catch {
-				return new Response('Bad Request', { status: 400 });
+				return createAnthropicError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
 			}
 
 			const sseHeaders = {
@@ -232,7 +252,11 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			if (isToolResultContinuation(body.messages)) {
 				const toolResults = extractToolResults(body.messages);
 				if (toolResults.length === 0) {
-					return new Response('Bad Request: no tool_result found', { status: 400 });
+					return createAnthropicError(
+						400,
+						'invalid_request_error',
+						'Bad Request: no tool_result found'
+					);
 				}
 
 				// Iterate ALL tool results — the Anthropic API allows multiple tool_result
@@ -273,7 +297,11 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					logger.error(
 						`codex-bridge: no active sessions found for any tool_use_id in this continuation`
 					);
-					return new Response('Session not found', { status: 404 });
+					return createAnthropicError(
+						404,
+						'not_found_error',
+						'Session not found for all tool_use_ids in this continuation'
+					);
 				}
 
 				const { gen, session, model: sessionModel } = primaryStored;
@@ -309,7 +337,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				await session.initialize();
 			} catch (err) {
 				logger.error('codex-bridge: failed to start BridgeSession:', err);
-				return new Response(`Internal Server Error: ${String(err)}`, { status: 500 });
+				return createAnthropicError(500, 'api_error', `Internal Server Error: ${String(err)}`);
 			}
 
 			const gen = session.startTurn(userText);
