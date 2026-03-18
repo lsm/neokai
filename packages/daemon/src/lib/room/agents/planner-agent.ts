@@ -294,7 +294,7 @@ Finish your response after the plan-writer completes — the Leader will dispatc
 When the Leader sends you an approval message, you are in Phase 2.
 **IMPORTANT**: Do NOT skip straight to \`create_task\` — you MUST merge the plan PR first.
 
-1. Merge the plan PR: run \`gh pr merge <PR_NUMBER> --merge\` (use the pr_number from the Phase 1 plan-writer result)
+1. Merge the plan PR: run \`gh pr merge <PR_NUMBER>\` (use the pr_number from the Phase 1 plan-writer result)
 2. Read the plan files (use the \`plan_files\` list from Phase 1, or find them under \`${planDir}/\` or at \`${planPath}\`)
 3. Create tasks 1:1 from the plan sections using the \`create_task\` tool
 4. Each task title and description should match the plan exactly

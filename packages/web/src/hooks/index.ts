@@ -18,6 +18,7 @@ export {
 	getModelFamilyIcon,
 	PROVIDER_LABELS,
 	getProviderLabel,
+	groupModelsByProvider,
 } from './useModelSwitcher';
 export {
 	useMessageHub,

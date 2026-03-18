@@ -300,7 +300,7 @@ export async function checkWorkerPrMerged(
 				`The PR for branch "${branch}" is CLOSED — it was closed without merging.\n\n` +
 				`A closed PR cannot be merged directly. To fix this:\n` +
 				`1. Reopen the PR: \`gh pr reopen ${branch}\`\n` +
-				`2. Then merge: \`gh pr merge ${branch} --merge\`\n` +
+				`2. Then merge: \`gh pr merge ${branch}\`\n` +
 				`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
 				`4. Then finish your response.`,
 		};
@@ -312,10 +312,9 @@ export async function checkWorkerPrMerged(
 		bounceMessage:
 			`The PR for branch "${branch}" is not merged yet (state: ${prState}).\n\n` +
 			`You were asked to merge the PR. Please complete this step:\n` +
-			`1. Run: \`gh pr merge ${branch} --merge\`\n` +
-			`2. If that fails, try: \`gh pr merge ${branch} --squash\`\n` +
-			`3. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
-			`4. Then finish your response.`,
+			`1. Run: \`gh pr merge ${branch}\`\n` +
+			`2. Verify: \`gh pr view ${branch} --json state --jq .state\` (must return "MERGED")\n` +
+			`3. Then finish your response.`,
 	};
 }
 
@@ -380,7 +379,7 @@ export async function checkLeaderPrMerged(
 				`The PR for this task is CLOSED — it was closed without merging.\n\n` +
 				'A closed PR cannot be merged directly. To fix this:\n' +
 				'1. Use `send_to_worker` with: "The PR was closed without merging. ' +
-				`Reopen it with \`gh pr reopen ${branch}\`, then merge with \`gh pr merge ${branch} --merge\`, ` +
+				`Reopen it with \`gh pr reopen ${branch}\`, then merge with \`gh pr merge ${branch}\`, ` +
 				`and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
 				'2. After the worker confirms the merge (state: MERGED), call `complete_task` again.',
 		};
@@ -393,7 +392,7 @@ export async function checkLeaderPrMerged(
 			`The PR for this task is not merged (state: ${prState}). You cannot mark the task complete until the PR is actually merged.\n\n` +
 			'To fix this:\n' +
 			'1. Use `send_to_worker` to ask the worker: "The PR merge did not complete. ' +
-			`Please run \`gh pr merge ${branch} --merge\` and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
+			`Please run \`gh pr merge ${branch}\` and verify with \`gh pr view ${branch} --json state --jq .state\`"\n` +
 			'2. After the worker confirms the merge (state: MERGED), call `complete_task` again.',
 	};
 }
@@ -591,12 +590,60 @@ export async function checkLeaderDraftsExist(
 			'No draft tasks were created by the planner yet. The planner must run Phase 2 to create tasks.\n\n' +
 			'To fix this:\n' +
 			'1. Call `send_to_worker` (mode: "queue") with: "The plan is approved. Please:\n' +
-			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER> --merge`\n' +
+			'   1. Merge the plan PR: `gh pr merge <PR_NUMBER>`\n' +
 			'   2. Read the plan file under docs/plans/\n' +
 			'   3. Create all tasks 1:1 from the plan using the `create_task` tool\n' +
 			'   4. Finish your response after all tasks are created"\n' +
 			'2. After the planner exits with tasks created, call `complete_task` again.',
 	};
+}
+
+// --- PR URL Utility ---
+
+/**
+ * Close a stale PR when a new PR has been created to replace it.
+ *
+ * Called when submit_for_review is invoked with a PR URL that differs from the
+ * task's existing prUrl. Closes the old PR with a comment pointing to the new one.
+ *
+ * Fails open: if the close command fails (e.g., PR already closed, gh unavailable),
+ * the error is logged but does not block the submit_for_review flow.
+ *
+ * Uses the PR URL directly with `gh pr close` — gh accepts both numbers and URLs,
+ * and URLs are unambiguous across multi-remote/forked repo setups.
+ *
+ * @param oldPrUrl - The existing PR URL stored in the task
+ * @param newPrUrl - The new PR URL being submitted for review
+ * @param workspacePath - The workspace path to run gh commands from
+ * @param opts - Optional hook options (for testing)
+ * @returns true if closed successfully, false otherwise
+ */
+export async function closeStalePr(
+	oldPrUrl: string,
+	newPrUrl: string,
+	workspacePath: string,
+	opts?: HookOptions
+): Promise<boolean> {
+	const run = getRunner(opts);
+
+	if (!oldPrUrl || !oldPrUrl.includes('/pull/')) {
+		log.warn(`closeStalePr: invalid old PR URL: ${oldPrUrl}`);
+		return false;
+	}
+
+	const comment = `Superseded by ${newPrUrl}`;
+	const { exitCode } = await run(
+		['gh', 'pr', 'close', oldPrUrl, '--comment', comment],
+		workspacePath
+	);
+
+	if (exitCode !== 0) {
+		log.warn(`closeStalePr: failed to close PR ${oldPrUrl} (exit ${exitCode})`);
+		return false;
+	}
+
+	log.info(`closeStalePr: closed stale PR ${oldPrUrl}, superseded by ${newPrUrl}`);
+	return true;
 }
 
 // --- Gate Runners ---

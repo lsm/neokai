@@ -19,6 +19,7 @@
 import type {
 	MessageDeliveryMode,
 	MessageImage,
+	ModelInfo,
 	ResolvedQuestion,
 	SessionFeatures,
 } from '@neokai/shared';
@@ -403,14 +404,14 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Model switch with processing confirmation
 	const handleModelSwitchWithConfirmation = useCallback(
-		async (modelId: string) => {
+		async (model: ModelInfo) => {
 			if (isProcessing) {
 				const confirmed = confirm(
 					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
 				);
 				if (!confirmed) return;
 			}
-			await switchModel(modelId);
+			await switchModel(model);
 		},
 		[switchModel, isProcessing]
 	);

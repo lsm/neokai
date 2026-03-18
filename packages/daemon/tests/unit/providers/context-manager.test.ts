@@ -541,87 +541,49 @@ describe('ProviderContextManager', () => {
 	});
 
 	describe('requiresQueryRestart', () => {
-		it('should return true for cross-provider switch', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-3-opus',
-					maxTokens: 8192,
-					temperature: 1.0,
-					provider: 'anthropic',
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
+		const anthropicSession: Session = {
+			id: 'test-session',
+			title: 'Test',
+			workspacePath: '/test',
+			createdAt: new Date().toISOString(),
+			lastActiveAt: new Date().toISOString(),
+			status: 'active',
+			config: {
+				model: 'claude-3-opus',
+				maxTokens: 8192,
+				temperature: 1.0,
+				provider: 'anthropic',
+			},
+			metadata: {
+				messageCount: 0,
+				totalTokens: 0,
+				inputTokens: 0,
+				outputTokens: 0,
+				totalCost: 0,
+				toolCallCount: 0,
+			},
+		};
 
-			const requires = manager.requiresQueryRestart(session, 'glm-4');
+		it('should return true for cross-provider switch', () => {
+			const requires = manager.requiresQueryRestart(anthropicSession, 'glm-4', 'glm');
 			expect(requires).toBe(true);
 		});
 
 		it('should return false for same-provider switch', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-3-opus',
-					maxTokens: 8192,
-					temperature: 1.0,
-					provider: 'anthropic',
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
-
-			const requires = manager.requiresQueryRestart(session, 'claude-3-sonnet');
+			const requires = manager.requiresQueryRestart(
+				anthropicSession,
+				'claude-3-sonnet',
+				'anthropic'
+			);
 			expect(requires).toBe(false);
 		});
 
-		it('should return true when new provider cannot be detected', () => {
-			const session: Session = {
-				id: 'test-session',
-				title: 'Test',
-				workspacePath: '/test',
-				createdAt: new Date().toISOString(),
-				lastActiveAt: new Date().toISOString(),
-				status: 'active',
-				config: {
-					model: 'claude-3-opus',
-					maxTokens: 8192,
-					temperature: 1.0,
-					provider: 'anthropic',
-				},
-				metadata: {
-					messageCount: 0,
-					totalTokens: 0,
-					inputTokens: 0,
-					outputTokens: 0,
-					totalCost: 0,
-					toolCallCount: 0,
-				},
-			};
-
-			const requires = manager.requiresQueryRestart(session, 'unknown-model-xyz');
+		it('should return true when the new provider is not registered', () => {
+			const requires = manager.requiresQueryRestart(
+				anthropicSession,
+				'unknown-model-xyz',
+				'unknown-provider-xyz'
+			);
 			expect(requires).toBe(true);
 		});
 	});
@@ -639,7 +601,7 @@ describe('ProviderContextManager', () => {
 		});
 	});
 
-	describe('detectProvider', () => {
+	describe('detectProvider (deprecated legacy heuristic)', () => {
 		it('should detect provider from model ID', () => {
 			const provider = manager.detectProvider('claude-3-opus');
 			expect(provider?.id).toBe('anthropic');

@@ -34,7 +34,7 @@
       "name": "@neokai/daemon",
       "version": "0.7.1",
       "dependencies": {
-        "@anthropic-ai/claude-agent-sdk": "0.2.76",
+        "@anthropic-ai/claude-agent-sdk": "0.2.77",
         "@github/copilot-sdk": "^0.1.32",
         "@neokai/shared": "workspace:*",
         "simple-git": "3.33.0",
@@ -105,7 +105,7 @@
     },
   },
   "packages": {
-    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.2.76", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.34.2", "@img/sharp-darwin-x64": "^0.34.2", "@img/sharp-linux-arm": "^0.34.2", "@img/sharp-linux-arm64": "^0.34.2", "@img/sharp-linux-x64": "^0.34.2", "@img/sharp-linuxmusl-arm64": "^0.34.2", "@img/sharp-linuxmusl-x64": "^0.34.2", "@img/sharp-win32-arm64": "^0.34.2", "@img/sharp-win32-x64": "^0.34.2" }, "peerDependencies": { "zod": "^4.0.0" } }, "sha512-HZxvnT8ZWkzCnQygaYCA0dl8RSUzuVbxE1YG4ecy6vh4nQbTT36CxUxBy+QVdR12pPQluncC0mCOLhI2918Eaw=="],
+    "@anthropic-ai/claude-agent-sdk": ["@anthropic-ai/claude-agent-sdk@0.2.77", "", { "optionalDependencies": { "@img/sharp-darwin-arm64": "^0.34.2", "@img/sharp-darwin-x64": "^0.34.2", "@img/sharp-linux-arm": "^0.34.2", "@img/sharp-linux-arm64": "^0.34.2", "@img/sharp-linux-x64": "^0.34.2", "@img/sharp-linuxmusl-arm64": "^0.34.2", "@img/sharp-linuxmusl-x64": "^0.34.2", "@img/sharp-win32-arm64": "^0.34.2", "@img/sharp-win32-x64": "^0.34.2" }, "peerDependencies": { "zod": "^4.0.0" } }, "sha512-t+R1BW3ahCFMNM7/8WJq7+Gw9KPA9Cl7UUK8fWPokJZ75cf/xwEd9MqB+MVNoQT45dJiom/wxybT7tqYPkCqyg=="],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.0", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.28.5", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw=="],
 

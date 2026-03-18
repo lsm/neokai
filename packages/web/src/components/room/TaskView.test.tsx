@@ -119,10 +119,12 @@ vi.mock('../ScrollToBottomButton.tsx', () => ({
 
 // Mock InputTextarea so we don't need its full dependencies.
 // Forwards maxChars as maxLength so tests can verify the 50000 limit is passed.
+// Forwards onKeyDown so keyboard-shortcut tests can exercise Enter/Shift+Enter/Cmd+Enter.
 vi.mock('../InputTextarea.tsx', () => ({
 	InputTextarea: ({
 		content,
 		onContentChange,
+		onKeyDown,
 		onSubmit,
 		disabled,
 		placeholder,
@@ -131,6 +133,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 	}: {
 		content: string;
 		onContentChange: (v: string) => void;
+		onKeyDown?: (e: KeyboardEvent) => void;
 		onSubmit: () => void;
 		disabled?: boolean;
 		placeholder?: string;
@@ -143,6 +146,7 @@ vi.mock('../InputTextarea.tsx', () => ({
 				data-testid="input-textarea-field"
 				value={content}
 				onInput={(e) => onContentChange((e.target as HTMLTextAreaElement).value)}
+				onKeyDown={onKeyDown}
 				disabled={disabled}
 				placeholder={placeholder}
 				maxLength={maxChars}
@@ -406,7 +410,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		expect(queryByTestId('task-target-button')).not.toBeNull();
 	});
 
-	it('sends feedback via task.sendHumanMessage in awaiting_human state', async () => {
+	it('sends feedback via task.sendHumanMessage in awaiting_human state (default target: leader)', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'review') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_human') };
@@ -430,7 +434,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 				roomId: 'room-1',
 				taskId: 'task-1',
 				message: 'Nice work!',
-				target: 'worker',
+				target: 'leader',
 			});
 		});
 	});
@@ -504,7 +508,9 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Please focus on auth first' } });
 
-		// Explicitly target leader in the dropdown.
+		// Explicitly select leader in the dropdown.
+		// Note: 'leader' is the default since the default target changed, so this selection
+		// is redundant but kept to make the intent of this test explicit.
 		fireEvent.click(getByTestId('task-target-button'));
 		fireEvent.click(getByTestId('task-target-option-leader'));
 		fireEvent.click(getByTestId('input-textarea-send'));
@@ -519,7 +525,7 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		});
 	});
 
-	it('sends message to worker in awaiting_worker state', async () => {
+	it('sends message to worker in awaiting_worker state when worker is explicitly selected', async () => {
 		mockRequest.mockImplementation(async (method) => {
 			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
 			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
@@ -535,6 +541,11 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 
 		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
 		fireEvent.input(textarea, { target: { value: 'Add benchmarks too' } });
+
+		// Explicitly select worker (default is now leader)
+		fireEvent.click(getByTestId('task-target-button'));
+		fireEvent.click(getByTestId('task-target-option-worker'));
+
 		fireEvent.click(getByTestId('input-textarea-send'));
 
 		await waitFor(() => {
@@ -565,6 +576,160 @@ describe('TaskView — HumanInputArea uses InputTextarea', () => {
 		const leaderOption = getByTestId('task-target-option-leader') as HTMLButtonElement;
 		expect(workerOption.disabled).toBe(false);
 		expect(leaderOption.disabled).toBe(false);
+	});
+
+	it('default target is leader', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		// Default target button label should be "Leader"
+		expect(getByTestId('task-target-button').textContent).toContain('Leader');
+	});
+
+	it('sends message when Enter is pressed (desktop)', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Hello leader' } });
+
+		// Plain Enter on desktop — should send
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Hello leader',
+				target: 'leader',
+			});
+		});
+	});
+
+	it('does NOT send when Shift+Enter is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Hello\nworld' } });
+
+		// Shift+Enter — should NOT send (used for newlines)
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true, metaKey: false, ctrlKey: false });
+
+		// sendMessage is async, but the RPC call should not have been invoked synchronously
+		// Verify immediately that no send was triggered (the handler does not send for Shift+Enter)
+		expect(mockRequest).not.toHaveBeenCalledWith(
+			'task.sendHumanMessage',
+			expect.objectContaining({ message: expect.any(String) })
+		);
+	});
+
+	it('sends message when Cmd+Enter is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Cmd enter works' } });
+
+		// Cmd+Enter — should also send (backward compat, macOS)
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false, metaKey: true, ctrlKey: false });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Cmd enter works',
+				target: 'leader',
+			});
+		});
+	});
+
+	it('sends message when Ctrl+Enter is pressed', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			if (method === 'task.sendHumanMessage') return {};
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		fireEvent.input(textarea, { target: { value: 'Ctrl enter works' } });
+
+		// Ctrl+Enter — should send (backward compat, Windows/Linux)
+		fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: true });
+
+		await waitFor(() => {
+			expect(mockRequest).toHaveBeenCalledWith('task.sendHumanMessage', {
+				roomId: 'room-1',
+				taskId: 'task-1',
+				message: 'Ctrl enter works',
+				target: 'leader',
+			});
+		});
+	});
+
+	it('placeholder text reflects Enter-to-send UX', async () => {
+		mockRequest.mockImplementation(async (method) => {
+			if (method === 'task.get') return { task: makeTask('task-1', 'in_progress') };
+			if (method === 'task.getGroup') return { group: makeGroup('awaiting_worker') };
+			return {};
+		});
+
+		const { getByTestId } = render(<TaskView roomId="room-1" taskId="task-1" />);
+
+		await waitFor(() => {
+			expect(getByTestId('input-textarea-field')).toBeTruthy();
+		});
+
+		const textarea = getByTestId('input-textarea-field') as HTMLTextAreaElement;
+		expect(textarea.placeholder).toContain('Enter to send');
+		expect(textarea.placeholder).toContain('Shift+Enter');
 	});
 });
 

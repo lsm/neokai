@@ -411,6 +411,13 @@ describe('QueryOptionsBuilder', () => {
 			const options = await builder.build();
 			expect(options.systemPrompt).toBeUndefined();
 		});
+
+		it('should preserve a custom string system prompt for room sessions', async () => {
+			mockSession.type = 'room_chat';
+			mockSession.config.systemPrompt = 'You are the Room Agent.';
+			const options = await builder.build();
+			expect(options.systemPrompt).toBe('You are the Room Agent.');
+		});
 	});
 
 	describe('additional directories configuration', () => {

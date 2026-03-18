@@ -9,7 +9,7 @@
  * - Title generation and branch renaming
  */
 
-import type { Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
+import type { Provider, Session, WorktreeMetadata, MessageHub } from '@neokai/shared';
 import { generateUUID } from '@neokai/shared';
 import type { Database } from '../../storage/database';
 import type { DaemonHub } from '../daemon-hub';
@@ -178,8 +178,7 @@ export class SessionLifecycle {
 				// Provider: Allow explicit override; fall back to resolved provider from model alias.
 				// Critical when providers share canonical IDs (e.g., Anthropic and
 				// anthropic-copilot both owning claude-sonnet-4.6).
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				provider: (params.config?.provider ?? resolvedProvider) as any,
+				provider: (params.config?.provider ?? resolvedProvider) as Provider,
 				// Tools config: Use global defaults for new sessions
 				// SDK built-in tools are always enabled (not configurable)
 				// MCP and NeoKai tools are configurable based on global settings
@@ -730,7 +729,7 @@ export class SessionLifecycle {
 		// provider's own isAvailable() implementation.
 		const legacyKeyProviders: string[] = ['anthropic', 'glm', 'minimax'];
 		if (legacyKeyProviders.includes(provider)) {
-			const apiKey = providerService.getProviderApiKey(provider as 'anthropic' | 'glm' | 'minimax');
+			const apiKey = providerService.getProviderApiKey(provider as Provider);
 			if (!apiKey) {
 				this.logger.warn(
 					`[SessionLifecycle] No API key for provider ${provider}, using fallback title`

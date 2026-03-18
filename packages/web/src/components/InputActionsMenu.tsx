@@ -26,7 +26,7 @@ export interface InputActionsMenuProps {
 	availableModels?: ModelInfo[];
 	modelSwitching?: boolean;
 	modelLoading?: boolean;
-	onModelSwitch?: (modelId: string) => void;
+	onModelSwitch?: (model: ModelInfo) => void;
 	/** Auto-scroll state */
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;

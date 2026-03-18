@@ -12,6 +12,7 @@ import {
 	MODEL_FAMILY_ICONS,
 	getModelFamilyIcon,
 	getProviderLabel,
+	groupModelsByProvider,
 } from '../useModelSwitcher.ts';
 
 // Mock the connection manager
@@ -142,9 +143,9 @@ describe('useModelSwitcher', () => {
 		it('should return correct label for known providers', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
-			expect(getProviderLabel('openai')).toBe('OpenAI');
+			expect(getProviderLabel('minimax')).toBe('MiniMax');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
-			expect(getProviderLabel('google')).toBe('Google');
+			expect(getProviderLabel('anthropic-codex')).toBe('Codex');
 		});
 
 		it('should return the provider string for unknown providers', () => {
@@ -260,39 +261,6 @@ describe('useModelSwitcher', () => {
 			const glmModel = result.current.availableModels.find((m) => m.id === 'glm-4-plus');
 			expect(glmModel?.provider).toBe('glm');
 			expect(glmModel?.family).toBe('glm');
-		});
-
-		it('should detect gpt family and openai provider for OpenAI models', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValueOnce({
-						currentModel: 'gpt-5.3-codex',
-						modelInfo: null,
-					})
-					.mockResolvedValueOnce({
-						models: [
-							{
-								id: 'gpt-5.3-codex',
-								display_name: 'GPT-5.3 Codex',
-								description: '',
-								provider: 'openai',
-							},
-							{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', description: '', provider: 'openai' },
-						],
-					}),
-			};
-			mockGetHubIfConnected.mockReturnValue(mockHub);
-
-			const { result } = renderHook(() => useModelSwitcher('session-1'));
-
-			await waitFor(() => {
-				expect(result.current.loading).toBe(false);
-			});
-
-			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
-			expect(gptModel?.provider).toBe('openai');
-			expect(gptModel?.family).toBe('gpt');
 		});
 
 		it('should detect gpt family and anthropic-copilot provider for Copilot GPT models', async () => {
@@ -463,7 +431,7 @@ describe('useModelSwitcher', () => {
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
-						modelInfo: { id: 'claude-sonnet-4-20250514', name: 'Sonnet' },
+						modelInfo: { id: 'claude-sonnet-4-20250514', name: 'Sonnet', provider: 'anthropic' },
 					})
 					.mockResolvedValueOnce({ models: [] }),
 			};
@@ -476,7 +444,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-sonnet-4-20250514');
+				await result.current.switchModel({ id: 'claude-sonnet-4-20250514', provider: 'anthropic' });
 			});
 
 			expect(mockToastInfo).toHaveBeenCalledWith(expect.stringContaining('Already using'));
@@ -510,7 +478,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(result.current.currentModel).toBe('claude-opus-4-5-20251101');
@@ -540,7 +508,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Model not available');
@@ -568,7 +536,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Failed to switch model');
@@ -596,7 +564,7 @@ describe('useModelSwitcher', () => {
 			mockGetHubIfConnected.mockReturnValue(null);
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
@@ -632,7 +600,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Connection lost');
@@ -668,7 +636,7 @@ describe('useModelSwitcher', () => {
 			switchingStates.push(result.current.switching);
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			// After switch completes, should not be switching
@@ -679,6 +647,7 @@ describe('useModelSwitcher', () => {
 			expect(mockHub.request).toHaveBeenCalledWith('session.model.switch', {
 				sessionId: 'session-1',
 				model: 'claude-opus-4-5-20251101',
+				provider: 'anthropic',
 			});
 		});
 
@@ -710,10 +679,93 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(result.current.currentModelInfo?.id).toBe('claude-opus-4-5-20251101');
+		});
+	});
+
+	describe('switchModel - cross-provider', () => {
+		it('should match currentModelInfo by provider after cross-provider switch', async () => {
+			// Two providers both expose claude-sonnet-4-20250514; the post-switch find must
+			// prefer the entry for the provider that was actually switched to.
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'claude-sonnet-4-20250514',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'claude-sonnet-4-20250514',
+								display_name: 'Sonnet (Anthropic)',
+								description: '',
+								provider: 'anthropic',
+							},
+							{
+								id: 'claude-sonnet-4-20250514',
+								display_name: 'Sonnet (Copilot)',
+								description: '',
+								provider: 'anthropic-copilot',
+							},
+						],
+					})
+					.mockResolvedValueOnce({
+						success: true,
+						model: 'claude-sonnet-4-20250514',
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			await act(async () => {
+				// Switch to the copilot variant
+				await result.current.switchModel({
+					id: 'claude-sonnet-4-20250514',
+					provider: 'anthropic-copilot',
+				});
+			});
+
+			// Should resolve to the copilot entry, not the anthropic one
+			expect(result.current.currentModelInfo?.provider).toBe('anthropic-copilot');
+			expect(result.current.currentModelInfo?.name).toBe('Sonnet (Copilot)');
+		});
+	});
+
+	describe('switchModel - provider validation', () => {
+		it('should show error when provider is missing from model', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'claude-sonnet-4-20250514',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({ models: [] }),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			await act(async () => {
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101' });
+			});
+
+			expect(mockToastError).toHaveBeenCalledWith('Model provider information is missing');
+			// Should not have made an RPC call for the switch
+			expect(mockHub.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
 		});
 	});
 
@@ -815,6 +867,78 @@ describe('useModelSwitcher', () => {
 			rerender();
 
 			expect(result.current.reload).toBe(firstReload);
+		});
+	});
+
+	describe('groupModelsByProvider', () => {
+		it('should return an empty map for empty input', () => {
+			const result = groupModelsByProvider([]);
+			expect(result.size).toBe(0);
+		});
+
+		it('should group models by provider', () => {
+			const models = [
+				{ id: 'claude-sonnet-4', provider: 'anthropic', family: 'sonnet', name: 'Sonnet' },
+				{ id: 'claude-opus-4', provider: 'anthropic', family: 'opus', name: 'Opus' },
+				{
+					id: 'claude-sonnet-4',
+					provider: 'anthropic-copilot',
+					family: 'sonnet',
+					name: 'Sonnet (Copilot)',
+				},
+			];
+			const result = groupModelsByProvider(models as any);
+			expect(result.size).toBe(2);
+			expect(result.get('anthropic')).toHaveLength(2);
+			expect(result.get('anthropic-copilot')).toHaveLength(1);
+		});
+
+		it('should default to anthropic provider when model has no provider', () => {
+			const models = [{ id: 'claude-sonnet-4', family: 'sonnet', name: 'Sonnet' }];
+			const result = groupModelsByProvider(models as any);
+			expect(result.has('anthropic')).toBe(true);
+			expect(result.get('anthropic')).toHaveLength(1);
+		});
+
+		it('should preserve all models within each group', () => {
+			const models = [
+				{ id: 'glm-4-plus', provider: 'glm', family: 'glm', name: 'GLM 4 Plus' },
+				{ id: 'glm-4-flash', provider: 'glm', family: 'glm', name: 'GLM 4 Flash' },
+				{ id: 'claude-sonnet-4', provider: 'anthropic', family: 'sonnet', name: 'Sonnet' },
+			];
+			const result = groupModelsByProvider(models as any);
+			expect(result.get('glm')).toHaveLength(2);
+			expect(result.get('anthropic')).toHaveLength(1);
+		});
+
+		it('should maintain insertion order of models within each group', () => {
+			const models = [
+				{ id: 'claude-opus-4', provider: 'anthropic', family: 'opus', name: 'Opus' },
+				{ id: 'claude-sonnet-4', provider: 'anthropic', family: 'sonnet', name: 'Sonnet' },
+				{ id: 'claude-haiku-4', provider: 'anthropic', family: 'haiku', name: 'Haiku' },
+			];
+			const result = groupModelsByProvider(models as any);
+			const anthropicModels = result.get('anthropic')!;
+			expect(anthropicModels[0].id).toBe('claude-opus-4');
+			expect(anthropicModels[1].id).toBe('claude-sonnet-4');
+			expect(anthropicModels[2].id).toBe('claude-haiku-4');
+		});
+
+		it('should handle all supported providers', () => {
+			const models = [
+				{ id: 'm1', provider: 'anthropic', family: 'sonnet', name: 'M1' },
+				{ id: 'm2', provider: 'anthropic-copilot', family: 'sonnet', name: 'M2' },
+				{ id: 'm3', provider: 'anthropic-codex', family: 'sonnet', name: 'M3' },
+				{ id: 'm4', provider: 'glm', family: 'glm', name: 'M4' },
+				{ id: 'm5', provider: 'minimax', family: 'minimax', name: 'M5' },
+			];
+			const result = groupModelsByProvider(models as any);
+			expect(result.size).toBe(5);
+			expect(result.has('anthropic')).toBe(true);
+			expect(result.has('anthropic-copilot')).toBe(true);
+			expect(result.has('anthropic-codex')).toBe(true);
+			expect(result.has('glm')).toBe(true);
+			expect(result.has('minimax')).toBe(true);
 		});
 	});
 

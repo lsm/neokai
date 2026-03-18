@@ -78,6 +78,7 @@ describe('Model RPC Handlers', () => {
 				daemon.messageHub.request('session.model.switch', {
 					sessionId: 'non-existent',
 					model: 'claude-opus-4-20250514',
+					provider: 'anthropic',
 				})
 			).rejects.toThrow();
 		});
@@ -88,6 +89,7 @@ describe('Model RPC Handlers', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'invalid-model-name',
+				provider: 'anthropic',
 			})) as { success: boolean; error?: string };
 
 			expect(result.success).toBe(false);
@@ -104,6 +106,7 @@ describe('Model RPC Handlers', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: currentModel,
+				provider: 'anthropic',
 			})) as { success: boolean; model: string };
 
 			expect(result.success).toBe(true);

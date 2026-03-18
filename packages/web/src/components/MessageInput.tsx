@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'preact/hooks';
-import type { MessageDeliveryMode, MessageImage, SessionType } from '@neokai/shared';
+import type { MessageDeliveryMode, MessageImage, ModelInfo, SessionType } from '@neokai/shared';
 import { isAgentWorking } from '../lib/state.ts';
 import { connectionManager } from '../lib/connection-manager';
 import { AttachmentPreview } from './AttachmentPreview.tsx';
@@ -239,8 +239,8 @@ export default function MessageInput({
 
 	// Model switch handler
 	const handleModelSwitch = useCallback(
-		async (modelId: string) => {
-			await switchModel(modelId);
+		async (model: ModelInfo) => {
+			await switchModel(model);
 			actionsMenu.close();
 		},
 		[switchModel, actionsMenu]

@@ -356,11 +356,17 @@ export function setupSessionHandlers(
 
 		// Get current model ID (may be an alias like "default")
 		const rawModelId = agentSession.getCurrentModel().id;
+		const sessionProvider = agentSession.getSessionData().config.provider;
+
+		if (!sessionProvider) {
+			throw new Error('Session has no provider configured');
+		}
 
 		// Resolve alias to full model ID for consistency with session.model.switch
+		// Pass provider so same-ID models are disambiguated by provider context
 		const { resolveModelAlias, getModelInfo } = await import('../model-service');
-		const currentModelId = await resolveModelAlias(rawModelId);
-		const modelInfo = await getModelInfo(currentModelId);
+		const currentModelId = await resolveModelAlias(rawModelId, 'global', sessionProvider);
+		const modelInfo = await getModelInfo(currentModelId, 'global', sessionProvider);
 
 		return {
 			currentModel: currentModelId,
@@ -371,10 +377,20 @@ export function setupSessionHandlers(
 	// Handle model switching
 	// Returns synchronous result for test compatibility and immediate feedback
 	messageHub.onRequest('session.model.switch', async (data) => {
-		const { sessionId: targetSessionId, model } = data as {
+		const {
+			sessionId: targetSessionId,
+			model,
+			provider,
+		} = data as {
 			sessionId: string;
 			model: string;
+			/** Explicit provider ID — always supply this from the UI model picker. */
+			provider?: string;
 		};
+
+		if (!provider) {
+			throw new Error('Missing required field: provider');
+		}
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {
@@ -382,7 +398,7 @@ export function setupSessionHandlers(
 		}
 
 		// Call handleModelSwitch directly - returns {success, model, error}
-		const result = await agentSession.handleModelSwitch(model);
+		const result = await agentSession.handleModelSwitch(model, provider);
 
 		// Broadcast model switch result via state channels for UI updates
 		if (result.success) {

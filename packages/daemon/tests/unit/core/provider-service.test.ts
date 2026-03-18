@@ -508,12 +508,12 @@ describe('ProviderService', () => {
 
 	describe('getEnvVarsForModel', () => {
 		it('should return empty object for anthropic model', () => {
-			const envVars = service.getEnvVarsForModel('claude-3-opus');
+			const envVars = service.getEnvVarsForModel('claude-3-opus', 'anthropic');
 			expect(envVars).toEqual({});
 		});
 
 		it('should return env vars for GLM model', () => {
-			const envVars = service.getEnvVarsForModel('glm-4');
+			const envVars = service.getEnvVarsForModel('glm-4', 'glm');
 
 			expect(envVars.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 			expect(envVars.API_TIMEOUT_MS).toBe('120000');
@@ -669,7 +669,7 @@ describe('ProviderService', () => {
 
 	describe('applyEnvVarsToProcess', () => {
 		it('should return empty object for anthropic model', () => {
-			const original = service.applyEnvVarsToProcess('claude-3-opus');
+			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 			expect(original).toEqual({});
 		});
 
@@ -678,7 +678,7 @@ describe('ProviderService', () => {
 			process.env.API_TIMEOUT_MS = '120000';
 			process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = 'glm-4';
 
-			const original = service.applyEnvVarsToProcess('claude-3-opus');
+			const original = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
 			expect(original.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 			expect(original.API_TIMEOUT_MS).toBe('120000');
@@ -692,7 +692,7 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_AUTH_TOKEN = 'original-token';
 			process.env.ANTHROPIC_BASE_URL = 'original-url';
 
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Check original values were saved
 			expect(original.ANTHROPIC_AUTH_TOKEN).toBe('original-token');
@@ -725,14 +725,14 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_BASE_URL = 'https://api.glm.example.com';
 
 			// Apply GLM env vars
-			const originalFromGlm = service.applyEnvVarsToProcess('glm-4');
+			const originalFromGlm = service.applyEnvVarsToProcess('glm-4', 'glm');
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
 
 			// Restore from GLM query
 			service.restoreEnvVars(originalFromGlm);
 
 			// Switch to anthropic - leaked GLM URL should be cleared
-			const originalFromAnthropic = service.applyEnvVarsToProcess('claude-3-opus');
+			const originalFromAnthropic = service.applyEnvVarsToProcess('claude-3-opus', 'anthropic');
 
 			// The leaked GLM URL should be cleared
 			expect(process.env.ANTHROPIC_BASE_URL).toBeUndefined();
@@ -776,7 +776,7 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_BASE_URL = 'original-url';
 
 			// Apply GLM env vars
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Verify env vars changed
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -795,7 +795,7 @@ describe('ProviderService', () => {
 			delete process.env.ANTHROPIC_BASE_URL;
 
 			// Apply GLM env vars
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Verify env vars were set
 			expect(process.env.ANTHROPIC_BASE_URL).toBe('https://api.glm.example.com');
@@ -838,7 +838,7 @@ describe('ProviderService', () => {
 			process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = 'opus-model';
 
 			// Apply GLM env vars
-			const original = service.applyEnvVarsToProcess('glm-4');
+			const original = service.applyEnvVarsToProcess('glm-4', 'glm');
 
 			// Restore
 			service.restoreEnvVars(original);

@@ -2,8 +2,9 @@
  * Unit tests for Provider Registry
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@neokai/shared';
+import { Logger } from '@neokai/shared/logger';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
@@ -59,6 +60,37 @@ class MockProvider implements Provider {
 			isAnthropicCompatible: true,
 		};
 	}
+}
+
+// Provider subclass factories for collision tests
+function makeAnthropicProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic' as const;
+		readonly displayName = 'Anthropic';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('claude-');
+		}
+	})();
+}
+
+function makeAnthropicCopilotProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic-copilot' as const;
+		readonly displayName = 'Anthropic Copilot';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('claude-');
+		}
+	})();
+}
+
+function makeAnthropicCodexProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic-codex' as const;
+		readonly displayName = 'Anthropic Codex';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('gpt-') || modelId.startsWith('claude-');
+		}
+	})();
 }
 
 describe('ProviderRegistry', () => {
@@ -205,6 +237,69 @@ describe('ProviderRegistry', () => {
 
 		it('should return undefined when no providers registered', () => {
 			expect(registry.detectProvider('any-model')).toBeUndefined();
+		});
+
+		it('should return the first registered provider (legacy heuristic, no warning)', () => {
+			// detectProvider is deprecated — it does simple first-match, no collision warning
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProvider('claude-opus-4.6');
+			expect(result?.id).toBe('anthropic');
+		});
+	});
+
+	describe('detectProviderForModel', () => {
+		it('should return copilot provider when providerId is anthropic-copilot', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			// Deterministic: explicit providerId → always the right provider regardless of model
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
+			expect(result?.id).toBe('anthropic-copilot');
+		});
+
+		it('should return anthropic provider when providerId is anthropic', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic');
+			expect(result?.id).toBe('anthropic');
+		});
+
+		it('should return codex provider for gpt- model when providerId is anthropic-codex', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCodexProvider());
+
+			const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
+			expect(result?.id).toBe('anthropic-codex');
+		});
+
+		it('should return undefined and log an error when providerId is not registered', () => {
+			const errorSpy = spyOn(Logger.prototype, 'error').mockImplementation(mock(() => {}));
+
+			try {
+				registry.register(makeAnthropicProvider());
+
+				const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
+				expect(result).toBeUndefined();
+				// Error should be logged for the unknown provider
+				expect(errorSpy).toHaveBeenCalledTimes(1);
+				const errArg = errorSpy.mock.calls[0][0] as string;
+				expect(errArg).toContain('nonexistent-provider');
+				expect(errArg).toContain('claude-opus-4.6');
+			} finally {
+				errorSpy.mockRestore();
+			}
+		});
+
+		it('detectProvider (deprecated) still returns first-registered match for legacy paths', () => {
+			// anthropic registered first — heuristic fallback returns it
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProvider('claude-opus-4.6');
+			expect(result?.id).toBe('anthropic');
 		});
 	});
 

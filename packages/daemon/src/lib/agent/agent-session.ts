@@ -593,9 +593,10 @@ export class AgentSession
 	// ============================================================================
 
 	async handleModelSwitch(
-		newModel: string
+		newModel: string,
+		newProvider: string
 	): Promise<{ success: boolean; model: string; error?: string }> {
-		return this.modelSwitchHandler.switchModel(newModel);
+		return this.modelSwitchHandler.switchModel(newModel, newProvider);
 	}
 
 	getCurrentModel(): CurrentModelInfo {
@@ -640,6 +641,18 @@ export class AgentSession
 		this.session.config = {
 			...this.session.config,
 			mcpServers,
+		};
+	}
+
+	/**
+	 * Apply a runtime system prompt to in-memory session config only.
+	 * Used to inject context-specific instructions (e.g. room workflow guidance)
+	 * without persisting them to the database.
+	 */
+	setRuntimeSystemPrompt(systemPrompt: SystemPromptConfig): void {
+		this.session.config = {
+			...this.session.config,
+			systemPrompt,
 		};
 	}
 

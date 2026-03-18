@@ -5,8 +5,9 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
+import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
+import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
@@ -53,6 +54,7 @@ export function SDKUserMessage({
 	allMessages: _allMessages,
 }: Props) {
 	const { message: apiMessage } = message;
+	const [copied, setCopied] = useState(false);
 
 	// Check if this is a tool result message (should not be rendered as user message)
 	const isToolResultMessage = (): boolean => {
@@ -147,10 +149,16 @@ export function SDKUserMessage({
 		return hasErrorOutput(textContent);
 	};
 
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
 	const handleCopy = async () => {
 		const success = await copyToClipboard(textContent);
 		if (success) {
-			toast.success('Message copied to clipboard');
+			setCopied(true);
 		} else {
 			toast.error('Failed to copy message');
 		}
@@ -308,9 +316,9 @@ export function SDKUserMessage({
 						<IconButton size="md" onClick={() => onRewind(message.uuid!)} title="Rewind to here">
 							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path
-									stroke-linecap="round"
-									stroke-linejoin="round"
-									stroke-width={2}
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
 									d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
 								/>
 							</svg>
@@ -327,15 +335,26 @@ export function SDKUserMessage({
 				/>
 			)}
 
-			<IconButton size="md" onClick={handleCopy} title="Copy message">
-				<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						stroke-width={2}
-						d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-					/>
-				</svg>
+			<IconButton
+				size="md"
+				onClick={handleCopy}
+				title={copied ? 'Copied!' : 'Copy message'}
+				class={copied ? 'text-green-400' : ''}
+			>
+				{copied ? (
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+					</svg>
+				) : (
+					<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							strokeWidth={2}
+							d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+						/>
+					</svg>
+				)}
 			</IconButton>
 		</div>
 	);
