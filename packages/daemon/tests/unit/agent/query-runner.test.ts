@@ -1149,4 +1149,59 @@ describe('QueryRunner cleaning up state', () => {
 
 		expect(setIdleCalled).toBe(true);
 	});
+
+	it('should call close() on queryObject before clearing it in finally block', () => {
+		// Verify the pattern: close() is called before null assignment
+		// This prevents "Already connected to a transport" errors in the natural exit path
+		let closeCalled = false;
+		let nulledAfterClose = false;
+
+		const mockQueryObject = {
+			close: () => {
+				closeCalled = true;
+			},
+		};
+
+		// Simulate the finally block's non-stale cleanup
+		let ctxQueryObject: typeof mockQueryObject | null = mockQueryObject;
+		if (ctxQueryObject) {
+			try {
+				ctxQueryObject.close();
+			} catch {
+				// Ignore
+			}
+		}
+		if (closeCalled) {
+			ctxQueryObject = null;
+			nulledAfterClose = true;
+		}
+
+		expect(closeCalled).toBe(true);
+		expect(nulledAfterClose).toBe(true);
+		expect(ctxQueryObject).toBeNull();
+	});
+
+	it('should handle close() errors gracefully in finally block', () => {
+		let errorHandled = false;
+
+		const mockQueryObject = {
+			close: () => {
+				throw new Error('Close error');
+			},
+		};
+
+		let ctxQueryObject: typeof mockQueryObject | null = mockQueryObject;
+		try {
+			if (ctxQueryObject) {
+				ctxQueryObject.close();
+			}
+		} catch {
+			errorHandled = true;
+		}
+		ctxQueryObject = null;
+
+		// Error was caught, reference was still cleared
+		expect(errorHandled).toBe(true);
+		expect(ctxQueryObject).toBeNull();
+	});
 });

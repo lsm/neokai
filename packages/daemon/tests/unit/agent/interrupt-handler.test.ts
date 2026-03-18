@@ -307,6 +307,9 @@ describe('InterruptHandler', () => {
 			const interruptIdx = callOrder.indexOf('interrupt');
 			const promiseIdx = callOrder.indexOf('promise');
 			const closeIdx = callOrder.indexOf('close');
+			expect(interruptIdx).not.toBe(-1);
+			expect(promiseIdx).not.toBe(-1);
+			expect(closeIdx).not.toBe(-1);
 			expect(interruptIdx).toBeLessThan(closeIdx);
 			expect(promiseIdx).toBeLessThan(closeIdx);
 		});

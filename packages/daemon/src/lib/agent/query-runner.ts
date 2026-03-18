@@ -384,6 +384,18 @@ export class QueryRunner {
 
 				messageQueue.stop();
 				this.ctx.queryPromise = null;
+
+				// Close query to terminate subprocess and MCP transports before
+				// clearing the reference. This prevents "Already connected to a
+				// transport" errors when a new query starts before the old
+				// subprocess exits (natural completion path).
+				if (this.ctx.queryObject) {
+					try {
+						this.ctx.queryObject.close();
+					} catch {
+						// Ignore close errors — subprocess may already be terminated
+					}
+				}
 				this.ctx.queryObject = null;
 
 				// Restore original env vars

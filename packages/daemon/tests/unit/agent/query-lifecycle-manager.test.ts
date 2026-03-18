@@ -293,6 +293,37 @@ describe('QueryLifecycleManager', () => {
 			expect(mockContext.queryObject).toBeNull();
 			expect(mockContext.queryPromise).toBeNull();
 		});
+
+		test('calls close() after query promise resolves', async () => {
+			const callOrder: string[] = [];
+			mockContext.queryObject = {
+				interrupt: mock(async () => {
+					callOrder.push('interrupt');
+				}),
+				close: mock(() => {
+					callOrder.push('close');
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			mockContext.queryPromise = new Promise<void>((resolve) => {
+				setTimeout(() => {
+					callOrder.push('promise');
+					resolve();
+				}, 10);
+			});
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			const interruptIdx = callOrder.indexOf('interrupt');
+			const promiseIdx = callOrder.indexOf('promise');
+			const closeIdx = callOrder.indexOf('close');
+			expect(interruptIdx).not.toBe(-1);
+			expect(promiseIdx).not.toBe(-1);
+			expect(closeIdx).not.toBe(-1);
+			expect(promiseIdx).toBeLessThan(closeIdx);
+			expect(interruptIdx).toBeLessThan(closeIdx);
+		});
 	});
 
 	describe('restart', () => {
