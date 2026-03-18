@@ -38,12 +38,17 @@ import { TaskGroupManager } from './task-group-manager';
 import type { DaemonHub } from '../../daemon-hub';
 import type { LeaderToolCallbacks, LeaderToolResult } from '../agents/leader-agent';
 import { createLeaderMcpServer } from '../agents/leader-agent';
-import type { PlannerCreateTaskParams, ReplanContext } from '../agents/planner-agent';
+import type {
+	PlannerCreateTaskParams,
+	ReplanContext,
+	MetricReplanStatus,
+} from '../agents/planner-agent';
 import {
 	createPlannerAgentInit,
 	createPlannerMcpServer,
 	buildPlannerTaskMessage,
 } from '../agents/planner-agent';
+import { getEffectiveMaxPlanningAttempts } from '../../../storage/repositories/goal-repository';
 import { createCoderAgentInit, buildCoderTaskMessage } from '../agents/coder-agent';
 import { createGeneralAgentInit, buildGeneralTaskMessage } from '../agents/general-agent';
 import { buildLeaderTaskContext } from '../agents/leader-agent';
@@ -2186,9 +2191,9 @@ export class RoomRuntime {
 
 		// Planning takes priority over execution.
 		// If a goal needs planning (no tasks, or all tasks failed), spawn a planning group first.
-		const goalForPlanning = await this.getNextGoalForPlanning();
-		if (goalForPlanning) {
-			await this.spawnPlanningGroup(goalForPlanning);
+		const planningNeeded = await this.getNextGoalForPlanning();
+		if (planningNeeded) {
+			await this.spawnPlanningGroup(planningNeeded.goal, planningNeeded.replanContext);
 			return; // Don't start execution groups in the same tick
 		}
 
@@ -2414,12 +2419,18 @@ export class RoomRuntime {
 	 * - status is 'active'
 	 * - has no linked tasks at all, OR all linked tasks need attention
 	 * - has no pending/in_progress/draft/escalated tasks
-	 * - planning_attempts < this.maxPlanningAttempts
+	 * - planning_attempts < effective max planning attempts
 	 *
-	 * Goals that exceed maxPlanningAttempts are transitioned to 'needs_human'.
+	 * For measurable missions, an additional case is handled:
+	 * - All execution tasks completed successfully but metric targets not met → replan with metric context
+	 * - All metric targets met → complete the mission automatically
+	 *
+	 * Goals that exceed max planning attempts are transitioned to 'needs_human'.
 	 */
-	private async getNextGoalForPlanning(): Promise<RoomGoal | null> {
+	private async getNextGoalForPlanning(): Promise<{ goal: RoomGoal; replanContext?: ReplanContext } | null> {
 		const activeGoals = await this.goalManager.listGoals('active');
+		const currentRoom = this.getCurrentRoom();
+		const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
 
 		for (const goal of activeGoals) {
 			// Recurring missions are ONLY planned through the scheduler path (tickRecurringMissions).
@@ -2427,7 +2438,8 @@ export class RoomRuntime {
 			if (goal.missionType === 'recurring') continue;
 			const linkedTaskIds = goal.linkedTaskIds ?? [];
 
-			let needsPlanning: boolean;
+			let needsPlanning = false;
+			let replanContext: ReplanContext | undefined;
 
 			if (linkedTaskIds.length === 0) {
 				// No tasks at all: brand new goal
@@ -2460,22 +2472,97 @@ export class RoomRuntime {
 				// Re-plan if no active tasks and either all tasks reached a terminal state
 				// (failed or cancelled) or all execution tasks reached a terminal state
 				needsPlanning = !hasActiveTask && (allFailed || allExecutionFailed);
+
+				// Measurable mission: check if all execution tasks completed (not failed)
+				// and whether metric targets are met.
+				if (
+					!needsPlanning &&
+					!hasActiveTask &&
+					goal.missionType === 'measurable' &&
+					goal.structuredMetrics &&
+					goal.structuredMetrics.length > 0
+				) {
+					const allExecutionCompleted =
+						executionTasks.length > 0 &&
+						executionTasks.every((t) => t.status === 'completed');
+
+					if (allExecutionCompleted) {
+						const targetsResult = await this.goalManager.checkMetricTargets(goal.id);
+
+						if (targetsResult.allMet) {
+							// All targets met — complete the mission automatically
+							log.info(
+								`Measurable mission ${goal.id} (${goal.title}): all metric targets met, completing.`
+							);
+							await this.goalManager.updateGoalStatus(goal.id, 'completed', { progress: 100 });
+							if (this.daemonHub) {
+								void this.daemonHub.emit('goal.progressUpdated', {
+									sessionId: `room:${this.roomId}`,
+									roomId: this.roomId,
+									goalId: goal.id,
+									progress: 100,
+								});
+							}
+							continue; // Don't plan for this goal
+						}
+
+						// Targets not met — trigger replanning with metric context
+						needsPlanning = true;
+						const completedExecTasks = executionTasks
+							.filter((t) => t.status === 'completed' && t.taskType !== 'planning')
+							.map((t) => ({ title: t.title, result: t.result ?? 'completed' }));
+
+						// Fetch recent history for each metric
+						const metricStatuses: MetricReplanStatus[] = await Promise.all(
+							targetsResult.results.map(async (r) => {
+								const metric = goal.structuredMetrics!.find((m) => m.name === r.name);
+								const history = await this.goalManager.getMetricHistory(goal.id, r.name);
+								const recentHistory = history.slice(-5).map((h) => h.value);
+								return {
+									name: r.name,
+									current: r.current,
+									target: r.target,
+									baseline: metric?.baseline,
+									direction: metric?.direction,
+									met: r.met,
+									recentHistory,
+								};
+							})
+						);
+
+						const unmetNames = targetsResult.results
+							.filter((r) => !r.met)
+							.map((r) => r.name)
+							.join(', ');
+
+						replanContext = {
+							completedTasks: completedExecTasks,
+							failedTask: {
+								title: 'Metric targets not met',
+								error: `All tasks completed but metric targets not reached. Unmet metrics: ${unmetNames}`,
+							},
+							attempt: (goal.planning_attempts ?? 0) + 1,
+							metricContext: { metrics: metricStatuses },
+						};
+					}
+				}
 			}
 
 			if (!needsPlanning) continue;
 
+			const effectiveMax = getEffectiveMaxPlanningAttempts(goal, roomConfig);
 			const attempts = goal.planning_attempts ?? 0;
 
-			if (attempts >= this.maxPlanningAttempts) {
+			if (attempts >= effectiveMax) {
 				// Too many failed planning attempts: escalate to human
 				log.warn(
-					`Goal ${goal.id} (${goal.title}) exceeded max planning attempts, marking needs_human`
+					`Goal ${goal.id} (${goal.title}) exceeded max planning attempts (${effectiveMax}), marking needs_human`
 				);
 				await this.goalManager.updateGoalStatus(goal.id, 'needs_human');
 				continue;
 			}
 
-			return goal;
+			return { goal, replanContext };
 		}
 
 		return null;
@@ -2872,7 +2959,10 @@ export class RoomRuntime {
 		}
 
 		const attempts = goal.planning_attempts ?? 0;
-		if (attempts >= this.maxPlanningAttempts) {
+		const currentRoom = this.getCurrentRoom();
+		const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
+		const effectiveMax = getEffectiveMaxPlanningAttempts(goal, roomConfig);
+		if (attempts >= effectiveMax) {
 			// Fail the task and escalate instead of replanning
 			await this.taskGroupManager.fail(groupId, reason);
 			this.cleanupMirroring(groupId, `Task failed: ${reason}`);
@@ -2881,7 +2971,7 @@ export class RoomRuntime {
 			this.scheduleTick();
 			return jsonResult({
 				success: false,
-				error: `Max planning retries (${this.maxPlanningAttempts - 1}) reached. Goal escalated to human.`,
+				error: `Max planning retries (${effectiveMax - 1}) reached. Goal escalated to human.`,
 			});
 		}
 
