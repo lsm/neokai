@@ -27,6 +27,10 @@
  *                            HTTP server.  Assertion: the MCP server subprocess receives a
  *                            tools/list call, proving get_answer was registered in the bridge.
  *   4. models-list         — the anthropic-copilot provider exposes its models when authenticated.
+ *   5. provider-session    — session.create with explicit config.provider:'anthropic-copilot'
+ *                            routes to the copilot backend.
+ *   6. error-envelope      — invalid requests return Anthropic JSON error envelopes.
+ *   7. token-usage         — SSE stream contains non-zero input_tokens and output_tokens.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -40,8 +44,74 @@ import {
 	getProcessingState,
 	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
+import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
+
+// ---------------------------------------------------------------------------
+// SSE parsing helpers (used by bridge-level tests 6-7)
+// ---------------------------------------------------------------------------
+
+type SseEvent = { event: string; data: Record<string, unknown> };
+
+function parseSseEvents(text: string): SseEvent[] {
+	const events: SseEvent[] = [];
+	for (const chunk of text.split('\n\n')) {
+		if (!chunk.trim()) continue;
+		let eventName = '';
+		let dataStr = '';
+		for (const line of chunk.split('\n')) {
+			if (line.startsWith('event: ')) eventName = line.slice(7).trim();
+			else if (line.startsWith('data: ')) dataStr = line.slice(6);
+		}
+		if (!eventName || !dataStr) continue;
+		try {
+			events.push({ event: eventName, data: JSON.parse(dataStr) as Record<string, unknown> });
+		} catch {
+			// ignore unparseable lines
+		}
+	}
+	return events;
+}
+
+/** Return the input_tokens from the message_start event, or 0 if not found. */
+function getInputTokens(events: SseEvent[]): number {
+	for (const e of events) {
+		if (e.event === 'message_start') {
+			const msg = (e.data as { message?: { usage?: { input_tokens?: number } } }).message;
+			return msg?.usage?.input_tokens ?? 0;
+		}
+	}
+	return 0;
+}
+
+/** Return the output_tokens from the message_delta event, or 0 if not found. */
+function getOutputTokens(events: SseEvent[]): number {
+	for (const e of events) {
+		if (e.event === 'message_delta') {
+			const usage = (e.data as { usage?: { output_tokens?: number } }).usage;
+			return usage?.output_tokens ?? 0;
+		}
+	}
+	return 0;
+}
+
+/** POST to the bridge /v1/messages endpoint, return parsed SSE events. */
+async function callCopilotBridge(
+	bridgeUrl: string,
+	messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+	model: string
+): Promise<SseEvent[]> {
+	const response = await fetch(`${bridgeUrl}/v1/messages`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ model, messages, stream: true, max_tokens: 256 }),
+	});
+	if (!response.ok) {
+		throw new Error(`Bridge HTTP ${response.status}: ${await response.text()}`);
+	}
+	return parseSseEvents(await response.text());
+}
 
 /** Per-turn idle timeout. The Copilot API can take 60-90 s per turn. */
 const IDLE_TIMEOUT = 120_000;
@@ -373,4 +443,127 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 		// the embedded server is running and at least one copilot model was returned.
 		expect(testModelId).toBeTruthy();
 	});
+
+	// -------------------------------------------------------------------------
+	// 5. Explicit provider session creation
+	// -------------------------------------------------------------------------
+
+	test(
+		'provider session: session.create with explicit config.provider uses copilot backend',
+		async () => {
+			const workspacePath = join(TMP_DIR, `copilot-provider-session-${Date.now()}`);
+			mkdirSync(workspacePath, { recursive: true });
+
+			// Create session with explicit provider — this is the key assertion:
+			// passing config.provider:'anthropic-copilot' must route to the copilot
+			// backend regardless of whether the model ID is ambiguous.
+			const { sessionId } = (await daemon.messageHub.request('session.create', {
+				workspacePath,
+				title: 'Copilot Explicit Provider Test',
+				config: {
+					model: testModelId,
+					provider: 'anthropic-copilot',
+					permissionMode: 'acceptEdits',
+				},
+			})) as { sessionId: string };
+			daemon.trackSession(sessionId);
+
+			// Query the session metadata to confirm the stored provider is 'anthropic-copilot'.
+			const { session } = (await daemon.messageHub.request('session.get', {
+				sessionId,
+			})) as { session: { config?: { provider?: string } } };
+			expect(session.config?.provider).toBe('anthropic-copilot');
+
+			// Send a message and verify the copilot backend responds.
+			await sendMessage(daemon, sessionId, 'Reply with exactly: COPILOT_OK');
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+
+			const state = await getProcessingState(daemon, sessionId);
+			expect(state.status).toBe('idle');
+
+			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+				minCount: 1,
+				timeout: 5000,
+			});
+			const text = sdkMessages
+				.filter((m) => (m as { type?: string }).type === 'assistant')
+				.map((m) => extractAssistantText(m as Record<string, unknown>))
+				.join('');
+			// The model must echo the token back -- a bare truthiness check would pass
+			// even for error messages or refusals from a wrong backend.
+			expect(text.toUpperCase()).toContain('COPILOT_OK');
+		},
+		TEST_TIMEOUT
+	);
+
+	// -------------------------------------------------------------------------
+	// 6. Error envelope — invalid request returns Anthropic JSON error format
+	// -------------------------------------------------------------------------
+
+	test(
+		'error envelope: stream:false returns Anthropic JSON error envelope',
+		async () => {
+			// Instantiate the provider directly to access the bridge URL without
+			// routing through the daemon session lifecycle.
+			const directProvider = new AnthropicToCopilotBridgeProvider();
+			const bridgeUrl = await directProvider.ensureServerStarted();
+
+			try {
+				// The copilot bridge requires stream:true — explicitly setting stream:false
+				// triggers an immediate 400 invalid_request_error (no API call needed).
+				const response = await fetch(`${bridgeUrl}/v1/messages`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						model: testModelId,
+						messages: [{ role: 'user', content: 'hi' }],
+						max_tokens: 16,
+						stream: false,
+					}),
+				});
+
+				expect(response.status).toBe(400);
+				const body = (await response.json()) as {
+					type?: string;
+					error?: { type?: string; message?: string };
+				};
+				// Must be Anthropic JSON error envelope: { type:'error', error:{type,message} }
+				expect(body.type).toBe('error');
+				expect(body.error?.type).toBe('invalid_request_error');
+				expect(typeof body.error?.message).toBe('string');
+			} finally {
+				await directProvider.shutdown();
+			}
+		},
+		SETUP_TIMEOUT
+	);
+
+	// -------------------------------------------------------------------------
+	// 7. Token usage — SSE stream has non-zero input_tokens and output_tokens
+	// -------------------------------------------------------------------------
+
+	test(
+		'token usage: SSE stream contains non-zero input_tokens and output_tokens',
+		async () => {
+			const directProvider = new AnthropicToCopilotBridgeProvider();
+			const bridgeUrl = await directProvider.ensureServerStarted();
+
+			try {
+				const events = await callCopilotBridge(
+					bridgeUrl,
+					[{ role: 'user', content: 'Say hello.' }],
+					testModelId
+				);
+
+				const inputTokens = getInputTokens(events);
+				const outputTokens = getOutputTokens(events);
+
+				expect(inputTokens).toBeGreaterThan(0);
+				expect(outputTokens).toBeGreaterThan(0);
+			} finally {
+				await directProvider.shutdown();
+			}
+		},
+		TEST_TIMEOUT
+	);
 });

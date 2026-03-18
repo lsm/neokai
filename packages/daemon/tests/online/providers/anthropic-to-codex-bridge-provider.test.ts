@@ -19,7 +19,22 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import {
+	sendMessage,
+	waitForIdle,
+	getProcessingState,
+	waitForSdkMessages,
+} from '../../helpers/daemon-actions';
+
+const TMP_DIR = process.env.TMPDIR || '/tmp';
+const IDLE_TIMEOUT = 120_000;
+const SETUP_TIMEOUT = 60_000;
+const TEST_TIMEOUT = IDLE_TIMEOUT + 30_000;
 
 // ---------------------------------------------------------------------------
 // SSE parsing helpers
@@ -82,6 +97,7 @@ type ToolUseBlock = {
 /**
  * Extract the first tool_use block from a stream.
  * Accumulates input_json_delta fragments and parses the final JSON.
+ * Only the first tool_use block is returned; subsequent blocks are ignored.
  */
 function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
 	let id = '';
@@ -92,10 +108,11 @@ function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
 		if (e.event === 'content_block_start') {
 			const cb = (e.data as { content_block?: { type?: string; id?: string; name?: string } })
 				.content_block;
-			if (cb?.type === 'tool_use' && cb.id) {
+			// Only capture the first tool_use block — stop updating id/name once set
+			// so that a second tool_use block does not overwrite the first one's state.
+			if (cb?.type === 'tool_use' && cb.id && !id) {
 				id = cb.id;
 				name = cb.name ?? '';
-				inputParts.length = 0; // reset for this block
 			}
 		} else if (e.event === 'content_block_delta' && id) {
 			const delta = (e.data as { delta?: { type?: string; partial_json?: string } }).delta;
@@ -159,9 +176,27 @@ async function callBridge(
 	}
 
 	const text = await response.text();
-	// DIAGNOSTIC: always log raw SSE bytes to stderr for CI debugging
-	console.log(`[codex-bridge-test] raw-sse (${text.length} bytes):`, text.slice(0, 2000));
-	return parseSseEvents(text);
+	const events = parseSseEvents(text);
+	// Diagnostic: log raw SSE bytes only when the stream looks empty or malformed,
+	// to avoid flooding CI logs on successful requests.
+	if (events.length === 0) {
+		console.log(
+			`[codex-bridge-test] raw-sse (${text.length} bytes, no events):`,
+			text.slice(0, 2000)
+		);
+	}
+	return events;
+}
+
+/** Return the output_tokens from the message_delta event, or 0 if not found. */
+function getOutputTokens(events: SseEvent[]): number {
+	for (const e of events) {
+		if (e.event === 'message_delta') {
+			const usage = (e.data as { usage?: { output_tokens?: number } }).usage;
+			return usage?.output_tokens ?? 0;
+		}
+	}
+	return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,17 +206,35 @@ async function callBridge(
 describe('Codex Bridge (Online)', () => {
 	let provider: AnthropicToCodexBridgeProvider;
 	let bridgeUrl: string;
+	let daemon: DaemonServerContext;
 
 	beforeAll(async () => {
 		provider = new AnthropicToCodexBridgeProvider();
-		await provider.getAuthStatus();
+
+		// Hard-fail if credentials are absent or the codex binary is missing —
+		// per CLAUDE.md policy: tests must FAIL, not silently skip.
+		const authStatus = await provider.getAuthStatus();
+		if (!authStatus.isAuthenticated) {
+			throw new Error(
+				`anthropic-codex provider is not authenticated: ${authStatus.error ?? 'unknown reason'}. ` +
+					'Set OPENAI_API_KEY or CODEX_API_KEY, or run `codex login`.'
+			);
+		}
+
 		const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
-	}, 15000);
 
-	afterAll(() => {
+		// Start a daemon server for provider-session and daemon-level tests.
+		daemon = await createDaemonServer();
+	}, SETUP_TIMEOUT);
+
+	afterAll(async () => {
 		provider?.stopAllBridgeServers();
-	});
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, SETUP_TIMEOUT);
 
 	// -------------------------------------------------------------------------
 	// Test 1: Basic conversation
@@ -385,4 +438,101 @@ describe('Codex Bridge (Online)', () => {
 		// The model should repeat the SECRET string in its final response
 		expect(extractText(turn2)).toContain(SECRET);
 	}, 180_000);
+
+	// -------------------------------------------------------------------------
+	// Test 4: Provider-aware session creation via daemon
+	// -------------------------------------------------------------------------
+	test(
+		'provider session: session.create with explicit config.provider uses codex backend',
+		async () => {
+			const workspacePath = join(TMP_DIR, `codex-provider-session-${Date.now()}`);
+			mkdirSync(workspacePath, { recursive: true });
+
+			// Create session with explicit provider — must route to anthropic-codex.
+			const { sessionId } = (await daemon.messageHub.request('session.create', {
+				workspacePath,
+				title: 'Codex Explicit Provider Test',
+				config: {
+					model: 'gpt-5.1-codex-mini',
+					provider: 'anthropic-codex',
+					permissionMode: 'acceptEdits',
+				},
+			})) as { sessionId: string };
+			daemon.trackSession(sessionId);
+
+			// Query the session metadata to confirm the stored provider is 'anthropic-codex'.
+			const { session } = (await daemon.messageHub.request('session.get', {
+				sessionId,
+			})) as { session: { config?: { provider?: string } } };
+			expect(session.config?.provider).toBe('anthropic-codex');
+
+			// Send a message and verify the codex backend responds with the expected token.
+			await sendMessage(daemon, sessionId, 'Reply with exactly: CODEX_OK');
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+
+			const state = await getProcessingState(daemon, sessionId);
+			expect(state.status).toBe('idle');
+
+			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+				minCount: 1,
+				timeout: 5000,
+			});
+			const text = sdkMessages
+				.filter((m) => (m as { type?: string }).type === 'assistant')
+				.map((m) => {
+					const msg = (m as { message?: { content?: unknown } }).message;
+					if (!msg?.content) return '';
+					if (typeof msg.content === 'string') return msg.content;
+					if (Array.isArray(msg.content)) {
+						return msg.content
+							.filter((b: unknown) => (b as { type?: string }).type === 'text')
+							.map((b: unknown) => (b as { text?: string }).text ?? '')
+							.join('');
+					}
+					return '';
+				})
+				.join('');
+			// The model must echo the token back -- a bare truthiness check would pass
+			// even for error messages or refusals from a wrong backend.
+			expect(text.toUpperCase()).toContain('CODEX_OK');
+		},
+		TEST_TIMEOUT
+	);
+
+	// -------------------------------------------------------------------------
+	// Test 5: Error envelope — invalid request returns Anthropic JSON error format
+	// -------------------------------------------------------------------------
+	test('error envelope: unknown route returns Anthropic JSON error body', async () => {
+		// Hit a non-existent endpoint on the bridge server — the bridge must respond
+		// with the Anthropic JSON error envelope rather than a plain-text error.
+		const response = await fetch(`${bridgeUrl}/v1/unknown-endpoint`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+
+		expect(response.status).toBeGreaterThanOrEqual(400);
+		const body = (await response.json()) as {
+			type?: string;
+			error?: { type?: string; message?: string };
+		};
+		// Must be Anthropic JSON error envelope format
+		expect(body.type).toBe('error');
+		expect(typeof body.error?.type).toBe('string');
+		expect(typeof body.error?.message).toBe('string');
+	}, 30_000);
+
+	// -------------------------------------------------------------------------
+	// Test 6: Token usage — SSE stream has non-zero output_tokens
+	// -------------------------------------------------------------------------
+	test('token usage: SSE stream contains non-zero output_tokens', async () => {
+		const events = await callBridge(bridgeUrl, [{ role: 'user', content: 'Say hello.' }]);
+
+		// The codex bridge hard-codes input_tokens to 0 in the message_start event
+		// because thread/tokenUsage/updated arrives after streaming starts and the
+		// message_start event has already been sent by then.  Only assert output_tokens.
+		const outputTokens = getOutputTokens(events);
+
+		expect(outputTokens).toBeGreaterThan(0);
+	}, 120_000);
 });
