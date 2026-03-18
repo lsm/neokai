@@ -356,6 +356,19 @@ No table rows here.
 			expect(result).toBeNull();
 		});
 
+		it('should return null for assistant message with tokens line but no category table', () => {
+			// Guard is tighter than isContextResponse to prevent false-positive parse attempts
+			const message = {
+				type: 'assistant',
+				message: {
+					content: 'Here is your summary. **Tokens:** 5k / 200k (2%). No table follows.',
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+			expect(result).toBeNull();
+		});
+
 		it('should return null for non-user non-assistant messages', () => {
 			const message = {
 				type: 'system',

@@ -146,7 +146,7 @@ export class ContextFetcher {
 			};
 
 			const content = this.extractTextContent(assistantMsg.message?.content);
-			if (!content.includes('**Tokens:**')) {
+			if (!content.includes('**Tokens:**') || !content.includes('| Category |')) {
 				return null;
 			}
 

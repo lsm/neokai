@@ -1124,6 +1124,108 @@ describe('SDKMessageHandler', () => {
 			);
 		});
 
+		it('should clear internalContextCommandIds after new SDK format three-message sequence', async () => {
+			// New SDK format state machine:
+			// 1. Normal result → enqueues /context (UUID=X stored in internalContextCommandIds)
+			// 2. User replay (UUID=X, content='/context') → UUID matched, parse returns null, UUID stays in set
+			// 3. Assistant message (sc8() output, UUID≠X) → context parsed, lastMessageWasContextResponse=true
+			// 4. Result message → internalContextCommandIds.clear() fires
+			// 5. Next normal result → set is empty → queues /context again
+
+			const normalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'normal-result-uuid',
+				usage: {
+					input_tokens: 100,
+					output_tokens: 50,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+
+			// Step 1: normal result queues /context
+			await handler.handleMessage(normalResult);
+			const contextUuid = (mockMessageQueue.enqueueWithId as ReturnType<typeof mock>).mock
+				.calls[0][0] as string;
+			expect(contextUuid).toBeString();
+
+			// Step 2: user replay with the context UUID but only plain '/context' text (new SDK format)
+			const userReplay: SDKMessage = {
+				type: 'user',
+				uuid: contextUuid,
+				isReplay: true,
+				message: {
+					role: 'user',
+					content: '/context',
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(userReplay);
+			// UUID-matched replay is suppressed — no save or broadcast
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1); // only the normal result
+
+			// Step 3: sc8() assistant message carrying actual context output (UUID differs from contextUuid)
+			const sc8AssistantContextMarkdown =
+				'## Context Usage\n\n**Model:** claude-sonnet-4-6\n**Tokens:** 20.3k / 200k (10%)\n\n' +
+				'### Estimated usage by category\n\n' +
+				'| Category | Tokens | Percentage |\n|----------|--------|------------|\n' +
+				'| System prompt | 3.6k | 1.8% |\n| System tools | 18k | 9.0% |\n' +
+				'| Messages | 108 | 0.1% |\n| Free space | 145.3k | 72.6% |';
+			const sc8AssistantMessage: SDKMessage = {
+				type: 'assistant',
+				uuid: 'sc8-assistant-uuid',
+				message: {
+					role: 'assistant',
+					content: [{ type: 'text', text: sc8AssistantContextMarkdown }],
+				},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(sc8AssistantMessage);
+			// Context data was parsed and tracker updated
+			expect(updateWithDetailedBreakdownSpy).toHaveBeenCalledTimes(1);
+			// sc8() assistant message is suppressed — still only 1 DB save
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
+
+			// Step 4: result message following the /context turn (zero tokens) — suppressed
+			const contextTurnResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'context-turn-result-uuid',
+				usage: {
+					input_tokens: 0,
+					output_tokens: 0,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(contextTurnResult);
+			// Result suppressed — still only 1 DB save and no new /context enqueue
+			expect(saveSDKMessageSpy).toHaveBeenCalledTimes(1);
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(1);
+
+			// Step 5: next normal result — internalContextCommandIds must be empty now
+			// so /context gets queued again
+			const nextNormalResult: SDKMessage = {
+				type: 'result',
+				subtype: 'success',
+				uuid: 'next-normal-result-uuid',
+				usage: {
+					input_tokens: 120,
+					output_tokens: 60,
+					cache_read_input_tokens: 0,
+					cache_creation_input_tokens: 0,
+				},
+				total_cost_usd: 0.001,
+				modelUsage: {},
+			} as unknown as SDKMessage;
+			await handler.handleMessage(nextNormalResult);
+			// internalContextCommandIds was cleared in step 4, so /context is queued again
+			expect(mockMessageQueue.enqueueWithId).toHaveBeenCalledTimes(2);
+		});
+
 		it('should suppress zero-token internal result when replay correlation fails', async () => {
 			const normalResult: SDKMessage = {
 				type: 'result',
