@@ -1108,10 +1108,14 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 
 describe('tool_choice warning — codex bridge', () => {
 	let server: BridgeServer & { port: number };
+	let connCreateSpy: ReturnType<typeof spyOn>;
+	let initializeSpy: ReturnType<typeof spyOn>;
+	let killSpy: ReturnType<typeof spyOn>;
+	let startTurnSpy: ReturnType<typeof spyOn>;
 
 	beforeEach(() => {
 		// Stub AppServerConn.create so no real subprocess is spawned.
-		spyOn(AppServerConn, 'create').mockReturnValue({
+		connCreateSpy = spyOn(AppServerConn, 'create').mockReturnValue({
 			closed: new Promise<void>(() => {}),
 			request: () => Promise.resolve({}),
 			notify: () => {},
@@ -1119,9 +1123,9 @@ describe('tool_choice warning — codex bridge', () => {
 		} as unknown as AppServerConn);
 
 		// Stub BridgeSession methods to avoid real I/O.
-		spyOn(BridgeSession.prototype, 'initialize').mockResolvedValue(undefined);
-		spyOn(BridgeSession.prototype, 'kill').mockImplementation(() => {});
-		spyOn(BridgeSession.prototype, 'startTurn').mockImplementation(
+		initializeSpy = spyOn(BridgeSession.prototype, 'initialize').mockResolvedValue(undefined);
+		killSpy = spyOn(BridgeSession.prototype, 'kill').mockImplementation(() => {});
+		startTurnSpy = spyOn(BridgeSession.prototype, 'startTurn').mockImplementation(
 			// eslint-disable-next-line @typescript-eslint/require-await
 			async function* (): AsyncGenerator<BridgeEvent> {
 				yield { type: 'turn_done', inputTokens: 0, outputTokens: 1 };
@@ -1136,6 +1140,10 @@ describe('tool_choice warning — codex bridge', () => {
 
 	afterEach(() => {
 		server.stop();
+		connCreateSpy.mockRestore();
+		initializeSpy.mockRestore();
+		killSpy.mockRestore();
+		startTurnSpy.mockRestore();
 	});
 
 	it('logs a warning when tool_choice is provided', async () => {

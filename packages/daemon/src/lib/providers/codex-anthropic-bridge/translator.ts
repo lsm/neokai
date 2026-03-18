@@ -43,7 +43,7 @@ export type AnthropicTool = {
 	input_schema: Record<string, unknown>;
 };
 
-export type AnthropicToolChoice =
+export type ToolChoice =
 	| { type: 'auto' }
 	| { type: 'none' }
 	| { type: 'any' }
@@ -61,7 +61,7 @@ export type AnthropicRequest = {
 	 * the Codex app-server does not expose tool-choice control.
 	 * A warning is logged when this field is present.
 	 */
-	tool_choice?: AnthropicToolChoice;
+	tool_choice?: ToolChoice;
 };
 
 // ---------------------------------------------------------------------------
