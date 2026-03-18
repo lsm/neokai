@@ -684,6 +684,60 @@ describe('useModelSwitcher', () => {
 		});
 	});
 
+	describe('switchModel - cross-provider', () => {
+		it('should match currentModelInfo by provider after cross-provider switch', async () => {
+			// Two providers both expose claude-sonnet-4-20250514; the post-switch find must
+			// prefer the entry for the provider that was actually switched to.
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'claude-sonnet-4-20250514',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({
+						models: [
+							{
+								id: 'claude-sonnet-4-20250514',
+								display_name: 'Sonnet (Anthropic)',
+								description: '',
+								provider: 'anthropic',
+							},
+							{
+								id: 'claude-sonnet-4-20250514',
+								display_name: 'Sonnet (Copilot)',
+								description: '',
+								provider: 'anthropic-copilot',
+							},
+						],
+					})
+					.mockResolvedValueOnce({
+						success: true,
+						model: 'claude-sonnet-4-20250514',
+					}),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			await act(async () => {
+				// Switch to the copilot variant
+				await result.current.switchModel({
+					id: 'claude-sonnet-4-20250514',
+					provider: 'anthropic-copilot',
+				});
+			});
+
+			// Should resolve to the copilot entry, not the anthropic one
+			expect(result.current.currentModelInfo?.provider).toBe('anthropic-copilot');
+			expect(result.current.currentModelInfo?.name).toBe('Sonnet (Copilot)');
+		});
+	});
+
 	describe('switchModel - provider validation', () => {
 		it('should show error when provider is missing from model', async () => {
 			const mockHub = {

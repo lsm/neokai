@@ -181,6 +181,7 @@ export interface GetCurrentModelResponse {
 export interface SwitchModelRequest {
 	sessionId: string;
 	model: string; // Can be alias (e.g., "opus") or full ID
+	provider: string; // Required — identifies which provider owns this model
 }
 
 export interface SwitchModelResponse {

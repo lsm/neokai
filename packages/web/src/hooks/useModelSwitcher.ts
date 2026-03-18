@@ -208,7 +208,12 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 
 				if (result.success) {
 					setCurrentModel(result.model);
-					const newModelInfo = availableModels.find((m) => m.id === result.model);
+					// Match by both id AND provider to avoid returning the wrong entry when
+					// two providers share the same canonical model ID (e.g. anthropic and
+					// anthropic-copilot both expose claude-sonnet-4.6).
+					const newModelInfo =
+						availableModels.find((m) => m.id === result.model && m.provider === model.provider) ??
+						availableModels.find((m) => m.id === result.model);
 					setCurrentModelInfo(newModelInfo || null);
 					toast.success(`Switched to ${newModelInfo?.name || result.model}`);
 				} else {

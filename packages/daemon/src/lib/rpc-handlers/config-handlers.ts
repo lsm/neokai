@@ -40,7 +40,10 @@ import type {
 	UpdateBulkConfigRequest,
 } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
+import { Logger } from '../logger';
 import type { SessionManager } from '../session-manager';
+
+const log = new Logger('config-handlers');
 import {
 	validateSystemPromptConfig,
 	validateToolsConfig,
@@ -93,7 +96,13 @@ export function setupConfigHandlers(
 
 		// Handle model change (runtime native via existing handleModelSwitch)
 		if (settings.model) {
-			const provider = agentSession.getSessionData().config.provider ?? 'anthropic';
+			const sessionConfig = agentSession.getSessionData().config;
+			if (!sessionConfig.provider) {
+				log.warn(
+					'config.model.update: session has no provider configured — using anthropic as legacy fallback'
+				);
+			}
+			const provider = sessionConfig.provider ?? 'anthropic';
 			const result = await agentSession.handleModelSwitch(settings.model, provider);
 			if (result.success) {
 				results.applied.push('model');
@@ -706,7 +715,13 @@ export function setupConfigHandlers(
 		const runtimeConfig = { ...config };
 
 		if (runtimeConfig.model) {
-			const provider = agentSession.getSessionData().config.provider ?? 'anthropic';
+			const sessionCfg = agentSession.getSessionData().config;
+			if (!sessionCfg.provider) {
+				log.warn(
+					'config.updateBulk: session has no provider configured — using anthropic as legacy fallback'
+				);
+			}
+			const provider = sessionCfg.provider ?? 'anthropic';
 			const result = await agentSession.handleModelSwitch(runtimeConfig.model, provider);
 			if (result.success) {
 				results.applied.push('model');

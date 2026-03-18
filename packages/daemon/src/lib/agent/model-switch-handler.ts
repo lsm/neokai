@@ -164,29 +164,17 @@ export class ModelSwitchHandler {
 			// Check if query is running AND ProcessTransport is ready
 			const transportReady = firstMessageReceived;
 
-			// Resolve the target provider — deterministic when caller supplies newProvider.
-			// modelInfo?.provider is a secondary source (model registry metadata).
-			// detectProvider is a last-resort deprecated heuristic for callers that pre-date
-			// explicit routing (e.g. CLI, old integration tests). Log a warning so these
-			// paths are visible in production.
+			// Locate the provider instance for the new model.
+			// newProvider is a required string, so detectProviderForModel always receives
+			// an explicit provider — no heuristic fallback is needed.
 			const providerRegistry = getProviderRegistry();
-			const targetProviderId = newProvider ?? modelInfo?.provider;
-			let newProviderInstance: ReturnType<typeof providerRegistry.detectProvider>;
-			if (targetProviderId) {
-				newProviderInstance = providerRegistry.detectProviderForModel(
-					resolvedModel,
-					targetProviderId
-				);
-			} else {
-				logger.warn(
-					`[model-switch] No provider supplied for model '${resolvedModel}' — ` +
-						'falling back to heuristic detection. Update callers to pass an explicit providerId.'
-				);
-				newProviderInstance = providerRegistry.detectProvider(resolvedModel);
-			}
+			const newProviderInstance = providerRegistry.detectProviderForModel(
+				resolvedModel,
+				newProvider
+			);
 
 			if (!newProviderInstance) {
-				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${targetProviderId ?? '(unknown)'}' is not registered.`;
+				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${newProvider}' is not registered.`;
 				logger.error(errMsg);
 				return { success: false, model: session.config.model, error: errMsg };
 			}
