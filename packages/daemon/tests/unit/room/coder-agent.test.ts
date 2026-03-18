@@ -98,6 +98,18 @@ describe('Coder Agent', () => {
 			);
 		});
 
+		it('checks for existing PR before creating to avoid duplicates', () => {
+			const prompt = buildCoderSystemPrompt();
+			// Step 5 should check for an existing PR first
+			expect(prompt).toContain('EXISTING_PR=$(gh pr list --head');
+			expect(prompt).toContain('--state open --json url --jq');
+			expect(prompt).toContain('if [ -z "$EXISTING_PR" ]');
+			// Only create PR when none exists
+			expect(prompt).toContain('gh pr create --fill --base');
+			// Acknowledge when PR already exists
+			expect(prompt).toContain('PR already exists');
+		});
+
 		it('combines sync commands in a single bash invocation using the empty-check fallback pattern', () => {
 			const prompt = buildCoderSystemPrompt();
 			// Two-step empty check: symbolic-ref first, then remote show if empty.
@@ -193,6 +205,22 @@ describe('Coder Agent', () => {
 		it('should omit previous work section when no summaries', () => {
 			const message = buildCoderTaskMessage(makeConfig());
 			expect(message).not.toContain('Previous Work');
+		});
+
+		it('should include existing PR URL when task has prUrl', () => {
+			const message = buildCoderTaskMessage(
+				makeConfig({
+					task: makeTask({ prUrl: 'https://github.com/org/repo/pull/42' }),
+				})
+			);
+			expect(message).toContain('https://github.com/org/repo/pull/42');
+			expect(message).toContain('Existing Pull Request');
+			expect(message).toContain('do NOT create a new one');
+		});
+
+		it('should omit existing PR section when task has no prUrl', () => {
+			const message = buildCoderTaskMessage(makeConfig());
+			expect(message).not.toContain('Existing Pull Request');
 		});
 
 		it('should end with begin instruction', () => {

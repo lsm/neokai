@@ -599,6 +599,61 @@ export async function checkLeaderDraftsExist(
 	};
 }
 
+// --- PR URL Utility ---
+
+/**
+ * Extract a PR number from a GitHub PR URL.
+ * Returns null if the URL is not a valid GitHub PR URL.
+ */
+export function extractPrNumberFromUrl(prUrl: string): number | null {
+	const match = prUrl.match(/\/pull\/(\d+)/);
+	return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Close a stale PR when a new PR has been created to replace it.
+ *
+ * Called when submit_for_review is invoked with a PR URL that differs from the
+ * task's existing prUrl. Closes the old PR with a comment pointing to the new one.
+ *
+ * Fails open: if the close command fails (e.g., PR already closed, gh unavailable),
+ * the error is logged but does not block the submit_for_review flow.
+ *
+ * @param oldPrUrl - The existing PR URL stored in the task
+ * @param newPrUrl - The new PR URL being submitted for review
+ * @param workspacePath - The workspace path to run gh commands from
+ * @param opts - Optional hook options (for testing)
+ * @returns true if closed successfully, false otherwise
+ */
+export async function closeStalePr(
+	oldPrUrl: string,
+	newPrUrl: string,
+	workspacePath: string,
+	opts?: HookOptions
+): Promise<boolean> {
+	const run = getRunner(opts);
+
+	const oldPrNumber = extractPrNumberFromUrl(oldPrUrl);
+	if (!oldPrNumber) {
+		log.warn(`closeStalePr: could not extract PR number from URL: ${oldPrUrl}`);
+		return false;
+	}
+
+	const comment = `Superseded by ${newPrUrl}`;
+	const { exitCode } = await run(
+		['gh', 'pr', 'close', String(oldPrNumber), '--comment', comment],
+		workspacePath
+	);
+
+	if (exitCode !== 0) {
+		log.warn(`closeStalePr: failed to close PR #${oldPrNumber} (exit ${exitCode})`);
+		return false;
+	}
+
+	log.info(`closeStalePr: closed stale PR #${oldPrNumber}, superseded by ${newPrUrl}`);
+	return true;
+}
+
 // --- Gate Runners ---
 
 /**

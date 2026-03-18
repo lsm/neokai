@@ -234,9 +234,14 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 	sections.push(`3. Add or update tests to cover the new/changed behavior — tests are mandatory`);
 	sections.push(`4. Push your branch: \`git push -u origin HEAD\``);
 	sections.push(
-		`5. Create a pull request — detect the default branch inside the subshell (no persistent variable needed):\n` +
+		`5. Ensure a pull request exists — check first to avoid creating a duplicate:\n` +
 			`   \`\`\`bash\n` +
-			`   gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
+			`   EXISTING_PR=$(gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json url --jq '.[0].url' 2>/dev/null)\n` +
+			`   if [ -z "$EXISTING_PR" ]; then\n` +
+			`     gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
+			`   else\n` +
+			`     echo "PR already exists: $EXISTING_PR (updated with latest push)"\n` +
+			`   fi\n` +
 			`   \`\`\``
 	);
 	sections.push(`6. Finish your response`);
@@ -374,6 +379,13 @@ export function buildCoderTaskMessage(config: CoderAgentConfig): string {
 	if (room.instructions) {
 		sections.push(`\n## Instructions\n`);
 		sections.push(room.instructions);
+	}
+
+	// Existing PR context (when task already has a PR from a previous iteration)
+	if (task.prUrl) {
+		sections.push(`\n## Existing Pull Request\n`);
+		sections.push(`This task already has an open pull request: ${task.prUrl}`);
+		sections.push(`Push your changes to update this PR — do NOT create a new one.`);
 	}
 
 	// Previous task summaries
