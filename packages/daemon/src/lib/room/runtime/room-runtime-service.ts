@@ -24,6 +24,7 @@ import { TaskManager } from '../managers/task-manager';
 import { GoalManager } from '../managers/goal-manager';
 import { AgentSession } from '../../agent/agent-session';
 import { createRoomAgentMcpServer } from '../tools/room-agent-tools';
+import { buildRoomChatSystemPrompt } from '../agents/room-chat-agent';
 import { SDKMessageRepository } from '../../../storage/repositories/sdk-message-repository';
 import { recoverRuntime, type SessionStateChecker } from './runtime-recovery';
 import type { RoomManager } from '../managers/room-manager';
@@ -434,6 +435,15 @@ export class RoomRuntimeService {
 				roomChatSession.setRuntimeMcpServers({
 					'room-agent-tools': roomAgentMcpServer,
 				});
+				// Inject the room chat system prompt so the agent knows the proper
+				// goal → plan → approval → task workflow and never creates tasks
+				// prematurely when a goal is created.
+				roomChatSession.setRuntimeSystemPrompt(
+					buildRoomChatSystemPrompt({
+						background: room.background,
+						instructions: room.instructions,
+					})
+				);
 			})
 			.catch((error) => {
 				log.error(`Failed to attach room MCP tools for room ${room.id}:`, error);
@@ -460,6 +470,24 @@ export class RoomRuntimeService {
 					const room = this.ctx.roomManager.getRoom(event.roomId);
 					if (room) {
 						runtime.updateRoom(room);
+						// Re-apply the room chat system prompt so it reflects the latest
+						// room background/instructions (e.g. after room.update changes them).
+						const roomChatSessionId = `room:chat:${room.id}`;
+						void this.ctx.sessionManager
+							.getSessionAsync(roomChatSessionId)
+							.then((session) => {
+								if (session) {
+									session.setRuntimeSystemPrompt(
+										buildRoomChatSystemPrompt({
+											background: room.background,
+											instructions: room.instructions,
+										})
+									);
+								}
+							})
+							.catch((error) => {
+								log.warn(`Failed to update room chat system prompt for room ${room.id}:`, error);
+							});
 					}
 				}
 			},
