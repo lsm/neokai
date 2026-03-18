@@ -310,6 +310,7 @@ describe('InterruptHandler', () => {
 			expect(interruptIdx).not.toBe(-1);
 			expect(promiseIdx).not.toBe(-1);
 			expect(closeIdx).not.toBe(-1);
+			expect(interruptIdx).toBeLessThan(promiseIdx);
 			expect(interruptIdx).toBeLessThan(closeIdx);
 			expect(promiseIdx).toBeLessThan(closeIdx);
 		});

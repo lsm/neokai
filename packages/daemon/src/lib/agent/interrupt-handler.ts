@@ -88,10 +88,14 @@ export class InterruptHandler {
 				this.ctx.queryAbortController = null;
 			}
 
+			// Capture snapshot before any await so interrupt() always targets the
+			// right object even if ctx.queryObject changes during async operations.
+			const queryObjectSnapshot = this.ctx.queryObject;
+
 			// STEP 2: Call SDK interrupt()
-			if (this.ctx.queryObject && typeof this.ctx.queryObject.interrupt === 'function') {
+			if (queryObjectSnapshot && typeof queryObjectSnapshot.interrupt === 'function') {
 				try {
-					await this.ctx.queryObject.interrupt();
+					await queryObjectSnapshot.interrupt();
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
 					logger.warn('SDK interrupt() failed (may be expected):', errorMessage);
@@ -110,8 +114,10 @@ export class InterruptHandler {
 				}
 			}
 
-			// STEP 4: Close query to terminate subprocess and MCP transports.
-			// Prevents "Already connected to a transport" errors on next query start.
+			// STEP 4: Close query — use live reference to avoid double-close.
+			// If runQuery()'s finally block ran during the STEP 3 await, it already
+			// called close() and nulled ctx.queryObject; skip close() in that case.
+			// Only close when the promise timed out and the subprocess is still alive.
 			if (this.ctx.queryObject) {
 				try {
 					this.ctx.queryObject.close();
