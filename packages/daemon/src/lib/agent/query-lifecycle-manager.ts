@@ -118,7 +118,21 @@ export class QueryLifecycleManager {
 			}
 		}
 
-		// 4. Clear references
+		// 4. Close query only if runQuery()'s finally block has not already done so.
+		// When queryPromise resolves normally, the finally block ran during the await
+		// above: it called close() and nulled ctx.queryObject. Check the live reference
+		// against our local snapshot — if they differ (null or new query), skip close()
+		// to avoid a redundant double-call. Only close when the promise timed out
+		// (finally block has not run yet, subprocess is still alive).
+		if (queryObject && this.ctx.queryObject === queryObject) {
+			try {
+				queryObject.close();
+			} catch {
+				// Ignore close errors — subprocess may already be terminated
+			}
+		}
+
+		// 5. Clear references
 		this.ctx.queryObject = null;
 		this.ctx.queryPromise = null;
 	}
