@@ -204,14 +204,15 @@ describe('Leader Agent', () => {
 			// Should instruct leader to send planner back — NOT merge the PR itself
 			expect(prompt).toContain('send_to_worker');
 			expect(prompt).toContain('create_task');
-			// The "merge PR yourself" instructions should NOT be present
-			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --squash');
+			// The "merge PR yourself" instructions should NOT be present for plan_review
+			expect(prompt).not.toContain('Do NOT send the worker back to do the merge');
 		});
 
 		it('should use direct merge post-approval workflow for code review', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
-			// Leader merges the PR directly for coder/general tasks
-			expect(prompt).toContain('gh pr merge <PR_NUMBER> --squash');
+			// Leader merges the PR directly for coder/general tasks (no hardcoded merge method)
+			expect(prompt).toContain('gh pr merge <PR_NUMBER>');
+			expect(prompt).not.toContain('gh pr merge <PR_NUMBER> --');
 			expect(prompt).toContain('Do NOT send the worker back to do the merge');
 		});
 
