@@ -499,16 +499,16 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	// -------------------------------------------------------------------------
 
 	test(
-		'error envelope: non-streaming request returns Anthropic JSON error',
+		'error envelope: stream:false returns Anthropic JSON error envelope',
 		async () => {
 			// Instantiate the provider directly to access the bridge URL without
 			// routing through the daemon session lifecycle.
-			const provider = new AnthropicToCopilotBridgeProvider();
-			const bridgeUrl = await provider.ensureServerStarted();
+			const directProvider = new AnthropicToCopilotBridgeProvider();
+			const bridgeUrl = await directProvider.ensureServerStarted();
 
 			try {
-				// The copilot bridge requires stream:true — omitting it triggers a
-				// 400 invalid_request_error with an Anthropic JSON error envelope.
+				// The copilot bridge requires stream:true — explicitly setting stream:false
+				// triggers an immediate 400 invalid_request_error (no API call needed).
 				const response = await fetch(`${bridgeUrl}/v1/messages`, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -516,21 +516,21 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 						model: testModelId,
 						messages: [{ role: 'user', content: 'hi' }],
 						max_tokens: 16,
-						// stream intentionally omitted — bridge requires it
+						stream: false,
 					}),
 				});
 
-				expect(response.status).toBeGreaterThanOrEqual(400);
+				expect(response.status).toBe(400);
 				const body = (await response.json()) as {
 					type?: string;
 					error?: { type?: string; message?: string };
 				};
-				// Must be Anthropic JSON error envelope format
+				// Must be Anthropic JSON error envelope: { type:'error', error:{type,message} }
 				expect(body.type).toBe('error');
-				expect(typeof body.error?.type).toBe('string');
+				expect(body.error?.type).toBe('invalid_request_error');
 				expect(typeof body.error?.message).toBe('string');
 			} finally {
-				await provider.shutdown();
+				await directProvider.shutdown();
 			}
 		},
 		SETUP_TIMEOUT
@@ -543,8 +543,8 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	test(
 		'token usage: SSE stream contains non-zero input_tokens and output_tokens',
 		async () => {
-			const provider = new AnthropicToCopilotBridgeProvider();
-			const bridgeUrl = await provider.ensureServerStarted();
+			const directProvider = new AnthropicToCopilotBridgeProvider();
+			const bridgeUrl = await directProvider.ensureServerStarted();
 
 			try {
 				const events = await callCopilotBridge(
@@ -559,7 +559,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 				expect(inputTokens).toBeGreaterThan(0);
 				expect(outputTokens).toBeGreaterThan(0);
 			} finally {
-				await provider.shutdown();
+				await directProvider.shutdown();
 			}
 		},
 		TEST_TIMEOUT
