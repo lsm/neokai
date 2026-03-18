@@ -445,13 +445,11 @@ export class GoalRepository {
 	/**
 	 * Atomically start a new execution for a recurring mission.
 	 *
-	 * Wraps four mutations in a single SQLite transaction so a crash between any
-	 * two steps cannot leave the goal in an inconsistent state:
-	 *   1. Determine the next execution_number
-	 *   2. Clear goals.linked_task_ids (fresh task list for this execution)
-	 *   3. Reset goals.planning_attempts to 0 (per-execution counter)
-	 *   4. Insert the mission_executions row (status = 'running')
-	 *   5. Advance goals.next_run_at (optional — pass undefined to skip)
+	 * Wraps three mutations (plus one read) in a single SQLite transaction so a
+	 * crash between any two steps cannot leave the goal in an inconsistent state:
+	 *   1. Read: determine the next execution_number
+	 *   2. Write: clear goals.linked_task_ids + reset planning_attempts (+ optional next_run_at)
+	 *   3. Write: insert the mission_executions row (status = 'running')
 	 *
 	 * The DB partial unique index on mission_executions(goal_id) WHERE status='running'
 	 * provides an additional guard against duplicate concurrent executions.

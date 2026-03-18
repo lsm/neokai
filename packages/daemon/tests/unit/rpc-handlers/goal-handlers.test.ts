@@ -21,6 +21,7 @@ import {
 	type GoalStatus,
 	type GoalPriority,
 	type NeoTask,
+	type MissionExecution,
 } from '@neokai/shared';
 import {
 	setupGoalHandlers,
@@ -149,6 +150,22 @@ const mockGoalManager = {
 		})
 	),
 	deleteGoal: mock(async (): Promise<boolean> => true),
+	getActiveExecution: mock((): MissionExecution | null => null),
+	linkTaskToExecution: mock(
+		async (): Promise<RoomGoal> => ({
+			id: 'goal-123',
+			roomId: 'room-123',
+			title: 'Test Goal',
+			description: 'Test description',
+			status: 'active' as GoalStatus,
+			priority: 'normal' as GoalPriority,
+			progress: 0,
+			linkedTaskIds: ['task-456'],
+			missionType: 'recurring',
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		})
+	),
 };
 
 const createMockGoalManager = (): GoalManagerLike => mockGoalManager as unknown as GoalManagerLike;
@@ -219,6 +236,8 @@ describe('Goal RPC Handlers', () => {
 		mockGoalManager.reactivateGoal.mockClear();
 		mockGoalManager.linkTaskToGoal.mockClear();
 		mockGoalManager.deleteGoal.mockClear();
+		mockGoalManager.getActiveExecution.mockClear();
+		mockGoalManager.linkTaskToExecution.mockClear();
 
 		// Setup handlers with mocked dependencies
 		setupGoalHandlers(messageHubData.hub, daemonHubData.daemonHub, createMockGoalManager);
@@ -648,6 +667,73 @@ describe('Goal RPC Handlers', () => {
 					goalId: 'goal-123',
 				})
 			);
+		});
+
+		it('uses linkTaskToExecution for recurring mission with active execution', async () => {
+			const handler = messageHubData.handlers.get('goal.linkTask')!;
+
+			// Mock: goal is a recurring mission
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				id: 'goal-123',
+				roomId: 'room-123',
+				title: 'Recurring Goal',
+				description: '',
+				status: 'active' as GoalStatus,
+				priority: 'normal' as GoalPriority,
+				progress: 0,
+				linkedTaskIds: [],
+				missionType: 'recurring',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as RoomGoal);
+
+			// Mock: active execution exists
+			const fakeExecution: MissionExecution = {
+				id: 'exec-1',
+				goalId: 'goal-123',
+				executionNumber: 1,
+				startedAt: Math.floor(Date.now() / 1000),
+				completedAt: null,
+				status: 'running',
+				resultSummary: null,
+				taskIds: [],
+			};
+			mockGoalManager.getActiveExecution.mockReturnValueOnce(fakeExecution);
+
+			await handler!({ roomId: 'room-123', goalId: 'goal-123', taskId: 'task-456' }, {});
+
+			expect(mockGoalManager.linkTaskToExecution).toHaveBeenCalledWith(
+				'goal-123',
+				'exec-1',
+				'task-456'
+			);
+			expect(mockGoalManager.linkTaskToGoal).not.toHaveBeenCalled();
+		});
+
+		it('falls back to linkTaskToGoal for recurring mission without active execution', async () => {
+			const handler = messageHubData.handlers.get('goal.linkTask')!;
+
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				id: 'goal-123',
+				roomId: 'room-123',
+				title: 'Recurring Goal',
+				description: '',
+				status: 'active' as GoalStatus,
+				priority: 'normal' as GoalPriority,
+				progress: 0,
+				linkedTaskIds: [],
+				missionType: 'recurring',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as RoomGoal);
+
+			// No active execution
+			mockGoalManager.getActiveExecution.mockReturnValueOnce(null);
+
+			await handler!({ roomId: 'room-123', goalId: 'goal-123', taskId: 'task-456' }, {});
+
+			expect(mockGoalManager.linkTaskToGoal).toHaveBeenCalledWith('goal-123', 'task-456');
+			expect(mockGoalManager.linkTaskToExecution).not.toHaveBeenCalled();
 		});
 	});
 

@@ -1589,7 +1589,17 @@ export class RoomRuntime {
 						assignedAgent: params.agent,
 					});
 					if (goal) {
-						await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+						// For recurring missions, use the atomic dual-write path so that
+						// mission_executions.task_ids stays in sync after a daemon restart.
+						const activeExecution =
+							goal.missionType === 'recurring'
+								? this.goalManager.getActiveExecution(goal.id)
+								: null;
+						if (activeExecution) {
+							await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, newTask.id);
+						} else {
+							await this.goalManager.linkTaskToGoal(goal.id, newTask.id);
+						}
 					}
 					log.info(`Planning (restored) created draft task: ${newTask.id} (${newTask.title})`);
 					return { id: newTask.id, title: newTask.title };
@@ -2659,16 +2669,27 @@ export class RoomRuntime {
 		if (!task || task.taskType !== 'planning') return;
 
 		// Safety net: ensure all draft children are linked to the same goal
-		// as the planning task. MCP server closures may have been lost on
-		// daemon restart, so linkTaskToGoal may not have been called.
+		// (and execution for recurring missions) as the planning task.
+		// MCP server closures may have been lost on daemon restart, so the
+		// link call may not have fired during the original planning session.
 		const goals = await this.goalManager.getGoalsForTask(taskId);
 		const goal = goals[0];
 		if (goal) {
+			// For recurring missions look up the active execution so that
+			// mission_executions.task_ids is also populated (same as the primary path).
+			const activeExecution =
+				goal.missionType === 'recurring'
+					? this.goalManager.getActiveExecution(goal.id)
+					: null;
 			const drafts = await this.taskManager.getDraftTasksByCreator(taskId);
 			const linked = new Set(goal.linkedTaskIds ?? []);
 			for (const draft of drafts) {
 				if (!linked.has(draft.id)) {
-					await this.goalManager.linkTaskToGoal(goal.id, draft.id);
+					if (activeExecution) {
+						await this.goalManager.linkTaskToExecution(goal.id, activeExecution.id, draft.id);
+					} else {
+						await this.goalManager.linkTaskToGoal(goal.id, draft.id);
+					}
 					log.info(`Linked draft task ${draft.id} to goal ${goal.id} (safety net)`);
 				}
 			}
