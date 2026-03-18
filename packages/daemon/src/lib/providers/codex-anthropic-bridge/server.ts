@@ -255,6 +255,12 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				'X-Accel-Buffering': 'no',
 			};
 
+			if (body.tool_choice !== undefined) {
+				logger.warn(
+					`tool_choice is not supported by the Codex bridge and will be ignored (received: ${JSON.stringify(body.tool_choice)})`
+				);
+			}
+
 			// ------------------------------------------------------------------
 			// Tool-continuation: resume a suspended generator
 			// ------------------------------------------------------------------

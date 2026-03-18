@@ -198,6 +198,12 @@ async function handleMessages(
 		return;
 	}
 
+	if (body.tool_choice !== undefined) {
+		logger.warn(
+			`tool_choice is not supported by the Copilot SDK and will be ignored (received: ${JSON.stringify(body.tool_choice)})`
+		);
+	}
+
 	const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
 	const hasToolResults = extractToolResultIds(body.messages).length > 0;
 

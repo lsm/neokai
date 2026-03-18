@@ -14,7 +14,7 @@
  * the exported `ToolSession` type from `server.ts` — both share the same named type.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
 	createBridgeServer,
 	createAnthropicError,
@@ -23,6 +23,7 @@ import {
 	type ToolSession,
 } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
 import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
+import { Logger } from '../../../../src/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Helper: parse SSE response body into an array of events
@@ -1098,5 +1099,105 @@ describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
 		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
 		expect(body.type).toBe('error');
 		expect(body.error.type).toBe('api_error');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// tool_choice pass-through — Codex bridge (production createBridgeServer)
+// ---------------------------------------------------------------------------
+
+describe('tool_choice warning — codex bridge', () => {
+	let server: BridgeServer & { port: number };
+
+	beforeEach(() => {
+		// Stub AppServerConn.create so no real subprocess is spawned.
+		spyOn(AppServerConn, 'create').mockReturnValue({
+			closed: new Promise<void>(() => {}),
+			request: () => Promise.resolve({}),
+			notify: () => {},
+			kill: () => {},
+		} as unknown as AppServerConn);
+
+		// Stub BridgeSession methods to avoid real I/O.
+		spyOn(BridgeSession.prototype, 'initialize').mockResolvedValue(undefined);
+		spyOn(BridgeSession.prototype, 'kill').mockImplementation(() => {});
+		spyOn(BridgeSession.prototype, 'startTurn').mockImplementation(
+			// eslint-disable-next-line @typescript-eslint/require-await
+			async function* (): AsyncGenerator<BridgeEvent> {
+				yield { type: 'turn_done', inputTokens: 0, outputTokens: 1 };
+			}
+		);
+
+		server = createBridgeServer({
+			codexBinaryPath: '/fake/codex',
+			cwd: '/tmp',
+		}) as BridgeServer & { port: number };
+	});
+
+	afterEach(() => {
+		server.stop();
+	});
+
+	it('logs a warning when tool_choice is provided', async () => {
+		const warnSpy = spyOn(Logger.prototype, 'warn');
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hello' }],
+				tool_choice: { type: 'auto' },
+				stream: true,
+			}),
+		});
+
+		await readSSEEvents(resp.body);
+
+		const warnMessages = warnSpy.mock.calls.map((args) => args.map(String).join(' '));
+		expect(warnMessages.some((m) => m.includes('tool_choice'))).toBe(true);
+
+		warnSpy.mockRestore();
+	});
+
+	it('processes the request successfully even when tool_choice is provided', async () => {
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hello' }],
+				tool_choice: { type: 'none' },
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const types = events.map((e) => e.event);
+		expect(types).toContain('message_stop');
+	});
+
+	it('does NOT log a tool_choice warning when tool_choice is absent', async () => {
+		const warnSpy = spyOn(Logger.prototype, 'warn');
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hello' }],
+				stream: true,
+			}),
+		});
+
+		await readSSEEvents(resp.body);
+
+		const toolChoiceWarns = warnSpy.mock.calls.filter((args) =>
+			args.map(String).join(' ').includes('tool_choice')
+		);
+		expect(toolChoiceWarns.length).toBe(0);
+
+		warnSpy.mockRestore();
 	});
 });
