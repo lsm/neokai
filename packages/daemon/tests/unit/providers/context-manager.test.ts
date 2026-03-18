@@ -123,6 +123,60 @@ class AnthropicMockProvider extends MockProvider {
 	translateModelIdForSdk = undefined;
 }
 
+// Anthropic Copilot provider mock (same model IDs as anthropic)
+class AnthropicCopilotMockProvider extends MockProvider {
+	readonly id = 'anthropic-copilot' as const;
+	readonly displayName = 'Anthropic Copilot';
+
+	constructor(available: boolean = true) {
+		super('anthropic-copilot', 'Anthropic Copilot', available, 'claude-');
+	}
+
+	ownsModel(modelId: string): boolean {
+		return modelId.toLowerCase().startsWith('claude-');
+	}
+
+	buildSdkConfig(
+		_modelId: string,
+		sessionConfig?: { apiKey?: string; baseUrl?: string }
+	): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || 'https://copilot.api.com',
+				ANTHROPIC_AUTH_TOKEN: sessionConfig?.apiKey || 'copilot-token',
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
+// Anthropic Codex provider mock (gpt- and claude- models)
+class AnthropicCodexMockProvider extends MockProvider {
+	readonly id = 'anthropic-codex' as const;
+	readonly displayName = 'Anthropic Codex';
+
+	constructor(available: boolean = true) {
+		super('anthropic-codex', 'Anthropic Codex', available, 'gpt-');
+	}
+
+	ownsModel(modelId: string): boolean {
+		return modelId.toLowerCase().startsWith('gpt-') || modelId.toLowerCase().startsWith('claude-');
+	}
+
+	buildSdkConfig(
+		_modelId: string,
+		sessionConfig?: { apiKey?: string; baseUrl?: string }
+	): ProviderSdkConfig {
+		return {
+			envVars: {
+				ANTHROPIC_BASE_URL: sessionConfig?.baseUrl || 'https://codex.api.com',
+				ANTHROPIC_AUTH_TOKEN: sessionConfig?.apiKey || 'codex-token',
+			},
+			isAnthropicCompatible: true,
+		};
+	}
+}
+
 // GLM-like provider
 class GlmMockProvider extends MockProvider {
 	readonly id = 'glm' as const;
@@ -645,6 +699,326 @@ describe('ProviderContextManager', () => {
 			const result = await manager.validateProviderSwitch('unknown' as unknown as ProviderId);
 			expect(result.valid).toBe(false);
 			expect(result.error).toContain('Unknown provider');
+		});
+	});
+
+	describe('createContext — anthropic-copilot provider', () => {
+		beforeEach(() => {
+			resetProviderRegistry();
+			resetProviderFactory();
+			registry = new ProviderRegistry();
+			registry.register(new AnthropicMockProvider(true));
+			registry.register(new AnthropicCopilotMockProvider(true));
+			manager = new ProviderContextManager(registry);
+		});
+
+		it('should create context for session with explicit anthropic-copilot provider', () => {
+			const session: Session = {
+				id: 'copilot-session',
+				title: 'Copilot Session',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+
+			expect(context.provider.id).toBe('anthropic-copilot');
+			expect(context.modelId).toBe('claude-sonnet-4.6');
+		});
+
+		it('should select anthropic-copilot over anthropic when provider explicitly set', () => {
+			// Both anthropic and anthropic-copilot own claude- models.
+			// With explicit provider set, the copilot should be selected.
+			const copilotSession: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-opus-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+			const anthropicSession: Session = {
+				...copilotSession,
+				config: { ...copilotSession.config, provider: 'anthropic' },
+			};
+
+			expect(manager.createContext(copilotSession).provider.id).toBe('anthropic-copilot');
+			expect(manager.createContext(anthropicSession).provider.id).toBe('anthropic');
+		});
+
+		it('should build sdk options with copilot env vars', async () => {
+			const session: Session = {
+				id: 'copilot-sdk',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+			const options = await context.buildSdkOptions({ maxTokens: 4096 });
+
+			expect(options.env).toBeDefined();
+			expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://copilot.api.com');
+		});
+
+		it('should return false for requiresQueryRestart within anthropic-copilot', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Same provider → no restart needed
+			expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic-copilot')).toBe(
+				false
+			);
+		});
+
+		it('should return true for requiresQueryRestart when switching from copilot to anthropic', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-sonnet-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-copilot',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Cross-provider switch → restart required
+			expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic')).toBe(true);
+		});
+	});
+
+	describe('createContext — anthropic-codex provider', () => {
+		beforeEach(() => {
+			resetProviderRegistry();
+			resetProviderFactory();
+			registry = new ProviderRegistry();
+			registry.register(new AnthropicMockProvider(true));
+			registry.register(new AnthropicCodexMockProvider(true));
+			manager = new ProviderContextManager(registry);
+		});
+
+		it('should create context for session with explicit anthropic-codex provider', () => {
+			const session: Session = {
+				id: 'codex-session',
+				title: 'Codex Session',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+
+			expect(context.provider.id).toBe('anthropic-codex');
+			expect(context.modelId).toBe('gpt-5.3-codex');
+		});
+
+		it('should select anthropic-codex over anthropic for claude- models when explicitly set', () => {
+			// anthropic-codex also owns claude- models but explicit provider wins
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'claude-opus-4.6',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			expect(manager.createContext(session).provider.id).toBe('anthropic-codex');
+		});
+
+		it('should build sdk options with codex env vars', async () => {
+			const session: Session = {
+				id: 'codex-sdk',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			const context = manager.createContext(session);
+			const options = await context.buildSdkOptions({ maxTokens: 4096 });
+
+			expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://codex.api.com');
+		});
+
+		it('should return true for requiresQueryRestart when switching from codex to anthropic', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			expect(manager.requiresQueryRestart(session, 'claude-opus-4.6', 'anthropic')).toBe(true);
+		});
+
+		it('should return false for requiresQueryRestart within anthropic-codex', () => {
+			const session: Session = {
+				id: 'test',
+				title: 'Test',
+				workspacePath: '/test',
+				createdAt: new Date().toISOString(),
+				lastActiveAt: new Date().toISOString(),
+				status: 'active',
+				config: {
+					model: 'gpt-5.3-codex',
+					maxTokens: 8192,
+					temperature: 1.0,
+					provider: 'anthropic-codex',
+				},
+				metadata: {
+					messageCount: 0,
+					totalTokens: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					totalCost: 0,
+					toolCallCount: 0,
+				},
+			};
+
+			// Same provider → no restart
+			expect(manager.requiresQueryRestart(session, 'gpt-5.3-codex-mini', 'anthropic-codex')).toBe(
+				false
+			);
 		});
 	});
 
