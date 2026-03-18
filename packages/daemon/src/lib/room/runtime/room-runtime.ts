@@ -2137,9 +2137,9 @@ export class RoomRuntime {
 	private tickRecurringMissions(): void | Promise<void> {
 		// Synchronous pre-check — goalRepo.listGoals is a bun:sqlite synchronous call.
 		// Avoids an extra microtask yield when there are no recurring goals.
-		const recurringGoals = this.goalManager.listGoalsSync('active').filter(
-			(g) => g.missionType === 'recurring'
-		);
+		const recurringGoals = this.goalManager
+			.listGoalsSync('active')
+			.filter((g) => g.missionType === 'recurring');
 
 		if (recurringGoals.length === 0) return; // synchronous return — no microtask added
 
@@ -2147,7 +2147,6 @@ export class RoomRuntime {
 	}
 
 	private async _doTickRecurringMissions(recurringGoals: RoomGoal[]): Promise<void> {
-
 		const nowSec = Math.floor(Date.now() / 1000);
 
 		// Phase 1: Complete finished executions
@@ -2165,7 +2164,7 @@ export class RoomRuntime {
 				if (nowSec - activeExecution.startedAt > ORPHAN_THRESHOLD_SEC) {
 					log.warn(
 						`Recurring mission ${goal.id}: orphan execution ${activeExecution.id} ` +
-						`has no tasks after ${ORPHAN_THRESHOLD_SEC}s — failing it`
+							`has no tasks after ${ORPHAN_THRESHOLD_SEC}s — failing it`
 					);
 					this.goalManager.failExecution(
 						activeExecution.id,
@@ -2192,10 +2191,14 @@ export class RoomRuntime {
 
 			if (anyCompleted) {
 				this.goalManager.completeExecution(activeExecution.id, resultSummary);
-				log.info(`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} completed`);
+				log.info(
+					`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} completed`
+				);
 			} else {
 				this.goalManager.failExecution(activeExecution.id, resultSummary);
-				log.warn(`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} failed`);
+				log.warn(
+					`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} failed`
+				);
 			}
 
 			// Advance next_run_at from current time
@@ -2678,9 +2681,7 @@ export class RoomRuntime {
 			// For recurring missions look up the active execution so that
 			// mission_executions.task_ids is also populated (same as the primary path).
 			const activeExecution =
-				goal.missionType === 'recurring'
-					? this.goalManager.getActiveExecution(goal.id)
-					: null;
+				goal.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
 			const drafts = await this.taskManager.getDraftTasksByCreator(taskId);
 			const linked = new Set(goal.linkedTaskIds ?? []);
 			for (const draft of drafts) {
@@ -2801,9 +2802,7 @@ export class RoomRuntime {
 		// For recurring missions, pass the active executionId so task-linking uses
 		// linkTaskToExecution instead of linkTaskToGoal (execution identity preserved).
 		const activeExecution =
-			goal.missionType === 'recurring'
-				? this.goalManager.getActiveExecution(goal.id)
-				: null;
+			goal.missionType === 'recurring' ? this.goalManager.getActiveExecution(goal.id) : null;
 
 		await this.spawnPlanningGroup(goal, replanContext, activeExecution?.id);
 		this.scheduleTick();

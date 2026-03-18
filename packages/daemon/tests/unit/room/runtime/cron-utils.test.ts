@@ -9,15 +9,19 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../../../../src/lib/room/runtime/cron-utils';
+import {
+	isValidCronExpression,
+	getNextRunAt,
+	getSystemTimezone,
+} from '../../../../src/lib/room/runtime/cron-utils';
 
 describe('isValidCronExpression', () => {
 	test('accepts valid 5-field cron expressions', () => {
-		expect(isValidCronExpression('0 9 * * *')).toBe(true);    // 9am daily
-		expect(isValidCronExpression('0 0 * * *')).toBe(true);    // midnight daily
-		expect(isValidCronExpression('0 0 * * 0')).toBe(true);    // weekly Sunday
-		expect(isValidCronExpression('30 14 1 * *')).toBe(true);  // 2:30pm on 1st of month
-		expect(isValidCronExpression('*/5 * * * *')).toBe(true);  // every 5 minutes
+		expect(isValidCronExpression('0 9 * * *')).toBe(true); // 9am daily
+		expect(isValidCronExpression('0 0 * * *')).toBe(true); // midnight daily
+		expect(isValidCronExpression('0 0 * * 0')).toBe(true); // weekly Sunday
+		expect(isValidCronExpression('30 14 1 * *')).toBe(true); // 2:30pm on 1st of month
+		expect(isValidCronExpression('*/5 * * * *')).toBe(true); // every 5 minutes
 	});
 
 	test('accepts preset aliases', () => {
@@ -39,8 +43,8 @@ describe('isValidCronExpression', () => {
 	test('rejects invalid expressions', () => {
 		expect(isValidCronExpression('')).toBe(false);
 		expect(isValidCronExpression('not-a-cron')).toBe(false);
-		expect(isValidCronExpression('0 25 * * *')).toBe(false);  // hour 25 is invalid
-		expect(isValidCronExpression('60 * * * *')).toBe(false);  // minute 60 is invalid
+		expect(isValidCronExpression('0 25 * * *')).toBe(false); // hour 25 is invalid
+		expect(isValidCronExpression('60 * * * *')).toBe(false); // minute 60 is invalid
 	});
 });
 

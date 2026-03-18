@@ -866,9 +866,7 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 				timezone: z
 					.string()
 					.optional()
-					.describe(
-						'IANA timezone string (e.g. "America/New_York"). Defaults to system timezone.'
-					),
+					.describe('IANA timezone string (e.g. "America/New_York"). Defaults to system timezone.'),
 			},
 			(args) => handlers.set_schedule(args)
 		),

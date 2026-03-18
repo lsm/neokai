@@ -338,9 +338,7 @@ export function setupGoalHandlers(
 		const tz = params.timezone ?? goal.schedule?.timezone ?? getSystemTimezone();
 		const nextRunAt = getNextRunAt(params.cronExpression, tz);
 		if (nextRunAt === null) {
-			throw new Error(
-				`Cron expression "${params.cronExpression}" produces no future run times.`
-			);
+			throw new Error(`Cron expression "${params.cronExpression}" produces no future run times.`);
 		}
 
 		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
@@ -388,9 +386,7 @@ export function setupGoalHandlers(
 			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
 		}
 		if (!goal.schedule) {
-			throw new Error(
-				`Goal ${params.goalId} has no schedule set. Set a schedule first.`
-			);
+			throw new Error(`Goal ${params.goalId} has no schedule set. Set a schedule first.`);
 		}
 
 		// Recalculate next_run_at from current time

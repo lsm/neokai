@@ -426,9 +426,7 @@ export class GoalRepository {
 	 */
 	getNextExecutionNumber(goalId: string): number {
 		const row = this.db
-			.prepare(
-				`SELECT MAX(execution_number) as max_num FROM mission_executions WHERE goal_id = ?`
-			)
+			.prepare(`SELECT MAX(execution_number) as max_num FROM mission_executions WHERE goal_id = ?`)
 			.get(goalId) as { max_num: number | null } | undefined;
 		const maxNum = row?.max_num ?? 0;
 		return maxNum + 1;

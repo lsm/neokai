@@ -96,7 +96,7 @@ describe('Recurring Missions: getNextGoalForPlanning skips recurring', () => {
 
 		// Verify one-shot goal got planning attempts
 		const oneShotGoal = await ctx.goalManager.getGoal(oneShot.id);
-		expect((oneShotGoal?.planning_attempts ?? 0)).toBeGreaterThan(0);
+		expect(oneShotGoal?.planning_attempts ?? 0).toBeGreaterThan(0);
 	});
 
 	test('recurring mission with zero linked tasks is NOT selected by standard planning', async () => {

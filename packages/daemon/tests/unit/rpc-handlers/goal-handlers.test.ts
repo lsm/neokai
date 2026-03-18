@@ -849,23 +849,23 @@ describe('Goal RPC Handlers', () => {
 
 		it('throws when roomId is missing', async () => {
 			const handler = messageHubData.handlers.get('goal.setSchedule')!;
-			await expect(
-				handler!({ goalId: 'goal-123', cronExpression: '@daily' }, {})
-			).rejects.toThrow('Room ID is required');
+			await expect(handler!({ goalId: 'goal-123', cronExpression: '@daily' }, {})).rejects.toThrow(
+				'Room ID is required'
+			);
 		});
 
 		it('throws when goalId is missing', async () => {
 			const handler = messageHubData.handlers.get('goal.setSchedule')!;
-			await expect(
-				handler!({ roomId: 'room-123', cronExpression: '@daily' }, {})
-			).rejects.toThrow('Goal ID is required');
+			await expect(handler!({ roomId: 'room-123', cronExpression: '@daily' }, {})).rejects.toThrow(
+				'Goal ID is required'
+			);
 		});
 
 		it('throws when cronExpression is missing', async () => {
 			const handler = messageHubData.handlers.get('goal.setSchedule')!;
-			await expect(
-				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
-			).rejects.toThrow('Cron expression is required');
+			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
+				'Cron expression is required'
+			);
 		});
 
 		it('throws when goal is not found', async () => {
@@ -891,10 +891,7 @@ describe('Goal RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('goal.setSchedule')!;
 			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
 			await expect(
-				handler!(
-					{ roomId: 'room-123', goalId: 'goal-123', cronExpression: 'not-valid-cron' },
-					{}
-				)
+				handler!({ roomId: 'room-123', goalId: 'goal-123', cronExpression: 'not-valid-cron' }, {})
 			).rejects.toThrow('Invalid cron expression');
 		});
 
@@ -953,9 +950,9 @@ describe('Goal RPC Handlers', () => {
 				...recurringGoal,
 				missionType: 'one_shot',
 			});
-			await expect(
-				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
-			).rejects.toThrow('not a recurring mission');
+			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
+				'not a recurring mission'
+			);
 		});
 
 		it('emits goal.updated event on success', async () => {
@@ -1019,9 +1016,9 @@ describe('Goal RPC Handlers', () => {
 				...recurringGoal,
 				missionType: 'one_shot',
 			});
-			await expect(
-				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
-			).rejects.toThrow('not a recurring mission');
+			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
+				'not a recurring mission'
+			);
 		});
 
 		it('throws when goal has no schedule', async () => {
@@ -1031,9 +1028,9 @@ describe('Goal RPC Handlers', () => {
 				schedule: undefined,
 				schedulePaused: true,
 			});
-			await expect(
-				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
-			).rejects.toThrow('no schedule set');
+			await expect(handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})).rejects.toThrow(
+				'no schedule set'
+			);
 		});
 
 		it('emits goal.updated event on success', async () => {
