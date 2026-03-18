@@ -153,6 +153,15 @@ describe('EventSubscriptionSetup', () => {
 					error: 'Invalid model',
 				});
 			});
+
+			it('should throw when provider is missing from event', async () => {
+				setup.setup();
+
+				const callback = registeredCallbacks.get('model.switchRequest')!;
+				await expect(callback({ sessionId: 'test-session-id', model: 'opus' })).rejects.toThrow(
+					'model.switchRequest event is missing required field: provider'
+				);
+			});
 		});
 
 		describe('agent.interruptRequest handler', () => {

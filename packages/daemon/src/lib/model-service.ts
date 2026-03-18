@@ -390,8 +390,13 @@ export async function getModelInfo(
 
 /**
  * Get model info by ID or alias without filtering by provider.
- * Use this for internal/backward-compat callers that don't have provider context.
- * Searches all available models using the three-step search.
+ * Use this ONLY for callers that genuinely lack provider context (e.g., legacy
+ * config paths, manual test utilities). For all new code, prefer `getModelInfo`
+ * with an explicit `providerId`.
+ *
+ * WARNING: If the same model ID exists in multiple providers (e.g., `claude-sonnet-4.6`
+ * in both `anthropic` and `anthropic-copilot`), this function returns whichever entry
+ * appears first in the cache — the result is ambiguous and provider-dependent.
  *
  * @param idOrAlias - Model ID or alias to look up
  * @param cacheKey - Cache key to look up models (defaults to 'global')
@@ -445,8 +450,11 @@ export async function resolveModelAlias(
 
 /**
  * Resolve a model alias to its actual ID without filtering by provider.
- * Use this for internal/backward-compat callers that don't have provider context.
- * Returns the original idOrAlias if no match is found.
+ * Use this ONLY for callers that genuinely lack provider context.
+ * For all new code, prefer `resolveModelAlias` with an explicit `providerId`.
+ *
+ * WARNING: Same ambiguity caveat as `getModelInfoUnfiltered` — if the same alias
+ * resolves to different IDs in different providers, the result is non-deterministic.
  *
  * @param idOrAlias - Model ID or alias to resolve
  * @param cacheKey - Cache key to look up models (defaults to 'global')

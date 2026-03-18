@@ -125,8 +125,9 @@ export class ModelSwitchHandler {
 			// 'claude-sonnet-4.6').
 			// Use newProvider to correctly disambiguate same-ID models across providers.
 			const modelInfo = await getModelInfo(newModel, 'global', newProvider);
-			const resolvedModel =
-				modelInfo?.id ?? (await resolveModelAlias(newModel, 'global', newProvider));
+			// modelInfo is non-null here because isValidModel passed above;
+			// fall back to newModel as-is for defensive safety (unreachable in practice).
+			const resolvedModel = modelInfo?.id ?? newModel;
 
 			// Resolve the current model in case it's also an alias.
 			// Use session.config.provider (the current provider) for the current model.
@@ -136,8 +137,11 @@ export class ModelSwitchHandler {
 				session.config.provider
 			);
 
-			// Check if already using this model (compare resolved IDs)
-			if (currentResolvedModel === resolvedModel) {
+			// Check if already using this model (compare resolved IDs and provider).
+			// Must check provider too: two providers can share the same canonical ID
+			// (e.g., anthropic and anthropic-copilot both have claude-sonnet-4.6),
+			// so switching providers on the same model ID is a meaningful operation.
+			if (currentResolvedModel === resolvedModel && session.config.provider === newProvider) {
 				return {
 					success: true,
 					model: resolvedModel,

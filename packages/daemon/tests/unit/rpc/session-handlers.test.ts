@@ -742,6 +742,33 @@ describe('Session RPC Handlers', () => {
 				handler!({ sessionId: 'non-existent', model: 'claude-opus', provider: 'anthropic' }, {})
 			).rejects.toThrow('Session not found');
 		});
+
+		it('throws error when provider is omitted', async () => {
+			const handler = messageHubData.handlers.get('session.model.switch');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ sessionId: 'session-123', model: 'claude-opus' }, {})
+			).rejects.toThrow('Missing required field: provider');
+		});
+	});
+
+	describe('session.model.get', () => {
+		it('throws error when session has no provider configured', async () => {
+			const handler = messageHubData.handlers.get('session.model.get');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession();
+			(agentSession.getSessionData as ReturnType<typeof mock>).mockReturnValue({
+				id: 'session-123',
+				config: { model: 'claude-sonnet-4-20250514' }, // no provider
+			});
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await expect(handler!({ sessionId: 'session-123' }, {})).rejects.toThrow(
+				'Session has no provider configured'
+			);
+		});
 	});
 
 	describe('session.coordinator.switch', () => {

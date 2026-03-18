@@ -509,7 +509,7 @@ export interface APIClient {
 
 	// Models
 	getCurrentModel(sessionId: string): Promise<GetCurrentModelResponse>;
-	switchModel(sessionId: string, model: string): Promise<SwitchModelResponse>;
+	switchModel(sessionId: string, model: string, provider: string): Promise<SwitchModelResponse>;
 
 	// Providers
 	listProviders(): Promise<ListProvidersResponse>;

@@ -417,6 +417,17 @@ describe('ModelSwitchHandler', () => {
 				expect(result.error).toContain('Restart failed');
 				expect(handleErrorSpy).toHaveBeenCalled();
 			});
+
+			it('should return error when session has no provider configured', async () => {
+				// Remove provider from session config
+				(mockSession.config as Record<string, unknown>).provider = undefined;
+				handler = createHandler({ queryObject: null });
+
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Session has no provider configured');
+			});
 		});
 
 		describe('context tracker update', () => {

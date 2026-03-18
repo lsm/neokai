@@ -429,7 +429,7 @@ describe('useModelSwitcher', () => {
 					.fn()
 					.mockResolvedValueOnce({
 						currentModel: 'claude-sonnet-4-20250514',
-						modelInfo: { id: 'claude-sonnet-4-20250514', name: 'Sonnet' },
+						modelInfo: { id: 'claude-sonnet-4-20250514', name: 'Sonnet', provider: 'anthropic' },
 					})
 					.mockResolvedValueOnce({ models: [] }),
 			};
@@ -442,7 +442,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-sonnet-4-20250514', 'anthropic');
+				await result.current.switchModel({ id: 'claude-sonnet-4-20250514', provider: 'anthropic' });
 			});
 
 			expect(mockToastInfo).toHaveBeenCalledWith(expect.stringContaining('Already using'));
@@ -476,7 +476,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(result.current.currentModel).toBe('claude-opus-4-5-20251101');
@@ -506,7 +506,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Model not available');
@@ -534,7 +534,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Failed to switch model');
@@ -562,7 +562,7 @@ describe('useModelSwitcher', () => {
 			mockGetHubIfConnected.mockReturnValue(null);
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
@@ -598,7 +598,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Connection lost');
@@ -634,7 +634,7 @@ describe('useModelSwitcher', () => {
 			switchingStates.push(result.current.switching);
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			// After switch completes, should not be switching
@@ -677,10 +677,39 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101', provider: 'anthropic' });
 			});
 
 			expect(result.current.currentModelInfo?.id).toBe('claude-opus-4-5-20251101');
+		});
+	});
+
+	describe('switchModel - provider validation', () => {
+		it('should show error when provider is missing from model', async () => {
+			const mockHub = {
+				request: vi
+					.fn()
+					.mockResolvedValueOnce({
+						currentModel: 'claude-sonnet-4-20250514',
+						modelInfo: null,
+					})
+					.mockResolvedValueOnce({ models: [] }),
+			};
+			mockGetHubIfConnected.mockReturnValue(mockHub);
+
+			const { result } = renderHook(() => useModelSwitcher('session-1'));
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			await act(async () => {
+				await result.current.switchModel({ id: 'claude-opus-4-5-20251101' });
+			});
+
+			expect(mockToastError).toHaveBeenCalledWith('Model provider information is missing');
+			// Should not have made an RPC call for the switch
+			expect(mockHub.request).not.toHaveBeenCalledWith('session.model.switch', expect.anything());
 		});
 	});
 

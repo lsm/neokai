@@ -62,8 +62,10 @@ export class EventSubscriptionSetup {
 		const unsubModelSwitch = daemonHub.on(
 			'model.switchRequest',
 			async ({ sessionId: sid, model, provider }) => {
-				const resolvedProvider = provider || session.config.provider || 'anthropic';
-				const result = await modelSwitchHandler.switchModel(model, resolvedProvider);
+				if (!provider) {
+					throw new Error('model.switchRequest event is missing required field: provider');
+				}
+				const result = await modelSwitchHandler.switchModel(model, provider);
 
 				// Emit result
 				await daemonHub.emit('model.switched', {
