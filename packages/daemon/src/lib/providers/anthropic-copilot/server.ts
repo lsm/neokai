@@ -38,6 +38,7 @@ import { formatAnthropicPrompt, extractSystemText, extractToolResultIds } from '
 import { ConversationManager } from './conversation.js';
 import { runSessionStreaming, resumeSessionStreaming } from './streaming.js';
 import { Logger } from '../../logger.js';
+import { type AnthropicErrorType, createAnthropicErrorBody } from '../shared/error-envelope.js';
 
 const logger = new Logger('anthropic-copilot-server');
 
@@ -75,12 +76,11 @@ function readBody(req: IncomingMessage): Promise<string> {
 function sendJsonError(
 	res: ServerResponse,
 	status: number,
-	type: 'invalid_request_error' | 'api_error',
+	type: AnthropicErrorType,
 	message: string
 ): void {
-	const body = JSON.stringify({ type: 'error', error: { type, message } });
 	res.writeHead(status, { 'Content-Type': 'application/json' });
-	res.end(body);
+	res.end(createAnthropicErrorBody(type, message));
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ async function handleMessages(
 		sendJsonError(
 			res,
 			status,
-			'invalid_request_error',
+			status === 413 ? 'request_too_large' : 'invalid_request_error',
 			status === 413 ? 'Request body exceeds 10 MB limit' : 'Failed to read request body'
 		);
 		return;
@@ -431,8 +431,7 @@ export function startEmbeddedServer(
 			return;
 		}
 
-		res.writeHead(404, { 'Content-Type': 'application/json' });
-		res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Not found' } }));
+		sendJsonError(res, 404, 'not_found_error', 'Not found');
 	});
 
 	return new Promise((resolve, reject) => {

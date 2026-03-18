@@ -148,7 +148,7 @@ function streamSession(
 			case 'session.error':
 				logger.warn(`Copilot session error: ${String(event.data.message)}`);
 				flushDeltas();
-				writer.sendFailed(res);
+				writer.sendFailed(res, 'api_error', String(event.data.message) || 'Session error');
 				res.end();
 				finishCompleted();
 				break;
@@ -170,7 +170,7 @@ function streamSession(
 			onDone();
 			session.abort().catch(() => {});
 			session.disconnect().catch(() => {});
-			writer.sendFailed(res);
+			writer.sendFailed(res, 'api_error', 'Streaming timeout');
 			res.end();
 			resolve({ kind: 'completed' });
 		}
@@ -207,7 +207,7 @@ function streamSession(
 	// fire between them.
 	startFn(finishCompleted, () => {
 		if (!sessionDone) {
-			writer.sendFailed(res);
+			writer.sendFailed(res, 'api_error', 'Internal streaming error');
 			res.end();
 		}
 	});

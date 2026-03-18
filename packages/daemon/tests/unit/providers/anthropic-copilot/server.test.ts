@@ -187,6 +187,16 @@ describe('startEmbeddedServer', () => {
 		expect(r.status).toBe(400);
 	});
 
+	it('returns 400 JSON error envelope for missing required fields', async () => {
+		const r = await postMessages(serverUrl, { model: 'x' });
+		expect(r.status).toBe(400);
+		const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+		expect(body['type']).toBe('error');
+		const err = body['error'] as Record<string, unknown>;
+		expect(err['type']).toBe('invalid_request_error');
+		expect(typeof err['message']).toBe('string');
+	});
+
 	it('returns 400 for stream=false', async () => {
 		const r = await postMessages(serverUrl, {
 			model: 'x',
@@ -195,6 +205,20 @@ describe('startEmbeddedServer', () => {
 			stream: false,
 		});
 		expect(r.status).toBe(400);
+	});
+
+	it('returns 400 JSON error envelope for stream=false', async () => {
+		const r = await postMessages(serverUrl, {
+			model: 'x',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'hi' }],
+			stream: false,
+		});
+		expect(r.status).toBe(400);
+		const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+		expect(body['type']).toBe('error');
+		const err = body['error'] as Record<string, unknown>;
+		expect(err['type']).toBe('invalid_request_error');
 	});
 
 	it('returns 413 when body exceeds 10 MB', async () => {
@@ -208,6 +232,25 @@ describe('startEmbeddedServer', () => {
 			}),
 		});
 		expect(resp.status).toBe(413);
+	});
+
+	it('returns 413 JSON error envelope for oversized body', async () => {
+		const resp = await fetch(`${serverUrl}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'x',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: 'x'.repeat(11 * 1024 * 1024) }],
+			}),
+		});
+		expect(resp.status).toBe(413);
+		const text = await resp.text();
+		const body = JSON.parse(text) as Record<string, unknown>;
+		expect(body['type']).toBe('error');
+		const err = body['error'] as Record<string, unknown>;
+		// Anthropic API uses 'request_too_large' (not 'invalid_request_error') for 413
+		expect(err['type']).toBe('request_too_large');
 	});
 
 	// -------------------------------------------------------------------------
@@ -386,7 +429,29 @@ describe('startEmbeddedServer', () => {
 		}
 	});
 
-	it('sends complete SSE epilogue on session error', async () => {
+	it('returns 500 JSON error envelope when createSession throws', async () => {
+		const rejectClient = makeMockClient(() => {
+			throw new Error('internal error');
+		});
+		const rs = await startEmbeddedServer(rejectClient, '/tmp');
+		try {
+			const r = await postMessages(rs.url, {
+				model: 'some-model',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: 'hi' }],
+			});
+			expect(r.status).toBe(500);
+			const body = JSON.parse(r.rawBody ?? '{}') as Record<string, unknown>;
+			expect(body['type']).toBe('error');
+			const err = body['error'] as Record<string, unknown>;
+			expect(err['type']).toBe('api_error');
+			expect(typeof err['message']).toBe('string');
+		} finally {
+			await rs.stop();
+		}
+	});
+
+	it('emits Anthropic error SSE event on session error', async () => {
 		session.shouldError = true;
 		const r = await postMessages(serverUrl, {
 			model: 'x',
@@ -394,10 +459,17 @@ describe('startEmbeddedServer', () => {
 			messages: [{ role: 'user', content: 'err' }],
 		});
 		expect(r.status).toBe(200);
-		expect(r.events.map((e) => e.type)).toContain('message_stop');
+		// Must emit an `error` SSE event (Anthropic streaming error format)
+		const errorEvent = r.events.find((e) => e.type === 'error');
+		expect(errorEvent).toBeDefined();
+		const data = errorEvent!.data as Record<string, unknown>;
+		expect(data['type']).toBe('error');
+		const err = data['error'] as Record<string, unknown>;
+		expect(err['type']).toBe('api_error');
+		expect(typeof err['message']).toBe('string');
 	});
 
-	it('sends complete SSE epilogue when session.send() rejects', async () => {
+	it('emits Anthropic error SSE event when session.send() rejects', async () => {
 		session.shouldRejectSend = true;
 		const r = await postMessages(serverUrl, {
 			model: 'x',
@@ -405,7 +477,13 @@ describe('startEmbeddedServer', () => {
 			messages: [{ role: 'user', content: 'err' }],
 		});
 		expect(r.status).toBe(200);
-		expect(r.events.map((e) => e.type)).toContain('message_stop');
+		// Must emit an `error` SSE event (Anthropic streaming error format)
+		const errorEvent = r.events.find((e) => e.type === 'error');
+		expect(errorEvent).toBeDefined();
+		const data = errorEvent!.data as Record<string, unknown>;
+		expect(data['type']).toBe('error');
+		const err = data['error'] as Record<string, unknown>;
+		expect(err['type']).toBe('api_error');
 	});
 
 	// -------------------------------------------------------------------------
@@ -422,7 +500,7 @@ describe('startEmbeddedServer', () => {
 		expect(session.disconnectCalled).toBe(true);
 	});
 
-	it('calls session.disconnect() after session error', async () => {
+	it('calls session.disconnect() after session.error event', async () => {
 		session.shouldError = true;
 		await postMessages(serverUrl, {
 			model: 'x',

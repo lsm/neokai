@@ -1112,6 +1112,8 @@ export function TaskView({ roomId, taskId }: TaskViewProps) {
 						<TaskConversationRenderer
 							key={`${group.id}-${conversationKey}`}
 							groupId={group.id}
+							leaderSessionId={group.leaderSessionId}
+							workerSessionId={group.workerSessionId}
 							onMessageCountChange={setMessageCount}
 						/>
 					) : (
