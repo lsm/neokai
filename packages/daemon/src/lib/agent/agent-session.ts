@@ -643,6 +643,18 @@ export class AgentSession
 		};
 	}
 
+	/**
+	 * Apply a runtime system prompt to in-memory session config only.
+	 * Used to inject context-specific instructions (e.g. room workflow guidance)
+	 * without persisting them to the database.
+	 */
+	setRuntimeSystemPrompt(systemPrompt: SystemPromptConfig): void {
+		this.session.config = {
+			...this.session.config,
+			systemPrompt,
+		};
+	}
+
 	updateMetadata(updates: Partial<Session>): void {
 		this.sessionConfigHandler.updateMetadata(updates);
 	}
