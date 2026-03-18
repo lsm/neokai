@@ -137,12 +137,16 @@ export async function waitForSessionCreated(page: Page): Promise<string> {
  * Wait for user message to be sent
  */
 export async function waitForMessageSent(page: Page, messageText: string): Promise<void> {
-	// Wait for user message to appear in the UI
-	// Use getByText which handles special characters better than text= selector
-	await page.getByText(messageText, { exact: false }).first().waitFor({
-		state: 'visible',
-		timeout: 10000,
-	});
+	// Wait for user message to appear in the chat area specifically
+	// Scoping to [data-message-role="user"] avoids false positives from sidebar titles
+	await page
+		.locator('[data-message-role="user"]')
+		.filter({ hasText: messageText })
+		.first()
+		.waitFor({
+			state: 'visible',
+			timeout: 10000,
+		});
 }
 
 /**
