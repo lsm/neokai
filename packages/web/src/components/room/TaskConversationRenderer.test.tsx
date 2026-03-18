@@ -628,3 +628,111 @@ describe('TaskConversationRenderer — pagination', () => {
 		expect(getByText('Load older messages')).toBeDefined();
 	});
 });
+
+describe('TaskConversationRenderer — session question state props', () => {
+	beforeEach(() => {
+		mockRequest.mockReset();
+		mockOnEvent.mockClear();
+		mockJoinRoom.mockReset();
+		mockLeaveRoom.mockReset();
+		deltaHandler = null;
+	});
+
+	afterEach(() => {
+		cleanup();
+	});
+
+	it('accepts leaderSessionId and workerSessionId props without errors', async () => {
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
+
+		let threw = false;
+		try {
+			const { container } = render(
+				<TaskConversationRenderer
+					groupId="group-1"
+					leaderSessionId="leader-session-123"
+					workerSessionId="worker-session-456"
+					onMessageCountChange={vi.fn()}
+				/>
+			);
+			await waitFor(() => {
+				expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
+			});
+		} catch {
+			threw = true;
+		}
+
+		expect(threw).toBe(false);
+	});
+
+	it('renders without leaderSessionId or workerSessionId (backward-compatible)', async () => {
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
+
+		let threw = false;
+		try {
+			const { container } = render(
+				<TaskConversationRenderer groupId="group-1" onMessageCountChange={vi.fn()} />
+			);
+			await waitFor(() => {
+				expect(container.querySelector('[data-testid^="msg-"]')).not.toBeNull();
+			});
+		} catch {
+			threw = true;
+		}
+
+		expect(threw).toBe(false);
+	});
+
+	it('joins session channels for leader and worker when both session IDs provided', async () => {
+		const messages = [makeRawMessage(1, 'assistant', 'uuid-1')];
+		mockRequest.mockImplementation(async () => makeApiResponse(messages));
+
+		render(
+			<TaskConversationRenderer
+				groupId="group-1"
+				leaderSessionId="leader-session-123"
+				workerSessionId="worker-session-456"
+				onMessageCountChange={vi.fn()}
+			/>
+		);
+
+		await waitFor(() => {
+			// TaskConversationRenderer joins group channel; useSessionQuestionState joins session channels
+			const joinedRooms = mockJoinRoom.mock.calls.map((c: string[]) => c[0]);
+			expect(joinedRooms).toContain('group:group-1');
+			expect(joinedRooms).toContain('session:leader-session-123');
+			expect(joinedRooms).toContain('session:worker-session-456');
+		});
+	});
+
+	it('renders messages with _taskMeta.authorSessionId set correctly', async () => {
+		// Craft a message with _taskMeta.authorSessionId set to a leader session
+		const leaderMsg = makeRawMessage(1, 'assistant', 'uuid-leader');
+		const parsed = JSON.parse(leaderMsg.content);
+		parsed._taskMeta = {
+			authorRole: 'leader',
+			authorSessionId: 'leader-session-123',
+			turnId: 'turn-1',
+			iteration: 0,
+		};
+		leaderMsg.content = JSON.stringify(parsed);
+
+		mockRequest.mockImplementation(async () => makeApiResponse([leaderMsg]));
+
+		const { container } = render(
+			<TaskConversationRenderer
+				groupId="group-1"
+				leaderSessionId="leader-session-123"
+				workerSessionId="worker-session-456"
+				onMessageCountChange={vi.fn()}
+			/>
+		);
+
+		await waitFor(() => {
+			// The message renders — the SDKMessageRenderer mock renders a div with the uuid
+			expect(container.querySelector('[data-testid="msg-uuid-leader"]')).not.toBeNull();
+		});
+	});
+});
