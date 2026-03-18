@@ -594,7 +594,7 @@ export class AgentSession
 
 	async handleModelSwitch(
 		newModel: string,
-		newProvider?: string
+		newProvider: string
 	): Promise<{ success: boolean; model: string; error?: string }> {
 		return this.modelSwitchHandler.switchModel(newModel, newProvider);
 	}

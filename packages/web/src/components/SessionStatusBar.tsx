@@ -15,12 +15,19 @@
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect } from 'preact/hooks';
 import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
+import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
-import { useModal, getModelFamilyIcon, getProviderLabel, useMessageHub } from '../hooks';
+import {
+	useModal,
+	getModelFamilyIcon,
+	getProviderLabel,
+	groupModelsByProvider,
+	useMessageHub,
+} from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -144,7 +151,7 @@ interface SessionStatusBarProps {
 	availableModels: ModelInfo[];
 	modelSwitching: boolean;
 	modelLoading: boolean;
-	onModelSwitch: (modelId: string, providerId: string) => void;
+	onModelSwitch: (model: ModelInfo) => void;
 	// Auto-scroll
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
@@ -195,6 +202,29 @@ export default function SessionStatusBar({
 	// Get MessageHub for RPC calls
 	const { callIfConnected } = useMessageHub();
 
+	// Provider auth statuses for availability dots in model picker
+	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, boolean>>(new Map());
+
+	useEffect(() => {
+		let cancelled = false;
+		callIfConnected('auth.providers', {})
+			.then((res) => {
+				if (cancelled) return;
+				const result = res as { providers?: ProviderAuthStatus[] } | null;
+				const statusMap = new Map<string, boolean>();
+				for (const p of result?.providers ?? []) {
+					statusMap.set(p.id, p.isAuthenticated);
+				}
+				setProviderAuthStatuses(statusMap);
+			})
+			.catch(() => {
+				// Silently ignore — dots just stay gray
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [callIfConnected]);
+
 	// Dropdowns - only one can be open at a time
 	const modelDropdown = useModal();
 	const thinkingDropdown = useModal();
@@ -243,8 +273,8 @@ export default function SessionStatusBar({
 
 	// Model switch handler
 	const handleModelSwitch = useCallback(
-		async (modelId: string, providerId: string) => {
-			await onModelSwitch(modelId, providerId);
+		async (model: ModelInfo) => {
+			await onModelSwitch(model);
 			modelDropdown.close();
 		},
 		[onModelSwitch, modelDropdown]
@@ -372,30 +402,46 @@ export default function SessionStatusBar({
 					{/* Model Dropdown */}
 					{modelDropdown.isOpen && (
 						<div
-							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-48 py-1 z-50 animate-slideIn`}
+							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn`}
 						>
 							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
-							{availableModels.map((model) => (
-								<button
-									key={model.id}
-									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
-										model.id === currentModelInfo?.id ? 'text-blue-400' : 'text-gray-200'
-									}`}
-									onClick={() => handleModelSwitch(model.alias, model.provider)}
-									disabled={modelSwitching}
-								>
-									<span class="text-base">{getModelFamilyIcon(model.family)}</span>
-									<span class="flex-1 truncate">{model.name}</span>
-									{model.provider !== 'anthropic' && (
-										<span class="text-gray-500 text-[10px]">
-											{getProviderLabel(model.provider)}
-										</span>
-									)}
-									{model.id === currentModelInfo?.id && (
-										<span class="text-blue-400 text-[10px]">(current)</span>
-									)}
-								</button>
-							))}
+							{Array.from(groupModelsByProvider(availableModels).entries()).map(
+								([provider, models], groupIndex) => {
+									const isAuthenticated = providerAuthStatuses.get(provider) ?? false;
+									return (
+										<div key={provider}>
+											{groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
+											<div class="px-3 py-1 flex items-center gap-1.5">
+												<span
+													class={`w-2 h-2 rounded-full flex-shrink-0 ${isAuthenticated ? 'bg-green-500' : 'bg-gray-500'}`}
+												/>
+												<span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+													{getProviderLabel(provider)}
+												</span>
+											</div>
+											{models.map((model) => {
+												const isCurrent =
+													model.id === currentModelInfo?.id &&
+													model.provider === currentModelInfo?.provider;
+												return (
+													<button
+														key={`${model.provider}:${model.id}`}
+														class={`w-full text-left px-3 py-1.5 hover:bg-dark-700 text-xs flex items-center gap-2 ${
+															isCurrent ? 'text-blue-400' : 'text-gray-200'
+														}`}
+														onClick={() => handleModelSwitch(model)}
+														disabled={modelSwitching}
+													>
+														<span class="text-base">{getModelFamilyIcon(model.family)}</span>
+														<span class="flex-1 truncate">{model.name}</span>
+														{isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
+													</button>
+												);
+											})}
+										</div>
+									);
+								}
+							)}
 						</div>
 					)}
 				</div>
