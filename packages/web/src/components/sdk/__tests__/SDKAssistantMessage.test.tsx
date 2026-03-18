@@ -327,7 +327,7 @@ describe('SDKAssistantMessage', () => {
 			expect(copyButton).toBeTruthy();
 		});
 
-		it('should show success toast when copy succeeds', async () => {
+		it('should show inline green check when copy succeeds', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(true);
 
 			const message = createTextOnlyMessage('Hello world');
@@ -339,11 +339,14 @@ describe('SDKAssistantMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
-				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+				// Button should now show "Copied!" title and green color
+				const copiedButton = container.querySelector('button[title="Copied!"]');
+				expect(copiedButton).toBeTruthy();
+				expect(copiedButton?.className).toContain('text-green-400');
 			});
 		});
 
-		it('should show error toast when copy fails', async () => {
+		it('should not show green check and show error toast when copy fails', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(false);
 
 			const message = createTextOnlyMessage('Hello world');
@@ -355,6 +358,9 @@ describe('SDKAssistantMessage', () => {
 			// Wait for the async handler to complete
 			await vi.waitFor(() => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
+				// Button should remain showing "Copy message" (not switched to Copied!)
+				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				// Error toast should be shown
 				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
 			});
 		});
@@ -375,7 +381,41 @@ describe('SDKAssistantMessage', () => {
 				expect(copyToClipboard).toHaveBeenCalledWith(
 					'I will read the file.\nThe file has been read.'
 				);
-				expect(toast.success).toHaveBeenCalledWith('Message copied to clipboard');
+				// Button should switch to "Copied!" state
+				expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+			});
+		});
+
+		describe('auto-revert behavior', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it('should revert to copy icon after 1500ms', async () => {
+				vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+				const message = createTextOnlyMessage('Hello world');
+				const { container } = render(<SDKAssistantMessage message={message} />);
+
+				const copyButton = container.querySelector('button[title="Copy message"]');
+				fireEvent.click(copyButton!);
+
+				// Should show Copied! state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+				});
+
+				// Advance timer past 1500ms
+				vi.advanceTimersByTime(1500);
+
+				// Should revert to copy state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				});
 			});
 		});
 	});
