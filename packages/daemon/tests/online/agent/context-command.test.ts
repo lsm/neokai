@@ -48,22 +48,12 @@ interface SDKMessageResult {
 describe('Context Command Online Tests', () => {
 	let daemon: DaemonServerContext;
 
-	// Skip all tests if no Anthropic credentials (or not using Dev Proxy mock)
-	const hasAnthropicCredentials =
-		IS_MOCK || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN;
-
 	beforeEach(async () => {
-		if (!hasAnthropicCredentials) {
-			return; // Skip setup if no credentials
-		}
 		daemon = await createDaemonServer();
 	}, SETUP_TIMEOUT);
 
 	afterEach(
 		async () => {
-			if (!hasAnthropicCredentials) {
-				return; // Skip cleanup if no credentials
-			}
 			if (daemon) {
 				daemon.kill('SIGTERM');
 				await daemon.waitForExit();
@@ -74,11 +64,6 @@ describe('Context Command Online Tests', () => {
 
 	describe('Automatic /context at turn end', () => {
 		test('should parse /context replay and produce source=context-command with SDK categories', async () => {
-			if (!hasAnthropicCredentials) {
-				console.log('Skipping - no Anthropic API credentials');
-				return;
-			}
-
 			const createResult = (await daemon.messageHub.request('session.create', {
 				workspacePath: process.cwd(),
 				title: 'Context Command Test',
@@ -161,10 +146,6 @@ describe('Context Command Online Tests', () => {
 		}, 60000);
 
 		test('should not produce repeated zero-token result messages after one turn', async () => {
-			if (!hasAnthropicCredentials) {
-				console.log('Skipping - no Anthropic API credentials');
-				return;
-			}
 			// In mock mode, the test checks for zero-token result patterns which may
 			// not behave the same way with mocked responses. Do a basic check only.
 			if (IS_MOCK) {

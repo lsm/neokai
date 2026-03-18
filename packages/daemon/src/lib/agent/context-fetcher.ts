@@ -90,6 +90,14 @@ export class ContextFetcher {
 		if (message.type === 'assistant') {
 			// New SDK format: assistant message produced by sc8() in the claude binary.
 			// The <local-command-stdout> wrapper is stripped; content is raw markdown.
+			//
+			// NOTE: Unlike the old user/isReplay format (which is protected by both
+			// the isReplay flag and UUID matching), this path relies solely on content
+			// heuristics with no UUID correlation. The dual-signal guard below
+			// (**Tokens:** + | Category |) reduces false-positive risk, but a real
+			// assistant response that happens to contain both patterns would be silently
+			// consumed and not shown in the UI. This is an acceptable trade-off because
+			// the pattern combination is highly specific to /context output.
 			const assistantMsg = message as {
 				message?: { content?: unknown };
 			};
@@ -143,7 +151,7 @@ export class ContextFetcher {
 			}
 
 			try {
-				return this.parseMarkdownContextDirect(content);
+				return this.parseMarkdownTokensAndBreakdown(content);
 			} catch (error) {
 				this.logger.warn('Failed to parse context response (assistant):', error);
 				return null;
@@ -255,16 +263,6 @@ export class ContextFetcher {
 		}
 
 		return breakdown;
-	}
-
-	/**
-	 * Parse markdown content directly (new SDK format: no <local-command-stdout> wrapper).
-	 *
-	 * Called for assistant messages produced by the claude binary's sc8() function,
-	 * which strips the <local-command-stdout> wrapper before creating the assistant message.
-	 */
-	private parseMarkdownContextDirect(markdown: string): ParsedContextInfo {
-		return this.parseMarkdownTokensAndBreakdown(markdown);
 	}
 
 	/**

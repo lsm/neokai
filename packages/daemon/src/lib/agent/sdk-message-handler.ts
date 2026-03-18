@@ -505,7 +505,12 @@ export class SDKMessageHandler {
 		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
 		if (isContextResponse) {
-			await this.handleContextResponse(message);
+			const parsed = await this.handleContextResponseIfParseable(message);
+			if (!parsed) {
+				// Content-based detection said it looks like context data, but parsing
+				// failed — log a warning so the failure is visible.
+				this.logger.warn('Failed to parse /context response');
+			}
 			// Set flag to skip:
 			// 1. Queuing another /context for the next result
 			// 2. Saving the result message that follows this context response
@@ -537,6 +542,11 @@ export class SDKMessageHandler {
 		if (message.type === 'result' && this.lastMessageWasContextResponse) {
 			// Reset the flag - we've now handled both the context response AND its result
 			this.lastMessageWasContextResponse = false;
+			// Clear any pending internal context command IDs. In the new SDK format the
+			// assistant message that carries context data does NOT match the enqueued UUID,
+			// so the UUID stays in the set after the user-replay is processed. Without this
+			// clear the stale UUID would prevent auto-queuing /context on subsequent turns.
+			this.internalContextCommandIds.clear();
 			// Return early - don't save or broadcast this result
 			return;
 		}
@@ -819,38 +829,13 @@ export class SDKMessageHandler {
 	}
 
 	/**
-	 * Handle /context response
-	 * Parse the detailed breakdown and update context tracker
-	 */
-	private async handleContextResponse(message: SDKMessage): Promise<void> {
-		const { session, daemonHub, contextTracker } = this.ctx;
-
-		const parsedContext = this.contextFetcher.parseContextResponse(message);
-		if (!parsedContext) {
-			this.logger.warn('Failed to parse /context response');
-			return;
-		}
-
-		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
-
-		// Update ContextTracker - persists to session metadata
-		contextTracker.updateWithDetailedBreakdown(contextInfo);
-
-		// Emit context update event via DaemonHub
-		// StateManager will broadcast this via state.session channel
-		await daemonHub.emit('context.updated', {
-			sessionId: session.id,
-			contextInfo,
-		});
-	}
-
-	/**
 	 * Attempt to parse and handle a /context response.
 	 *
 	 * Returns true if the message was successfully parsed as context data.
 	 * Returns false if the message did not contain parseable context data
 	 * (e.g. it is a plain user acknowledgment of the /context command rather
-	 * than the actual output — which happens in the new SDK format).
+	 * than the actual output — which happens in the new SDK format where a
+	 * user replay carries the original '/context' text, not the output).
 	 */
 	private async handleContextResponseIfParseable(message: SDKMessage): Promise<boolean> {
 		const { session, daemonHub, contextTracker } = this.ctx;
@@ -861,7 +846,12 @@ export class SDKMessageHandler {
 		}
 
 		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
+
+		// Persist to session metadata
 		contextTracker.updateWithDetailedBreakdown(contextInfo);
+
+		// Emit context update event via DaemonHub
+		// StateManager will broadcast this via state.session channel
 		await daemonHub.emit('context.updated', {
 			sessionId: session.id,
 			contextInfo,
