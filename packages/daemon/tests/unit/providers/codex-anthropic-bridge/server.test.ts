@@ -10,13 +10,15 @@
  * server cannot be exercised with a mock `BridgeSession` without starting a real process.
  * The `createMockBridgeServer` helper below reimplements the same HTTP routing + SSE
  * drain logic using `MockBridgeSession`, keeping all test coverage in-process and fast.
- * The production server's multi-result loop is covered by the same code path exercised
- * through the mock — any logic drift would be caught by a type error at the shared
- * `ToolSession` type boundary.
+ * Type drift between the mock and the production server is kept in check by importing
+ * the exported `ToolSession` type from `server.ts` — both share the same named type.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { BridgeServer } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
+import type {
+	BridgeServer,
+	ToolSession,
+} from '../../../../src/lib/providers/codex-anthropic-bridge/server';
 import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 
 // ---------------------------------------------------------------------------
@@ -86,16 +88,7 @@ class MockBridgeSession {
 let mockSessionFactory: (() => MockBridgeSession) | null = null;
 
 /** Shared tool session map — reset in beforeEach. */
-const toolSessions = new Map<
-	string,
-	{
-		gen: AsyncGenerator<BridgeEvent>;
-		session: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
-		provideResult: (text: string) => void;
-		model: string;
-		cleanupTimer: ReturnType<typeof setTimeout>;
-	}
->();
+const toolSessions = new Map<string, ToolSession>();
 
 function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 	const bunServer = Bun.serve({
@@ -208,14 +201,7 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 			if (isToolResultContinuation(body.messages)) {
 				const toolResults = extractToolResults(body.messages);
 				// Mirror production logic: iterate all tool results, warn on unmatched
-				type ToolSessionEntry = {
-					gen: AsyncGenerator<BridgeEvent>;
-					session: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
-					provideResult: (text: string) => void;
-					model: string;
-					cleanupTimer: ReturnType<typeof setTimeout>;
-				};
-				let primaryStored: ToolSessionEntry | null = null;
+				let primaryStored: ToolSession | null = null;
 				for (const tr of toolResults) {
 					const stored = toolSessions.get(tr.toolUseId);
 					if (!stored) {

@@ -42,7 +42,7 @@ export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
 // Session state for tool-call round-trips
 // ---------------------------------------------------------------------------
 
-type ToolSession = {
+export type ToolSession = {
 	/** The suspended generator — resume with provideResult then continue polling. */
 	gen: AsyncGenerator<import('./process-manager.js').BridgeEvent>;
 	/** The underlying BridgeSession — needed to kill the subprocess when done. */
