@@ -22,7 +22,11 @@ import {
 	type BridgeServer,
 	type ToolSession,
 } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
-import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
+import {
+	AppServerConn,
+	BridgeSession,
+	type BridgeEvent,
+} from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 import { Logger } from '../../../../src/lib/logger';
 
 // ---------------------------------------------------------------------------
