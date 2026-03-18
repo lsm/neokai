@@ -599,6 +599,54 @@ export async function checkLeaderDraftsExist(
 	};
 }
 
+// --- PR URL Utility ---
+
+/**
+ * Close a stale PR when a new PR has been created to replace it.
+ *
+ * Called when submit_for_review is invoked with a PR URL that differs from the
+ * task's existing prUrl. Closes the old PR with a comment pointing to the new one.
+ *
+ * Fails open: if the close command fails (e.g., PR already closed, gh unavailable),
+ * the error is logged but does not block the submit_for_review flow.
+ *
+ * Uses the PR URL directly with `gh pr close` — gh accepts both numbers and URLs,
+ * and URLs are unambiguous across multi-remote/forked repo setups.
+ *
+ * @param oldPrUrl - The existing PR URL stored in the task
+ * @param newPrUrl - The new PR URL being submitted for review
+ * @param workspacePath - The workspace path to run gh commands from
+ * @param opts - Optional hook options (for testing)
+ * @returns true if closed successfully, false otherwise
+ */
+export async function closeStalePr(
+	oldPrUrl: string,
+	newPrUrl: string,
+	workspacePath: string,
+	opts?: HookOptions
+): Promise<boolean> {
+	const run = getRunner(opts);
+
+	if (!oldPrUrl || !oldPrUrl.includes('/pull/')) {
+		log.warn(`closeStalePr: invalid old PR URL: ${oldPrUrl}`);
+		return false;
+	}
+
+	const comment = `Superseded by ${newPrUrl}`;
+	const { exitCode } = await run(
+		['gh', 'pr', 'close', oldPrUrl, '--comment', comment],
+		workspacePath
+	);
+
+	if (exitCode !== 0) {
+		log.warn(`closeStalePr: failed to close PR ${oldPrUrl} (exit ${exitCode})`);
+		return false;
+	}
+
+	log.info(`closeStalePr: closed stale PR ${oldPrUrl}, superseded by ${newPrUrl}`);
+	return true;
+}
+
 // --- Gate Runners ---
 
 /**

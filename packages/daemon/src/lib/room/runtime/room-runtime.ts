@@ -60,6 +60,7 @@ import {
 	runWorkerExitGate,
 	runLeaderCompleteGate,
 	runLeaderSubmitGate,
+	closeStalePr,
 	type HookOptions,
 	type HookResult,
 	type WorkerExitHookContext,
@@ -1093,6 +1094,22 @@ export class RoomRuntime {
 								action_required: gateResult.bounceMessage,
 							});
 						}
+					}
+				}
+
+				// If the task already has a different PR URL (e.g., agent created a new PR
+				// instead of updating the existing one), close the stale PR before proceeding.
+				{
+					const existingTask = await this.taskManager.getTask(group.taskId);
+					if (existingTask?.prUrl && existingTask.prUrl !== prUrl) {
+						const groupWorkspace = group.workspacePath ?? this.taskGroupManager.workspacePath;
+						log.info(
+							`submit_for_review: new PR ${prUrl} differs from existing ${existingTask.prUrl} — closing stale PR`
+						);
+						this.appendGroupEvent(groupId, 'status', {
+							text: `Closing stale PR ${existingTask.prUrl}, superseded by ${prUrl}.`,
+						});
+						await closeStalePr(existingTask.prUrl, prUrl, groupWorkspace, this.hookOptions);
 					}
 				}
 
