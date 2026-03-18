@@ -1024,6 +1024,7 @@ export class RoomRuntime {
 				await this.emitGoalProgressForTask(group.taskId);
 				// Reset consecutive failures on success and emit auto_completed event if applicable.
 				{
+					// Tasks are linked to at most one goal in the current data model.
 					const completeGoals = await this.goalManager.getGoalsForTask(group.taskId);
 					const completeGoal = completeGoals[0] ?? null;
 					if (completeGoal?.autonomyLevel === 'semi_autonomous') {
@@ -1041,7 +1042,6 @@ export class RoomRuntime {
 								taskId: group.taskId,
 								taskTitle: completedTask?.title ?? '',
 								prUrl: completedTask?.prUrl ?? '',
-								filesChangedCount: 0,
 								approvalSource: 'leader_semi_auto',
 							});
 						}
@@ -1062,6 +1062,7 @@ export class RoomRuntime {
 				// Escalation policy: track consecutive failures for semi-autonomous goals.
 				// When consecutiveFailures reaches the max threshold, set goal to needs_human.
 				{
+					// Tasks are linked to at most one goal in the current data model.
 					const failGoals = await this.goalManager.getGoalsForTask(group.taskId);
 					const failGoal = failGoals[0] ?? null;
 					if (failGoal?.autonomyLevel === 'semi_autonomous') {
@@ -1165,6 +1166,7 @@ export class RoomRuntime {
 				// Semi-autonomous mode: auto-approve coder/general tasks without human interaction.
 				// Planner tasks always require human approval regardless of autonomy level.
 				if (group.workerRole !== 'planner') {
+					// Tasks are linked to at most one goal in the current data model.
 					const semiAutoGoals = await this.goalManager.getGoalsForTask(group.taskId);
 					const semiAutoGoal = semiAutoGoals[0] ?? null;
 					if (semiAutoGoal?.autonomyLevel === 'semi_autonomous') {
@@ -1259,6 +1261,7 @@ export class RoomRuntime {
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
 		const previousStatus = task.status;
 		const previousApproved = group.approved;
+		const previousApprovalSource = group.approvalSource;
 
 		if (isApproval && !previousApproved) {
 			this.groupRepo.setApproved(group.id, true);
@@ -1291,6 +1294,10 @@ export class RoomRuntime {
 				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
 				if (isApproval && !previousApproved) {
 					this.groupRepo.setApproved(group.id, previousApproved);
+					// Roll back approvalSource to prevent deadlock: if the deferred auto-approve
+					// callback set approvalSource before this call, but the resume failed, the
+					// idempotency guard would permanently block future retries without rollback.
+					this.groupRepo.setApprovalSource(group.id, previousApprovalSource);
 				}
 				return false;
 			}
@@ -1302,6 +1309,8 @@ export class RoomRuntime {
 			}
 			if (isApproval && !previousApproved) {
 				this.groupRepo.setApproved(group.id, previousApproved);
+				// Roll back approvalSource (see comment above).
+				this.groupRepo.setApprovalSource(group.id, previousApprovalSource);
 			}
 			log.error(`Failed to resume from human for task ${taskId}:`, error);
 			return false;

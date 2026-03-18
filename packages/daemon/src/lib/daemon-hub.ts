@@ -337,7 +337,6 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		taskId: string;
 		taskTitle: string;
 		prUrl: string;
-		filesChangedCount: number;
 		approvalSource: 'leader_semi_auto';
 	};
 	'goal.updated': {

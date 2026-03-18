@@ -490,12 +490,13 @@ export class SessionGroupRepository {
 	}
 
 	/**
-	 * Set approvalSource in metadata without version check.
+	 * Set (or clear) approvalSource in metadata without version check.
 	 * Tracks who approved the task: 'human' for human approvals, 'leader_semi_auto' for
 	 * auto-approvals in semi-autonomous mode. Also serves as an idempotency guard for
 	 * the deferred auto-approve callback (skip if already set).
+	 * Pass null to clear (roll back after a failed resumeWorkerFromHuman).
 	 */
-	setApprovalSource(groupId: string, source: 'human' | 'leader_semi_auto'): void {
+	setApprovalSource(groupId: string, source: 'human' | 'leader_semi_auto' | null): void {
 		const raw = (
 			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
 				string,
@@ -503,10 +504,18 @@ export class SessionGroupRepository {
 			>
 		)?.metadata as string;
 		const currentMeta = this.parseMetadata(raw);
-		const merged = { ...currentMeta, approvalSource: source };
-		this.db
-			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
-			.run(JSON.stringify(merged), groupId);
+		if (source === null) {
+			// Remove the field entirely so rowToGroup returns null for approvalSource
+			const { approvalSource: _removed, ...rest } = currentMeta;
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(rest), groupId);
+		} else {
+			const merged = { ...currentMeta, approvalSource: source };
+			this.db
+				.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+				.run(JSON.stringify(merged), groupId);
+		}
 	}
 
 	/**

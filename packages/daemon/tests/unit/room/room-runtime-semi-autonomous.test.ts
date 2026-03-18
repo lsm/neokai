@@ -226,15 +226,6 @@ describe('RoomRuntime semi-autonomous mode', () => {
 	// =========================================================================
 
 	it('complete_task after auto-approve emits goal.task.auto_completed and resets failures', async () => {
-		const emittedEvents: Array<{ event: string; data: unknown }> = [];
-		// Intercept hub events
-		const originalHub = (ctx.runtime as unknown as Record<string, unknown>).daemonHub as
-			| { emit: (event: string, data: unknown) => void }
-			| undefined;
-
-		// We can't easily hook into the hub directly in tests, so check side effects instead.
-		// The key thing is that complete_task works after auto-approve.
-
 		const { goal, task, group } = await spawnSemiAutoToLeader({ assignedAgent: 'coder' });
 
 		// Manually set up goal with some prior failures to verify reset
@@ -253,6 +244,9 @@ describe('RoomRuntime semi-autonomous mode', () => {
 		expect(approvedGroup.approved).toBe(true);
 		expect(approvedGroup.approvalSource).toBe('leader_semi_auto');
 
+		// Clear emitted events so we can assert only on what complete_task emits
+		ctx.hub.emittedEvents.length = 0;
+
 		// Now leader calls complete_task (would happen in a new turn after injection)
 		const completeResult = await ctx.runtime.handleLeaderTool(group.id, 'complete_task', {
 			summary: 'Health endpoint added',
@@ -269,8 +263,16 @@ describe('RoomRuntime semi-autonomous mode', () => {
 		const updatedGoal = await ctx.goalManager.getGoal(goal.id);
 		expect(updatedGoal!.consecutiveFailures).toBe(0);
 
-		void emittedEvents;
-		void originalHub;
+		// goal.task.auto_completed event should have been emitted with correct payload
+		const autoCompletedEvents = ctx.hub.emittedEvents.filter(
+			(e) => e.event === 'goal.task.auto_completed'
+		);
+		expect(autoCompletedEvents).toHaveLength(1);
+		const eventData = autoCompletedEvents[0].data as Record<string, unknown>;
+		expect(eventData.goalId).toBe(goal.id);
+		expect(eventData.taskId).toBe(task.id);
+		expect(eventData.approvalSource).toBe('leader_semi_auto');
+		expect(eventData.roomId).toBe('room-1');
 	});
 
 	// =========================================================================
