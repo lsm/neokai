@@ -12,7 +12,7 @@
  */
 
 import { BridgeSession, AppServerConn, type AppServerAuth } from './process-manager.js';
-import { createAnthropicErrorBody } from '../shared/error-envelope.js';
+import { createAnthropicErrorBody, anthropicErrorSSELine } from '../shared/error-envelope.js';
 
 export type { AppServerAuth } from './process-manager.js';
 import {
@@ -151,14 +151,14 @@ async function drainToSSE(
 			return;
 		} else if (event.type === 'error') {
 			logger.error('codex-bridge: BridgeSession error:', event.message);
-			// Emit a minimal error text block so the SDK gets a response
-			if (!textBlockOpen) {
-				send(contentBlockStartTextSSE(blockIndex));
+			// Close any open text block before emitting the error event
+			if (textBlockOpen) {
+				send(contentBlockStopSSE(blockIndex));
+				textBlockOpen = false;
 			}
-			send(textDeltaSSE(blockIndex, `[Codex error: ${event.message}]`));
-			send(contentBlockStopSSE(blockIndex));
-			send(messageDeltaSSE('end_turn', outputTokens));
-			send(messageStopSSE());
+			// Emit an Anthropic-format error SSE event so the Claude Agent SDK
+			// surfaces this as an APIError instead of silently completing.
+			send(anthropicErrorSSELine('api_error', String(event.message) || 'Codex session error'));
 			session.kill();
 			controller.close();
 			return;
