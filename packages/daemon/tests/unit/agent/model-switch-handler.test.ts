@@ -72,6 +72,38 @@ const TEST_MODELS: ModelInfo[] = [
 		releaseDate: '2026-01-01',
 		available: true,
 	},
+	// Copilot models — intentionally share IDs with standard Anthropic models.
+	// isValidModel/getModelInfo now filter by provider, so 'claude-opus-4.6' under
+	// 'anthropic-copilot' and 'claude-opus-4.6' under 'anthropic' are distinct entries.
+	// There is no Anthropic entry for 'claude-sonnet-4.6' here because the cross-provider
+	// tests that start on 'anthropic' switch *to* 'anthropic-copilot' and only need the
+	// copilot entry to resolve. Callers that stay on 'anthropic' use 'default'/'opus'/etc.
+	{
+		id: 'claude-opus-4.6',
+		name: 'Claude Opus 4.6 (Copilot)',
+		alias: 'copilot-anthropic-opus',
+		family: 'opus',
+		provider: 'anthropic-copilot',
+		contextWindow: 200000,
+		description: 'Claude Opus via GitHub Copilot',
+		releaseDate: '2025-11-01',
+		available: true,
+	},
+	{
+		// 'claude-sonnet-4.6' registered only under 'anthropic-copilot' in this fixture.
+		// isValidModel('claude-sonnet-4.6', 'global', 'anthropic-copilot') → found.
+		// isValidModel('claude-sonnet-4.6', 'global', 'anthropic')         → not found
+		//   (tests that need an anthropic sonnet use 'default' which resolves to 'default').
+		id: 'claude-sonnet-4.6',
+		name: 'Claude Sonnet 4.6 (Copilot)',
+		alias: 'copilot-anthropic-sonnet',
+		family: 'sonnet',
+		provider: 'anthropic-copilot',
+		contextWindow: 200000,
+		description: 'Claude Sonnet 4.6 via Copilot',
+		releaseDate: '2025-11-01',
+		available: true,
+	},
 ];
 
 describe('ModelSwitchHandler', () => {
@@ -171,6 +203,8 @@ describe('ModelSwitchHandler', () => {
 		mockLogger = {
 			log: mock(() => {}),
 			error: mock(() => {}),
+			warn: mock(() => {}),
+			debug: mock(() => {}),
 		} as unknown as Logger;
 
 		mockLifecycleManager = {
@@ -438,6 +472,120 @@ describe('ModelSwitchHandler', () => {
 				await handler.switchModel('haiku', 'anthropic');
 
 				expect(setModelTrackerSpy).toHaveBeenCalled();
+			});
+		});
+	});
+
+	describe('provider routing', () => {
+		/**
+		 * Same-provider switch: copilot opus -> copilot sonnet (explicit provider)
+		 *
+		 * When a session is on anthropic-copilot and the caller explicitly passes
+		 * 'anthropic-copilot' as the provider, the switch stays within that provider.
+		 * Both copilot-opus and copilot-sonnet share canonical IDs with Anthropic models;
+		 * explicit provider routing (dev approach) means there is no ambiguity.
+		 */
+		describe('same-provider switch (copilot opus to copilot sonnet)', () => {
+			beforeEach(() => {
+				mockSession.config.model = 'claude-opus-4.6';
+				mockSession.config.provider = 'anthropic-copilot';
+			});
+
+			it('switches copilot opus to copilot sonnet with explicit provider', async () => {
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel('claude-sonnet-4.6', 'anthropic-copilot');
+
+				expect(result.success).toBe(true);
+				expect(result.model).toBe('claude-sonnet-4.6');
+				expect(mockSession.config.provider).toBe('anthropic-copilot');
+			});
+
+			it('stores anthropic-copilot in persisted config', async () => {
+				handler = createHandler({ queryObject: null });
+				await handler.switchModel('claude-sonnet-4.6', 'anthropic-copilot');
+
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						config: expect.objectContaining({ provider: 'anthropic-copilot' }),
+					})
+				);
+			});
+
+			it('already on copilot-opus via alias; no-op expected', async () => {
+				// copilot-anthropic-opus resolves to claude-opus-4.6 which is the current model.
+				// Provider also matches, so the handler takes the "already using" early-return path.
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel('copilot-anthropic-opus', 'anthropic-copilot');
+
+				expect(result.success).toBe(true);
+				expect(result.error).toContain('Already using');
+				// No-op: must not write to DB or restart query
+				expect(updateSessionSpy).not.toHaveBeenCalled();
+			});
+		});
+
+		/**
+		 * Cross-provider switch: anthropic -> copilot (explicit provider)
+		 *
+		 * Caller explicitly requests 'anthropic-copilot'; session was on 'anthropic'.
+		 * The explicit provider arg always wins.
+		 */
+		describe('cross-provider switch (anthropic to copilot, explicit provider)', () => {
+			beforeEach(() => {
+				mockSession.config.model = 'default';
+				mockSession.config.provider = 'anthropic';
+			});
+
+			it('switches to anthropic-copilot when explicitly requested', async () => {
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel('claude-sonnet-4.6', 'anthropic-copilot');
+
+				expect(result.success).toBe(true);
+				expect(result.model).toBe('claude-sonnet-4.6');
+				expect(mockSession.config.provider).toBe('anthropic-copilot');
+			});
+
+			it('persists the new provider in the database', async () => {
+				handler = createHandler({ queryObject: null });
+				await handler.switchModel('claude-sonnet-4.6', 'anthropic-copilot');
+
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						config: expect.objectContaining({
+							model: 'claude-sonnet-4.6',
+							provider: 'anthropic-copilot',
+						}),
+					})
+				);
+			});
+		});
+
+		/**
+		 * Cross-provider switch: GLM -> anthropic (explicit provider)
+		 *
+		 * Caller passes 'anthropic' explicitly when switching from GLM to an Anthropic model.
+		 */
+		describe('cross-provider switch (glm to anthropic, explicit provider)', () => {
+			it('switches from glm to anthropic when explicit provider given', async () => {
+				mockSession.config.model = 'glm-5';
+				mockSession.config.provider = 'glm';
+
+				handler = createHandler({ queryObject: null });
+				const result = await handler.switchModel('opus', 'anthropic');
+
+				expect(result.success).toBe(true);
+				expect(mockSession.config.provider).toBe('anthropic');
+				expect(updateSessionSpy).toHaveBeenCalledWith(
+					mockSession.id,
+					expect.objectContaining({
+						config: expect.objectContaining({
+							model: 'opus',
+							provider: 'anthropic',
+						}),
+					})
+				);
 			});
 		});
 	});
