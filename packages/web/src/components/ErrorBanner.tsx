@@ -1,17 +1,25 @@
 /**
  * ErrorBanner Component
  *
- * Displays error messages with optional "View Details" button and dismiss functionality.
+ * Displays error messages with optional "View Details" button, custom action buttons,
+ * and dismiss functionality.
  * Extracted from ChatContainer.tsx for better separation of concerns.
  */
 
 import { borderColors } from '../lib/design-tokens';
+
+export interface ErrorBannerAction {
+	label: string;
+	onClick: () => void;
+}
 
 export interface ErrorBannerProps {
 	error: string;
 	hasDetails?: boolean;
 	onViewDetails?: () => void;
 	onDismiss: () => void;
+	/** Optional action buttons rendered before the dismiss button */
+	actions?: ErrorBannerAction[];
 }
 
 export function ErrorBanner({
@@ -19,6 +27,7 @@ export function ErrorBanner({
 	hasDetails = false,
 	onViewDetails,
 	onDismiss,
+	actions,
 }: ErrorBannerProps) {
 	return (
 		<div
@@ -28,6 +37,15 @@ export function ErrorBanner({
 			<div class="max-w-4xl mx-auto w-full px-4 md:px-0 flex items-center justify-between gap-4">
 				<p class="text-sm text-red-400 flex-1">{error}</p>
 				<div class="flex items-center gap-2">
+					{actions?.map((action) => (
+						<button
+							key={action.label}
+							onClick={action.onClick}
+							class="text-xs px-3 py-1 rounded-md bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 transition-colors border border-red-500/30"
+						>
+							{action.label}
+						</button>
+					))}
 					{hasDetails && onViewDetails && (
 						<button
 							onClick={onViewDetails}
