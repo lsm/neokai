@@ -967,7 +967,9 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Record a metric value for a measurable mission goal. Agents use this to report KPI progress.',
 			{
 				goal_id: z.string().describe('ID of the measurable mission goal'),
-				metric_name: z.string().describe('Name of the metric to record (must match structuredMetrics)'),
+				metric_name: z
+					.string()
+					.describe('Name of the metric to record (must match structuredMetrics)'),
 				value: z.number().describe('The current value of the metric'),
 			},
 			(args) => handlers.record_metric(args)

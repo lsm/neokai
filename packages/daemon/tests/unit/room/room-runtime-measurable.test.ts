@@ -8,10 +8,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
-import {
-	createRuntimeTestContext,
-	type RuntimeTestContext,
-} from './room-runtime-test-helpers';
+import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
 
 describe('RoomRuntime — measurable missions', () => {
 	let ctx: RuntimeTestContext;

@@ -1601,7 +1601,7 @@ describe('Room Agent Tools', () => {
 				})
 			);
 			expect(result.success).toBe(false);
-			expect((result.error as string)).toContain('not a measurable mission');
+			expect(result.error as string).toContain('not a measurable mission');
 		});
 
 		it('should reject non-existent goal', async () => {
@@ -1609,13 +1609,11 @@ describe('Room Agent Tools', () => {
 				await handlers.record_metric({ goal_id: 'no-such-goal', metric_name: 'kpi', value: 42 })
 			);
 			expect(result.success).toBe(false);
-			expect((result.error as string)).toContain('not found');
+			expect(result.error as string).toContain('not found');
 		});
 
 		it('should record metric for measurable goal', async () => {
-			const goalResult = parseResult(
-				await handlers.create_goal({ title: 'Measurable Goal' })
-			);
+			const goalResult = parseResult(await handlers.create_goal({ title: 'Measurable Goal' }));
 			const goalId = goalResult.goalId as string;
 			// Directly set missionType + structuredMetrics via manager
 			await goalManager.updateGoalStatus(goalId, 'active');
@@ -1649,16 +1647,14 @@ describe('Room Agent Tools', () => {
 				await handlers.record_metric({ goal_id: mGoal.id, metric_name: 'unknown_kpi', value: 50 })
 			);
 			expect(result.success).toBe(false);
-			expect((result.error as string)).toContain('not defined in structuredMetrics');
+			expect(result.error as string).toContain('not defined in structuredMetrics');
 		});
 	});
 
 	describe('get_metrics', () => {
 		it('should return empty structured metrics for goal without them', async () => {
 			const created = parseResult(await handlers.create_goal({ title: 'Legacy Goal' }));
-			const result = parseResult(
-				await handlers.get_metrics({ goal_id: created.goalId as string })
-			);
+			const result = parseResult(await handlers.get_metrics({ goal_id: created.goalId as string }));
 			expect(result.success).toBe(true);
 			expect((result.structuredMetrics as unknown[]).length).toBe(0);
 		});
@@ -1678,9 +1674,15 @@ describe('Room Agent Tools', () => {
 			expect(result.missionType).toBe('measurable');
 			expect((result.metrics as unknown[]).length).toBe(2);
 
-			const coverage = (result.metrics as Array<{ name: string; current: number; target: number; met: boolean; direction: string }>).find(
-				(m) => m.name === 'coverage'
-			);
+			const coverage = (
+				result.metrics as Array<{
+					name: string;
+					current: number;
+					target: number;
+					met: boolean;
+					direction: string;
+				}>
+			).find((m) => m.name === 'coverage');
 			expect(coverage!.current).toBe(50);
 			expect(coverage!.target).toBe(80);
 			expect(coverage!.met).toBe(false);

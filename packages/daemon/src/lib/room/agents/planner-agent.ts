@@ -389,9 +389,7 @@ export function buildPlannerTaskMessage(config: PlannerAgentConfig): string {
 				}
 			}
 			sections.push('');
-			sections.push(
-				`Focus your plan on tasks that will directly improve the unmet metrics above.`
-			);
+			sections.push(`Focus your plan on tasks that will directly improve the unmet metrics above.`);
 		}
 	}
 

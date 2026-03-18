@@ -2427,7 +2427,10 @@ export class RoomRuntime {
 	 *
 	 * Goals that exceed max planning attempts are transitioned to 'needs_human'.
 	 */
-	private async getNextGoalForPlanning(): Promise<{ goal: RoomGoal; replanContext?: ReplanContext } | null> {
+	private async getNextGoalForPlanning(): Promise<{
+		goal: RoomGoal;
+		replanContext?: ReplanContext;
+	} | null> {
 		const activeGoals = await this.goalManager.listGoals('active');
 		const currentRoom = this.getCurrentRoom();
 		const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
@@ -2483,8 +2486,7 @@ export class RoomRuntime {
 					goal.structuredMetrics.length > 0
 				) {
 					const allExecutionCompleted =
-						executionTasks.length > 0 &&
-						executionTasks.every((t) => t.status === 'completed');
+						executionTasks.length > 0 && executionTasks.every((t) => t.status === 'completed');
 
 					if (allExecutionCompleted) {
 						const targetsResult = await this.goalManager.checkMetricTargets(goal.id);

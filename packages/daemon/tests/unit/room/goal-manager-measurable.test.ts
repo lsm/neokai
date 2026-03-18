@@ -325,9 +325,9 @@ describe('GoalManager — Measurable Missions', () => {
 				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
 			});
 
-			await expect(
-				goalManager.recordMetric(goal.id, 'unknown_metric', 42)
-			).rejects.toThrow('not defined in structuredMetrics');
+			await expect(goalManager.recordMetric(goal.id, 'unknown_metric', 42)).rejects.toThrow(
+				'not defined in structuredMetrics'
+			);
 		});
 
 		it('should not write history row when metric name is unknown', async () => {
@@ -337,9 +337,7 @@ describe('GoalManager — Measurable Missions', () => {
 				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
 			});
 
-			await expect(
-				goalManager.recordMetric(goal.id, 'unknown_metric', 42)
-			).rejects.toThrow();
+			await expect(goalManager.recordMetric(goal.id, 'unknown_metric', 42)).rejects.toThrow();
 
 			// History table must stay empty — no orphaned row written before error
 			const history = await goalManager.getMetricHistory(goal.id);
@@ -352,15 +350,15 @@ describe('GoalManager — Measurable Missions', () => {
 				// default missionType is 'one_shot'
 			});
 
-			await expect(
-				goalManager.recordMetric(goal.id, 'kpi', 42)
-			).rejects.toThrow('not a measurable mission');
+			await expect(goalManager.recordMetric(goal.id, 'kpi', 42)).rejects.toThrow(
+				'not a measurable mission'
+			);
 		});
 
 		it('should throw for non-existent goal', async () => {
-			await expect(
-				goalManager.recordMetric('non-existent', 'coverage', 50)
-			).rejects.toThrow('Goal not found: non-existent');
+			await expect(goalManager.recordMetric('non-existent', 'coverage', 50)).rejects.toThrow(
+				'Goal not found: non-existent'
+			);
 		});
 
 		it('should accumulate multiple recordings as history', async () => {
@@ -678,7 +676,14 @@ describe('GoalManager — Measurable Missions', () => {
 		it('should persist structuredMetrics on creation', async () => {
 			const metrics: MissionMetric[] = [
 				{ name: 'coverage', target: 80, current: 0 },
-				{ name: 'perf', target: 200, current: 0, unit: 'ms', direction: 'decrease', baseline: 1000 },
+				{
+					name: 'perf',
+					target: 200,
+					current: 0,
+					unit: 'ms',
+					direction: 'decrease',
+					baseline: 1000,
+				},
 			];
 
 			const goal = await goalManager.createGoal({
