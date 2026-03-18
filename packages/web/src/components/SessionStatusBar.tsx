@@ -33,29 +33,33 @@ import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
 
 /**
- * Per-provider dot color.
+ * Brand-accurate provider dot colors (hex values outside Tailwind's palette).
  * Keep in sync with PROVIDER_LABELS in packages/web/src/hooks/useModelSwitcher.ts —
  * when a new provider is added there, add a matching entry here.
  */
-const PROVIDER_DOT_COLORS: Record<string, string> = {
-	'anthropic-copilot': 'bg-green-400',
-	'anthropic-codex': 'bg-teal-400',
-	glm: 'bg-blue-400',
-	minimax: 'bg-purple-400',
+const PROVIDER_DOT_COLORS: Record<string, { color: string; ring?: boolean }> = {
+	anthropic: { color: '#D97757' }, // Anthropic brand orange
+	'anthropic-copilot': { color: '#8957E5' }, // GitHub Copilot purple
+	'anthropic-codex': { color: '#FFFFFF', ring: true }, // OpenAI white (ring for visibility)
+	glm: { color: '#7DD3FC' }, // ChatGLM light blue
+	minimax: { color: '#FCA5A5' }, // MiniMax light red
 };
 
 /**
  * ProviderBadge - Small colored dot indicating the provider next to the model name.
- * Returns null for the Anthropic default provider (no dot needed).
+ * Shows for all providers including Anthropic (orange dot).
+ * Returns null only when provider is undefined/unknown.
  * The dot's title/aria-label provide the provider name for accessibility.
  */
 function ProviderBadge({ provider }: { provider: string | undefined }) {
-	if (!provider || provider === 'anthropic') return null;
-	const color = PROVIDER_DOT_COLORS[provider] ?? 'bg-gray-400';
+	if (!provider) return null;
+	const config = PROVIDER_DOT_COLORS[provider];
+	const backgroundColor = config?.color ?? '#9CA3AF'; // gray-400 fallback
 	const label = getProviderLabel(provider);
 	return (
 		<span
-			class={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${color}`}
+			class={`inline-block w-2 h-2 rounded-full flex-shrink-0${config?.ring ? ' ring-1 ring-gray-300' : ''}`}
+			style={{ backgroundColor }}
 			title={label}
 			aria-label={label}
 			role="img"

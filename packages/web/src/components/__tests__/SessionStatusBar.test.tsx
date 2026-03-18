@@ -794,7 +794,7 @@ describe('SessionStatusBar', () => {
 	});
 
 	describe('Provider Badge (colored dot)', () => {
-		it('should not show provider badge for Anthropic provider', () => {
+		it('should show orange dot for Anthropic provider', () => {
 			const anthropicModelInfo: ModelInfo = {
 				...mockModelInfo,
 				provider: 'anthropic',
@@ -803,7 +803,10 @@ describe('SessionStatusBar', () => {
 				<SessionStatusBar {...defaultProps} currentModelInfo={anthropicModelInfo} />
 			);
 			const badge = container.querySelector('[data-testid="provider-badge"]');
-			expect(badge).toBeNull();
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Anthropic');
+			expect(badge?.getAttribute('aria-label')).toBe('Anthropic');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#D97757');
 		});
 
 		it('should not show provider badge when provider is undefined', () => {
@@ -818,7 +821,7 @@ describe('SessionStatusBar', () => {
 			expect(badge).toBeNull();
 		});
 
-		it('should show green dot for anthropic-copilot provider', () => {
+		it('should show purple dot for anthropic-copilot provider', () => {
 			const copilotModelInfo: ModelInfo = {
 				...mockModelInfo,
 				provider: 'anthropic-copilot',
@@ -830,10 +833,10 @@ describe('SessionStatusBar', () => {
 			expect(badge).toBeTruthy();
 			expect(badge?.getAttribute('title')).toBe('Copilot');
 			expect(badge?.getAttribute('aria-label')).toBe('Copilot');
-			expect(badge?.className).toContain('bg-green-400');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#8957E5');
 		});
 
-		it('should show teal dot for anthropic-codex provider', () => {
+		it('should show white dot with ring for anthropic-codex provider', () => {
 			const codexModelInfo: ModelInfo = {
 				...mockModelInfo,
 				provider: 'anthropic-codex',
@@ -845,10 +848,11 @@ describe('SessionStatusBar', () => {
 			expect(badge).toBeTruthy();
 			expect(badge?.getAttribute('title')).toBe('Codex');
 			expect(badge?.getAttribute('aria-label')).toBe('Codex');
-			expect(badge?.className).toContain('bg-teal-400');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FFFFFF');
+			expect(badge?.className).toContain('ring-1');
 		});
 
-		it('should show blue dot for glm provider', () => {
+		it('should show light blue dot for glm provider', () => {
 			const glmModelInfo: ModelInfo = {
 				...mockModelInfo,
 				provider: 'glm',
@@ -860,10 +864,10 @@ describe('SessionStatusBar', () => {
 			expect(badge).toBeTruthy();
 			expect(badge?.getAttribute('title')).toBe('GLM');
 			expect(badge?.getAttribute('aria-label')).toBe('GLM');
-			expect(badge?.className).toContain('bg-blue-400');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#7DD3FC');
 		});
 
-		it('should show purple dot for minimax provider', () => {
+		it('should show light red dot for minimax provider', () => {
 			const minimaxModelInfo: ModelInfo = {
 				...mockModelInfo,
 				provider: 'minimax',
@@ -875,7 +879,7 @@ describe('SessionStatusBar', () => {
 			expect(badge).toBeTruthy();
 			expect(badge?.getAttribute('title')).toBe('MiniMax');
 			expect(badge?.getAttribute('aria-label')).toBe('MiniMax');
-			expect(badge?.className).toContain('bg-purple-400');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#FCA5A5');
 		});
 
 		it('should show gray dot for unknown provider using getProviderLabel fallback', () => {
@@ -892,11 +896,17 @@ describe('SessionStatusBar', () => {
 			expect(badge).toBeTruthy();
 			expect(badge?.getAttribute('title')).toBe(expectedLabel);
 			expect(badge?.getAttribute('aria-label')).toBe(expectedLabel);
-			expect(badge?.className).toContain('bg-gray-400');
+			expect((badge as HTMLElement)?.style.backgroundColor).toBe('#9CA3AF');
 		});
 
-		it('should have explicit dot color for every known non-anthropic provider', () => {
-			const knownProviders = ['anthropic-copilot', 'anthropic-codex', 'glm', 'minimax'];
+		it('should have explicit dot color for every known provider', () => {
+			const knownProviders = [
+				'anthropic',
+				'anthropic-copilot',
+				'anthropic-codex',
+				'glm',
+				'minimax',
+			];
 			for (const provider of knownProviders) {
 				const modelInfo: ModelInfo = { ...mockModelInfo, provider };
 				const { container, unmount } = render(
@@ -904,9 +914,9 @@ describe('SessionStatusBar', () => {
 				);
 				const badge = container.querySelector('[data-testid="provider-badge"]');
 				expect(
-					badge?.className,
-					`${provider} should have explicit color, not fallback gray`
-				).not.toContain('bg-gray-400');
+					(badge as HTMLElement)?.style.backgroundColor,
+					`${provider} should have explicit brand color, not fallback gray`
+				).not.toBe('#9CA3AF');
 				unmount();
 			}
 		});
