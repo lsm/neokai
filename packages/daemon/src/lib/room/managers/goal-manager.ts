@@ -15,7 +15,7 @@ import {
 	type CreateGoalParams,
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
-import type { RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
+import type { RoomGoal, GoalStatus, GoalPriority, MissionExecution } from '@neokai/shared';
 
 export class GoalManager {
 	private goalRepo: GoalRepository;
@@ -34,10 +34,8 @@ export class GoalManager {
 	 */
 	async createGoal(params: Omit<CreateGoalParams, 'roomId'>): Promise<RoomGoal> {
 		const goal = this.goalRepo.createGoal({
+			...params,
 			roomId: this.roomId,
-			title: params.title,
-			description: params.description,
-			priority: params.priority,
 		});
 
 		return goal;
@@ -58,6 +56,15 @@ export class GoalManager {
 	 * List goals with optional status filter
 	 */
 	async listGoals(status?: GoalStatus): Promise<RoomGoal[]> {
+		return this.goalRepo.listGoals(this.roomId, status);
+	}
+
+	/**
+	 * Synchronous version of listGoals. All bun:sqlite operations are synchronous;
+	 * this avoids the extra microtask yield from the async wrapper when callers
+	 * need to check for recurring goals without introducing async scheduling side-effects.
+	 */
+	listGoalsSync(status?: GoalStatus): RoomGoal[] {
 		return this.goalRepo.listGoals(this.roomId, status);
 	}
 
@@ -143,6 +150,40 @@ export class GoalManager {
 		const updatedGoal = this.goalRepo.linkTaskToGoal(goalId, taskId);
 		if (!updatedGoal) {
 			throw new Error(`Failed to link task to goal: ${goalId}`);
+		}
+
+		// Recalculate progress
+		await this.recalculateProgress(goalId);
+
+		return this.getGoal(goalId) as Promise<RoomGoal>;
+	}
+
+	/**
+	 * Atomically link a task to a recurring mission execution AND the parent goal.
+	 *
+	 * Use this for all recurring-mission task linkage. It writes to both
+	 * mission_executions.task_ids and goals.linked_task_ids in one transaction.
+	 * For non-recurring missions, use linkTaskToGoal() instead.
+	 */
+	async linkTaskToExecution(
+		goalId: string,
+		executionId: string,
+		taskId: string
+	): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+
+		// Verify task exists in this room
+		const task = this.taskRepo.getTask(taskId);
+		if (!task || task.roomId !== this.roomId) {
+			throw new Error(`Task not found in this room: ${taskId}`);
+		}
+
+		const updatedGoal = this.goalRepo.linkTaskToExecution(goalId, executionId, taskId);
+		if (!updatedGoal) {
+			throw new Error(`Failed to link task to execution: ${executionId}`);
 		}
 
 		// Recalculate progress
@@ -295,6 +336,86 @@ export class GoalManager {
 			throw new Error(`Failed to update planning_attempts for goal: ${goalId}`);
 		}
 		return updatedGoal;
+	}
+
+	// =========================================================================
+	// Mission Execution management (recurring missions)
+	// =========================================================================
+
+	/**
+	 * Get the currently running execution for a recurring mission.
+	 * Returns null if no execution is running (or if this is not a recurring mission).
+	 */
+	getActiveExecution(goalId: string): MissionExecution | null {
+		return this.goalRepo.getActiveExecution(goalId);
+	}
+
+	/**
+	 * Start a new execution for a recurring mission.
+	 * Atomically:
+	 *   1. Clears goals.linked_task_ids (so this execution starts fresh)
+	 *   2. Inserts a new mission_executions row with the next execution_number
+	 *
+	 * Returns the new MissionExecution record.
+	 * Throws if the goal does not exist.
+	 */
+	startExecution(goalId: string): MissionExecution {
+		const goal = this.goalRepo.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+		const executionNumber = this.goalRepo.getNextExecutionNumber(goalId);
+		// Clear linked_task_ids so the new execution starts with an empty task list
+		this.goalRepo.clearLinkedTaskIds(goalId);
+		return this.goalRepo.insertExecution({ goalId, executionNumber });
+	}
+
+	/**
+	 * Mark an execution as completed and optionally record a result summary.
+	 * Returns the updated MissionExecution or null if not found.
+	 */
+	completeExecution(executionId: string, resultSummary?: string): MissionExecution | null {
+		const now = Math.floor(Date.now() / 1000);
+		return this.goalRepo.updateExecution(executionId, {
+			status: 'completed',
+			completedAt: now,
+			resultSummary,
+		});
+	}
+
+	/**
+	 * Mark an execution as failed.
+	 * Returns the updated MissionExecution or null if not found.
+	 */
+	failExecution(executionId: string, resultSummary?: string): MissionExecution | null {
+		const now = Math.floor(Date.now() / 1000);
+		return this.goalRepo.updateExecution(executionId, {
+			status: 'failed',
+			completedAt: now,
+			resultSummary,
+		});
+	}
+
+	/**
+	 * Update the next_run_at timestamp for a recurring mission.
+	 */
+	async updateNextRunAt(goalId: string, nextRunAt: number | null): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+		const updated = this.goalRepo.updateGoal(goalId, { nextRunAt });
+		if (!updated) {
+			throw new Error(`Failed to update nextRunAt for goal: ${goalId}`);
+		}
+		return updated;
+	}
+
+	/**
+	 * List executions for a goal (most recent first).
+	 */
+	listExecutions(goalId: string, limit?: number): MissionExecution[] {
+		return this.goalRepo.listExecutions(goalId, limit);
 	}
 
 	/**

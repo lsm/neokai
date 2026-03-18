@@ -277,6 +277,40 @@ export class GoalRepository {
 	}
 
 	/**
+	 * Atomically link a task to both a mission execution and the parent goal.
+	 *
+	 * This is the single write path for recurring-mission task linkage:
+	 * - Appends taskId to mission_executions.task_ids (execution-scoped history)
+	 * - Appends taskId to goals.linked_task_ids (current execution snapshot for progress)
+	 *
+	 * For non-recurring missions use linkTaskToGoal() instead.
+	 * Returns null if the execution or goal does not exist.
+	 */
+	linkTaskToExecution(goalId: string, executionId: string, taskId: string): RoomGoal | null {
+		return this.db.transaction(() => {
+			// 1. Update mission_executions.task_ids
+			const execRow = this.db
+				.prepare(`SELECT task_ids FROM mission_executions WHERE id = ? AND goal_id = ?`)
+				.get(executionId, goalId) as { task_ids: string } | undefined;
+			if (!execRow) return null;
+
+			const execTaskIds: string[] = JSON.parse(execRow.task_ids);
+			if (!execTaskIds.includes(taskId)) {
+				execTaskIds.push(taskId);
+			}
+			this.db
+				.prepare(`UPDATE mission_executions SET task_ids = ? WHERE id = ?`)
+				.run(JSON.stringify(execTaskIds), executionId);
+
+			// 2. Update goals.linked_task_ids
+			const goal = this.getGoal(goalId);
+			if (!goal) return null;
+			const goalTaskIds = [...new Set([...goal.linkedTaskIds, taskId])];
+			return this.updateGoal(goalId, { linkedTaskIds: goalTaskIds });
+		})();
+	}
+
+	/**
 	 * Unlink a task from a goal
 	 */
 	unlinkTaskFromGoal(goalId: string, taskId: string): RoomGoal | null {
@@ -386,6 +420,27 @@ export class GoalRepository {
 	// =========================================================================
 	// Mission Executions
 	// =========================================================================
+
+	/**
+	 * Return the next execution number for a goal (max existing + 1, or 1 if none).
+	 */
+	getNextExecutionNumber(goalId: string): number {
+		const row = this.db
+			.prepare(
+				`SELECT MAX(execution_number) as max_num FROM mission_executions WHERE goal_id = ?`
+			)
+			.get(goalId) as { max_num: number | null } | undefined;
+		const maxNum = row?.max_num ?? 0;
+		return maxNum + 1;
+	}
+
+	/**
+	 * Clear linked_task_ids on a goal (used when a new recurring execution starts).
+	 * Returns updated goal or null if not found.
+	 */
+	clearLinkedTaskIds(goalId: string): RoomGoal | null {
+		return this.updateGoal(goalId, { linkedTaskIds: [] });
+	}
 
 	/**
 	 * Insert a new mission execution record

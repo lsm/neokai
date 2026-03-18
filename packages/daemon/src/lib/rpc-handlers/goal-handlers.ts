@@ -19,6 +19,7 @@ import type { GoalManager } from '../room/managers/goal-manager';
 import type { TaskManager } from '../room/managers/task-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
+import { parseCronExpression, getNextRunAt, getSystemTimezone } from '../room/runtime/cron-utils';
 
 const log = new Logger('goal-handlers');
 
@@ -33,7 +34,10 @@ export type GoalManagerLike = Pick<
 	| 'needsHumanGoal'
 	| 'reactivateGoal'
 	| 'linkTaskToGoal'
+	| 'linkTaskToExecution'
 	| 'deleteGoal'
+	| 'getActiveExecution'
+	| 'updateNextRunAt'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
@@ -258,7 +262,24 @@ export function setupGoalHandlers(
 		}
 
 		const goalManager = goalManagerFactory(params.roomId);
-		const goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+
+		// For recurring missions with an active execution, use the atomic dual-write path.
+		let goal;
+		const linkedGoal = await goalManager.getGoal(params.goalId);
+		if (linkedGoal?.missionType === 'recurring') {
+			const activeExecution = goalManager.getActiveExecution(params.goalId);
+			if (activeExecution) {
+				goal = await goalManager.linkTaskToExecution(
+					params.goalId,
+					activeExecution.id,
+					params.taskId
+				);
+			} else {
+				goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+			}
+		} else {
+			goal = await goalManager.linkTaskToGoal(params.goalId, params.taskId);
+		}
 
 		// Emit goal.updated event (task linked and progress recalculated)
 		emitGoalUpdated(params.roomId, params.goalId, goal);
@@ -285,6 +306,102 @@ export function setupGoalHandlers(
 		emitGoalUpdated(params.roomId, params.goalId);
 
 		return { success };
+	});
+
+	// goal.setSchedule - Set or update cron schedule for a recurring mission
+	messageHub.onRequest('goal.setSchedule', async (data) => {
+		const params = data as {
+			roomId: string;
+			goalId: string;
+			cronExpression: string;
+			timezone?: string;
+		};
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+		if (!params.cronExpression) throw new Error('Cron expression is required');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.getGoal(params.goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+		if (goal.missionType !== 'recurring') {
+			throw new Error(
+				`Goal ${params.goalId} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'})`
+			);
+		}
+		if (!parseCronExpression(params.cronExpression)) {
+			throw new Error(
+				`Invalid cron expression: "${params.cronExpression}". Use 5-field cron or presets (@daily, @weekly, @hourly, @monthly).`
+			);
+		}
+
+		const tz = params.timezone ?? goal.schedule?.timezone ?? getSystemTimezone();
+		const nextRunAt = getNextRunAt(params.cronExpression, tz);
+		if (nextRunAt === null) {
+			throw new Error(
+				`Cron expression "${params.cronExpression}" produces no future run times.`
+			);
+		}
+
+		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+			schedule: { expression: params.cronExpression, timezone: tz },
+			nextRunAt,
+			missionType: 'recurring',
+		});
+
+		emitGoalUpdated(params.roomId, params.goalId, updated);
+		return { goal: updated, nextRunAt };
+	});
+
+	// goal.pauseSchedule - Pause the schedule for a recurring mission
+	messageHub.onRequest('goal.pauseSchedule', async (data) => {
+		const params = data as { roomId: string; goalId: string };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.getGoal(params.goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+		if (goal.missionType !== 'recurring') {
+			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
+		}
+
+		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+			schedulePaused: true,
+		});
+		emitGoalUpdated(params.roomId, params.goalId, updated);
+		return { goal: updated };
+	});
+
+	// goal.resumeSchedule - Resume a paused recurring mission schedule
+	messageHub.onRequest('goal.resumeSchedule', async (data) => {
+		const params = data as { roomId: string; goalId: string };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.getGoal(params.goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+		if (goal.missionType !== 'recurring') {
+			throw new Error(`Goal ${params.goalId} is not a recurring mission.`);
+		}
+		if (!goal.schedule) {
+			throw new Error(
+				`Goal ${params.goalId} has no schedule set. Set a schedule first.`
+			);
+		}
+
+		// Recalculate next_run_at from current time
+		const tz = goal.schedule.timezone ?? getSystemTimezone();
+		const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+		const updated = await goalManager.updateGoalStatus(params.goalId, goal.status, {
+			schedulePaused: false,
+			nextRunAt: nextRunAt ?? undefined,
+		});
+		emitGoalUpdated(params.roomId, params.goalId, updated);
+		return { goal: updated, nextRunAt };
 	});
 
 	// task.approve - Human approves the PR; resume leader to complete task flow

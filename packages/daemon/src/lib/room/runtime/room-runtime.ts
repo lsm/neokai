@@ -66,6 +66,7 @@ import {
 	type LeaderCompleteHookContext,
 } from './lifecycle-hooks';
 import { checkDeadLoop, DEFAULT_DEAD_LOOP_CONFIG, type DeadLoopConfig } from './dead-loop-detector';
+import { getNextRunAt } from './cron-utils';
 
 const log = new Logger('room-runtime');
 
@@ -2020,7 +2021,9 @@ export class RoomRuntime {
 
 	private async executeTick(): Promise<void> {
 		// Safety net: detect and recover zombie groups (sessions missing from cache).
-		// Sync detection avoids unnecessary microtask checkpoints in the common case.
+		// Ordering: zombie recovery runs BEFORE tickRecurringMissions so that any
+		// in-flight execution from a prior restart is recovered first, preventing a
+		// duplicate catch-up trigger from the scheduler.
 		const zombies = this.findZombieGroups();
 		if (zombies.length > 0) {
 			await this.recoverZombieGroups(zombies);
@@ -2030,6 +2033,19 @@ export class RoomRuntime {
 		// This recovers cases where the observer callback fired but the routing failed silently.
 		// Note: synchronous scan, only fires async work as fire-and-forget if stuck workers are found.
 		this.recoverStuckWorkers();
+
+		// Recurring mission scheduler: check for due missions and trigger new executions.
+		// Also checks for completed executions to advance next_run_at.
+		// Runs only when runtime is in 'running' state (enforced by tick() guard above).
+		// tickRecurringMissions() returns void (synchronously) when there are no recurring goals,
+		// or Promise<void> when async work is needed — only await in the latter case to preserve
+		// the microtask-ordering behaviour that existing tests depend on.
+		const recurringWork = this.tickRecurringMissions();
+		if (recurringWork !== undefined) {
+			await recurringWork;
+			// Bail out early if the runtime was stopped during the async recurring mission work.
+			if (this.state !== 'running') return;
+		}
 
 		// Check capacity — groups awaiting human review don't consume slots
 		const activeGroups = this.groupRepo
@@ -2086,6 +2102,167 @@ export class RoomRuntime {
 	}
 
 	/**
+	 * Scheduler tick for recurring missions.
+	 *
+	 * Two phases per tick:
+	 * Phase 1 — Completion check: for each recurring goal with a running execution,
+	 *   check whether all of its tasks have reached a terminal state. If so, mark
+	 *   the execution as completed and advance next_run_at.
+	 * Phase 2 — Trigger check: for each recurring goal where next_run_at <= now
+	 *   AND schedule_paused = false AND no active execution, start a new execution.
+	 *
+	 * Overlap prevention: enforced at two levels —
+	 *   (1) DB partial unique index on mission_executions(goal_id) WHERE status='running'
+	 *   (2) App-level check via getActiveExecution() before insert
+	 *
+	 * Catch-up: if next_run_at is in the past, fire once immediately, then
+	 * advance from current time (skipping missed intervals).
+	 *
+	 * Precision: up to 30s jitter from tick interval (acceptable for @hourly+).
+	 */
+	/**
+	 * Returns void synchronously when there are no recurring goals (to preserve microtask ordering),
+	 * or a Promise<void> when async work is needed.
+	 * Call site must conditionally await: `const p = this.tickRecurringMissions(); if (p) await p;`
+	 */
+	private tickRecurringMissions(): void | Promise<void> {
+		// Synchronous pre-check — goalRepo.listGoals is a bun:sqlite synchronous call.
+		// Avoids an extra microtask yield when there are no recurring goals.
+		const recurringGoals = this.goalManager.listGoalsSync('active').filter(
+			(g) => g.missionType === 'recurring'
+		);
+
+		if (recurringGoals.length === 0) return; // synchronous return — no microtask added
+
+		return this._doTickRecurringMissions(recurringGoals);
+	}
+
+	private async _doTickRecurringMissions(recurringGoals: RoomGoal[]): Promise<void> {
+
+		const nowSec = Math.floor(Date.now() / 1000);
+
+		// Phase 1: Complete finished executions
+		for (const goal of recurringGoals) {
+			const activeExecution = this.goalManager.getActiveExecution(goal.id);
+			if (!activeExecution) continue;
+
+			// Check if all tasks for this execution are in terminal state
+			const taskIds = activeExecution.taskIds;
+			if (taskIds.length === 0) continue;
+
+			const tasks = await Promise.all(taskIds.map((id) => this.taskManager.getTask(id)));
+			const validTasks = tasks.filter(Boolean) as NonNullable<(typeof tasks)[number]>[];
+			if (validTasks.length === 0) continue;
+
+			const isTerminal = (status: string) =>
+				status === 'completed' || status === 'needs_attention' || status === 'cancelled';
+			const allTerminal = validTasks.every((t) => isTerminal(t.status));
+			if (!allTerminal) continue;
+
+			// All tasks are terminal: mark execution as completed (or failed)
+			const anyCompleted = validTasks.some((t) => t.status === 'completed');
+			const resultSummary = anyCompleted
+				? `Execution ${activeExecution.executionNumber} completed: ${validTasks.filter((t) => t.status === 'completed').length}/${validTasks.length} tasks succeeded.`
+				: `Execution ${activeExecution.executionNumber} failed: all tasks reached terminal state without completion.`;
+
+			if (anyCompleted) {
+				this.goalManager.completeExecution(activeExecution.id, resultSummary);
+				log.info(`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} completed`);
+			} else {
+				this.goalManager.failExecution(activeExecution.id, resultSummary);
+				log.warn(`Recurring mission ${goal.id} execution ${activeExecution.executionNumber} failed`);
+			}
+
+			// Advance next_run_at from current time
+			if (goal.schedule) {
+				const tz = goal.schedule.timezone ?? 'UTC';
+				const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+				if (nextRunAt !== null) {
+					await this.goalManager.updateNextRunAt(goal.id, nextRunAt);
+					log.info(
+						`Recurring mission ${goal.id} next run scheduled at ${new Date(nextRunAt * 1000).toISOString()}`
+					);
+				}
+			}
+
+			// Emit goal progress update
+			if (this.daemonHub) {
+				const updatedGoal = await this.goalManager.getGoal(goal.id);
+				if (updatedGoal) {
+					void this.daemonHub.emit('goal.progressUpdated', {
+						sessionId: `room:${this.roomId}`,
+						roomId: this.roomId,
+						goalId: goal.id,
+						progress: updatedGoal.progress,
+					});
+				}
+			}
+		}
+
+		// Phase 2: Trigger new executions for due missions
+		// Refresh goal list after Phase 1 mutations
+		const refreshedGoals = (await this.goalManager.listGoals('active')).filter(
+			(g) => g.missionType === 'recurring'
+		);
+
+		for (const goal of refreshedGoals) {
+			if (goal.schedulePaused) continue;
+			if (!goal.schedule) continue;
+			if (goal.nextRunAt === undefined || goal.nextRunAt === null) continue;
+			if (goal.nextRunAt > nowSec) continue; // not due yet
+
+			// Check for active execution (overlap prevention — app level)
+			const activeExecution = this.goalManager.getActiveExecution(goal.id);
+			if (activeExecution) {
+				// Overlap: execution still running but next_run_at is past
+				// Advance next_run_at to prevent repeated log spam on every tick
+				log.warn(
+					`Recurring mission ${goal.id} (${goal.title}) due but execution ${activeExecution.id} still running — skipping trigger, advancing next_run_at`
+				);
+				const tz = goal.schedule.timezone ?? 'UTC';
+				const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+				if (nextRunAt !== null) {
+					await this.goalManager.updateNextRunAt(goal.id, nextRunAt);
+				}
+				continue;
+			}
+
+			// Trigger a new execution (wrapped in try/catch to handle DB unique constraint)
+			let execution;
+			try {
+				execution = this.goalManager.startExecution(goal.id);
+				log.info(
+					`Recurring mission ${goal.id} (${goal.title}) triggered execution ${execution.executionNumber}`
+				);
+			} catch (err) {
+				// Unique constraint violation from DB index: another process already inserted a row.
+				// Idempotent — log and skip.
+				log.warn(
+					`Recurring mission ${goal.id}: failed to start execution (possible race) — ${err}`
+				);
+				continue;
+			}
+
+			// Advance next_run_at immediately (catch-up: skip missed intervals by computing from now)
+			const tz = goal.schedule.timezone ?? 'UTC';
+			const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+			if (nextRunAt !== null) {
+				await this.goalManager.updateNextRunAt(goal.id, nextRunAt);
+			}
+
+			// Fetch previous execution result for context
+			const prevExecutions = this.goalManager.listExecutions(goal.id, 2);
+			const prevCompleted = prevExecutions.find(
+				(e) => e.id !== execution.id && e.status === 'completed'
+			);
+			const previousResultSummary = prevCompleted?.resultSummary;
+
+			// Spawn planning group with executionId
+			await this.spawnPlanningGroup(goal, undefined, execution.id, previousResultSummary);
+		}
+	}
+
+	/**
 	 * Find the highest-priority active goal that needs planning.
 	 *
 	 * A goal needs planning when:
@@ -2100,6 +2277,9 @@ export class RoomRuntime {
 		const activeGoals = await this.goalManager.listGoals('active');
 
 		for (const goal of activeGoals) {
+			// Recurring missions are ONLY planned through the scheduler path (tickRecurringMissions).
+			// Never let the standard selector pick them up.
+			if (goal.missionType === 'recurring') continue;
 			const linkedTaskIds = goal.linkedTaskIds ?? [];
 
 			let needsPlanning: boolean;
@@ -2159,21 +2339,40 @@ export class RoomRuntime {
 	/**
 	 * Spawn a planning (Planner, Leader) group for a goal that has no tasks yet.
 	 * Creates a planning task, increments planning_attempts, and starts the group.
+	 *
+	 * For recurring missions, pass executionId to correlate the group with the
+	 * mission_executions row. Pass previousResultSummary for continuity context.
 	 */
-	private async spawnPlanningGroup(goal: RoomGoal, replanContext?: ReplanContext): Promise<void> {
+	private async spawnPlanningGroup(
+		goal: RoomGoal,
+		replanContext?: ReplanContext,
+		executionId?: string,
+		previousResultSummary?: string
+	): Promise<void> {
 		const isReplan = !!replanContext;
+		const isRecurringExecution = !!executionId;
+
 		// Create the planning task itself
 		const planningTask = await this.taskManager.createTask({
 			title: isReplan ? `Replan: ${goal.title}` : `Plan: ${goal.title}`,
 			description: isReplan
 				? `Replan the goal "${goal.title}" after task failure. Build on completed work.`
-				: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
+				: isRecurringExecution
+					? `Scheduled execution of "${goal.title}".` +
+						(previousResultSummary
+							? ` Previous run result: ${previousResultSummary}`
+							: ' (first execution)')
+					: `Examine the codebase and break down the goal "${goal.title}" into concrete, executable tasks.`,
 			taskType: 'planning',
 			status: 'pending',
 		});
 
-		// Link planning task to the goal
-		await this.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+		// Link planning task to the goal (or execution for recurring missions)
+		if (isRecurringExecution) {
+			await this.goalManager.linkTaskToExecution(goal.id, executionId, planningTask.id);
+		} else {
+			await this.goalManager.linkTaskToGoal(goal.id, planningTask.id);
+		}
 
 		// Increment planning attempts BEFORE spawning (counts attempts, not outcomes)
 		await this.goalManager.incrementPlanningAttempts(goal.id);
@@ -2192,8 +2391,12 @@ export class RoomRuntime {
 				createdByTaskId: planningTask.id,
 				assignedAgent: params.agent,
 			});
-			// Link the draft task to the goal so it appears in the room
-			await this.goalManager.linkTaskToGoal(goal.id, task.id);
+			// Link the draft task to the goal (or execution for recurring missions)
+			if (isRecurringExecution) {
+				await this.goalManager.linkTaskToExecution(goal.id, executionId, task.id);
+			} else {
+				await this.goalManager.linkTaskToGoal(goal.id, task.id);
+			}
 			log.info(`Planning created draft task: ${task.id} (${task.title})`);
 			return { id: task.id, title: task.title };
 		};
@@ -2296,12 +2499,19 @@ export class RoomRuntime {
 		// Wire up the mutable ref so isPlanApproved can query the group
 		spawnedGroupId = group.id;
 
+		// For recurring missions, persist the execution ID in group metadata so
+		// recoverZombieGroups() can correlate the group back to mission_executions after restart.
+		if (isRecurringExecution) {
+			this.groupRepo.setExecutionId(group.id, executionId);
+		}
+
 		// Notify UI: planning task is now in_progress
 		await this.emitTaskUpdateById(planningTask.id);
 		this.setupMirroring(group);
 
 		log.info(
-			`Spawned planning group for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}`
+			`Spawned planning group for goal ${goal.id} (${goal.title}), attempt ${(goal.planning_attempts ?? 0) + 1}` +
+				(isRecurringExecution ? ` [execution ${executionId}]` : '')
 		);
 	}
 
