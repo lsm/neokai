@@ -236,6 +236,7 @@ declare namespace coreTypes {
         PromptRequest,
         PromptResponse,
         RewindFilesResult,
+        SDKAPIRetryMessage,
         SDKAssistantMessageError,
         SDKAssistantMessage,
         SDKAuthStatusMessage,
@@ -1994,7 +1995,7 @@ export declare type SdkMcpToolDefinition<Schema extends AnyZodRawShape = AnyZodR
     handler: (args: InferShape<Schema>, extra: unknown) => Promise<CallToolResult>;
 };
 
-export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
+export declare type SDKMessage = SDKAssistantMessage | SDKUserMessage | SDKUserMessageReplay | SDKResultMessage | SDKSystemMessage | SDKPartialAssistantMessage | SDKCompactBoundaryMessage | SDKStatusMessage | SDKAPIRetryMessage | SDKLocalCommandOutputMessage | SDKHookStartedMessage | SDKHookProgressMessage | SDKHookResponseMessage | SDKToolProgressMessage | SDKAuthStatusMessage | SDKTaskNotificationMessage | SDKTaskStartedMessage | SDKTaskProgressMessage | SDKFilesPersistedEvent | SDKToolUseSummaryMessage | SDKRateLimitEvent | SDKElicitationCompleteMessage | SDKPromptSuggestionMessage;
 
 export declare type SDKPartialAssistantMessage = {
     type: 'stream_event';
@@ -2230,6 +2231,18 @@ export declare type SDKStatusMessage = {
     subtype: 'status';
     status: SDKStatus;
     permissionMode?: PermissionMode;
+    uuid: UUID;
+    session_id: string;
+};
+
+export declare type SDKAPIRetryMessage = {
+    type: 'system';
+    subtype: 'api_retry';
+    attempt: number;
+    max_retries: number;
+    retry_delay_ms: number;
+    error_status: number | null;
+    error: SDKAssistantMessageError;
     uuid: UUID;
     session_id: string;
 };

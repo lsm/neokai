@@ -16,6 +16,7 @@ export {
   isSDKCompactBoundary,
   isSDKStatusMessage,
   isSDKHookResponse,
+  isSDKAPIRetryMessage,
   isSDKStreamEvent,
   isSDKToolProgressMessage,
   isSDKAuthStatusMessage,
