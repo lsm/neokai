@@ -102,19 +102,25 @@ const FALLBACK_MODELS: ModelInfo[] = [
  * are always available for resolution, even when only non-Anthropic
  * providers are configured.
  *
- * Provider models take precedence over fallback models with same ID.
+ * Provider models take precedence over fallback models with the same
+ * (provider, id) pair. Models with the same id but different providers
+ * are kept as separate entries so that provider-filtered lookup in
+ * getModelInfo can distinguish them (e.g. both 'anthropic' and
+ * 'anthropic-copilot' may expose 'claude-sonnet-4.6').
  */
 function mergeWithFallbackModels(providerModels: ModelInfo[]): ModelInfo[] {
+	// Key by "provider:id" so same-id models from different providers
+	// are preserved as distinct entries rather than last-writer-wins.
 	const modelMap = new Map<string, ModelInfo>();
 
 	// Add fallback models first
 	for (const model of FALLBACK_MODELS) {
-		modelMap.set(model.id, model);
+		modelMap.set(`${model.provider}:${model.id}`, model);
 	}
 
-	// Provider models override fallbacks with same ID
+	// Provider models override fallbacks with same (provider, id)
 	for (const model of providerModels) {
-		modelMap.set(model.id, model);
+		modelMap.set(`${model.provider}:${model.id}`, model);
 	}
 
 	return Array.from(modelMap.values());
@@ -390,12 +396,17 @@ export async function getModelInfo(
 
 /**
  * Validate if a model ID or alias is valid
+ *
+ * @param providerId - Optional provider ID to prefer for disambiguation (see getModelInfo).
+ *   Validation uses an unfiltered fallback, so a model is considered valid if it exists
+ *   in *any* provider, but provider-specific models are preferred when `providerId` is set.
  */
 export async function isValidModel(
 	idOrAlias: string,
-	cacheKey: string = 'global'
+	cacheKey: string = 'global',
+	providerId?: string
 ): Promise<boolean> {
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey);
+	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
 	return modelInfo !== null;
 }
 

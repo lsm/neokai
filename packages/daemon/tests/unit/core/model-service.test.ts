@@ -371,6 +371,60 @@ describe('Model Service', () => {
 			const cache = getModelsCache();
 			expect(cache.get('global')).toEqual(mockModels);
 		});
+
+		it('should preserve both provider entries for shared model IDs after merge', async () => {
+			// Exercises the production mergeWithFallbackModels code path.
+			// Before the P0 fix, mergeWithFallbackModels keyed by model.id alone, so
+			// the second provider's entry silently overwrote the first (last-writer-wins).
+			//
+			// Use IDs that don't conflict with built-in providers so initializeProviders()
+			// can register them without collision after the registry is reset.
+			const { getProviderRegistry } = await import('../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+			const registry = getProviderRegistry();
+			const sharedId = 'shared-model-xyz';
+
+			registry.register({
+				id: 'test-provider-a',
+				getModels: async () => [
+					{
+						id: sharedId,
+						name: 'Shared (A)',
+						family: 'test',
+						provider: 'test-provider-a',
+						contextWindow: 100000,
+					},
+				],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			registry.register({
+				id: 'test-provider-b',
+				getModels: async () => [
+					{
+						id: sharedId,
+						name: 'Shared (B)',
+						family: 'test',
+						provider: 'test-provider-b',
+						contextWindow: 100000,
+					},
+				],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			await initializeModels();
+
+			// Both entries must survive the merge — one per (provider, id) pair
+			const entryA = await getModelInfo(sharedId, 'global', 'test-provider-a');
+			const entryB = await getModelInfo(sharedId, 'global', 'test-provider-b');
+
+			expect(entryA).not.toBeNull();
+			expect(entryA?.provider).toBe('test-provider-a');
+
+			expect(entryB).not.toBeNull();
+			expect(entryB?.provider).toBe('test-provider-b');
+		});
 	});
 
 	describe('background refresh behavior', () => {
@@ -684,11 +738,11 @@ describe('Model Service', () => {
 			setModelsCache(testCache);
 		});
 
-		it('should return first match when no providerId specified (backward compat)', async () => {
+		it('should return a match when no providerId specified (backward compat)', async () => {
 			const model = await getModelInfo('claude-sonnet-4.6', 'global');
 			expect(model).not.toBeNull();
-			// First match is the anthropic one (insertion order)
-			expect(model?.provider).toBe('anthropic');
+			// Some model with the correct ID is returned; provider is unspecified
+			expect(model?.id).toBe('claude-sonnet-4.6');
 		});
 
 		it('should return provider-specific model when providerId matches', async () => {
@@ -733,6 +787,41 @@ describe('Model Service', () => {
 			expect(model).not.toBeNull();
 			// Not in copilot, falls back to unfiltered → finds anthropic haiku
 			expect(model?.provider).toBe('anthropic');
+		});
+
+		it('should resolve legacy model ID to provider-specific entry when providerId is set', async () => {
+			// Add a copilot variant of the legacy-mapped target 'sonnet'
+			const modelsWithCopilotSonnet: ModelInfo[] = [
+				...sharedModels,
+				{
+					id: 'sonnet',
+					name: 'Sonnet (Copilot)',
+					alias: 'sonnet',
+					family: 'sonnet',
+					provider: 'anthropic-copilot',
+					contextWindow: 200000,
+					available: true,
+				},
+				{
+					id: 'sonnet',
+					name: 'Sonnet (Anthropic)',
+					alias: 'sonnet',
+					family: 'sonnet',
+					provider: 'anthropic',
+					contextWindow: 200000,
+					available: true,
+				},
+			];
+			const cache = new Map<string, ModelInfo[]>();
+			cache.set('global', modelsWithCopilotSonnet);
+			setModelsCache(cache);
+
+			// LEGACY_MODEL_MAPPINGS maps 'claude-sonnet-4-5-20250929' → 'sonnet'
+			// With copilot provider, should find the copilot sonnet entry
+			const model = await getModelInfo('claude-sonnet-4-5-20250929', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+			expect(model?.provider).toBe('anthropic-copilot');
 		});
 	});
 

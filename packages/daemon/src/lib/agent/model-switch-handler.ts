@@ -107,8 +107,8 @@ export class ModelSwitchHandler {
 		} = this.ctx;
 
 		try {
-			// Validate the model
-			const isValid = await isValidModel(newModel);
+			// Validate the model, preferring session provider for disambiguation
+			const isValid = await isValidModel(newModel, 'global', session.config.provider);
 			if (!isValid) {
 				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
 				logger.error(`${error}`);
