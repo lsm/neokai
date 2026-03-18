@@ -42,8 +42,6 @@ import type {
 import type { DaemonHub } from '../daemon-hub';
 import { Logger } from '../logger';
 import type { SessionManager } from '../session-manager';
-
-const log = new Logger('config-handlers');
 import {
 	validateSystemPromptConfig,
 	validateToolsConfig,
@@ -55,6 +53,8 @@ import {
 	validateBetasConfig,
 	validateEnvConfig,
 } from '../config-validators';
+
+const log = new Logger('config-handlers');
 
 /**
  * Setup SDK config RPC handlers
@@ -96,21 +96,26 @@ export function setupConfigHandlers(
 
 		// Handle model change (runtime native via existing handleModelSwitch)
 		if (settings.model) {
-			const sessionConfig = agentSession.getSessionData().config;
-			if (!sessionConfig.provider) {
-				log.warn(
-					'config.model.update: session has no provider configured — using anthropic as legacy fallback'
-				);
-			}
-			const provider = sessionConfig.provider ?? 'anthropic';
-			const result = await agentSession.handleModelSwitch(settings.model, provider);
-			if (result.success) {
-				results.applied.push('model');
-			} else {
+			const provider = agentSession.getSessionData().config.provider;
+			if (!provider) {
+				// Session has no provider — cannot route the model switch.
+				// This is a misconfigured session; surface the error rather than
+				// silently falling back to 'anthropic' (which switchModel rejects anyway).
+				log.warn('config.model.update: session has no provider configured — skipping model switch');
 				results.errors.push({
 					field: 'model',
-					error: result.error || 'Failed to switch model',
+					error: 'Session has no provider configured',
 				});
+			} else {
+				const result = await agentSession.handleModelSwitch(settings.model, provider);
+				if (result.success) {
+					results.applied.push('model');
+				} else {
+					results.errors.push({
+						field: 'model',
+						error: result.error || 'Failed to switch model',
+					});
+				}
 			}
 		}
 
@@ -715,21 +720,25 @@ export function setupConfigHandlers(
 		const runtimeConfig = { ...config };
 
 		if (runtimeConfig.model) {
-			const sessionCfg = agentSession.getSessionData().config;
-			if (!sessionCfg.provider) {
-				log.warn(
-					'config.updateBulk: session has no provider configured — using anthropic as legacy fallback'
-				);
-			}
-			const provider = sessionCfg.provider ?? 'anthropic';
-			const result = await agentSession.handleModelSwitch(runtimeConfig.model, provider);
-			if (result.success) {
-				results.applied.push('model');
-			} else {
+			const provider = agentSession.getSessionData().config.provider;
+			if (!provider) {
+				// Session has no provider — surface the error instead of silently
+				// falling back (switchModel rejects missing provider internally anyway).
+				log.warn('config.updateBulk: session has no provider configured — skipping model switch');
 				results.errors.push({
 					field: 'model',
-					error: result.error || 'Failed',
+					error: 'Session has no provider configured',
 				});
+			} else {
+				const result = await agentSession.handleModelSwitch(runtimeConfig.model, provider);
+				if (result.success) {
+					results.applied.push('model');
+				} else {
+					results.errors.push({
+						field: 'model',
+						error: result.error || 'Failed',
+					});
+				}
 			}
 			delete runtimeConfig.model;
 		}
