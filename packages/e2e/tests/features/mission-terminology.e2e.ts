@@ -17,9 +17,7 @@ import { waitForWebSocketConnected } from '../helpers/wait-helpers';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function createRoom(
-	page: Parameters<typeof waitForWebSocketConnected>[0]
-): Promise<string> {
+async function createRoom(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<string> {
 	await waitForWebSocketConnected(page);
 	return page.evaluate(async () => {
 		const hub = window.__messageHub || window.appState?.messageHub;

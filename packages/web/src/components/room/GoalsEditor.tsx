@@ -661,7 +661,11 @@ export function GoalsEditor({
 			)}
 
 			{/* Create Mission Modal */}
-			<Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Mission">
+			<Modal
+				isOpen={showCreateModal}
+				onClose={() => setShowCreateModal(false)}
+				title="Create Mission"
+			>
 				<GoalForm
 					onSubmit={onCreateGoal}
 					onCancel={() => setShowCreateModal(false)}
