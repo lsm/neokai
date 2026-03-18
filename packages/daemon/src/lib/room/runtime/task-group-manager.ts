@@ -91,7 +91,7 @@ export interface SessionFactory {
 	 *
 	 * Returns true if successful, false if the session is not in the cache.
 	 */
-	startSession?(sessionId: string): Promise<boolean>;
+	startSession(sessionId: string): Promise<boolean>;
 	/**
 	 * Set runtime MCP servers on a restored session.
 	 * MCP servers are non-serializable and lost on restart — must be re-created.

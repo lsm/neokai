@@ -598,13 +598,22 @@ export class RoomRuntimeService {
 						// Restore MCP servers (planner-tools, leader-agent-tools)
 						await runtime.restoreMcpServersForGroup(group);
 
-						// Inject continuation message to resume work
-						// Groups awaiting human review don't need a message — human will provide one
-						if (!group.submittedForReview) {
+						// Resume work after restart.
+						// - Groups awaiting human review: no message needed, human will provide one.
+						// - Groups waiting for a question answer: start the SDK query so it
+						//   re-encounters the pending AskUserQuestion tool call and re-establishes
+						//   pendingResolver. Injecting a user message would corrupt the conversation
+						//   by adding an orphaned turn after the unanswered tool use.
+						// - All other groups: inject a continuation message to resume work.
+						if (!group.submittedForReview && !group.waitingForQuestion) {
 							await sessionFactory.injectMessage(
 								group.workerSessionId,
 								'The system was restarted. Continue working on the task.'
 							);
+						} else if (group.waitingForQuestion) {
+							const sessionId =
+								group.waitingSession === 'leader' ? group.leaderSessionId : group.workerSessionId;
+							await sessionFactory.startSession(sessionId);
 						}
 					} catch (error) {
 						log.error(`Failed to restore/inject continuation for group ${group.id}:`, error);

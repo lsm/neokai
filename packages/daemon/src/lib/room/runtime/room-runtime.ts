@@ -2092,7 +2092,7 @@ export class RoomRuntime {
 					const sessionId =
 						group.waitingSession === 'leader' ? group.leaderSessionId : group.workerSessionId;
 					const restored = group.waitingSession === 'leader' ? leaderRestored : workerRestored;
-					if (restored && this.sessionFactory.startSession) {
+					if (restored) {
 						await this.sessionFactory.startSession(sessionId);
 						log.info(
 							`[ZombieRecovery] Group ${group.id}: started SDK query for ` +
