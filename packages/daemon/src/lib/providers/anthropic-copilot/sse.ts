@@ -139,6 +139,10 @@ export class AnthropicStreamWriter {
 	 * Write one `tool_use` content block WITHOUT writing the epilogue or ending
 	 * the response.  Use this when multiple parallel tool calls need to be
 	 * emitted in the same response — call `sendToolUseEpilogue()` afterward.
+	 *
+	 * NOTE: Tool JSON bytes are NOT counted in `outputCharCount`.  The heuristic
+	 * `output_tokens` estimate in `message_delta` covers only text delta
+	 * characters accumulated via `flushDeltas()`.
 	 */
 	writeToolUseBlock(
 		res: ServerResponse,

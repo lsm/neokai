@@ -230,7 +230,11 @@ async function handleMessages(
 						// next HTTP request will route correctly without any help here.
 						// Cleanup (cleanupConversation / releaseConversation) is handled
 						// below based on the StreamingOutcome kind.
-					}
+					},
+					// Heuristic input_tokens for the continuation turn: the full
+					// conversation history (system + all messages including tool results)
+					// is re-serialised on every request, so we use that as the input text.
+					(extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages)
 				);
 				if (outcome.kind === 'completed') {
 					// streamSession already called session.disconnect() — use

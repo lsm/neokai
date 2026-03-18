@@ -273,7 +273,9 @@ export function resumeSessionStreaming(
 	res: ServerResponse,
 	registry: ToolBridgeRegistry,
 	toolResults: ToolResult[],
-	onDone: () => void = () => {}
+	onDone: () => void = () => {},
+	/** Raw input text (system prompt + full message history) for heuristic token estimation. */
+	inputText = ''
 ): Promise<StreamingOutcome> {
 	return streamSession(
 		session,
@@ -288,6 +290,7 @@ export function resumeSessionStreaming(
 				registry.resolveToolResult(toolUseId, result, isError);
 			}
 		},
-		onDone
+		onDone,
+		inputText
 	);
 }
