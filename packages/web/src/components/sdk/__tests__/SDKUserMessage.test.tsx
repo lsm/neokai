@@ -416,6 +416,32 @@ describe('SDKUserMessage', () => {
 				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
 			});
 		});
+
+		it('should revert to copy icon after 1500ms', async () => {
+			vi.mocked(copyToClipboard).mockResolvedValue(true);
+			vi.useFakeTimers();
+
+			const message = createTextMessage('Hello world');
+			const { container } = render(<SDKUserMessage message={message} />);
+
+			const copyButton = container.querySelector('button[title="Copy message"]');
+			fireEvent.click(copyButton!);
+
+			// Should show Copied! state
+			await vi.waitFor(() => {
+				expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+			});
+
+			// Advance timer past 1500ms
+			vi.advanceTimersByTime(1500);
+
+			// Should revert to copy state
+			await vi.waitFor(() => {
+				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+			});
+
+			vi.useRealTimers();
+		});
 	});
 
 	describe('Rewind Mode', () => {

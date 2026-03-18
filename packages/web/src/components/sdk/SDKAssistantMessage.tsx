@@ -17,7 +17,7 @@ import {
 	isThinkingBlock,
 	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
@@ -81,12 +81,17 @@ export function SDKAssistantMessage({
 
 	const [copied, setCopied] = useState(false);
 
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
 	const handleCopy = async () => {
 		const textContent = getTextContent();
 		const success = await copyToClipboard(textContent);
 		if (success) {
 			setCopied(true);
-			setTimeout(() => setCopied(false), 1500);
 		}
 	};
 

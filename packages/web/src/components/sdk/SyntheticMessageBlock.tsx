@@ -11,11 +11,11 @@
  * - Timestamp and synthetic badge in footer
  */
 
+import { useEffect, useState } from 'preact/hooks';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { messageSpacing, borderRadius } from '../../lib/design-tokens.ts';
 import { Tooltip } from '../ui/Tooltip.tsx';
 import { IconButton } from '../ui/IconButton.tsx';
-import { toast } from '../../lib/toast.ts';
 
 interface Props {
 	/** Content to display - can be a simple string or array of content blocks */
@@ -75,12 +75,18 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 			.join('\n');
 	};
 
+	const [copied, setCopied] = useState(false);
+
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
 	const handleCopy = async () => {
 		const success = await copyToClipboard(getTextContent());
 		if (success) {
-			toast.success('Message copied to clipboard');
-		} else {
-			toast.error('Failed to copy message');
+			setCopied(true);
 		}
 	};
 
@@ -191,15 +197,31 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 						</span>
 					</Tooltip>
 
-					<IconButton size="md" onClick={handleCopy} title="Copy message">
-						<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path
-								strokeLinecap="round"
-								strokeLinejoin="round"
-								strokeWidth={2}
-								d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-							/>
-						</svg>
+					<IconButton
+						size="md"
+						onClick={handleCopy}
+						title={copied ? 'Copied!' : 'Copy message'}
+						class={copied ? 'text-green-400' : ''}
+					>
+						{copied ? (
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M5 13l4 4L19 7"
+								/>
+							</svg>
+						) : (
+							<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth={2}
+									d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+								/>
+							</svg>
+						)}
 					</IconButton>
 				</div>
 			</div>

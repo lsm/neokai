@@ -5,7 +5,7 @@
  */
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
@@ -148,11 +148,16 @@ export function SDKUserMessage({
 		return hasErrorOutput(textContent);
 	};
 
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
 	const handleCopy = async () => {
 		const success = await copyToClipboard(textContent);
 		if (success) {
 			setCopied(true);
-			setTimeout(() => setCopied(false), 1500);
 		}
 	};
 
