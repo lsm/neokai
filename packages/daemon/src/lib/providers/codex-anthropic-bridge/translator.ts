@@ -43,6 +43,12 @@ export type AnthropicTool = {
 	input_schema: Record<string, unknown>;
 };
 
+export type ToolChoice =
+	| { type: 'auto' }
+	| { type: 'none' }
+	| { type: 'any' }
+	| { type: 'tool'; name: string };
+
 export type AnthropicRequest = {
 	model: string;
 	messages: AnthropicMessage[];
@@ -50,6 +56,12 @@ export type AnthropicRequest = {
 	tools?: AnthropicTool[];
 	max_tokens?: number;
 	stream?: boolean;
+	/**
+	 * Accepted for API compatibility but not forwarded to Codex —
+	 * the Codex app-server does not expose tool-choice control.
+	 * A warning is logged when this field is present.
+	 */
+	tool_choice?: ToolChoice;
 };
 
 // ---------------------------------------------------------------------------
