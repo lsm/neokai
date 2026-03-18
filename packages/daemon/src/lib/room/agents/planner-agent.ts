@@ -49,6 +49,18 @@ export interface PlannerCreateTaskParams {
 	dependsOn?: string[];
 }
 
+/** Metric status for measurable mission replanning */
+export interface MetricReplanStatus {
+	name: string;
+	current: number;
+	target: number;
+	baseline?: number;
+	direction?: 'increase' | 'decrease';
+	met: boolean;
+	/** Recent metric history values (most recent last) */
+	recentHistory?: number[];
+}
+
 /** Context passed to the planner when replanning after a task failure */
 export interface ReplanContext {
 	/** Tasks that completed successfully (DO NOT redo) */
@@ -57,6 +69,10 @@ export interface ReplanContext {
 	failedTask: { title: string; error: string };
 	/** Planning attempt number (1-indexed) */
 	attempt: number;
+	/** Optional: metric context for measurable mission replanning */
+	metricContext?: {
+		metrics: MetricReplanStatus[];
+	};
 }
 
 export interface PlannerAgentConfig {
@@ -352,6 +368,29 @@ export function buildPlannerTaskMessage(config: PlannerAgentConfig): string {
 		sections.push('');
 		sections.push(`Create new tasks that address the failure and complete the remaining goal.`);
 		sections.push(`Do NOT create tasks for work that already completed successfully.`);
+
+		// Metric context for measurable missions
+		if (rc.metricContext && rc.metricContext.metrics.length > 0) {
+			sections.push(`\n### Metric Targets (Measurable Mission)\n`);
+			sections.push(
+				`This goal has KPI targets. Your plan must include tasks that move these metrics toward their targets.\n`
+			);
+			for (const m of rc.metricContext.metrics) {
+				const direction = m.direction ?? 'increase';
+				const statusIcon = m.met ? '[MET]' : '[NOT MET]';
+				const dirStr = direction === 'increase' ? 'increase to' : 'decrease to';
+				let line = `- **${m.name}**: current=${m.current}, need to ${dirStr} ${m.target} ${statusIcon}`;
+				if (direction === 'decrease' && m.baseline !== undefined) {
+					line += `, baseline=${m.baseline}`;
+				}
+				sections.push(line);
+				if (m.recentHistory && m.recentHistory.length > 0) {
+					sections.push(`  Recent history: ${m.recentHistory.join(' → ')}`);
+				}
+			}
+			sections.push('');
+			sections.push(`Focus your plan on tasks that will directly improve the unmet metrics above.`);
+		}
 	}
 
 	sections.push(`\nBreak this goal into tasks.`);

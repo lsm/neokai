@@ -15,7 +15,26 @@ import {
 	type CreateGoalParams,
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
-import type { RoomGoal, GoalStatus, GoalPriority, MissionExecution } from '@neokai/shared';
+import type {
+	RoomGoal,
+	GoalStatus,
+	GoalPriority,
+	MissionExecution,
+	MissionMetric,
+	MetricHistoryEntry,
+} from '@neokai/shared';
+
+export interface MetricTargetResult {
+	name: string;
+	current: number;
+	target: number;
+	met: boolean;
+}
+
+export interface CheckMetricTargetsResult {
+	allMet: boolean;
+	results: MetricTargetResult[];
+}
 
 export class GoalManager {
 	private goalRepo: GoalRepository;
@@ -448,5 +467,186 @@ export class GoalManager {
 		}
 
 		return this.goalRepo.deleteGoal(goalId);
+	}
+
+	// =========================================================================
+	// Measurable Mission — Metric Methods
+	// =========================================================================
+
+	/**
+	 * Validate a single metric configuration.
+	 * Returns an error string if invalid, or null if valid.
+	 */
+	validateMetric(metric: MissionMetric): string | null {
+		const direction = metric.direction ?? 'increase';
+		if (direction === 'increase') {
+			if (metric.target <= 0) {
+				return `Metric "${metric.name}": target must be > 0 for increase direction`;
+			}
+		} else {
+			if (metric.baseline === undefined) {
+				return `Metric "${metric.name}": baseline is required for decrease direction`;
+			}
+			if (metric.baseline <= metric.target) {
+				return `Metric "${metric.name}": baseline must be > target for decrease direction`;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Calculate progress for a measurable mission based on structured metrics.
+	 *
+	 * - increase (default): progress = average(min(current / target, 1.0) * 100)
+	 * - decrease: progress = average(min((baseline - current) / (baseline - target), 1.0) * 100)
+	 *
+	 * Metrics with invalid configuration (target ≤ 0 for increase; missing/invalid baseline for
+	 * decrease) are skipped to guard against divide-by-zero.
+	 */
+	calculateMeasurableProgress(metrics: MissionMetric[]): number {
+		if (!metrics || metrics.length === 0) return 0;
+
+		let totalProgress = 0;
+		let validCount = 0;
+
+		for (const m of metrics) {
+			const direction = m.direction ?? 'increase';
+			let progress: number;
+
+			if (direction === 'increase') {
+				if (m.target <= 0) continue; // skip invalid
+				progress = Math.min(m.current / m.target, 1.0) * 100;
+			} else {
+				// decrease direction
+				if (m.baseline === undefined || m.baseline <= m.target) continue; // skip invalid
+				const range = m.baseline - m.target;
+				if (range === 0) continue; // guard against divide-by-zero
+				progress = Math.min((m.baseline - m.current) / range, 1.0) * 100;
+			}
+
+			totalProgress += progress;
+			validCount++;
+		}
+
+		if (validCount === 0) return 0;
+		return Math.round(totalProgress / validCount);
+	}
+
+	/**
+	 * Record a metric value for a measurable mission.
+	 *
+	 * - Updates `current` in `structuredMetrics`
+	 * - Inserts a history row in `mission_metric_history`
+	 * - Derives and writes legacy `metrics` field for backward compat
+	 * - Recalculates and stores progress for measurable missions
+	 */
+	async recordMetric(
+		goalId: string,
+		metricName: string,
+		value: number,
+		timestamp?: number
+	): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+
+		if (goal.missionType !== 'measurable') {
+			throw new Error(
+				`Cannot record metric for goal ${goalId}: not a measurable mission (missionType="${goal.missionType}")`
+			);
+		}
+
+		// Update structuredMetrics — find by name and update current
+		const existingMetrics = goal.structuredMetrics ?? [];
+		let found = false;
+		const updatedMetrics: MissionMetric[] = existingMetrics.map((m) => {
+			if (m.name === metricName) {
+				found = true;
+				return { ...m, current: value };
+			}
+			return m;
+		});
+
+		// Reject unknown metric names before writing any history row — auto-creating
+		// would set target === current (always met) and leave an orphaned history entry.
+		if (!found) {
+			throw new Error(
+				`Metric "${metricName}" is not defined in structuredMetrics for goal ${goalId}. ` +
+					`Known metrics: ${existingMetrics.map((m) => m.name).join(', ') || '(none)'}`
+			);
+		}
+
+		// Insert history entry only after successful validation
+		this.goalRepo.insertMetricHistory(goalId, metricName, value, timestamp);
+
+		// Derive legacy metrics record: { [name]: current }
+		const legacyMetrics: Record<string, number> = {};
+		for (const m of updatedMetrics) {
+			legacyMetrics[m.name] = m.current;
+		}
+
+		// Recalculate progress for measurable missions using metric-based formula
+		const progress = this.calculateMeasurableProgress(updatedMetrics);
+
+		const updatedGoal = this.goalRepo.updateGoal(goalId, {
+			structuredMetrics: updatedMetrics,
+			metrics: legacyMetrics,
+			progress,
+		});
+
+		if (!updatedGoal) {
+			throw new Error(`Failed to update goal: ${goalId}`);
+		}
+		return updatedGoal;
+	}
+
+	/**
+	 * Query metric history for a goal.
+	 * Optionally filtered by metric name and time range.
+	 */
+	async getMetricHistory(
+		goalId: string,
+		metricName?: string,
+		timeRange?: { fromTs?: number; toTs?: number }
+	): Promise<MetricHistoryEntry[]> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+
+		return this.goalRepo.queryMetricHistory(goalId, {
+			metricName,
+			fromTs: timeRange?.fromTs,
+			toTs: timeRange?.toTs,
+		});
+	}
+
+	/**
+	 * Check whether all metric targets are met for a measurable mission.
+	 *
+	 * - increase: met when current >= target
+	 * - decrease: met when current <= target
+	 *
+	 * Returns allMet=true with empty results if goal has no structuredMetrics (legacy compat).
+	 */
+	async checkMetricTargets(goalId: string): Promise<CheckMetricTargetsResult> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+
+		const metrics = goal.structuredMetrics;
+		if (!metrics || metrics.length === 0) {
+			return { allMet: true, results: [] };
+		}
+
+		const results: MetricTargetResult[] = metrics.map((m) => {
+			const direction = m.direction ?? 'increase';
+			const met = direction === 'increase' ? m.current >= m.target : m.current <= m.target;
+			return { name: m.name, current: m.current, target: m.target, met };
+		});
+
+		return { allMet: results.every((r) => r.met), results };
 	}
 }

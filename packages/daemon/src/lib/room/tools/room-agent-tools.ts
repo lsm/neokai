@@ -691,6 +691,80 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				},
 			});
 		},
+
+		async record_metric(args: {
+			goal_id: string;
+			metric_name: string;
+			value: number;
+		}): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'measurable') {
+				return jsonResult({
+					success: false,
+					error: `Goal "${args.goal_id}" is not a measurable mission (missionType: ${goal.missionType ?? 'one_shot'}).`,
+				});
+			}
+			try {
+				const updated = await goalManager.recordMetric(args.goal_id, args.metric_name, args.value);
+				if (daemonHub) {
+					void daemonHub.emit('goal.progressUpdated', {
+						sessionId: `room:${roomId}`,
+						roomId,
+						goalId: updated.id,
+						progress: updated.progress,
+					});
+				}
+				return jsonResult({
+					success: true,
+					metric: {
+						name: args.metric_name,
+						value: args.value,
+						goalProgress: updated.progress,
+					},
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return jsonResult({ success: false, error: message });
+			}
+		},
+
+		async get_metrics(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			// Legacy compat: goals with no structuredMetrics but with legacy metrics field
+			if (!goal.structuredMetrics || goal.structuredMetrics.length === 0) {
+				return jsonResult({
+					success: true,
+					missionType: goal.missionType ?? 'one_shot',
+					structuredMetrics: [],
+					legacyMetrics: goal.metrics ?? {},
+					note: 'No structured metrics configured. For measurable missions, add structuredMetrics to the goal.',
+				});
+			}
+			const checkResult = await goalManager.checkMetricTargets(args.goal_id);
+			return jsonResult({
+				success: true,
+				missionType: goal.missionType ?? 'one_shot',
+				allTargetsMet: checkResult.allMet,
+				metrics: checkResult.results.map((r) => {
+					const metric = goal.structuredMetrics!.find((m) => m.name === r.name);
+					return {
+						name: r.name,
+						current: r.current,
+						target: r.target,
+						met: r.met,
+						direction: metric?.direction ?? 'increase',
+						...(metric?.baseline !== undefined ? { baseline: metric.baseline } : {}),
+						...(metric?.unit ? { unit: metric.unit } : {}),
+					};
+				}),
+			});
+		},
 	};
 }
 
@@ -887,6 +961,26 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
+		),
+		tool(
+			'record_metric',
+			'Record a metric value for a measurable mission goal. Agents use this to report KPI progress.',
+			{
+				goal_id: z.string().describe('ID of the measurable mission goal'),
+				metric_name: z
+					.string()
+					.describe('Name of the metric to record (must match structuredMetrics)'),
+				value: z.number().describe('The current value of the metric'),
+			},
+			(args) => handlers.record_metric(args)
+		),
+		tool(
+			'get_metrics',
+			'View current metric state and targets for a goal. Returns current values, targets, and whether targets are met.',
+			{
+				goal_id: z.string().describe('ID of the goal to get metrics for'),
+			},
+			(args) => handlers.get_metrics(args)
 		),
 	];
 

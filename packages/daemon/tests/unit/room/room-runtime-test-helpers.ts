@@ -134,7 +134,7 @@ const DB_SCHEMA = `
 		next_run_at INTEGER,
 		structured_metrics TEXT,
 		max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
-		max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+		max_planning_attempts INTEGER NOT NULL DEFAULT 0,
 		consecutive_failures INTEGER NOT NULL DEFAULT 0,
 		replan_count INTEGER NOT NULL DEFAULT 0
 	);
@@ -175,6 +175,16 @@ const DB_SCHEMA = `
 		payload_json TEXT,
 		created_at INTEGER NOT NULL
 	);
+	CREATE TABLE mission_metric_history (
+		id TEXT PRIMARY KEY,
+		goal_id TEXT NOT NULL,
+		metric_name TEXT NOT NULL,
+		value REAL NOT NULL,
+		recorded_at INTEGER NOT NULL,
+		FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+	);
+	CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup
+		ON mission_metric_history(goal_id, metric_name, recorded_at);
 `;
 
 export interface RuntimeTestContext {
