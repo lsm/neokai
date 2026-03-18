@@ -422,6 +422,23 @@ export class GoalManager {
 	}
 
 	/**
+	 * Update the consecutiveFailures counter on a goal.
+	 * Called by the runtime to track consecutive task failures for escalation policy.
+	 * Pass 0 to reset after a successful task completion.
+	 */
+	async updateConsecutiveFailures(goalId: string, count: number): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+		const updatedGoal = this.goalRepo.updateGoal(goalId, { consecutiveFailures: count });
+		if (!updatedGoal) {
+			throw new Error(`Failed to update consecutiveFailures for goal: ${goalId}`);
+		}
+		return updatedGoal;
+	}
+
+	/**
 	 * Delete a goal
 	 */
 	async deleteGoal(goalId: string): Promise<boolean> {

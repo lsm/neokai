@@ -11,7 +11,9 @@ import type { HookOptions } from '../../../src/lib/room/runtime/lifecycle-hooks'
 
 export function createMockDaemonHub() {
 	const handlers = new Map<string, Map<string | undefined, Array<(data: unknown) => void>>>();
+	const emittedEvents: Array<{ event: string; data: unknown }> = [];
 	return {
+		emittedEvents,
 		on(
 			event: string,
 			handler: (data: unknown) => void,
@@ -33,6 +35,9 @@ export function createMockDaemonHub() {
 					if (idx !== -1) list.splice(idx, 1);
 				}
 			};
+		},
+		async emit(event: string, data: unknown): Promise<void> {
+			emittedEvents.push({ event, data });
 		},
 	};
 }
@@ -180,6 +185,7 @@ export interface RuntimeTestContext {
 	groupRepo: SessionGroupRepository;
 	sessionFactory: ReturnType<typeof createMockSessionFactory>;
 	observer: SessionObserver;
+	hub: ReturnType<typeof createMockDaemonHub>;
 }
 
 export interface RuntimeTestContextOptions {
@@ -231,9 +237,19 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		getRoom: (roomId) => (roomId === 'room-1' ? room : null),
 		getTask: (taskId) => taskManager.getTask(taskId),
 		getGoal: (goalId) => goalManager.getGoal(goalId),
+		daemonHub: mockHub as unknown as DaemonHub,
 	});
 
-	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer };
+	return {
+		db,
+		runtime,
+		taskManager,
+		goalManager,
+		groupRepo,
+		sessionFactory,
+		observer,
+		hub: mockHub,
+	};
 }
 
 export async function createGoalAndTask(

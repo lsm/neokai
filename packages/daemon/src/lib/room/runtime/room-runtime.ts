@@ -1023,6 +1023,31 @@ export class RoomRuntime {
 				this.cleanupMirroring(groupId, 'Task completed.');
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
+				// Reset consecutive failures on success and emit auto_completed event if applicable.
+				{
+					// Tasks are linked to at most one goal in the current data model.
+					const completeGoals = await this.goalManager.getGoalsForTask(group.taskId);
+					const completeGoal = completeGoals[0] ?? null;
+					if (completeGoal?.autonomyLevel === 'semi_autonomous') {
+						// Reset failure counter on success.
+						if ((completeGoal.consecutiveFailures ?? 0) > 0) {
+							await this.goalManager.updateConsecutiveFailures(completeGoal.id, 0);
+						}
+						// Emit auto_completed notification if this was auto-approved.
+						if (group.approvalSource === 'leader_semi_auto' && this.daemonHub) {
+							const completedTask = await this.taskManager.getTask(group.taskId);
+							void this.daemonHub.emit('goal.task.auto_completed', {
+								sessionId: `room:${this.roomId}`,
+								roomId: this.roomId,
+								goalId: completeGoal.id,
+								taskId: group.taskId,
+								taskTitle: completedTask?.title ?? '',
+								prUrl: completedTask?.prUrl ?? '',
+								approvalSource: 'leader_semi_auto',
+							});
+						}
+					}
+				}
 				// If this was a planning task, promote its draft children to pending
 				await this.promoteDraftTasksIfPlanning(group.taskId);
 				this.scheduleTick();
@@ -1035,6 +1060,24 @@ export class RoomRuntime {
 				this.cleanupMirroring(groupId, `Task failed: ${reason}`);
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
+				// Escalation policy: track consecutive failures for semi-autonomous goals.
+				// When consecutiveFailures reaches the max threshold, set goal to needs_human.
+				{
+					// Tasks are linked to at most one goal in the current data model.
+					const failGoals = await this.goalManager.getGoalsForTask(group.taskId);
+					const failGoal = failGoals[0] ?? null;
+					if (failGoal?.autonomyLevel === 'semi_autonomous') {
+						const newCount = (failGoal.consecutiveFailures ?? 0) + 1;
+						await this.goalManager.updateConsecutiveFailures(failGoal.id, newCount);
+						const maxFailures = failGoal.maxConsecutiveFailures ?? 3;
+						if (newCount >= maxFailures) {
+							log.info(
+								`Goal ${failGoal.id} (${failGoal.title}) escalated to needs_human after ${newCount} consecutive failure(s)`
+							);
+							await this.goalManager.updateGoalStatus(failGoal.id, 'needs_human');
+						}
+					}
+				}
 				this.scheduleTick();
 				return jsonResult({ success: true, message: 'Task marked as failed.' });
 			}
@@ -1120,6 +1163,53 @@ export class RoomRuntime {
 				await this.taskGroupManager.submitForReview(groupId, prUrl);
 				await this.emitTaskUpdateById(group.taskId);
 				await this.emitGoalProgressForTask(group.taskId);
+
+				// Semi-autonomous mode: auto-approve coder/general tasks without human interaction.
+				// Planner tasks always require human approval regardless of autonomy level.
+				if (group.workerRole !== 'planner') {
+					// Tasks are linked to at most one goal in the current data model.
+					const semiAutoGoals = await this.goalManager.getGoalsForTask(group.taskId);
+					const semiAutoGoal = semiAutoGoals[0] ?? null;
+					if (semiAutoGoal?.autonomyLevel === 'semi_autonomous') {
+						const capturedGroupId = groupId;
+						const capturedTaskId = group.taskId;
+						// Defer auto-approve until after this tool result has been fully committed.
+						// Using setTimeout(0) ensures we do not call resumeWorkerFromHuman inline
+						// from handleLeaderTool, avoiding reentrancy/ordering issues.
+						setTimeout(() => {
+							// Idempotency guard: skip if already approved (prevents duplicate resumes
+							// on daemon restart or if this callback fires more than once).
+							const currentGroup = this.groupRepo.getGroup(capturedGroupId);
+							if (!currentGroup || currentGroup.approvalSource) return;
+							// Persist approval source before calling resumeWorkerFromHuman so that
+							// a restart during the resume sees the source and can skip re-processing.
+							this.groupRepo.setApprovalSource(capturedGroupId, 'leader_semi_auto');
+							void this.resumeWorkerFromHuman(
+								capturedTaskId,
+								'PR auto-approved under semi-autonomous mode. Proceed with merge and complete_task.',
+								{ approved: true }
+							)
+								.then((ok) => {
+									if (!ok) {
+										// Resume returned false (e.g. group no longer submittedForReview
+										// or leader session gone). Clear approvalSource so future retries
+										// are not blocked by the idempotency guard.
+										this.groupRepo.setApprovalSource(capturedGroupId, null);
+									}
+								})
+								.catch((err) => {
+									log.error(`[semi-auto] Failed to auto-approve task ${capturedTaskId}:`, err);
+									// Clear approvalSource on throw so retries are not permanently blocked.
+									this.groupRepo.setApprovalSource(capturedGroupId, null);
+								});
+						}, 0);
+						return jsonResult({
+							success: true,
+							message: `PR submitted. Auto-approving under semi-autonomous mode.`,
+						});
+					}
+				}
+
 				// Do NOT call scheduleTick() — the group stays alive in submitted-for-review mode.
 				// The slot is excluded from the active count in executeTick().
 				return jsonResult({
@@ -1183,9 +1273,15 @@ export class RoomRuntime {
 			opts?.approved === true || (group.workerRole === 'planner' && opts?.approved !== false);
 		const previousStatus = task.status;
 		const previousApproved = group.approved;
+		const previousApprovalSource = group.approvalSource;
 
 		if (isApproval && !previousApproved) {
 			this.groupRepo.setApproved(group.id, true);
+			// Record approval source for auditing. Only set to 'human' if not already set
+			// (preserves 'leader_semi_auto' source set before this call in semi-autonomous mode).
+			if (!group.approvalSource) {
+				this.groupRepo.setApprovalSource(group.id, 'human');
+			}
 		}
 
 		// For approvals, keep task in review status and let leader's complete_task
@@ -1210,6 +1306,10 @@ export class RoomRuntime {
 				await this.taskManager.updateTaskStatus(group.taskId, previousStatus);
 				if (isApproval && !previousApproved) {
 					this.groupRepo.setApproved(group.id, previousApproved);
+					// Roll back approvalSource to prevent deadlock: if the deferred auto-approve
+					// callback set approvalSource before this call, but the resume failed, the
+					// idempotency guard would permanently block future retries without rollback.
+					this.groupRepo.setApprovalSource(group.id, previousApprovalSource);
 				}
 				return false;
 			}
@@ -1221,6 +1321,8 @@ export class RoomRuntime {
 			}
 			if (isApproval && !previousApproved) {
 				this.groupRepo.setApproved(group.id, previousApproved);
+				// Roll back approvalSource (see comment above).
+				this.groupRepo.setApprovalSource(group.id, previousApprovalSource);
 			}
 			log.error(`Failed to resume from human for task ${taskId}:`, error);
 			return false;
