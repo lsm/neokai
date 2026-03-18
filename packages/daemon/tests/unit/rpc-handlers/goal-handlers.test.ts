@@ -512,7 +512,11 @@ describe('Goal RPC Handlers', () => {
 				{
 					roomId: 'room-123',
 					goalId: 'goal-123',
-					updates: { missionType: 'measurable', autonomyLevel: 'semi_autonomous', priority: 'high' },
+					updates: {
+						missionType: 'measurable',
+						autonomyLevel: 'semi_autonomous',
+						priority: 'high',
+					},
 				},
 				{}
 			);

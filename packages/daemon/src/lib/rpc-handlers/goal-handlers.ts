@@ -212,7 +212,14 @@ export function setupGoalHandlers(
 
 		// Detect V2 patch fields (title, description, missionType, autonomyLevel,
 		// structuredMetrics, schedule) — these go through patchGoal.
-		const v2Fields = ['title', 'description', 'missionType', 'autonomyLevel', 'structuredMetrics', 'schedule'] as const;
+		const v2Fields = [
+			'title',
+			'description',
+			'missionType',
+			'autonomyLevel',
+			'structuredMetrics',
+			'schedule',
+		] as const;
 		const hasV2Fields = v2Fields.some((f) => f in params.updates);
 
 		let goal: RoomGoal;
@@ -240,7 +247,9 @@ export function setupGoalHandlers(
 		} else if (priority) {
 			goal = await goalManager.updateGoalPriority(params.goalId, priority);
 		} else {
-			throw new Error('No update fields provided (status, progress, priority, or editable fields required)');
+			throw new Error(
+				'No update fields provided (status, progress, priority, or editable fields required)'
+			);
 		}
 
 		emitGoalUpdated(params.roomId, params.goalId, goal);

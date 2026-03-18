@@ -43,7 +43,9 @@ async function deleteRoom(
 	}
 }
 
-async function openMissionsTab(page: Parameters<typeof waitForWebSocketConnected>[0]): Promise<void> {
+async function openMissionsTab(
+	page: Parameters<typeof waitForWebSocketConnected>[0]
+): Promise<void> {
 	const missionsTab = page.locator('button:has-text("Missions")');
 	await expect(missionsTab).toBeVisible({ timeout: 10000 });
 	await missionsTab.click();
@@ -98,7 +100,9 @@ test.describe('Mission Creation', () => {
 		await openMissionsTab(page);
 		await openCreateMissionModal(page);
 
-		await expect(page.locator('[data-testid="autonomy-supervised"]')).toBeVisible({ timeout: 5000 });
+		await expect(page.locator('[data-testid="autonomy-supervised"]')).toBeVisible({
+			timeout: 5000,
+		});
 		await expect(page.locator('[data-testid="autonomy-semi_autonomous"]')).toBeVisible();
 	});
 
@@ -151,9 +155,9 @@ test.describe('Mission Creation', () => {
 		await expect(page.locator('h4:has-text("Track Test Coverage")')).toBeVisible({ timeout: 8000 });
 
 		// Measurable badge should be visible
-		await expect(page.locator('[data-testid="mission-type-badge"]:has-text("Measurable")')).toBeVisible(
-			{ timeout: 5000 }
-		);
+		await expect(
+			page.locator('[data-testid="mission-type-badge"]:has-text("Measurable")')
+		).toBeVisible({ timeout: 5000 });
 	});
 
 	test('should show schedule section when recurring type is selected', async ({ page }) => {
@@ -193,9 +197,9 @@ test.describe('Mission Creation', () => {
 		await expect(page.locator('h4:has-text("Daily Health Check")')).toBeVisible({ timeout: 8000 });
 
 		// Recurring badge should be visible
-		await expect(page.locator('[data-testid="mission-type-badge"]:has-text("Recurring")')).toBeVisible(
-			{ timeout: 5000 }
-		);
+		await expect(
+			page.locator('[data-testid="mission-type-badge"]:has-text("Recurring")')
+		).toBeVisible({ timeout: 5000 });
 
 		// Schedule should be shown in header
 		await expect(page.locator('text=@daily')).toBeVisible({ timeout: 5000 });

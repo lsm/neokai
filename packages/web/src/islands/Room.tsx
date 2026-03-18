@@ -226,9 +226,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										onLinkTask={handleLinkTaskToGoal}
 										isLoading={roomStore.goalsLoading.value}
 										autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
-										onDismissNotification={(taskId) =>
-											roomStore.dismissAutoCompleted(taskId)
-										}
+										onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
 									/>
 								</div>
 							)}
