@@ -808,6 +808,8 @@ describe('Bridge HTTP server', () => {
 			}),
 		});
 		expect(resp.status).toBe(404);
+	});
+
 	// -------------------------------------------------------------------------
 	// Streaming error — drainToSSE emits Anthropic error SSE event (tests real code path)
 	// -------------------------------------------------------------------------
@@ -833,26 +835,23 @@ describe('Bridge HTTP server', () => {
 
 		const events = await readSSEEvents(stream);
 
-		// Must emit an SSE error event with Anthropic envelope
-		const errorEvent = events.find((e) => e.event === 'error');
-		expect(errorEvent).toBeDefined();
-		const data = errorEvent!.data as { type: string; error: { type: string; message: string } };
+		// Must have exactly one error SSE event
+		const errorEvents = events.filter((e) => e.event === 'error');
+		expect(errorEvents).toHaveLength(1);
+		const data = errorEvents[0].data as { type: string; error: { type: string; message: string } };
 		expect(data.type).toBe('error');
 		expect(data.error.type).toBe('api_error');
 		expect(data.error.message).toBe('codex subprocess crashed');
 
-		// Must NOT emit a plain-text [Codex error: ...] block
+		// Must NOT contain [Codex error: ...] plain-text blocks
 		const textDeltas = events.filter((e) => e.event === 'content_block_delta');
-		const hasErrorText = textDeltas.some((e) =>
-			String(
-				((e.data as { delta?: { text?: string } }).delta?.text) ?? ''
-			).includes('[Codex error:')
+		const hasLegacyErrorText = textDeltas.some((e) =>
+			String((e.data as { delta?: { text?: string } }).delta?.text ?? '').includes('[Codex error:')
 		);
-		expect(hasErrorText).toBe(false);
+		expect(hasLegacyErrorText).toBe(false);
 
-		// Session must be killed after error
+		// Session must be killed
 		expect(killCalled).toBe(true);
-	});
 	});
 
 	// -------------------------------------------------------------------------
