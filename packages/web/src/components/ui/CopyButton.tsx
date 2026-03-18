@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { copyToClipboard } from '../../lib/utils.ts';
 
 interface CopyButtonProps {
@@ -9,11 +9,16 @@ interface CopyButtonProps {
 export function CopyButton({ text, label = 'Copy to clipboard' }: CopyButtonProps) {
 	const [copied, setCopied] = useState(false);
 
+	useEffect(() => {
+		if (!copied) return;
+		const timer = setTimeout(() => setCopied(false), 1500);
+		return () => clearTimeout(timer);
+	}, [copied]);
+
 	const handleCopy = async () => {
 		const success = await copyToClipboard(text);
 		if (success) {
 			setCopied(true);
-			setTimeout(() => setCopied(false), 1500);
 		}
 	};
 

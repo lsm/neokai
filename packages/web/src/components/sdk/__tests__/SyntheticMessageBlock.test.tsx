@@ -21,12 +21,11 @@ vi.mock('../../../lib/utils.ts', async () => {
 });
 
 // Mock toast
-const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
 vi.mock('../../../lib/toast.ts', () => ({
 	toast: {
-		success: (msg: string) => mockToastSuccess(msg),
+		success: vi.fn(),
 		error: (msg: string) => mockToastError(msg),
 	},
 }));
@@ -35,6 +34,7 @@ describe('SyntheticMessageBlock', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockCopyToClipboard.mockResolvedValue(true);
+		mockToastError.mockClear();
 	});
 
 	afterEach(() => {
@@ -289,7 +289,7 @@ describe('SyntheticMessageBlock', () => {
 			expect(copyButton).toBeTruthy();
 		});
 
-		it('should copy string content on button click', async () => {
+		it('should show inline green check when copy succeeds', async () => {
 			const { container } = render(
 				<SyntheticMessageBlock content="Content to copy" timestamp={Date.now()} />
 			);
@@ -299,11 +299,13 @@ describe('SyntheticMessageBlock', () => {
 
 			await waitFor(() => {
 				expect(mockCopyToClipboard).toHaveBeenCalledWith('Content to copy');
-				expect(mockToastSuccess).toHaveBeenCalledWith('Message copied to clipboard');
+				const copiedButton = container.querySelector('button[title="Copied!"]');
+				expect(copiedButton).toBeTruthy();
+				expect(copiedButton?.className).toContain('text-green-400');
 			});
 		});
 
-		it('should show error toast when copy fails', async () => {
+		it('should not show green check and show error toast when copy fails', async () => {
 			mockCopyToClipboard.mockResolvedValue(false);
 
 			const { container } = render(
@@ -314,7 +316,41 @@ describe('SyntheticMessageBlock', () => {
 			fireEvent.click(copyButton!);
 
 			await waitFor(() => {
+				expect(mockCopyToClipboard).toHaveBeenCalledWith('Content to copy');
+				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
 				expect(mockToastError).toHaveBeenCalledWith('Failed to copy message');
+			});
+		});
+
+		describe('auto-revert behavior', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it('should revert to copy icon after 1500ms', async () => {
+				const { container } = render(
+					<SyntheticMessageBlock content="Content to copy" timestamp={Date.now()} />
+				);
+
+				const copyButton = container.querySelector('button[title="Copy message"]');
+				fireEvent.click(copyButton!);
+
+				// Should show Copied! state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+				});
+
+				// Advance timer past 1500ms
+				vi.advanceTimersByTime(1500);
+
+				// Should revert to copy state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				});
 			});
 		});
 
