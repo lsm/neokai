@@ -18,6 +18,7 @@ import {
 	isToolUseBlock,
 } from '@neokai/shared/sdk/type-guards';
 import { useEffect, useState } from 'preact/hooks';
+import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import MarkdownRenderer from '../chat/MarkdownRenderer.tsx';
@@ -92,6 +93,8 @@ export function SDKAssistantMessage({
 		const success = await copyToClipboard(textContent);
 		if (success) {
 			setCopied(true);
+		} else {
+			toast.error('Failed to copy message');
 		}
 	};
 
@@ -144,7 +147,7 @@ export function SDKAssistantMessage({
 							<path
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								stroke-width={2}
+								strokeWidth={2}
 								d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
 							/>
 						</svg>
@@ -198,7 +201,7 @@ export function SDKAssistantMessage({
 							<path
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								stroke-width={2}
+								strokeWidth={2}
 								d="M5 13l4 4L19 7"
 							/>
 						</svg>
@@ -207,7 +210,7 @@ export function SDKAssistantMessage({
 							<path
 								strokeLinecap="round"
 								strokeLinejoin="round"
-								stroke-width={2}
+								strokeWidth={2}
 								d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
 							/>
 						</svg>

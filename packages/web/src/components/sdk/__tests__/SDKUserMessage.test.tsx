@@ -20,7 +20,16 @@ vi.mock('../../../lib/utils.ts', async (importOriginal) => {
 	};
 });
 
+// Mock the toast module
+vi.mock('../../../lib/toast.ts', () => ({
+	toast: {
+		success: vi.fn(),
+		error: vi.fn(),
+	},
+}));
+
 import { copyToClipboard } from '../../../lib/utils.ts';
+import { toast } from '../../../lib/toast.ts';
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -400,7 +409,7 @@ describe('SDKUserMessage', () => {
 			});
 		});
 
-		it('should not show green check when copy fails', async () => {
+		it('should not show green check and show error toast when copy fails', async () => {
 			vi.mocked(copyToClipboard).mockResolvedValue(false);
 
 			const message = createTextMessage('Hello world');
@@ -414,33 +423,42 @@ describe('SDKUserMessage', () => {
 				expect(copyToClipboard).toHaveBeenCalledWith('Hello world');
 				// Button should remain showing "Copy message" (not switched to Copied!)
 				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				// Error toast should be shown
+				expect(toast.error).toHaveBeenCalledWith('Failed to copy message');
 			});
 		});
 
-		it('should revert to copy icon after 1500ms', async () => {
-			vi.mocked(copyToClipboard).mockResolvedValue(true);
-			vi.useFakeTimers();
-
-			const message = createTextMessage('Hello world');
-			const { container } = render(<SDKUserMessage message={message} />);
-
-			const copyButton = container.querySelector('button[title="Copy message"]');
-			fireEvent.click(copyButton!);
-
-			// Should show Copied! state
-			await vi.waitFor(() => {
-				expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+		describe('auto-revert behavior', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
 			});
 
-			// Advance timer past 1500ms
-			vi.advanceTimersByTime(1500);
-
-			// Should revert to copy state
-			await vi.waitFor(() => {
-				expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+			afterEach(() => {
+				vi.useRealTimers();
 			});
 
-			vi.useRealTimers();
+			it('should revert to copy icon after 1500ms', async () => {
+				vi.mocked(copyToClipboard).mockResolvedValue(true);
+
+				const message = createTextMessage('Hello world');
+				const { container } = render(<SDKUserMessage message={message} />);
+
+				const copyButton = container.querySelector('button[title="Copy message"]');
+				fireEvent.click(copyButton!);
+
+				// Should show Copied! state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copied!"]')).toBeTruthy();
+				});
+
+				// Advance timer past 1500ms
+				vi.advanceTimersByTime(1500);
+
+				// Should revert to copy state
+				await vi.waitFor(() => {
+					expect(container.querySelector('button[title="Copy message"]')).toBeTruthy();
+				});
+			});
 		});
 	});
 

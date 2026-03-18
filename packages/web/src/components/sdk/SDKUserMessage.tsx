@@ -6,6 +6,7 @@
 
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useEffect, useState } from 'preact/hooks';
+import { toast } from '../../lib/toast.ts';
 import { borderRadius, messageColors, messageSpacing } from '../../lib/design-tokens.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { Dropdown } from '../ui/Dropdown.tsx';
@@ -158,6 +159,8 @@ export function SDKUserMessage({
 		const success = await copyToClipboard(textContent);
 		if (success) {
 			setCopied(true);
+		} else {
+			toast.error('Failed to copy message');
 		}
 	};
 

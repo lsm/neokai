@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
+import { toast } from '../../lib/toast.ts';
 import { cn, copyToClipboard } from '../../lib/utils.ts';
 import { messageSpacing, borderRadius } from '../../lib/design-tokens.ts';
 import { Tooltip } from '../ui/Tooltip.tsx';
@@ -87,6 +88,8 @@ export function SyntheticMessageBlock({ content, timestamp, uuid }: Props) {
 		const success = await copyToClipboard(getTextContent());
 		if (success) {
 			setCopied(true);
+		} else {
+			toast.error('Failed to copy message');
 		}
 	};
 
