@@ -6,13 +6,16 @@
  * - Optional room assignment dropdown (shows room name + allowedPaths count)
  * - "Create new room" option that opens inline form
  * - "Browse for folder" button
+ * - Optional model selector (provider-grouped)
  * - Form validation and error handling
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import type { Room } from '@neokai/shared';
+import type { Room, ModelInfo } from '@neokai/shared';
+import { connectionManager } from '../../lib/connection-manager';
+import { groupModelsByProvider, getProviderLabel } from '../../hooks/useModelSwitcher';
 
 interface RecentPath {
 	path: string;
@@ -20,10 +23,56 @@ interface RecentPath {
 	absoluteTime: Date;
 }
 
+/** Fetch available models from the server and map to ModelInfo */
+async function fetchAvailableModels(): Promise<ModelInfo[]> {
+	const hub = connectionManager.getHubIfConnected();
+	if (!hub) return [];
+
+	const { models } = (await hub.request('models.list', { useCache: true })) as {
+		models: Array<{
+			id: string;
+			display_name: string;
+			description: string;
+			alias?: string;
+			provider?: string;
+		}>;
+	};
+
+	return models.map((m) => {
+		let family = 'sonnet';
+		const mid = m.id.toLowerCase();
+		if (mid.includes('opus')) {
+			family = 'opus';
+		} else if (mid.includes('haiku')) {
+			family = 'haiku';
+		} else if (mid.startsWith('glm-')) {
+			family = 'glm';
+		} else if (mid.startsWith('minimax-')) {
+			family = 'minimax';
+		}
+
+		return {
+			id: m.id,
+			name: m.display_name,
+			alias: m.alias || m.id,
+			family,
+			provider: m.provider || 'anthropic',
+			contextWindow: 200000,
+			description: m.description || '',
+			releaseDate: '',
+			available: true,
+		};
+	});
+}
+
 interface NewSessionModalProps {
 	isOpen: boolean;
 	onClose: () => void;
-	onSubmit: (params: { workspacePath: string; roomId?: string }) => Promise<void>;
+	onSubmit: (params: {
+		workspacePath: string;
+		roomId?: string;
+		model?: ModelInfo;
+	}) => Promise<void>;
 	recentPaths: RecentPath[];
 	rooms: Room[];
 	onCreateRoom?: (params: {
@@ -49,6 +98,27 @@ export function NewSessionModal({
 	const [showCreateRoom, setShowCreateRoom] = useState(false);
 	const [newRoomName, setNewRoomName] = useState('');
 	const [newRoomDescription, setNewRoomDescription] = useState('');
+	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+	// Empty string = "Default (server setting)"; non-empty = "provider:id"
+	const [selectedModelKey, setSelectedModelKey] = useState<string>('');
+
+	useEffect(() => {
+		if (!isOpen) return;
+		fetchAvailableModels()
+			.then((models) => setAvailableModels(models))
+			.catch(() => {
+				// silently ignore — model picker remains hidden
+			});
+	}, [isOpen]);
+
+	/** Resolve the selected model by composite key `provider:id` */
+	function resolveSelectedModel(): ModelInfo | undefined {
+		if (!selectedModelKey) return undefined;
+		const colonIdx = selectedModelKey.indexOf(':');
+		const provider = selectedModelKey.slice(0, colonIdx);
+		const id = selectedModelKey.slice(colonIdx + 1);
+		return availableModels.find((m) => m.provider === provider && m.id === id);
+	}
 
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
@@ -66,11 +136,13 @@ export function NewSessionModal({
 			await onSubmit({
 				workspacePath,
 				roomId: selectedRoomId || undefined,
+				model: resolveSelectedModel(),
 			});
 
 			// Reset form on success
 			setSelectedPath('');
 			setSelectedRoomId(undefined);
+			setSelectedModelKey('');
 			setShowCreateRoom(false);
 			setNewRoomName('');
 			setNewRoomDescription('');
@@ -119,12 +191,15 @@ export function NewSessionModal({
 	const handleClose = () => {
 		setSelectedPath('');
 		setSelectedRoomId(undefined);
+		setSelectedModelKey('');
 		setShowCreateRoom(false);
 		setNewRoomName('');
 		setNewRoomDescription('');
 		setError(null);
 		onClose();
 	};
+
+	const groupedModels = groupModelsByProvider(availableModels);
 
 	const handleBrowseFolder = () => {
 		// Trigger file browser dialog
@@ -194,6 +269,32 @@ export function NewSessionModal({
 						Browse for folder...
 					</button>
 				</div>
+
+				{/* Model Selection Section */}
+				{availableModels.length > 0 && (
+					<div>
+						<label class="block text-sm font-medium text-gray-300 mb-1.5">Model (optional)</label>
+						<select
+							value={selectedModelKey}
+							onChange={(e) => setSelectedModelKey((e.target as HTMLSelectElement).value)}
+							class="w-full bg-dark-800 border border-dark-700 rounded-lg px-4 py-2.5 text-gray-100 focus:outline-none focus:border-blue-500 cursor-pointer"
+						>
+							<option value="">Default (server setting)</option>
+							{Array.from(groupedModels.entries()).map(([provider, models]) => (
+								<optgroup key={provider} label={getProviderLabel(provider)}>
+									{models.map((model) => (
+										<option
+											key={`${model.provider}:${model.id}`}
+											value={`${model.provider}:${model.id}`}
+										>
+											{model.name}
+										</option>
+									))}
+								</optgroup>
+							))}
+						</select>
+					</div>
+				)}
 
 				{/* Room Assignment Section */}
 				{!showCreateRoom && (

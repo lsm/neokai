@@ -61,12 +61,22 @@ export default function Lobby() {
 		absoluteTime: p.usedAt,
 	}));
 
-	async function handleCreateSession(params: { workspacePath: string; roomId?: string }) {
+	async function handleCreateSession(params: {
+		workspacePath: string;
+		roomId?: string;
+		model?: import('@neokai/shared').ModelInfo;
+	}) {
 		try {
 			const { sessionId } = await createSession({
 				workspacePath: params.workspacePath,
 				roomId: params.roomId,
 				createdBy: 'human',
+				...(params.model && {
+					config: {
+						model: params.model.id,
+						provider: params.model.provider as import('@neokai/shared').Provider,
+					},
+				}),
 			});
 
 			// Add to recent paths
