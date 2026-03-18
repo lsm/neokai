@@ -489,7 +489,9 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 				.filter((m) => (m as { type?: string }).type === 'assistant')
 				.map((m) => extractAssistantText(m as Record<string, unknown>))
 				.join('');
-			expect(text).toBeTruthy();
+			// The model must echo the token back -- a bare truthiness check would pass
+			// even for error messages or refusals from a wrong backend.
+			expect(text.toUpperCase()).toContain('COPILOT_OK');
 		},
 		TEST_TIMEOUT
 	);

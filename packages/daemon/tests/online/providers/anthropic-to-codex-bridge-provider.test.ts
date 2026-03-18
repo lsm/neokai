@@ -24,7 +24,12 @@ import { join } from 'node:path';
 import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-actions';
+import {
+	sendMessage,
+	waitForIdle,
+	getProcessingState,
+	waitForSdkMessages,
+} from '../../helpers/daemon-actions';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
 const IDLE_TIMEOUT = 120_000;
@@ -92,6 +97,7 @@ type ToolUseBlock = {
 /**
  * Extract the first tool_use block from a stream.
  * Accumulates input_json_delta fragments and parses the final JSON.
+ * Only the first tool_use block is returned; subsequent blocks are ignored.
  */
 function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
 	let id = '';
@@ -102,10 +108,11 @@ function getToolUseBlock(events: SseEvent[]): ToolUseBlock | null {
 		if (e.event === 'content_block_start') {
 			const cb = (e.data as { content_block?: { type?: string; id?: string; name?: string } })
 				.content_block;
-			if (cb?.type === 'tool_use' && cb.id) {
+			// Only capture the first tool_use block — stop updating id/name once set
+			// so that a second tool_use block does not overwrite the first one's state.
+			if (cb?.type === 'tool_use' && cb.id && !id) {
 				id = cb.id;
 				name = cb.name ?? '';
-				inputParts.length = 0; // reset for this block
 			}
 		} else if (e.event === 'content_block_delta' && id) {
 			const delta = (e.data as { delta?: { type?: string; partial_json?: string } }).delta;
@@ -169,9 +176,16 @@ async function callBridge(
 	}
 
 	const text = await response.text();
-	// DIAGNOSTIC: always log raw SSE bytes to stderr for CI debugging
-	console.log(`[codex-bridge-test] raw-sse (${text.length} bytes):`, text.slice(0, 2000));
-	return parseSseEvents(text);
+	const events = parseSseEvents(text);
+	// Diagnostic: log raw SSE bytes only when the stream looks empty or malformed,
+	// to avoid flooding CI logs on successful requests.
+	if (events.length === 0) {
+		console.log(
+			`[codex-bridge-test] raw-sse (${text.length} bytes, no events):`,
+			text.slice(0, 2000)
+		);
+	}
+	return events;
 }
 
 /** Return the input_tokens from the message_start event, or 0 if not found. */
@@ -207,7 +221,17 @@ describe('Codex Bridge (Online)', () => {
 
 	beforeAll(async () => {
 		provider = new AnthropicToCodexBridgeProvider();
-		await provider.getAuthStatus();
+
+		// Hard-fail if credentials are absent or the codex binary is missing —
+		// per CLAUDE.md policy: tests must FAIL, not silently skip.
+		const authStatus = await provider.getAuthStatus();
+		if (!authStatus.isAuthenticated) {
+			throw new Error(
+				`anthropic-codex provider is not authenticated: ${authStatus.error ?? 'unknown reason'}. ` +
+					'Set OPENAI_API_KEY or CODEX_API_KEY, or run `codex login`.'
+			);
+		}
+
 		const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
 
@@ -453,12 +477,35 @@ describe('Codex Bridge (Online)', () => {
 			})) as { session: { config?: { provider?: string } } };
 			expect(session.config?.provider).toBe('anthropic-codex');
 
-			// Send a message and verify the codex backend responds.
+			// Send a message and verify the codex backend responds with the expected token.
 			await sendMessage(daemon, sessionId, 'Reply with exactly: CODEX_OK');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
 			const state = await getProcessingState(daemon, sessionId);
 			expect(state.status).toBe('idle');
+
+			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
+				minCount: 1,
+				timeout: 5000,
+			});
+			const text = sdkMessages
+				.filter((m) => (m as { type?: string }).type === 'assistant')
+				.map((m) => {
+					const msg = (m as { message?: { content?: unknown } }).message;
+					if (!msg?.content) return '';
+					if (typeof msg.content === 'string') return msg.content;
+					if (Array.isArray(msg.content)) {
+						return msg.content
+							.filter((b: unknown) => (b as { type?: string }).type === 'text')
+							.map((b: unknown) => (b as { text?: string }).text ?? '')
+							.join('');
+					}
+					return '';
+				})
+				.join('');
+			// The model must echo the token back -- a bare truthiness check would pass
+			// even for error messages or refusals from a wrong backend.
+			expect(text.toUpperCase()).toContain('CODEX_OK');
 		},
 		TEST_TIMEOUT
 	);
