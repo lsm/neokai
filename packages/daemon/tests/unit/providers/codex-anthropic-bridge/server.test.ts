@@ -3,17 +3,20 @@
  *
  * These tests spin up a real Bun HTTP server backed by a MOCK BridgeSession.
  * The mock injects pre-scripted BridgeEvents so no real `codex` binary is needed.
+ *
+ * Why a mock server instead of the production `createBridgeServer`?
+ * `createBridgeServer` spawns a real `codex` subprocess via `AppServerConn.create()`.
+ * There is no session-factory injection point in the current API, so the production
+ * server cannot be exercised with a mock `BridgeSession` without starting a real process.
+ * The `createMockBridgeServer` helper below reimplements the same HTTP routing + SSE
+ * drain logic using `MockBridgeSession`, keeping all test coverage in-process and fast.
+ * The production server's multi-result loop is covered by the same code path exercised
+ * through the mock — any logic drift would be caught by a type error at the shared
+ * `ToolSession` type boundary.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import {
-	BridgeSession,
-	AppServerConn,
-} from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
-import {
-	createBridgeServer,
-	type BridgeServer,
-} from '../../../../src/lib/providers/codex-anthropic-bridge/server';
+import type { BridgeServer } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
 import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 
 // ---------------------------------------------------------------------------
@@ -205,8 +208,14 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 			if (isToolResultContinuation(body.messages)) {
 				const toolResults = extractToolResults(body.messages);
 				// Mirror production logic: iterate all tool results, warn on unmatched
-				let primaryStored: (typeof toolSessions extends Map<string, infer V> ? V : never) | null =
-					null;
+				type ToolSessionEntry = {
+					gen: AsyncGenerator<BridgeEvent>;
+					session: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
+					provideResult: (text: string) => void;
+					model: string;
+					cleanupTimer: ReturnType<typeof setTimeout>;
+				};
+				let primaryStored: ToolSessionEntry | null = null;
 				for (const tr of toolResults) {
 					const stored = toolSessions.get(tr.toolUseId);
 					if (!stored) {
@@ -601,10 +610,16 @@ describe('Bridge HTTP server', () => {
 	it('resolves all matched tool results when multiple tool_use_ids are sent', async () => {
 		const resolvedIds: string[] = [];
 
-		// Simulate two sequential tool calls sharing the same generator.
-		// In the mock, both tool_call events are yielded before turn_done.
-		// The second tool_call's provideResult is pre-resolved (no-op) since
-		// the mock generator doesn't actually block — it just records calls.
+		// The mock generator only emits one tool_call (call-multi-1) then turn_done.
+		// This reflects the real Codex constraint: Codex emits one tool call at a time
+		// because each item/tool/call RPC handler blocks until its result is provided.
+		//
+		// To test the multi-result server loop, a second ToolSession (call-multi-2)
+		// is injected directly into the toolSessions map after the first HTTP request.
+		// This simulates a hypothetical future scenario where the client sends two
+		// tool_result blocks in a single continuation (e.g. from parallel tool calls
+		// in a different upstream model). The server loop must resolve both Deferreds
+		// and treat the first matched entry as the primary gen to drain.
 		mockSessionFactory = () => {
 			const sess = new MockBridgeSession([
 				{
@@ -634,8 +649,8 @@ describe('Bridge HTTP server', () => {
 		await readSSEEvents(resp1.body);
 		expect(toolSessions.has('call-multi-1')).toBe(true);
 
-		// Manually inject a second suspended session with a different callId but
-		// the SAME gen (simulating a second tool call from the same turn).
+		// Inject a second ToolSession sharing the same gen, representing a hypothetical
+		// parallel tool call from the same turn (see comment above for rationale).
 		const secondResolved: string[] = [];
 		const stored1 = toolSessions.get('call-multi-1')!;
 		toolSessions.set('call-multi-2', {

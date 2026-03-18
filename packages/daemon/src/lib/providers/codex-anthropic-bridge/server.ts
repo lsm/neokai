@@ -90,9 +90,8 @@ async function drainToSSE(
 		const { value: event, done } = await gen.next();
 		if (done) break;
 
-		// DIAGNOSTIC: log each BridgeEvent type to stderr for CI debugging
-		process.stderr.write(
-			`[codex-bridge-server] drainToSSE event: ${event.type}${event.type === 'text_delta' ? ` text=${JSON.stringify((event as { text: string }).text)}` : ''}\n`
+		logger.debug(
+			`drainToSSE event: ${event.type}${event.type === 'text_delta' ? ` text=${JSON.stringify((event as { text: string }).text)}` : ''}`
 		);
 
 		if (event.type === 'text_delta') {
