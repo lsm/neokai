@@ -117,7 +117,9 @@ test.describe('Auto Title Generation', () => {
 		await messageInput.press('Enter');
 
 		// Wait for second message to appear in the chat (don't need full response)
-		await expect(page.locator('text=What are its benefits?')).toBeVisible({ timeout: 5000 });
+		await expect(
+			page.locator('[data-message-role="user"]').filter({ hasText: 'What are its benefits?' })
+		).toBeVisible({ timeout: 5000 });
 
 		// Wait enough time for title regeneration to trigger (if it were going to)
 		// IS_MOCK: Reduced timeout in mock mode since title won't regenerate anyway
