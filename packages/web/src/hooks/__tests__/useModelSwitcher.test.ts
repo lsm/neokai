@@ -143,6 +143,7 @@ describe('useModelSwitcher', () => {
 		it('should return correct label for known providers', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
+			expect(getProviderLabel('minimax')).toBe('MiniMax');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
 			expect(getProviderLabel('anthropic-codex')).toBe('Codex');
 		});
