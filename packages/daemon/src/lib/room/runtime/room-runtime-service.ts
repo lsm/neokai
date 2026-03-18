@@ -438,16 +438,18 @@ export class RoomRuntimeService {
 				// Inject the room chat system prompt so the agent knows the proper
 				// goal → plan → approval → task workflow and never creates tasks
 				// prematurely when a goal is created.
-				roomChatSession.setRuntimeSystemPrompt(
-					buildRoomChatSystemPrompt({
-						background: room.background,
-						instructions: room.instructions,
-					})
-				);
+				roomChatSession.setRuntimeSystemPrompt(this.buildRoomSystemPrompt(room));
 			})
 			.catch((error) => {
 				log.error(`Failed to attach room MCP tools for room ${room.id}:`, error);
 			});
+	}
+
+	private buildRoomSystemPrompt(room: Room): string {
+		return buildRoomChatSystemPrompt({
+			background: room.background,
+			instructions: room.instructions,
+		});
 	}
 
 	private subscribeToEvents(): void {
@@ -477,12 +479,7 @@ export class RoomRuntimeService {
 							.getSessionAsync(roomChatSessionId)
 							.then((session) => {
 								if (session) {
-									session.setRuntimeSystemPrompt(
-										buildRoomChatSystemPrompt({
-											background: room.background,
-											instructions: room.instructions,
-										})
-									);
+									session.setRuntimeSystemPrompt(this.buildRoomSystemPrompt(room));
 								}
 							})
 							.catch((error) => {

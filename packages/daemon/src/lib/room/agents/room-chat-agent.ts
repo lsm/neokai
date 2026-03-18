@@ -21,6 +21,9 @@ export interface RoomChatAgentContext {
  * planner agent has produced a plan and the human has approved it.
  */
 export function buildRoomChatSystemPrompt(context?: RoomChatAgentContext): string {
+	// Trust assumption: background and instructions are operator-controlled fields.
+	// They are interpolated directly into the system prompt without sanitization.
+	// This is acceptable for a self-hosted tool where the operator sets these values.
 	const backgroundSection = context?.background
 		? `## Room Background\n\n${context.background}\n\n`
 		: '';

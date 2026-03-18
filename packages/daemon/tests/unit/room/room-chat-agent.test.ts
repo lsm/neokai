@@ -77,7 +77,7 @@ describe('buildRoomChatSystemPrompt', () => {
 
 	it('mentions that tasks are created automatically after plan approval', () => {
 		const prompt = buildRoomChatSystemPrompt();
-		// Should mention automatic handling including planning, approval, and task creation
-		expect(prompt.toLowerCase()).toMatch(/automatically.*plan.*approv.*task|approv.*task/);
+		// Must mention that the system automatically handles planning, approval, and task creation
+		expect(prompt.toLowerCase()).toMatch(/automatically.*plan.*approv.*task/);
 	});
 });
