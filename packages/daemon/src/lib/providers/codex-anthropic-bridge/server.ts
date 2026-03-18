@@ -133,9 +133,9 @@ export async function drainToSSE(
 			send(contentBlockStartToolUseSSE(blockIndex, event.callId, event.toolName));
 			send(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)));
 			send(contentBlockStopSSE(blockIndex));
-			// Use actual output tokens from bridge session if available; fall back to heuristic.
-			const toolUseOutputTokens = session.getUsage()?.outputTokens ?? outputTokens;
-			send(messageDeltaSSE('tool_use', { outputTokens: toolUseOutputTokens }));
+			// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
+			// hasn't finished the turn yet), so always use the heuristic count here.
+			send(messageDeltaSSE('tool_use', { outputTokens }));
 			send(messageStopSSE());
 
 			// Store the session so the next HTTP request can resume it.

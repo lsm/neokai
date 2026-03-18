@@ -182,11 +182,8 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 							enc.encode(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)))
 						);
 						controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
-						// Mirror real server: prefer actual token count from getUsage(), fall back to heuristic.
-						const toolUseOutputTokens = sessionArg?.getUsage()?.outputTokens ?? outputTokens;
-						controller.enqueue(
-							enc.encode(messageDeltaSSE('tool_use', { outputTokens: toolUseOutputTokens }))
-						);
+						// Mirror real server: at tool_call time tokenUsage hasn't arrived yet — always use heuristic.
+						controller.enqueue(enc.encode(messageDeltaSSE('tool_use', { outputTokens })));
 						controller.enqueue(enc.encode(messageStopSSE()));
 						const callId = event.callId;
 						const cleanupTimer = setTimeout(() => {
@@ -999,8 +996,9 @@ describe('Bridge HTTP server', () => {
 		expect(msgDelta).toBeDefined();
 		const usageOutputTokens = (msgDelta?.data as { usage?: { output_tokens?: number } })?.usage
 			?.output_tokens;
-		// Should fall back to heuristic (2 text_delta events → 2 token count in mock)
-		expect(usageOutputTokens).toBeGreaterThan(0);
+		// The mock drainGen increments outputTokens++ per text_delta event (not per character).
+		// Two text_delta events → heuristic count of 2.
+		expect(usageOutputTokens).toBe(2);
 	});
 });
 
