@@ -186,8 +186,12 @@ test.describe('Page Refresh - Session State Persistence', () => {
 		const messageCountAfter = await page.locator('[data-message-role]').count();
 		expect(messageCountAfter).toBe(messageCountBefore);
 
-		// Verify original message is still visible
-		await expect(page.locator('text=What is React and why is it popular?')).toBeVisible();
+		// Verify original message is still visible in the chat area
+		await expect(
+			page
+				.locator('[data-message-role="user"]')
+				.filter({ hasText: 'What is React and why is it popular?' })
+		).toBeVisible();
 
 		// Verify session title is restored in sidebar
 		await expect(sessionItem).toBeVisible();
