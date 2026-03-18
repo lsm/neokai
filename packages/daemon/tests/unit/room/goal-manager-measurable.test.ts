@@ -318,18 +318,27 @@ describe('GoalManager — Measurable Missions', () => {
 			expect(updated.progress).toBe(75);
 		});
 
-		it('should add new metric if name not in structuredMetrics', async () => {
+		it('should throw for metric name not in structuredMetrics', async () => {
 			const goal = await goalManager.createGoal({
 				title: 'Test Measurable',
 				missionType: 'measurable',
-				structuredMetrics: [],
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
 			});
 
-			const updated = await goalManager.recordMetric(goal.id, 'new_metric', 42);
+			await expect(
+				goalManager.recordMetric(goal.id, 'unknown_metric', 42)
+			).rejects.toThrow('not defined in structuredMetrics');
+		});
 
-			expect(updated.structuredMetrics).toBeDefined();
-			const metric = updated.structuredMetrics!.find((m) => m.name === 'new_metric');
-			expect(metric?.current).toBe(42);
+		it('should throw for non-measurable goals', async () => {
+			const goal = await goalManager.createGoal({
+				title: 'One-Shot Goal',
+				// default missionType is 'one_shot'
+			});
+
+			await expect(
+				goalManager.recordMetric(goal.id, 'kpi', 42)
+			).rejects.toThrow('not a measurable mission');
 		});
 
 		it('should throw for non-existent goal', async () => {

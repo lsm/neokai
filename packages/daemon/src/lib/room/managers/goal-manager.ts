@@ -551,6 +551,12 @@ export class GoalManager {
 			throw new Error(`Goal not found: ${goalId}`);
 		}
 
+		if (goal.missionType !== 'measurable') {
+			throw new Error(
+				`Cannot record metric for goal ${goalId}: not a measurable mission (missionType="${goal.missionType}")`
+			);
+		}
+
 		// Always insert history entry
 		this.goalRepo.insertMetricHistory(goalId, metricName, value, timestamp);
 
@@ -565,9 +571,13 @@ export class GoalManager {
 			return m;
 		});
 
-		// If metric name not in structuredMetrics, add it as an untracked metric
+		// Reject unknown metric names — auto-creating would set target === current,
+		// making the metric immediately "met" and masking configuration errors.
 		if (!found) {
-			updatedMetrics.push({ name: metricName, target: value, current: value });
+			throw new Error(
+				`Metric "${metricName}" is not defined in structuredMetrics for goal ${goalId}. ` +
+					`Known metrics: ${existingMetrics.map((m) => m.name).join(', ') || '(none)'}`
+			);
 		}
 
 		// Derive legacy metrics record: { [name]: current }

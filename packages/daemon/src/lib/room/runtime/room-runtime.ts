@@ -2506,11 +2506,14 @@ export class RoomRuntime {
 							continue; // Don't plan for this goal
 						}
 
-						// Targets not met — trigger replanning with metric context
+						// Targets not met — trigger replanning with metric context.
+						// executionTasks is already filtered to taskType !== 'planning' and all have
+						// status === 'completed' (allExecutionCompleted guard above).
 						needsPlanning = true;
-						const completedExecTasks = executionTasks
-							.filter((t) => t.status === 'completed' && t.taskType !== 'planning')
-							.map((t) => ({ title: t.title, result: t.result ?? 'completed' }));
+						const completedExecTasks = executionTasks.map((t) => ({
+							title: t.title,
+							result: t.result ?? 'completed',
+						}));
 
 						// Fetch recent history for each metric
 						const metricStatuses: MetricReplanStatus[] = await Promise.all(

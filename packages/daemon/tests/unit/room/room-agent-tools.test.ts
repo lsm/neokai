@@ -103,6 +103,16 @@ describe('Room Agent Tools', () => {
 				payload_json TEXT,
 				created_at INTEGER NOT NULL
 			);
+			CREATE TABLE mission_metric_history (
+				id TEXT PRIMARY KEY,
+				goal_id TEXT NOT NULL,
+				metric_name TEXT NOT NULL,
+				value REAL NOT NULL,
+				recorded_at INTEGER NOT NULL,
+				FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup
+				ON mission_metric_history(goal_id, metric_name, recorded_at);
 			INSERT INTO rooms (id, name, created_at, updated_at) VALUES ('${roomId}', 'Test', ${Date.now()}, ${Date.now()});
 		`);
 
@@ -1580,6 +1590,120 @@ describe('Room Agent Tools', () => {
 		});
 	});
 
+	describe('record_metric', () => {
+		it('should reject non-measurable goals', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'One-Shot Goal' }));
+			const result = parseResult(
+				await handlers.record_metric({
+					goal_id: created.goalId as string,
+					metric_name: 'kpi',
+					value: 42,
+				})
+			);
+			expect(result.success).toBe(false);
+			expect((result.error as string)).toContain('not a measurable mission');
+		});
+
+		it('should reject non-existent goal', async () => {
+			const result = parseResult(
+				await handlers.record_metric({ goal_id: 'no-such-goal', metric_name: 'kpi', value: 42 })
+			);
+			expect(result.success).toBe(false);
+			expect((result.error as string)).toContain('not found');
+		});
+
+		it('should record metric for measurable goal', async () => {
+			const goalResult = parseResult(
+				await handlers.create_goal({ title: 'Measurable Goal' })
+			);
+			const goalId = goalResult.goalId as string;
+			// Directly set missionType + structuredMetrics via manager
+			await goalManager.updateGoalStatus(goalId, 'active');
+			const dbGoal = await goalManager.getGoal(goalId);
+			expect(dbGoal).toBeDefined();
+
+			// Create goal directly with missionType via goalManager
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal 2',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
+			});
+
+			const result = parseResult(
+				await handlers.record_metric({ goal_id: mGoal.id, metric_name: 'coverage', value: 60 })
+			);
+			expect(result.success).toBe(true);
+			expect((result.metric as { name: string }).name).toBe('coverage');
+			expect((result.metric as { value: number }).value).toBe(60);
+			// progress = 60/80 = 75%
+			expect((result.metric as { goalProgress: number }).goalProgress).toBe(75);
+		});
+
+		it('should reject unknown metric name', async () => {
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
+			});
+			const result = parseResult(
+				await handlers.record_metric({ goal_id: mGoal.id, metric_name: 'unknown_kpi', value: 50 })
+			);
+			expect(result.success).toBe(false);
+			expect((result.error as string)).toContain('not defined in structuredMetrics');
+		});
+	});
+
+	describe('get_metrics', () => {
+		it('should return empty structured metrics for goal without them', async () => {
+			const created = parseResult(await handlers.create_goal({ title: 'Legacy Goal' }));
+			const result = parseResult(
+				await handlers.get_metrics({ goal_id: created.goalId as string })
+			);
+			expect(result.success).toBe(true);
+			expect((result.structuredMetrics as unknown[]).length).toBe(0);
+		});
+
+		it('should return metric state for measurable goal', async () => {
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal',
+				missionType: 'measurable',
+				structuredMetrics: [
+					{ name: 'coverage', target: 80, current: 50 },
+					{ name: 'latency', target: 200, current: 300, direction: 'decrease', baseline: 1000 },
+				],
+			});
+
+			const result = parseResult(await handlers.get_metrics({ goal_id: mGoal.id }));
+			expect(result.success).toBe(true);
+			expect(result.missionType).toBe('measurable');
+			expect((result.metrics as unknown[]).length).toBe(2);
+
+			const coverage = (result.metrics as Array<{ name: string; current: number; target: number; met: boolean; direction: string }>).find(
+				(m) => m.name === 'coverage'
+			);
+			expect(coverage!.current).toBe(50);
+			expect(coverage!.target).toBe(80);
+			expect(coverage!.met).toBe(false);
+			expect(coverage!.direction).toBe('increase');
+		});
+
+		it('should report allTargetsMet=true when all met', async () => {
+			const mGoal = await goalManager.createGoal({
+				title: 'Measurable Goal',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 90 }],
+			});
+
+			const result = parseResult(await handlers.get_metrics({ goal_id: mGoal.id }));
+			expect(result.allTargetsMet).toBe(true);
+		});
+
+		it('should return error for non-existent goal', async () => {
+			const result = parseResult(await handlers.get_metrics({ goal_id: 'no-such-goal' }));
+			expect(result.success).toBe(false);
+		});
+	});
+
 	describe('createLeaderContextMcpServer', () => {
 		/**
 		 * Helper: return the registered tool names from an SDK MCP server.
@@ -1637,15 +1761,17 @@ describe('Room Agent Tools', () => {
 			expect(fullServer.name).toBe('room-agent');
 		});
 
-		it('full server exposes all 17 tools', () => {
+		it('full server exposes all 19 tools', () => {
 			const fullServer = createRoomAgentMcpServer({ roomId, goalManager, taskManager, groupRepo });
 			const names = getRegisteredToolNames(fullServer as never);
-			expect(names).toHaveLength(17);
+			expect(names).toHaveLength(19);
 			expect(names).toContain('approve_task');
 			expect(names).toContain('reject_task');
 			expect(names).toContain('set_schedule');
 			expect(names).toContain('pause_schedule');
 			expect(names).toContain('resume_schedule');
+			expect(names).toContain('record_metric');
+			expect(names).toContain('get_metrics');
 		});
 	});
 });
