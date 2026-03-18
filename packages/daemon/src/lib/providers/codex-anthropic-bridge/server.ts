@@ -236,22 +236,48 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					return new Response('Bad Request: no tool_result found', { status: 400 });
 				}
 
-				// For simplicity handle one tool result at a time (Codex sends one at a time)
-				const tr = toolResults[0];
-				const stored = toolSessions.get(tr.toolUseId);
-				if (!stored) {
-					logger.error(`codex-bridge: no active session for tool_use_id=${tr.toolUseId}`);
+				// Iterate ALL tool results — the Anthropic API allows multiple tool_result
+				// blocks in a single continuation request (one per parallel tool call).
+				//
+				// NOTE: The Codex app-server only ever emits one tool call per turn, because
+				// each item/tool/call RPC handler blocks until its result is provided before
+				// Codex can proceed to the next tool call. In practice there is therefore
+				// always exactly one suspended ToolSession at continuation time. We still
+				// handle the multi-result path correctly here for forward compatibility: if
+				// Codex ever gains parallel tool-call support, this code will work without
+				// changes.
+				//
+				// The first matched session's generator drives the resumed SSE stream.
+				// All matched sessions have their Deferreds resolved. Unmatched tool_use_ids
+				// produce a warning and are skipped (not silently dropped).
+				let primaryStored: ToolSession | null = null;
+
+				for (const tr of toolResults) {
+					const stored = toolSessions.get(tr.toolUseId);
+					if (!stored) {
+						logger.warn(
+							`codex-bridge: orphaned tool_result — no active session for tool_use_id=${tr.toolUseId}, skipping`
+						);
+						continue;
+					}
+					toolSessions.delete(tr.toolUseId);
+					// Cancel the TTL timer — session is being resumed normally
+					clearTimeout(stored.cleanupTimer);
+					// Provide the tool result — this unblocks the Codex read loop for this call
+					stored.provideResult(tr.text);
+					if (!primaryStored) {
+						primaryStored = stored;
+					}
+				}
+
+				if (!primaryStored) {
+					logger.error(
+						`codex-bridge: no active sessions found for any tool_use_id in this continuation`
+					);
 					return new Response('Session not found', { status: 404 });
 				}
-				toolSessions.delete(tr.toolUseId);
 
-				// Cancel the TTL timer — session is being resumed normally
-				clearTimeout(stored.cleanupTimer);
-
-				const { gen, session, provideResult, model: sessionModel } = stored;
-				// Provide the tool result — this unblocks the Codex read loop
-				provideResult(tr.text);
-
+				const { gen, session, model: sessionModel } = primaryStored;
 				const stream = new ReadableStream<Uint8Array>({
 					start(controller) {
 						void drainToSSE(gen, session, sessionModel, toolSessions, controller, ttlMs);
