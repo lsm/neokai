@@ -486,14 +486,6 @@ export class BridgeSession {
 		}
 	}
 
-	/**
-	 * Returns the most recent token usage captured from `thread/tokenUsage/updated`,
-	 * or `null` if that notification has not arrived yet.
-	 */
-	getUsage(): TokenUsage | null {
-		return this.latestUsage;
-	}
-
 	kill(): void {
 		this.conn.kill();
 	}

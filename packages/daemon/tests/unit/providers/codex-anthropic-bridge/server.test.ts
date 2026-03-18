@@ -64,30 +64,14 @@ async function readSSEEvents(
 class MockBridgeSession {
 	private events: BridgeEvent[];
 	capturedProviders = new Map<string, (text: string) => void>();
-	/** Simulates the token usage captured from thread/tokenUsage/updated. */
-	private usage:
-		| import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').TokenUsage
-		| null = null;
 
-	constructor(
-		events: BridgeEvent[],
-		opts?: {
-			usage?: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').TokenUsage;
-		}
-	) {
+	constructor(events: BridgeEvent[]) {
 		this.events = [...events];
-		this.usage = opts?.usage ?? null;
 	}
 
 	async initialize(): Promise<void> {}
 
 	kill(): void {}
-
-	getUsage():
-		| import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').TokenUsage
-		| null {
-		return this.usage;
-	}
 
 	async *startTurn(_text: string): AsyncGenerator<BridgeEvent> {
 		for (const event of this.events) {
@@ -939,15 +923,13 @@ describe('Bridge HTTP server', () => {
 	// -------------------------------------------------------------------------
 
 	it('message_delta uses actual outputTokens from turn_done when > 0', async () => {
-		// Simulate v2 protocol: thread/tokenUsage/updated populated turn_done with real counts
+		// Simulate v2 protocol: thread/tokenUsage/updated populated turn_done with real counts.
+		// The mock yields turn_done.outputTokens = 55; the heuristic for "Hi" would be 1.
 		mockSessionFactory = () =>
-			new MockBridgeSession(
-				[
-					{ type: 'text_delta', text: 'Hi' },
-					{ type: 'turn_done', inputTokens: 120, outputTokens: 55 },
-				],
-				{ usage: { inputTokens: 120, outputTokens: 55 } }
-			);
+			new MockBridgeSession([
+				{ type: 'text_delta', text: 'Hi' },
+				{ type: 'turn_done', inputTokens: 120, outputTokens: 55 },
+			]);
 
 		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
 			method: 'POST',
