@@ -13,6 +13,7 @@ import {
 	getModelFamilyIcon,
 	getProviderLabel,
 	groupModelsByProvider,
+	mapRawModelsToModelInfos,
 } from '../useModelSwitcher.ts';
 
 // Mock the connection manager
@@ -974,5 +975,70 @@ describe('useModelSwitcher', () => {
 			// Server-provided alias is used directly
 			expect(result.current.availableModels[0].alias).toBe('copilot-anthropic-opus');
 		});
+	});
+});
+
+describe('mapRawModelsToModelInfos', () => {
+	it('maps display_name to name and falls back alias to id', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet', description: '' },
+		]);
+		expect(result[0].name).toBe('Claude Sonnet');
+		expect(result[0].alias).toBe('claude-sonnet-4-6');
+	});
+
+	it('detects opus family', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-opus-4-6', display_name: 'Opus', description: '' },
+		]);
+		expect(result[0].family).toBe('opus');
+	});
+
+	it('detects gpt family', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gpt-4o', display_name: 'GPT-4o', description: '' },
+		]);
+		expect(result[0].family).toBe('gpt');
+	});
+
+	it('detects gemini family', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gemini-1-5-pro', display_name: 'Gemini', description: '' },
+		]);
+		expect(result[0].family).toBe('gemini');
+	});
+
+	it('defaults provider to anthropic when not provided', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-sonnet-4-6', display_name: 'Sonnet', description: '' },
+		]);
+		expect(result[0].provider).toBe('anthropic');
+	});
+
+	it('sorts by PROVIDER_ORDER: anthropic before copilot before codex', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'codex-sonnet', display_name: 'Codex', description: '', provider: 'anthropic-codex' },
+			{ id: 'claude-sonnet', display_name: 'Sonnet', description: '', provider: 'anthropic' },
+			{
+				id: 'copilot-sonnet',
+				display_name: 'Copilot',
+				description: '',
+				provider: 'anthropic-copilot',
+			},
+		]);
+		expect(result[0].provider).toBe('anthropic');
+		expect(result[1].provider).toBe('anthropic-copilot');
+		expect(result[2].provider).toBe('anthropic-codex');
+	});
+
+	it('sorts within provider by family: opus before sonnet before haiku', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-haiku-3', display_name: 'Haiku', description: '', provider: 'anthropic' },
+			{ id: 'claude-opus-4', display_name: 'Opus', description: '', provider: 'anthropic' },
+			{ id: 'claude-sonnet-4', display_name: 'Sonnet', description: '', provider: 'anthropic' },
+		]);
+		expect(result[0].family).toBe('opus');
+		expect(result[1].family).toBe('sonnet');
+		expect(result[2].family).toBe('haiku');
 	});
 });

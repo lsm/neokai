@@ -15,7 +15,12 @@ import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import type { Room, ModelInfo } from '@neokai/shared';
 import { connectionManager } from '../../lib/connection-manager';
-import { groupModelsByProvider, getProviderLabel } from '../../hooks/useModelSwitcher';
+import {
+	groupModelsByProvider,
+	getProviderLabel,
+	mapRawModelsToModelInfos,
+} from '../../hooks/useModelSwitcher';
+import type { RawModelEntry } from '../../hooks/useModelSwitcher';
 
 interface RecentPath {
 	path: string;
@@ -23,46 +28,14 @@ interface RecentPath {
 	absoluteTime: Date;
 }
 
-/** Fetch available models from the server and map to ModelInfo */
-async function fetchAvailableModels(): Promise<ModelInfo[]> {
+/** Fetch available models from the server, mapped and sorted via shared utility */
+async function fetchAvailableModels(): Promise<import('@neokai/shared').ModelInfo[]> {
 	const hub = connectionManager.getHubIfConnected();
 	if (!hub) return [];
-
 	const { models } = (await hub.request('models.list', { useCache: true })) as {
-		models: Array<{
-			id: string;
-			display_name: string;
-			description: string;
-			alias?: string;
-			provider?: string;
-		}>;
+		models: RawModelEntry[];
 	};
-
-	return models.map((m) => {
-		let family = 'sonnet';
-		const mid = m.id.toLowerCase();
-		if (mid.includes('opus')) {
-			family = 'opus';
-		} else if (mid.includes('haiku')) {
-			family = 'haiku';
-		} else if (mid.startsWith('glm-')) {
-			family = 'glm';
-		} else if (mid.startsWith('minimax-')) {
-			family = 'minimax';
-		}
-
-		return {
-			id: m.id,
-			name: m.display_name,
-			alias: m.alias || m.id,
-			family,
-			provider: m.provider || 'anthropic',
-			contextWindow: 200000,
-			description: m.description || '',
-			releaseDate: '',
-			available: true,
-		};
-	});
+	return mapRawModelsToModelInfos(models);
 }
 
 interface NewSessionModalProps {
@@ -192,6 +165,7 @@ export function NewSessionModal({
 		setSelectedPath('');
 		setSelectedRoomId(undefined);
 		setSelectedModelKey('');
+		setAvailableModels([]);
 		setShowCreateRoom(false);
 		setNewRoomName('');
 		setNewRoomDescription('');

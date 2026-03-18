@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useState } from 'preact/hooks';
+import type { ModelInfo, Provider } from '@neokai/shared';
 import { lobbyStore } from '../lib/lobby-store';
 import { globalStore } from '../lib/global-store';
 import { navigateToRoom, navigateToSession } from '../lib/router';
@@ -64,7 +65,7 @@ export default function Lobby() {
 	async function handleCreateSession(params: {
 		workspacePath: string;
 		roomId?: string;
-		model?: import('@neokai/shared').ModelInfo;
+		model?: ModelInfo;
 	}) {
 		try {
 			const { sessionId } = await createSession({
@@ -74,7 +75,7 @@ export default function Lobby() {
 				...(params.model && {
 					config: {
 						model: params.model.id,
-						provider: params.model.provider as import('@neokai/shared').Provider,
+						provider: params.model.provider as Provider,
 					},
 				}),
 			});
