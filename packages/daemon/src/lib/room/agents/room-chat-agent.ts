@@ -51,7 +51,7 @@ Call \`create_goal\` with the title and description. That is all you do.
 The system automatically spawns a Planner agent that explores the codebase and writes a plan document in a PR.
 
 **Step 3 — Plan review (automatic + human):**
-A Leader agent reviews the plan. The human user (you) will be presented with the plan and asked to approve or reject it.
+A Leader agent reviews the plan. The human will be presented with the plan and asked to approve or reject it.
 
 **Step 4 — Task creation (automatic, after approval):**
 Once the plan is approved, tasks are automatically created from the approved plan by the Planner agent.

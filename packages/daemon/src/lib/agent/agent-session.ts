@@ -648,7 +648,7 @@ export class AgentSession
 	 * Used to inject context-specific instructions (e.g. room workflow guidance)
 	 * without persisting them to the database.
 	 */
-	setRuntimeSystemPrompt(systemPrompt: string): void {
+	setRuntimeSystemPrompt(systemPrompt: SystemPromptConfig): void {
 		this.session.config = {
 			...this.session.config,
 			systemPrompt,
