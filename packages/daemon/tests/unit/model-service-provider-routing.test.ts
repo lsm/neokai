@@ -9,7 +9,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import type { ModelInfo } from '@neokai/shared';
-import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
+import type { Provider, ProviderCapabilities, ProviderSdkConfig } from '@neokai/shared/provider';
 import {
 	getModelInfo,
 	resolveModelAlias,
@@ -20,28 +20,30 @@ import {
 	initializeModels,
 } from '../../src/lib/model-service';
 import { getProviderRegistry, resetProviderRegistry } from '../../src/lib/providers/registry';
-import { resetProviderFactory } from '../../src/lib/providers/factory';
+import { initializeProviders, resetProviderFactory } from '../../src/lib/providers/factory';
 
 // ---------------------------------------------------------------------------
-// Minimal provider stub
+// Minimal provider stub — implements the full Provider interface structurally
 // ---------------------------------------------------------------------------
 function makeStubProvider(id: string, models: ModelInfo[], available: boolean = true): Provider {
-	return {
+	const capabilities: ProviderCapabilities = {
+		streaming: true,
+		extendedThinking: false,
+		maxContextWindow: 200000,
+		functionCalling: true,
+		vision: false,
+	};
+	const stub: Provider = {
 		id,
 		displayName: id,
-		capabilities: {
-			streaming: true,
-			extendedThinking: false,
-			maxContextWindow: 200000,
-			functionCalling: true,
-			vision: false,
-		},
+		capabilities,
 		isAvailable: async () => available,
 		getModels: async () => models,
 		ownsModel: (modelId: string) => models.some((m) => m.id === modelId),
 		getModelForTier: () => undefined,
 		buildSdkConfig: (): ProviderSdkConfig => ({ envVars: {}, isAnthropicCompatible: true }),
-	} as unknown as Provider;
+	};
+	return stub;
 }
 
 // Shared model IDs that appear in more than one provider
@@ -256,10 +258,12 @@ describe('Model Service — provider routing', () => {
 	// -------------------------------------------------------------------------
 	// Global cache populated from all available providers via initializeModels
 	// -------------------------------------------------------------------------
-	// NOTE: initializeModels() calls initializeProviders() internally, which
-	// registers the 5 built-in providers (anthropic, glm, etc.). To avoid
-	// ID collisions we use unique stub IDs that don't shadow built-ins.
-	// The model .provider fields match those stub IDs so getModelInfo filtering works.
+	// Strategy: call initializeProviders() first so the 5 built-in providers are
+	// registered and initialized=true. Then add stub providers. When initializeModels()
+	// runs it calls initializeProviders() again, but because initialized=true and
+	// registry.size > 0, it returns early without touching the registry.
+	// All 5 real providers are unavailable in the test environment (no credentials),
+	// so only stub models make it into the cache — giving us deterministic assertions.
 	// -------------------------------------------------------------------------
 	describe('initializeModels — global cache contains models from all providers', () => {
 		const STUB_A = 'stub-provider-alpha';
@@ -304,6 +308,8 @@ describe('Model Service — provider routing', () => {
 		];
 
 		it('populates cache with models from all registered stub providers', async () => {
+			// Register real providers first (all unavailable); then add stubs.
+			initializeProviders();
 			const registry = getProviderRegistry();
 			registry.register(makeStubProvider(STUB_A, stubModelsA, true));
 			registry.register(makeStubProvider(STUB_B, stubModelsB, true));
@@ -326,6 +332,7 @@ describe('Model Service — provider routing', () => {
 		});
 
 		it('keeps both provider entries when two providers share the same model ID', async () => {
+			initializeProviders();
 			const registry = getProviderRegistry();
 			registry.register(makeStubProvider(STUB_A, stubModelsA, true));
 			registry.register(makeStubProvider(STUB_B, stubModelsB, true));
@@ -343,6 +350,7 @@ describe('Model Service — provider routing', () => {
 		});
 
 		it('skips unavailable providers when populating cache', async () => {
+			initializeProviders();
 			const registry = getProviderRegistry();
 			registry.register(makeStubProvider(STUB_A, stubModelsA, true));
 			registry.register(makeStubProvider(STUB_B, stubModelsB, false)); // unavailable
@@ -359,6 +367,7 @@ describe('Model Service — provider routing', () => {
 		});
 
 		it('uses fallback models when all stub providers are unavailable', async () => {
+			initializeProviders();
 			const registry = getProviderRegistry();
 			registry.register(makeStubProvider(STUB_A, stubModelsA, false));
 			registry.register(makeStubProvider(STUB_B, stubModelsB, false));

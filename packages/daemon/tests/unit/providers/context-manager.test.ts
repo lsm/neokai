@@ -805,6 +805,7 @@ describe('ProviderContextManager', () => {
 
 			expect(options.env).toBeDefined();
 			expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://copilot.api.com');
+			expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('copilot-token');
 		});
 
 		it('should return false for requiresQueryRestart within anthropic-copilot', () => {
@@ -962,6 +963,7 @@ describe('ProviderContextManager', () => {
 			const options = await context.buildSdkOptions({ maxTokens: 4096 });
 
 			expect(options.env?.ANTHROPIC_BASE_URL).toBe('https://codex.api.com');
+			expect(options.env?.ANTHROPIC_AUTH_TOKEN).toBe('codex-token');
 		});
 
 		it('should return true for requiresQueryRestart when switching from codex to anthropic', () => {
