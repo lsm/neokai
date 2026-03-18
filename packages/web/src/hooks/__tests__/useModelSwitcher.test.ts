@@ -12,6 +12,7 @@ import {
 	MODEL_FAMILY_ICONS,
 	getModelFamilyIcon,
 	getProviderLabel,
+	groupModelsByProvider,
 } from '../useModelSwitcher.ts';
 
 // Mock the connection manager
@@ -142,6 +143,7 @@ describe('useModelSwitcher', () => {
 		it('should return correct label for known providers', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
+			expect(getProviderLabel('minimax')).toBe('MiniMax');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
 			expect(getProviderLabel('anthropic-codex')).toBe('Codex');
 		});
@@ -865,6 +867,78 @@ describe('useModelSwitcher', () => {
 			rerender();
 
 			expect(result.current.reload).toBe(firstReload);
+		});
+	});
+
+	describe('groupModelsByProvider', () => {
+		it('should return an empty map for empty input', () => {
+			const result = groupModelsByProvider([]);
+			expect(result.size).toBe(0);
+		});
+
+		it('should group models by provider', () => {
+			const models = [
+				{ id: 'claude-sonnet-4', provider: 'anthropic', family: 'sonnet', name: 'Sonnet' },
+				{ id: 'claude-opus-4', provider: 'anthropic', family: 'opus', name: 'Opus' },
+				{
+					id: 'claude-sonnet-4',
+					provider: 'anthropic-copilot',
+					family: 'sonnet',
+					name: 'Sonnet (Copilot)',
+				},
+			];
+			const result = groupModelsByProvider(models as any);
+			expect(result.size).toBe(2);
+			expect(result.get('anthropic')).toHaveLength(2);
+			expect(result.get('anthropic-copilot')).toHaveLength(1);
+		});
+
+		it('should default to anthropic provider when model has no provider', () => {
+			const models = [{ id: 'claude-sonnet-4', family: 'sonnet', name: 'Sonnet' }];
+			const result = groupModelsByProvider(models as any);
+			expect(result.has('anthropic')).toBe(true);
+			expect(result.get('anthropic')).toHaveLength(1);
+		});
+
+		it('should preserve all models within each group', () => {
+			const models = [
+				{ id: 'glm-4-plus', provider: 'glm', family: 'glm', name: 'GLM 4 Plus' },
+				{ id: 'glm-4-flash', provider: 'glm', family: 'glm', name: 'GLM 4 Flash' },
+				{ id: 'claude-sonnet-4', provider: 'anthropic', family: 'sonnet', name: 'Sonnet' },
+			];
+			const result = groupModelsByProvider(models as any);
+			expect(result.get('glm')).toHaveLength(2);
+			expect(result.get('anthropic')).toHaveLength(1);
+		});
+
+		it('should maintain insertion order of models within each group', () => {
+			const models = [
+				{ id: 'claude-opus-4', provider: 'anthropic', family: 'opus', name: 'Opus' },
+				{ id: 'claude-sonnet-4', provider: 'anthropic', family: 'sonnet', name: 'Sonnet' },
+				{ id: 'claude-haiku-4', provider: 'anthropic', family: 'haiku', name: 'Haiku' },
+			];
+			const result = groupModelsByProvider(models as any);
+			const anthropicModels = result.get('anthropic')!;
+			expect(anthropicModels[0].id).toBe('claude-opus-4');
+			expect(anthropicModels[1].id).toBe('claude-sonnet-4');
+			expect(anthropicModels[2].id).toBe('claude-haiku-4');
+		});
+
+		it('should handle all supported providers', () => {
+			const models = [
+				{ id: 'm1', provider: 'anthropic', family: 'sonnet', name: 'M1' },
+				{ id: 'm2', provider: 'anthropic-copilot', family: 'sonnet', name: 'M2' },
+				{ id: 'm3', provider: 'anthropic-codex', family: 'sonnet', name: 'M3' },
+				{ id: 'm4', provider: 'glm', family: 'glm', name: 'M4' },
+				{ id: 'm5', provider: 'minimax', family: 'minimax', name: 'M5' },
+			];
+			const result = groupModelsByProvider(models as any);
+			expect(result.size).toBe(5);
+			expect(result.has('anthropic')).toBe(true);
+			expect(result.has('anthropic-copilot')).toBe(true);
+			expect(result.has('anthropic-codex')).toBe(true);
+			expect(result.has('glm')).toBe(true);
+			expect(result.has('minimax')).toBe(true);
 		});
 	});
 

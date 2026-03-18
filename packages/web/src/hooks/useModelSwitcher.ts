@@ -70,6 +70,35 @@ const FAMILY_ORDER: Record<string, number> = {
 	gemini: 6,
 };
 
+/** Provider sort order for model picker grouping */
+const PROVIDER_ORDER: Record<string, number> = {
+	anthropic: 0,
+	'anthropic-copilot': 1,
+	'anthropic-codex': 2,
+	glm: 3,
+	minimax: 4,
+};
+
+/**
+ * Group models by their provider, preserving insertion order of the input array.
+ * Provider group ordering depends on the caller supplying a pre-sorted array —
+ * `loadModelInfo` sorts by PROVIDER_ORDER before calling this function.
+ * Models within each group retain their input order (family-sorted by the caller).
+ */
+export function groupModelsByProvider(models: ModelInfo[]): Map<string, ModelInfo[]> {
+	const groups = new Map<string, ModelInfo[]>();
+	for (const model of models) {
+		const provider = model.provider || 'anthropic';
+		const existing = groups.get(provider);
+		if (existing) {
+			existing.push(model);
+		} else {
+			groups.set(provider, [model]);
+		}
+	}
+	return groups;
+}
+
 /** Provider display labels for UI */
 export const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
@@ -77,6 +106,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 	minimax: 'MiniMax',
 	'anthropic-copilot': 'Copilot',
 	'anthropic-codex': 'Codex',
+	// Note: keep in sync with PROVIDER_ORDER above
 };
 
 /**
@@ -161,8 +191,17 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 				};
 			});
 
-			// Sort by family order
-			modelInfos.sort((a, b) => FAMILY_ORDER[a.family] - FAMILY_ORDER[b.family]);
+			// Sort by provider first, then by family order within each provider group.
+			// This pre-sort is required so that groupModelsByProvider() preserves
+			// the intended provider order via Map insertion order.
+			modelInfos.sort((a, b) => {
+				const providerA = PROVIDER_ORDER[a.provider || 'anthropic'] ?? 99;
+				const providerB = PROVIDER_ORDER[b.provider || 'anthropic'] ?? 99;
+				if (providerA !== providerB) return providerA - providerB;
+				const familyA = FAMILY_ORDER[a.family] ?? 99;
+				const familyB = FAMILY_ORDER[b.family] ?? 99;
+				return familyA - familyB;
+			});
 			setAvailableModels(modelInfos);
 		} catch {
 			// Error handled silently - loading state will be cleared

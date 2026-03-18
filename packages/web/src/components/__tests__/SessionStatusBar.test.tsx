@@ -9,9 +9,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/preact';
+import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@neokai/shared';
 import SessionStatusBar from '../SessionStatusBar';
+
+// Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
+// Individual tests can call mockGetHubIfConnected.mockReturnValue({ request: ... }) to
+// simulate an authenticated connection.
+const mockGetHubIfConnected = vi.fn(() => null);
+
+vi.mock('../../lib/connection-manager', () => ({
+	connectionManager: {
+		getHubIfConnected: () => mockGetHubIfConnected(),
+		onConnection: vi.fn(() => () => {}),
+	},
+}));
 
 describe('SessionStatusBar', () => {
 	const mockOnModelSwitch = vi.fn(() => Promise.resolve());
@@ -22,6 +34,7 @@ describe('SessionStatusBar', () => {
 		id: 'sonnet',
 		name: 'Sonnet 4.5',
 		family: 'sonnet',
+		provider: 'anthropic',
 		isDefault: true,
 	};
 
@@ -85,6 +98,8 @@ describe('SessionStatusBar', () => {
 		mockOnModelSwitch.mockClear();
 		mockOnAutoScrollChange.mockClear();
 		mockOnCoordinatorModeChange.mockClear();
+		// Reset hub to null (no connection) between tests — individual tests can override
+		mockGetHubIfConnected.mockReturnValue(null);
 	});
 
 	afterEach(() => {
@@ -412,7 +427,7 @@ describe('SessionStatusBar', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
-			expect(container.textContent).toContain('(current)');
+			expect(container.textContent).toContain('✓');
 		});
 
 		it('should call onModelSwitch when a model is selected', async () => {
@@ -768,6 +783,112 @@ describe('SessionStatusBar', () => {
 				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
 			);
 			expect(coordinatorButton?.className).toContain('border-gray-600');
+		});
+	});
+
+	describe('Model Dropdown — provider group headers', () => {
+		it('should render provider group header label when dropdown is open', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// All mock models belong to 'anthropic' → label "Anthropic" should appear
+			expect(container.textContent).toContain('Anthropic');
+		});
+
+		it('should render one provider group header per distinct provider', () => {
+			const multiProviderModels: ModelInfo[] = [
+				{ id: 'opus', alias: 'opus', name: 'Opus 4.5', family: 'opus', provider: 'anthropic' },
+				{
+					id: 'copilot-sonnet',
+					alias: 'copilot-sonnet',
+					name: 'Sonnet (Copilot)',
+					family: 'sonnet',
+					provider: 'anthropic-copilot',
+				},
+			];
+
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} availableModels={multiProviderModels} />
+			);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			expect(container.textContent).toContain('Anthropic');
+			expect(container.textContent).toContain('Copilot');
+		});
+
+		it('should render an availability dot for each provider group', () => {
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			// Provider availability dots have flex-shrink-0 to distinguish them from
+			// the connection status dot (which does not have that class)
+			const providerDots = Array.from(
+				container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+			);
+			expect(providerDots.length).toBeGreaterThan(0);
+		});
+
+		it('should show gray availability dot when provider is not authenticated', () => {
+			// No hub → auth.providers returns null → isAuthenticated defaults to false → gray dot
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			const providerDots = Array.from(
+				container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+			);
+			expect(providerDots.length).toBeGreaterThan(0);
+			expect(providerDots[0].className).toContain('bg-gray-500');
+		});
+
+		it('should show green availability dot when provider is authenticated', async () => {
+			// Configure hub to return authenticated status for 'anthropic'
+			mockGetHubIfConnected.mockReturnValue({
+				request: vi.fn().mockImplementation((method: string) => {
+					if (method === 'auth.providers') {
+						return Promise.resolve({
+							providers: [{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true }],
+						});
+					}
+					return Promise.resolve(null);
+				}),
+				onEvent: vi.fn(() => () => {}),
+				onConnection: vi.fn(() => () => {}),
+				isConnected: vi.fn(() => true),
+			});
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+
+			// Wait for the auth.providers effect to resolve
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const modelButton = container.querySelector(
+				'.control-btn[title*="Switch Model"]'
+			) as HTMLButtonElement;
+			fireEvent.click(modelButton);
+
+			const providerDots = Array.from(
+				container.querySelectorAll('.w-2.h-2.rounded-full.flex-shrink-0')
+			);
+			expect(providerDots.length).toBeGreaterThan(0);
+			expect(providerDots[0].className).toContain('bg-green-500');
 		});
 	});
 });
