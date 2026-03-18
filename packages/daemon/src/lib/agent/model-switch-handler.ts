@@ -17,7 +17,13 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { Session, SessionConfig, CurrentModelInfo, MessageHub } from '@neokai/shared';
+import type {
+	Provider,
+	Session,
+	SessionConfig,
+	CurrentModelInfo,
+	MessageHub,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
@@ -156,8 +162,7 @@ export class ModelSwitchHandler {
 				// Keep provider aligned with model for pre-query switches too.
 				// Without this, a stale explicit provider can force wrong model routing.
 				if (newProviderInstance?.id) {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					session.config.provider = newProviderInstance.id as any;
+					session.config.provider = newProviderInstance.id as Provider;
 				}
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
@@ -166,7 +171,7 @@ export class ModelSwitchHandler {
 					config: {
 						model: resolvedModel,
 						...(newProviderInstance?.id && {
-							provider: newProviderInstance.id as 'anthropic' | 'glm',
+							provider: newProviderInstance.id as Provider,
 						}),
 					} as SessionConfig,
 				});
@@ -191,8 +196,7 @@ export class ModelSwitchHandler {
 				// Keep provider aligned with model (same as the pre-query branch —
 				// unconditionally update so same-provider switches don’t leave stale state).
 				if (newProviderInstance?.id) {
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					session.config.provider = newProviderInstance.id as any;
+					session.config.provider = newProviderInstance.id as Provider;
 				}
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
@@ -201,7 +205,7 @@ export class ModelSwitchHandler {
 					config: {
 						model: resolvedModel,
 						...(newProviderInstance?.id && {
-							provider: newProviderInstance.id as 'anthropic' | 'glm',
+							provider: newProviderInstance.id as Provider,
 						}),
 					} as SessionConfig,
 				});
