@@ -340,31 +340,52 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
 /**
  * Get model info by ID or alias
  * Searches available models with support for legacy model IDs
+ *
+ * @param idOrAlias - Model ID or alias to look up
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Optional provider ID to prefer when multiple models share the same ID/alias.
+ *   When specified, models from this provider are returned first. Falls back to unfiltered
+ *   search if no provider-matching model is found (backward compatible).
  */
 export async function getModelInfo(
 	idOrAlias: string,
-	cacheKey: string = 'global'
+	cacheKey: string = 'global',
+	providerId?: string
 ): Promise<ModelInfo | null> {
 	const availableModels = getAvailableModels(cacheKey);
 
-	// 1. Try exact ID match first (works for SDK's short IDs like 'opus', 'default')
-	let model = availableModels.find((m) => m.id === idOrAlias);
+	// Helper: run the three-step search on a subset of models
+	function findIn(models: ModelInfo[]): ModelInfo | undefined {
+		// 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
+		let found = models.find((m) => m.id === idOrAlias);
 
-	// 2. Try alias match in model's alias field
-	if (!model) {
-		model = availableModels.find((m) => m.alias === idOrAlias);
-	}
-
-	// 3. Try legacy model mapping (maps old full IDs to SDK short IDs)
-	// This handles existing sessions with legacy model IDs like 'claude-sonnet-4-5-20250929'
-	if (!model) {
-		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
-		if (legacyMappedId) {
-			model = availableModels.find((m) => m.id === legacyMappedId);
+		// 2. Alias field match
+		if (!found) {
+			found = models.find((m) => m.alias === idOrAlias);
 		}
+
+		// 3. Legacy model mapping (maps old full IDs to SDK short IDs)
+		if (!found) {
+			const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
+			if (legacyMappedId) {
+				found = models.find((m) => m.id === legacyMappedId);
+			}
+		}
+
+		return found;
 	}
 
-	return model || null;
+	// When a provider is specified, prefer models from that provider first
+	if (providerId) {
+		const providerModels = availableModels.filter((m) => m.provider === providerId);
+		const match = findIn(providerModels);
+		if (match) {
+			return match;
+		}
+		// Fall through to unfiltered search for backward compatibility
+	}
+
+	return findIn(availableModels) ?? null;
 }
 
 /**
@@ -381,13 +402,18 @@ export async function isValidModel(
 /**
  * Resolve a model alias to its actual ID in the available models
  * Returns the model ID as it exists in the SDK/cache
+ *
+ * @param idOrAlias - Model ID or alias to resolve
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Optional provider ID to prefer for disambiguation (see getModelInfo)
  */
 export async function resolveModelAlias(
 	idOrAlias: string,
-	cacheKey: string = 'global'
+	cacheKey: string = 'global',
+	providerId?: string
 ): Promise<string> {
 	// Try to find the model directly
-	const modelInfo = await getModelInfo(idOrAlias, cacheKey);
+	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
 	if (modelInfo) {
 		return modelInfo.id;
 	}

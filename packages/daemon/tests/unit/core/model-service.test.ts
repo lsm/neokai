@@ -644,6 +644,98 @@ describe('Model Service', () => {
 		});
 	});
 
+	describe('provider-filtered model resolution', () => {
+		// Two providers exposing the same canonical model ID
+		const sharedModels: ModelInfo[] = [
+			{
+				id: 'claude-sonnet-4.6',
+				name: 'Claude Sonnet 4.6 (Anthropic)',
+				alias: 'sonnet-4.6',
+				family: 'sonnet',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				description: 'Anthropic Sonnet',
+				available: true,
+			},
+			{
+				id: 'claude-sonnet-4.6',
+				name: 'Claude Sonnet 4.6 (Copilot)',
+				alias: 'sonnet-4.6',
+				family: 'sonnet',
+				provider: 'anthropic-copilot',
+				contextWindow: 200000,
+				description: 'Copilot Sonnet',
+				available: true,
+			},
+			{
+				id: 'haiku',
+				name: 'Haiku (Anthropic)',
+				alias: 'haiku',
+				family: 'haiku',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				available: true,
+			},
+		];
+
+		beforeEach(() => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', sharedModels);
+			setModelsCache(testCache);
+		});
+
+		it('should return first match when no providerId specified (backward compat)', async () => {
+			const model = await getModelInfo('claude-sonnet-4.6', 'global');
+			expect(model).not.toBeNull();
+			// First match is the anthropic one (insertion order)
+			expect(model?.provider).toBe('anthropic');
+		});
+
+		it('should return provider-specific model when providerId matches', async () => {
+			const model = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic-copilot');
+			expect(model?.name).toBe('Claude Sonnet 4.6 (Copilot)');
+		});
+
+		it('should return anthropic model when providerId is anthropic', async () => {
+			const model = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic');
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic');
+			expect(model?.name).toBe('Claude Sonnet 4.6 (Anthropic)');
+		});
+
+		it('should fall back to unfiltered search when providerId has no matching model', async () => {
+			// 'glm' provider has no claude-sonnet-4.6 — should fall back to anthropic entry
+			const model = await getModelInfo('claude-sonnet-4.6', 'global', 'glm');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('claude-sonnet-4.6');
+		});
+
+		it('should resolve alias with provider filter', async () => {
+			const resolved = await resolveModelAlias('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+			expect(resolved).toBe('claude-sonnet-4.6');
+		});
+
+		it('should find model by alias with provider filter', async () => {
+			const model = await getModelInfo('sonnet-4.6', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic-copilot');
+		});
+
+		it('should return null when model not found even with provider filter (and no unfiltered match)', async () => {
+			const model = await getModelInfo('nonexistent-model', 'global', 'anthropic-copilot');
+			expect(model).toBeNull();
+		});
+
+		it('should return model without provider filter for model unique to one provider', async () => {
+			const model = await getModelInfo('haiku', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			// Not in copilot, falls back to unfiltered → finds anthropic haiku
+			expect(model?.provider).toBe('anthropic');
+		});
+	});
+
 	describe('ModelInfo optional fields', () => {
 		it('should handle models with minimal fields', async () => {
 			const minimalModels: ModelInfo[] = [

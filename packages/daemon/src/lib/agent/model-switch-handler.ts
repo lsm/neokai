@@ -120,11 +120,17 @@ export class ModelSwitchHandler {
 			// and then calling getModelInfo loses the provider — two providers can share
 			// the same canonical ID (e.g., Anthropic and anthropic-copilot both have
 			// 'claude-sonnet-4.6').
-			const modelInfo = await getModelInfo(newModel);
-			const resolvedModel = modelInfo?.id ?? (await resolveModelAlias(newModel));
+			// Pass session provider so same-ID models are disambiguated by provider.
+			const modelInfo = await getModelInfo(newModel, 'global', session.config.provider);
+			const resolvedModel =
+				modelInfo?.id ?? (await resolveModelAlias(newModel, 'global', session.config.provider));
 
 			// Resolve the current model in case it's also an alias
-			const currentResolvedModel = await resolveModelAlias(session.config.model);
+			const currentResolvedModel = await resolveModelAlias(
+				session.config.model,
+				'global',
+				session.config.provider
+			);
 
 			// Check if already using this model (compare resolved IDs)
 			if (currentResolvedModel === resolvedModel) {

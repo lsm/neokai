@@ -356,11 +356,13 @@ export function setupSessionHandlers(
 
 		// Get current model ID (may be an alias like "default")
 		const rawModelId = agentSession.getCurrentModel().id;
+		const sessionProvider = agentSession.getSessionData().config.provider;
 
 		// Resolve alias to full model ID for consistency with session.model.switch
+		// Pass provider so same-ID models are disambiguated by provider context
 		const { resolveModelAlias, getModelInfo } = await import('../model-service');
-		const currentModelId = await resolveModelAlias(rawModelId);
-		const modelInfo = await getModelInfo(currentModelId);
+		const currentModelId = await resolveModelAlias(rawModelId, 'global', sessionProvider);
+		const modelInfo = await getModelInfo(currentModelId, 'global', sessionProvider);
 
 		return {
 			currentModel: currentModelId,
