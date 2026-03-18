@@ -15,6 +15,7 @@ import {
 	resumeSessionStreaming,
 	STREAMING_TIMEOUT_MS,
 } from '../../../../src/lib/providers/anthropic-copilot/streaming';
+import { estimateTokens } from '../../../../src/lib/providers/anthropic-copilot/sse';
 import { ToolBridgeRegistry } from '../../../../src/lib/providers/anthropic-copilot/tool-bridge';
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,84 @@ describe('runSessionStreaming', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// SSE parse helper (shared with token accounting assertions below)
+// ---------------------------------------------------------------------------
+
+function parseEvents(written: string[]): Array<{ type: string; data: unknown }> {
+	const events: Array<{ type: string; data: unknown }> = [];
+	let currentType = '';
+	for (const chunk of written) {
+		for (const line of chunk.split('\n')) {
+			if (line.startsWith('event: ')) {
+				currentType = line.slice(7).trim();
+			} else if (line.startsWith('data: ')) {
+				events.push({ type: currentType, data: JSON.parse(line.slice(6)) });
+				currentType = '';
+			}
+		}
+	}
+	return events;
+}
+
+// ---------------------------------------------------------------------------
+// Token accounting via inputText parameter
+// ---------------------------------------------------------------------------
+
+describe('runSessionStreaming — inputText / input_tokens', () => {
+	it('message_start carries non-zero input_tokens when inputText is provided', async () => {
+		const session = new MockSession();
+		const { written, res } = makeMockRes();
+		const { req } = makeMockReq();
+
+		const inputText = 'hello world'; // 11 chars → ceil(11/4) = 3
+		const p = runSessionStreaming(
+			session as unknown as CopilotSession,
+			'prompt',
+			'model',
+			req,
+			res,
+			undefined,
+			() => {},
+			inputText
+		);
+		await Promise.resolve();
+		session.emit('session.idle');
+		await p;
+
+		const events = parseEvents(written);
+		const start = events.find((e) => e.type === 'message_start');
+		const usage = ((start!.data as Record<string, unknown>)['message'] as Record<string, unknown>)[
+			'usage'
+		] as Record<string, unknown>;
+		expect(usage['input_tokens']).toBe(estimateTokens(inputText.length));
+	});
+
+	it('message_start carries 0 input_tokens when inputText is empty (default)', async () => {
+		const session = new MockSession();
+		const { written, res } = makeMockRes();
+		const { req } = makeMockReq();
+
+		const p = runSessionStreaming(
+			session as unknown as CopilotSession,
+			'prompt',
+			'model',
+			req,
+			res
+		);
+		await Promise.resolve();
+		session.emit('session.idle');
+		await p;
+
+		const events = parseEvents(written);
+		const start = events.find((e) => e.type === 'message_start');
+		const usage = ((start!.data as Record<string, unknown>)['message'] as Record<string, unknown>)[
+			'usage'
+		] as Record<string, unknown>;
+		expect(usage['input_tokens']).toBe(0);
+	});
+});
+
 describe('resumeSessionStreaming', () => {
 	it('resolves completed after tool results resume and session idles', async () => {
 		const session = new MockSession();
@@ -268,6 +347,48 @@ describe('resumeSessionStreaming', () => {
 		const outcome = await p;
 		expect(outcome.kind).toBe('completed');
 		expect(session.disconnectCalled).toBe(true);
+		clearTimeout(fakeTimer);
+	});
+
+	it('message_start carries non-zero input_tokens when inputText is provided', async () => {
+		const session = new MockSession();
+		const { written, res } = makeMockRes();
+		const { req } = makeMockReq();
+		const registry = new ToolBridgeRegistry();
+
+		const fakeTimer = setTimeout(() => {}, 100_000);
+		(registry as unknown as Record<string, unknown>)['pending'] = new Map([
+			[
+				'tc_1',
+				{
+					resolve: () => {},
+					reject: () => {},
+					timer: fakeTimer,
+				},
+			],
+		]);
+
+		const inputText = 'system context\nuser: run the tool'; // 34 chars → ceil(34/4) = 9
+		const p = resumeSessionStreaming(
+			session as unknown as CopilotSession,
+			'model',
+			req,
+			res,
+			registry,
+			[{ toolUseId: 'tc_1', result: 'ok' }],
+			() => {},
+			inputText
+		);
+		await Promise.resolve();
+		session.emit('session.idle');
+		await p;
+
+		const events = parseEvents(written);
+		const start = events.find((e) => e.type === 'message_start');
+		const usage = ((start!.data as Record<string, unknown>)['message'] as Record<string, unknown>)[
+			'usage'
+		] as Record<string, unknown>;
+		expect(usage['input_tokens']).toBe(estimateTokens(inputText.length));
 		clearTimeout(fakeTimer);
 	});
 });
