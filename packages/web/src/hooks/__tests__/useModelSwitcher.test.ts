@@ -142,9 +142,8 @@ describe('useModelSwitcher', () => {
 		it('should return correct label for known providers', () => {
 			expect(getProviderLabel('anthropic')).toBe('Anthropic');
 			expect(getProviderLabel('glm')).toBe('GLM');
-			expect(getProviderLabel('openai')).toBe('OpenAI');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
-			expect(getProviderLabel('google')).toBe('Google');
+			expect(getProviderLabel('anthropic-codex')).toBe('Codex');
 		});
 
 		it('should return the provider string for unknown providers', () => {
@@ -260,39 +259,6 @@ describe('useModelSwitcher', () => {
 			const glmModel = result.current.availableModels.find((m) => m.id === 'glm-4-plus');
 			expect(glmModel?.provider).toBe('glm');
 			expect(glmModel?.family).toBe('glm');
-		});
-
-		it('should detect gpt family and openai provider for OpenAI models', async () => {
-			const mockHub = {
-				request: vi
-					.fn()
-					.mockResolvedValueOnce({
-						currentModel: 'gpt-5.3-codex',
-						modelInfo: null,
-					})
-					.mockResolvedValueOnce({
-						models: [
-							{
-								id: 'gpt-5.3-codex',
-								display_name: 'GPT-5.3 Codex',
-								description: '',
-								provider: 'openai',
-							},
-							{ id: 'gpt-5-mini', display_name: 'GPT-5 Mini', description: '', provider: 'openai' },
-						],
-					}),
-			};
-			mockGetHubIfConnected.mockReturnValue(mockHub);
-
-			const { result } = renderHook(() => useModelSwitcher('session-1'));
-
-			await waitFor(() => {
-				expect(result.current.loading).toBe(false);
-			});
-
-			const gptModel = result.current.availableModels.find((m) => m.id === 'gpt-5.3-codex');
-			expect(gptModel?.provider).toBe('openai');
-			expect(gptModel?.family).toBe('gpt');
 		});
 
 		it('should detect gpt family and anthropic-copilot provider for Copilot GPT models', async () => {
