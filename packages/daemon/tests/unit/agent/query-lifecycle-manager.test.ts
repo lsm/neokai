@@ -233,6 +233,66 @@ describe('QueryLifecycleManager', () => {
 			// Should not throw
 			await manager.stop();
 		});
+
+		test('calls close() on query object to terminate subprocess', async () => {
+			let closeCalled = false;
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					closeCalled = true;
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(closeCalled).toBe(true);
+		});
+
+		test('calls close() even when transport is not ready (firstMessageReceived=false)', async () => {
+			let closeCalled = false;
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					closeCalled = true;
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = false;
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(closeCalled).toBe(true);
+		});
+
+		test('handles close() errors gracefully', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {
+					throw new Error('Close failed');
+				}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.firstMessageReceived = true;
+			manager = new QueryLifecycleManager(mockContext);
+
+			// Should not throw
+			await manager.stop();
+		});
+
+		test('clears query references after close()', async () => {
+			mockContext.queryObject = {
+				interrupt: mock(async () => {}),
+				close: mock(() => {}),
+			} as unknown as QueryLifecycleManagerContext['queryObject'];
+			mockContext.queryPromise = Promise.resolve();
+			manager = new QueryLifecycleManager(mockContext);
+
+			await manager.stop();
+
+			expect(mockContext.queryObject).toBeNull();
+			expect(mockContext.queryPromise).toBeNull();
+		});
 	});
 
 	describe('restart', () => {

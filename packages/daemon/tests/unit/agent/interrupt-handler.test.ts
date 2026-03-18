@@ -34,6 +34,7 @@ describe('InterruptHandler', () => {
 	let queueClearSpy: ReturnType<typeof mock>;
 	let queueStopSpy: ReturnType<typeof mock>;
 	let sdkInterruptSpy: ReturnType<typeof mock>;
+	let sdkCloseSpy: ReturnType<typeof mock>;
 
 	beforeEach(() => {
 		mockSession = {
@@ -82,8 +83,10 @@ describe('InterruptHandler', () => {
 		} as unknown as Logger;
 
 		sdkInterruptSpy = mock(async () => {});
+		sdkCloseSpy = mock(() => {});
 		mockQueryObject = {
 			interrupt: sdkInterruptSpy,
+			close: sdkCloseSpy,
 		} as unknown as Query;
 
 		mockAbortController = new AbortController();
@@ -273,6 +276,58 @@ describe('InterruptHandler', () => {
 
 			// Should not throw
 			expect(handler).toBeDefined();
+		});
+
+		it('should call SDK close() to terminate subprocess and MCP transports', async () => {
+			handler = createHandler();
+
+			await handler.handleInterrupt();
+
+			expect(sdkCloseSpy).toHaveBeenCalled();
+		});
+
+		it('should call close() after interrupt() and waiting for query promise', async () => {
+			const callOrder: string[] = [];
+			sdkInterruptSpy.mockImplementation(async () => {
+				callOrder.push('interrupt');
+			});
+			sdkCloseSpy.mockImplementation(() => {
+				callOrder.push('close');
+			});
+			const queryPromise = Promise.resolve().then(() => {
+				callOrder.push('promise');
+			});
+			handler = createHandler({ queryPromise });
+
+			await handler.handleInterrupt();
+
+			const interruptIdx = callOrder.indexOf('interrupt');
+			const closeIdx = callOrder.indexOf('close');
+			expect(interruptIdx).toBeLessThan(closeIdx);
+		});
+
+		it('should handle SDK close() failure gracefully', async () => {
+			sdkCloseSpy.mockImplementation(() => {
+				throw new Error('Close failed');
+			});
+			handler = createHandler();
+
+			// Should not throw
+			await handler.handleInterrupt();
+
+			expect(mockLogger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('SDK close() failed'),
+				'Close failed'
+			);
+		});
+
+		it('should skip close() when queryObject is null', async () => {
+			handler = createHandler({ queryObject: null });
+
+			// Should not throw
+			await handler.handleInterrupt();
+
+			expect(sdkCloseSpy).not.toHaveBeenCalled();
 		});
 	});
 });

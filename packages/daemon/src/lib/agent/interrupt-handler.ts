@@ -110,10 +110,21 @@ export class InterruptHandler {
 				}
 			}
 
-			// STEP 4: Clear queryObject
+			// STEP 4: Close query to terminate subprocess and MCP transports.
+			// Prevents "Already connected to a transport" errors on next query start.
+			if (this.ctx.queryObject) {
+				try {
+					this.ctx.queryObject.close();
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					logger.warn('SDK close() failed (may be expected):', errorMessage);
+				}
+			}
+
+			// STEP 5: Clear queryObject
 			this.ctx.queryObject = null;
 
-			// STEP 5: Stop the message queue
+			// STEP 6: Stop the message queue
 			messageQueue.stop();
 
 			// Publish interrupt event
