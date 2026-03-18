@@ -1033,9 +1033,9 @@ export class RoomRuntime {
 							await this.goalManager.updateConsecutiveFailures(completeGoal.id, 0);
 						}
 						// Emit auto_completed notification if this was auto-approved.
-						if (group.approvalSource === 'leader_semi_auto') {
+						if (group.approvalSource === 'leader_semi_auto' && this.daemonHub) {
 							const completedTask = await this.taskManager.getTask(group.taskId);
-							void this.daemonHub?.emit('goal.task.auto_completed', {
+							void this.daemonHub.emit('goal.task.auto_completed', {
 								sessionId: `room:${this.roomId}`,
 								roomId: this.roomId,
 								goalId: completeGoal.id,
@@ -1187,9 +1187,20 @@ export class RoomRuntime {
 								capturedTaskId,
 								'PR auto-approved under semi-autonomous mode. Proceed with merge and complete_task.',
 								{ approved: true }
-							).catch((err) => {
-								log.error(`[semi-auto] Failed to auto-approve task ${capturedTaskId}:`, err);
-							});
+							)
+								.then((ok) => {
+									if (!ok) {
+										// Resume returned false (e.g. group no longer submittedForReview
+										// or leader session gone). Clear approvalSource so future retries
+										// are not blocked by the idempotency guard.
+										this.groupRepo.setApprovalSource(capturedGroupId, null);
+									}
+								})
+								.catch((err) => {
+									log.error(`[semi-auto] Failed to auto-approve task ${capturedTaskId}:`, err);
+									// Clear approvalSource on throw so retries are not permanently blocked.
+									this.groupRepo.setApprovalSource(capturedGroupId, null);
+								});
 						}, 0);
 						return jsonResult({
 							success: true,

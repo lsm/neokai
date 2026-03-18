@@ -221,6 +221,32 @@ describe('RoomRuntime semi-autonomous mode', () => {
 		expect(injectCallsAfter).toBe(injectCallsBefore);
 	});
 
+	it('deferred auto-approve: approvalSource cleared when resumeWorkerFromHuman returns false', async () => {
+		// By resetting submittedForReview to false AFTER handleLeaderTool completes but
+		// BEFORE yielding to the event loop, resumeLeaderFromHuman will see
+		// submittedForReview=false and return false. Without the fix, approvalSource would
+		// remain 'leader_semi_auto' permanently, blocking all future auto-approve retries.
+		const { group } = await spawnSemiAutoToLeader({ assignedAgent: 'coder' });
+
+		// submit_for_review: sets submittedForReview=true internally and schedules setTimeout(0)
+		await ctx.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+			pr_url: 'https://github.com/org/repo/pull/77',
+		});
+
+		// Synchronously reset submittedForReview to false — the setTimeout(0) hasn't fired
+		// yet because we haven't yielded to the event loop. resumeLeaderFromHuman will see
+		// this and return false, triggering the rollback path in the deferred callback.
+		ctx.groupRepo.setSubmittedForReview(group.id, false);
+
+		// Yield to let the deferred callback execute
+		await new Promise<void>((resolve) => setTimeout(resolve, 10));
+
+		// approvalSource must be cleared (null) — not stuck at 'leader_semi_auto'
+		const updatedGroup = ctx.groupRepo.getGroup(group.id)!;
+		expect(updatedGroup.approvalSource).toBeNull();
+		expect(updatedGroup.approved).toBe(false);
+	});
+
 	// =========================================================================
 	// Auto-completed event + consecutive failures reset
 	// =========================================================================
