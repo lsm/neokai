@@ -73,14 +73,17 @@ function ProviderBadge({ provider }: { provider: string | undefined }) {
 /**
  * AuthStatusIndicator - Small icon showing auth health for the current session's provider.
  *
- * - Green check: authenticated, no refresh needed
+ * Only shown when action is required:
  * - Yellow warning: authenticated but token expiring soon (needsRefresh)
  * - Red X: not authenticated
  *
+ * Hidden (returns null) when the provider is healthy — no visual noise in the happy path.
  * Clicking navigates to the Providers settings page.
  */
 function AuthStatusIndicator({ status }: { status: ProviderAuthStatus | null }) {
 	if (!status) return null;
+	// No indicator in healthy state — show only when action is required
+	if (status.isAuthenticated && !status.needsRefresh) return null;
 
 	const handleClick = () => {
 		settingsSectionSignal.value = 'providers';
@@ -92,7 +95,10 @@ function AuthStatusIndicator({ status }: { status: ProviderAuthStatus | null }) 
 	let tooltipText: string;
 
 	if (!status.isAuthenticated) {
-		label = 'Not authenticated';
+		// Include error detail in aria-label so screen reader users hear the actionable info
+		label = status.error
+			? `Not authenticated: ${status.error}`
+			: 'Not authenticated — click to fix in provider settings';
 		tooltipText = status.error
 			? `${status.displayName}: ${status.error} — click to fix`
 			: `${status.displayName}: not authenticated — click to fix`;
@@ -112,8 +118,9 @@ function AuthStatusIndicator({ status }: { status: ProviderAuthStatus | null }) 
 				/>
 			</svg>
 		);
-	} else if (status.needsRefresh) {
-		label = 'Token expiring soon';
+	} else {
+		// needsRefresh must be true here
+		label = `${status.displayName}: token expiring soon — click to refresh`;
 		tooltipText = `${status.displayName}: token expiring soon — click to refresh`;
 		icon = (
 			<svg
@@ -128,25 +135,6 @@ function AuthStatusIndicator({ status }: { status: ProviderAuthStatus | null }) 
 					stroke-linejoin="round"
 					stroke-width="2.5"
 					d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-				/>
-			</svg>
-		);
-	} else {
-		label = 'Authenticated';
-		tooltipText = `${status.displayName}: authenticated`;
-		icon = (
-			<svg
-				class="w-3 h-3 text-green-400"
-				fill="none"
-				viewBox="0 0 24 24"
-				stroke="currentColor"
-				aria-hidden="true"
-			>
-				<path
-					stroke-linecap="round"
-					stroke-linejoin="round"
-					stroke-width="2.5"
-					d="M5 13l4 4L19 7"
 				/>
 			</svg>
 		);
@@ -334,7 +322,7 @@ export default function SessionStatusBar({
 	});
 
 	// Get MessageHub for RPC calls
-	const { callIfConnected } = useMessageHub();
+	const { callIfConnected, onEvent } = useMessageHub();
 
 	// Provider auth statuses for availability dots in model picker
 	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, boolean>>(new Map());
@@ -343,11 +331,9 @@ export default function SessionStatusBar({
 		new Map()
 	);
 
-	useEffect(() => {
-		let cancelled = false;
+	const fetchAuthStatuses = useCallback(() => {
 		callIfConnected('auth.providers', {})
 			.then((res) => {
-				if (cancelled) return;
 				const result = res as { providers?: ProviderAuthStatus[] } | null;
 				const statusMap = new Map<string, boolean>();
 				const detailMap = new Map<string, ProviderAuthStatus>();
@@ -361,10 +347,19 @@ export default function SessionStatusBar({
 			.catch(() => {
 				// Silently ignore — dots just stay gray
 			});
-		return () => {
-			cancelled = true;
-		};
 	}, [callIfConnected]);
+
+	// Fetch on mount and whenever callIfConnected changes (hub reconnects)
+	useEffect(() => {
+		fetchAuthStatuses();
+	}, [fetchAuthStatuses]);
+
+	// Re-fetch when auth changes (login/logout in provider settings)
+	useEffect(() => {
+		return onEvent('auth.changed', () => {
+			fetchAuthStatuses();
+		});
+	}, [onEvent, fetchAuthStatuses]);
 
 	// Current provider auth status (for the inline indicator near provider badge)
 	const currentProviderAuthStatus = currentModelInfo?.provider

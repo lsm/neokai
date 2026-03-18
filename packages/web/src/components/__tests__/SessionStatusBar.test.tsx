@@ -13,6 +13,7 @@ import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@neokai/shared';
 import SessionStatusBar from '../SessionStatusBar';
 import { getProviderLabel } from '../../hooks';
+import { navSectionSignal, settingsSectionSignal } from '../../lib/signals';
 
 // Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
 // Individual tests can call mockGetHubIfConnected.mockReturnValue({ request: ... }) to
@@ -23,6 +24,11 @@ vi.mock('../../lib/connection-manager', () => ({
 	connectionManager: {
 		getHubIfConnected: () => mockGetHubIfConnected(),
 		onConnection: vi.fn(() => () => {}),
+		onceConnected: vi.fn((cb: () => void) => {
+			// Invoke synchronously so effects settle in tests
+			cb();
+			return () => {};
+		}),
 	},
 }));
 
@@ -1042,14 +1048,22 @@ describe('SessionStatusBar', () => {
 	});
 
 	describe('AuthStatusIndicator', () => {
-		const makeHub = (providers: object[]) => ({
+		const makeHub = (
+			providers: object[],
+			authChangedHandler?: { ref: (handler: () => void) => void }
+		) => ({
 			request: vi.fn().mockImplementation((method: string) => {
 				if (method === 'auth.providers') {
 					return Promise.resolve({ providers });
 				}
 				return Promise.resolve(null);
 			}),
-			onEvent: vi.fn(() => () => {}),
+			onEvent: vi.fn().mockImplementation((event: string, handler: () => void) => {
+				if (event === 'auth.changed' && authChangedHandler) {
+					authChangedHandler.ref = handler;
+				}
+				return () => {};
+			}),
 			onConnection: vi.fn(() => () => {}),
 			isConnected: vi.fn(() => true),
 		});
@@ -1072,7 +1086,6 @@ describe('SessionStatusBar', () => {
 
 			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
 			expect(indicator).not.toBeNull();
-			// Red color via SVG
 			const svg = indicator?.querySelector('svg');
 			expect(svg?.className).toContain('text-red-400');
 		});
@@ -1100,7 +1113,8 @@ describe('SessionStatusBar', () => {
 			expect(svg?.className).toContain('text-yellow-400');
 		});
 
-		it('should render green indicator when authenticated and healthy', async () => {
+		it('should not render indicator when provider is authenticated and healthy', async () => {
+			// Healthy state: no indicator — avoids visual noise
 			mockGetHubIfConnected.mockReturnValue(
 				makeHub([{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true }])
 			);
@@ -1110,10 +1124,7 @@ describe('SessionStatusBar', () => {
 				await new Promise((resolve) => setTimeout(resolve, 0));
 			});
 
-			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
-			expect(indicator).not.toBeNull();
-			const svg = indicator?.querySelector('svg');
-			expect(svg?.className).toContain('text-green-400');
+			expect(container.querySelector('[data-testid="auth-status-indicator"]')).toBeNull();
 		});
 
 		it('should include error message in aria-label when not authenticated', async () => {
@@ -1134,13 +1145,19 @@ describe('SessionStatusBar', () => {
 			});
 
 			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
-			expect(indicator?.getAttribute('aria-label')).toContain('Not authenticated');
+			const label = indicator?.getAttribute('aria-label') ?? '';
+			// aria-label must contain the specific error text, not just a generic message
+			expect(label).toContain('Invalid API key');
 		});
 
-		it('should navigate to providers settings when indicator is clicked', async () => {
+		it('should set navSectionSignal and settingsSectionSignal when indicator is clicked', async () => {
 			mockGetHubIfConnected.mockReturnValue(
 				makeHub([{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: false }])
 			);
+
+			// Reset signals to known values before the test
+			navSectionSignal.value = 'home';
+			settingsSectionSignal.value = 'general';
 
 			const { container } = render(<SessionStatusBar {...defaultProps} />);
 			await act(async () => {
@@ -1151,8 +1168,55 @@ describe('SessionStatusBar', () => {
 				'[data-testid="auth-status-indicator"]'
 			) as HTMLButtonElement;
 			expect(indicator).not.toBeNull();
-			// Clicking should not throw — navigation is handled via signals
-			expect(() => fireEvent.click(indicator)).not.toThrow();
+			fireEvent.click(indicator);
+
+			expect(navSectionSignal.value).toBe('settings');
+			expect(settingsSectionSignal.value).toBe('providers');
+		});
+
+		it('should re-fetch auth status when auth.changed event fires', async () => {
+			// Start unauthenticated
+			let currentProviders = [
+				{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: false },
+			];
+			const authChangedHandler: { ref: ((handler: () => void) => void) | null } = { ref: null };
+			let capturedAuthHandler: (() => void) | null = null;
+
+			const hub = {
+				request: vi.fn().mockImplementation((method: string) => {
+					if (method === 'auth.providers') {
+						return Promise.resolve({ providers: currentProviders });
+					}
+					return Promise.resolve(null);
+				}),
+				onEvent: vi.fn().mockImplementation((event: string, handler: () => void) => {
+					if (event === 'auth.changed') {
+						capturedAuthHandler = handler;
+					}
+					return () => {};
+				}),
+				onConnection: vi.fn(() => () => {}),
+				isConnected: vi.fn(() => true),
+			};
+			mockGetHubIfConnected.mockReturnValue(hub);
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			// Initially unauthenticated — red indicator shown
+			expect(container.querySelector('[data-testid="auth-status-indicator"]')).not.toBeNull();
+
+			// Simulate login: update provider list and fire auth.changed
+			currentProviders = [{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true }];
+			await act(async () => {
+				capturedAuthHandler?.();
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			// After login event, indicator should disappear (healthy state)
+			expect(container.querySelector('[data-testid="auth-status-indicator"]')).toBeNull();
 		});
 	});
 });
