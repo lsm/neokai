@@ -35,9 +35,7 @@ export class GoalManager {
 	async createGoal(params: Omit<CreateGoalParams, 'roomId'>): Promise<RoomGoal> {
 		const goal = this.goalRepo.createGoal({
 			roomId: this.roomId,
-			title: params.title,
-			description: params.description,
-			priority: params.priority,
+			...params,
 		});
 
 		return goal;
@@ -293,6 +291,23 @@ export class GoalManager {
 		});
 		if (!updatedGoal) {
 			throw new Error(`Failed to update planning_attempts for goal: ${goalId}`);
+		}
+		return updatedGoal;
+	}
+
+	/**
+	 * Update the consecutiveFailures counter on a goal.
+	 * Called by the runtime to track consecutive task failures for escalation policy.
+	 * Pass 0 to reset after a successful task completion.
+	 */
+	async updateConsecutiveFailures(goalId: string, count: number): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+		const updatedGoal = this.goalRepo.updateGoal(goalId, { consecutiveFailures: count });
+		if (!updatedGoal) {
+			throw new Error(`Failed to update consecutiveFailures for goal: ${goalId}`);
 		}
 		return updatedGoal;
 	}

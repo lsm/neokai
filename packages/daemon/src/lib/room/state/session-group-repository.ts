@@ -76,6 +76,12 @@ interface TaskGroupMetadata {
 	 * because bypass tasks have no PR.
 	 */
 	workerBypassed?: boolean;
+	/**
+	 * Who approved this task. Set to 'human' when a human calls resumeWorkerFromHuman
+	 * with approved=true. Set to 'leader_semi_auto' when runtime auto-approves in
+	 * semi-autonomous mode. Used as idempotency guard for auto-approve deferred callbacks.
+	 */
+	approvalSource?: 'human' | 'leader_semi_auto';
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -137,6 +143,10 @@ export interface SessionGroup {
 	 * When true, checkLeaderPrMerged fails open even with approved=true (no PR exists).
 	 */
 	workerBypassed: boolean;
+	/**
+	 * Who approved this task ('human' or 'leader_semi_auto'), or null if not yet approved.
+	 */
+	approvalSource: 'human' | 'leader_semi_auto' | null;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -480,6 +490,26 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set approvalSource in metadata without version check.
+	 * Tracks who approved the task: 'human' for human approvals, 'leader_semi_auto' for
+	 * auto-approvals in semi-autonomous mode. Also serves as an idempotency guard for
+	 * the deferred auto-approve callback (skip if already set).
+	 */
+	setApprovalSource(groupId: string, source: 'human' | 'leader_semi_auto'): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, approvalSource: source };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Set workerBypassed flag without version check.
 	 * Records that the worker used a bypass marker (RESEARCH_ONLY, etc.) to skip git/PR gates.
 	 * When set, checkLeaderPrMerged fails open even with approved=true (no PR exists).
@@ -741,6 +771,7 @@ export class SessionGroupRepository {
 			waitingForQuestion: meta.waitingForQuestion ?? false,
 			waitingSession: meta.waitingSession ?? null,
 			workerBypassed: meta.workerBypassed === true,
+			approvalSource: meta.approvalSource ?? null,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};
