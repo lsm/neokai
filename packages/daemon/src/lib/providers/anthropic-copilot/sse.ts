@@ -13,6 +13,22 @@ import type { ServerResponse } from 'node:http';
 import type { AnthropicErrorType } from '../shared/error-envelope.js';
 
 // ---------------------------------------------------------------------------
+// Token estimation helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimate token count from a character count using the rough 4-chars-per-token
+ * heuristic.
+ *
+ * NOTE: These are NOT actual model-reported values — the Copilot SDK does not
+ * expose per-request token counts.  The estimate provides a non-zero
+ * approximation for UI display purposes only.
+ */
+export function estimateTokens(charCount: number): number {
+	return Math.ceil(charCount / 4);
+}
+
+// ---------------------------------------------------------------------------
 // Headers & low-level helper
 // ---------------------------------------------------------------------------
 
@@ -41,6 +57,8 @@ export class AnthropicStreamWriter {
 	private textBlockStarted = false;
 	private nextBlockIndex = 0;
 	private textBlockIndex = 0;
+	/** Accumulated output character count, used for heuristic output_tokens estimate. */
+	private outputCharCount = 0;
 	readonly messageId = `msg_${randomUUID()}`;
 
 	private closeTextBlock(res: ServerResponse): void {
@@ -67,19 +85,24 @@ export class AnthropicStreamWriter {
 	}
 
 	private sendEpilogue(res: ServerResponse, stopReason: string): void {
-		// output_tokens is always 0 because the Copilot SDK does not expose token
-		// counts.  Any NeoKai UI elements that display token usage will show 0 for
-		// Copilot-backed sessions — this is a known limitation of the bridge layer.
+		// Heuristic estimate: ceil(outputTextLength / 4).
+		// NOT actual model-reported values — the Copilot SDK does not expose
+		// per-request token counts.  Approximation for UI display purposes only.
 		sendEvent(res, 'message_delta', {
 			type: 'message_delta',
 			delta: { stop_reason: stopReason, stop_sequence: null },
-			usage: { output_tokens: 0 },
+			usage: { output_tokens: estimateTokens(this.outputCharCount) },
 		});
 		sendEvent(res, 'message_stop', { type: 'message_stop' });
 	}
 
-	/** Write the `message_start` preamble and set SSE response headers. */
-	start(res: ServerResponse, model: string): void {
+	/**
+	 * Write the `message_start` preamble and set SSE response headers.
+	 *
+	 * @param inputTokens Heuristic estimate of input tokens — caller should pass
+	 *   `estimateTokens(inputText.length)`.  NOT actual model-reported values.
+	 */
+	start(res: ServerResponse, model: string, inputTokens = 0): void {
 		res.writeHead(200, SSE_HEADERS);
 		sendEvent(res, 'message_start', {
 			type: 'message_start',
@@ -90,9 +113,10 @@ export class AnthropicStreamWriter {
 				content: [],
 				model,
 				stop_reason: null,
-				// TODO: input_tokens is always 0 — the Copilot SDK does not expose
-				// per-request token counts on the prompt side.
-				usage: { input_tokens: 0, output_tokens: 0 },
+				// Heuristic estimate: ceil(inputTextLength / 4).
+				// NOT actual model-reported values — the Copilot SDK does not expose
+				// per-request token counts.  Approximation for UI display purposes only.
+				usage: { input_tokens: inputTokens, output_tokens: 0 },
 			},
 		});
 	}
@@ -102,6 +126,7 @@ export class AnthropicStreamWriter {
 		if (deltas.length === 0) return;
 		this.ensureTextBlock(res);
 		for (const text of deltas) {
+			this.outputCharCount += text.length;
 			sendEvent(res, 'content_block_delta', {
 				type: 'content_block_delta',
 				index: this.textBlockIndex,

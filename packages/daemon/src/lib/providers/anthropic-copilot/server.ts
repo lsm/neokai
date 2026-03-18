@@ -323,7 +323,9 @@ async function handleNewToolConversation(
 			body.model,
 			req,
 			res,
-			conv.registry
+			conv.registry,
+			() => {},
+			(systemMessage ?? '') + prompt
 		);
 		if (outcome.kind === 'completed') {
 			// streamSession already called session.disconnect() — use
@@ -372,7 +374,16 @@ async function handlePlainRequest(
 	}
 
 	try {
-		await runSessionStreaming(session, prompt, body.model, req, res);
+		await runSessionStreaming(
+			session,
+			prompt,
+			body.model,
+			req,
+			res,
+			undefined,
+			() => {},
+			(systemMessage ?? '') + prompt
+		);
 	} catch (err) {
 		logger.error('Streaming failed:', err);
 		// Disconnect the session in case runSessionStreaming threw before its
