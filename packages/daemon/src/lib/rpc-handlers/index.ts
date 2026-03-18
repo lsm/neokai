@@ -85,7 +85,10 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	setupFileHandlers(deps.messageHub, deps.sessionManager);
 	setupSystemHandlers(deps.messageHub, deps.sessionManager, deps.authManager, deps.config);
 	setupAuthHandlers(deps.messageHub, deps.authManager);
-	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
+	// Note: setupQuestionHandlers is called after roomRuntimeService is created below
+	// so that it can receive a runtime session lookup function. Room worker/leader
+	// sessions live in RoomRuntimeService.agentSessions (separate from SessionManager),
+	// so the handler needs to check the runtime pool first.
 	registerMcpHandlers(deps.messageHub, deps.sessionManager);
 	registerSettingsHandlers(deps.messageHub, deps.settingsManager, deps.daemonHub, deps.db);
 	setupConfigHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub);
@@ -115,6 +118,15 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	roomRuntimeService.start().catch((error) => {
 		log.error('Failed to start RoomRuntimeService:', error);
 	});
+
+	// Wire question handlers now that roomRuntimeService is available.
+	// Pass its session lookup so question.respond reaches the correct live AgentSession
+	// (room worker/leader sessions are stored in RoomRuntimeService.agentSessions,
+	// not in SessionManager's cache).
+	setupQuestionHandlers(deps.messageHub, deps.sessionManager, deps.daemonHub, (sessionId) =>
+		roomRuntimeService.getAgentSession(sessionId)
+	);
+
 	setupRoomRuntimeHandlers(deps.messageHub, deps.daemonHub, roomRuntimeService);
 	setupTaskHandlers(
 		deps.messageHub,

@@ -93,6 +93,17 @@ export class RoomRuntimeService {
 		return agentModels?.worker ?? room.defaultModel ?? this.ctx.defaultModel;
 	}
 
+	/**
+	 * Get an active AgentSession by ID from the runtime session pool.
+	 *
+	 * Room worker/leader sessions are stored here (not in SessionManager's cache),
+	 * so this must be used when routing question responses to the correct instance.
+	 * Returns undefined if the session is not currently active in this service.
+	 */
+	getAgentSession(sessionId: string): AgentSession | undefined {
+		return this.agentSessions.get(sessionId);
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
@@ -252,6 +263,15 @@ export class RoomRuntimeService {
 				// started lazily when injectMessage() is called. Eagerly starting
 				// without a queued message causes a 15s startup timeout because the
 				// SDK waits for user input that never arrives.
+				return true;
+			},
+			startSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return false;
+				// Eagerly start the SDK query for waiting_for_input sessions so the
+				// SDK re-encounters the pending AskUserQuestion in its session file
+				// and re-calls canUseTool, re-establishing the pendingResolver.
+				await session.ensureQueryStarted();
 				return true;
 			},
 			setSessionMcpServers: (sessionId, mcpServers) => {

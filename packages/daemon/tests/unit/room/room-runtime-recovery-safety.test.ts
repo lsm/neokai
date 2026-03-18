@@ -767,3 +767,116 @@ describe('Stuck worker detection and recovery', () => {
 		expect(leaderCreateCount).toBe(1);
 	});
 });
+
+describe('Zombie recovery — waitingForQuestion groups', () => {
+	let ctx: RuntimeTestContext;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	it('should call startSession (not injectMessage) for a zombie worker waiting for question answer', async () => {
+		const { groupId, workerSessionId } = await createTaskWithGroup(ctx);
+
+		// Mark the group as waiting for a question from the worker
+		ctx.groupRepo.setWaitingForQuestion(groupId, true, 'worker');
+
+		// Worker session is missing from cache (zombie)
+		const restoredSessions = new Set<string>();
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === workerSessionId && !restoredSessions.has(sessionId)) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async (sessionId: string) => {
+			restoredSessions.add(sessionId);
+			ctx.sessionFactory.calls.push({ method: 'restoreSession', args: [sessionId] });
+			return true;
+		};
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// startSession should have been called for the worker
+		const startCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'startSession' && c.args[0] === workerSessionId
+		);
+		expect(startCalls).toHaveLength(1);
+
+		// injectMessage should NOT have been called (would corrupt conversation state)
+		const injectCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === workerSessionId
+		);
+		expect(injectCalls).toHaveLength(0);
+
+		// Group should still be active
+		const updated = ctx.groupRepo.getGroup(groupId);
+		expect(updated!.completedAt).toBeNull();
+	});
+
+	it('should call startSession for a zombie leader waiting for question answer', async () => {
+		const { groupId, leaderSessionId } = await createTaskWithGroup(ctx);
+
+		// Mark the group as waiting for a question from the leader
+		ctx.groupRepo.setWaitingForQuestion(groupId, true, 'leader');
+
+		// Leader session is missing from cache (zombie)
+		const restoredSessions = new Set<string>();
+		ctx.sessionFactory.hasSession = (sessionId: string) => {
+			if (sessionId === leaderSessionId && !restoredSessions.has(sessionId)) return false;
+			return true;
+		};
+		ctx.sessionFactory.restoreSession = async (sessionId: string) => {
+			restoredSessions.add(sessionId);
+			ctx.sessionFactory.calls.push({ method: 'restoreSession', args: [sessionId] });
+			return true;
+		};
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// startSession should have been called for the leader session
+		const startCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'startSession' && c.args[0] === leaderSessionId
+		);
+		expect(startCalls).toHaveLength(1);
+
+		// injectMessage should NOT have been called for the leader
+		const injectCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'injectMessage' && c.args[0] === leaderSessionId
+		);
+		expect(injectCalls).toHaveLength(0);
+
+		// Group should still be active
+		const updated = ctx.groupRepo.getGroup(groupId);
+		expect(updated!.completedAt).toBeNull();
+	});
+
+	it('should NOT call startSession when session was already live (not a zombie)', async () => {
+		const { groupId, workerSessionId } = await createTaskWithGroup(ctx);
+
+		// Mark as waiting for a question
+		ctx.groupRepo.setWaitingForQuestion(groupId, true, 'worker');
+
+		// Session IS in cache — hasSession returns true, no restore needed
+		ctx.sessionFactory.hasSession = () => true;
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		// No restore and no startSession needed — session was already live
+		const startCalls = ctx.sessionFactory.calls.filter(
+			(c) => c.method === 'startSession' && c.args[0] === workerSessionId
+		);
+		expect(startCalls).toHaveLength(0);
+
+		// Group should remain active
+		const updated = ctx.groupRepo.getGroup(groupId);
+		expect(updated!.completedAt).toBeNull();
+		expect(updated!.waitingForQuestion).toBe(true);
+	});
+});

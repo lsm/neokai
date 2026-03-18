@@ -76,10 +76,22 @@ export interface SessionFactory {
 	createWorktree(basePath: string, sessionId: string, branchName?: string): Promise<string | null>;
 	/**
 	 * Restore a session from DB after daemon restart.
-	 * Adds it to the in-memory cache and starts the streaming query.
+	 * Adds it to the in-memory cache but does NOT start the streaming query
+	 * (lazy start via injectMessage or startSession).
 	 * Returns true if successful, false if session not found in DB.
 	 */
 	restoreSession(sessionId: string): Promise<boolean>;
+	/**
+	 * Start the SDK streaming query for a restored session without injecting a message.
+	 *
+	 * Used for sessions in waiting_for_input state after daemon restart: the SDK
+	 * will re-encounter the pending AskUserQuestion tool call in its session file
+	 * and re-call canUseTool, re-establishing the pendingResolver so the user can
+	 * answer the question via question.respond RPC.
+	 *
+	 * Returns true if successful, false if the session is not in the cache.
+	 */
+	startSession?(sessionId: string): Promise<boolean>;
 	/**
 	 * Set runtime MCP servers on a restored session.
 	 * MCP servers are non-serializable and lost on restart — must be re-created.

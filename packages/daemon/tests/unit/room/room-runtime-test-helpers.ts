@@ -90,6 +90,10 @@ export function createMockSessionFactory() {
 		async stopSession(sessionId: string) {
 			calls.push({ method: 'stopSession', args: [sessionId] });
 		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
+			return true;
+		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
 		processingStates: Map<
