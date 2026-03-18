@@ -16,16 +16,6 @@ export type {
 } from './types.js';
 
 export type {
-	ProviderQueryOptions,
-	ProviderQueryContext,
-	ToolDefinition,
-	CustomProviderContentBlock,
-	CustomProviderUserMessage,
-	CustomProviderAssistantMessage,
-	CustomProviderMessage,
-} from './query-types.js';
-
-export type {
 	ProviderAuthStatus,
 	ProviderAuthRequest,
 	ProviderAuthResponse,

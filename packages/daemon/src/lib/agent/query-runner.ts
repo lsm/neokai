@@ -14,11 +14,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import type { UUID } from 'crypto';
 import type { Session, MessageHub } from '@neokai/shared';
-import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
-import type {
-	ProviderQueryOptions,
-	ProviderQueryContext,
-} from '@neokai/shared/provider/query-types';
+import type { SDKMessage } from '@neokai/shared/sdk';
 import { generateUUID } from '@neokai/shared';
 import { Database } from '../../storage/database';
 import { ErrorCategory, ErrorManager } from '../error-manager';
@@ -77,9 +73,6 @@ export interface QueryRunnerContext {
 	firstMessageReceived: boolean;
 	startupTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	originalEnvVars: OriginalEnvVars;
-	// Flag indicating whether the current query uses a custom provider (bypasses SDK)
-	isCustomQueryProvider: boolean;
-
 	// Methods for state coordination
 	incrementQueryGeneration(): number;
 	getQueryGeneration(): number;
@@ -196,8 +189,8 @@ export class QueryRunner {
 			let queryOptions = await optionsBuilder.build();
 			queryOptions = optionsBuilder.addSessionStateOptions(queryOptions);
 
-			// Apply provider env vars (only for SDK-based providers)
-			if (!provider?.createQuery) {
+			// Apply provider env vars
+			{
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
 				// Pass explicitProviderId so providers whose model IDs are also claimed by
@@ -211,156 +204,6 @@ export class QueryRunner {
 			this.ctx.originalEnvVars.CLAUDE_AGENT_SDK_CLIENT_APP =
 				process.env.CLAUDE_AGENT_SDK_CLIENT_APP;
 			process.env.CLAUDE_AGENT_SDK_CLIENT_APP = 'neokai/0.5.0';
-
-			// Check for custom query provider
-			// Some providers may bypass the SDK entirely
-			if (provider?.createQuery) {
-				logger.info(`Using custom query provider: ${provider.id} for model: ${modelId}`);
-
-				// Mark as custom query provider so SDKMessageHandler skips /context queuing
-				// Custom providers' generators complete immediately after yielding result,
-				// so nothing would consume a queued /context command
-				this.ctx.isCustomQueryProvider = true;
-
-				// Build query options for custom provider
-				const customQueryOptions: ProviderQueryOptions = {
-					model: queryOptions.model || modelId,
-					systemPrompt:
-						typeof queryOptions.systemPrompt === 'string'
-							? queryOptions.systemPrompt
-							: (queryOptions.systemPrompt as { text?: string })?.text,
-					// NOTE: tools: [] because queryOptions.tools holds the SDK-native tool spec
-					// (string[] | preset) which is incompatible with ProviderQueryOptions.tools: ToolDefinition[].
-					// To enable Codex App Server Dynamic Tools, MCP tool definitions must be threaded
-					// through from AgentSession (as ToolDefinition[] objects) once toolExecutor is wired.
-					// See docs/reports/codex-app-server-integration.md §6 for the full integration plan.
-					tools: [],
-					cwd: queryOptions.cwd || session.workspacePath,
-					maxTurns: queryOptions.maxTurns || 50,
-					permissionMode: queryOptions.permissionMode,
-				};
-
-				// Create abort controller for this query
-				const abortController = new AbortController();
-				this.ctx.queryAbortController = abortController;
-
-				const customQueryContext: ProviderQueryContext = {
-					signal: abortController.signal,
-					sessionId: session.id,
-				};
-
-				try {
-					const customQuery = await provider.createQuery(
-						this.createMessageGeneratorWrapper() as AsyncGenerator<SDKUserMessage>,
-						customQueryOptions,
-						customQueryContext
-					);
-
-					if (customQuery) {
-						// Set up startup timeout
-						const queryStartTime = Date.now();
-						let startupTimeoutReached = false;
-
-						const startupTimer = setTimeout(() => {
-							if (!this.ctx.firstMessageReceived) {
-								startupTimeoutReached = true;
-								const elapsed = Date.now() - queryStartTime;
-								logger.error(
-									`Custom provider startup timeout: ${provider.id} did not respond within ${elapsed}ms. ` +
-										`Model: ${modelId}, Workspace: ${session.workspacePath}`
-								);
-
-								if (!abortController.signal.aborted) {
-									abortController.abort();
-								}
-							}
-						}, STARTUP_TIMEOUT_MS);
-						this.ctx.startupTimeoutTimer = startupTimer;
-
-						// Fetch slash commands and models in background
-						this.ctx.onSlashCommandsFetched().catch((e) => {
-							logger.warn('Background fetch of slash commands failed:', e);
-						});
-						this.ctx.onModelsFetched().catch((e) => {
-							logger.warn('Background fetch of models failed:', e);
-						});
-
-						let messageCount = 0;
-
-						// Iterate through custom query generator
-						for await (const message of customQuery) {
-							if (abortController.signal.aborted) {
-								break;
-							}
-
-							if (startupTimeoutReached && messageCount === 0) {
-								throw new Error('Custom provider startup timeout - query aborted');
-							}
-
-							messageCount++;
-
-							// Clear startup timeout on first message
-							const timer = this.ctx.startupTimeoutTimer;
-							if (timer && messageCount === 1) {
-								clearTimeout(timer);
-								this.ctx.startupTimeoutTimer = null;
-							}
-
-							this.ctx.firstMessageReceived = true;
-
-							try {
-								await this.handleSDKMessage(message as SDKMessage);
-							} catch (error) {
-								logger.error('Error handling custom provider message:', error);
-								logger.error('Message type:', (message as SDKMessage).type);
-
-								const processingState = stateManager.getState();
-								await stateManager.setIdle();
-
-								await errorManager.handleError(
-									session.id,
-									error as Error,
-									ErrorCategory.MESSAGE,
-									'Error processing message from custom provider. The session has been reset.',
-									processingState,
-									{ messageType: (message as SDKMessage).type }
-								);
-							}
-						}
-
-						// If startup timed out before first message, surface as timeout error
-						if (startupTimeoutReached && messageCount === 0) {
-							throw new Error('Custom provider startup timeout - query aborted');
-						}
-
-						// Custom query completed successfully
-						return;
-					}
-
-					// createQuery returned null — the provider is not ready (e.g., Copilot token
-					// expired and refresh failed). Do NOT fall through to the standard Claude Agent
-					// SDK: that path spawns a subprocess for a different provider, causing confusing
-					// "Claude Code process exited" errors instead of a clear auth message.
-					throw new Error(
-						`Provider ${provider.displayName ?? provider.id} is not ready. ` +
-							`Please re-authenticate (Settings → Providers → ${provider.displayName ?? provider.id} → Login).`
-					);
-				} catch (customQueryError) {
-					logger.error('Custom query provider failed:', customQueryError);
-
-					// Check if this is an availability issue (provider not configured)
-					const isAvailable = await provider.isAvailable();
-					if (!isAvailable) {
-						throw new Error(`Provider ${provider.id} is not available. Please configure API key.`);
-					}
-
-					// Re-throw other errors
-					throw customQueryError;
-				}
-			}
-
-			// Fall through to standard SDK query for providers without custom query support
-			// const provider = providerRegistry.detectProvider(modelId);
 
 			// Create query with AsyncGenerator
 			const queryObject = query({
@@ -542,9 +385,6 @@ export class QueryRunner {
 
 				messageQueue.stop();
 				this.ctx.queryPromise = null;
-
-				// Reset custom query provider flag
-				this.ctx.isCustomQueryProvider = false;
 
 				// Restore original env vars
 				const originalEnvVars = this.ctx.originalEnvVars;

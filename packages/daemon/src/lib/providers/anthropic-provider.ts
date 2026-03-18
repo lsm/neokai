@@ -320,7 +320,10 @@ export class AnthropicProvider implements Provider {
 			return true;
 		}
 
-		// Known other provider prefixes (exclude these)
+		// Known other provider prefixes (exclude these).
+		// Even if no provider is currently registered for openai-/gpt-/copilot- prefixes,
+		// keeping them here prevents Anthropic from claiming those model IDs by default,
+		// which would cause confusing "model not found" errors from the Anthropic API.
 		const otherProviderPrefixes = [
 			'glm-',
 			'deepseek-',
