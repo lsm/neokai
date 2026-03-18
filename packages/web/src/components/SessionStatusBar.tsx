@@ -14,10 +14,12 @@
 
 import { useSignalEffect } from '@preact/signals';
 import { useState, useCallback, useEffect } from 'preact/hooks';
+import type { VNode } from 'preact';
 import type { ContextInfo, ModelInfo, ThinkingLevel, SessionFeatures } from '@neokai/shared';
 import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { DEFAULT_WORKER_FEATURES } from '@neokai/shared';
 import { connectionState, type ConnectionState } from '../lib/state.ts';
+import { navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
 import ConnectionStatus from './ConnectionStatus.tsx';
 import ContextUsageBar from './ContextUsageBar.tsx';
 import { ContentContainer } from './ui/ContentContainer.tsx';
@@ -65,6 +67,102 @@ function ProviderBadge({ provider }: { provider: string | undefined }) {
 			role="img"
 			data-testid="provider-badge"
 		/>
+	);
+}
+
+/**
+ * AuthStatusIndicator - Small icon showing auth health for the current session's provider.
+ *
+ * - Green check: authenticated, no refresh needed
+ * - Yellow warning: authenticated but token expiring soon (needsRefresh)
+ * - Red X: not authenticated
+ *
+ * Clicking navigates to the Providers settings page.
+ */
+function AuthStatusIndicator({ status }: { status: ProviderAuthStatus | null }) {
+	if (!status) return null;
+
+	const handleClick = () => {
+		settingsSectionSignal.value = 'providers';
+		navSectionSignal.value = 'settings';
+	};
+
+	let icon: VNode;
+	let label: string;
+	let tooltipText: string;
+
+	if (!status.isAuthenticated) {
+		label = 'Not authenticated';
+		tooltipText = status.error
+			? `${status.displayName}: ${status.error} — click to fix`
+			: `${status.displayName}: not authenticated — click to fix`;
+		icon = (
+			<svg
+				class="w-3 h-3 text-red-400"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				aria-hidden="true"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width="2.5"
+					d="M6 18L18 6M6 6l12 12"
+				/>
+			</svg>
+		);
+	} else if (status.needsRefresh) {
+		label = 'Token expiring soon';
+		tooltipText = `${status.displayName}: token expiring soon — click to refresh`;
+		icon = (
+			<svg
+				class="w-3 h-3 text-yellow-400"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				aria-hidden="true"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width="2.5"
+					d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+				/>
+			</svg>
+		);
+	} else {
+		label = 'Authenticated';
+		tooltipText = `${status.displayName}: authenticated`;
+		icon = (
+			<svg
+				class="w-3 h-3 text-green-400"
+				fill="none"
+				viewBox="0 0 24 24"
+				stroke="currentColor"
+				aria-hidden="true"
+			>
+				<path
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					stroke-width="2.5"
+					d="M5 13l4 4L19 7"
+				/>
+			</svg>
+		);
+	}
+
+	return (
+		<Tooltip content={tooltipText} position="top" delay={200}>
+			<button
+				class="flex items-center justify-center w-4 h-4 rounded-full hover:bg-dark-600 transition-colors focus:outline-none"
+				onClick={handleClick}
+				aria-label={label}
+				data-testid="auth-status-indicator"
+			>
+				{icon}
+			</button>
+		</Tooltip>
 	);
 }
 
@@ -240,6 +338,10 @@ export default function SessionStatusBar({
 
 	// Provider auth statuses for availability dots in model picker
 	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, boolean>>(new Map());
+	// Full auth status objects keyed by provider id, for the auth status indicator
+	const [providerAuthDetails, setProviderAuthDetails] = useState<Map<string, ProviderAuthStatus>>(
+		new Map()
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -248,10 +350,13 @@ export default function SessionStatusBar({
 				if (cancelled) return;
 				const result = res as { providers?: ProviderAuthStatus[] } | null;
 				const statusMap = new Map<string, boolean>();
+				const detailMap = new Map<string, ProviderAuthStatus>();
 				for (const p of result?.providers ?? []) {
 					statusMap.set(p.id, p.isAuthenticated);
+					detailMap.set(p.id, p);
 				}
 				setProviderAuthStatuses(statusMap);
+				setProviderAuthDetails(detailMap);
 			})
 			.catch(() => {
 				// Silently ignore — dots just stay gray
@@ -260,6 +365,11 @@ export default function SessionStatusBar({
 			cancelled = true;
 		};
 	}, [callIfConnected]);
+
+	// Current provider auth status (for the inline indicator near provider badge)
+	const currentProviderAuthStatus = currentModelInfo?.provider
+		? (providerAuthDetails.get(currentModelInfo.provider) ?? null)
+		: null;
 
 	// Dropdowns - only one can be open at a time
 	const modelDropdown = useModal();
@@ -485,6 +595,7 @@ export default function SessionStatusBar({
 						)}
 					</div>
 					<ProviderBadge provider={currentModelInfo?.provider} />
+					<AuthStatusIndicator status={currentProviderAuthStatus} />
 				</div>
 
 				{/* Thinking Level */}

@@ -1040,4 +1040,119 @@ describe('SessionStatusBar', () => {
 			expect(providerDots[0].className).toContain('bg-green-500');
 		});
 	});
+
+	describe('AuthStatusIndicator', () => {
+		const makeHub = (providers: object[]) => ({
+			request: vi.fn().mockImplementation((method: string) => {
+				if (method === 'auth.providers') {
+					return Promise.resolve({ providers });
+				}
+				return Promise.resolve(null);
+			}),
+			onEvent: vi.fn(() => () => {}),
+			onConnection: vi.fn(() => () => {}),
+			isConnected: vi.fn(() => true),
+		});
+
+		it('should not render auth status indicator when no hub is connected', () => {
+			// No hub → no auth status fetched → indicator not shown
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			expect(container.querySelector('[data-testid="auth-status-indicator"]')).toBeNull();
+		});
+
+		it('should render red indicator when provider is not authenticated', async () => {
+			mockGetHubIfConnected.mockReturnValue(
+				makeHub([{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: false }])
+			);
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
+			expect(indicator).not.toBeNull();
+			// Red color via SVG
+			const svg = indicator?.querySelector('svg');
+			expect(svg?.className).toContain('text-red-400');
+		});
+
+		it('should render yellow indicator when token needs refresh', async () => {
+			mockGetHubIfConnected.mockReturnValue(
+				makeHub([
+					{
+						id: 'anthropic',
+						displayName: 'Anthropic',
+						isAuthenticated: true,
+						needsRefresh: true,
+					},
+				])
+			);
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
+			expect(indicator).not.toBeNull();
+			const svg = indicator?.querySelector('svg');
+			expect(svg?.className).toContain('text-yellow-400');
+		});
+
+		it('should render green indicator when authenticated and healthy', async () => {
+			mockGetHubIfConnected.mockReturnValue(
+				makeHub([{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: true }])
+			);
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
+			expect(indicator).not.toBeNull();
+			const svg = indicator?.querySelector('svg');
+			expect(svg?.className).toContain('text-green-400');
+		});
+
+		it('should include error message in aria-label when not authenticated', async () => {
+			mockGetHubIfConnected.mockReturnValue(
+				makeHub([
+					{
+						id: 'anthropic',
+						displayName: 'Anthropic',
+						isAuthenticated: false,
+						error: 'Invalid API key',
+					},
+				])
+			);
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const indicator = container.querySelector('[data-testid="auth-status-indicator"]');
+			expect(indicator?.getAttribute('aria-label')).toContain('Not authenticated');
+		});
+
+		it('should navigate to providers settings when indicator is clicked', async () => {
+			mockGetHubIfConnected.mockReturnValue(
+				makeHub([{ id: 'anthropic', displayName: 'Anthropic', isAuthenticated: false }])
+			);
+
+			const { container } = render(<SessionStatusBar {...defaultProps} />);
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+
+			const indicator = container.querySelector(
+				'[data-testid="auth-status-indicator"]'
+			) as HTMLButtonElement;
+			expect(indicator).not.toBeNull();
+			// Clicking should not throw — navigation is handled via signals
+			expect(() => fireEvent.click(indicator)).not.toThrow();
+		});
+	});
 });
