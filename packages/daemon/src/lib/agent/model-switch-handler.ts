@@ -87,11 +87,10 @@ export class ModelSwitchHandler {
 	 * with the correct model. This is necessary because SDK's setModel() doesn't
 	 * update the cached system:init, causing stale model info in the UI.
 	 *
-	 * @param newModel - Target model ID or alias
-	 * @param newProvider - Explicit provider ID. When provided, routing is deterministic.
-	 *   If omitted, the provider is inferred from the model's metadata (legacy path).
+	 * @param newModel - Model ID or alias to switch to
+	 * @param newProvider - Provider ID for the new model (required)
 	 */
-	async switchModel(newModel: string, newProvider?: string): Promise<ModelSwitchResult> {
+	async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
 		const {
 			session,
 			db,
@@ -107,8 +106,12 @@ export class ModelSwitchHandler {
 		} = this.ctx;
 
 		try {
-			// Validate the model, preferring session provider for disambiguation
-			const isValid = await isValidModel(newModel, 'global', session.config.provider);
+			if (!session.config.provider) {
+				throw new Error('Session has no provider configured');
+			}
+
+			// Validate the new model against the new provider
+			const isValid = await isValidModel(newModel, 'global', newProvider);
 			if (!isValid) {
 				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
 				logger.error(`${error}`);
@@ -120,12 +123,13 @@ export class ModelSwitchHandler {
 			// and then calling getModelInfo loses the provider — two providers can share
 			// the same canonical ID (e.g., Anthropic and anthropic-copilot both have
 			// 'claude-sonnet-4.6').
-			// Pass session provider so same-ID models are disambiguated by provider.
-			const modelInfo = await getModelInfo(newModel, 'global', session.config.provider);
+			// Use newProvider to correctly disambiguate same-ID models across providers.
+			const modelInfo = await getModelInfo(newModel, 'global', newProvider);
 			const resolvedModel =
-				modelInfo?.id ?? (await resolveModelAlias(newModel, 'global', session.config.provider));
+				modelInfo?.id ?? (await resolveModelAlias(newModel, 'global', newProvider));
 
-			// Resolve the current model in case it's also an alias
+			// Resolve the current model in case it's also an alias.
+			// Use session.config.provider (the current provider) for the current model.
 			const currentResolvedModel = await resolveModelAlias(
 				session.config.model,
 				'global',

@@ -93,7 +93,8 @@ export function setupConfigHandlers(
 
 		// Handle model change (runtime native via existing handleModelSwitch)
 		if (settings.model) {
-			const result = await agentSession.handleModelSwitch(settings.model);
+			const provider = agentSession.getSessionData().config.provider ?? 'anthropic';
+			const result = await agentSession.handleModelSwitch(settings.model, provider);
 			if (result.success) {
 				results.applied.push('model');
 			} else {
@@ -705,7 +706,8 @@ export function setupConfigHandlers(
 		const runtimeConfig = { ...config };
 
 		if (runtimeConfig.model) {
-			const result = await agentSession.handleModelSwitch(runtimeConfig.model);
+			const provider = agentSession.getSessionData().config.provider ?? 'anthropic';
+			const result = await agentSession.handleModelSwitch(runtimeConfig.model, provider);
 			if (result.success) {
 				results.applied.push('model');
 			} else {

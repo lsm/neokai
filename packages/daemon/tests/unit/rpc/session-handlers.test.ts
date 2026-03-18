@@ -130,6 +130,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		status: 'active',
 		config: {
 			model: 'claude-sonnet-4-20250514',
+			provider: 'anthropic',
 			coordinatorMode: false,
 			sandbox: { enabled: true },
 			thinkingLevel: 'auto',
@@ -738,7 +739,7 @@ describe('Session RPC Handlers', () => {
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
 			await expect(
-				handler!({ sessionId: 'non-existent', model: 'claude-opus' }, {})
+				handler!({ sessionId: 'non-existent', model: 'claude-opus', provider: 'anthropic' }, {})
 			).rejects.toThrow('Session not found');
 		});
 	});

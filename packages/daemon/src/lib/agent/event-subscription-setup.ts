@@ -61,8 +61,9 @@ export class EventSubscriptionSetup {
 		// Model switch request handler
 		const unsubModelSwitch = daemonHub.on(
 			'model.switchRequest',
-			async ({ sessionId: sid, model }) => {
-				const result = await modelSwitchHandler.switchModel(model);
+			async ({ sessionId: sid, model, provider }) => {
+				const resolvedProvider = provider || session.config.provider || 'anthropic';
+				const result = await modelSwitchHandler.switchModel(model, resolvedProvider);
 
 				// Emit result
 				await daemonHub.emit('model.switched', {

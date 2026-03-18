@@ -358,6 +358,10 @@ export function setupSessionHandlers(
 		const rawModelId = agentSession.getCurrentModel().id;
 		const sessionProvider = agentSession.getSessionData().config.provider;
 
+		if (!sessionProvider) {
+			throw new Error('Session has no provider configured');
+		}
+
 		// Resolve alias to full model ID for consistency with session.model.switch
 		// Pass provider so same-ID models are disambiguated by provider context
 		const { resolveModelAlias, getModelInfo } = await import('../model-service');
@@ -383,6 +387,10 @@ export function setupSessionHandlers(
 			/** Explicit provider ID — always supply this from the UI model picker. */
 			provider?: string;
 		};
+
+		if (!provider) {
+			throw new Error('Missing required field: provider');
+		}
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
 		if (!agentSession) {

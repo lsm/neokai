@@ -123,9 +123,9 @@ describe('EventSubscriptionSetup', () => {
 				setup.setup();
 
 				const callback = registeredCallbacks.get('model.switchRequest')!;
-				await callback({ sessionId: 'test-session-id', model: 'opus' });
+				await callback({ sessionId: 'test-session-id', model: 'opus', provider: 'anthropic' });
 
-				expect(mockModelSwitchHandler.switchModel).toHaveBeenCalledWith('opus');
+				expect(mockModelSwitchHandler.switchModel).toHaveBeenCalledWith('opus', 'anthropic');
 				expect(emitSpy).toHaveBeenCalledWith('model.switched', {
 					sessionId: 'test-session-id',
 					success: true,
@@ -144,7 +144,7 @@ describe('EventSubscriptionSetup', () => {
 				setup.setup();
 
 				const callback = registeredCallbacks.get('model.switchRequest')!;
-				await callback({ sessionId: 'test-session-id', model: 'opus' });
+				await callback({ sessionId: 'test-session-id', model: 'opus', provider: 'anthropic' });
 
 				expect(emitSpy).toHaveBeenCalledWith('model.switched', {
 					sessionId: 'test-session-id',

@@ -344,91 +344,121 @@ export function setModelsCache(cache: Map<string, ModelInfo[]>, timestamp?: numb
 }
 
 /**
- * Get model info by ID or alias
- * Searches available models with support for legacy model IDs
- *
- * @param idOrAlias - Model ID or alias to look up
- * @param cacheKey - Cache key to look up models
- * @param providerId - Optional provider ID to prefer when multiple models share the same ID/alias.
- *   When specified, models from this provider are returned first. Falls back to unfiltered
- *   search if no provider-matching model is found (backward compatible).
+ * Three-step search helper for a given model list.
+ * 1. Exact ID match
+ * 2. Alias field match
+ * 3. Legacy model mapping
  */
-export async function getModelInfo(
-	idOrAlias: string,
-	cacheKey: string = 'global',
-	providerId?: string
-): Promise<ModelInfo | null> {
-	const availableModels = getAvailableModels(cacheKey);
+function findInModels(models: ModelInfo[], idOrAlias: string): ModelInfo | undefined {
+	// 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
+	let found = models.find((m) => m.id === idOrAlias);
 
-	// Helper: run the three-step search on a subset of models
-	function findIn(models: ModelInfo[]): ModelInfo | undefined {
-		// 1. Exact ID match (works for SDK's short IDs like 'opus', 'default')
-		let found = models.find((m) => m.id === idOrAlias);
-
-		// 2. Alias field match
-		if (!found) {
-			found = models.find((m) => m.alias === idOrAlias);
-		}
-
-		// 3. Legacy model mapping (maps old full IDs to SDK short IDs)
-		if (!found) {
-			const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
-			if (legacyMappedId) {
-				found = models.find((m) => m.id === legacyMappedId);
-			}
-		}
-
-		return found;
+	// 2. Alias field match
+	if (!found) {
+		found = models.find((m) => m.alias === idOrAlias);
 	}
 
-	// When a provider is specified, prefer models from that provider first
-	if (providerId) {
-		const providerModels = availableModels.filter((m) => m.provider === providerId);
-		const match = findIn(providerModels);
-		if (match) {
-			return match;
+	// 3. Legacy model mapping (maps old full IDs to SDK short IDs)
+	if (!found) {
+		const legacyMappedId = LEGACY_MODEL_MAPPINGS[idOrAlias];
+		if (legacyMappedId) {
+			found = models.find((m) => m.id === legacyMappedId);
 		}
-		// Fall through to unfiltered search for backward compatibility
 	}
 
-	return findIn(availableModels) ?? null;
+	return found;
 }
 
 /**
- * Validate if a model ID or alias is valid
+ * Get model info by ID or alias, filtered to the specified provider.
+ * All three parameters are required — no fallback to unfiltered search.
+ * Returns null if no model matching both idOrAlias and providerId is found.
  *
- * @param providerId - Optional provider ID to prefer for disambiguation (see getModelInfo).
- *   Validation uses an unfiltered fallback, so a model is considered valid if it exists
- *   in *any* provider, but provider-specific models are preferred when `providerId` is set.
+ * @param idOrAlias - Model ID or alias to look up
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Provider ID to filter by (required)
+ */
+export async function getModelInfo(
+	idOrAlias: string,
+	cacheKey: string,
+	providerId: string
+): Promise<ModelInfo | null> {
+	const availableModels = getAvailableModels(cacheKey);
+	const providerModels = availableModels.filter((m) => m.provider === providerId);
+	return findInModels(providerModels, idOrAlias) ?? null;
+}
+
+/**
+ * Get model info by ID or alias without filtering by provider.
+ * Use this for internal/backward-compat callers that don't have provider context.
+ * Searches all available models using the three-step search.
+ *
+ * @param idOrAlias - Model ID or alias to look up
+ * @param cacheKey - Cache key to look up models (defaults to 'global')
+ */
+export async function getModelInfoUnfiltered(
+	idOrAlias: string,
+	cacheKey: string = 'global'
+): Promise<ModelInfo | null> {
+	const availableModels = getAvailableModels(cacheKey);
+	return findInModels(availableModels, idOrAlias) ?? null;
+}
+
+/**
+ * Validate if a model ID or alias is valid for the specified provider.
+ * All three parameters are required — validation is strict, no unfiltered fallback.
+ *
+ * @param idOrAlias - Model ID or alias to validate
+ * @param cacheKey - Cache key to look up models
+ * @param providerId - Provider ID to filter by (required)
  */
 export async function isValidModel(
 	idOrAlias: string,
-	cacheKey: string = 'global',
-	providerId?: string
+	cacheKey: string,
+	providerId: string
 ): Promise<boolean> {
 	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
 	return modelInfo !== null;
 }
 
 /**
- * Resolve a model alias to its actual ID in the available models
- * Returns the model ID as it exists in the SDK/cache
+ * Resolve a model alias to its actual ID, filtered to the specified provider.
+ * All three parameters are required.
+ * Returns the original idOrAlias if no match is found.
  *
  * @param idOrAlias - Model ID or alias to resolve
  * @param cacheKey - Cache key to look up models
- * @param providerId - Optional provider ID to prefer for disambiguation (see getModelInfo)
+ * @param providerId - Provider ID to filter by (required)
  */
 export async function resolveModelAlias(
 	idOrAlias: string,
-	cacheKey: string = 'global',
-	providerId?: string
+	cacheKey: string,
+	providerId: string
 ): Promise<string> {
-	// Try to find the model directly
 	const modelInfo = await getModelInfo(idOrAlias, cacheKey, providerId);
 	if (modelInfo) {
 		return modelInfo.id;
 	}
+	// Return as-is if nothing found
+	return idOrAlias;
+}
 
+/**
+ * Resolve a model alias to its actual ID without filtering by provider.
+ * Use this for internal/backward-compat callers that don't have provider context.
+ * Returns the original idOrAlias if no match is found.
+ *
+ * @param idOrAlias - Model ID or alias to resolve
+ * @param cacheKey - Cache key to look up models (defaults to 'global')
+ */
+export async function resolveModelAliasUnfiltered(
+	idOrAlias: string,
+	cacheKey: string = 'global'
+): Promise<string> {
+	const modelInfo = await getModelInfoUnfiltered(idOrAlias, cacheKey);
+	if (modelInfo) {
+		return modelInfo.id;
+	}
 	// Return as-is if nothing found
 	return idOrAlias;
 }
