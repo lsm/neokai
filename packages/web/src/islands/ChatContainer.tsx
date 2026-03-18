@@ -403,14 +403,14 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 
 	// Model switch with processing confirmation
 	const handleModelSwitchWithConfirmation = useCallback(
-		async (modelId: string) => {
+		async (modelId: string, providerId: string) => {
 			if (isProcessing) {
 				const confirmed = confirm(
 					'The agent is currently processing. Switching the model will interrupt the current operation. Continue?'
 				);
 				if (!confirmed) return;
 			}
-			await switchModel(modelId);
+			await switchModel(modelId, providerId);
 		},
 		[switchModel, isProcessing]
 	);

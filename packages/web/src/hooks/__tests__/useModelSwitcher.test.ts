@@ -442,7 +442,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-sonnet-4-20250514');
+				await result.current.switchModel('claude-sonnet-4-20250514', 'anthropic');
 			});
 
 			expect(mockToastInfo).toHaveBeenCalledWith(expect.stringContaining('Already using'));
@@ -476,7 +476,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			expect(result.current.currentModel).toBe('claude-opus-4-5-20251101');
@@ -506,7 +506,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Model not available');
@@ -534,7 +534,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Failed to switch model');
@@ -562,7 +562,7 @@ describe('useModelSwitcher', () => {
 			mockGetHubIfConnected.mockReturnValue(null);
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Not connected to server');
@@ -598,7 +598,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			expect(mockToastError).toHaveBeenCalledWith('Connection lost');
@@ -634,7 +634,7 @@ describe('useModelSwitcher', () => {
 			switchingStates.push(result.current.switching);
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			// After switch completes, should not be switching
@@ -645,6 +645,7 @@ describe('useModelSwitcher', () => {
 			expect(mockHub.request).toHaveBeenCalledWith('session.model.switch', {
 				sessionId: 'session-1',
 				model: 'claude-opus-4-5-20251101',
+				provider: 'anthropic',
 			});
 		});
 
@@ -676,7 +677,7 @@ describe('useModelSwitcher', () => {
 			});
 
 			await act(async () => {
-				await result.current.switchModel('claude-opus-4-5-20251101');
+				await result.current.switchModel('claude-opus-4-5-20251101', 'anthropic');
 			});
 
 			expect(result.current.currentModelInfo?.id).toBe('claude-opus-4-5-20251101');

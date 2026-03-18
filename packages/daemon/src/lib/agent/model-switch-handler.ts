@@ -81,13 +81,17 @@ export class ModelSwitchHandler {
 	}
 
 	/**
-	 * Switch to a different model mid-session
+	 * Switch to a different model mid-session.
 	 *
 	 * Always restarts the query to ensure SDK emits a fresh system:init message
 	 * with the correct model. This is necessary because SDK's setModel() doesn't
 	 * update the cached system:init, causing stale model info in the UI.
+	 *
+	 * @param newModel - Target model ID or alias
+	 * @param newProvider - Explicit provider ID. When provided, routing is deterministic.
+	 *   If omitted, the provider is inferred from the model's metadata (legacy path).
 	 */
-	async switchModel(newModel: string): Promise<ModelSwitchResult> {
+	async switchModel(newModel: string, newProvider?: string): Promise<ModelSwitchResult> {
 		const {
 			session,
 			db,
@@ -146,33 +150,45 @@ export class ModelSwitchHandler {
 			// Check if query is running AND ProcessTransport is ready
 			const transportReady = firstMessageReceived;
 
-			// Detect new provider instance to keep provider config aligned with the model
+			// Resolve the target provider — deterministic when caller supplies newProvider.
+			// modelInfo?.provider is a secondary source (model registry metadata).
+			// detectProvider is a last-resort deprecated heuristic for callers that pre-date
+			// explicit routing (e.g. CLI, old integration tests). Log a warning so these
+			// paths are visible in production.
 			const providerRegistry = getProviderRegistry();
-			// Use provider from model info to correctly handle shared canonical IDs
-			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
-			// detectProvider() would otherwise return Anthropic for 'claude-sonnet-4.6'.
-			const newProviderInstance = modelInfo?.provider
-				? (providerRegistry.get(modelInfo.provider) ??
-					providerRegistry.detectProvider(resolvedModel))
-				: providerRegistry.detectProvider(resolvedModel);
+			const targetProviderId = newProvider ?? modelInfo?.provider;
+			let newProviderInstance: ReturnType<typeof providerRegistry.detectProvider>;
+			if (targetProviderId) {
+				newProviderInstance = providerRegistry.detectProviderForModel(
+					resolvedModel,
+					targetProviderId
+				);
+			} else {
+				logger.warn(
+					`[model-switch] No provider supplied for model '${resolvedModel}' — ` +
+						'falling back to heuristic detection. Update callers to pass an explicit providerId.'
+				);
+				newProviderInstance = providerRegistry.detectProvider(resolvedModel);
+			}
+
+			if (!newProviderInstance) {
+				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${targetProviderId ?? '(unknown)'}' is not registered.`;
+				logger.error(errMsg);
+				return { success: false, model: session.config.model, error: errMsg };
+			}
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
 				session.config.model = resolvedModel;
-				// Keep provider aligned with model for pre-query switches too.
-				// Without this, a stale explicit provider can force wrong model routing.
-				if (newProviderInstance?.id) {
-					session.config.provider = newProviderInstance.id as Provider;
-				}
+				// newProviderInstance is guaranteed non-null here (we returned early above).
+				session.config.provider = newProviderInstance.id as Provider;
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
 					config: {
 						model: resolvedModel,
-						...(newProviderInstance?.id && {
-							provider: newProviderInstance.id as Provider,
-						}),
+						provider: newProviderInstance.id as Provider,
 					} as SessionConfig,
 				});
 
@@ -193,20 +209,15 @@ export class ModelSwitchHandler {
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
-				// Keep provider aligned with model (same as the pre-query branch —
-				// unconditionally update so same-provider switches don’t leave stale state).
-				if (newProviderInstance?.id) {
-					session.config.provider = newProviderInstance.id as Provider;
-				}
+				// newProviderInstance is guaranteed non-null here (we returned early above).
+				session.config.provider = newProviderInstance.id as Provider;
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
 					config: {
 						model: resolvedModel,
-						...(newProviderInstance?.id && {
-							provider: newProviderInstance.id as Provider,
-						}),
+						provider: newProviderInstance.id as Provider,
 					} as SessionConfig,
 				});
 

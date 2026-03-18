@@ -100,7 +100,7 @@ export class ProviderContextManager {
 	 * Resolve the provider for a session
 	 */
 	private resolveProvider(session: Session): Provider {
-		// 1. Try explicit provider first
+		// 1. Prefer explicit provider stored in session config (always set for new sessions)
 		if (session.config.provider) {
 			const provider = this.registry.get(session.config.provider);
 			if (provider) {
@@ -108,7 +108,8 @@ export class ProviderContextManager {
 			}
 		}
 
-		// 2. Detect provider from model ID
+		// 2. Legacy fallback: detect from model ID for old sessions that pre-date explicit routing.
+		// @deprecated — new sessions always store session.config.provider.
 		const modelId = session.config.model || 'default';
 		const detected = this.registry.detectProvider(modelId);
 		if (detected) {
@@ -125,21 +126,24 @@ export class ProviderContextManager {
 	}
 
 	/**
-	 * Check if a model switch requires a query restart
+	 * Check if a model switch requires a query restart.
 	 *
 	 * Cross-provider switches require restart because the SDK subprocess
 	 * needs different environment variables.
+	 *
+	 * @param session - Current session (used to resolve the current provider)
+	 * @param newModelId - Target model ID (informational)
+	 * @param newProviderId - Target provider ID (explicit — must be known by the caller)
 	 */
-	requiresQueryRestart(session: Session, newModelId: string): boolean {
+	requiresQueryRestart(session: Session, newModelId: string, newProviderId: string): boolean {
 		const currentProvider = this.resolveProvider(session);
-		const newProvider = this.registry.detectProvider(newModelId);
+		const newProvider = this.registry.get(newProviderId);
 
-		// If we can't detect the new provider, assume it's different
+		// If the new provider is unknown, assume a different one — safer to restart
 		if (!newProvider) {
 			return true;
 		}
 
-		// Restart if providers are different
 		return currentProvider.id !== newProvider.id;
 	}
 
@@ -151,7 +155,8 @@ export class ProviderContextManager {
 	}
 
 	/**
-	 * Detect provider from model ID
+	 * @deprecated Use `getProvider(providerId)` or `registry.detectProviderForModel(modelId, providerId)`.
+	 *   Heuristic model-ID-only detection is ambiguous when providers share model IDs.
 	 */
 	detectProvider(modelId: string): Provider | undefined {
 		return this.registry.detectProvider(modelId);

@@ -371,9 +371,15 @@ export function setupSessionHandlers(
 	// Handle model switching
 	// Returns synchronous result for test compatibility and immediate feedback
 	messageHub.onRequest('session.model.switch', async (data) => {
-		const { sessionId: targetSessionId, model } = data as {
+		const {
+			sessionId: targetSessionId,
+			model,
+			provider,
+		} = data as {
 			sessionId: string;
 			model: string;
+			/** Explicit provider ID — always supply this from the UI model picker. */
+			provider?: string;
 		};
 
 		const agentSession = await sessionManager.getSessionAsync(targetSessionId);
@@ -382,7 +388,7 @@ export function setupSessionHandlers(
 		}
 
 		// Call handleModelSwitch directly - returns {success, model, error}
-		const result = await agentSession.handleModelSwitch(model);
+		const result = await agentSession.handleModelSwitch(model, provider);
 
 		// Broadcast model switch result via state channels for UI updates
 		if (result.success) {

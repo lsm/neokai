@@ -55,6 +55,7 @@ describe('GLM Model Switching', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-5',
+				provider: 'glm',
 			})) as { success: boolean; model: string; error?: string };
 
 			expect(result.success).toBe(true);
@@ -98,6 +99,7 @@ describe('GLM Model Switching', () => {
 			await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-5',
+				provider: 'glm',
 			});
 
 			// Get state after switch
@@ -142,12 +144,19 @@ describe('GLM Model Switching', () => {
 			daemon.trackSession(sessionId);
 
 			// Perform rapid switches between Claude and GLM
-			const switches = ['glm-5', 'haiku', 'glm-5', 'sonnet', 'glm-5'];
+			const switches: Array<{ model: string; provider: string }> = [
+				{ model: 'glm-5', provider: 'glm' },
+				{ model: 'haiku', provider: 'anthropic' },
+				{ model: 'glm-5', provider: 'glm' },
+				{ model: 'sonnet', provider: 'anthropic' },
+				{ model: 'glm-5', provider: 'glm' },
+			];
 
-			for (const model of switches) {
+			for (const { model, provider } of switches) {
 				const result = (await daemon.messageHub.request('session.model.switch', {
 					sessionId,
 					model,
+					provider,
 				})) as { success: boolean };
 				expect(result.success).toBe(true);
 			}
@@ -176,6 +185,7 @@ describe('GLM Model Switching', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'glm-5',
+				provider: 'glm',
 			})) as { success: boolean; model: string };
 
 			expect(result.success).toBe(true);

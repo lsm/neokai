@@ -239,8 +239,8 @@ export default function MessageInput({
 
 	// Model switch handler
 	const handleModelSwitch = useCallback(
-		async (modelId: string) => {
-			await switchModel(modelId);
+		async (modelId: string, providerId: string) => {
+			await switchModel(modelId, providerId);
 			actionsMenu.close();
 		},
 		[switchModel, actionsMenu]

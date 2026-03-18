@@ -701,24 +701,30 @@ describe('Session RPC Handlers', () => {
 			const params = {
 				sessionId: 'session-123',
 				model: 'claude-opus-4-6',
+				provider: 'anthropic',
 			};
 
-			const { mocks } = createMockAgentSession();
+			const { agentSession, mocks } = createMockAgentSession();
 			mocks.handleModelSwitch.mockResolvedValueOnce({
 				success: true,
 				model: 'claude-opus-4-6',
 			});
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
 
 			const result = await handler!(params, {});
 
 			expect(result).toHaveProperty('success');
+			expect(mocks.handleModelSwitch).toHaveBeenCalledWith('claude-opus-4-6', 'anthropic');
 		});
 
 		it('broadcasts session.updated on successful switch', async () => {
 			const handler = messageHubData.handlers.get('session.model.switch');
 			expect(handler).toBeDefined();
 
-			await handler!({ sessionId: 'session-123', model: 'claude-opus-4-6' }, {});
+			await handler!(
+				{ sessionId: 'session-123', model: 'claude-opus-4-6', provider: 'anthropic' },
+				{}
+			);
 
 			expect(messageHubData.hub.event).toHaveBeenCalledWith('session.updated', expect.any(Object), {
 				channel: 'session:session-123',

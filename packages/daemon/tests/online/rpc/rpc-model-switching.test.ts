@@ -80,6 +80,7 @@ describe('Model Switching', () => {
 				daemon.messageHub.request('session.model.switch', {
 					sessionId: 'non-existent-session',
 					model: 'sonnet',
+					provider: 'anthropic',
 				})
 			).rejects.toThrow();
 		});

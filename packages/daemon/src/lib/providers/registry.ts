@@ -10,7 +10,10 @@
  * - Provider auto-detection from model IDs
  */
 
+import { createLogger } from '@neokai/shared/logger';
 import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
+
+const log = createLogger('kai:providers:registry');
 
 /**
  * Provider Registry class
@@ -74,10 +77,29 @@ export class ProviderRegistry {
 	}
 
 	/**
-	 * Detect provider from model ID
-	 * Asks each provider if it owns the model
+	 * Resolve provider by explicit (modelId, providerId) pair — fully deterministic.
 	 *
-	 * Returns undefined if no provider claims the model
+	 * Both the model ID and provider ID must be known at the call site. This is the
+	 * preferred routing method: when the UI selects a model it always has the associated
+	 * provider ID, so there is never any ambiguity.
+	 *
+	 * Logs an error and returns `undefined` if the provider is not registered.
+	 */
+	detectProviderForModel(modelId: string, providerId: string): Provider | undefined {
+		const provider = this.providers.get(providerId);
+		if (!provider) {
+			log.error(`[routing] Unknown provider '${providerId}' for model '${modelId}'`);
+		}
+		return provider;
+	}
+
+	/**
+	 * Heuristic provider detection from model ID alone.
+	 *
+	 * @deprecated Use `detectProviderForModel(modelId, providerId)` with an explicit provider ID.
+	 *   This method is ambiguous when multiple providers claim the same model ID
+	 *   (e.g. 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
+	 *   It is retained only for legacy paths (e.g. old sessions without a stored provider).
 	 */
 	detectProvider(modelId: string): Provider | undefined {
 		for (const provider of this.getAll()) {
