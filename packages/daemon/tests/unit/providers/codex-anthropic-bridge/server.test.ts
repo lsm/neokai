@@ -3,16 +3,21 @@
  *
  * These tests spin up a real Bun HTTP server backed by a MOCK BridgeSession.
  * The mock injects pre-scripted BridgeEvents so no real `codex` binary is needed.
+ *
+ * Why a mock server instead of the production `createBridgeServer`?
+ * `createBridgeServer` spawns a real `codex` subprocess via `AppServerConn.create()`.
+ * There is no session-factory injection point in the current API, so the production
+ * server cannot be exercised with a mock `BridgeSession` without starting a real process.
+ * The `createMockBridgeServer` helper below reimplements the same HTTP routing + SSE
+ * drain logic using `MockBridgeSession`, keeping all test coverage in-process and fast.
+ * Type drift between the mock and the production server is kept in check by importing
+ * the exported `ToolSession` type from `server.ts` — both share the same named type.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import {
-	BridgeSession,
-	AppServerConn,
-} from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
-import {
-	createBridgeServer,
-	type BridgeServer,
+import type {
+	BridgeServer,
+	ToolSession,
 } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
 import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 
@@ -83,16 +88,7 @@ class MockBridgeSession {
 let mockSessionFactory: (() => MockBridgeSession) | null = null;
 
 /** Shared tool session map — reset in beforeEach. */
-const toolSessions = new Map<
-	string,
-	{
-		gen: AsyncGenerator<BridgeEvent>;
-		session: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
-		provideResult: (text: string) => void;
-		model: string;
-		cleanupTimer: ReturnType<typeof setTimeout>;
-	}
->();
+const toolSessions = new Map<string, ToolSession>();
 
 function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 	const bunServer = Bun.serve({
@@ -203,17 +199,27 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 			}
 
 			if (isToolResultContinuation(body.messages)) {
-				const [tr] = extractToolResults(body.messages);
-				const stored = toolSessions.get(tr.toolUseId);
-				if (!stored) return new Response('Session not found', { status: 404 });
-				toolSessions.delete(tr.toolUseId);
-				clearTimeout(stored.cleanupTimer);
-				stored.provideResult(tr.text);
-				const resumeModel = stored.model; // preserve original model
+				const toolResults = extractToolResults(body.messages);
+				// Mirror production logic: iterate all tool results, warn on unmatched
+				let primaryStored: ToolSession | null = null;
+				for (const tr of toolResults) {
+					const stored = toolSessions.get(tr.toolUseId);
+					if (!stored) {
+						// warn — mirrors production logger.warn for orphaned results
+						continue;
+					}
+					toolSessions.delete(tr.toolUseId);
+					clearTimeout(stored.cleanupTimer);
+					stored.provideResult(tr.text);
+					if (!primaryStored) primaryStored = stored;
+				}
+				if (!primaryStored) return new Response('Session not found', { status: 404 });
+				const resumeModel = primaryStored.model;
+				const primaryGen = primaryStored.gen;
 				const stream = new ReadableStream<Uint8Array>({
 					async start(controller) {
 						controller.enqueue(enc.encode(messageStartSSE(`msg_${Date.now()}`, resumeModel, 0)));
-						await drainGen(stored.gen, null, resumeModel, controller);
+						await drainGen(primaryGen, null, resumeModel, controller);
 					},
 				});
 				return new Response(stream, { headers: sseHeaders });
@@ -581,6 +587,214 @@ describe('Bridge HTTP server', () => {
 		} finally {
 			ttlServer.stop();
 		}
+	});
+
+	// -------------------------------------------------------------------------
+	// Multiple tool results — all matched sessions resolved
+	// -------------------------------------------------------------------------
+
+	it('resolves all matched tool results when multiple tool_use_ids are sent', async () => {
+		const resolvedIds: string[] = [];
+
+		// The mock generator only emits one tool_call (call-multi-1) then turn_done.
+		// This reflects the real Codex constraint: Codex emits one tool call at a time
+		// because each item/tool/call RPC handler blocks until its result is provided.
+		//
+		// To test the multi-result server loop, a second ToolSession (call-multi-2)
+		// is injected directly into the toolSessions map after the first HTTP request.
+		// This simulates a hypothetical future scenario where the client sends two
+		// tool_result blocks in a single continuation (e.g. from parallel tool calls
+		// in a different upstream model). The server loop must resolve both Deferreds
+		// and treat the first matched entry as the primary gen to drain.
+		mockSessionFactory = () => {
+			const sess = new MockBridgeSession([
+				{
+					type: 'tool_call',
+					callId: 'call-multi-1',
+					toolName: 'bash',
+					toolInput: { command: 'ls' },
+					provideResult: (_text: string) => {
+						resolvedIds.push('call-multi-1');
+					},
+				},
+				{ type: 'turn_done', inputTokens: 5, outputTokens: 5 },
+			]);
+			return sess;
+		};
+
+		// First request — suspends on call-multi-1
+		const resp1 = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'run' }],
+				stream: true,
+			}),
+		});
+		await readSSEEvents(resp1.body);
+		expect(toolSessions.has('call-multi-1')).toBe(true);
+
+		// Inject a second ToolSession sharing the same gen, representing a hypothetical
+		// parallel tool call from the same turn (see comment above for rationale).
+		const secondResolved: string[] = [];
+		const stored1 = toolSessions.get('call-multi-1')!;
+		toolSessions.set('call-multi-2', {
+			gen: stored1.gen,
+			session: stored1.session,
+			provideResult: (_text: string) => {
+				secondResolved.push('call-multi-2');
+			},
+			model: stored1.model,
+			cleanupTimer: setTimeout(() => {}, 60_000),
+		});
+
+		// Send a continuation with BOTH tool results
+		const resp2 = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{ role: 'user', content: 'run' },
+					{
+						role: 'assistant',
+						content: [
+							{ type: 'tool_use', id: 'call-multi-1', name: 'bash', input: {} },
+							{ type: 'tool_use', id: 'call-multi-2', name: 'bash', input: {} },
+						],
+					},
+					{
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'call-multi-1', content: 'result-1' },
+							{ type: 'tool_result', tool_use_id: 'call-multi-2', content: 'result-2' },
+						],
+					},
+				],
+				stream: true,
+			}),
+		});
+
+		expect(resp2.ok).toBe(true);
+		await readSSEEvents(resp2.body);
+
+		// Both provideResult callbacks must have been called
+		expect(resolvedIds).toContain('call-multi-1');
+		expect(secondResolved).toContain('call-multi-2');
+
+		// Both sessions must be removed from the map
+		expect(toolSessions.has('call-multi-1')).toBe(false);
+		expect(toolSessions.has('call-multi-2')).toBe(false);
+	});
+
+	// -------------------------------------------------------------------------
+	// Multiple tool results — some unmatched (orphaned) — warn, not crash
+	// -------------------------------------------------------------------------
+
+	it('warns on unmatched tool_use_ids and still resumes the matched session', async () => {
+		const resolvedIds: string[] = [];
+
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{
+					type: 'tool_call',
+					callId: 'call-orphan-match',
+					toolName: 'bash',
+					toolInput: { command: 'pwd' },
+					provideResult: (_text: string) => {
+						resolvedIds.push('call-orphan-match');
+					},
+				},
+				{ type: 'text_delta', text: 'resumed' },
+				{ type: 'turn_done', inputTokens: 1, outputTokens: 1 },
+			]);
+
+		// First request — suspends on call-orphan-match
+		const resp1 = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'pwd' }],
+				stream: true,
+			}),
+		});
+		await readSSEEvents(resp1.body);
+		expect(toolSessions.has('call-orphan-match')).toBe(true);
+
+		// Send continuation with the real call-id AND a nonexistent call-id
+		const resp2 = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{ role: 'user', content: 'pwd' },
+					{
+						role: 'assistant',
+						content: [
+							{ type: 'tool_use', id: 'call-orphan-match', name: 'bash', input: {} },
+							{ type: 'tool_use', id: 'call-orphan-no-session', name: 'bash', input: {} },
+						],
+					},
+					{
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'call-orphan-match', content: 'dir' },
+							{ type: 'tool_result', tool_use_id: 'call-orphan-no-session', content: 'dir' },
+						],
+					},
+				],
+				stream: true,
+			}),
+		});
+
+		// Must succeed (not 404) — the matched session is resumed normally
+		expect(resp2.ok).toBe(true);
+		const events2 = await readSSEEvents(resp2.body);
+
+		// The matched session resolved its Deferred
+		expect(resolvedIds).toContain('call-orphan-match');
+
+		// Resumed turn text should appear
+		const text = events2
+			.filter((e) => e.event === 'content_block_delta')
+			.map((e) => (e.data as { delta: { type: string; text?: string } }).delta)
+			.filter((d) => d.type === 'text_delta')
+			.map((d) => d.text ?? '')
+			.join('');
+		expect(text).toBe('resumed');
+	});
+
+	// -------------------------------------------------------------------------
+	// Multiple tool results — ALL unmatched — 404
+	// -------------------------------------------------------------------------
+
+	it('returns 404 when all tool_use_ids in the continuation are unmatched', async () => {
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{ role: 'user', content: 'x' },
+					{
+						role: 'assistant',
+						content: [{ type: 'tool_use', id: 'bad-id-1', name: 'bash', input: {} }],
+					},
+					{
+						role: 'user',
+						content: [
+							{ type: 'tool_result', tool_use_id: 'bad-id-1', content: 'r1' },
+							{ type: 'tool_result', tool_use_id: 'bad-id-2', content: 'r2' },
+						],
+					},
+				],
+				stream: true,
+			}),
+		});
+		expect(resp.status).toBe(404);
 	});
 
 	// -------------------------------------------------------------------------
