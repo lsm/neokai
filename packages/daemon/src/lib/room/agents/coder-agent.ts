@@ -236,7 +236,7 @@ export function buildCoderSystemPrompt(helperAgentNames?: string[]): string {
 	sections.push(
 		`5. Ensure a pull request exists — check first to avoid creating a duplicate:\n` +
 			`   \`\`\`bash\n` +
-			`   EXISTING_PR=$(gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json url --jq '.[0].url' 2>/dev/null)\n` +
+			`   EXISTING_PR=$(gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json url --jq '.[0].url // empty' 2>/dev/null)\n` +
 			`   if [ -z "$EXISTING_PR" ]; then\n` +
 			`     gh pr create --fill --base $(b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'); [ -z "$b" ] && b=$(git remote show origin | sed -n '/HEAD branch/s/.*: //p'); echo "$b")\n` +
 			`   else\n` +
@@ -384,7 +384,7 @@ export function buildCoderTaskMessage(config: CoderAgentConfig): string {
 	// Existing PR context (when task already has a PR from a previous iteration)
 	if (task.prUrl) {
 		sections.push(`\n## Existing Pull Request\n`);
-		sections.push(`This task already has an open pull request: ${task.prUrl}`);
+		sections.push(`This task already has an existing pull request: ${task.prUrl}`);
 		sections.push(`Push your changes to update this PR — do NOT create a new one.`);
 	}
 

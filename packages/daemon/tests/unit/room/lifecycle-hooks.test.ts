@@ -15,7 +15,6 @@ import {
 	runLeaderSubmitGate,
 	detectBypassMarker,
 	BYPASS_GATES_MARKERS,
-	extractPrNumberFromUrl,
 	closeStalePr,
 	type WorkerExitHookContext,
 	type LeaderCompleteHookContext,
@@ -1492,30 +1491,8 @@ describe('runWorkerExitGate with bypass markers', () => {
 	});
 });
 
-describe('extractPrNumberFromUrl', () => {
-	test('extracts PR number from a valid GitHub PR URL', () => {
-		expect(extractPrNumberFromUrl('https://github.com/org/repo/pull/42')).toBe(42);
-	});
-
-	test('extracts PR number from a URL with trailing segments', () => {
-		expect(extractPrNumberFromUrl('https://github.com/org/repo/pull/123/files')).toBe(123);
-	});
-
-	test('returns null for a non-PR URL', () => {
-		expect(extractPrNumberFromUrl('https://github.com/org/repo/issues/42')).toBeNull();
-	});
-
-	test('returns null for an empty string', () => {
-		expect(extractPrNumberFromUrl('')).toBeNull();
-	});
-
-	test('returns null for a malformed URL', () => {
-		expect(extractPrNumberFromUrl('not-a-url')).toBeNull();
-	});
-});
-
 describe('closeStalePr', () => {
-	test('closes the old PR with a superseded-by comment', async () => {
+	test('closes the old PR via URL with a superseded-by comment', async () => {
 		const calls: Array<{ args: string[]; cwd: string }> = [];
 		const opts: HookOptions = {
 			runCommand: async (args, cwd) => {
@@ -1531,11 +1508,12 @@ describe('closeStalePr', () => {
 		);
 		expect(result).toBe(true);
 		expect(calls.length).toBe(1);
+		// Uses the full URL, not just the PR number
 		expect(calls[0].args).toEqual([
 			'gh',
 			'pr',
 			'close',
-			'10',
+			'https://github.com/org/repo/pull/10',
 			'--comment',
 			'Superseded by https://github.com/org/repo/pull/20',
 		]);
@@ -1555,7 +1533,7 @@ describe('closeStalePr', () => {
 		expect(result).toBe(false);
 	});
 
-	test('returns false for invalid old PR URL', async () => {
+	test('returns false for invalid old PR URL (not a PR path)', async () => {
 		const calls: Array<string[]> = [];
 		const opts: HookOptions = {
 			runCommand: async (args) => {
@@ -1565,6 +1543,24 @@ describe('closeStalePr', () => {
 		};
 		const result = await closeStalePr(
 			'not-a-pr-url',
+			'https://github.com/org/repo/pull/20',
+			'/workspace',
+			opts
+		);
+		expect(result).toBe(false);
+		expect(calls.length).toBe(0);
+	});
+
+	test('returns false for empty old PR URL', async () => {
+		const calls: Array<string[]> = [];
+		const opts: HookOptions = {
+			runCommand: async (args) => {
+				calls.push(args);
+				return { stdout: '', exitCode: 0 };
+			},
+		};
+		const result = await closeStalePr(
+			'',
 			'https://github.com/org/repo/pull/20',
 			'/workspace',
 			opts

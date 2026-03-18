@@ -580,4 +580,110 @@ describe('RoomRuntime leader tools', () => {
 			expect(planningTasks).toHaveLength(0);
 		});
 	});
+
+	describe('submit_for_review stale PR cleanup', () => {
+		it('closes stale PR when submit_for_review is called with a different PR URL', async () => {
+			const ghCalls: Array<string[]> = [];
+			const ctx2 = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args) => {
+						ghCalls.push(args);
+						// Simulate successful gh pr close; fail everything else gracefully
+						if (args[0] === 'gh' && args[1] === 'pr' && args[2] === 'close') {
+							return { stdout: '', exitCode: 0 };
+						}
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			try {
+				const { task, group } = await spawnAndRouteToLeader(ctx2, { assignedAgent: 'coder' });
+
+				// Pre-set the task with an existing PR URL to simulate a second review cycle
+				await ctx2.taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/10');
+
+				// Leader calls submit_for_review with a NEW, different PR URL
+				const result = await ctx2.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+					pr_url: 'https://github.com/org/repo/pull/20',
+				});
+
+				const parsed = JSON.parse(result.content[0].text);
+				expect(parsed.success).toBe(true);
+
+				// Should have called gh pr close with the old PR URL
+				const closeCalls = ghCalls.filter((a) => a[1] === 'pr' && a[2] === 'close');
+				expect(closeCalls.length).toBe(1);
+				expect(closeCalls[0]).toContain('https://github.com/org/repo/pull/10');
+				expect(closeCalls[0]).toContain('Superseded by https://github.com/org/repo/pull/20');
+
+				// Task should now have the new PR URL
+				const updatedTask = await ctx2.taskManager.getTask(task.id);
+				expect(updatedTask!.prUrl).toBe('https://github.com/org/repo/pull/20');
+			} finally {
+				ctx2.runtime.stop();
+				ctx2.db.close();
+			}
+		});
+
+		it('does not call gh pr close when submit_for_review uses the same PR URL', async () => {
+			const ghCalls: Array<string[]> = [];
+			const ctx2 = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async (args) => {
+						ghCalls.push(args);
+						return { stdout: '', exitCode: 1 };
+					},
+				},
+			});
+
+			try {
+				const { task, group } = await spawnAndRouteToLeader(ctx2, { assignedAgent: 'coder' });
+
+				// Pre-set the task with the same PR URL that will be submitted
+				await ctx2.taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/10');
+
+				// Leader calls submit_for_review with the SAME PR URL — no close needed
+				await ctx2.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+					pr_url: 'https://github.com/org/repo/pull/10',
+				});
+
+				const closeCalls = ghCalls.filter((a) => a[1] === 'pr' && a[2] === 'close');
+				expect(closeCalls.length).toBe(0);
+			} finally {
+				ctx2.runtime.stop();
+				ctx2.db.close();
+			}
+		});
+
+		it('proceeds with submit_for_review even when closeStalePr fails', async () => {
+			const ctx2 = createRuntimeTestContext({
+				hookOptions: {
+					runCommand: async () => ({ stdout: '', exitCode: 1 }), // gh always fails
+				},
+			});
+
+			try {
+				const { task, group } = await spawnAndRouteToLeader(ctx2, { assignedAgent: 'coder' });
+
+				// Pre-set an existing PR URL
+				await ctx2.taskManager.reviewTask(task.id, 'https://github.com/org/repo/pull/10');
+
+				// Even though gh pr close will fail, submit_for_review should still succeed
+				const result = await ctx2.runtime.handleLeaderTool(group.id, 'submit_for_review', {
+					pr_url: 'https://github.com/org/repo/pull/20',
+				});
+
+				const parsed = JSON.parse(result.content[0].text);
+				expect(parsed.success).toBe(true);
+
+				// Task still updates to the new PR URL
+				const updatedTask = await ctx2.taskManager.getTask(task.id);
+				expect(updatedTask!.prUrl).toBe('https://github.com/org/repo/pull/20');
+			} finally {
+				ctx2.runtime.stop();
+				ctx2.db.close();
+			}
+		});
+	});
 });

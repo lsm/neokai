@@ -103,6 +103,8 @@ describe('Coder Agent', () => {
 			// Step 5 should check for an existing PR first
 			expect(prompt).toContain('EXISTING_PR=$(gh pr list --head');
 			expect(prompt).toContain('--state open --json url --jq');
+			// Uses `// empty` to convert jq null output to empty string (avoids the "null" string bug)
+			expect(prompt).toContain('// empty');
 			expect(prompt).toContain('if [ -z "$EXISTING_PR" ]');
 			// Only create PR when none exists
 			expect(prompt).toContain('gh pr create --fill --base');
@@ -215,6 +217,9 @@ describe('Coder Agent', () => {
 			);
 			expect(message).toContain('https://github.com/org/repo/pull/42');
 			expect(message).toContain('Existing Pull Request');
+			// Should say "existing" not "open" — prUrl may be closed
+			expect(message).toContain('existing pull request');
+			expect(message).not.toContain('open pull request');
 			expect(message).toContain('do NOT create a new one');
 		});
 
