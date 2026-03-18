@@ -12,11 +12,11 @@
  */
 
 import { BridgeSession, AppServerConn, type AppServerAuth } from './process-manager.js';
-import { createAnthropicErrorBody, anthropicErrorSSELine } from '../shared/error-envelope.js';
 
 export type { AppServerAuth } from './process-manager.js';
 import {
 	type AnthropicRequest,
+	type AnthropicErrorType,
 	buildDynamicTools,
 	buildConversationText,
 	extractSystemText,
@@ -31,10 +31,30 @@ import {
 	contentBlockStopSSE,
 	messageDeltaSSE,
 	messageStopSSE,
+	errorSSE,
 } from './translator.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
+
+// ---------------------------------------------------------------------------
+// Anthropic JSON error envelope
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a JSON Response with an Anthropic-format error envelope body.
+ * Shape: {"type":"error","error":{"type":"<errorType>","message":"<message>"}}
+ */
+export function createAnthropicError(
+	httpStatus: number,
+	type: AnthropicErrorType,
+	message: string
+): Response {
+	return new Response(JSON.stringify({ type: 'error', error: { type, message } }), {
+		status: httpStatus,
+		headers: { 'Content-Type': 'application/json' },
+	});
+}
 
 /** Default TTL before an unresolved tool-call session is abandoned (5 min). */
 export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
@@ -43,7 +63,7 @@ export const DEFAULT_TOOL_SESSION_TTL_MS = 5 * 60 * 1000;
 // Session state for tool-call round-trips
 // ---------------------------------------------------------------------------
 
-type ToolSession = {
+export type ToolSession = {
 	/** The suspended generator — resume with provideResult then continue polling. */
 	gen: AsyncGenerator<import('./process-manager.js').BridgeEvent>;
 	/** The underlying BridgeSession — needed to kill the subprocess when done. */
@@ -64,7 +84,7 @@ function generateMsgId(): string {
 // SSE drain loop — shared between new turns and tool continuations
 // ---------------------------------------------------------------------------
 
-async function drainToSSE(
+export async function drainToSSE(
 	gen: AsyncGenerator<import('./process-manager.js').BridgeEvent>,
 	session: BridgeSession,
 	model: string,
@@ -90,6 +110,10 @@ async function drainToSSE(
 	while (true) {
 		const { value: event, done } = await gen.next();
 		if (done) break;
+
+		logger.debug(
+			`drainToSSE event: ${event.type}${event.type === 'text_delta' ? ` text=${JSON.stringify((event as { text: string }).text)}` : ''}`
+		);
 
 		if (event.type === 'text_delta') {
 			if (!textBlockOpen) {
@@ -151,9 +175,8 @@ async function drainToSSE(
 				send(contentBlockStopSSE(blockIndex));
 				textBlockOpen = false;
 			}
-			// Emit an Anthropic-format error SSE event so the Claude Agent SDK
-			// surfaces this as an APIError instead of silently completing.
-			send(anthropicErrorSSELine('api_error', String(event.message) || 'Codex session error'));
+			// Emit an Anthropic-format error SSE event then close the stream
+			send(errorSSE('api_error', event.message));
 			session.kill();
 			controller.close();
 			return;
@@ -206,23 +229,14 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			}
 
 			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
-				return new Response(createAnthropicErrorBody('not_found_error', 'Not found'), {
-					status: 404,
-					headers: { 'Content-Type': 'application/json' },
-				});
+				return createAnthropicError(404, 'not_found_error', 'Not found');
 			}
 
 			let body: AnthropicRequest;
 			try {
 				body = (await req.json()) as AnthropicRequest;
 			} catch {
-				return new Response(
-					createAnthropicErrorBody('invalid_request_error', 'Request body must be valid JSON'),
-					{
-						status: 400,
-						headers: { 'Content-Type': 'application/json' },
-					}
-				);
+				return createAnthropicError(400, 'invalid_request_error', 'Bad Request: invalid JSON');
 			}
 
 			const sseHeaders = {
@@ -238,34 +252,59 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			if (isToolResultContinuation(body.messages)) {
 				const toolResults = extractToolResults(body.messages);
 				if (toolResults.length === 0) {
-					return new Response(
-						createAnthropicErrorBody('invalid_request_error', 'No tool_result found in messages'),
-						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					return createAnthropicError(
+						400,
+						'invalid_request_error',
+						'Bad Request: no tool_result found'
 					);
 				}
 
-				// For simplicity handle one tool result at a time (Codex sends one at a time)
-				const tr = toolResults[0];
-				const stored = toolSessions.get(tr.toolUseId);
-				if (!stored) {
-					logger.error(`codex-bridge: no active session for tool_use_id=${tr.toolUseId}`);
-					return new Response(
-						createAnthropicErrorBody(
-							'not_found_error',
-							`No active session for tool_use_id=${tr.toolUseId}`
-						),
-						{ status: 404, headers: { 'Content-Type': 'application/json' } }
+				// Iterate ALL tool results — the Anthropic API allows multiple tool_result
+				// blocks in a single continuation request (one per parallel tool call).
+				//
+				// NOTE: The Codex app-server only ever emits one tool call per turn, because
+				// each item/tool/call RPC handler blocks until its result is provided before
+				// Codex can proceed to the next tool call. In practice there is therefore
+				// always exactly one suspended ToolSession at continuation time. We still
+				// handle the multi-result path correctly here for forward compatibility: if
+				// Codex ever gains parallel tool-call support, this code will work without
+				// changes.
+				//
+				// The first matched session's generator drives the resumed SSE stream.
+				// All matched sessions have their Deferreds resolved. Unmatched tool_use_ids
+				// produce a warning and are skipped (not silently dropped).
+				let primaryStored: ToolSession | null = null;
+
+				for (const tr of toolResults) {
+					const stored = toolSessions.get(tr.toolUseId);
+					if (!stored) {
+						logger.warn(
+							`codex-bridge: orphaned tool_result — no active session for tool_use_id=${tr.toolUseId}, skipping`
+						);
+						continue;
+					}
+					toolSessions.delete(tr.toolUseId);
+					// Cancel the TTL timer — session is being resumed normally
+					clearTimeout(stored.cleanupTimer);
+					// Provide the tool result — this unblocks the Codex read loop for this call
+					stored.provideResult(tr.text);
+					if (!primaryStored) {
+						primaryStored = stored;
+					}
+				}
+
+				if (!primaryStored) {
+					logger.error(
+						`codex-bridge: no active sessions found for any tool_use_id in this continuation`
+					);
+					return createAnthropicError(
+						404,
+						'not_found_error',
+						'Session not found for all tool_use_ids in this continuation'
 					);
 				}
-				toolSessions.delete(tr.toolUseId);
 
-				// Cancel the TTL timer — session is being resumed normally
-				clearTimeout(stored.cleanupTimer);
-
-				const { gen, session, provideResult, model: sessionModel } = stored;
-				// Provide the tool result — this unblocks the Codex read loop
-				provideResult(tr.text);
-
+				const { gen, session, model: sessionModel } = primaryStored;
 				const stream = new ReadableStream<Uint8Array>({
 					start(controller) {
 						void drainToSSE(gen, session, sessionModel, toolSessions, controller, ttlMs);
@@ -298,13 +337,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				await session.initialize();
 			} catch (err) {
 				logger.error('codex-bridge: failed to start BridgeSession:', err);
-				return new Response(
-					createAnthropicErrorBody(
-						'api_error',
-						`Failed to start session: ${err instanceof Error ? err.message : String(err)}`
-					),
-					{ status: 500, headers: { 'Content-Type': 'application/json' } }
-				);
+				return createAnthropicError(500, 'api_error', `Internal Server Error: ${String(err)}`);
 			}
 
 			const gen = session.startTurn(userText);

@@ -34,14 +34,3 @@ export type AnthropicErrorType =
 export function createAnthropicErrorBody(errorType: AnthropicErrorType, message: string): string {
 	return JSON.stringify({ type: 'error', error: { type: errorType, message } });
 }
-
-/**
- * Format an Anthropic-format `error` SSE event string.
- *
- * Emitted mid-stream (after SSE headers and `message_start` have been sent)
- * when a streaming error occurs.  The Claude Agent SDK interprets this event
- * as an `APIError` and surfaces it to the caller.
- */
-export function anthropicErrorSSELine(errorType: AnthropicErrorType, message: string): string {
-	return `event: error\ndata: ${JSON.stringify({ type: 'error', error: { type: errorType, message } })}\n\n`;
-}
