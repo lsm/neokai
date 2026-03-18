@@ -268,6 +268,321 @@ describe('GoalsEditor', () => {
 		});
 	});
 
+	describe('Mission Type Badge', () => {
+		it('should show MissionTypeBadge for measurable missions', () => {
+			const goals = [createMockGoal('goal-1', { missionType: 'measurable' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('Measurable');
+		});
+
+		it('should show MissionTypeBadge for recurring missions', () => {
+			const goals = [createMockGoal('goal-1', { missionType: 'recurring' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('Recurring');
+		});
+
+		it('should not show MissionTypeBadge for one-shot missions', () => {
+			const goals = [createMockGoal('goal-1', { missionType: 'one_shot' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			// One-shot is the default, so no badge is shown
+			const typeBadges = container.querySelectorAll('[data-testid="mission-type-badge"]');
+			expect(typeBadges.length).toBe(0);
+		});
+	});
+
+	describe('Autonomy Badge', () => {
+		it('should show Semi-Autonomous badge when autonomyLevel is semi_autonomous', () => {
+			const goals = [createMockGoal('goal-1', { autonomyLevel: 'semi_autonomous' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('Semi-Autonomous');
+		});
+
+		it('should not show autonomy badge for supervised (default)', () => {
+			const goals = [createMockGoal('goal-1', { autonomyLevel: 'supervised' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			const badges = container.querySelectorAll('[data-testid="autonomy-badge"]');
+			// supervised badge is only shown in expanded detail, not in header
+			expect(badges.length).toBe(0);
+		});
+	});
+
+	describe('Metric Progress Display', () => {
+		it('should show metric progress bars for measurable missions when expanded', () => {
+			const goals = [
+				createMockGoal('goal-1', {
+					missionType: 'measurable',
+					structuredMetrics: [
+						{ name: 'Test Coverage', target: 100, current: 75, unit: '%' },
+						{ name: 'Bugs Fixed', target: 20, current: 10 },
+					],
+				}),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			// Expand the goal
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('Test Coverage');
+			expect(container.textContent).toContain('Bugs Fixed');
+			expect(container.textContent).toContain('75 % / 100 %');
+			expect(container.textContent).toContain('75%');
+		});
+
+		it('should show metric progress in header for measurable missions', () => {
+			const goals = [
+				createMockGoal('goal-1', {
+					missionType: 'measurable',
+					structuredMetrics: [{ name: 'Score', target: 100, current: 60 }],
+				}),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			// Header shows metric progress without expanding
+			expect(container.textContent).toContain('Score');
+		});
+	});
+
+	describe('Recurring Schedule Display', () => {
+		it('should show schedule info in header for recurring missions', () => {
+			const goals = [
+				createMockGoal('goal-1', {
+					missionType: 'recurring',
+					schedule: { expression: '@daily', timezone: 'UTC' },
+				}),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('@daily');
+		});
+
+		it('should show "Paused" label when schedule is paused', () => {
+			const goals = [
+				createMockGoal('goal-1', {
+					missionType: 'recurring',
+					schedule: { expression: '@daily', timezone: 'UTC' },
+					schedulePaused: true,
+				}),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.textContent).toContain('Paused');
+		});
+
+		it('should show schedule details when recurring mission is expanded', () => {
+			const goals = [
+				createMockGoal('goal-1', {
+					missionType: 'recurring',
+					schedule: { expression: '0 9 * * 1', timezone: 'America/New_York' },
+				}),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			// Expand
+			const header = container.querySelector('.cursor-pointer');
+			fireEvent.click(header!);
+
+			expect(container.textContent).toContain('0 9 * * 1');
+			expect(container.textContent).toContain('America/New_York');
+		});
+	});
+
+	describe('Mission Creation Form', () => {
+		it('should show mission type selector buttons in the create form', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			// Open the create modal
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// The modal body should have rendered — look for testid buttons
+			expect(document.body.querySelector('[data-testid="mission-type-one_shot"]')).toBeTruthy();
+			expect(document.body.querySelector('[data-testid="mission-type-measurable"]')).toBeTruthy();
+			expect(document.body.querySelector('[data-testid="mission-type-recurring"]')).toBeTruthy();
+		});
+
+		it('should show metrics section when measurable type is selected', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// Click measurable type
+			const measurableBtn = document.body.querySelector('[data-testid="mission-type-measurable"]');
+			fireEvent.click(measurableBtn!);
+
+			expect(document.body.querySelector('[data-testid="metrics-section"]')).toBeTruthy();
+		});
+
+		it('should show schedule section when recurring type is selected', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// Click recurring type
+			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
+			fireEvent.click(recurringBtn!);
+
+			expect(document.body.querySelector('[data-testid="schedule-section"]')).toBeTruthy();
+			expect(document.body.querySelector('[data-testid="schedule-preset"]')).toBeTruthy();
+			expect(document.body.querySelector('[data-testid="timezone-select"]')).toBeTruthy();
+		});
+
+		it('should show autonomy level selector buttons', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			expect(document.body.querySelector('[data-testid="autonomy-supervised"]')).toBeTruthy();
+			expect(document.body.querySelector('[data-testid="autonomy-semi_autonomous"]')).toBeTruthy();
+		});
+
+		it('should add a metric row when "Add Metric" is clicked', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// Select measurable type
+			const measurableBtn = document.body.querySelector('[data-testid="mission-type-measurable"]');
+			fireEvent.click(measurableBtn!);
+
+			// Click add metric button
+			const addMetricBtn = document.body.querySelector('[data-testid="add-metric-btn"]');
+			fireEvent.click(addMetricBtn!);
+
+			// Should now have a metric name input
+			const nameInput = document.body.querySelector('[aria-label="Metric 1 name"]');
+			expect(nameInput).toBeTruthy();
+		});
+
+		it('should show custom cron field when "Custom" preset is selected', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// Select recurring type
+			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
+			fireEvent.click(recurringBtn!);
+
+			// Select custom preset
+			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
+			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+
+			expect(document.body.querySelector('[data-testid="custom-cron"]')).toBeTruthy();
+		});
+	});
+
+	describe('Auto-Completed Notifications', () => {
+		it('should show auto-completed feed when notifications are provided', () => {
+			const notifications = [
+				{
+					taskId: 'task-1',
+					taskTitle: 'Fix login bug',
+					goalId: 'goal-1',
+					prUrl: 'https://github.com/org/repo/pull/42',
+					timestamp: Date.now(),
+				},
+			];
+			const { container } = render(
+				<GoalsEditor goals={[]} {...defaultHandlers} autoCompletedNotifications={notifications} />
+			);
+			expect(container.textContent).toContain('Fix login bug');
+			expect(container.textContent).toContain('Auto-Completed');
+		});
+
+		it('should not show auto-completed feed when no notifications', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			const feed = container.querySelector('[data-testid="auto-completed-feed"]');
+			expect(feed).toBeNull();
+		});
+
+		it('should call onDismissNotification when dismiss button clicked', () => {
+			const onDismiss = vi.fn();
+			const notifications = [
+				{
+					taskId: 'task-abc',
+					taskTitle: 'Completed task',
+					goalId: 'goal-1',
+					prUrl: '',
+					timestamp: Date.now(),
+				},
+			];
+			const { container } = render(
+				<GoalsEditor
+					goals={[]}
+					{...defaultHandlers}
+					autoCompletedNotifications={notifications}
+					onDismissNotification={onDismiss}
+				/>
+			);
+			const dismissButton = container.querySelector('[aria-label="Dismiss notification"]');
+			fireEvent.click(dismissButton!);
+			expect(onDismiss).toHaveBeenCalledWith('task-abc');
+		});
+	});
+
+	describe('Mission Type Filter', () => {
+		it('should show filter buttons when missions exist', () => {
+			const goals = [createMockGoal('goal-1', { missionType: 'recurring' })];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+			expect(container.querySelector('[data-testid="filter-all"]')).toBeTruthy();
+			expect(container.querySelector('[data-testid="filter-measurable"]')).toBeTruthy();
+			expect(container.querySelector('[data-testid="filter-recurring"]')).toBeTruthy();
+		});
+
+		it('should filter missions by recurring type', () => {
+			const goals = [
+				createMockGoal('goal-1', { title: 'One-Shot Goal', missionType: 'one_shot' }),
+				createMockGoal('goal-2', { title: 'Recurring Goal', missionType: 'recurring' }),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			// Click recurring filter
+			const recurringFilter = container.querySelector('[data-testid="filter-recurring"]');
+			fireEvent.click(recurringFilter!);
+
+			expect(container.textContent).toContain('Recurring Goal');
+			expect(container.textContent).not.toContain('One-Shot Goal');
+		});
+
+		it('should show all missions when "All" filter is selected', () => {
+			const goals = [
+				createMockGoal('goal-1', { title: 'One-Shot Goal', missionType: 'one_shot' }),
+				createMockGoal('goal-2', { title: 'Recurring Goal', missionType: 'recurring' }),
+			];
+			const { container } = render(<GoalsEditor goals={goals} {...defaultHandlers} />);
+
+			// Click recurring filter first
+			const recurringFilter = container.querySelector('[data-testid="filter-recurring"]');
+			fireEvent.click(recurringFilter!);
+
+			// Then click all
+			const allFilter = container.querySelector('[data-testid="filter-all"]');
+			fireEvent.click(allFilter!);
+
+			expect(container.textContent).toContain('One-Shot Goal');
+			expect(container.textContent).toContain('Recurring Goal');
+		});
+
+		it('should not show filter when no missions', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+			expect(container.querySelector('[data-testid="filter-all"]')).toBeNull();
+		});
+	});
+
 	describe('Linked Tasks with Title Resolution', () => {
 		const mockTasks: TaskSummary[] = [
 			{

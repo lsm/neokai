@@ -13,7 +13,16 @@
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
-import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
+import type {
+	MessageHub,
+	RoomGoal,
+	GoalStatus,
+	GoalPriority,
+	MissionType,
+	AutonomyLevel,
+	MissionMetric,
+	CronSchedule,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { GoalManager } from '../room/managers/goal-manager';
 import type { TaskManager } from '../room/managers/task-manager';
@@ -107,6 +116,11 @@ export function setupGoalHandlers(
 			title: string;
 			description?: string;
 			priority?: GoalPriority;
+			missionType?: MissionType;
+			autonomyLevel?: AutonomyLevel;
+			structuredMetrics?: MissionMetric[];
+			schedule?: CronSchedule;
+			schedulePaused?: boolean;
 		};
 
 		if (!params.roomId) {
@@ -121,6 +135,11 @@ export function setupGoalHandlers(
 			title: params.title,
 			description: params.description ?? '',
 			priority: params.priority,
+			missionType: params.missionType,
+			autonomyLevel: params.autonomyLevel,
+			structuredMetrics: params.structuredMetrics,
+			schedule: params.schedule,
+			schedulePaused: params.schedulePaused,
 		});
 
 		// Emit goal.created event

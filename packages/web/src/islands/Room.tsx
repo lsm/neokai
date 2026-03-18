@@ -13,6 +13,7 @@ import { navigateToHome, navigateToRoomTask, navigateToRoom } from '../lib/route
 import { RoomDashboard } from '../components/room/RoomDashboard';
 import ChatContainer from './ChatContainer';
 import { GoalsEditor, RoomContext, RoomSettings, RoomAgents } from '../components/room';
+import type { CreateGoalFormData } from '../components/room/GoalsEditor';
 import { TaskView } from '../components/room/TaskView';
 import { Skeleton } from '../components/ui/Skeleton';
 import { Button } from '../components/ui/Button';
@@ -85,15 +86,15 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 	}
 
 	// Goals handlers
-	const handleCreateGoal = async (goal: {
-		title: string;
-		description?: string;
-		priority?: string;
-	}) => {
+	const handleCreateGoal = async (goal: CreateGoalFormData) => {
 		await roomStore.createGoal({
 			title: goal.title,
 			description: goal.description ?? '',
-			priority: goal.priority as 'low' | 'normal' | 'high' | 'urgent',
+			priority: goal.priority,
+			missionType: goal.missionType,
+			autonomyLevel: goal.autonomyLevel,
+			structuredMetrics: goal.structuredMetrics,
+			schedule: goal.schedule,
 		});
 	};
 
@@ -224,6 +225,10 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										onDeleteGoal={handleDeleteGoal}
 										onLinkTask={handleLinkTaskToGoal}
 										isLoading={roomStore.goalsLoading.value}
+										autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
+										onDismissNotification={(taskId) =>
+											roomStore.dismissAutoCompleted(taskId)
+										}
 									/>
 								</div>
 							)}
