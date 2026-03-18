@@ -169,7 +169,7 @@ async function handleMessages(
 		sendJsonError(
 			res,
 			status,
-			'invalid_request_error',
+			status === 413 ? 'request_too_large' : 'invalid_request_error',
 			status === 413 ? 'Request body exceeds 10 MB limit' : 'Failed to read request body'
 		);
 		return;
@@ -431,8 +431,7 @@ export function startEmbeddedServer(
 			return;
 		}
 
-		res.writeHead(404, { 'Content-Type': 'application/json' });
-		res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message: 'Not found' } }));
+		sendJsonError(res, 404, 'not_found_error', 'Not found');
 	});
 
 	return new Promise((resolve, reject) => {

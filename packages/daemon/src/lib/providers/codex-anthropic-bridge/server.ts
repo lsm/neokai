@@ -12,6 +12,7 @@
  */
 
 import { BridgeSession, AppServerConn, type AppServerAuth } from './process-manager.js';
+import { createAnthropicErrorBody } from '../shared/error-envelope.js';
 
 export type { AppServerAuth } from './process-manager.js';
 import {
@@ -210,14 +211,23 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			}
 
 			if (url.pathname !== '/v1/messages' || req.method !== 'POST') {
-				return new Response('Not Found', { status: 404 });
+				return new Response(createAnthropicErrorBody('not_found_error', 'Not found'), {
+					status: 404,
+					headers: { 'Content-Type': 'application/json' },
+				});
 			}
 
 			let body: AnthropicRequest;
 			try {
 				body = (await req.json()) as AnthropicRequest;
 			} catch {
-				return new Response('Bad Request', { status: 400 });
+				return new Response(
+					createAnthropicErrorBody('invalid_request_error', 'Request body must be valid JSON'),
+					{
+						status: 400,
+						headers: { 'Content-Type': 'application/json' },
+					}
+				);
 			}
 
 			const sseHeaders = {
@@ -233,7 +243,10 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 			if (isToolResultContinuation(body.messages)) {
 				const toolResults = extractToolResults(body.messages);
 				if (toolResults.length === 0) {
-					return new Response('Bad Request: no tool_result found', { status: 400 });
+					return new Response(
+						createAnthropicErrorBody('invalid_request_error', 'No tool_result found in messages'),
+						{ status: 400, headers: { 'Content-Type': 'application/json' } }
+					);
 				}
 
 				// For simplicity handle one tool result at a time (Codex sends one at a time)
@@ -241,7 +254,13 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				const stored = toolSessions.get(tr.toolUseId);
 				if (!stored) {
 					logger.error(`codex-bridge: no active session for tool_use_id=${tr.toolUseId}`);
-					return new Response('Session not found', { status: 404 });
+					return new Response(
+						createAnthropicErrorBody(
+							'not_found_error',
+							`No active session for tool_use_id=${tr.toolUseId}`
+						),
+						{ status: 404, headers: { 'Content-Type': 'application/json' } }
+					);
 				}
 				toolSessions.delete(tr.toolUseId);
 
@@ -284,7 +303,13 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				await session.initialize();
 			} catch (err) {
 				logger.error('codex-bridge: failed to start BridgeSession:', err);
-				return new Response(`Internal Server Error: ${String(err)}`, { status: 500 });
+				return new Response(
+					createAnthropicErrorBody(
+						'api_error',
+						`Failed to start session: ${err instanceof Error ? err.message : String(err)}`
+					),
+					{ status: 500, headers: { 'Content-Type': 'application/json' } }
+				);
 			}
 
 			const gen = session.startTurn(userText);

@@ -249,7 +249,8 @@ describe('startEmbeddedServer', () => {
 		const body = JSON.parse(text) as Record<string, unknown>;
 		expect(body['type']).toBe('error');
 		const err = body['error'] as Record<string, unknown>;
-		expect(err['type']).toBe('invalid_request_error');
+		// Anthropic API uses 'request_too_large' (not 'invalid_request_error') for 413
+		expect(err['type']).toBe('request_too_large');
 	});
 
 	// -------------------------------------------------------------------------
