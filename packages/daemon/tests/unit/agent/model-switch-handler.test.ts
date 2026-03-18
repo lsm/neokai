@@ -118,6 +118,7 @@ describe('ModelSwitchHandler', () => {
 			status: 'active',
 			config: {
 				model: 'default',
+				provider: 'anthropic',
 				maxTokens: 8192,
 				temperature: 1.0,
 			},
@@ -267,7 +268,7 @@ describe('ModelSwitchHandler', () => {
 		describe('when query not started', () => {
 			it('should update config only when query not started', async () => {
 				handler = createHandler({ queryObject: null });
-				const result = await handler.switchModel(VALID_MODEL);
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalledWith(
@@ -287,7 +288,7 @@ describe('ModelSwitchHandler', () => {
 				(mockSession.config as Record<string, unknown>)['mcpServers'] = { 'room-tools': liveObj };
 
 				handler = createHandler({ queryObject: null });
-				const result = await handler.switchModel(VALID_MODEL);
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				// The spy should have been called with only plain serializable fields
@@ -299,7 +300,7 @@ describe('ModelSwitchHandler', () => {
 
 			it('should emit session.updated event', async () => {
 				handler = createHandler({ queryObject: null });
-				await handler.switchModel(VALID_MODEL);
+				await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(emitSpy).toHaveBeenCalledWith(
 					'session.updated',
@@ -312,7 +313,7 @@ describe('ModelSwitchHandler', () => {
 
 			it('should emit model-switching event', async () => {
 				handler = createHandler({ queryObject: null });
-				await handler.switchModel(VALID_MODEL);
+				await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(publishSpy).toHaveBeenCalledWith(
 					'session.model-switching',
@@ -325,7 +326,7 @@ describe('ModelSwitchHandler', () => {
 
 			it('should emit model-switched event on success', async () => {
 				handler = createHandler({ queryObject: null });
-				await handler.switchModel(VALID_MODEL);
+				await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(publishSpy).toHaveBeenCalledWith(
 					'session.model-switched',
@@ -341,7 +342,7 @@ describe('ModelSwitchHandler', () => {
 				mockSession.config.provider = 'glm';
 
 				handler = createHandler({ queryObject: null });
-				const result = await handler.switchModel(VALID_MODEL);
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(mockSession.config.provider).toBe('anthropic');
@@ -351,7 +352,7 @@ describe('ModelSwitchHandler', () => {
 		describe('when transport not ready', () => {
 			it('should update config only when transport not ready', async () => {
 				handler = createHandler({ firstMessageReceived: false });
-				const result = await handler.switchModel(VALID_MODEL);
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(updateSessionSpy).toHaveBeenCalled();
@@ -362,7 +363,7 @@ describe('ModelSwitchHandler', () => {
 		describe('when query is running', () => {
 			it('should restart query when running', async () => {
 				handler = createHandler();
-				const result = await handler.switchModel(VALID_MODEL);
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(restartSpy).toHaveBeenCalled();
@@ -370,7 +371,7 @@ describe('ModelSwitchHandler', () => {
 
 			it('should update session config before restart', async () => {
 				handler = createHandler();
-				await handler.switchModel(VALID_MODEL);
+				await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(updateSessionSpy).toHaveBeenCalledWith(
 					mockSession.id,
@@ -384,7 +385,7 @@ describe('ModelSwitchHandler', () => {
 		describe('validation', () => {
 			it('should reject invalid model', async () => {
 				handler = createHandler();
-				const result = await handler.switchModel('invalid-model-12345');
+				const result = await handler.switchModel('invalid-model-12345', 'anthropic');
 
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Invalid model');
@@ -395,9 +396,9 @@ describe('ModelSwitchHandler', () => {
 				// No query running for simpler test
 				handler = createHandler({ queryObject: null });
 				// Switch to haiku first
-				await handler.switchModel('haiku');
+				await handler.switchModel('haiku', 'anthropic');
 				// Then try to switch to haiku again
-				const result = await handler.switchModel('haiku');
+				const result = await handler.switchModel('haiku', 'anthropic');
 
 				expect(result.success).toBe(true);
 				expect(result.error).toContain('Already using');
@@ -410,11 +411,22 @@ describe('ModelSwitchHandler', () => {
 				restartSpy.mockRejectedValue(new Error('Restart failed'));
 				handler = createHandler();
 
-				const result = await handler.switchModel(VALID_MODEL);
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
 
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('Restart failed');
 				expect(handleErrorSpy).toHaveBeenCalled();
+			});
+
+			it('should return error when session has no provider configured', async () => {
+				// Remove provider from session config
+				(mockSession.config as Record<string, unknown>).provider = undefined;
+				handler = createHandler({ queryObject: null });
+
+				const result = await handler.switchModel(VALID_MODEL, 'anthropic');
+
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('Session has no provider configured');
 			});
 		});
 
@@ -423,7 +435,7 @@ describe('ModelSwitchHandler', () => {
 				// Set query to null so we don't need restart
 				handler = createHandler({ queryObject: null });
 				// Use haiku to ensure we're switching to a different model
-				await handler.switchModel('haiku');
+				await handler.switchModel('haiku', 'anthropic');
 
 				expect(setModelTrackerSpy).toHaveBeenCalled();
 			});

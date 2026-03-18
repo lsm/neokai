@@ -33,8 +33,8 @@ export interface UseModelSwitcherResult {
 	switching: boolean;
 	/** Whether models are being loaded */
 	loading: boolean;
-	/** Switch to a different model. Both model ID and provider ID must be supplied. */
-	switchModel: (modelId: string, providerId: string) => Promise<void>;
+	/** Switch to a different model */
+	switchModel: (model: ModelInfo) => Promise<void>;
 	/** Reload model info */
 	reload: () => Promise<void>;
 }
@@ -177,8 +177,13 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 	}, [loadModelInfo]);
 
 	const switchModel = useCallback(
-		async (newModelId: string, newProviderId: string) => {
-			if (newModelId === currentModel) {
+		async (model: ModelInfo) => {
+			if (!model.provider) {
+				toast.error('Model provider information is missing');
+				return;
+			}
+
+			if (model.id === currentModel && model.provider === currentModelInfo?.provider) {
 				toast.info(`Already using ${currentModelInfo?.name || currentModel}`);
 				return;
 			}
@@ -193,8 +198,8 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 
 				const result = (await hub.request('session.model.switch', {
 					sessionId,
-					model: newModelId,
-					provider: newProviderId,
+					model: model.id,
+					provider: model.provider,
 				})) as {
 					success: boolean;
 					model: string;
@@ -203,7 +208,12 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 
 				if (result.success) {
 					setCurrentModel(result.model);
-					const newModelInfo = availableModels.find((m) => m.id === result.model);
+					// Match by both id AND provider to avoid returning the wrong entry when
+					// two providers share the same canonical model ID (e.g. anthropic and
+					// anthropic-copilot both expose claude-sonnet-4.6).
+					const newModelInfo =
+						availableModels.find((m) => m.id === result.model && m.provider === model.provider) ??
+						availableModels.find((m) => m.id === result.model);
 					setCurrentModelInfo(newModelInfo || null);
 					toast.success(`Switched to ${newModelInfo?.name || result.model}`);
 				} else {

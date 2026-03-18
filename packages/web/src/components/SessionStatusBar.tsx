@@ -144,7 +144,7 @@ interface SessionStatusBarProps {
 	availableModels: ModelInfo[];
 	modelSwitching: boolean;
 	modelLoading: boolean;
-	onModelSwitch: (modelId: string, providerId: string) => void;
+	onModelSwitch: (model: ModelInfo) => void;
 	// Auto-scroll
 	autoScroll: boolean;
 	onAutoScrollChange: (enabled: boolean) => void;
@@ -243,8 +243,8 @@ export default function SessionStatusBar({
 
 	// Model switch handler
 	const handleModelSwitch = useCallback(
-		async (modelId: string, providerId: string) => {
-			await onModelSwitch(modelId, providerId);
+		async (model: ModelInfo) => {
+			await onModelSwitch(model);
 			modelDropdown.close();
 		},
 		[onModelSwitch, modelDropdown]
@@ -381,7 +381,7 @@ export default function SessionStatusBar({
 									class={`w-full text-left px-3 py-2 hover:bg-dark-700 text-xs flex items-center gap-2 ${
 										model.id === currentModelInfo?.id ? 'text-blue-400' : 'text-gray-200'
 									}`}
-									onClick={() => handleModelSwitch(model.alias, model.provider)}
+									onClick={() => handleModelSwitch(model)}
 									disabled={modelSwitching}
 								>
 									<span class="text-base">{getModelFamilyIcon(model.family)}</span>

@@ -428,7 +428,9 @@ describe('SessionStatusBar', () => {
 			const opusButton = buttons.find((btn) => btn.textContent?.includes('Opus 4.5'));
 			fireEvent.click(opusButton!);
 
-			expect(mockOnModelSwitch).toHaveBeenCalledWith('opus', 'anthropic');
+			expect(mockOnModelSwitch).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'opus', family: 'opus' })
+			);
 		});
 
 		it('should close model dropdown when clicking it again', () => {
