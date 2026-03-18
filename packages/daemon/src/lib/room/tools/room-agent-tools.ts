@@ -20,6 +20,7 @@ import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import type { RoomRuntime } from '../runtime/room-runtime';
 import { routeHumanMessageToGroup } from '../runtime/human-message-routing';
+import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../runtime/cron-utils';
 
 export interface RoomAgentToolsConfig {
 	roomId: string;
@@ -127,7 +128,19 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				return jsonResult({ success: false, error: message });
 			}
 			if (args.goal_id) {
-				await goalManager.linkTaskToGoal(args.goal_id, task.id);
+				// For recurring missions with an active execution, use the atomic dual-write path.
+				// For all other goals, use the standard linkTaskToGoal path.
+				const linkedGoal = await goalManager.getGoal(args.goal_id);
+				if (linkedGoal?.missionType === 'recurring') {
+					const activeExecution = goalManager.getActiveExecution(args.goal_id);
+					if (activeExecution) {
+						await goalManager.linkTaskToExecution(args.goal_id, activeExecution.id, task.id);
+					} else {
+						await goalManager.linkTaskToGoal(args.goal_id, task.id);
+					}
+				} else {
+					await goalManager.linkTaskToGoal(args.goal_id, task.id);
+				}
 			}
 			// Notify runtime so it schedules a tick immediately
 			if (daemonHub) {
@@ -541,6 +554,98 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 			});
 		},
 
+		async set_schedule(args: {
+			goal_id: string;
+			cron_expression: string;
+			timezone?: string;
+		}): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'recurring') {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'}). Only recurring missions can have a schedule.`,
+				});
+			}
+			if (!isValidCronExpression(args.cron_expression)) {
+				return jsonResult({
+					success: false,
+					error: `Invalid cron expression: "${args.cron_expression}". Use 5-field cron (e.g. "0 9 * * *") or presets (@daily, @weekly, @hourly, @monthly).`,
+				});
+			}
+			const tz = args.timezone ?? goal.schedule?.timezone ?? getSystemTimezone();
+			const nextRunAt = getNextRunAt(args.cron_expression, tz);
+			if (nextRunAt === null) {
+				return jsonResult({
+					success: false,
+					error: `Cron expression "${args.cron_expression}" produces no future run times.`,
+				});
+			}
+			const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+				schedule: { expression: args.cron_expression, timezone: tz },
+				nextRunAt,
+				missionType: 'recurring',
+			});
+			return jsonResult({
+				success: true,
+				goal: updated,
+				nextRunAt,
+				nextRunAtISO: new Date(nextRunAt * 1000).toISOString(),
+			});
+		},
+
+		async pause_schedule(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'recurring') {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} is not a recurring mission.`,
+				});
+			}
+			const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+				schedulePaused: true,
+			});
+			return jsonResult({ success: true, goal: updated, message: 'Schedule paused.' });
+		},
+
+		async resume_schedule(args: { goal_id: string }): Promise<ToolResult> {
+			const goal = await goalManager.getGoal(args.goal_id);
+			if (!goal) {
+				return jsonResult({ success: false, error: `Goal not found: ${args.goal_id}` });
+			}
+			if (goal.missionType !== 'recurring') {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} is not a recurring mission.`,
+				});
+			}
+			if (!goal.schedule) {
+				return jsonResult({
+					success: false,
+					error: `Goal ${args.goal_id} has no schedule set. Use set_schedule first.`,
+				});
+			}
+			// Recalculate next_run_at from current time on resume
+			const tz = goal.schedule.timezone ?? getSystemTimezone();
+			const nextRunAt = getNextRunAt(goal.schedule.expression, tz);
+			const updated = await goalManager.updateGoalStatus(args.goal_id, goal.status, {
+				schedulePaused: false,
+				nextRunAt: nextRunAt ?? undefined,
+			});
+			return jsonResult({
+				success: true,
+				goal: updated,
+				message: 'Schedule resumed.',
+				nextRunAt,
+				nextRunAtISO: nextRunAt !== null ? new Date(nextRunAt * 1000).toISOString() : null,
+			});
+		},
+
 		async get_room_status(): Promise<ToolResult> {
 			const goals = await goalManager.listGoals();
 			const tasks = await taskManager.listTasks();
@@ -747,6 +852,35 @@ export function createRoomAgentMcpServer(config: RoomAgentToolsConfig) {
 			'Get full details for a task including group session IDs and whether it is awaiting human review',
 			{ task_id: z.string().describe('ID of the task to get details for') },
 			(args) => handlers.get_task_detail(args)
+		),
+		tool(
+			'set_schedule',
+			'Set or update the cron schedule for a recurring mission. Supports 5-field cron expressions (e.g. "0 9 * * *") and presets: @hourly, @daily, @weekly, @monthly.',
+			{
+				goal_id: z.string().describe('ID of the recurring mission goal'),
+				cron_expression: z
+					.string()
+					.describe(
+						'Cron expression (e.g. "0 9 * * *" = 9am daily) or preset (@hourly, @daily, @weekly, @monthly)'
+					),
+				timezone: z
+					.string()
+					.optional()
+					.describe('IANA timezone string (e.g. "America/New_York"). Defaults to system timezone.'),
+			},
+			(args) => handlers.set_schedule(args)
+		),
+		tool(
+			'pause_schedule',
+			'Pause the schedule for a recurring mission. While paused, the mission will not trigger automatically.',
+			{ goal_id: z.string().describe('ID of the recurring mission goal') },
+			(args) => handlers.pause_schedule(args)
+		),
+		tool(
+			'resume_schedule',
+			'Resume a paused recurring mission schedule. Recalculates next_run_at from the current time.',
+			{ goal_id: z.string().describe('ID of the recurring mission goal') },
+			(args) => handlers.resume_schedule(args)
 		),
 		tool(
 			'get_room_status',
