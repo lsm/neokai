@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/preact';
 import type { ContextInfo, ModelInfo } from '@neokai/shared';
 import SessionStatusBar from '../SessionStatusBar';
+import { getProviderLabel } from '../../hooks';
 
 // Configurable hub mock — defaults to null (no connection) so existing tests are unaffected.
 // Individual tests can call mockGetHubIfConnected.mockReturnValue({ request: ... }) to
@@ -29,6 +30,7 @@ describe('SessionStatusBar', () => {
 	const mockOnModelSwitch = vi.fn(() => Promise.resolve());
 	const mockOnAutoScrollChange = vi.fn(() => {});
 	const mockOnCoordinatorModeChange = vi.fn(() => {});
+	const mockOnSandboxModeChange = vi.fn(() => {});
 
 	const mockModelInfo: ModelInfo = {
 		id: 'sonnet',
@@ -91,6 +93,8 @@ describe('SessionStatusBar', () => {
 		coordinatorMode: true,
 		coordinatorSwitching: false,
 		onCoordinatorModeChange: mockOnCoordinatorModeChange,
+		sandboxEnabled: false,
+		onSandboxModeChange: mockOnSandboxModeChange,
 	};
 
 	beforeEach(() => {
@@ -98,6 +102,7 @@ describe('SessionStatusBar', () => {
 		mockOnModelSwitch.mockClear();
 		mockOnAutoScrollChange.mockClear();
 		mockOnCoordinatorModeChange.mockClear();
+		mockOnSandboxModeChange.mockClear();
 		// Reset hub to null (no connection) between tests — individual tests can override
 		mockGetHubIfConnected.mockReturnValue(null);
 	});
@@ -682,6 +687,7 @@ describe('SessionStatusBar', () => {
 				name: 'Claude Opus 4',
 				family: 'opus',
 				isDefault: false,
+				provider: 'anthropic',
 			};
 			const { container } = render(
 				<SessionStatusBar {...defaultProps} currentModelInfo={opusModelInfo} />
@@ -697,6 +703,7 @@ describe('SessionStatusBar', () => {
 				name: 'Claude Haiku 3',
 				family: 'haiku',
 				isDefault: false,
+				provider: 'anthropic',
 			};
 			const { container } = render(
 				<SessionStatusBar {...defaultProps} currentModelInfo={haikuModelInfo} />
@@ -783,6 +790,138 @@ describe('SessionStatusBar', () => {
 				(btn) => btn.getAttribute('title')?.includes('Coordinator Mode') || false
 			);
 			expect(coordinatorButton?.className).toContain('border-gray-600');
+		});
+	});
+
+	describe('Provider Badge (colored dot)', () => {
+		it('should not show provider badge for Anthropic provider', () => {
+			const anthropicModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={anthropicModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should not show provider badge when provider is undefined', () => {
+			const noProviderModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: undefined,
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={noProviderModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeNull();
+		});
+
+		it('should show green dot for anthropic-copilot provider', () => {
+			const copilotModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-copilot',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={copilotModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Copilot');
+			expect(badge?.getAttribute('aria-label')).toBe('Copilot');
+			expect(badge?.className).toContain('bg-green-400');
+		});
+
+		it('should show teal dot for anthropic-codex provider', () => {
+			const codexModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-codex',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={codexModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('Codex');
+			expect(badge?.getAttribute('aria-label')).toBe('Codex');
+			expect(badge?.className).toContain('bg-teal-400');
+		});
+
+		it('should show blue dot for glm provider', () => {
+			const glmModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'glm',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={glmModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('GLM');
+			expect(badge?.getAttribute('aria-label')).toBe('GLM');
+			expect(badge?.className).toContain('bg-blue-400');
+		});
+
+		it('should show purple dot for minimax provider', () => {
+			const minimaxModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'minimax',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={minimaxModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe('MiniMax');
+			expect(badge?.getAttribute('aria-label')).toBe('MiniMax');
+			expect(badge?.className).toContain('bg-purple-400');
+		});
+
+		it('should show gray dot for unknown provider using getProviderLabel fallback', () => {
+			const unknownProvider = 'some-unknown-provider';
+			const unknownModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: unknownProvider,
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={unknownModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			const expectedLabel = getProviderLabel(unknownProvider);
+			expect(badge).toBeTruthy();
+			expect(badge?.getAttribute('title')).toBe(expectedLabel);
+			expect(badge?.getAttribute('aria-label')).toBe(expectedLabel);
+			expect(badge?.className).toContain('bg-gray-400');
+		});
+
+		it('should have explicit dot color for every known non-anthropic provider', () => {
+			const knownProviders = ['anthropic-copilot', 'anthropic-codex', 'glm', 'minimax'];
+			for (const provider of knownProviders) {
+				const modelInfo: ModelInfo = { ...mockModelInfo, provider };
+				const { container, unmount } = render(
+					<SessionStatusBar {...defaultProps} currentModelInfo={modelInfo} />
+				);
+				const badge = container.querySelector('[data-testid="provider-badge"]');
+				expect(
+					badge?.className,
+					`${provider} should have explicit color, not fallback gray`
+				).not.toContain('bg-gray-400');
+				unmount();
+			}
+		});
+
+		it('should render as a dot with no text content', () => {
+			const copilotModelInfo: ModelInfo = {
+				...mockModelInfo,
+				provider: 'anthropic-copilot',
+			};
+			const { container } = render(
+				<SessionStatusBar {...defaultProps} currentModelInfo={copilotModelInfo} />
+			);
+			const badge = container.querySelector('[data-testid="provider-badge"]');
+			expect(badge?.textContent).toBe('');
+			expect(badge?.className).toContain('rounded-full');
 		});
 	});
 
