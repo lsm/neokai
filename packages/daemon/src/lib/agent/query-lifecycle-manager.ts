@@ -121,10 +121,10 @@ export class QueryLifecycleManager {
 		// 4. Close query to terminate subprocess and MCP transports.
 		// This prevents "Already connected to a transport" errors when a new
 		// query is started before the old subprocess has fully exited.
-		const queryObjectToClose = this.ctx.queryObject;
-		if (queryObjectToClose) {
+		// Uses the same local reference captured in step 2 for consistency.
+		if (queryObject) {
 			try {
-				queryObjectToClose.close();
+				queryObject.close();
 			} catch {
 				// Ignore close errors — subprocess may already be terminated
 			}

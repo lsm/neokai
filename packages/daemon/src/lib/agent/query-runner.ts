@@ -384,6 +384,7 @@ export class QueryRunner {
 
 				messageQueue.stop();
 				this.ctx.queryPromise = null;
+				this.ctx.queryObject = null;
 
 				// Restore original env vars
 				const originalEnvVars = this.ctx.originalEnvVars;

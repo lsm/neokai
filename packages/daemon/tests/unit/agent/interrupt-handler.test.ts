@@ -294,16 +294,21 @@ describe('InterruptHandler', () => {
 			sdkCloseSpy.mockImplementation(() => {
 				callOrder.push('close');
 			});
-			const queryPromise = Promise.resolve().then(() => {
-				callOrder.push('promise');
+			const queryPromise = new Promise<void>((resolve) => {
+				setTimeout(() => {
+					callOrder.push('promise');
+					resolve();
+				}, 10);
 			});
 			handler = createHandler({ queryPromise });
 
 			await handler.handleInterrupt();
 
 			const interruptIdx = callOrder.indexOf('interrupt');
+			const promiseIdx = callOrder.indexOf('promise');
 			const closeIdx = callOrder.indexOf('close');
 			expect(interruptIdx).toBeLessThan(closeIdx);
+			expect(promiseIdx).toBeLessThan(closeIdx);
 		});
 
 		it('should handle SDK close() failure gracefully', async () => {
