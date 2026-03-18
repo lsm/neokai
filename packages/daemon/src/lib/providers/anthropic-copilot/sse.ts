@@ -10,6 +10,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { ServerResponse } from 'node:http';
+import type { AnthropicErrorType } from '../shared/error-envelope.js';
 
 // ---------------------------------------------------------------------------
 // Headers & low-level helper
@@ -169,14 +170,25 @@ export class AnthropicStreamWriter {
 		this.sendEpilogue(res, 'end_turn');
 	}
 
-	/** Emit an `end_turn` epilogue (best-effort — called on error paths). */
-	sendFailed(res: ServerResponse): void {
+	/**
+	 * Emit an Anthropic-format `error` SSE event (called on error paths).
+	 *
+	 * Closes the open text block (if any) then emits an `error` event that the
+	 * Claude Agent SDK interprets as an `APIError`.  Does NOT emit `message_stop`
+	 * — the stream ends after the error event per the Anthropic streaming spec.
+	 */
+	sendFailed(
+		res: ServerResponse,
+		errorType: AnthropicErrorType = 'api_error',
+		message = 'Internal server error'
+	): void {
 		if (this.textBlockStarted) {
 			sendEvent(res, 'content_block_stop', {
 				type: 'content_block_stop',
 				index: this.textBlockIndex,
 			});
+			this.textBlockStarted = false;
 		}
-		this.sendEpilogue(res, 'end_turn');
+		sendEvent(res, 'error', { type: 'error', error: { type: errorType, message } });
 	}
 }
