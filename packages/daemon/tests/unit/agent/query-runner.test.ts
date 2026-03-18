@@ -642,6 +642,78 @@ describe('QueryRunner', () => {
 			}).toThrow('Some SDK error');
 		});
 	});
+
+	describe('runQuery() finally block close() behaviour', () => {
+		// Integration tests: exercise the actual QueryRunner.start() → runQuery() finally block.
+		// In unit tests, no credentials are configured (setup.ts clears all API keys), so
+		// runQuery() fails at the auth check before creating a new queryObject. This means
+		// ctx.queryObject stays as whatever was pre-set, and the finally block (non-stale path)
+		// calls close() on it and nulls it — exactly the natural-completion cleanup path.
+
+		it('should call close() on pre-existing queryObject in finally block', async () => {
+			const closeSpy = mock(() => {});
+			const ctx = createContext({
+				queryObject: {
+					interrupt: mock(async () => {}),
+					close: closeSpy,
+				} as unknown as Query,
+			});
+			runner = new QueryRunner(ctx);
+
+			// start() launches runQuery() asynchronously; wait for it to settle.
+			// runQuery() fails at the auth check (no credentials in unit tests),
+			// but the finally block still runs and should close + null ctx.queryObject.
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(closeSpy).toHaveBeenCalled();
+			expect(ctx.queryObject).toBeNull();
+		});
+
+		it('should handle close() errors gracefully in finally block', async () => {
+			const ctx = createContext({
+				queryObject: {
+					interrupt: mock(async () => {}),
+					close: mock(() => {
+						throw new Error('Close failed');
+					}),
+				} as unknown as Query,
+			});
+			runner = new QueryRunner(ctx);
+
+			// start() launches runQuery() asynchronously; wait for it to settle.
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			// queryObject is still nulled after error is caught
+			expect(ctx.queryObject).toBeNull();
+		});
+
+		it('should not call close() or null queryObject for stale queries in finally block', async () => {
+			const closeSpy = mock(() => {});
+			let gen = 0;
+			const originalQueryObject = {
+				interrupt: mock(async () => {}),
+				close: closeSpy,
+			} as unknown as Query;
+			const ctx = createContext({
+				queryObject: originalQueryObject,
+				// incrementQueryGeneration returns gen 1, but getQueryGeneration returns 2
+				// → isStaleQuery = true → finally block skips all cleanup
+				incrementQueryGeneration: () => ++gen, // returns 1
+				getQueryGeneration: () => 2, // current gen is 2, query ran as gen 1
+			});
+			runner = new QueryRunner(ctx);
+
+			// start() launches runQuery() asynchronously; wait for it to settle.
+			runner.start();
+			await ctx.queryPromise?.catch(() => {});
+
+			expect(closeSpy).not.toHaveBeenCalled();
+			// ctx.queryObject is not nulled — it belongs to the current (gen 2) query
+			expect(ctx.queryObject).toBe(originalQueryObject);
+		});
+	});
 });
 
 describe('QueryRunner error categorization', () => {
@@ -1148,60 +1220,5 @@ describe('QueryRunner cleaning up state', () => {
 		}
 
 		expect(setIdleCalled).toBe(true);
-	});
-
-	it('should call close() on queryObject before clearing it in finally block', () => {
-		// Verify the pattern: close() is called before null assignment
-		// This prevents "Already connected to a transport" errors in the natural exit path
-		let closeCalled = false;
-		let nulledAfterClose = false;
-
-		const mockQueryObject = {
-			close: () => {
-				closeCalled = true;
-			},
-		};
-
-		// Simulate the finally block's non-stale cleanup
-		let ctxQueryObject: typeof mockQueryObject | null = mockQueryObject;
-		if (ctxQueryObject) {
-			try {
-				ctxQueryObject.close();
-			} catch {
-				// Ignore
-			}
-		}
-		if (closeCalled) {
-			ctxQueryObject = null;
-			nulledAfterClose = true;
-		}
-
-		expect(closeCalled).toBe(true);
-		expect(nulledAfterClose).toBe(true);
-		expect(ctxQueryObject).toBeNull();
-	});
-
-	it('should handle close() errors gracefully in finally block', () => {
-		let errorHandled = false;
-
-		const mockQueryObject = {
-			close: () => {
-				throw new Error('Close error');
-			},
-		};
-
-		let ctxQueryObject: typeof mockQueryObject | null = mockQueryObject;
-		try {
-			if (ctxQueryObject) {
-				ctxQueryObject.close();
-			}
-		} catch {
-			errorHandled = true;
-		}
-		ctxQueryObject = null;
-
-		// Error was caught, reference was still cleared
-		expect(errorHandled).toBe(true);
-		expect(ctxQueryObject).toBeNull();
 	});
 });
