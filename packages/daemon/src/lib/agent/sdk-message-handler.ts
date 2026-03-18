@@ -473,20 +473,35 @@ export class SDKMessageHandler {
 		// First, correlate internal /context replay by message UUID.
 		// This avoids relying on brittle content markers that may change across SDK versions.
 		if (this.isInternalContextResponse(message)) {
-			await this.handleContextResponse(message);
-			// Skip:
-			// 1. Queuing another /context for the paired result
-			// 2. Saving/broadcasting this internal replay message
-			this.lastMessageWasContextResponse = true;
+			// UUID matches an internally queued /context command.
+			// Try to parse the context data from this message.
+			//
+			// NEW SDK behaviour (claude binary >= ~1.0.53): the user replay message
+			// contains only the original '/context' text (not the output). The actual
+			// context output arrives as a SEPARATE assistant message via sc8(). In that
+			// case parseContextResponse returns null here and the content-based check
+			// below catches the assistant message on the next iteration.
+			//
+			// OLD SDK behaviour: the user replay message itself contains the context
+			// output wrapped in <local-command-stdout> tags.
+			const parsed = await this.handleContextResponseIfParseable(message);
 
-			const userMsg = message as { uuid?: string };
-			if (userMsg.uuid) {
-				this.internalContextCommandIds.delete(userMsg.uuid);
+			if (parsed) {
+				// Successfully parsed: this message IS the context output.
+				this.lastMessageWasContextResponse = true;
+				const userMsg = message as { uuid?: string };
+				if (userMsg.uuid) {
+					this.internalContextCommandIds.delete(userMsg.uuid);
+				}
 			}
+			// Whether parsed or not, suppress saving/broadcasting this internal message
 			return;
 		}
 
-		// Check if this is a /context response BEFORE saving/emitting
+		// Check if this is a /context response BEFORE saving/emitting.
+		// Handles both:
+		//   - Old format: user message with isReplay=true + <local-command-stdout>
+		//   - New format: assistant message (from sc8()) with raw markdown content
 		// /context responses should be processed for context tracking but NOT saved to DB or shown in UI
 		const isContextResponse = this.contextFetcher.isContextResponse(message);
 		if (isContextResponse) {
@@ -496,10 +511,11 @@ export class SDKMessageHandler {
 			// 2. Saving the result message that follows this context response
 			this.lastMessageWasContextResponse = true;
 
-			// Clean up the tracked ID if this is the response
-			const userMsg = message as { uuid?: string };
-			if (userMsg.uuid && this.internalContextCommandIds.has(userMsg.uuid)) {
-				this.internalContextCommandIds.delete(userMsg.uuid);
+			// Clean up the tracked ID if this message carries the same UUID
+			// (only possible in old format where the replay IS the output)
+			const msg = message as { uuid?: string };
+			if (msg.uuid && this.internalContextCommandIds.has(msg.uuid)) {
+				this.internalContextCommandIds.delete(msg.uuid);
 			}
 
 			// IMPORTANT: Return early to skip saving and emitting this message
@@ -826,5 +842,30 @@ export class SDKMessageHandler {
 			sessionId: session.id,
 			contextInfo,
 		});
+	}
+
+	/**
+	 * Attempt to parse and handle a /context response.
+	 *
+	 * Returns true if the message was successfully parsed as context data.
+	 * Returns false if the message did not contain parseable context data
+	 * (e.g. it is a plain user acknowledgment of the /context command rather
+	 * than the actual output — which happens in the new SDK format).
+	 */
+	private async handleContextResponseIfParseable(message: SDKMessage): Promise<boolean> {
+		const { session, daemonHub, contextTracker } = this.ctx;
+
+		const parsedContext = this.contextFetcher.parseContextResponse(message);
+		if (!parsedContext) {
+			return false;
+		}
+
+		const contextInfo = this.contextFetcher.toContextInfo(parsedContext);
+		contextTracker.updateWithDetailedBreakdown(contextInfo);
+		await daemonHub.emit('context.updated', {
+			sessionId: session.id,
+			contextInfo,
+		});
+		return true;
 	}
 }

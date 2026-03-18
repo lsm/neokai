@@ -5,7 +5,9 @@ describe('ContextFetcher', () => {
 	const fetcher = new ContextFetcher('test-session');
 
 	describe('isContextResponse', () => {
-		it('should detect valid context response', () => {
+		// --- Old SDK format (user message with isReplay + <local-command-stdout>) ---
+
+		it('should detect valid context response (old format: user/isReplay)', () => {
 			const message = {
 				type: 'user',
 				isReplay: true,
@@ -17,15 +19,6 @@ describe('ContextFetcher', () => {
 			expect(fetcher.isContextResponse(message as never)).toBe(true);
 		});
 
-		it('should reject non-user messages', () => {
-			const message = {
-				type: 'assistant',
-				message: { content: 'test' },
-			};
-
-			expect(fetcher.isContextResponse(message as never)).toBe(false);
-		});
-
 		it('should reject user messages without isReplay', () => {
 			const message = {
 				type: 'user',
@@ -35,7 +28,7 @@ describe('ContextFetcher', () => {
 			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
 
-		it('should reject messages without context stdout', () => {
+		it('should reject user isReplay messages without context stdout', () => {
 			const message = {
 				type: 'user',
 				isReplay: true,
@@ -45,7 +38,7 @@ describe('ContextFetcher', () => {
 			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
 
-		it('should detect context response without explicit "Context Usage" header', () => {
+		it('should detect context response without explicit "Context Usage" header (old format)', () => {
 			const message = {
 				type: 'user',
 				isReplay: true,
@@ -56,6 +49,72 @@ describe('ContextFetcher', () => {
 			};
 
 			expect(fetcher.isContextResponse(message as never)).toBe(true);
+		});
+
+		// --- New SDK format (assistant message with raw markdown, no wrapper tags) ---
+		// In the new claude binary, sc8() converts system/local_command messages to
+		// assistant messages and strips <local-command-stdout> tags.
+
+		it('should detect context response in new assistant message format', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'text',
+							text: `## Context Usage\n\n**Model:** claude-sonnet-4-6\n**Tokens:** 20.3k / 200k (10%)\n\n### Estimated usage by category\n\n| Category | Tokens | Percentage |\n|----------|--------|------------|\n| System prompt | 3.6k | 1.8% |\n| Messages | 108 | 0.1% |\n| Free space | 145.3k | 72.6% |`,
+						},
+					],
+				},
+			};
+
+			expect(fetcher.isContextResponse(message as never)).toBe(true);
+		});
+
+		it('should detect context response in new format with string content', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content:
+						'## Context Usage\n\n**Model:** claude-sonnet-4-6\n**Tokens:** 20.3k / 200k (10%)\n\n| Category | Tokens | Percentage |\n|----------|--------|------------|\n| System prompt | 3.6k | 1.8% |',
+				},
+			};
+
+			expect(fetcher.isContextResponse(message as never)).toBe(true);
+		});
+
+		it('should reject regular assistant messages that mention tokens but have no category table', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [
+						{
+							type: 'text',
+							text: 'Here is a summary. **Tokens:** 1k / 200k (1%). No table here.',
+						},
+					],
+				},
+			};
+
+			expect(fetcher.isContextResponse(message as never)).toBe(false);
+		});
+
+		it('should reject regular assistant messages without tokens line', () => {
+			const message = {
+				type: 'assistant',
+				message: { content: 'This is just a regular assistant response.' },
+			};
+
+			expect(fetcher.isContextResponse(message as never)).toBe(false);
+		});
+
+		it('should reject system messages', () => {
+			const message = {
+				type: 'system',
+				subtype: 'init',
+			};
+
+			expect(fetcher.isContextResponse(message as never)).toBe(false);
 		});
 	});
 
@@ -236,6 +295,71 @@ No table rows here.
 
 </local-command-stdout>`,
 				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+			expect(result).toBeNull();
+		});
+
+		// --- New SDK format: assistant messages (sc8() strips <local-command-stdout> tags) ---
+
+		it('should parse new assistant message format with array content', () => {
+			// This is the format produced by sc8() in newer claude binaries:
+			// <local-command-stdout> tags are stripped, content is raw markdown in an array.
+			const rawMarkdown = `## Context Usage\n\n**Model:** claude-sonnet-4-6  \n**Tokens:** 20.3k / 200k (10%)\n\n### Estimated usage by category\n\n| Category | Tokens | Percentage |\n|----------|--------|------------|\n| System prompt | 3.6k | 1.8% |\n| System tools | 18k | 9.0% |\n| Skills | 61 | 0.0% |\n| Messages | 108 | 0.1% |\n| Free space | 145.3k | 72.6% |\n| Autocompact buffer | 33k | 16.5% |`;
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [{ type: 'text', text: rawMarkdown }],
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+
+			expect(result).not.toBeNull();
+			expect(result?.model).toBe('claude-sonnet-4-6');
+			expect(result?.totalCapacity).toBe(200000);
+			// totalUsed = 3600 + 18000 + 61 + 108 + 33000 = 54769 (Free space excluded)
+			expect(result?.totalUsed).toBe(54769);
+			expect(result?.percentUsed).toBe(27);
+			expect(result?.breakdown['System tools']).toEqual({ tokens: 18000, percent: 9.0 });
+			expect(result?.breakdown['System prompt']).toEqual({ tokens: 3600, percent: 1.8 });
+			expect(result?.breakdown['Autocompact buffer']).toEqual({ tokens: 33000, percent: 16.5 });
+		});
+
+		it('should parse new assistant message format with string content', () => {
+			const rawMarkdown = `## Context Usage\n\n**Model:** claude-sonnet-4-6\n**Tokens:** 62.5k / 200.0k (31%)\n\n| Category | Tokens | Percentage |\n|----------|--------|------------|\n| System prompt | 3.2k | 1.6% |\n| System tools | 14.3k | 7.1% |\n| Messages | 25 | 0.0% |\n| Free space | 137.5k | 68.7% |\n| Autocompact buffer | 45.0k | 22.5% |`;
+			const message = {
+				type: 'assistant',
+				message: { content: rawMarkdown },
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+
+			expect(result).not.toBeNull();
+			expect(result?.model).toBe('claude-sonnet-4-6');
+			expect(result?.totalCapacity).toBe(200000);
+			// totalUsed = 3200 + 14300 + 25 + 45000 = 62525
+			expect(result?.totalUsed).toBe(62525);
+			expect(result?.percentUsed).toBe(31);
+		});
+
+		it('should return null for assistant message without tokens line', () => {
+			const message = {
+				type: 'assistant',
+				message: {
+					content: [{ type: 'text', text: 'Just a regular response without context data.' }],
+				},
+			};
+
+			const result = fetcher.parseContextResponse(message as never);
+			expect(result).toBeNull();
+		});
+
+		it('should return null for non-user non-assistant messages', () => {
+			const message = {
+				type: 'system',
+				subtype: 'init',
 			};
 
 			const result = fetcher.parseContextResponse(message as never);
