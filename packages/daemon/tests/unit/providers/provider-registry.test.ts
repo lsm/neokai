@@ -240,22 +240,38 @@ describe('ProviderRegistry', () => {
 		});
 
 		it('should return the same result as before (backwards compatible) when multiple providers claim a model', () => {
-			// Register anthropic first — it should be the first match
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCopilotProvider());
+			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
 
-			const result = registry.detectProvider('claude-opus-4.6');
-			expect(result?.id).toBe('anthropic');
+			try {
+				// Register anthropic first — it should be the first match
+				registry.register(makeAnthropicProvider());
+				registry.register(makeAnthropicCopilotProvider());
+
+				const result = registry.detectProvider('claude-opus-4.6');
+				expect(result?.id).toBe('anthropic');
+				// Collision warning should fire (no preference was given)
+				expect(warnSpy).toHaveBeenCalledTimes(1);
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 	});
 
 	describe('detectProviderForModel', () => {
-		it('should return preferred provider when it claims the model', () => {
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCopilotProvider());
+		it('should return preferred provider when it claims the model without logging a warning', () => {
+			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
 
-			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
-			expect(result?.id).toBe('anthropic-copilot');
+			try {
+				registry.register(makeAnthropicProvider());
+				registry.register(makeAnthropicCopilotProvider());
+
+				const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
+				expect(result?.id).toBe('anthropic-copilot');
+				// Preference resolved the collision — no warning should be emitted
+				expect(warnSpy).not.toHaveBeenCalled();
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 
 		it('should return first registered provider and log collision when no preference and multiple matches', () => {
@@ -279,13 +295,19 @@ describe('ProviderRegistry', () => {
 			}
 		});
 
-		it('should return codex provider when preferred and model starts with gpt-', () => {
-			// anthropic-codex owns both claude- and gpt- models; register anthropic first
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCodexProvider());
+		it('should return codex provider when preferred and model starts with gpt-, no warning', () => {
+			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
 
-			const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
-			expect(result?.id).toBe('anthropic-codex');
+			try {
+				// anthropic-codex owns both claude- and gpt- models; only it owns gpt- here
+				registry.register(makeAnthropicCodexProvider());
+
+				const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
+				expect(result?.id).toBe('anthropic-codex');
+				expect(warnSpy).not.toHaveBeenCalled();
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 
 		it('should return undefined when no provider claims the model', () => {
@@ -308,14 +330,24 @@ describe('ProviderRegistry', () => {
 			}
 		});
 
-		it('should fall back to first match when preferred provider does not claim the model', () => {
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCopilotProvider());
+		it('should fall back to first match and log collision when preference is not in match set', () => {
+			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
 
-			// 'anthropic-codex' is not registered but even if it were it doesn't own this model
-			const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
-			// Falls back to first match
-			expect(result?.id).toBe('anthropic');
+			try {
+				registry.register(makeAnthropicProvider());
+				registry.register(makeAnthropicCopilotProvider());
+
+				// 'nonexistent-provider' is not in the match set — collision is unresolved
+				const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
+				// Falls back to first match
+				expect(result?.id).toBe('anthropic');
+				// Collision warning should have fired since preference couldn't resolve it
+				expect(warnSpy).toHaveBeenCalledTimes(1);
+				const warnArg = warnSpy.mock.calls[0][0] as string;
+				expect(warnArg).toContain('claude-opus-4.6');
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 	});
 

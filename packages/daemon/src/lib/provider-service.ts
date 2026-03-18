@@ -384,9 +384,7 @@ export class ProviderService {
 	 */
 	getEnvVarsForModel(modelId: string, providerId?: string): ProviderEnvVars {
 		const registry = this.getRegistry();
-		const provider = providerId
-			? (registry.get(providerId) ?? registry.detectProvider(modelId))
-			: registry.detectProvider(modelId);
+		const provider = registry.detectProviderForModel(modelId, providerId);
 
 		if (!provider || provider.id === 'anthropic') {
 			// When Dev Proxy is enabled, route Anthropic API calls through the proxy

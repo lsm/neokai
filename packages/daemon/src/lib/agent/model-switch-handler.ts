@@ -151,10 +151,10 @@ export class ModelSwitchHandler {
 			// Use provider from model info to correctly handle shared canonical IDs
 			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
 			// detectProvider() would otherwise return Anthropic for 'claude-sonnet-4.6'.
-			const newProviderInstance = modelInfo?.provider
-				? (providerRegistry.get(modelInfo.provider) ??
-					providerRegistry.detectProvider(resolvedModel))
-				: providerRegistry.detectProvider(resolvedModel);
+			const newProviderInstance = providerRegistry.detectProviderForModel(
+				resolvedModel,
+				modelInfo?.provider
+			);
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config

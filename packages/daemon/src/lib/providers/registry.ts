@@ -80,8 +80,10 @@ export class ProviderRegistry {
 	 * Detect provider for a model ID, optionally preferring a specific provider.
 	 *
 	 * Iterates ALL registered providers to collect every match, then:
-	 * - If `preferredProviderId` is given and it's in the match set, returns it.
-	 * - If multiple providers claim the model, logs a collision warning.
+	 * - If `preferredProviderId` is given and it's in the match set, returns it without warning
+	 *   (the caller has already resolved the ambiguity).
+	 * - If multiple providers claim the model and no preference resolves the collision, logs a
+	 *   warning listing all colliding provider IDs, then returns the first registered match.
 	 * - Returns the first match (preserving registration order for backwards compatibility).
 	 *
 	 * Returns undefined if no provider claims the model.
@@ -93,19 +95,20 @@ export class ProviderRegistry {
 			return undefined;
 		}
 
-		if (matches.length > 1) {
-			const ids = matches.map((p) => p.id).join(', ');
-			const resolvedId = preferredProviderId
-				? (matches.find((p) => p.id === preferredProviderId)?.id ?? matches[0].id)
-				: matches[0].id;
-			log.warn(`Model '${modelId}' claimed by multiple providers: ${ids}. Using ${resolvedId}.`);
-		}
-
+		// If the caller expressed a preference, try to honour it.
+		// When the preferred provider is in the match set the collision is resolved
+		// unambiguously — no warning needed.
 		if (preferredProviderId) {
 			const preferred = matches.find((p) => p.id === preferredProviderId);
 			if (preferred) {
 				return preferred;
 			}
+		}
+
+		// Multiple providers claim the model and the preference (if any) didn't resolve it.
+		if (matches.length > 1) {
+			const ids = matches.map((p) => p.id).join(', ');
+			log.warn(`Model '${modelId}' claimed by multiple providers: ${ids}. Using ${matches[0].id}.`);
 		}
 
 		return matches[0];

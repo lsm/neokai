@@ -128,9 +128,7 @@ export class QueryRunner {
 			// This is critical when canonical model IDs are shared across providers
 			// (e.g., claude-sonnet-4.6), which would be misrouted if we only used detectProvider().
 			const explicitProviderId = session.config.provider as string | undefined;
-			const provider = explicitProviderId
-				? (providerRegistry.get(explicitProviderId) ?? providerRegistry.detectProvider(modelId))
-				: providerRegistry.detectProvider(modelId);
+			const provider = providerRegistry.detectProviderForModel(modelId, explicitProviderId);
 
 			// Check if the provider supports getAuthStatus (OAuth-style providers)
 			if (provider?.getAuthStatus) {
