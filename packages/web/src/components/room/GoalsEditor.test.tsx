@@ -40,9 +40,9 @@ describe('GoalsEditor', () => {
 	};
 
 	describe('Rendering', () => {
-		it('should render the Goals header', () => {
+		it('should render the Missions header', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('Goals');
+			expect(container.textContent).toContain('Missions');
 		});
 
 		it('should display goal count badge', () => {
@@ -52,10 +52,10 @@ describe('GoalsEditor', () => {
 			expect(badge?.textContent).toBe('2');
 		});
 
-		it('should render "Create Goal" button', () => {
+		it('should render "Create Mission" button', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Goal');
+			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Mission');
 			expect(hasCreateGoal).toBe(true);
 		});
 	});
@@ -63,14 +63,14 @@ describe('GoalsEditor', () => {
 	describe('Empty State', () => {
 		it('should show empty state when no goals', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
-			expect(container.textContent).toContain('No goals yet');
-			expect(container.textContent).toContain('Create your first goal to get started');
+			expect(container.textContent).toContain('No missions yet');
+			expect(container.textContent).toContain('Create your first mission to get started');
 		});
 
-		it('should have "Create Goal" button in empty state', () => {
+		it('should have "Create Mission" button in empty state', () => {
 			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
 			const buttons = container.querySelectorAll('button');
-			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Goal');
+			const hasCreateGoal = Array.from(buttons).some((btn) => btn.textContent === 'Create Mission');
 			expect(hasCreateGoal).toBe(true);
 		});
 	});

@@ -87,11 +87,10 @@ export class ModelSwitchHandler {
 	 * with the correct model. This is necessary because SDK's setModel() doesn't
 	 * update the cached system:init, causing stale model info in the UI.
 	 *
-	 * @param newModel - Target model ID or alias
-	 * @param newProvider - Explicit provider ID. When provided, routing is deterministic.
-	 *   If omitted, the provider is inferred from the model's metadata (legacy path).
+	 * @param newModel - Model ID or alias to switch to
+	 * @param newProvider - Provider ID for the new model (required)
 	 */
-	async switchModel(newModel: string, newProvider?: string): Promise<ModelSwitchResult> {
+	async switchModel(newModel: string, newProvider: string): Promise<ModelSwitchResult> {
 		const {
 			session,
 			db,
@@ -107,8 +106,12 @@ export class ModelSwitchHandler {
 		} = this.ctx;
 
 		try {
-			// Validate the model
-			const isValid = await isValidModel(newModel);
+			if (!session.config.provider) {
+				throw new Error('Session has no provider configured');
+			}
+
+			// Validate the new model against the new provider
+			const isValid = await isValidModel(newModel, 'global', newProvider);
 			if (!isValid) {
 				const error = `Invalid model: ${newModel}. Use a valid model ID or alias.`;
 				logger.error(`${error}`);
@@ -120,14 +123,25 @@ export class ModelSwitchHandler {
 			// and then calling getModelInfo loses the provider — two providers can share
 			// the same canonical ID (e.g., Anthropic and anthropic-copilot both have
 			// 'claude-sonnet-4.6').
-			const modelInfo = await getModelInfo(newModel);
-			const resolvedModel = modelInfo?.id ?? (await resolveModelAlias(newModel));
+			// Use newProvider to correctly disambiguate same-ID models across providers.
+			const modelInfo = await getModelInfo(newModel, 'global', newProvider);
+			// modelInfo is non-null here because isValidModel passed above;
+			// fall back to newModel as-is for defensive safety (unreachable in practice).
+			const resolvedModel = modelInfo?.id ?? newModel;
 
-			// Resolve the current model in case it's also an alias
-			const currentResolvedModel = await resolveModelAlias(session.config.model);
+			// Resolve the current model in case it's also an alias.
+			// Use session.config.provider (the current provider) for the current model.
+			const currentResolvedModel = await resolveModelAlias(
+				session.config.model,
+				'global',
+				session.config.provider
+			);
 
-			// Check if already using this model (compare resolved IDs)
-			if (currentResolvedModel === resolvedModel) {
+			// Check if already using this model (compare resolved IDs and provider).
+			// Must check provider too: two providers can share the same canonical ID
+			// (e.g., anthropic and anthropic-copilot both have claude-sonnet-4.6),
+			// so switching providers on the same model ID is a meaningful operation.
+			if (currentResolvedModel === resolvedModel && session.config.provider === newProvider) {
 				return {
 					success: true,
 					model: resolvedModel,
@@ -150,29 +164,17 @@ export class ModelSwitchHandler {
 			// Check if query is running AND ProcessTransport is ready
 			const transportReady = firstMessageReceived;
 
-			// Resolve the target provider — deterministic when caller supplies newProvider.
-			// modelInfo?.provider is a secondary source (model registry metadata).
-			// detectProvider is a last-resort deprecated heuristic for callers that pre-date
-			// explicit routing (e.g. CLI, old integration tests). Log a warning so these
-			// paths are visible in production.
+			// Locate the provider instance for the new model.
+			// newProvider is a required string, so detectProviderForModel always receives
+			// an explicit provider — no heuristic fallback is needed.
 			const providerRegistry = getProviderRegistry();
-			const targetProviderId = newProvider ?? modelInfo?.provider;
-			let newProviderInstance: ReturnType<typeof providerRegistry.detectProvider>;
-			if (targetProviderId) {
-				newProviderInstance = providerRegistry.detectProviderForModel(
-					resolvedModel,
-					targetProviderId
-				);
-			} else {
-				logger.warn(
-					`[model-switch] No provider supplied for model '${resolvedModel}' — ` +
-						'falling back to heuristic detection. Update callers to pass an explicit providerId.'
-				);
-				newProviderInstance = providerRegistry.detectProvider(resolvedModel);
-			}
+			const newProviderInstance = providerRegistry.detectProviderForModel(
+				resolvedModel,
+				newProvider
+			);
 
 			if (!newProviderInstance) {
-				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${targetProviderId ?? '(unknown)'}' is not registered.`;
+				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${newProvider}' is not registered.`;
 				logger.error(errMsg);
 				return { success: false, model: session.config.model, error: errMsg };
 			}

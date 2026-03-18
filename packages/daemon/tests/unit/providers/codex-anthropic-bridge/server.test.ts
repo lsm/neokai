@@ -15,9 +15,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type {
-	BridgeServer,
-	ToolSession,
+import {
+	createBridgeServer,
+	createAnthropicError,
+	drainToSSE,
+	type BridgeServer,
+	type ToolSession,
 } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
 import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
 
@@ -114,6 +117,7 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 				contentBlockStopSSE,
 				messageDeltaSSE,
 				messageStopSSE,
+				errorSSE,
 			} = await import('../../../../src/lib/providers/codex-anthropic-bridge/translator');
 
 			const body =
@@ -162,7 +166,8 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 							enc.encode(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)))
 						);
 						controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
-						controller.enqueue(enc.encode(messageDeltaSSE('tool_use', outputTokens)));
+						// Mirror real server: at tool_call time tokenUsage hasn't arrived yet — always use heuristic.
+						controller.enqueue(enc.encode(messageDeltaSSE('tool_use', { outputTokens })));
 						controller.enqueue(enc.encode(messageStopSSE()));
 						const callId = event.callId;
 						const cleanupTimer = setTimeout(() => {
@@ -179,20 +184,45 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 						});
 						controller.close();
 						return;
-					} else if (event.type === 'turn_done' || event.type === 'error') {
+					} else if (event.type === 'turn_done') {
 						if (textOpen) {
 							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
 							textOpen = false;
 						}
-						controller.enqueue(enc.encode(messageDeltaSSE('end_turn', outputTokens)));
+						// Mirror real server: prefer actual token count from turn_done, fall back to heuristic.
+						const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
+						controller.enqueue(
+							enc.encode(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }))
+						);
 						controller.enqueue(enc.encode(messageStopSSE()));
+						sessionArg?.kill();
+						controller.close();
+						return;
+					} else if (event.type === 'error') {
+						if (textOpen) {
+							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
+							textOpen = false;
+						}
+						controller.enqueue(
+							enc.encode(messageDeltaSSE('end_turn', { outputTokens: outputTokens }))
+						);
+						controller.enqueue(enc.encode(messageStopSSE()));
+						sessionArg?.kill();
+						controller.close();
+						return;
+					} else if (event.type === 'error') {
+						if (textOpen) {
+							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
+							textOpen = false;
+						}
+						controller.enqueue(enc.encode(errorSSE('api_error', event.message)));
 						sessionArg?.kill();
 						controller.close();
 						return;
 					}
 				}
 				if (textOpen) controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
-				controller.enqueue(enc.encode(messageDeltaSSE('end_turn', outputTokens)));
+				controller.enqueue(enc.encode(messageDeltaSSE('end_turn', { outputTokens: outputTokens })));
 				controller.enqueue(enc.encode(messageStopSSE()));
 				sessionArg?.kill();
 				controller.close();
@@ -798,6 +828,50 @@ describe('Bridge HTTP server', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// Streaming error — drainToSSE emits Anthropic error SSE event (tests real code path)
+	// -------------------------------------------------------------------------
+
+	it('drainToSSE emits an Anthropic error SSE event on BridgeSession error', async () => {
+		async function* errorGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'text_delta', text: 'partial' };
+			yield { type: 'error', message: 'codex subprocess crashed' };
+		}
+
+		let killCalled = false;
+		const mockSession = {
+			kill: () => {
+				killCalled = true;
+			},
+		} as unknown as import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
+
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				void drainToSSE(errorGen(), mockSession, 'test-model', new Map(), controller, 5000);
+			},
+		});
+
+		const events = await readSSEEvents(stream);
+
+		// Must have exactly one error SSE event
+		const errorEvents = events.filter((e) => e.event === 'error');
+		expect(errorEvents).toHaveLength(1);
+		const data = errorEvents[0].data as { type: string; error: { type: string; message: string } };
+		expect(data.type).toBe('error');
+		expect(data.error.type).toBe('api_error');
+		expect(data.error.message).toBe('codex subprocess crashed');
+
+		// Must NOT contain [Codex error: ...] plain-text blocks
+		const textDeltas = events.filter((e) => e.event === 'content_block_delta');
+		const hasLegacyErrorText = textDeltas.some((e) =>
+			String((e.data as { delta?: { text?: string } }).delta?.text ?? '').includes('[Codex error:')
+		);
+		expect(hasLegacyErrorText).toBe(false);
+
+		// Session must be killed
+		expect(killCalled).toBe(true);
+	});
+
+	// -------------------------------------------------------------------------
 	// stop() cleanup — suspended sessions killed (regression: issue #3b)
 	// -------------------------------------------------------------------------
 
@@ -842,5 +916,187 @@ describe('Bridge HTTP server', () => {
 		// Prevent afterEach from calling stop() again on an already-stopped server
 		// by replacing server with a no-op
 		server = { port: 0, stop: () => {} } as BridgeServer & { port: number };
+	});
+
+	// -------------------------------------------------------------------------
+	// Token usage wiring — actual counts from turn_done
+	// -------------------------------------------------------------------------
+
+	it('message_delta uses actual outputTokens from turn_done when > 0', async () => {
+		// Simulate v2 protocol: thread/tokenUsage/updated populated turn_done with real counts.
+		// The mock yields turn_done.outputTokens = 55; the heuristic for "Hi" would be 1.
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{ type: 'text_delta', text: 'Hi' },
+				{ type: 'turn_done', inputTokens: 120, outputTokens: 55 },
+			]);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hi' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		expect(msgDelta).toBeDefined();
+		const usageOutputTokens = (msgDelta?.data as { usage?: { output_tokens?: number } })?.usage
+			?.output_tokens;
+		// Should use actual count (55), not heuristic (which would be 1 for "Hi")
+		expect(usageOutputTokens).toBe(55);
+	});
+
+	it('message_delta falls back to heuristic outputTokens when turn_done has 0 tokens', async () => {
+		// Simulate no thread/tokenUsage/updated notification — turn_done carries 0 tokens
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{ type: 'text_delta', text: 'Hello' },
+				{ type: 'text_delta', text: ' world' },
+				{ type: 'turn_done', inputTokens: 0, outputTokens: 0 },
+			]);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hello' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+
+		const msgDelta = events.find((e) => e.event === 'message_delta');
+		expect(msgDelta).toBeDefined();
+		const usageOutputTokens = (msgDelta?.data as { usage?: { output_tokens?: number } })?.usage
+			?.output_tokens;
+		// The mock drainGen increments outputTokens++ per text_delta event (not per character).
+		// Two text_delta events → heuristic count of 2.
+		expect(usageOutputTokens).toBe(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// createAnthropicError helper unit tests
+// ---------------------------------------------------------------------------
+
+describe('createAnthropicError', () => {
+	it('returns the correct HTTP status and JSON envelope for 400', async () => {
+		const resp = createAnthropicError(400, 'invalid_request_error', 'bad input');
+		expect(resp.status).toBe(400);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('invalid_request_error');
+		expect(body.error.message).toBe('bad input');
+	});
+
+	it('returns the correct HTTP status and JSON envelope for 404', async () => {
+		const resp = createAnthropicError(404, 'not_found_error', 'not here');
+		expect(resp.status).toBe(404);
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('not_found_error');
+		expect(body.error.message).toBe('not here');
+	});
+
+	it('returns the correct HTTP status and JSON envelope for 500', async () => {
+		const resp = createAnthropicError(500, 'api_error', 'something exploded');
+		expect(resp.status).toBe(500);
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('api_error');
+		expect(body.error.message).toBe('something exploded');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Real createBridgeServer — HTTP error envelope integration tests
+// ---------------------------------------------------------------------------
+
+describe('Bridge HTTP server — Anthropic JSON error envelopes', () => {
+	let realServer: BridgeServer & { port: number };
+
+	beforeEach(() => {
+		// Use a nonexistent binary path; these tests only exercise paths that
+		// don't require a real Codex subprocess.
+		realServer = createBridgeServer({
+			codexBinaryPath: '/nonexistent/codex',
+			cwd: '/tmp',
+		}) as BridgeServer & { port: number };
+	});
+
+	afterEach(() => {
+		realServer.stop();
+	});
+
+	it('returns 404 JSON envelope for unknown URL paths', async () => {
+		const resp = await fetch(`http://127.0.0.1:${realServer.port}/unknown/path`, {
+			method: 'GET',
+		});
+		expect(resp.status).toBe(404);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('not_found_error');
+	});
+
+	it('returns 400 JSON envelope for invalid JSON body', async () => {
+		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: 'this is not json{{{',
+		});
+		expect(resp.status).toBe(400);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('invalid_request_error');
+	});
+
+	it('returns 404 JSON envelope when tool_use_id has no active session', async () => {
+		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [
+					{
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 'nonexistent-id', content: 'result' }],
+					},
+				],
+			}),
+		});
+		expect(resp.status).toBe(404);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('not_found_error');
+	});
+
+	it('returns 500 JSON envelope when BridgeSession fails to initialize', async () => {
+		const resp = await fetch(`http://127.0.0.1:${realServer.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'hello' }],
+				stream: true,
+			}),
+		});
+		expect(resp.status).toBe(500);
+		expect(resp.headers.get('content-type')).toContain('application/json');
+		const body = (await resp.json()) as { type: string; error: { type: string; message: string } };
+		expect(body.type).toBe('error');
+		expect(body.error.type).toBe('api_error');
 	});
 });

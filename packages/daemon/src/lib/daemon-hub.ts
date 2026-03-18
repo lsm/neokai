@@ -115,7 +115,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 
 	// Model switch events
-	'model.switchRequest': { sessionId: string; model: string };
+	'model.switchRequest': { sessionId: string; model: string; provider: string };
 	'model.switched': {
 		sessionId: string;
 		success: boolean;

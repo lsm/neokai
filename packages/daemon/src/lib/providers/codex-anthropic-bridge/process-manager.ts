@@ -269,10 +269,17 @@ type ThreadStartResult = { thread: { id: string } };
 // codex 0.114+: turn/start returns { turn: { id: "..." }, ... }
 type TurnStartResult = { turn: { id: string } };
 
+export type TokenUsage = {
+	inputTokens: number;
+	outputTokens: number;
+};
+
 export class BridgeSession {
 	private threadId: string | null = null;
 	private readonly queue = new AsyncQueue<BridgeEvent | Error>();
 	private turnStarted = false;
+	/** Token usage captured from the most recent thread/tokenUsage/updated notification. */
+	private latestUsage: TokenUsage | null = null;
 	/**
 	 * Reverse map: codex tool name (single-underscore) → original Anthropic tool name.
 	 * Used to restore `mcp_server_tool` → `mcp__server__tool` on tool call interception.
@@ -344,6 +351,27 @@ export class BridgeSession {
 		this.threadId = res.thread.id;
 		logger.debug(`BridgeSession: thread started threadId=${this.threadId}`);
 
+		// Capture accurate token usage from the app-server notification.
+		// This notification arrives after the model finishes generating and before
+		// (or around the same time as) turn/completed.  We store it so that
+		// turn/completed can populate turn_done with real counts instead of zeros.
+		this.conn.onNotification('thread/tokenUsage/updated', (rawParams) => {
+			// The Codex app-server may send usage as a nested object or flat:
+			//   { threadId, usage: { inputTokens, outputTokens } }
+			//   { threadId, inputTokens, outputTokens }
+			const params = rawParams as {
+				usage?: { inputTokens?: number; outputTokens?: number };
+				inputTokens?: number;
+				outputTokens?: number;
+			};
+			const inputTokens = params?.usage?.inputTokens ?? params?.inputTokens ?? 0;
+			const outputTokens = params?.usage?.outputTokens ?? params?.outputTokens ?? 0;
+			logger.debug(
+				`BridgeSession: thread/tokenUsage/updated inputTokens=${inputTokens} outputTokens=${outputTokens}`
+			);
+			this.latestUsage = { inputTokens, outputTokens };
+		});
+
 		// Wire notification handlers
 		this.conn.onNotification('item/agentMessage/delta', (rawParams) => {
 			// codex 0.114.0+ (v2 protocol): delta is a plain string, not an object.
@@ -366,8 +394,8 @@ export class BridgeSession {
 		this.conn.onNotification('turn/completed', (rawParams) => {
 			// codex 0.114.0+ (v2 protocol):
 			//   TurnCompletedNotification = { threadId, turn: { id, items, status, error } }
-			// Token usage arrives separately in thread/tokenUsage/updated.
-			// We emit turn_done with 0 tokens here; the SSE layer tracks its own count.
+			// Token usage arrives separately in thread/tokenUsage/updated (captured above).
+			// Legacy protocol had usage in this notification; v2 sends it separately.
 			const params = rawParams as {
 				turn?: { id?: string; status?: string; error?: { message?: string } | null };
 				usage?: { inputTokens?: number; outputTokens?: number };
@@ -378,12 +406,11 @@ export class BridgeSession {
 				const msg = params?.turn?.error?.message ?? 'Turn failed';
 				this.queue.push({ type: 'error', message: msg });
 			} else {
-				this.queue.push({
-					type: 'turn_done',
-					// Legacy protocol had usage here; v2 sends it via thread/tokenUsage/updated
-					inputTokens: params?.usage?.inputTokens ?? 0,
-					outputTokens: params?.usage?.outputTokens ?? 0,
-				});
+				// Prefer token counts from thread/tokenUsage/updated (v2 protocol), then
+				// fall back to inline usage in turn/completed (legacy protocol), then 0.
+				const inputTokens = this.latestUsage?.inputTokens ?? params?.usage?.inputTokens ?? 0;
+				const outputTokens = this.latestUsage?.outputTokens ?? params?.usage?.outputTokens ?? 0;
+				this.queue.push({ type: 'turn_done', inputTokens, outputTokens });
 			}
 		});
 
@@ -440,6 +467,9 @@ export class BridgeSession {
 		if (!this.threadId) throw new Error('BridgeSession not initialized');
 		if (this.turnStarted) throw new Error('BridgeSession.startTurn() called more than once');
 		this.turnStarted = true;
+		// Reset latestUsage so any stale value from a previous (erroneous) notification
+		// does not bleed into this turn's turn_done event.
+		this.latestUsage = null;
 
 		const res = await this.conn.request<TurnStartResult>('turn/start', {
 			threadId: this.threadId,

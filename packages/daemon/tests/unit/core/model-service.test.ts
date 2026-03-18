@@ -9,8 +9,10 @@ import { describe, expect, it, beforeEach, afterEach, mock } from 'bun:test';
 import {
 	getAvailableModels,
 	getModelInfo,
+	getModelInfoUnfiltered,
 	isValidModel,
 	resolveModelAlias,
+	resolveModelAliasUnfiltered,
 	clearModelsCache,
 	getModelsCache,
 	setModelsCache,
@@ -169,40 +171,46 @@ describe('Model Service', () => {
 		});
 
 		it('should find model by exact ID', async () => {
-			const model = await getModelInfo('sonnet');
+			const model = await getModelInfo('sonnet', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
 		});
 
 		it('should find model by alias', async () => {
-			const model = await getModelInfo('opus');
+			const model = await getModelInfo('opus', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('opus');
 		});
 
 		it('should return null for unknown model', async () => {
-			const model = await getModelInfo('unknown-model');
+			const model = await getModelInfo('unknown-model', 'global', 'anthropic');
 			expect(model).toBeNull();
 		});
 
 		it('should handle legacy model IDs', async () => {
 			// Legacy full model IDs should map to SDK short IDs
 			// Note: 'claude-sonnet-4-5-20250929' maps to 'sonnet' via LEGACY_MODEL_MAPPINGS
-			const model = await getModelInfo('claude-sonnet-4-5-20250929');
+			const model = await getModelInfo('claude-sonnet-4-5-20250929', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
 		});
 
 		it('should handle legacy opus model ID', async () => {
-			const model = await getModelInfo('claude-opus-4-5-20251101');
+			const model = await getModelInfo('claude-opus-4-5-20251101', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('opus');
 		});
 
 		it('should handle legacy haiku model ID', async () => {
-			const model = await getModelInfo('claude-haiku-4-5-20251001');
+			const model = await getModelInfo('claude-haiku-4-5-20251001', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('haiku');
+		});
+
+		it('should return null when provider does not match (no fallback)', async () => {
+			// 'sonnet' exists for 'anthropic' but not for 'glm'
+			const model = await getModelInfo('sonnet', 'global', 'glm');
+			expect(model).toBeNull();
 		});
 	});
 
@@ -214,22 +222,22 @@ describe('Model Service', () => {
 		});
 
 		it('should return true for valid model ID', async () => {
-			const isValid = await isValidModel('sonnet');
+			const isValid = await isValidModel('sonnet', 'global', 'anthropic');
 			expect(isValid).toBe(true);
 		});
 
 		it('should return true for valid alias', async () => {
-			const isValid = await isValidModel('opus');
+			const isValid = await isValidModel('opus', 'global', 'anthropic');
 			expect(isValid).toBe(true);
 		});
 
 		it('should return false for invalid model', async () => {
-			const isValid = await isValidModel('invalid-model');
+			const isValid = await isValidModel('invalid-model', 'global', 'anthropic');
 			expect(isValid).toBe(false);
 		});
 
 		it('should return true for legacy model IDs', async () => {
-			const isValid = await isValidModel('claude-sonnet-4-5-20250929');
+			const isValid = await isValidModel('claude-sonnet-4-5-20250929', 'global', 'anthropic');
 			expect(isValid).toBe(true);
 		});
 	});
@@ -242,23 +250,23 @@ describe('Model Service', () => {
 		});
 
 		it('should resolve existing model ID', async () => {
-			const resolved = await resolveModelAlias('sonnet');
+			const resolved = await resolveModelAlias('sonnet', 'global', 'anthropic');
 			expect(resolved).toBe('sonnet');
 		});
 
 		it('should resolve alias to model ID', async () => {
-			const resolved = await resolveModelAlias('opus');
+			const resolved = await resolveModelAlias('opus', 'global', 'anthropic');
 			expect(resolved).toBe('opus');
 		});
 
 		it('should return input as-is for unknown model', async () => {
-			const resolved = await resolveModelAlias('custom-model-id');
+			const resolved = await resolveModelAlias('custom-model-id', 'global', 'anthropic');
 			expect(resolved).toBe('custom-model-id');
 		});
 
 		it('should resolve legacy model ID', async () => {
 			// LEGACY_MODEL_MAPPINGS maps 'claude-sonnet-4-5-20250929' to 'sonnet'
-			const resolved = await resolveModelAlias('claude-sonnet-4-5-20250929');
+			const resolved = await resolveModelAlias('claude-sonnet-4-5-20250929', 'global', 'anthropic');
 			expect(resolved).toBe('sonnet');
 		});
 	});
@@ -371,6 +379,60 @@ describe('Model Service', () => {
 			const cache = getModelsCache();
 			expect(cache.get('global')).toEqual(mockModels);
 		});
+
+		it('should preserve both provider entries for shared model IDs after merge', async () => {
+			// Exercises the production mergeWithFallbackModels code path.
+			// Before the P0 fix, mergeWithFallbackModels keyed by model.id alone, so
+			// the second provider's entry silently overwrote the first (last-writer-wins).
+			//
+			// Use IDs that don't conflict with built-in providers so initializeProviders()
+			// can register them without collision after the registry is reset.
+			const { getProviderRegistry } = await import('../../../src/lib/providers/registry');
+			type ProviderLike = Parameters<ReturnType<typeof getProviderRegistry>['register']>[0];
+
+			const registry = getProviderRegistry();
+			const sharedId = 'shared-model-xyz';
+
+			registry.register({
+				id: 'test-provider-a',
+				getModels: async () => [
+					{
+						id: sharedId,
+						name: 'Shared (A)',
+						family: 'test',
+						provider: 'test-provider-a',
+						contextWindow: 100000,
+					},
+				],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			registry.register({
+				id: 'test-provider-b',
+				getModels: async () => [
+					{
+						id: sharedId,
+						name: 'Shared (B)',
+						family: 'test',
+						provider: 'test-provider-b',
+						contextWindow: 100000,
+					},
+				],
+				isAvailable: async () => true,
+			} as ProviderLike);
+
+			await initializeModels();
+
+			// Both entries must survive the merge — one per (provider, id) pair
+			const entryA = await getModelInfo(sharedId, 'global', 'test-provider-a');
+			const entryB = await getModelInfo(sharedId, 'global', 'test-provider-b');
+
+			expect(entryA).not.toBeNull();
+			expect(entryA?.provider).toBe('test-provider-a');
+
+			expect(entryB).not.toBeNull();
+			expect(entryB?.provider).toBe('test-provider-b');
+		});
 	});
 
 	describe('background refresh behavior', () => {
@@ -477,25 +539,25 @@ describe('Model Service', () => {
 		});
 
 		it('should handle claude-sonnet-4-20241022 legacy ID', async () => {
-			const model = await getModelInfo('claude-sonnet-4-20241022');
+			const model = await getModelInfo('claude-sonnet-4-20241022', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
 		});
 
 		it('should handle claude-3-5-sonnet-20241022 legacy ID', async () => {
-			const model = await getModelInfo('claude-3-5-sonnet-20241022');
+			const model = await getModelInfo('claude-3-5-sonnet-20241022', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
 		});
 
 		it('should handle claude-opus-4-20250514 legacy ID', async () => {
-			const model = await getModelInfo('claude-opus-4-20250514');
+			const model = await getModelInfo('claude-opus-4-20250514', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('opus');
 		});
 
 		it('should handle claude-3-5-haiku-20241022 legacy ID', async () => {
-			const model = await getModelInfo('claude-3-5-haiku-20241022');
+			const model = await getModelInfo('claude-3-5-haiku-20241022', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('haiku');
 		});
@@ -512,7 +574,7 @@ describe('Model Service', () => {
 			];
 
 			for (const { id, expected } of legacyIds) {
-				const resolved = await resolveModelAlias(id);
+				const resolved = await resolveModelAlias(id, 'global', 'anthropic');
 				expect(resolved).toBe(expected);
 			}
 		});
@@ -527,17 +589,17 @@ describe('Model Service', () => {
 
 		it('should resolve "default" alias to sonnet', async () => {
 			// LEGACY_MODEL_MAPPINGS maps 'default' to 'sonnet'
-			const resolved = await resolveModelAlias('default');
+			const resolved = await resolveModelAlias('default', 'global', 'anthropic');
 			expect(resolved).toBe('sonnet');
 		});
 
 		it('should validate "default" as a valid model', async () => {
-			const isValid = await isValidModel('default');
+			const isValid = await isValidModel('default', 'global', 'anthropic');
 			expect(isValid).toBe(true);
 		});
 
 		it('should get model info for "default"', async () => {
-			const model = await getModelInfo('default');
+			const model = await getModelInfo('default', 'global', 'anthropic');
 			expect(model).not.toBeNull();
 			expect(model?.id).toBe('sonnet');
 		});
@@ -573,17 +635,17 @@ describe('Model Service', () => {
 			testCache.set('custom-cache', customModels);
 			setModelsCache(testCache);
 
-			// Should find in global cache
-			const globalModel = await getModelInfo('sonnet', 'global');
+			// Should find in global cache with correct provider
+			const globalModel = await getModelInfo('sonnet', 'global', 'anthropic');
 			expect(globalModel).not.toBeNull();
 
-			// Should find in custom cache
-			const customModel = await getModelInfo('custom-model', 'custom-cache');
+			// Should find in custom cache with correct provider
+			const customModel = await getModelInfo('custom-model', 'custom-cache', 'custom');
 			expect(customModel).not.toBeNull();
 			expect(customModel?.id).toBe('custom-model');
 
 			// Should not find custom model in global cache
-			const notFound = await getModelInfo('custom-model', 'global');
+			const notFound = await getModelInfo('custom-model', 'global', 'custom');
 			expect(notFound).toBeNull();
 		});
 	});
@@ -607,11 +669,11 @@ describe('Model Service', () => {
 			testCache.set('custom-cache', customModels);
 			setModelsCache(testCache);
 
-			// Custom model should be valid in custom cache
-			expect(await isValidModel('custom-only', 'custom-cache')).toBe(true);
+			// Custom model should be valid in custom cache with correct provider
+			expect(await isValidModel('custom-only', 'custom-cache', 'custom')).toBe(true);
 
-			// Custom model should not be valid in global cache
-			expect(await isValidModel('custom-only', 'global')).toBe(false);
+			// Custom model should not be valid in global cache (not present there)
+			expect(await isValidModel('custom-only', 'global', 'custom')).toBe(false);
 		});
 	});
 
@@ -634,13 +696,191 @@ describe('Model Service', () => {
 			testCache.set('custom-cache', customModels);
 			setModelsCache(testCache);
 
-			// Should resolve alias in custom cache
-			const resolved = await resolveModelAlias('my-custom-alias', 'custom-cache');
+			// Should resolve alias in custom cache with correct provider
+			const resolved = await resolveModelAlias('my-custom-alias', 'custom-cache', 'custom');
 			expect(resolved).toBe('custom-alias-model');
 
-			// Should return as-is when not found in global cache
-			const notResolved = await resolveModelAlias('my-custom-alias', 'global');
+			// Should return as-is when not found in global cache (wrong provider)
+			const notResolved = await resolveModelAlias('my-custom-alias', 'global', 'anthropic');
 			expect(notResolved).toBe('my-custom-alias');
+		});
+	});
+
+	describe('provider-filtered model resolution', () => {
+		// Two providers exposing the same canonical model ID
+		const sharedModels: ModelInfo[] = [
+			{
+				id: 'claude-sonnet-4.6',
+				name: 'Claude Sonnet 4.6 (Anthropic)',
+				alias: 'sonnet-4.6',
+				family: 'sonnet',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				description: 'Anthropic Sonnet',
+				available: true,
+			},
+			{
+				id: 'claude-sonnet-4.6',
+				name: 'Claude Sonnet 4.6 (Copilot)',
+				alias: 'sonnet-4.6',
+				family: 'sonnet',
+				provider: 'anthropic-copilot',
+				contextWindow: 200000,
+				description: 'Copilot Sonnet',
+				available: true,
+			},
+			{
+				id: 'haiku',
+				name: 'Haiku (Anthropic)',
+				alias: 'haiku',
+				family: 'haiku',
+				provider: 'anthropic',
+				contextWindow: 200000,
+				available: true,
+			},
+		];
+
+		beforeEach(() => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', sharedModels);
+			setModelsCache(testCache);
+		});
+
+		it('should return provider-specific model when providerId matches anthropic-copilot', async () => {
+			const model = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic-copilot');
+			expect(model?.name).toBe('Claude Sonnet 4.6 (Copilot)');
+		});
+
+		it('should return anthropic model when providerId is anthropic', async () => {
+			const model = await getModelInfo('claude-sonnet-4.6', 'global', 'anthropic');
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic');
+			expect(model?.name).toBe('Claude Sonnet 4.6 (Anthropic)');
+		});
+
+		it('should return null when provider does not have the model (no fallback)', async () => {
+			// 'glm' provider has no claude-sonnet-4.6 — no fallback, returns null
+			const model = await getModelInfo('claude-sonnet-4.6', 'global', 'glm');
+			expect(model).toBeNull();
+		});
+
+		it('should resolve alias with provider filter', async () => {
+			const resolved = await resolveModelAlias('claude-sonnet-4.6', 'global', 'anthropic-copilot');
+			expect(resolved).toBe('claude-sonnet-4.6');
+		});
+
+		it('should find model by alias with provider filter', async () => {
+			const model = await getModelInfo('sonnet-4.6', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			expect(model?.provider).toBe('anthropic-copilot');
+		});
+
+		it('should return null when model not found for the specified provider', async () => {
+			const model = await getModelInfo('nonexistent-model', 'global', 'anthropic-copilot');
+			expect(model).toBeNull();
+		});
+
+		it('should return null for model unique to one provider when wrong provider is requested', async () => {
+			// 'haiku' only exists for 'anthropic', not 'anthropic-copilot'
+			const model = await getModelInfo('haiku', 'global', 'anthropic-copilot');
+			expect(model).toBeNull();
+		});
+
+		it('should resolve legacy model ID to provider-specific entry when providerId is set', async () => {
+			// Add a copilot variant of the legacy-mapped target 'sonnet'
+			const modelsWithCopilotSonnet: ModelInfo[] = [
+				...sharedModels,
+				{
+					id: 'sonnet',
+					name: 'Sonnet (Copilot)',
+					alias: 'sonnet',
+					family: 'sonnet',
+					provider: 'anthropic-copilot',
+					contextWindow: 200000,
+					available: true,
+				},
+				{
+					id: 'sonnet',
+					name: 'Sonnet (Anthropic)',
+					alias: 'sonnet',
+					family: 'sonnet',
+					provider: 'anthropic',
+					contextWindow: 200000,
+					available: true,
+				},
+			];
+			const cache = new Map<string, ModelInfo[]>();
+			cache.set('global', modelsWithCopilotSonnet);
+			setModelsCache(cache);
+
+			// LEGACY_MODEL_MAPPINGS maps 'claude-sonnet-4-5-20250929' → 'sonnet'
+			// With copilot provider, should find the copilot sonnet entry
+			const model = await getModelInfo('claude-sonnet-4-5-20250929', 'global', 'anthropic-copilot');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+			expect(model?.provider).toBe('anthropic-copilot');
+		});
+	});
+
+	describe('getModelInfoUnfiltered', () => {
+		beforeEach(() => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+		});
+
+		it('should return a result without requiring provider', async () => {
+			const model = await getModelInfoUnfiltered('sonnet');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+			expect(model?.provider).toBe('anthropic');
+		});
+
+		it('should find model by alias without provider filter', async () => {
+			const model = await getModelInfoUnfiltered('opus');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('opus');
+		});
+
+		it('should return null for unknown model', async () => {
+			const model = await getModelInfoUnfiltered('nonexistent-model-xyz');
+			expect(model).toBeNull();
+		});
+
+		it('should handle legacy model IDs without provider', async () => {
+			const model = await getModelInfoUnfiltered('claude-sonnet-4-5-20250929');
+			expect(model).not.toBeNull();
+			expect(model?.id).toBe('sonnet');
+		});
+	});
+
+	describe('resolveModelAliasUnfiltered', () => {
+		beforeEach(() => {
+			const testCache = new Map<string, ModelInfo[]>();
+			testCache.set('global', mockModels);
+			setModelsCache(testCache);
+		});
+
+		it('should resolve correctly without provider', async () => {
+			const resolved = await resolveModelAliasUnfiltered('sonnet');
+			expect(resolved).toBe('sonnet');
+		});
+
+		it('should resolve alias to model ID without provider', async () => {
+			const resolved = await resolveModelAliasUnfiltered('opus');
+			expect(resolved).toBe('opus');
+		});
+
+		it('should return input as-is for unknown model', async () => {
+			const resolved = await resolveModelAliasUnfiltered('unknown-id-xyz');
+			expect(resolved).toBe('unknown-id-xyz');
+		});
+
+		it('should handle legacy model IDs without provider', async () => {
+			const resolved = await resolveModelAliasUnfiltered('claude-sonnet-4-5-20250929');
+			expect(resolved).toBe('sonnet');
 		});
 	});
 

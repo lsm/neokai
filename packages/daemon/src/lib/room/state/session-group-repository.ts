@@ -82,6 +82,11 @@ interface TaskGroupMetadata {
 	 * semi-autonomous mode. Used as idempotency guard for auto-approve deferred callbacks.
 	 */
 	approvalSource?: 'human' | 'leader_semi_auto';
+	/**
+	 * Links this session group to a specific mission_executions row for recurring missions.
+	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
+	 */
+	executionId?: string;
 }
 
 function defaultMetadata(): TaskGroupMetadata {
@@ -147,6 +152,11 @@ export interface SessionGroup {
 	 * Who approved this task ('human' or 'leader_semi_auto'), or null if not yet approved.
 	 */
 	approvalSource: 'human' | 'leader_semi_auto' | null;
+	/**
+	 * Links this session group to a specific mission_executions row for recurring missions.
+	 * Used by recoverZombieGroups() to correlate recovered groups to their execution after restart.
+	 */
+	executionId?: string;
 	createdAt: number;
 	completedAt: number | null;
 }
@@ -538,6 +548,24 @@ export class SessionGroupRepository {
 	}
 
 	/**
+	 * Set executionId in group metadata without version check.
+	 * Links this group to a mission_executions row for recurring mission correlation.
+	 */
+	setExecutionId(groupId: string, executionId: string): void {
+		const raw = (
+			this.db.prepare(`SELECT metadata FROM session_groups WHERE id = ?`).get(groupId) as Record<
+				string,
+				unknown
+			>
+		)?.metadata as string;
+		const currentMeta = this.parseMetadata(raw);
+		const merged = { ...currentMeta, executionId };
+		this.db
+			.prepare(`UPDATE session_groups SET metadata = ? WHERE id = ?`)
+			.run(JSON.stringify(merged), groupId);
+	}
+
+	/**
 	 * Set waitingForQuestion flag without version check.
 	 * When set, the group is paused waiting for a human answer to an agent question.
 	 */
@@ -781,6 +809,7 @@ export class SessionGroupRepository {
 			waitingSession: meta.waitingSession ?? null,
 			workerBypassed: meta.workerBypassed === true,
 			approvalSource: meta.approvalSource ?? null,
+			executionId: meta.executionId,
 			createdAt: row.created_at as number,
 			completedAt: (row.completed_at as number | null) ?? null,
 		};

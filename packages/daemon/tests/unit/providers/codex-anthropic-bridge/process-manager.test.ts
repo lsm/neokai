@@ -245,6 +245,168 @@ describe('BridgeSession item/agentMessage/delta', () => {
 });
 
 // ---------------------------------------------------------------------------
+// thread/tokenUsage/updated — token usage capture
+// ---------------------------------------------------------------------------
+
+// White-box helper to read the private latestUsage field (same pattern as threadId test above).
+type SessionInternals = {
+	latestUsage:
+		| import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').TokenUsage
+		| null;
+};
+
+describe('BridgeSession thread/tokenUsage/updated', () => {
+	it('captures token usage from nested usage object shape', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		// Before any notification, latestUsage is null
+		expect((session as unknown as SessionInternals).latestUsage).toBeNull();
+
+		setTimeout(() => {
+			// Fire the token usage notification (nested usage object shape)
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				usage: { inputTokens: 150, outputTokens: 75 },
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		// latestUsage should reflect what arrived
+		expect((session as unknown as SessionInternals).latestUsage).toEqual({
+			inputTokens: 150,
+			outputTokens: 75,
+		});
+	});
+
+	it('captures token usage from flat params shape', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Fire the token usage notification (flat params shape)
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				inputTokens: 200,
+				outputTokens: 100,
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		for await (const _event of gen) {
+			// drain
+		}
+
+		expect((session as unknown as SessionInternals).latestUsage).toEqual({
+			inputTokens: 200,
+			outputTokens: 100,
+		});
+	});
+
+	it('populates turn_done with actual token counts from thread/tokenUsage/updated', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Usage notification arrives before turn/completed (normal ordering)
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				usage: { inputTokens: 300, outputTokens: 42 },
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+		const done = doneEvents[0] as { type: 'turn_done'; inputTokens: number; outputTokens: number };
+		expect(done.inputTokens).toBe(300);
+		expect(done.outputTokens).toBe(42);
+	});
+
+	it('falls back to 0 tokens in turn_done when no tokenUsage notification arrives', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// No thread/tokenUsage/updated — only turn/completed
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+		const done = doneEvents[0] as { type: 'turn_done'; inputTokens: number; outputTokens: number };
+		expect(done.inputTokens).toBe(0);
+		expect(done.outputTokens).toBe(0);
+	});
+
+	it('falls back to inline usage from turn/completed when no tokenUsage notification arrives (legacy protocol)', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Legacy protocol: usage is inline in turn/completed, no thread/tokenUsage/updated
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+				usage: { inputTokens: 50, outputTokens: 25 },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+		const done = doneEvents[0] as { type: 'turn_done'; inputTokens: number; outputTokens: number };
+		expect(done.inputTokens).toBe(50);
+		expect(done.outputTokens).toBe(25);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // BridgeSession single-use guard (regression: P1 fix)
 // ---------------------------------------------------------------------------
 
@@ -259,9 +421,11 @@ describe('BridgeSession.startTurn()', () => {
 		const gen1 = session.startTurn('first');
 		const firstNextPromise = gen1.next();
 
-		// Yield to the event loop several times so the async generator body has a
-		// chance to advance past `await conn.request('turn/start')` and set the flag.
-		await new Promise((res) => setTimeout(res, 10));
+		// The mock request() resolves immediately (no real async work), so a few
+		// microtask yields are sufficient to advance the generator past
+		// `await conn.request('turn/start')` and set turnStarted = true.
+		// No wall-clock delay needed — using Promise.resolve() avoids a race on slow CI.
+		for (let i = 0; i < 10; i++) await Promise.resolve();
 
 		// Second startTurn() call: its first next() should throw synchronously.
 		const gen2 = session.startTurn('second');

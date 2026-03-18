@@ -272,17 +272,39 @@ export function contentBlockStopSSE(index: number): string {
 	});
 }
 
+export type MessageDeltaUsage = {
+	/**
+	 * Output token count for this message. Use the real count from
+	 * `thread/tokenUsage/updated` when available; otherwise pass the heuristic
+	 * estimate (`Math.ceil(text.length / 4)` accumulated across text_delta events).
+	 * The `outputTokens > 0` guard in `drainToSSE` selects between the two.
+	 */
+	outputTokens: number;
+};
+
 export function messageDeltaSSE(
 	stopReason: 'end_turn' | 'tool_use' | 'max_tokens',
-	outputTokens: number
+	usage: MessageDeltaUsage
 ): string {
 	return sseEvent('message_delta', {
 		type: 'message_delta',
 		delta: { stop_reason: stopReason, stop_sequence: null },
-		usage: { output_tokens: outputTokens },
+		usage: { output_tokens: usage.outputTokens },
 	});
 }
 
 export function messageStopSSE(): string {
 	return sseEvent('message_stop', { type: 'message_stop' });
+}
+
+/** Anthropic-standard error types used in both HTTP envelopes and SSE error events. */
+export type AnthropicErrorType =
+	| 'invalid_request_error'
+	| 'authentication_error'
+	| 'not_found_error'
+	| 'api_error'
+	| 'overloaded_error';
+
+export function errorSSE(errorType: AnthropicErrorType, message: string): string {
+	return sseEvent('error', { type: 'error', error: { type: errorType, message } });
 }

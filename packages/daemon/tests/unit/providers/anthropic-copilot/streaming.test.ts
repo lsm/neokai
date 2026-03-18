@@ -104,7 +104,7 @@ describe('runSessionStreaming', () => {
 
 	it('resolves completed on session.error', async () => {
 		const session = new MockSession();
-		const { res } = makeMockRes();
+		const { written, res } = makeMockRes();
 		const { req } = makeMockReq();
 
 		const p = runSessionStreaming(
@@ -120,6 +120,9 @@ describe('runSessionStreaming', () => {
 		const outcome = await p;
 		expect(outcome.kind).toBe('completed');
 		expect(session.disconnectCalled).toBe(true);
+		// Must emit an Anthropic-format error SSE event (not a silent end_turn)
+		expect(written.some((c) => c.includes('event: error'))).toBe(true);
+		expect(written.some((c) => c.includes('"type":"api_error"'))).toBe(true);
 	});
 
 	it('resolves completed and aborts on client disconnect', async () => {
@@ -199,7 +202,7 @@ describe('runSessionStreaming', () => {
 		jest.useFakeTimers();
 		try {
 			const session = new MockSession();
-			const { res } = makeMockRes();
+			const { written, res } = makeMockRes();
 			const { req } = makeMockReq();
 
 			expect(STREAMING_TIMEOUT_MS).toBeGreaterThan(0);
@@ -214,6 +217,9 @@ describe('runSessionStreaming', () => {
 			// Timeout path must abort and disconnect the session.
 			expect(session.abortCalled).toBe(true);
 			expect(session.disconnectCalled).toBe(true);
+			// Must emit an Anthropic-format error SSE event (not a silent end_turn)
+			expect(written.some((c) => c.includes('event: error'))).toBe(true);
+			expect(written.some((c) => c.includes('"type":"api_error"'))).toBe(true);
 		} finally {
 			jest.useRealTimers();
 		}

@@ -130,6 +130,7 @@ function createMockAgentSession(overrides: Partial<AgentSession> = {}): {
 		status: 'active',
 		config: {
 			model: 'claude-sonnet-4-20250514',
+			provider: 'anthropic',
 			coordinatorMode: false,
 			sandbox: { enabled: true },
 			thinkingLevel: 'auto',
@@ -738,8 +739,35 @@ describe('Session RPC Handlers', () => {
 			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(null);
 
 			await expect(
-				handler!({ sessionId: 'non-existent', model: 'claude-opus' }, {})
+				handler!({ sessionId: 'non-existent', model: 'claude-opus', provider: 'anthropic' }, {})
 			).rejects.toThrow('Session not found');
+		});
+
+		it('throws error when provider is omitted', async () => {
+			const handler = messageHubData.handlers.get('session.model.switch');
+			expect(handler).toBeDefined();
+
+			await expect(
+				handler!({ sessionId: 'session-123', model: 'claude-opus' }, {})
+			).rejects.toThrow('Missing required field: provider');
+		});
+	});
+
+	describe('session.model.get', () => {
+		it('throws error when session has no provider configured', async () => {
+			const handler = messageHubData.handlers.get('session.model.get');
+			expect(handler).toBeDefined();
+
+			const { agentSession } = createMockAgentSession();
+			(agentSession.getSessionData as ReturnType<typeof mock>).mockReturnValue({
+				id: 'session-123',
+				config: { model: 'claude-sonnet-4-20250514' }, // no provider
+			});
+			sessionManagerData.mocks.getSessionAsync.mockResolvedValueOnce(agentSession);
+
+			await expect(handler!({ sessionId: 'session-123' }, {})).rejects.toThrow(
+				'Session has no provider configured'
+			);
 		});
 	});
 

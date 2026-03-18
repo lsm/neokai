@@ -1,13 +1,13 @@
 /**
  * GoalsEditor Component
  *
- * Provides CRUD operations for room goals with progress tracking.
+ * Provides CRUD operations for room missions with progress tracking.
  * Features:
- * - Create, edit, and delete goals
+ * - Create, edit, and delete missions
  * - Status and priority badges with visual indicators
  * - Progress bar with color-coded completion
- * - Link/unlink tasks to goals
- * - Expandable goal details view
+ * - Link/unlink tasks to missions
+ * - Expandable mission details view
  */
 
 import { useState } from 'preact/hooks';
@@ -166,7 +166,7 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 	);
 }
 
-// Create/Edit Goal Form
+// Create/Edit Mission Form
 interface GoalFormProps {
 	initialTitle?: string;
 	initialDescription?: string;
@@ -226,7 +226,7 @@ function GoalForm({
 					value={title}
 					onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-					placeholder="Enter goal title..."
+					placeholder="Enter mission title..."
 					required
 				/>
 			</div>
@@ -240,7 +240,7 @@ function GoalForm({
 					value={description}
 					onInput={(e) => setDescription((e.target as HTMLTextAreaElement).value)}
 					class="w-full px-3 py-2 bg-dark-800 border border-dark-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-					placeholder="Describe the goal..."
+					placeholder="Describe the mission..."
 					rows={3}
 				/>
 			</div>
@@ -530,7 +530,7 @@ function GoalItem({
 				isOpen={showDeleteConfirm}
 				onClose={() => setShowDeleteConfirm(false)}
 				onConfirm={handleDelete}
-				title="Delete Goal"
+				title="Delete Mission"
 				message={`Are you sure you want to delete "${goal.title}"? This action cannot be undone.`}
 				confirmText="Delete"
 				isLoading={isUpdating}
@@ -572,9 +572,9 @@ function EmptyState({ onCreateClick }: { onCreateClick: () => void }) {
 					/>
 				</svg>
 			</div>
-			<h3 class="text-lg font-medium text-gray-200 mb-2">No goals yet</h3>
-			<p class="text-sm text-gray-400 mb-4">Create your first goal to get started.</p>
-			<Button onClick={onCreateClick}>Create Goal</Button>
+			<h3 class="text-lg font-medium text-gray-200 mb-2">No missions yet</h3>
+			<p class="text-sm text-gray-400 mb-4">Create your first mission to get started.</p>
+			<Button onClick={onCreateClick}>Create Mission</Button>
 		</div>
 	);
 }
@@ -629,12 +629,12 @@ export function GoalsEditor({
 			{/* Header */}
 			<div class="flex items-center justify-between">
 				<div class="flex items-center gap-2">
-					<h2 class="text-lg font-semibold text-gray-100">Goals</h2>
+					<h2 class="text-lg font-semibold text-gray-100">Missions</h2>
 					<span class="px-2 py-0.5 text-xs font-medium bg-dark-700 text-gray-300 rounded">
 						{goals.length}
 					</span>
 				</div>
-				<Button onClick={() => setShowCreateModal(true)}>Create Goal</Button>
+				<Button onClick={() => setShowCreateModal(true)}>Create Mission</Button>
 			</div>
 
 			{/* Content */}
@@ -660,8 +660,12 @@ export function GoalsEditor({
 				</div>
 			)}
 
-			{/* Create Goal Modal */}
-			<Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Goal">
+			{/* Create Mission Modal */}
+			<Modal
+				isOpen={showCreateModal}
+				onClose={() => setShowCreateModal(false)}
+				title="Create Mission"
+			>
 				<GoalForm
 					onSubmit={onCreateGoal}
 					onCancel={() => setShowCreateModal(false)}

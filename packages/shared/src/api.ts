@@ -181,6 +181,7 @@ export interface GetCurrentModelResponse {
 export interface SwitchModelRequest {
 	sessionId: string;
 	model: string; // Can be alias (e.g., "opus") or full ID
+	provider: string; // Required — identifies which provider owns this model
 }
 
 export interface SwitchModelResponse {
@@ -509,7 +510,7 @@ export interface APIClient {
 
 	// Models
 	getCurrentModel(sessionId: string): Promise<GetCurrentModelResponse>;
-	switchModel(sessionId: string, model: string): Promise<SwitchModelResponse>;
+	switchModel(sessionId: string, model: string, provider: string): Promise<SwitchModelResponse>;
 
 	// Providers
 	listProviders(): Promise<ListProvidersResponse>;
