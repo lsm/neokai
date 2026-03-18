@@ -15,6 +15,7 @@ import {
 	type BridgeServer,
 } from '../../../../src/lib/providers/codex-anthropic-bridge/server';
 import type { BridgeEvent } from '../../../../src/lib/providers/codex-anthropic-bridge/process-manager';
+import { anthropicErrorSSELine } from '../../../../src/lib/providers/shared/error-envelope';
 
 // ---------------------------------------------------------------------------
 // Helper: parse SSE response body into an array of events
@@ -183,13 +184,28 @@ function createMockBridgeServer(opts?: { ttlMs?: number }): BridgeServer {
 						});
 						controller.close();
 						return;
-					} else if (event.type === 'turn_done' || event.type === 'error') {
+					} else if (event.type === 'turn_done') {
 						if (textOpen) {
 							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
 							textOpen = false;
 						}
 						controller.enqueue(enc.encode(messageDeltaSSE('end_turn', outputTokens)));
 						controller.enqueue(enc.encode(messageStopSSE()));
+						sessionArg?.kill();
+						controller.close();
+						return;
+					} else if (event.type === 'error') {
+						// Mirror production drainToSSE: close open text block then emit
+						// Anthropic-format error SSE event (no message_stop epilogue).
+						if (textOpen) {
+							controller.enqueue(enc.encode(contentBlockStopSSE(blockIndex)));
+							textOpen = false;
+						}
+						controller.enqueue(
+							enc.encode(
+								anthropicErrorSSELine('api_error', String(event.message) || 'Codex session error')
+							)
+						);
 						sessionArg?.kill();
 						controller.close();
 						return;
@@ -444,6 +460,44 @@ describe('Bridge HTTP server', () => {
 			.map((d) => d.text ?? '')
 			.join('');
 		expect(text).toBe('file1.ts');
+	});
+
+	// -------------------------------------------------------------------------
+	// BridgeSession error — emits Anthropic error SSE event
+	// -------------------------------------------------------------------------
+
+	it('emits Anthropic error SSE event when BridgeSession yields an error event', async () => {
+		mockSessionFactory = () =>
+			new MockBridgeSession([
+				{ type: 'text_delta', text: 'partial' },
+				{ type: 'error', message: 'boom' },
+			]);
+
+		const resp = await fetch(`http://127.0.0.1:${server.port}/v1/messages`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				model: 'codex-1',
+				messages: [{ role: 'user', content: 'fail me' }],
+				stream: true,
+			}),
+		});
+
+		expect(resp.ok).toBe(true);
+		const events = await readSSEEvents(resp.body);
+		const types = events.map((e) => e.event);
+
+		// Must emit Anthropic error SSE event
+		expect(types).toContain('error');
+		// Must NOT emit message_stop after the error
+		expect(types).not.toContain('message_stop');
+
+		const errorEvent = events.find((e) => e.event === 'error');
+		const data = errorEvent!.data as Record<string, unknown>;
+		expect(data['type']).toBe('error');
+		const err = data['error'] as Record<string, unknown>;
+		expect(err['type']).toBe('api_error');
+		expect(err['message']).toBe('boom');
 	});
 
 	// -------------------------------------------------------------------------
