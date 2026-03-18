@@ -80,9 +80,9 @@ test.describe('Mission Terminology', () => {
 		// Wait for tabs to render
 		await expect(page.locator('button:has-text("Missions")')).toBeVisible({ timeout: 10000 });
 
-		// There should be no user-visible "Goals" tab button
+		// There should be no "Goals" tab button in the DOM at all
 		const goalsTab = page.locator('button:has-text("Goals")');
-		await expect(goalsTab).not.toBeVisible();
+		await expect(goalsTab).not.toBeAttached();
 	});
 
 	test('should show "No missions yet" in empty state after clicking Missions tab', async ({

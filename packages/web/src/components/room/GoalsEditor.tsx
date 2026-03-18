@@ -166,7 +166,7 @@ function TaskStatusBadge({ status }: { status: TaskStatus }) {
 	);
 }
 
-// Create/Edit Goal Form
+// Create/Edit Mission Form
 interface GoalFormProps {
 	initialTitle?: string;
 	initialDescription?: string;
@@ -660,7 +660,7 @@ export function GoalsEditor({
 				</div>
 			)}
 
-			{/* Create Goal Modal */}
+			{/* Create Mission Modal */}
 			<Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title="Create Mission">
 				<GoalForm
 					onSubmit={onCreateGoal}
