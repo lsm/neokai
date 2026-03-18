@@ -149,6 +149,7 @@ describe('Session RPC Handlers - Extended', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'haiku',
+				provider: 'anthropic',
 			})) as { success: boolean };
 
 			expect(result.success).toBe(true);
@@ -166,6 +167,7 @@ describe('Session RPC Handlers - Extended', () => {
 			const result = (await daemon.messageHub.request('session.model.switch', {
 				sessionId,
 				model: 'invalid-model-id',
+				provider: 'anthropic',
 			})) as { success: boolean; error?: string };
 
 			expect(result.success).toBe(false);

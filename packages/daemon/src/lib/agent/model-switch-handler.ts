@@ -17,13 +17,7 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type {
-	Provider,
-	Session,
-	SessionConfig,
-	CurrentModelInfo,
-	MessageHub,
-} from '@neokai/shared';
+import type { Provider, Session, SessionConfig, CurrentModelInfo, MessageHub } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
@@ -151,30 +145,44 @@ export class ModelSwitchHandler {
 			const transportReady = firstMessageReceived;
 
 			// Resolve the target provider — deterministic when caller supplies newProvider.
-			// Fall back to model metadata or heuristic detection only for legacy paths.
+			// modelInfo?.provider is a secondary source (model registry metadata).
+			// detectProvider is a last-resort deprecated heuristic for callers that pre-date
+			// explicit routing (e.g. CLI, old integration tests). Log a warning so these
+			// paths are visible in production.
 			const providerRegistry = getProviderRegistry();
 			const targetProviderId = newProvider ?? modelInfo?.provider;
-			const newProviderInstance = targetProviderId
-				? providerRegistry.detectProviderForModel(resolvedModel, targetProviderId)
-				: providerRegistry.detectProvider(resolvedModel);
+			let newProviderInstance: ReturnType<typeof providerRegistry.detectProvider>;
+			if (targetProviderId) {
+				newProviderInstance = providerRegistry.detectProviderForModel(
+					resolvedModel,
+					targetProviderId
+				);
+			} else {
+				logger.warn(
+					`[model-switch] No provider supplied for model '${resolvedModel}' — ` +
+						'falling back to heuristic detection. Update callers to pass an explicit providerId.'
+				);
+				newProviderInstance = providerRegistry.detectProvider(resolvedModel);
+			}
+
+			if (!newProviderInstance) {
+				const errMsg = `Cannot switch to model '${resolvedModel}': provider '${targetProviderId ?? '(unknown)'}' is not registered.`;
+				logger.error(errMsg);
+				return { success: false, model: session.config.model, error: errMsg };
+			}
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config
 				session.config.model = resolvedModel;
-				// Keep provider aligned with model for pre-query switches too.
-				// Without this, a stale explicit provider can force wrong model routing.
-				if (newProviderInstance?.id) {
-					session.config.provider = newProviderInstance.id as Provider;
-				}
+				// newProviderInstance is guaranteed non-null here (we returned early above).
+				session.config.provider = newProviderInstance.id as Provider;
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
 					config: {
 						model: resolvedModel,
-						...(newProviderInstance?.id && {
-							provider: newProviderInstance.id as Provider,
-						}),
+						provider: newProviderInstance.id as Provider,
 					} as SessionConfig,
 				});
 
@@ -195,20 +203,15 @@ export class ModelSwitchHandler {
 
 				// Update session config first (will be used when query restarts)
 				session.config.model = resolvedModel;
-				// Keep provider aligned with model (same as the pre-query branch —
-				// unconditionally update so same-provider switches don’t leave stale state).
-				if (newProviderInstance?.id) {
-					session.config.provider = newProviderInstance.id as Provider;
-				}
+				// newProviderInstance is guaranteed non-null here (we returned early above).
+				session.config.provider = newProviderInstance.id as Provider;
 				// Only pass serializable fields — session.config may contain runtime-only
 				// objects (mcpServers with closures, agents, spawnClaudeCodeProcess) that
 				// cannot be JSON-stringified and would cause a cyclic structure error.
 				db.updateSession(session.id, {
 					config: {
 						model: resolvedModel,
-						...(newProviderInstance?.id && {
-							provider: newProviderInstance.id as Provider,
-						}),
+						provider: newProviderInstance.id as Provider,
 					} as SessionConfig,
 				});
 
