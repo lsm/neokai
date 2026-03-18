@@ -383,20 +383,21 @@ export class QueryRunner {
 				}
 
 				messageQueue.stop();
-				this.ctx.queryPromise = null;
 
-				// Close query to terminate subprocess and MCP transports before
-				// clearing the reference. This prevents "Already connected to a
-				// transport" errors when a new query starts before the old
-				// subprocess exits (natural completion path).
+				// Close and null queryObject BEFORE any async operation so that
+				// concurrent stop()/interrupt() callers see null and skip their
+				// own close() call. queryPromise is nulled LAST — callers awaiting
+				// it exit the race only after this synchronous block has run,
+				// guaranteeing they observe queryObject=null and skip the redundant
+				// close().
 				if (this.ctx.queryObject) {
 					try {
 						this.ctx.queryObject.close();
 					} catch {
 						// Ignore close errors — subprocess may already be terminated
 					}
+					this.ctx.queryObject = null;
 				}
-				this.ctx.queryObject = null;
 
 				// Restore original env vars
 				const originalEnvVars = this.ctx.originalEnvVars;
@@ -412,6 +413,9 @@ export class QueryRunner {
 				if (!this.ctx.isCleaningUp()) {
 					await stateManager.setIdle();
 				}
+
+				// Null queryPromise last so callers awaiting it see queryObject=null.
+				this.ctx.queryPromise = null;
 			}
 			// Stale query: skip all cleanup — new query owns shared state
 		}

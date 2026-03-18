@@ -323,7 +323,6 @@ describe('QueryLifecycleManager', () => {
 			expect(closeIdx).not.toBe(-1);
 			expect(interruptIdx).toBeLessThan(promiseIdx);
 			expect(promiseIdx).toBeLessThan(closeIdx);
-			expect(interruptIdx).toBeLessThan(closeIdx);
 		});
 	});
 
