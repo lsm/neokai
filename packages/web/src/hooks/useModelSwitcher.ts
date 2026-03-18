@@ -75,9 +75,8 @@ export const PROVIDER_LABELS: Record<string, string> = {
 	anthropic: 'Anthropic',
 	glm: 'GLM',
 	minimax: 'MiniMax',
-	openai: 'OpenAI',
 	'anthropic-copilot': 'Copilot',
-	google: 'Google',
+	'anthropic-codex': 'Codex',
 };
 
 /**
