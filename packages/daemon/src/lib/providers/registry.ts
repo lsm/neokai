@@ -10,7 +10,10 @@
  * - Provider auto-detection from model IDs
  */
 
+import { createLogger } from '@neokai/shared/logger';
 import type { Provider, ProviderId, ProviderInfo } from '@neokai/shared/provider';
+
+const log = createLogger('kai:providers:registry');
 
 /**
  * Provider Registry class
@@ -74,18 +77,48 @@ export class ProviderRegistry {
 	}
 
 	/**
+	 * Detect provider for a model ID, optionally preferring a specific provider.
+	 *
+	 * Iterates ALL registered providers to collect every match, then:
+	 * - If `preferredProviderId` is given and it's in the match set, returns it.
+	 * - If multiple providers claim the model, logs a collision warning.
+	 * - Returns the first match (preserving registration order for backwards compatibility).
+	 *
+	 * Returns undefined if no provider claims the model.
+	 */
+	detectProviderForModel(modelId: string, preferredProviderId?: string): Provider | undefined {
+		const matches = this.getAll().filter((p) => p.ownsModel(modelId));
+
+		if (matches.length === 0) {
+			return undefined;
+		}
+
+		if (matches.length > 1) {
+			const ids = matches.map((p) => p.id).join(', ');
+			const resolvedId = preferredProviderId
+				? (matches.find((p) => p.id === preferredProviderId)?.id ?? matches[0].id)
+				: matches[0].id;
+			log.warn(`Model '${modelId}' claimed by multiple providers: ${ids}. Using ${resolvedId}.`);
+		}
+
+		if (preferredProviderId) {
+			const preferred = matches.find((p) => p.id === preferredProviderId);
+			if (preferred) {
+				return preferred;
+			}
+		}
+
+		return matches[0];
+	}
+
+	/**
 	 * Detect provider from model ID
 	 * Asks each provider if it owns the model
 	 *
 	 * Returns undefined if no provider claims the model
 	 */
 	detectProvider(modelId: string): Provider | undefined {
-		for (const provider of this.getAll()) {
-			if (provider.ownsModel(modelId)) {
-				return provider;
-			}
-		}
-		return undefined;
+		return this.detectProviderForModel(modelId);
 	}
 
 	/**

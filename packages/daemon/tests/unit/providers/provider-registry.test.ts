@@ -2,8 +2,9 @@
  * Unit tests for Provider Registry
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { ModelInfo } from '@neokai/shared';
+import { Logger } from '@neokai/shared/logger';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
@@ -59,6 +60,37 @@ class MockProvider implements Provider {
 			isAnthropicCompatible: true,
 		};
 	}
+}
+
+// Provider subclass factories for collision tests
+function makeAnthropicProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic' as const;
+		readonly displayName = 'Anthropic';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('claude-');
+		}
+	})();
+}
+
+function makeAnthropicCopilotProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic-copilot' as const;
+		readonly displayName = 'Anthropic Copilot';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('claude-');
+		}
+	})();
+}
+
+function makeAnthropicCodexProvider() {
+	return new (class extends MockProvider {
+		readonly id = 'anthropic-codex' as const;
+		readonly displayName = 'Anthropic Codex';
+		ownsModel(modelId: string): boolean {
+			return modelId.startsWith('gpt-') || modelId.startsWith('claude-');
+		}
+	})();
 }
 
 describe('ProviderRegistry', () => {
@@ -205,6 +237,85 @@ describe('ProviderRegistry', () => {
 
 		it('should return undefined when no providers registered', () => {
 			expect(registry.detectProvider('any-model')).toBeUndefined();
+		});
+
+		it('should return the same result as before (backwards compatible) when multiple providers claim a model', () => {
+			// Register anthropic first — it should be the first match
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProvider('claude-opus-4.6');
+			expect(result?.id).toBe('anthropic');
+		});
+	});
+
+	describe('detectProviderForModel', () => {
+		it('should return preferred provider when it claims the model', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
+			expect(result?.id).toBe('anthropic-copilot');
+		});
+
+		it('should return first registered provider and log collision when no preference and multiple matches', () => {
+			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
+
+			try {
+				registry.register(makeAnthropicProvider());
+				registry.register(makeAnthropicCopilotProvider());
+
+				const result = registry.detectProviderForModel('claude-opus-4.6');
+				expect(result?.id).toBe('anthropic');
+
+				// Warn should have been called once with collision info
+				expect(warnSpy).toHaveBeenCalledTimes(1);
+				const warnArg = warnSpy.mock.calls[0][0] as string;
+				expect(warnArg).toContain('anthropic');
+				expect(warnArg).toContain('anthropic-copilot');
+				expect(warnArg).toContain('claude-opus-4.6');
+			} finally {
+				warnSpy.mockRestore();
+			}
+		});
+
+		it('should return codex provider when preferred and model starts with gpt-', () => {
+			// anthropic-codex owns both claude- and gpt- models; register anthropic first
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCodexProvider());
+
+			const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
+			expect(result?.id).toBe('anthropic-codex');
+		});
+
+		it('should return undefined when no provider claims the model', () => {
+			registry.register(makeAnthropicProvider());
+
+			expect(registry.detectProviderForModel('unknown-xyz-model')).toBeUndefined();
+		});
+
+		it('should return single match without logging collision', () => {
+			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
+
+			try {
+				registry.register(makeAnthropicProvider());
+
+				const result = registry.detectProviderForModel('claude-opus-4.6');
+				expect(result?.id).toBe('anthropic');
+				expect(warnSpy).not.toHaveBeenCalled();
+			} finally {
+				warnSpy.mockRestore();
+			}
+		});
+
+		it('should fall back to first match when preferred provider does not claim the model', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			// 'anthropic-codex' is not registered but even if it were it doesn't own this model
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
+			// Falls back to first match
+			expect(result?.id).toBe('anthropic');
 		});
 	});
 
