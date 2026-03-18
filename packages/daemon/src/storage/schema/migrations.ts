@@ -1376,7 +1376,12 @@ function runMigration28(db: BunDatabase): void {
 			db.exec(`ALTER TABLE goals ADD COLUMN max_consecutive_failures INTEGER NOT NULL DEFAULT 3`);
 		}
 		if (!tableHasColumn(db, 'goals', 'max_planning_attempts')) {
-			db.exec(`ALTER TABLE goals ADD COLUMN max_planning_attempts INTEGER NOT NULL DEFAULT 5`);
+			db.exec(`ALTER TABLE goals ADD COLUMN max_planning_attempts INTEGER NOT NULL DEFAULT 0`);
+		} else {
+			// Reset old default sentinel 5 → 0. Zero means "use room config" (no per-goal override).
+			// The prior migration used 5 as the column default, but that was never a meaningful
+			// user-set value; it caused all goals to appear as if they had an explicit override.
+			db.exec(`UPDATE goals SET max_planning_attempts = 0 WHERE max_planning_attempts = 5`);
 		}
 		if (!tableHasColumn(db, 'goals', 'consecutive_failures')) {
 			db.exec(`ALTER TABLE goals ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`);

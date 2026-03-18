@@ -134,7 +134,7 @@ const DB_SCHEMA = `
 		next_run_at INTEGER,
 		structured_metrics TEXT,
 		max_consecutive_failures INTEGER NOT NULL DEFAULT 3,
-		max_planning_attempts INTEGER NOT NULL DEFAULT 5,
+		max_planning_attempts INTEGER NOT NULL DEFAULT 0,
 		consecutive_failures INTEGER NOT NULL DEFAULT 0,
 		replan_count INTEGER NOT NULL DEFAULT 0
 	);

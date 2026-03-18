@@ -407,7 +407,8 @@ describe('planner-agent', () => {
 			expect(msg).toContain('Metric Targets');
 			expect(msg).toContain('coverage');
 			expect(msg).toContain('current=50');
-			expect(msg).toContain('target=80');
+			// Format is "need to increase to 80" (not "target=80")
+			expect(msg).toContain('increase to 80');
 			expect(msg).toContain('[NOT MET]');
 			expect(msg).toContain('latency_p99');
 			expect(msg).toContain('baseline=500');

@@ -114,7 +114,7 @@ export class GoalRepository {
 			params.nextRunAt ?? null,
 			params.structuredMetrics ? JSON.stringify(params.structuredMetrics) : null,
 			params.maxConsecutiveFailures ?? 3,
-			params.maxPlanningAttempts ?? 5,
+			params.maxPlanningAttempts ?? 0,
 			params.consecutiveFailures ?? 0,
 			params.replanCount ?? 0
 		);
@@ -602,7 +602,7 @@ export class GoalRepository {
 			schedulePaused: row.schedule_paused === 1,
 			nextRunAt: (row.next_run_at as number | null) ?? undefined,
 			maxConsecutiveFailures: (row.max_consecutive_failures as number | null) ?? 3,
-			maxPlanningAttempts: (row.max_planning_attempts as number | null) ?? 5,
+			maxPlanningAttempts: (row.max_planning_attempts as number | null) ?? 0,
 			consecutiveFailures: (row.consecutive_failures as number | null) ?? 0,
 			replanCount: (row.replan_count as number | null) ?? undefined,
 		};

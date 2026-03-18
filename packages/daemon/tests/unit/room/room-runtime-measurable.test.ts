@@ -86,11 +86,14 @@ describe('RoomRuntime — measurable missions', () => {
 	});
 
 	it('should escalate to needs_human after max planning attempts for metric replan', async () => {
-		// Default effectiveMax = 1 (global default with no per-goal override and no room config)
+		// Set maxPlanningAttempts: 1 explicitly so effectiveMax = 1.
+		// (GoalRepository defaults max_planning_attempts to 5 if not provided, which would
+		// require 5 increments before escalation triggers.)
 		const goal = await ctx.goalManager.createGoal({
 			title: 'Improve coverage',
 			missionType: 'measurable',
 			structuredMetrics: [{ name: 'coverage', target: 80, current: 50 }],
+			maxPlanningAttempts: 1,
 		});
 
 		const task = await ctx.taskManager.createTask({

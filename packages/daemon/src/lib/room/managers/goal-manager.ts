@@ -557,9 +557,6 @@ export class GoalManager {
 			);
 		}
 
-		// Always insert history entry
-		this.goalRepo.insertMetricHistory(goalId, metricName, value, timestamp);
-
 		// Update structuredMetrics — find by name and update current
 		const existingMetrics = goal.structuredMetrics ?? [];
 		let found = false;
@@ -571,14 +568,17 @@ export class GoalManager {
 			return m;
 		});
 
-		// Reject unknown metric names — auto-creating would set target === current,
-		// making the metric immediately "met" and masking configuration errors.
+		// Reject unknown metric names before writing any history row — auto-creating
+		// would set target === current (always met) and leave an orphaned history entry.
 		if (!found) {
 			throw new Error(
 				`Metric "${metricName}" is not defined in structuredMetrics for goal ${goalId}. ` +
 					`Known metrics: ${existingMetrics.map((m) => m.name).join(', ') || '(none)'}`
 			);
 		}
+
+		// Insert history entry only after successful validation
+		this.goalRepo.insertMetricHistory(goalId, metricName, value, timestamp);
 
 		// Derive legacy metrics record: { [name]: current }
 		const legacyMetrics: Record<string, number> = {};

@@ -2962,9 +2962,7 @@ export class RoomRuntime {
 		}
 
 		const attempts = goal.planning_attempts ?? 0;
-		const currentRoom = this.getCurrentRoom();
-		const roomConfig = (currentRoom?.config ?? {}) as Record<string, unknown>;
-		const effectiveMax = getEffectiveMaxPlanningAttempts(goal, roomConfig);
+		const effectiveMax = this.maxPlanningAttempts;
 		if (attempts >= effectiveMax) {
 			// Fail the task and escalate instead of replanning
 			await this.taskGroupManager.fail(groupId, reason);

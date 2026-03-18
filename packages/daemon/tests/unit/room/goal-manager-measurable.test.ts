@@ -330,6 +330,22 @@ describe('GoalManager — Measurable Missions', () => {
 			).rejects.toThrow('not defined in structuredMetrics');
 		});
 
+		it('should not write history row when metric name is unknown', async () => {
+			const goal = await goalManager.createGoal({
+				title: 'Test Measurable',
+				missionType: 'measurable',
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0 }],
+			});
+
+			await expect(
+				goalManager.recordMetric(goal.id, 'unknown_metric', 42)
+			).rejects.toThrow();
+
+			// History table must stay empty — no orphaned row written before error
+			const history = await goalManager.getMetricHistory(goal.id);
+			expect(history).toHaveLength(0);
+		});
+
 		it('should throw for non-measurable goals', async () => {
 			const goal = await goalManager.createGoal({
 				title: 'One-Shot Goal',

@@ -94,7 +94,7 @@ describe('GoalRepository — V2 Mission fields', () => {
 			expect(fetched?.schedulePaused).toBe(true);
 			expect(fetched?.nextRunAt).toBe(1700000000000);
 			expect(fetched?.maxConsecutiveFailures).toBe(3);
-			expect(fetched?.maxPlanningAttempts).toBe(5);
+			expect(fetched?.maxPlanningAttempts).toBe(5); // explicitly set to 5
 		});
 
 		it('should persist consecutiveFailures and replanCount', () => {
@@ -126,7 +126,7 @@ describe('GoalRepository — V2 Mission fields', () => {
 			expect(fetched?.missionType).toBe('one_shot');
 			expect(fetched?.autonomyLevel).toBe('supervised');
 			expect(fetched?.maxConsecutiveFailures).toBe(3);
-			expect(fetched?.maxPlanningAttempts).toBe(5);
+			expect(fetched?.maxPlanningAttempts).toBe(0); // 0 = no per-goal override, use room config
 			// Nullable fields remain undefined when not provided
 			expect(fetched?.structuredMetrics).toBeUndefined();
 			expect(fetched?.schedule).toBeUndefined();
