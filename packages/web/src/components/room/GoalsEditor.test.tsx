@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for GoalsEditor Component
  */
@@ -591,6 +590,8 @@ describe('GoalsEditor', () => {
 				status: 'completed',
 				priority: 'high',
 				progress: 100,
+				dependsOn: [],
+				updatedAt: 1000000,
 			},
 			{
 				id: 'task-2',
@@ -598,8 +599,18 @@ describe('GoalsEditor', () => {
 				status: 'in_progress',
 				priority: 'normal',
 				progress: 50,
+				dependsOn: [],
+				updatedAt: 1000000,
 			},
-			{ id: 'task-3', title: 'Deploy to staging', status: 'pending', priority: 'low', progress: 0 },
+			{
+				id: 'task-3',
+				title: 'Deploy to staging',
+				status: 'pending',
+				priority: 'low',
+				progress: 0,
+				dependsOn: [],
+				updatedAt: 1000000,
+			},
 		];
 
 		it('should show task title instead of task ID when tasks prop is provided', () => {

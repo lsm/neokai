@@ -342,20 +342,45 @@ function MetricRow({ metric, index, onChange, onRemove }: MetricRowProps) {
 
 // ─── Create/Edit Mission Form ─────────────────────────────────────────────────
 
+/** Derives the schedule preset string from a stored CronSchedule. */
+function scheduleToPreset(schedule?: CronSchedule): string {
+	if (!schedule) return '@daily';
+	const knownValues = SCHEDULE_PRESETS.filter((p) => p.value !== 'custom').map((p) => p.value);
+	return knownValues.includes(schedule.expression as (typeof knownValues)[number])
+		? schedule.expression
+		: 'custom';
+}
+
 interface GoalFormProps {
 	initialTitle?: string;
 	initialDescription?: string;
 	initialPriority?: GoalPriority;
+	initialMissionType?: MissionType;
+	initialAutonomyLevel?: AutonomyLevel;
+	initialMetrics?: MissionMetric[];
+	initialSchedule?: CronSchedule;
 	onSubmit: (data: CreateGoalFormData) => Promise<void>;
 	onCancel: () => void;
 	isLoading?: boolean;
 	submitLabel?: string;
 }
 
+/** Stable-keyed metric entry used internally to avoid index-as-key issues. */
+type MetricEntry = { id: string; metric: MissionMetric };
+
+let _metricKeyCounter = 0;
+function newMetricEntry(metric: MissionMetric): MetricEntry {
+	return { id: `m-${++_metricKeyCounter}`, metric };
+}
+
 function GoalForm({
 	initialTitle = '',
 	initialDescription = '',
 	initialPriority = 'normal',
+	initialMissionType = 'one_shot',
+	initialAutonomyLevel = 'supervised',
+	initialMetrics,
+	initialSchedule,
 	onSubmit,
 	onCancel,
 	isLoading,
@@ -364,24 +389,31 @@ function GoalForm({
 	const [title, setTitle] = useState(initialTitle);
 	const [description, setDescription] = useState(initialDescription);
 	const [priority, setPriority] = useState<GoalPriority>(initialPriority);
-	const [missionType, setMissionType] = useState<MissionType>('one_shot');
-	const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>('supervised');
-	const [metrics, setMetrics] = useState<MissionMetric[]>([]);
-	const [schedulePreset, setSchedulePreset] = useState<string>('@daily');
-	const [customCron, setCustomCron] = useState('');
-	const [timezone, setTimezone] = useState('UTC');
+	const [missionType, setMissionType] = useState<MissionType>(initialMissionType);
+	const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>(initialAutonomyLevel);
+	const [metricEntries, setMetricEntries] = useState<MetricEntry[]>(
+		() => (initialMetrics ?? []).map(newMetricEntry)
+	);
+	const [schedulePreset, setSchedulePreset] = useState<string>(() =>
+		scheduleToPreset(initialSchedule)
+	);
+	const [customCron, setCustomCron] = useState(() => {
+		if (!initialSchedule) return '';
+		return scheduleToPreset(initialSchedule) === 'custom' ? initialSchedule.expression : '';
+	});
+	const [timezone, setTimezone] = useState(initialSchedule?.timezone ?? 'UTC');
 	const [isSubmitting, setIsSubmitting] = useState(false);
 
 	const handleMetricChange = (index: number, metric: MissionMetric) => {
-		setMetrics((prev) => prev.map((m, i) => (i === index ? metric : m)));
+		setMetricEntries((prev) => prev.map((e, i) => (i === index ? { ...e, metric } : e)));
 	};
 
 	const handleMetricRemove = (index: number) => {
-		setMetrics((prev) => prev.filter((_, i) => i !== index));
+		setMetricEntries((prev) => prev.filter((_, i) => i !== index));
 	};
 
 	const handleAddMetric = () => {
-		setMetrics((prev) => [...prev, { name: '', target: 100, current: 0 }]);
+		setMetricEntries((prev) => [...prev, newMetricEntry({ name: '', target: 100, current: 0 })]);
 	};
 
 	const buildSchedule = (): CronSchedule | undefined => {
@@ -391,9 +423,12 @@ function GoalForm({
 		return { expression, timezone };
 	};
 
+	const isCustomCronEmpty =
+		missionType === 'recurring' && schedulePreset === 'custom' && !customCron.trim();
+
 	const handleSubmit = async (e: Event) => {
 		e.preventDefault();
-		if (!title.trim()) return;
+		if (!title.trim() || isCustomCronEmpty) return;
 
 		setIsSubmitting(true);
 		try {
@@ -403,14 +438,14 @@ function GoalForm({
 				priority,
 				missionType,
 				autonomyLevel,
-				structuredMetrics: missionType === 'measurable' ? metrics : undefined,
+				structuredMetrics: missionType === 'measurable' ? metricEntries.map((e) => e.metric) : undefined,
 				schedule: buildSchedule(),
 			});
+			onCancel(); // only close on success
 		} catch {
-			// Error already logged by the store layer
+			// Leave modal open so user can retry
 		} finally {
 			setIsSubmitting(false);
-			onCancel();
 		}
 	};
 
@@ -491,7 +526,7 @@ function GoalForm({
 							+ Add Metric
 						</button>
 					</div>
-					{metrics.length === 0 ? (
+					{metricEntries.length === 0 ? (
 						<p class="text-xs text-gray-500 italic">
 							No metrics yet — click "Add Metric" to track KPIs.
 						</p>
@@ -503,9 +538,9 @@ function GoalForm({
 								<span class="text-[10px] text-gray-500 uppercase">Unit</span>
 								<span />
 							</div>
-							{metrics.map((metric, i) => (
+							{metricEntries.map(({ id, metric }, i) => (
 								<MetricRow
-									key={i}
+									key={id}
 									metric={metric}
 									index={i}
 									onChange={handleMetricChange}
@@ -629,7 +664,7 @@ function GoalForm({
 				</Button>
 				<Button
 					type="submit"
-					disabled={!title.trim() || isSubmitting || isLoading}
+					disabled={!title.trim() || isCustomCronEmpty || isSubmitting || isLoading}
 					loading={isSubmitting || isLoading}
 				>
 					{submitLabel}
@@ -801,6 +836,10 @@ function GoalItem({
 					initialTitle={goal.title}
 					initialDescription={goal.description}
 					initialPriority={goal.priority}
+					initialMissionType={goal.missionType ?? 'one_shot'}
+					initialAutonomyLevel={goal.autonomyLevel ?? 'supervised'}
+					initialMetrics={goal.structuredMetrics ?? []}
+					initialSchedule={goal.schedule ?? undefined}
 					onSubmit={async (data) => {
 						setIsUpdating(true);
 						try {

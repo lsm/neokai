@@ -186,6 +186,7 @@ E2E tests are **pure browser-based Playwright tests** simulating real end-user i
 
 **Allowed exceptions (infrastructure only):**
 - Session cleanup in `afterEach`/teardown via `hub.request('session.delete', ...)` — reliability matters for cleanup
+- Room create/delete in `beforeEach`/`afterEach` via `hub.request('room.create', ...)` / `hub.request('room.delete', ...)` — accepted infrastructure pattern for test isolation
 - Session ID extraction in `waitForSessionCreated()` helper — reads signals as fallback for URL-based extraction
 - `waitForWebSocketConnected()` — may check hub state as fallback alongside UI indicator
 - Global teardown (`global-teardown.ts`) — RPC-based session/worktree cleanup
