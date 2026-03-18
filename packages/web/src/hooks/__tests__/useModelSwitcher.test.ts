@@ -144,6 +144,7 @@ describe('useModelSwitcher', () => {
 			expect(getProviderLabel('glm')).toBe('GLM');
 			expect(getProviderLabel('openai')).toBe('OpenAI');
 			expect(getProviderLabel('anthropic-copilot')).toBe('Copilot');
+			expect(getProviderLabel('anthropic-codex')).toBe('Codex');
 			expect(getProviderLabel('google')).toBe('Google');
 		});
 
