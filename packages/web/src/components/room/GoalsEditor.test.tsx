@@ -482,6 +482,58 @@ describe('GoalsEditor', () => {
 
 			expect(document.body.querySelector('[data-testid="custom-cron"]')).toBeTruthy();
 		});
+
+		it('should disable submit when recurring + custom preset + empty cron expression', () => {
+			const { container } = render(<GoalsEditor goals={[]} {...defaultHandlers} />);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// Fill in title
+			const titleInput = document.body.querySelector('#goal-title') as HTMLInputElement;
+			fireEvent.input(titleInput, { target: { value: 'My recurring mission' } });
+
+			// Select recurring type
+			const recurringBtn = document.body.querySelector('[data-testid="mission-type-recurring"]');
+			fireEvent.click(recurringBtn!);
+
+			// Select custom preset (cron field empty)
+			const presetSelect = document.body.querySelector('[data-testid="schedule-preset"]');
+			fireEvent.change(presetSelect!, { target: { value: 'custom' } });
+
+			// Submit button should be disabled
+			const submitBtn = Array.from(document.body.querySelectorAll('button[type="submit"]')).at(
+				-1
+			) as HTMLButtonElement;
+			expect(submitBtn.disabled).toBe(true);
+		});
+
+		it('should keep modal open when submission fails', async () => {
+			const failingCreate = vi.fn().mockRejectedValue(new Error('Network error'));
+			const { container } = render(
+				<GoalsEditor goals={[]} {...defaultHandlers} onCreateGoal={failingCreate} />
+			);
+
+			const createButton = Array.from(container.querySelectorAll('button')).find(
+				(btn) => btn.textContent === 'Create Mission'
+			);
+			fireEvent.click(createButton!);
+
+			// Fill in title and submit
+			const titleInput = document.body.querySelector('#goal-title') as HTMLInputElement;
+			fireEvent.input(titleInput, { target: { value: 'Test Mission' } });
+
+			const submitBtn = Array.from(document.body.querySelectorAll('button[type="submit"]')).at(-1)!;
+			fireEvent.click(submitBtn);
+
+			// Wait for async rejection to settle
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			// Modal should still be open (title input still present)
+			expect(document.body.querySelector('#goal-title')).toBeTruthy();
+		});
 	});
 
 	describe('Auto-Completed Notifications', () => {

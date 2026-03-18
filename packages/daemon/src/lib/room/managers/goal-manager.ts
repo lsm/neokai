@@ -13,6 +13,7 @@ import type { Database as BunDatabase } from 'bun:sqlite';
 import {
 	GoalRepository,
 	type CreateGoalParams,
+	type UpdateGoalParams,
 } from '../../../storage/repositories/goal-repository';
 import { TaskRepository } from '../../../storage/repositories/task-repository';
 import type {
@@ -295,6 +296,23 @@ export class GoalManager {
 			throw new Error(`Failed to update goal: ${goalId}`);
 		}
 
+		return updatedGoal;
+	}
+
+	/**
+	 * General-purpose patch for editable fields (title, description, missionType,
+	 * autonomyLevel, structuredMetrics, schedule, priority, and similar).
+	 * Does NOT change status or recalculate progress.
+	 */
+	async patchGoal(goalId: string, patch: UpdateGoalParams): Promise<RoomGoal> {
+		const goal = await this.getGoal(goalId);
+		if (!goal) {
+			throw new Error(`Goal not found: ${goalId}`);
+		}
+		const updatedGoal = this.goalRepo.updateGoal(goalId, patch);
+		if (!updatedGoal) {
+			throw new Error(`Failed to update goal: ${goalId}`);
+		}
 		return updatedGoal;
 	}
 

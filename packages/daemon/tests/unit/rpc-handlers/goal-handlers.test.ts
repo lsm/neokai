@@ -107,6 +107,20 @@ const mockGoalManager = {
 			updatedAt: Date.now(),
 		})
 	),
+	patchGoal: mock(
+		async (): Promise<RoomGoal> => ({
+			id: 'goal-123',
+			roomId: 'room-123',
+			title: 'Updated Goal',
+			description: 'Updated description',
+			status: 'active' as GoalStatus,
+			priority: 'normal' as GoalPriority,
+			progress: 0,
+			linkedTaskIds: [],
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		})
+	),
 	needsHumanGoal: mock(
 		async (): Promise<RoomGoal> => ({
 			id: 'goal-123',
@@ -232,6 +246,7 @@ describe('Goal RPC Handlers', () => {
 		mockGoalManager.updateGoalStatus.mockClear();
 		mockGoalManager.updateGoalProgress.mockClear();
 		mockGoalManager.updateGoalPriority.mockClear();
+		mockGoalManager.patchGoal.mockClear();
 		mockGoalManager.needsHumanGoal.mockClear();
 		mockGoalManager.reactivateGoal.mockClear();
 		mockGoalManager.linkTaskToGoal.mockClear();
@@ -476,12 +491,67 @@ describe('Goal RPC Handlers', () => {
 			).rejects.toThrow('No update fields provided');
 		});
 
-		it('throws error when updates has no recognized fields', async () => {
+		it('patches title via patchGoal', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			const result = await handler!(
+				{ roomId: 'room-123', goalId: 'goal-123', updates: { title: 'New Title' } },
+				{}
+			);
+
+			expect(mockGoalManager.patchGoal).toHaveBeenCalledWith('goal-123', { title: 'New Title' });
+			expect((result as { goal: RoomGoal }).goal).toBeDefined();
+		});
+
+		it('patches missionType and autonomyLevel via patchGoal', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			await handler!(
+				{
+					roomId: 'room-123',
+					goalId: 'goal-123',
+					updates: { missionType: 'measurable', autonomyLevel: 'semi_autonomous', priority: 'high' },
+				},
+				{}
+			);
+
+			expect(mockGoalManager.patchGoal).toHaveBeenCalledWith('goal-123', {
+				priority: 'high',
+				missionType: 'measurable',
+				autonomyLevel: 'semi_autonomous',
+			});
+		});
+
+		it('patches structuredMetrics and schedule via patchGoal', async () => {
+			const handler = messageHubData.handlers.get('goal.update');
+			expect(handler).toBeDefined();
+
+			const metrics = [{ name: 'Coverage', target: 90, current: 0 }];
+			const schedule = { expression: '@daily', timezone: 'UTC' };
+
+			await handler!(
+				{
+					roomId: 'room-123',
+					goalId: 'goal-123',
+					updates: { structuredMetrics: metrics, schedule },
+				},
+				{}
+			);
+
+			expect(mockGoalManager.patchGoal).toHaveBeenCalledWith('goal-123', {
+				structuredMetrics: metrics,
+				schedule,
+			});
+		});
+
+		it('throws error when updates has truly no recognized fields', async () => {
 			const handler = messageHubData.handlers.get('goal.update');
 			expect(handler).toBeDefined();
 
 			await expect(
-				handler!({ roomId: 'room-123', goalId: 'goal-123', updates: { title: 'New Title' } }, {})
+				handler!({ roomId: 'room-123', goalId: 'goal-123', updates: {} }, {})
 			).rejects.toThrow('No update fields provided');
 		});
 
