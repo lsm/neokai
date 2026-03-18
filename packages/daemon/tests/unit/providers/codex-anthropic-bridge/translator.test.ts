@@ -348,15 +348,27 @@ describe('SSE builders', () => {
 		expect((data as { type: string; index: number }).index).toBe(2);
 	});
 
-	it('messageDeltaSSE emits stop_reason and output tokens', () => {
+	it('messageDeltaSSE emits stop_reason and output tokens (plain number)', () => {
 		const { data } = parseSSE(messageDeltaSSE('end_turn', 42));
 		expect((data as { delta: { stop_reason: string } }).delta.stop_reason).toBe('end_turn');
 		expect((data as { usage: { output_tokens: number } }).usage.output_tokens).toBe(42);
 	});
 
-	it('messageDeltaSSE emits tool_use stop_reason', () => {
+	it('messageDeltaSSE accepts a usage object with actual token count', () => {
+		const { data } = parseSSE(messageDeltaSSE('end_turn', { outputTokens: 99 }));
+		expect((data as { delta: { stop_reason: string } }).delta.stop_reason).toBe('end_turn');
+		expect((data as { usage: { output_tokens: number } }).usage.output_tokens).toBe(99);
+	});
+
+	it('messageDeltaSSE emits tool_use stop_reason (plain number)', () => {
 		const { data } = parseSSE(messageDeltaSSE('tool_use', 10));
 		expect((data as { delta: { stop_reason: string } }).delta.stop_reason).toBe('tool_use');
+	});
+
+	it('messageDeltaSSE emits tool_use stop_reason (usage object)', () => {
+		const { data } = parseSSE(messageDeltaSSE('tool_use', { outputTokens: 10 }));
+		expect((data as { delta: { stop_reason: string } }).delta.stop_reason).toBe('tool_use');
+		expect((data as { usage: { output_tokens: number } }).usage.output_tokens).toBe(10);
 	});
 
 	it('messageStopSSE emits message_stop', () => {

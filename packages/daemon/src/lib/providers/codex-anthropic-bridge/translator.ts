@@ -272,10 +272,17 @@ export function contentBlockStopSSE(index: number): string {
 	});
 }
 
+export type MessageDeltaUsage = {
+	/** Actual output token count. Pass the heuristic estimate when real count is unavailable. */
+	outputTokens: number;
+};
+
 export function messageDeltaSSE(
 	stopReason: 'end_turn' | 'tool_use' | 'max_tokens',
-	outputTokens: number
+	usage: MessageDeltaUsage | number
 ): string {
+	// Accept either a plain number (legacy callers) or a MessageDeltaUsage object.
+	const outputTokens = typeof usage === 'number' ? usage : usage.outputTokens;
 	return sseEvent('message_delta', {
 		type: 'message_delta',
 		delta: { stop_reason: stopReason, stop_sequence: null },

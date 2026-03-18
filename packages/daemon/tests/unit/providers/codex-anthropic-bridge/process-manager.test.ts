@@ -245,6 +245,127 @@ describe('BridgeSession item/agentMessage/delta', () => {
 });
 
 // ---------------------------------------------------------------------------
+// thread/tokenUsage/updated — token usage capture
+// ---------------------------------------------------------------------------
+
+describe('BridgeSession thread/tokenUsage/updated', () => {
+	it('captures token usage and returns it via getUsage()', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		// Before any notification, getUsage() returns null
+		expect(session.getUsage()).toBeNull();
+
+		setTimeout(() => {
+			// Fire the token usage notification (nested usage object shape)
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				usage: { inputTokens: 150, outputTokens: 75 },
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		// getUsage() should reflect what arrived
+		expect(session.getUsage()).toEqual({ inputTokens: 150, outputTokens: 75 });
+	});
+
+	it('captures token usage from flat params shape', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Fire the token usage notification (flat params shape)
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				inputTokens: 200,
+				outputTokens: 100,
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		for await (const _event of gen) {
+			// drain
+		}
+
+		expect(session.getUsage()).toEqual({ inputTokens: 200, outputTokens: 100 });
+	});
+
+	it('populates turn_done with actual token counts from thread/tokenUsage/updated', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Usage notification arrives before turn/completed (normal ordering)
+			fireNotification('thread/tokenUsage/updated', {
+				threadId: 'thread-1',
+				usage: { inputTokens: 300, outputTokens: 42 },
+			});
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+		const done = doneEvents[0] as { type: 'turn_done'; inputTokens: number; outputTokens: number };
+		expect(done.inputTokens).toBe(300);
+		expect(done.outputTokens).toBe(42);
+	});
+
+	it('falls back to 0 tokens in turn_done when no tokenUsage notification arrives', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// No thread/tokenUsage/updated — only turn/completed
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+		const done = doneEvents[0] as { type: 'turn_done'; inputTokens: number; outputTokens: number };
+		expect(done.inputTokens).toBe(0);
+		expect(done.outputTokens).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // BridgeSession single-use guard (regression: P1 fix)
 // ---------------------------------------------------------------------------
 

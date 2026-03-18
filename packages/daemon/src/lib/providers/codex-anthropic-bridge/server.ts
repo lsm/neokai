@@ -133,7 +133,9 @@ export async function drainToSSE(
 			send(contentBlockStartToolUseSSE(blockIndex, event.callId, event.toolName));
 			send(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)));
 			send(contentBlockStopSSE(blockIndex));
-			send(messageDeltaSSE('tool_use', outputTokens));
+			// Use actual output tokens from bridge session if available; fall back to heuristic.
+			const toolUseOutputTokens = session.getUsage()?.outputTokens ?? outputTokens;
+			send(messageDeltaSSE('tool_use', { outputTokens: toolUseOutputTokens }));
 			send(messageStopSSE());
 
 			// Store the session so the next HTTP request can resume it.
@@ -163,7 +165,10 @@ export async function drainToSSE(
 				send(contentBlockStopSSE(blockIndex));
 				textBlockOpen = false;
 			}
-			send(messageDeltaSSE('end_turn', event.outputTokens ?? outputTokens));
+			// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
+			// or from legacy inline usage. Fall back to heuristic count if both are 0.
+			const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
+			send(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }));
 			send(messageStopSSE());
 			session.kill();
 			controller.close();
@@ -187,7 +192,7 @@ export async function drainToSSE(
 	if (textBlockOpen) {
 		send(contentBlockStopSSE(blockIndex));
 	}
-	send(messageDeltaSSE('end_turn', outputTokens));
+	send(messageDeltaSSE('end_turn', { outputTokens: outputTokens }));
 	send(messageStopSSE());
 	session.kill();
 	controller.close();
