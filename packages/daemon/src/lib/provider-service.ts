@@ -334,9 +334,10 @@ export class ProviderService {
 	}
 
 	/**
-	 * Detect if a model ID belongs to GLM provider
+	 * Detect if a model ID belongs to GLM provider.
 	 *
-	 * Delegates to registry.detectProvider()
+	 * @deprecated Use explicit `providerId` comparison instead. GLM model IDs are currently
+	 *   unique (no collision), but prefer routing by provider ID for consistency.
 	 */
 	isGlmModel(modelId: string): boolean {
 		const registry = this.getRegistry();
@@ -345,9 +346,10 @@ export class ProviderService {
 	}
 
 	/**
-	 * Detect provider from model ID
+	 * Detect provider from model ID alone.
 	 *
-	 * Delegates to registry.detectProvider()
+	 * @deprecated Use `detectProviderForModel(modelId, providerId)` with an explicit provider ID.
+	 *   This method is ambiguous when multiple providers claim the same model ID.
 	 */
 	detectProviderFromModel(modelId: string): Provider {
 		const registry = this.getRegistry();
@@ -356,9 +358,10 @@ export class ProviderService {
 	}
 
 	/**
-	 * Translate a model ID to an SDK-recognized model ID
+	 * Translate a model ID to an SDK-recognized model ID.
 	 *
-	 * Delegates to provider.translateModelIdForSdk()
+	 * @deprecated Pass explicit `providerId` to resolve which provider's translation to apply.
+	 *   Delegates to provider.translateModelIdForSdk()
 	 */
 	translateModelIdForSdk(modelId: string): string {
 		const registry = this.getRegistry();
@@ -373,16 +376,15 @@ export class ProviderService {
 	}
 
 	/**
-	 * Get environment variables for SDK subprocess based on model ID
+	 * Get environment variables for SDK subprocess based on explicit (modelId, providerId) pair.
 	 *
-	 * Delegates to provider.buildSdkConfig()
+	 * Both the model ID and provider ID must be known at the call site. Use
+	 * `getProviderEnvVars(session)` when you have a full session object.
 	 *
-	 * @param modelId - The model ID to get env vars for
-	 * @param providerId - When supplied, look up provider by ID instead of auto-detecting from
-	 *   modelId. Required when model IDs are shared across providers (e.g. claude-opus-4.6 is
-	 *   claimed by both Anthropic and AnthropicCopilot).
+	 * @param modelId - The model ID (used for SDK config building)
+	 * @param providerId - The provider ID — must be explicit; routing is deterministic
 	 */
-	getEnvVarsForModel(modelId: string, providerId?: string): ProviderEnvVars {
+	getEnvVarsForModel(modelId: string, providerId: string): ProviderEnvVars {
 		const registry = this.getRegistry();
 		const provider = registry.detectProviderForModel(modelId, providerId);
 
@@ -445,19 +447,18 @@ export class ProviderService {
 	}
 
 	/**
-	 * Apply provider environment variables to process.env
+	 * Apply provider environment variables to process.env.
 	 *
 	 * IMPORTANT: These must be set in the parent process before SDK query creation.
 	 * The SDK subprocess inherits these environment variables when spawned.
 	 *
 	 * This method saves the original values and returns them for restoration.
 	 *
-	 * @param modelId - The model ID to get env vars for
-	 * @param providerId - When supplied, look up provider by ID instead of auto-detecting from
-	 *   modelId. Required when model IDs are shared across providers.
+	 * @param modelId - The model ID (used for SDK config building)
+	 * @param providerId - The provider ID — must be explicit; routing is deterministic
 	 * @returns Original env vars that should be restored after SDK query
 	 */
-	applyEnvVarsToProcess(modelId: string, providerId?: string): OriginalEnvVars {
+	applyEnvVarsToProcess(modelId: string, providerId: string): OriginalEnvVars {
 		const envVars = this.getEnvVarsForModel(modelId, providerId);
 
 		// For Anthropic (or any non-overriding provider), explicitly clear routing

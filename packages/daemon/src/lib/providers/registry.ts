@@ -77,51 +77,37 @@ export class ProviderRegistry {
 	}
 
 	/**
-	 * Detect provider for a model ID, optionally preferring a specific provider.
+	 * Resolve provider by explicit (modelId, providerId) pair — fully deterministic.
 	 *
-	 * Iterates ALL registered providers to collect every match, then:
-	 * - If `preferredProviderId` is given and it's in the match set, returns it without warning
-	 *   (the caller has already resolved the ambiguity).
-	 * - If multiple providers claim the model and no preference resolves the collision, logs a
-	 *   warning listing all colliding provider IDs, then returns the first registered match.
-	 * - Returns the first match (preserving registration order for backwards compatibility).
+	 * Both the model ID and provider ID must be known at the call site. This is the
+	 * preferred routing method: when the UI selects a model it always has the associated
+	 * provider ID, so there is never any ambiguity.
 	 *
-	 * Returns undefined if no provider claims the model.
+	 * Logs an error and returns `undefined` if the provider is not registered.
 	 */
-	detectProviderForModel(modelId: string, preferredProviderId?: string): Provider | undefined {
-		const matches = this.getAll().filter((p) => p.ownsModel(modelId));
-
-		if (matches.length === 0) {
-			return undefined;
+	detectProviderForModel(modelId: string, providerId: string): Provider | undefined {
+		const provider = this.providers.get(providerId);
+		if (!provider) {
+			log.error(`[routing] Unknown provider '${providerId}' for model '${modelId}'`);
 		}
-
-		// If the caller expressed a preference, try to honour it.
-		// When the preferred provider is in the match set the collision is resolved
-		// unambiguously — no warning needed.
-		if (preferredProviderId) {
-			const preferred = matches.find((p) => p.id === preferredProviderId);
-			if (preferred) {
-				return preferred;
-			}
-		}
-
-		// Multiple providers claim the model and the preference (if any) didn't resolve it.
-		if (matches.length > 1) {
-			const ids = matches.map((p) => p.id).join(', ');
-			log.warn(`Model '${modelId}' claimed by multiple providers: ${ids}. Using ${matches[0].id}.`);
-		}
-
-		return matches[0];
+		return provider;
 	}
 
 	/**
-	 * Detect provider from model ID
-	 * Asks each provider if it owns the model
+	 * Heuristic provider detection from model ID alone.
 	 *
-	 * Returns undefined if no provider claims the model
+	 * @deprecated Use `detectProviderForModel(modelId, providerId)` with an explicit provider ID.
+	 *   This method is ambiguous when multiple providers claim the same model ID
+	 *   (e.g. 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
+	 *   It is retained only for legacy paths (e.g. old sessions without a stored provider).
 	 */
 	detectProvider(modelId: string): Provider | undefined {
-		return this.detectProviderForModel(modelId);
+		for (const provider of this.getAll()) {
+			if (provider.ownsModel(modelId)) {
+				return provider;
+			}
+		}
+		return undefined;
 	}
 
 	/**

@@ -81,13 +81,17 @@ export class ModelSwitchHandler {
 	}
 
 	/**
-	 * Switch to a different model mid-session
+	 * Switch to a different model mid-session.
 	 *
 	 * Always restarts the query to ensure SDK emits a fresh system:init message
 	 * with the correct model. This is necessary because SDK's setModel() doesn't
 	 * update the cached system:init, causing stale model info in the UI.
+	 *
+	 * @param newModel - Target model ID or alias
+	 * @param newProvider - Explicit provider ID. When provided, routing is deterministic.
+	 *   If omitted, the provider is inferred from the model's metadata (legacy path).
 	 */
-	async switchModel(newModel: string): Promise<ModelSwitchResult> {
+	async switchModel(newModel: string, newProvider?: string): Promise<ModelSwitchResult> {
 		const {
 			session,
 			db,
@@ -146,15 +150,13 @@ export class ModelSwitchHandler {
 			// Check if query is running AND ProcessTransport is ready
 			const transportReady = firstMessageReceived;
 
-			// Detect new provider instance to keep provider config aligned with the model
+			// Resolve the target provider — deterministic when caller supplies newProvider.
+			// Fall back to model metadata or heuristic detection only for legacy paths.
 			const providerRegistry = getProviderRegistry();
-			// Use provider from model info to correctly handle shared canonical IDs
-			// (e.g., 'claude-sonnet-4.6' is owned by both Anthropic and anthropic-copilot).
-			// detectProvider() would otherwise return Anthropic for 'claude-sonnet-4.6'.
-			const newProviderInstance = providerRegistry.detectProviderForModel(
-				resolvedModel,
-				modelInfo?.provider
-			);
+			const targetProviderId = newProvider ?? modelInfo?.provider;
+			const newProviderInstance = targetProviderId
+				? providerRegistry.detectProviderForModel(resolvedModel, targetProviderId)
+				: providerRegistry.detectProvider(resolvedModel);
 
 			if (!queryObject || !transportReady) {
 				// Query not started yet OR transport not ready - just update config

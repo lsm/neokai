@@ -124,11 +124,13 @@ export class QueryRunner {
 			const { initializeProviders } = await import('../providers/factory.js');
 			const providerRegistry = initializeProviders();
 			const modelId = session.config.model || 'sonnet';
-			// Check explicit provider first (stored during session creation when model alias is resolved).
-			// This is critical when canonical model IDs are shared across providers
-			// (e.g., claude-sonnet-4.6), which would be misrouted if we only used detectProvider().
+			// Routing is deterministic: session.config.provider is always set by the model
+			// picker and stored on every model switch. Legacy sessions without a stored
+			// provider fall back to heuristic detection (@deprecated path).
 			const explicitProviderId = session.config.provider as string | undefined;
-			const provider = providerRegistry.detectProviderForModel(modelId, explicitProviderId);
+			const provider = explicitProviderId
+				? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
+				: providerRegistry.detectProvider(modelId);
 
 			// Check if the provider supports getAuthStatus (OAuth-style providers)
 			if (provider?.getAuthStatus) {
@@ -191,10 +193,9 @@ export class QueryRunner {
 			{
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();
-				// Pass explicitProviderId so providers whose model IDs are also claimed by
-				// Anthropic (e.g. AnthropicToCopilotBridgeProvider uses claude-opus-4.6) are not
-				// incorrectly routed to Anthropic by detectProvider().
-				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, explicitProviderId);
+				// Use the resolved provider ID (falls back to 'anthropic' for legacy sessions)
+				const resolvedProviderId = explicitProviderId ?? provider?.id ?? 'anthropic';
+				const originalEnvVars = providerService.applyEnvVarsToProcess(modelId, resolvedProviderId);
 				this.ctx.originalEnvVars = originalEnvVars;
 			}
 

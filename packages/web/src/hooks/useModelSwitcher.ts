@@ -33,8 +33,8 @@ export interface UseModelSwitcherResult {
 	switching: boolean;
 	/** Whether models are being loaded */
 	loading: boolean;
-	/** Switch to a different model */
-	switchModel: (modelId: string) => Promise<void>;
+	/** Switch to a different model. Both model ID and provider ID must be supplied. */
+	switchModel: (modelId: string, providerId: string) => Promise<void>;
 	/** Reload model info */
 	reload: () => Promise<void>;
 }
@@ -177,7 +177,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 	}, [loadModelInfo]);
 
 	const switchModel = useCallback(
-		async (newModelId: string) => {
+		async (newModelId: string, newProviderId: string) => {
 			if (newModelId === currentModel) {
 				toast.info(`Already using ${currentModelInfo?.name || currentModel}`);
 				return;
@@ -194,6 +194,7 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 				const result = (await hub.request('session.model.switch', {
 					sessionId,
 					model: newModelId,
+					provider: newProviderId,
 				})) as {
 					success: boolean;
 					model: string;

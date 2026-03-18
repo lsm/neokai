@@ -31,6 +31,7 @@ describe('SessionStatusBar', () => {
 			alias: 'opus',
 			name: 'Opus 4.5',
 			family: 'opus',
+			provider: 'anthropic',
 			isDefault: false,
 		},
 		{
@@ -38,6 +39,7 @@ describe('SessionStatusBar', () => {
 			alias: 'sonnet',
 			name: 'Sonnet 4.5',
 			family: 'sonnet',
+			provider: 'anthropic',
 			isDefault: true,
 		},
 		{
@@ -45,6 +47,7 @@ describe('SessionStatusBar', () => {
 			alias: 'haiku',
 			name: 'Haiku 4.5',
 			family: 'haiku',
+			provider: 'anthropic',
 			isDefault: false,
 		},
 	];
@@ -425,7 +428,7 @@ describe('SessionStatusBar', () => {
 			const opusButton = buttons.find((btn) => btn.textContent?.includes('Opus 4.5'));
 			fireEvent.click(opusButton!);
 
-			expect(mockOnModelSwitch).toHaveBeenCalledWith('opus');
+			expect(mockOnModelSwitch).toHaveBeenCalledWith('opus', 'anthropic');
 		});
 
 		it('should close model dropdown when clicking it again', () => {

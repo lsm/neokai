@@ -239,115 +239,67 @@ describe('ProviderRegistry', () => {
 			expect(registry.detectProvider('any-model')).toBeUndefined();
 		});
 
-		it('should return the same result as before (backwards compatible) when multiple providers claim a model', () => {
-			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
+		it('should return the first registered provider (legacy heuristic, no warning)', () => {
+			// detectProvider is deprecated — it does simple first-match, no collision warning
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
 
-			try {
-				// Register anthropic first — it should be the first match
-				registry.register(makeAnthropicProvider());
-				registry.register(makeAnthropicCopilotProvider());
-
-				const result = registry.detectProvider('claude-opus-4.6');
-				expect(result?.id).toBe('anthropic');
-				// Collision warning should fire (no preference was given)
-				expect(warnSpy).toHaveBeenCalledTimes(1);
-			} finally {
-				warnSpy.mockRestore();
-			}
+			const result = registry.detectProvider('claude-opus-4.6');
+			expect(result?.id).toBe('anthropic');
 		});
 	});
 
 	describe('detectProviderForModel', () => {
-		it('should return preferred provider when it claims the model without logging a warning', () => {
-			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
-
-			try {
-				registry.register(makeAnthropicProvider());
-				registry.register(makeAnthropicCopilotProvider());
-
-				const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
-				expect(result?.id).toBe('anthropic-copilot');
-				// Preference resolved the collision — no warning should be emitted
-				expect(warnSpy).not.toHaveBeenCalled();
-			} finally {
-				warnSpy.mockRestore();
-			}
-		});
-
-		it('should return first registered provider and log collision when no preference and multiple matches', () => {
-			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
-
-			try {
-				registry.register(makeAnthropicProvider());
-				registry.register(makeAnthropicCopilotProvider());
-
-				const result = registry.detectProviderForModel('claude-opus-4.6');
-				expect(result?.id).toBe('anthropic');
-
-				// Warn should have been called once with collision info
-				expect(warnSpy).toHaveBeenCalledTimes(1);
-				const warnArg = warnSpy.mock.calls[0][0] as string;
-				expect(warnArg).toContain('anthropic');
-				expect(warnArg).toContain('anthropic-copilot');
-				expect(warnArg).toContain('claude-opus-4.6');
-			} finally {
-				warnSpy.mockRestore();
-			}
-		});
-
-		it('should return codex provider when preferred and model starts with gpt-, no warning', () => {
-			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
-
-			try {
-				// anthropic-codex owns both claude- and gpt- models; only it owns gpt- here
-				registry.register(makeAnthropicCodexProvider());
-
-				const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
-				expect(result?.id).toBe('anthropic-codex');
-				expect(warnSpy).not.toHaveBeenCalled();
-			} finally {
-				warnSpy.mockRestore();
-			}
-		});
-
-		it('should return undefined when no provider claims the model', () => {
+		it('should return copilot provider when providerId is anthropic-copilot', () => {
 			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
 
-			expect(registry.detectProviderForModel('unknown-xyz-model')).toBeUndefined();
+			// Deterministic: explicit providerId → always the right provider regardless of model
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic-copilot');
+			expect(result?.id).toBe('anthropic-copilot');
 		});
 
-		it('should return single match without logging collision', () => {
-			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
+		it('should return anthropic provider when providerId is anthropic', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProviderForModel('claude-opus-4.6', 'anthropic');
+			expect(result?.id).toBe('anthropic');
+		});
+
+		it('should return codex provider for gpt- model when providerId is anthropic-codex', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCodexProvider());
+
+			const result = registry.detectProviderForModel('gpt-5.3-codex', 'anthropic-codex');
+			expect(result?.id).toBe('anthropic-codex');
+		});
+
+		it('should return undefined and log an error when providerId is not registered', () => {
+			const errorSpy = spyOn(Logger.prototype, 'error').mockImplementation(mock(() => {}));
 
 			try {
 				registry.register(makeAnthropicProvider());
 
-				const result = registry.detectProviderForModel('claude-opus-4.6');
-				expect(result?.id).toBe('anthropic');
-				expect(warnSpy).not.toHaveBeenCalled();
-			} finally {
-				warnSpy.mockRestore();
-			}
-		});
-
-		it('should fall back to first match and log collision when preference is not in match set', () => {
-			const warnSpy = spyOn(Logger.prototype, 'warn').mockImplementation(mock(() => {}));
-
-			try {
-				registry.register(makeAnthropicProvider());
-				registry.register(makeAnthropicCopilotProvider());
-
-				// 'nonexistent-provider' is not in the match set — collision is unresolved
 				const result = registry.detectProviderForModel('claude-opus-4.6', 'nonexistent-provider');
-				// Falls back to first match
-				expect(result?.id).toBe('anthropic');
-				// Collision warning should have fired since preference couldn't resolve it
-				expect(warnSpy).toHaveBeenCalledTimes(1);
-				const warnArg = warnSpy.mock.calls[0][0] as string;
-				expect(warnArg).toContain('claude-opus-4.6');
+				expect(result).toBeUndefined();
+				// Error should be logged for the unknown provider
+				expect(errorSpy).toHaveBeenCalledTimes(1);
+				const errArg = errorSpy.mock.calls[0][0] as string;
+				expect(errArg).toContain('nonexistent-provider');
+				expect(errArg).toContain('claude-opus-4.6');
 			} finally {
-				warnSpy.mockRestore();
+				errorSpy.mockRestore();
 			}
+		});
+
+		it('detectProvider (deprecated) still returns first-registered match for legacy paths', () => {
+			// anthropic registered first — heuristic fallback returns it
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			const result = registry.detectProvider('claude-opus-4.6');
+			expect(result?.id).toBe('anthropic');
 		});
 	});
 
