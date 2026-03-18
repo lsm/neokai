@@ -188,17 +188,6 @@ async function callBridge(
 	return events;
 }
 
-/** Return the input_tokens from the message_start event, or 0 if not found. */
-function getInputTokens(events: SseEvent[]): number {
-	for (const e of events) {
-		if (e.event === 'message_start') {
-			const msg = (e.data as { message?: { usage?: { input_tokens?: number } } }).message;
-			return msg?.usage?.input_tokens ?? 0;
-		}
-	}
-	return 0;
-}
-
 /** Return the output_tokens from the message_delta event, or 0 if not found. */
 function getOutputTokens(events: SseEvent[]): number {
 	for (const e of events) {
