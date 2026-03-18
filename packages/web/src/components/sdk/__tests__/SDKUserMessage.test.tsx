@@ -4,9 +4,9 @@
  *
  * Tests user message rendering including text, images, and special cases
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { render, fireEvent } from '@testing-library/preact';
+import { render, fireEvent, cleanup } from '@testing-library/preact';
 import { SDKUserMessage } from '../SDKUserMessage';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import type { UUID } from 'crypto';
@@ -33,6 +33,10 @@ import { toast } from '../../../lib/toast.ts';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+});
+
+afterEach(() => {
+	cleanup();
 });
 
 // Helper to create a valid UUID
