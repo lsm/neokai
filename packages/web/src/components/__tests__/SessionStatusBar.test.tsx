@@ -22,6 +22,7 @@ describe('SessionStatusBar', () => {
 		id: 'sonnet',
 		name: 'Sonnet 4.5',
 		family: 'sonnet',
+		provider: 'anthropic',
 		isDefault: true,
 	};
 
@@ -412,7 +413,7 @@ describe('SessionStatusBar', () => {
 			) as HTMLButtonElement;
 			fireEvent.click(modelButton);
 
-			expect(container.textContent).toContain('(current)');
+			expect(container.textContent).toContain('✓');
 		});
 
 		it('should call onModelSwitch when a model is selected', async () => {
