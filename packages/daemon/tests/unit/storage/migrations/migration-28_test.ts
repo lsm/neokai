@@ -152,7 +152,7 @@ describe('Migration 28: mission metadata schema additions', () => {
 		expect(row.autonomy_level).toBe('supervised');
 		expect(row.schedule_paused).toBe(0);
 		expect(row.max_consecutive_failures).toBe(3);
-		expect(row.max_planning_attempts).toBe(5);
+		expect(row.max_planning_attempts).toBe(0);
 		expect(row.consecutive_failures).toBe(0);
 		expect(row.schedule).toBeNull();
 		expect(row.next_run_at).toBeNull();
@@ -271,7 +271,7 @@ describe('GoalRepository: mission metadata CRUD', () => {
 		expect(goal.autonomyLevel).toBe('supervised');
 		expect(goal.schedulePaused).toBe(false);
 		expect(goal.maxConsecutiveFailures).toBe(3);
-		expect(goal.maxPlanningAttempts).toBe(5);
+		expect(goal.maxPlanningAttempts).toBe(0);
 		expect(goal.consecutiveFailures).toBe(0);
 	});
 
