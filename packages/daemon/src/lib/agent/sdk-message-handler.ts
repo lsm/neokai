@@ -21,6 +21,7 @@ import { generateUUID } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SDKMessage, SDKUserMessage } from '@neokai/shared/sdk';
 import {
+	isSDKAPIRetryMessage,
 	isSDKAssistantMessage,
 	isSDKCompactBoundary,
 	isSDKResultSuccess,
@@ -467,6 +468,18 @@ export class SDKMessageHandler {
 			return;
 		}
 
+		// Suppress API retry messages: log at daemon level but do not save to DB or broadcast.
+		// These carry operational metadata (attempt count, delay, error) that is useful for
+		// debugging but should not appear in the transcript or accumulate in the database.
+		if (isSDKAPIRetryMessage(message)) {
+			this.logger.warn(
+				`API retry: attempt ${message.attempt}/${message.max_retries}, ` +
+					`delay ${message.retry_delay_ms}ms, status ${message.error_status ?? 'n/a'}, ` +
+					`error ${message.error}`
+			);
+			return;
+		}
+
 		// Automatically update phase based on message type
 		await stateManager.detectPhaseFromMessage(message);
 
@@ -621,7 +634,9 @@ export class SDKMessageHandler {
 
 		// Capture SDK's internal session ID if we don't have it yet
 		// This enables session resumption after daemon restart
-		if (!session.sdkSessionId && message.session_id) {
+		// Guard on isSDKSystemInit so that other system subtypes (api_retry, status, etc.)
+		// that also carry session_id cannot accidentally overwrite this field.
+		if (isSDKSystemInit(message) && !session.sdkSessionId && message.session_id) {
 			// Update in-memory session
 			session.sdkSessionId = message.session_id;
 

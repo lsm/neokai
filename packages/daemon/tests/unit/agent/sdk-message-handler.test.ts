@@ -377,6 +377,29 @@ describe('SDKMessageHandler', () => {
 
 			expect(mockSession.sdkSessionId).toBe('existing-session-id');
 		});
+
+		it('should not set sdkSessionId from api_retry message', async () => {
+			// api_retry has session_id but should not overwrite sdkSessionId
+			// — only system/init messages are the authoritative source
+			const message: SDKMessage = {
+				type: 'system',
+				subtype: 'api_retry',
+				uuid: 'retry-uuid',
+				session_id: 'retry-session-id',
+				attempt: 1,
+				max_retries: 3,
+				retry_delay_ms: 1000,
+				error_status: 429,
+				error: 'rate_limit',
+			} as unknown as SDKMessage;
+
+			await handler.handleMessage(message);
+
+			expect(mockSession.sdkSessionId).toBeUndefined();
+			// api_retry is suppressed before DB/broadcast — should not appear in transcript
+			expect(saveSDKMessageSpy).not.toHaveBeenCalled();
+			expect(publishSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('handleResultMessage', () => {
