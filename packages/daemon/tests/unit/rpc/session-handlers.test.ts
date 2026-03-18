@@ -721,7 +721,10 @@ describe('Session RPC Handlers', () => {
 			const handler = messageHubData.handlers.get('session.model.switch');
 			expect(handler).toBeDefined();
 
-			await handler!({ sessionId: 'session-123', model: 'claude-opus-4-6' }, {});
+			await handler!(
+				{ sessionId: 'session-123', model: 'claude-opus-4-6', provider: 'anthropic' },
+				{}
+			);
 
 			expect(messageHubData.hub.event).toHaveBeenCalledWith('session.updated', expect.any(Object), {
 				channel: 'session:session-123',
