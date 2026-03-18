@@ -2,45 +2,45 @@
  * cron-utils Tests
  *
  * Tests for cron expression parsing and next-run calculation:
- * - parseCronExpression: valid/invalid expressions
+ * - isValidCronExpression: valid/invalid expressions
  * - getNextRunAt: 5-field cron and preset expansion
  * - Timezone-aware scheduling
  * - getSystemTimezone fallback
  */
 
 import { describe, test, expect } from 'bun:test';
-import { parseCronExpression, getNextRunAt, getSystemTimezone } from '../../../../src/lib/room/runtime/cron-utils';
+import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../../../../src/lib/room/runtime/cron-utils';
 
-describe('parseCronExpression', () => {
+describe('isValidCronExpression', () => {
 	test('accepts valid 5-field cron expressions', () => {
-		expect(parseCronExpression('0 9 * * *')).toBe(true);    // 9am daily
-		expect(parseCronExpression('0 0 * * *')).toBe(true);    // midnight daily
-		expect(parseCronExpression('0 0 * * 0')).toBe(true);    // weekly Sunday
-		expect(parseCronExpression('30 14 1 * *')).toBe(true);  // 2:30pm on 1st of month
-		expect(parseCronExpression('*/5 * * * *')).toBe(true);  // every 5 minutes
+		expect(isValidCronExpression('0 9 * * *')).toBe(true);    // 9am daily
+		expect(isValidCronExpression('0 0 * * *')).toBe(true);    // midnight daily
+		expect(isValidCronExpression('0 0 * * 0')).toBe(true);    // weekly Sunday
+		expect(isValidCronExpression('30 14 1 * *')).toBe(true);  // 2:30pm on 1st of month
+		expect(isValidCronExpression('*/5 * * * *')).toBe(true);  // every 5 minutes
 	});
 
 	test('accepts preset aliases', () => {
-		expect(parseCronExpression('@hourly')).toBe(true);
-		expect(parseCronExpression('@daily')).toBe(true);
-		expect(parseCronExpression('@midnight')).toBe(true);
-		expect(parseCronExpression('@weekly')).toBe(true);
-		expect(parseCronExpression('@monthly')).toBe(true);
-		expect(parseCronExpression('@yearly')).toBe(true);
-		expect(parseCronExpression('@annually')).toBe(true);
+		expect(isValidCronExpression('@hourly')).toBe(true);
+		expect(isValidCronExpression('@daily')).toBe(true);
+		expect(isValidCronExpression('@midnight')).toBe(true);
+		expect(isValidCronExpression('@weekly')).toBe(true);
+		expect(isValidCronExpression('@monthly')).toBe(true);
+		expect(isValidCronExpression('@yearly')).toBe(true);
+		expect(isValidCronExpression('@annually')).toBe(true);
 	});
 
 	test('accepts case-insensitive presets', () => {
-		expect(parseCronExpression('@DAILY')).toBe(true);
-		expect(parseCronExpression('@Daily')).toBe(true);
-		expect(parseCronExpression('@HOURLY')).toBe(true);
+		expect(isValidCronExpression('@DAILY')).toBe(true);
+		expect(isValidCronExpression('@Daily')).toBe(true);
+		expect(isValidCronExpression('@HOURLY')).toBe(true);
 	});
 
 	test('rejects invalid expressions', () => {
-		expect(parseCronExpression('')).toBe(false);
-		expect(parseCronExpression('not-a-cron')).toBe(false);
-		expect(parseCronExpression('0 25 * * *')).toBe(false);  // hour 25 is invalid
-		expect(parseCronExpression('60 * * * *')).toBe(false);  // minute 60 is invalid
+		expect(isValidCronExpression('')).toBe(false);
+		expect(isValidCronExpression('not-a-cron')).toBe(false);
+		expect(isValidCronExpression('0 25 * * *')).toBe(false);  // hour 25 is invalid
+		expect(isValidCronExpression('60 * * * *')).toBe(false);  // minute 60 is invalid
 	});
 });
 

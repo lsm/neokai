@@ -443,6 +443,38 @@ export class GoalRepository {
 	}
 
 	/**
+	 * Atomically start a new execution for a recurring mission.
+	 *
+	 * Wraps four mutations in a single SQLite transaction so a crash between any
+	 * two steps cannot leave the goal in an inconsistent state:
+	 *   1. Determine the next execution_number
+	 *   2. Clear goals.linked_task_ids (fresh task list for this execution)
+	 *   3. Reset goals.planning_attempts to 0 (per-execution counter)
+	 *   4. Insert the mission_executions row (status = 'running')
+	 *   5. Advance goals.next_run_at (optional — pass undefined to skip)
+	 *
+	 * The DB partial unique index on mission_executions(goal_id) WHERE status='running'
+	 * provides an additional guard against duplicate concurrent executions.
+	 */
+	atomicStartExecution(goalId: string, nextRunAt?: number): MissionExecution {
+		return this.db.transaction(() => {
+			const executionNumber = this.getNextExecutionNumber(goalId);
+
+			// Atomically clear task list, reset planning counter, and advance schedule
+			const goalUpdates: UpdateGoalParams = {
+				linkedTaskIds: [],
+				planning_attempts: 0,
+			};
+			if (nextRunAt !== undefined) {
+				goalUpdates.nextRunAt = nextRunAt;
+			}
+			this.updateGoal(goalId, goalUpdates);
+
+			return this.insertExecution({ goalId, executionNumber });
+		})();
+	}
+
+	/**
 	 * Insert a new mission execution record
 	 */
 	insertExecution(params: CreateExecutionParams): MissionExecution {

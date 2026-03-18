@@ -351,23 +351,26 @@ export class GoalManager {
 	}
 
 	/**
-	 * Start a new execution for a recurring mission.
-	 * Atomically:
-	 *   1. Clears goals.linked_task_ids (so this execution starts fresh)
-	 *   2. Inserts a new mission_executions row with the next execution_number
+	 * Atomically start a new execution for a recurring mission.
+	 * In a single SQLite transaction:
+	 *   1. Clears goals.linked_task_ids (fresh task list per execution)
+	 *   2. Resets goals.planning_attempts to 0 (per-execution counter)
+	 *   3. Inserts mission_executions row with the next execution_number
+	 *   4. Advances goals.next_run_at (optional — avoids a separate updateNextRunAt call)
+	 *
+	 * Passing nextRunAt here prevents the window between insertExecution and a
+	 * subsequent updateNextRunAt where a crash could leave an execution running
+	 * with an expired next_run_at (which would be stuck due to overlap prevention).
 	 *
 	 * Returns the new MissionExecution record.
 	 * Throws if the goal does not exist.
 	 */
-	startExecution(goalId: string): MissionExecution {
+	startExecution(goalId: string, nextRunAt?: number): MissionExecution {
 		const goal = this.goalRepo.getGoal(goalId);
 		if (!goal) {
 			throw new Error(`Goal not found: ${goalId}`);
 		}
-		const executionNumber = this.goalRepo.getNextExecutionNumber(goalId);
-		// Clear linked_task_ids so the new execution starts with an empty task list
-		this.goalRepo.clearLinkedTaskIds(goalId);
-		return this.goalRepo.insertExecution({ goalId, executionNumber });
+		return this.goalRepo.atomicStartExecution(goalId, nextRunAt);
 	}
 
 	/**

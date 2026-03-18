@@ -484,3 +484,106 @@ describe('executionId in session group metadata', () => {
 		expect(planningGroup.executionId).toBe(activeExecution!.id);
 	});
 });
+
+describe('replan_goal + recurring mission interaction', () => {
+	let ctx: RuntimeTestContext;
+
+	beforeEach(() => {
+		ctx = createRuntimeTestContext();
+		addMissionExecutionsTable(ctx.db as Database);
+	});
+
+	afterEach(() => {
+		ctx.runtime.stop();
+		ctx.db.close();
+	});
+
+	test('getActiveExecution returns running execution for handleReplanGoal to consume', async () => {
+		// Simulate what handleReplanGoal checks: is there an active execution for a recurring mission?
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Daily digest',
+			description: 'recurring',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+		});
+		const execution = ctx.goalManager.startExecution(goal.id);
+
+		// handleReplanGoal calls getActiveExecution to get the executionId
+		const activeExecution = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeExecution).not.toBeNull();
+		expect(activeExecution!.id).toBe(execution.id);
+		expect(activeExecution!.status).toBe('running');
+	});
+
+	test('atomicStartExecution resets planning_attempts to 0', async () => {
+		// Verifies that per-execution planning_attempts counter is reset atomically on
+		// each new execution (important for replan budget tracking).
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Recurring goal',
+			description: 'test',
+			missionType: 'recurring',
+		});
+
+		// Simulate two planning attempts during the first execution
+		await ctx.goalManager.incrementPlanningAttempts(goal.id);
+		await ctx.goalManager.incrementPlanningAttempts(goal.id);
+		const afterAttempts = await ctx.goalManager.getGoal(goal.id);
+		expect(afterAttempts?.planning_attempts).toBe(2);
+
+		// Complete the execution so we can start a second one
+		const execution = ctx.goalManager.startExecution(goal.id);
+		ctx.goalManager.completeExecution(execution.id);
+
+		// New execution: planning_attempts must reset to 0 atomically
+		ctx.goalManager.startExecution(goal.id);
+		const afterRestart = await ctx.goalManager.getGoal(goal.id);
+		expect(afterRestart?.planning_attempts).toBe(0);
+	});
+
+	test('atomicStartExecution sets nextRunAt in the same transaction', async () => {
+		// Verifies that nextRunAt is advanced atomically with execution start —
+		// crash between startExecution and a separate updateNextRunAt cannot leave
+		// an expired next_run_at paired with a running execution.
+		const pastTime = Math.floor(Date.now() / 1000) - 60;
+		const futureTime = Math.floor(Date.now() / 1000) + 3600;
+
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Atomic schedule test',
+			description: 'test',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: pastTime,
+		});
+
+		ctx.goalManager.startExecution(goal.id, futureTime);
+
+		const updated = await ctx.goalManager.getGoal(goal.id);
+		expect(updated?.nextRunAt).toBe(futureTime);
+	});
+
+	test('tick triggers execution and spawns planning group for due recurring mission', async () => {
+		const pastTime = Math.floor(Date.now() / 1000) - 60;
+		const goal = await ctx.goalManager.createGoal({
+			title: 'Due recurring mission',
+			description: 'test',
+			missionType: 'recurring',
+			schedule: { expression: '@daily', timezone: 'UTC' },
+			nextRunAt: pastTime,
+		});
+
+		ctx.runtime.start();
+		await ctx.runtime.tick();
+
+		const activeExecution = ctx.goalManager.getActiveExecution(goal.id);
+		expect(activeExecution).not.toBeNull();
+
+		// Planning group executionId must match the running execution
+		const activeGroups = ctx.groupRepo.getActiveGroups('room-1');
+		expect(activeGroups.length).toBeGreaterThan(0);
+		expect(activeGroups[0].executionId).toBe(activeExecution!.id);
+
+		// next_run_at must be advanced past now (atomic with execution start)
+		const updatedGoal = await ctx.goalManager.getGoal(goal.id);
+		expect(updatedGoal!.nextRunAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+	});
+});

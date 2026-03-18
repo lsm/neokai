@@ -712,6 +712,261 @@ describe('Goal RPC Handlers', () => {
 		});
 	});
 
+	// ---- recurring mission schedule handlers ----
+
+	const recurringGoal: RoomGoal = {
+		id: 'goal-123',
+		roomId: 'room-123',
+		title: 'Daily Backup',
+		description: 'Run daily backup',
+		status: 'active' as GoalStatus,
+		priority: 'normal' as GoalPriority,
+		progress: 0,
+		linkedTaskIds: [],
+		missionType: 'recurring',
+		schedule: { expression: '@daily', timezone: 'UTC' },
+		nextRunAt: Math.floor(Date.now() / 1000) + 3600,
+		schedulePaused: false,
+		createdAt: Date.now(),
+		updatedAt: Date.now(),
+	};
+
+	describe('goal.setSchedule', () => {
+		it('registers the handler', () => {
+			expect(messageHubData.handlers.get('goal.setSchedule')).toBeDefined();
+		});
+
+		it('sets a valid cron schedule and returns updated goal and nextRunAt', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
+			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
+				...recurringGoal,
+				schedule: { expression: '0 9 * * *', timezone: 'UTC' },
+			});
+
+			const result = (await handler!(
+				{ roomId: 'room-123', goalId: 'goal-123', cronExpression: '0 9 * * *' },
+				{}
+			)) as { goal: RoomGoal; nextRunAt: number };
+
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith(
+				'goal-123',
+				'active',
+				expect.objectContaining({
+					schedule: expect.objectContaining({ expression: '0 9 * * *' }),
+					missionType: 'recurring',
+				})
+			);
+			expect(typeof result.nextRunAt).toBe('number');
+			expect(result.goal).toBeDefined();
+		});
+
+		it('throws when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			await expect(
+				handler!({ goalId: 'goal-123', cronExpression: '@daily' }, {})
+			).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			await expect(
+				handler!({ roomId: 'room-123', cronExpression: '@daily' }, {})
+			).rejects.toThrow('Goal ID is required');
+		});
+
+		it('throws when cronExpression is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
+			).rejects.toThrow('Cron expression is required');
+		});
+
+		it('throws when goal is not found', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(null);
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-missing', cronExpression: '@daily' }, {})
+			).rejects.toThrow('Goal not found');
+		});
+
+		it('throws when goal is not a recurring mission', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				missionType: 'one_shot',
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123', cronExpression: '@daily' }, {})
+			).rejects.toThrow('not a recurring mission');
+		});
+
+		it('throws when cron expression is invalid', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
+			await expect(
+				handler!(
+					{ roomId: 'room-123', goalId: 'goal-123', cronExpression: 'not-valid-cron' },
+					{}
+				)
+			).rejects.toThrow('Invalid cron expression');
+		});
+
+		it('emits goal.updated event on success', async () => {
+			const handler = messageHubData.handlers.get('goal.setSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
+			mockGoalManager.updateGoalStatus.mockResolvedValueOnce(recurringGoal);
+
+			await handler!({ roomId: 'room-123', goalId: 'goal-123', cronExpression: '@weekly' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'goal.updated',
+				expect.objectContaining({ roomId: 'room-123', goalId: 'goal-123' })
+			);
+		});
+	});
+
+	describe('goal.pauseSchedule', () => {
+		it('registers the handler', () => {
+			expect(messageHubData.handlers.get('goal.pauseSchedule')).toBeDefined();
+		});
+
+		it('sets schedulePaused=true and returns updated goal', async () => {
+			const handler = messageHubData.handlers.get('goal.pauseSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
+			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
+				...recurringGoal,
+				schedulePaused: true,
+			});
+
+			const result = (await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})) as {
+				goal: RoomGoal;
+			};
+
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith(
+				'goal-123',
+				'active',
+				expect.objectContaining({ schedulePaused: true })
+			);
+			expect(result.goal).toBeDefined();
+		});
+
+		it('throws when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.pauseSchedule')!;
+			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.pauseSchedule')!;
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
+		});
+
+		it('throws when goal is not a recurring mission', async () => {
+			const handler = messageHubData.handlers.get('goal.pauseSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				missionType: 'one_shot',
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
+			).rejects.toThrow('not a recurring mission');
+		});
+
+		it('emits goal.updated event on success', async () => {
+			const handler = messageHubData.handlers.get('goal.pauseSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(recurringGoal);
+			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
+				...recurringGoal,
+				schedulePaused: true,
+			});
+
+			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'goal.updated',
+				expect.objectContaining({ roomId: 'room-123', goalId: 'goal-123' })
+			);
+		});
+	});
+
+	describe('goal.resumeSchedule', () => {
+		const pausedGoal: RoomGoal = { ...recurringGoal, schedulePaused: true };
+
+		it('registers the handler', () => {
+			expect(messageHubData.handlers.get('goal.resumeSchedule')).toBeDefined();
+		});
+
+		it('sets schedulePaused=false and returns updated goal with nextRunAt', async () => {
+			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(pausedGoal);
+			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
+				...pausedGoal,
+				schedulePaused: false,
+			});
+
+			const result = (await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})) as {
+				goal: RoomGoal;
+				nextRunAt: number | null;
+			};
+
+			expect(mockGoalManager.updateGoalStatus).toHaveBeenCalledWith(
+				'goal-123',
+				'active',
+				expect.objectContaining({ schedulePaused: false })
+			);
+			expect(result.goal).toBeDefined();
+		});
+
+		it('throws when roomId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
+			await expect(handler!({ goalId: 'goal-123' }, {})).rejects.toThrow('Room ID is required');
+		});
+
+		it('throws when goalId is missing', async () => {
+			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
+			await expect(handler!({ roomId: 'room-123' }, {})).rejects.toThrow('Goal ID is required');
+		});
+
+		it('throws when goal is not a recurring mission', async () => {
+			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				missionType: 'one_shot',
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
+			).rejects.toThrow('not a recurring mission');
+		});
+
+		it('throws when goal has no schedule', async () => {
+			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce({
+				...recurringGoal,
+				schedule: undefined,
+				schedulePaused: true,
+			});
+			await expect(
+				handler!({ roomId: 'room-123', goalId: 'goal-123' }, {})
+			).rejects.toThrow('no schedule set');
+		});
+
+		it('emits goal.updated event on success', async () => {
+			const handler = messageHubData.handlers.get('goal.resumeSchedule')!;
+			mockGoalManager.getGoal.mockResolvedValueOnce(pausedGoal);
+			mockGoalManager.updateGoalStatus.mockResolvedValueOnce({
+				...pausedGoal,
+				schedulePaused: false,
+			});
+
+			await handler!({ roomId: 'room-123', goalId: 'goal-123' }, {});
+
+			expect(daemonHubData.emit).toHaveBeenCalledWith(
+				'goal.updated',
+				expect.objectContaining({ roomId: 'room-123', goalId: 'goal-123' })
+			);
+		});
+	});
+
 	describe('task approval handlers', () => {
 		function setupApprovalHandlers(task: NeoTask | null, resumeResult = true) {
 			const taskManager = {

@@ -19,7 +19,7 @@ import type { GoalManager } from '../room/managers/goal-manager';
 import type { TaskManager } from '../room/managers/task-manager';
 import type { RoomRuntimeService } from '../room/runtime/room-runtime-service';
 import { Logger } from '../logger';
-import { parseCronExpression, getNextRunAt, getSystemTimezone } from '../room/runtime/cron-utils';
+import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../room/runtime/cron-utils';
 
 const log = new Logger('goal-handlers');
 
@@ -329,7 +329,7 @@ export function setupGoalHandlers(
 				`Goal ${params.goalId} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'})`
 			);
 		}
-		if (!parseCronExpression(params.cronExpression)) {
+		if (!isValidCronExpression(params.cronExpression)) {
 			throw new Error(
 				`Invalid cron expression: "${params.cronExpression}". Use 5-field cron or presets (@daily, @weekly, @hourly, @monthly).`
 			);

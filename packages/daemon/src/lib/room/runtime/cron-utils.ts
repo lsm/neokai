@@ -16,7 +16,7 @@ import { Cron } from 'croner';
  * Parse and validate a cron expression (including presets).
  * Returns null if the expression is invalid.
  */
-export function parseCronExpression(expression: string): boolean {
+export function isValidCronExpression(expression: string): boolean {
 	// Normalize presets before passing to croner
 	const normalized = normalizePreset(expression);
 	try {

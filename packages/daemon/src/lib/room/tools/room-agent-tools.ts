@@ -20,7 +20,7 @@ import type { SessionGroupRepository } from '../state/session-group-repository';
 import type { DaemonHub } from '../../daemon-hub';
 import type { RoomRuntime } from '../runtime/room-runtime';
 import { routeHumanMessageToGroup } from '../runtime/human-message-routing';
-import { parseCronExpression, getNextRunAt, getSystemTimezone } from '../runtime/cron-utils';
+import { isValidCronExpression, getNextRunAt, getSystemTimezone } from '../runtime/cron-utils';
 
 export interface RoomAgentToolsConfig {
 	roomId: string;
@@ -569,7 +569,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					error: `Goal ${args.goal_id} is not a recurring mission (missionType=${goal.missionType ?? 'one_shot'}). Only recurring missions can have a schedule.`,
 				});
 			}
-			if (!parseCronExpression(args.cron_expression)) {
+			if (!isValidCronExpression(args.cron_expression)) {
 				return jsonResult({
 					success: false,
 					error: `Invalid cron expression: "${args.cron_expression}". Use 5-field cron (e.g. "0 9 * * *") or presets (@daily, @weekly, @hourly, @monthly).`,
