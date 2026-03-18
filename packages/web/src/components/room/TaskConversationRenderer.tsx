@@ -17,8 +17,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SDKMessage } from '@neokai/shared/sdk/sdk.d.ts';
 import { useMessageHub } from '../../hooks/useMessageHub';
+import {
+	useSessionQuestionState,
+	type SessionQuestionState,
+} from '../../hooks/useSessionQuestionState';
 import { SDKMessageRenderer } from '../sdk/SDKMessageRenderer';
 import { useMessageMaps } from '../../hooks/useMessageMaps';
+
+/** Empty question state used as a safe fallback for messages with unknown session IDs */
+const NO_OP_QUESTION_STATE: SessionQuestionState = {
+	pendingQuestion: null,
+	resolvedQuestions: new Map(),
+	onQuestionResolved: () => {},
+};
 
 interface TaskMeta {
 	authorRole: 'planner' | 'coder' | 'general' | 'leader' | 'craft' | 'lead' | 'human' | 'system';
@@ -39,6 +50,10 @@ interface GroupMessage {
 
 interface TaskConversationRendererProps {
 	groupId: string;
+	/** Session ID of the leader agent (used to render AskUserQuestion as interactive forms) */
+	leaderSessionId?: string;
+	/** Session ID of the worker agent (used to render AskUserQuestion as interactive forms) */
+	workerSessionId?: string;
 	/** Called whenever the message list length changes, so the parent can drive autoscroll */
 	onMessageCountChange?: (count: number) => void;
 }
@@ -95,9 +110,16 @@ const PAGE_SIZE = 50;
 
 export function TaskConversationRenderer({
 	groupId,
+	leaderSessionId,
+	workerSessionId,
 	onMessageCountChange,
 }: TaskConversationRendererProps) {
 	const { request, joinRoom, leaveRoom, onEvent } = useMessageHub();
+
+	// Subscribe to question state for each agent session so AskUserQuestion
+	// renders as an interactive form rather than a plain message
+	const leaderQuestionState = useSessionQuestionState(leaderSessionId);
+	const workerQuestionState = useSessionQuestionState(workerSessionId);
 	const [messages, setMessages] = useState<SDKMessage[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [loadingOlder, setLoadingOlder] = useState(false);
@@ -367,6 +389,17 @@ export function TaskConversationRenderer({
 				// Insert a role transition divider when the agent changes
 				const showTransition = roleTransitions.has(i);
 
+				// Look up the question state for the session that authored this message.
+				// Fall back to a no-op state for messages whose authorSessionId does not
+				// match either known session, to avoid rendering incorrect question forms.
+				const authorSessionId = meta?.authorSessionId;
+				let questionState: SessionQuestionState = NO_OP_QUESTION_STATE;
+				if (authorSessionId && leaderSessionId && authorSessionId === leaderSessionId) {
+					questionState = leaderQuestionState;
+				} else if (authorSessionId && workerSessionId && authorSessionId === workerSessionId) {
+					questionState = workerQuestionState;
+				}
+
 				return (
 					<div key={key}>
 						{showTransition && (
@@ -386,6 +419,10 @@ export function TaskConversationRenderer({
 								toolResultsMap={maps.toolResultsMap}
 								toolInputsMap={maps.toolInputsMap}
 								subagentMessagesMap={maps.subagentMessagesMap}
+								sessionId={authorSessionId || undefined}
+								pendingQuestion={questionState.pendingQuestion}
+								resolvedQuestions={questionState.resolvedQuestions}
+								onQuestionResolved={questionState.onQuestionResolved}
 								taskContext
 							/>
 						</div>
