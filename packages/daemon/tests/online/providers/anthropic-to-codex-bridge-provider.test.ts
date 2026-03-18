@@ -19,7 +19,17 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import type { DaemonServerContext } from '../../helpers/daemon-server';
+import { createDaemonServer } from '../../helpers/daemon-server';
+import { sendMessage, waitForIdle, getProcessingState } from '../../helpers/daemon-actions';
+
+const TMP_DIR = process.env.TMPDIR || '/tmp';
+const IDLE_TIMEOUT = 120_000;
+const SETUP_TIMEOUT = 60_000;
+const TEST_TIMEOUT = IDLE_TIMEOUT + 30_000;
 
 // ---------------------------------------------------------------------------
 // SSE parsing helpers
@@ -164,6 +174,28 @@ async function callBridge(
 	return parseSseEvents(text);
 }
 
+/** Return the input_tokens from the message_start event, or 0 if not found. */
+function getInputTokens(events: SseEvent[]): number {
+	for (const e of events) {
+		if (e.event === 'message_start') {
+			const msg = (e.data as { message?: { usage?: { input_tokens?: number } } }).message;
+			return msg?.usage?.input_tokens ?? 0;
+		}
+	}
+	return 0;
+}
+
+/** Return the output_tokens from the message_delta event, or 0 if not found. */
+function getOutputTokens(events: SseEvent[]): number {
+	for (const e of events) {
+		if (e.event === 'message_delta') {
+			const usage = (e.data as { usage?: { output_tokens?: number } }).usage;
+			return usage?.output_tokens ?? 0;
+		}
+	}
+	return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -171,17 +203,25 @@ async function callBridge(
 describe('Codex Bridge (Online)', () => {
 	let provider: AnthropicToCodexBridgeProvider;
 	let bridgeUrl: string;
+	let daemon: DaemonServerContext;
 
 	beforeAll(async () => {
 		provider = new AnthropicToCodexBridgeProvider();
 		await provider.getAuthStatus();
 		const cfg = provider.buildSdkConfig('gpt-5.1-codex-mini', { workspacePath: process.cwd() });
 		bridgeUrl = cfg.envVars.ANTHROPIC_BASE_URL as string;
-	}, 15000);
 
-	afterAll(() => {
+		// Start a daemon server for provider-session and daemon-level tests.
+		daemon = await createDaemonServer();
+	}, SETUP_TIMEOUT);
+
+	afterAll(async () => {
 		provider?.stopAllBridgeServers();
-	});
+		if (daemon) {
+			daemon.kill('SIGTERM');
+			await daemon.waitForExit();
+		}
+	}, SETUP_TIMEOUT);
 
 	// -------------------------------------------------------------------------
 	// Test 1: Basic conversation
@@ -385,4 +425,77 @@ describe('Codex Bridge (Online)', () => {
 		// The model should repeat the SECRET string in its final response
 		expect(extractText(turn2)).toContain(SECRET);
 	}, 180_000);
+
+	// -------------------------------------------------------------------------
+	// Test 4: Provider-aware session creation via daemon
+	// -------------------------------------------------------------------------
+	test(
+		'provider session: session.create with explicit config.provider uses codex backend',
+		async () => {
+			const workspacePath = join(TMP_DIR, `codex-provider-session-${Date.now()}`);
+			mkdirSync(workspacePath, { recursive: true });
+
+			// Create session with explicit provider — must route to anthropic-codex.
+			const { sessionId } = (await daemon.messageHub.request('session.create', {
+				workspacePath,
+				title: 'Codex Explicit Provider Test',
+				config: {
+					model: 'gpt-5.1-codex-mini',
+					provider: 'anthropic-codex',
+					permissionMode: 'acceptEdits',
+				},
+			})) as { sessionId: string };
+			daemon.trackSession(sessionId);
+
+			// Query the session metadata to confirm the stored provider is 'anthropic-codex'.
+			const { session } = (await daemon.messageHub.request('session.get', {
+				sessionId,
+			})) as { session: { config?: { provider?: string } } };
+			expect(session.config?.provider).toBe('anthropic-codex');
+
+			// Send a message and verify the codex backend responds.
+			await sendMessage(daemon, sessionId, 'Reply with exactly: CODEX_OK');
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
+
+			const state = await getProcessingState(daemon, sessionId);
+			expect(state.status).toBe('idle');
+		},
+		TEST_TIMEOUT
+	);
+
+	// -------------------------------------------------------------------------
+	// Test 5: Error envelope — invalid request returns Anthropic JSON error format
+	// -------------------------------------------------------------------------
+	test('error envelope: unknown route returns Anthropic JSON error body', async () => {
+		// Hit a non-existent endpoint on the bridge server — the bridge must respond
+		// with the Anthropic JSON error envelope rather than a plain-text error.
+		const response = await fetch(`${bridgeUrl}/v1/unknown-endpoint`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({}),
+		});
+
+		expect(response.status).toBeGreaterThanOrEqual(400);
+		const body = (await response.json()) as {
+			type?: string;
+			error?: { type?: string; message?: string };
+		};
+		// Must be Anthropic JSON error envelope format
+		expect(body.type).toBe('error');
+		expect(typeof body.error?.type).toBe('string');
+		expect(typeof body.error?.message).toBe('string');
+	}, 30_000);
+
+	// -------------------------------------------------------------------------
+	// Test 6: Token usage — SSE stream has non-zero input_tokens and output_tokens
+	// -------------------------------------------------------------------------
+	test('token usage: SSE stream contains non-zero input_tokens and output_tokens', async () => {
+		const events = await callBridge(bridgeUrl, [{ role: 'user', content: 'Say hello.' }]);
+
+		const inputTokens = getInputTokens(events);
+		const outputTokens = getOutputTokens(events);
+
+		expect(inputTokens).toBeGreaterThan(0);
+		expect(outputTokens).toBeGreaterThan(0);
+	}, 120_000);
 });
