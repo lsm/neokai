@@ -17,7 +17,13 @@
  */
 
 import type { Query } from '@anthropic-ai/claude-agent-sdk';
-import type { Provider, Session, SessionConfig, CurrentModelInfo, MessageHub } from '@neokai/shared';
+import type {
+	Provider,
+	Session,
+	SessionConfig,
+	CurrentModelInfo,
+	MessageHub,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { Database } from '../../storage/database';
 import type { ErrorManager } from '../error-manager';
