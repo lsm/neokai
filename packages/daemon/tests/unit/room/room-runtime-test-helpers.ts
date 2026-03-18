@@ -240,7 +240,16 @@ export function createRuntimeTestContext(opts?: RuntimeTestContextOptions): Runt
 		daemonHub: mockHub as unknown as DaemonHub,
 	});
 
-	return { db, runtime, taskManager, goalManager, groupRepo, sessionFactory, observer, hub: mockHub };
+	return {
+		db,
+		runtime,
+		taskManager,
+		goalManager,
+		groupRepo,
+		sessionFactory,
+		observer,
+		hub: mockHub,
+	};
 }
 
 export async function createGoalAndTask(
