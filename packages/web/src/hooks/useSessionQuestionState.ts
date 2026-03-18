@@ -48,6 +48,12 @@ function applySessionState(
 		}
 		setResolvedQuestions(map);
 	}
+	// When resolvedRaw is absent (e.g. sessionInfo: null), we intentionally do NOT
+	// call setResolvedQuestions. Resolved questions are append-only: once a question
+	// has been resolved it should remain visible, and optimistic updates from
+	// onQuestionResolved must not be erased by a subsequent server event that lacks
+	// metadata. The server will include resolvedQuestions in metadata once it
+	// persists the resolution, at which point we will apply the authoritative map.
 }
 
 /**

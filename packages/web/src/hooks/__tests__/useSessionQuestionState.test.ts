@@ -257,4 +257,37 @@ describe('useSessionQuestionState', () => {
 
 		expect(result.current.resolvedQuestions.size).toBe(0);
 	});
+
+	it('preserves resolvedQuestions when a state event arrives with null sessionInfo (optimistic update not erased)', async () => {
+		mockRequest.mockResolvedValue(makeWaitingSessionState('tool-001'));
+
+		const { result } = renderHook(() => useSessionQuestionState('session-abc'));
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		// Optimistically resolve the question
+		await act(async () => {
+			result.current.onQuestionResolved('submitted', [
+				{ questionIndex: 0, selectedLabels: ['Yes'], customText: undefined },
+			]);
+		});
+
+		expect(result.current.resolvedQuestions.size).toBe(1);
+
+		// Server sends a state event without sessionInfo (no metadata/resolvedQuestions)
+		act(() => {
+			fireSessionEvent('session:session-abc', makeIdleSessionState());
+		});
+
+		await waitFor(() => {
+			// pendingQuestion cleared by the server event
+			expect(result.current.pendingQuestion).toBeNull();
+		});
+
+		// Optimistic resolved entry must NOT be erased by the null-metadata event
+		expect(result.current.resolvedQuestions.size).toBe(1);
+		expect(result.current.resolvedQuestions.get('tool-001')?.state).toBe('submitted');
+	});
 });

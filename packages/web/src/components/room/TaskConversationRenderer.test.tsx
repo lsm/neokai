@@ -820,8 +820,9 @@ describe('TaskConversationRenderer — session question state props', () => {
 		});
 
 		await waitFor(() => {
-			const leaderProps = capturedSDKProps.find((p) => p.uuid === 'uuid-leader');
-			const workerProps = capturedSDKProps.find((p) => p.uuid === 'uuid-worker');
+			// Use the last captured render for each uuid to avoid stale intermediate snapshots
+			const leaderProps = [...capturedSDKProps].reverse().find((p) => p.uuid === 'uuid-leader');
+			const workerProps = [...capturedSDKProps].reverse().find((p) => p.uuid === 'uuid-worker');
 			// Leader message should receive the pending question
 			expect(leaderProps?.pendingQuestion).toEqual(leaderPendingQuestion);
 			// Worker message should NOT receive the leader's pending question (no cross-session contamination)
