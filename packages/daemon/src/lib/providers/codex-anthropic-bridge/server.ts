@@ -100,6 +100,10 @@ export async function drainToSSE(
 	let outputTokens = 0;
 
 	const msgId = generateMsgId();
+	// TODO: input_tokens is hard-coded to 0 here because thread/tokenUsage/updated
+	// arrives after streaming starts and message_start is already sent by then.
+	// To surface real input token counts, drainToSSE would need to either buffer
+	// events until turn_done is available or emit a corrected usage event afterward.
 	send(messageStartSSE(msgId, model, 0));
 	send(pingSSE());
 

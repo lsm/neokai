@@ -467,6 +467,9 @@ export class BridgeSession {
 		if (!this.threadId) throw new Error('BridgeSession not initialized');
 		if (this.turnStarted) throw new Error('BridgeSession.startTurn() called more than once');
 		this.turnStarted = true;
+		// Reset latestUsage so any stale value from a previous (erroneous) notification
+		// does not bleed into this turn's turn_done event.
+		this.latestUsage = null;
 
 		const res = await this.conn.request<TurnStartResult>('turn/start', {
 			threadId: this.threadId,

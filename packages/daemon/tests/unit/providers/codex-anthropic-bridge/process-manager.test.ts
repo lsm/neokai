@@ -376,6 +376,34 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 		expect(done.inputTokens).toBe(0);
 		expect(done.outputTokens).toBe(0);
 	});
+
+	it('falls back to inline usage from turn/completed when no tokenUsage notification arrives (legacy protocol)', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
+		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
+		await session.initialize();
+
+		setTimeout(() => {
+			// Legacy protocol: usage is inline in turn/completed, no thread/tokenUsage/updated
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+				usage: { inputTokens: 50, outputTokens: 25 },
+			});
+		}, 5);
+
+		const gen = session.startTurn('test');
+		const events: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
+		for await (const event of gen) {
+			events.push(event);
+		}
+
+		const doneEvents = events.filter((e) => e.type === 'turn_done');
+		expect(doneEvents).toHaveLength(1);
+		const done = doneEvents[0] as { type: 'turn_done'; inputTokens: number; outputTokens: number };
+		expect(done.inputTokens).toBe(50);
+		expect(done.outputTokens).toBe(25);
+	});
 });
 
 // ---------------------------------------------------------------------------
