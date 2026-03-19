@@ -38,12 +38,7 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import {
-	sendMessage,
-	waitForIdle,
-	waitForProcessing,
-	waitForSdkMessages,
-} from '../../helpers/daemon-actions';
+import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -482,16 +477,17 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			expect(session.config?.provider).toBe('anthropic-copilot');
 
 			// Send a message and verify the copilot backend responds.
+			// sendMessage() already polls until processing starts, so waitForIdle()
+			// will not resolve against the pre-send idle state.
 			await sendMessage(daemon, sessionId, 'Reply with exactly: COPILOT_OK');
-			// Explicitly wait for the session to enter 'processing' before waiting for
-			// 'idle', to avoid the race where waitForIdle resolves against the pre-send
-			// idle state (before the query has actually started).
-			await waitForProcessing(daemon, sessionId, 15_000);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
+			// waitForIdle may resolve on a brief idle between Copilot retry cycles
+			// before the assistant message is persisted. Use a long timeout so we
+			// keep polling until the real response arrives.
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 			const text = sdkMessages
 				.filter((m) => (m as { type?: string }).type === 'assistant')
