@@ -280,6 +280,7 @@ export class RoomRuntime {
 			getRoom: config.getRoom,
 			getTask: config.getTask,
 			getGoal: config.getGoal,
+			daemonHub: config.daemonHub,
 		});
 
 		// Keep test and direct-runtime usage predictable: when no explicit leader model

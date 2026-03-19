@@ -138,6 +138,14 @@ describe('Leader Agent', () => {
 			expect(prompt).toContain('replan_goal');
 		});
 
+		it('should include task management tools in tool contract', () => {
+			const prompt = buildLeaderSystemPrompt(makeConfig());
+			expect(prompt).toContain('update_task');
+			expect(prompt).toContain('cancel_task');
+			expect(prompt).toContain('update_task_status');
+			expect(prompt).toContain('Task Management Tools');
+		});
+
 		it('should NOT include task-specific context', () => {
 			const prompt = buildLeaderSystemPrompt(makeConfig());
 			// Task/goal details belong in buildLeaderTaskContext, not the system prompt
@@ -403,7 +411,7 @@ describe('Leader Agent', () => {
 			expect(init.mcpServers!['leader-agent-tools']).toBeDefined();
 		});
 
-		it('should include leader-context-tools MCP server for read-only context', () => {
+		it('should include leader-context-tools MCP server with context and task management tools', () => {
 			const callbacks = makeCallbacks();
 			const init = createLeaderAgentInit(makeConfig(), callbacks);
 			expect(init.mcpServers).toBeDefined();
@@ -415,8 +423,17 @@ describe('Leader Agent', () => {
 			// Verify it is the narrow leader-context server, not the full room-agent server
 			expect(ctxServer.name).toBe('leader-context');
 			const toolNames = Object.keys(ctxServer.instance._registeredTools).sort();
+			// Should include both read-only context tools and task management tools
 			expect(toolNames).toEqual(
-				['get_room_status', 'get_task_detail', 'list_goals', 'list_tasks'].sort()
+				[
+					'cancel_task',
+					'get_room_status',
+					'get_task_detail',
+					'list_goals',
+					'list_tasks',
+					'update_task',
+					'update_task_status',
+				].sort()
 			);
 		});
 

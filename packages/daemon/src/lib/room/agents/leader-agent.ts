@@ -28,6 +28,7 @@ import type {
 import type { GoalManager } from '../managers/goal-manager';
 import type { TaskManager } from '../managers/task-manager';
 import type { SessionGroupRepository } from '../state/session-group-repository';
+import type { DaemonHub } from '../../daemon-hub';
 import { createLeaderContextMcpServer } from '../tools/room-agent-tools';
 
 const DEFAULT_LEADER_MODEL = 'claude-sonnet-4-5-20250929';
@@ -76,6 +77,8 @@ export interface LeaderAgentConfig {
 	goalManager?: GoalManager;
 	taskManager?: TaskManager;
 	groupRepo?: SessionGroupRepository;
+	/** Used to emit task update events to the UI when leader modifies tasks */
+	daemonHub?: DaemonHub;
 }
 
 /**
@@ -144,6 +147,8 @@ function leaderToolContractSection(): string {
 ## Tool Contract (CRITICAL)
 
 You MUST call tools (no text-only final responses).
+
+### Review Tools (primary actions)
 - \`send_to_worker\` — Forward feedback to worker without changing group ownership
   - mode=\`queue\`: enqueue for next-turn processing (default, preferred for review URLs)
   - mode=\`steer\`: inject for current-turn steering
@@ -151,6 +156,14 @@ You MUST call tools (no text-only final responses).
 - \`fail_task\` — Mark the task as not achievable
 - \`replan_goal\` — The current approach isn't working; fail this task and trigger replanning with context about what was tried
 - \`submit_for_review\` — Work is done with a PR ready; submit for peer review and human approval
+
+### Task Management Tools (for managing other tasks in the room)
+- \`update_task\` — Edit title, description, priority, or dependencies of any task
+- \`cancel_task\` — Cancel a task and cascade to any pending dependents
+- \`update_task_status\` — Change a task's status (e.g., retry a failed task: needs_attention → pending)
+
+### Context Tools (read-only)
+- \`list_goals\`, \`list_tasks\`, \`get_task_detail\`, \`get_room_status\` — Inspect room state
 
 Do NOT respond with only text.`;
 }
@@ -1026,9 +1039,8 @@ export function createLeaderAgentInit(
 ): AgentSessionInit {
 	const mcpServer = createLeaderMcpServer(config.groupId, callbacks);
 
-	// Create a read-only context MCP server for the leader (list/get tools only).
-	// Deliberately excludes write tools, human-only tools (approve_task, reject_task),
-	// and write-capable dependencies (daemonHub, runtimeService).
+	// Create a context + task management MCP server for the leader.
+	// Excludes human-only tools (approve_task, reject_task) and session management (stop_session).
 	const roomAgentTools =
 		config.goalManager && config.taskManager && config.groupRepo
 			? (createLeaderContextMcpServer({
@@ -1036,6 +1048,7 @@ export function createLeaderAgentInit(
 					goalManager: config.goalManager,
 					taskManager: config.taskManager,
 					groupRepo: config.groupRepo,
+					daemonHub: config.daemonHub,
 				}) as unknown as McpServerConfig)
 			: undefined;
 

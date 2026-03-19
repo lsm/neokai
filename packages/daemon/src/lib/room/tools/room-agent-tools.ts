@@ -991,26 +991,31 @@ export type RoomAgentMcpServer = ReturnType<typeof createRoomAgentMcpServer>;
 
 /**
  * Narrow config type for the leader context MCP server.
- * Excludes daemonHub and runtimeService since read-only tools do not need them.
+ * Includes daemonHub (optional) for emitting task update events to the UI.
  */
 export type LeaderContextMcpConfig = Pick<
 	RoomAgentToolsConfig,
-	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo'
+	'roomId' | 'goalManager' | 'taskManager' | 'groupRepo' | 'daemonHub'
 >;
 
 /**
- * Create a minimal read-only MCP server for the Leader agent.
+ * Create an MCP server for the Leader agent with context and task management tools.
  *
  * Registered as `'leader-context'` (distinct from `'room-agent'` used by the full server).
- * Exposes only 4 read-only tools: list_goals, list_tasks, get_task_detail, get_room_status.
+ * Exposes read-only context tools plus task management tools the leader can use directly.
  *
- * The leader only needs context tools — it should NOT have write or human-only tools.
+ * Included tools:
+ *   - list_goals, list_tasks, get_task_detail, get_room_status: read-only context
+ *   - update_task: edit title, description, priority, or dependencies of any task
+ *   - cancel_task: cancel a task and cascade to pending dependents
+ *   - update_task_status: change task status with transition validation
+ *
  * Excluded tools and reasons:
  *   - approve_task / reject_task: human-only decisions
  *   - create_goal / update_goal: not the leader's role
- *   - create_task / update_task: leader delegates to worker via send_to_worker
- *   - cancel_task / stop_session: not the leader's role
- *   - set_task_status: leader uses complete_task / fail_task from leader-agent-tools instead
+ *   - create_task: leader delegates task creation to worker via send_to_worker
+ *   - stop_session: session management is handled by the runtime
+ *   - complete_task / fail_task: leader uses these from leader-agent-tools for the current task
  *   - send_message_to_task: leader uses send_to_worker from leader-agent-tools instead
  */
 export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
@@ -1049,6 +1054,45 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 			'Get an overview of the room state including goals, tasks, active groups, and tasks needing review',
 			{},
 			() => handlers.get_room_status()
+		),
+		tool(
+			'update_task',
+			'Update task fields (title, description, priority, or dependencies). Works for tasks in any status.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				title: z.string().optional().describe('New title for the task'),
+				description: z.string().optional().describe('New description for the task'),
+				priority: z
+					.enum(['low', 'normal', 'high', 'urgent'])
+					.optional()
+					.describe('New priority level'),
+				depends_on: z
+					.array(z.string())
+					.optional()
+					.describe('Full replacement list of dependency task IDs'),
+			},
+			(args) => handlers.update_task(args)
+		),
+		tool(
+			'cancel_task',
+			'Cancel a task. Cascades cancellation to any pending tasks that depend on it.',
+			{
+				task_id: z.string().describe('ID of the task to cancel'),
+			},
+			(args) => handlers.cancel_task(args)
+		),
+		tool(
+			'update_task_status',
+			'Change a task status with transition validation. Use to retry failed tasks (needs_attention → pending), revive to review, or move between valid states.',
+			{
+				task_id: z.string().describe('ID of the task to update'),
+				status: z
+					.enum(['pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled'])
+					.describe('New status for the task'),
+				result: z.string().optional().describe('Result summary (for completed status)'),
+				error: z.string().optional().describe('Error message (for needs_attention status)'),
+			},
+			(args) => handlers.set_task_status(args)
 		),
 	];
 
