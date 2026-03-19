@@ -1,15 +1,14 @@
-# Milestone 7: Workflow Selection & Intelligence
+# Milestone 7: Workflow Selection & Agent Tools
 
 ## Goal
 
-Enable intelligent workflow selection within Spaces so the Space agent can automatically choose the appropriate workflow based on task context. Also support manual workflow override on goals and tasks, and enhance agent prompts with workflow awareness. All code lives in the Space namespace — no existing Room code is modified.
+Enable intelligent workflow selection within Spaces so the Space agent can automatically choose the appropriate workflow when starting a workflow run. Also provide Space agent tools for creating tasks and runs, and enhance agent prompts with workflow awareness. All code lives in the Space namespace — no existing Room code is modified.
 
 ## Isolation Checklist
 
 - Selection logic in `packages/daemon/src/lib/space/runtime/workflow-selector.ts`
 - Space agent tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts` (NOT `room-agent-tools.ts`)
-- `SpaceGoalManager` workflow assignment in `packages/daemon/src/lib/space/managers/space-goal-manager.ts` (NOT `GoalManager` or `GoalRepository`)
-- No modifications to `room-agent-tools.ts`, `GoalRepository`, `GoalManager`, or any Room file
+- No modifications to `room-agent-tools.ts` or any Room file
 
 ## Note on Auto-Selection
 
@@ -18,14 +17,13 @@ The auto-selection algorithm is an **MVP heuristic** — a simple priority-based
 ## Scope
 
 - Pure, testable workflow selection logic
-- Space agent tool updates for workflow assignment
-- Goal/task-level workflow override via `SpaceGoalManager`/`SpaceTaskManager`
+- Space agent tools for task/run creation with workflow assignment
 - Agent prompt enhancement with workflow context
 - Unit tests
 
 ---
 
-### Task 7.1: Workflow Selection Logic and Goal Assignment
+### Task 7.1: Workflow Selection Logic and Agent Tools
 
 **Agent:** coder
 **Priority:** high
@@ -33,51 +31,46 @@ The auto-selection algorithm is an **MVP heuristic** — a simple priority-based
 
 **Description:**
 
-Implement workflow selection as a pure testable unit and wire goal/task workflow assignment into Space agent tools. All in the Space namespace.
+Implement workflow selection as a pure testable unit and create Space agent tools for starting workflow runs and creating standalone tasks. All in the Space namespace.
 
 **Subtasks:**
 
 1. Create `packages/daemon/src/lib/space/runtime/workflow-selector.ts`:
    - `selectWorkflow(context: WorkflowSelectionContext): SpaceWorkflow | null`
-   - `WorkflowSelectionContext`: `{ spaceId, taskTitle, taskDescription, taskType, goalTitle, goalDescription, availableWorkflows: SpaceWorkflow[] }`
+   - `WorkflowSelectionContext`: `{ spaceId, title, description, availableWorkflows: SpaceWorkflow[] }`
    - Selection algorithm (deterministic priority chain):
-     1. Task has explicit `workflowId` → use it
-     2. Task's goal has `workflowId` → use it
-     3. Space has default workflow → use it
-     4. Tag-based: match `taskType` against workflow tags
-     5. MVP keyword matching: substring match task title/description against workflow descriptions
-     6. Fall back to null (use default behavior)
+     1. Explicit `workflowId` provided → use it
+     2. Space has default workflow → use it
+     3. Tag-based: match task description keywords against workflow tags
+     4. MVP keyword matching: substring match title/description against workflow descriptions
+     5. Fall back to null (create standalone task)
 
 2. **Unit-testable without runtime**: `selectWorkflow()` takes only data inputs (all `SpaceWorkflow` type).
 
-3. Wire into `SpaceGoalManager` (already in `packages/daemon/src/lib/space/managers/`):
-   - `createGoal` accepts optional `workflowId`
-   - Validation: if provided, workflow must exist in same space (query `SpaceWorkflowManager`)
-   - **External caller validation only**: internal `updateGoalWorkflowStep(goalId, stepId)` bypasses existence check for `WorkflowExecutor` use (avoids redundant DB round-trips)
-
-4. Create Space agent tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts`:
-   - `create_goal` tool accepts optional `workflowId`
-   - `create_task` tool accepts optional `workflowId` (overrides goal-level)
-   - `list_workflows` tool returns available `SpaceWorkflow` records
+3. Create Space agent tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts`:
+   - `start_workflow_run` tool — starts a new workflow run with optional `workflowId` (auto-selects if not provided). Returns the created `SpaceWorkflowRun`.
+   - `create_task` tool — creates a standalone `SpaceTask` (no workflow). Accepts optional `workflowId` for ad-hoc workflow assignment.
+   - `list_workflows` tool — returns available `SpaceWorkflow` records for the space
+   - `list_tasks` tool — returns `SpaceTask` records, filterable by status and `workflowRunId`
+   - `list_workflow_runs` tool — returns active/completed `SpaceWorkflowRun` records
    - **This is a new file** — NOT modifying `room-agent-tools.ts`
 
-5. Integration point in `SpaceRuntime`:
-   - `resolveWorkflowForGoal(goalId: string): SpaceWorkflow | null` — calls `selectWorkflow()`
+4. Integration point in `SpaceRuntime`:
+   - `resolveWorkflowForRun(title: string, description?: string): SpaceWorkflow | null` — calls `selectWorkflow()`
 
-6. Write unit tests:
+5. Write unit tests:
    - All priority chain levels tested
    - Explicit assignment wins over defaults
    - Tag matching works
    - Keyword matching handles common patterns and no-match gracefully
    - Null fallback when no workflows exist
-   - Goal workflow assignment validation via `SpaceGoalManager`
+   - Agent tools create correct records
 
 **Acceptance criteria:**
 - `selectWorkflow()` is a pure function with no runtime dependencies, using `SpaceWorkflow` type
 - Deterministic priority chain with clear precedence
-- Goals and tasks can have workflows assigned via `SpaceGoalManager`/`SpaceTaskManager`
 - Space agent tools in new file `space-agent-tools.ts` (NOT modifying `room-agent-tools.ts`)
-- Validation prevents cross-space references
+- Tools support both workflow runs and standalone tasks
 - Unit tests cover all selection paths
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -98,7 +91,7 @@ Enhance Space agent prompts with workflow awareness so agents can recommend and 
 1. Create Space chat agent system prompt builder in `packages/daemon/src/lib/space/agents/space-chat-agent.ts`:
    - Include available `SpaceWorkflow` records (names, descriptions, tags)
    - Include `SpaceAgent` information
-   - Guidance: "When creating goals, consider which workflow best fits the work"
+   - Guidance: "When creating work, consider which workflow best fits. Use `start_workflow_run` for multi-step processes or `create_task` for standalone work."
    - **New file** — NOT modifying existing room agent prompt builders
 
 2. Add `get_workflow_detail` tool to `space-agent-tools.ts`:
@@ -109,8 +102,8 @@ Enhance Space agent prompts with workflow awareness so agents can recommend and 
    - Returns best-matching `SpaceWorkflow` records via `selectWorkflow()` logic
 
 4. Update Planner agent prompt for workflow context (in Space planner setup):
-   - When `SpaceGoal` has an assigned workflow, include structure in planning context
-   - Planner creates tasks aligned with workflow steps
+   - When a workflow run is active, include workflow structure in planning context
+   - Planner creates tasks aligned with the current workflow step
 
 5. Write unit tests:
    - Prompt includes workflow information

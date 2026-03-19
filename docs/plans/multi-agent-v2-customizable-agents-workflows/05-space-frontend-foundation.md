@@ -92,7 +92,7 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
    - Core signals:
      - `space: Signal<Space | null>` — current space
      - `tasks: Signal<SpaceTask[]>` — tasks in current space
-     - `goals: Signal<SpaceGoal[]>` — goals in current space
+     - `workflowRuns: Signal<SpaceWorkflowRun[]>` — active and recent workflow runs
      - `agents: Signal<SpaceAgent[]>` — custom agents
      - `workflows: Signal<SpaceWorkflow[]>` — workflow definitions
      - `runtimeState: Signal<SpaceRuntimeState | null>` — runtime status
@@ -100,19 +100,19 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
 
    - Computed signals:
      - `activeTasks` — tasks filtered by active status
-     - `activeGoals` — goals filtered by active status
+     - `activeRuns` — workflow runs filtered by in-progress status
      - `defaultWorkflow` — the space's default workflow
-     - `tasksByGoal` — tasks grouped by goal ID
+     - `tasksByRun` — tasks grouped by workflow run ID
 
    - Methods:
      - `selectSpace(spaceId: string)` — fetch space data, subscribe to events
      - `clearSpace()` — unsubscribe, reset signals
-     - CRUD wrappers: `createTask()`, `updateGoal()`, `archiveSpace()`, etc.
+     - CRUD wrappers: `createTask()`, `startWorkflowRun()`, `archiveSpace()`, etc.
 
 2. Promise-chain lock for atomic space switching (prevent race conditions when rapidly switching spaces — same pattern as `RoomStore`)
 
 3. Event subscriptions:
-   - Subscribe to `space.task.created`, `space.task.updated`, `space.goal.created`, `space.goal.updated`, `spaceAgent.created/updated/deleted`, `spaceWorkflow.created/updated/deleted`
+   - Subscribe to `space.task.created`, `space.task.updated`, `space.workflowRun.created`, `space.workflowRun.updated`, `spaceAgent.created/updated/deleted`, `spaceWorkflow.created/updated/deleted`
    - Auto-cleanup on space switch
 
 4. Write unit tests:
@@ -125,7 +125,7 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
 - `SpaceStore` provides complete reactive state for Space UI
 - Event subscriptions enable real-time updates
 - Promise-chain lock prevents race conditions
-- Computed signals derive useful views of the data
+- Computed signals derive useful views of the data (tasks by run, active runs, etc.)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -155,21 +155,22 @@ Build the Space creation dialog (with required workspace path) and the main 3-co
 
 2. Create `packages/web/src/islands/Space.tsx` — the main Space component:
    - **3-column layout**:
-     - **Left column (narrow)**: Space navigation panel — goals list, quick-access sections (Agents, Workflows, Settings), space status indicator
-     - **Middle column (wide)**: Primary work area — goal detail, task list, dashboard, or editor views depending on what's selected
+     - **Left column (narrow)**: Space navigation panel — workflow runs list, standalone tasks, quick-access sections (Agents, Workflows, Settings), space status indicator
+     - **Middle column (wide)**: Primary work area — workflow run detail, task list, dashboard, or editor views depending on what's selected
      - **Right column (wide)**: Detail pane — active task conversation, session view, or contextual information
    - The right column shows task conversations (using the `TaskConversationRenderer` pattern but styled fresh) when a task is selected
    - Responsive: on narrow screens, columns collapse (right → overlay, left → toggleable)
 
 3. Create `packages/web/src/components/space/SpaceDashboard.tsx`:
    - Default middle-column view when no specific item is selected
-   - Shows: space name, workspace path, goal progress overview, recent activity
-   - Quick actions: "New Goal", "Configure Agents", "Edit Workflows"
+   - Shows: space name, workspace path, workflow run progress, recent activity
+   - Quick actions: "Start Workflow Run", "Create Task", "Configure Agents", "Edit Workflows"
    - Minimalist design: cards with clear hierarchy, subtle color accents
 
 4. Create `packages/web/src/components/space/SpaceNavPanel.tsx`:
    - Left column navigation:
-     - Goals section (expandable list with status indicators)
+     - Workflow Runs section (expandable list with status indicators, step progress like "Step 2/3")
+     - Standalone Tasks section (tasks not part of a workflow run)
      - "Agents" link → opens agent management in middle column
      - "Workflows" link → opens workflow management in middle column
      - "Settings" link → opens space settings
@@ -194,13 +195,13 @@ Build the Space creation dialog (with required workspace path) and the main 3-co
    - Create a new Space via the dialog
    - Verify workspace path is required
    - Navigate to Space and verify 3-column layout renders
-   - Navigate between goals and verify task pane updates
+   - Navigate between workflow runs and verify task pane updates
 
 **Acceptance criteria:**
 - Space creation requires workspace path and validates it
 - 3-column layout renders correctly with left nav, middle work area, right detail
-- Dashboard provides clear overview of space status
-- Navigation panel allows quick access to all space sections
+- Dashboard provides clear overview of space status (workflow runs, tasks)
+- Navigation panel shows workflow runs and standalone tasks
 - Task pane shows workflow step progression
 - Design is minimalist and feels fresh (not a copy of Room UI)
 - E2E tests pass

@@ -8,7 +8,7 @@ Build a new **Spaces** system — a fully parallel, isolated multi-agent workflo
 
 **No existing code is modified.** Spaces are an entirely new parallel system that coexists with the existing Rooms implementation:
 
-- **New DB tables**: `spaces`, `space_agents`, `space_workflows`, `space_workflow_steps`, `space_tasks`, `space_goals`, `space_session_groups`, `space_session_group_members` — no modifications to any existing table (no ALTER TABLE on `tasks`, `goals`, `rooms`, etc.)
+- **New DB tables**: `spaces`, `space_agents`, `space_workflows`, `space_workflow_steps`, `space_workflow_runs`, `space_tasks`, `space_session_groups`, `space_session_group_members` — no modifications to any existing table (no ALTER TABLE on `tasks`, `goals`, `rooms`, etc.)
 - **New API routes**: `space.*`, `spaceAgent.*`, `spaceWorkflow.*`, `spaceExport.*`, `spaceImport.*` — no touching existing RPC handlers
 - **New frontend pages/components**: `/space/:spaceId` routes, new islands, new stores — no modifying existing UI components. All Space UI lives under `packages/web/src/components/space/`
 - **New navigation entry point**: "Spaces" section in sidebar alongside existing "Rooms"
@@ -18,15 +18,24 @@ Build a new **Spaces** system — a fully parallel, isolated multi-agent workflo
 
 Existing code (rooms, agents, sessions, components, routes, tables) can be **imported** (e.g., reusing `AgentSessionInit` interfaces, `Bun.spawn` patterns) but never **modified**.
 
+## No Goals — Tasks and Workflows Are the Primitives
+
+The Space system deliberately **does not include goals**. In the existing Room system, a goal is a pre-processor for tasks and workflows. In Spaces, we simplify:
+
+- **Tasks** are the primary work unit — created directly or by workflow steps
+- **Workflows** orchestrate multi-step processes, producing tasks at each step
+- **Workflow runs** (`space_workflow_runs`) track the state of an active workflow execution — which step it's on, which tasks belong to it
+- A future plan may re-introduce goals as a higher-level grouping concept
+
 ## High-Level Approach
 
-1. **Space Foundation** — new `spaces` table and full supporting infrastructure (tasks, goals, session groups, agents, workflows) all created in a **single migration** since there are no existing tables to worry about. `space_tasks` has `custom_agent_id`, `workflow_id`, `workflow_step_id` columns built in from the start. `space_goals` has `workflow_id` built in. Spaces require a **workspace path** at creation time.
+1. **Space Foundation** — new `spaces` table and full supporting infrastructure (tasks, workflow runs, session groups, agents, workflows) all created in a **single migration**. `space_tasks` has `custom_agent_id`, `workflow_run_id`, `workflow_step_id` columns built in from the start. Spaces require a **workspace path** at creation time.
 
 2. **Custom Agent Definitions** — a `space_agents` table so users can define agents with arbitrary names, models, tools, and system prompts. Each agent belongs to a Space. Managed by `SpaceAgentManager`.
 
 3. **Custom Workflows** — `space_workflows` and `space_workflow_steps` tables (created in the M1 migration) with `SpaceWorkflowRepository` and `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`. Workflows define sequences of agent steps, runtime gates, and rules. All types in `space.ts`.
 
-4. **SpaceRuntime** — a new workflow-first orchestration engine in `packages/daemon/src/lib/space/runtime/`. Unlike `RoomRuntime` which has a hardcoded planner-coder-leader flow, `SpaceRuntime` is designed from the ground up for workflow-driven orchestration via `WorkflowExecutor`. Managed by `SpaceRuntimeService`.
+4. **SpaceRuntime** — a new workflow-first orchestration engine in `packages/daemon/src/lib/space/runtime/`. Unlike `RoomRuntime` which has a hardcoded planner→coder→leader flow, `SpaceRuntime` is designed from the ground up for workflow-driven orchestration via `WorkflowExecutor`. Workflow runs are the unit of orchestration — each run tracks step progression through a workflow. Managed by `SpaceRuntimeService`.
 
 5. **Frontend** — a fresh, minimalist UI using the 3-column layout pattern. Creative design that feels focused and purposeful, not a copy of the existing Room UI. All components under `packages/web/src/components/space/`.
 
@@ -38,13 +47,13 @@ Existing code (rooms, agents, sessions, components, routes, tables) can be **imp
 
 The existing `AgentType = 'coder' | 'general'` union is **kept as-is**. Custom agents are referenced exclusively via the `customAgentId?: string` field on `SpaceTask`. Resolution logic: if `customAgentId` is set, resolve from `SpaceAgentManager`; otherwise, use the existing `assignedAgent` (`AgentType`) path. This preserves type safety in all existing code.
 
-### 2. WorkflowExecutor Operates at the Goal Level
+### 2. WorkflowExecutor Operates on Workflow Runs
 
-The `WorkflowExecutor` orchestrates **goal-level** workflow progression within Spaces:
-- A `SpaceGoal` has an associated workflow (e.g., Step 1: Planner, Step 2: Coder, Step 3: Security Reviewer)
+The `WorkflowExecutor` orchestrates **workflow run** progression within Spaces:
+- A `SpaceWorkflowRun` represents an active execution of a workflow (e.g., Step 1: Planner, Step 2: Coder, Step 3: Security Reviewer)
 - Each workflow step produces one or more `SpaceTask` records. When a step completes, the executor evaluates the exit gate and advances to the next step.
 - **The Leader role is preserved per group.** Every Worker group still gets a Leader session for review. Custom agents with `role: 'reviewer'` are specialized Workers whose output is reviewed by the Leader.
-- The `WorkflowExecutor` hooks into the **goal completion** path within `SpaceRuntime`: when a task completes (Leader approves), the executor checks if the current step is done and whether to advance.
+- The `WorkflowExecutor` hooks into the **task completion** path within `SpaceRuntime`: when all tasks for a step complete (Leader approves), the executor checks whether to advance.
 
 ### 3. Gate Security Model
 
@@ -57,9 +66,8 @@ Shell-executing gates (`quality_check`, `custom`) pose security risks:
 ### 4. Single Migration Strategy
 
 All schema changes are in a **single migration** since everything is new:
-- Creates all Space-related tables: `spaces`, `space_agents`, `space_workflows`, `space_workflow_steps`, `space_tasks`, `space_goals`, `space_session_groups`, `space_session_group_members`
-- `space_tasks` has `custom_agent_id`, `workflow_id`, `workflow_step_id` columns built in from the start
-- `space_goals` has `workflow_id` built in from the start
+- Creates all Space-related tables: `spaces`, `space_agents`, `space_workflows`, `space_workflow_steps`, `space_workflow_runs`, `space_tasks`, `space_session_groups`, `space_session_group_members`
+- `space_tasks` has `custom_agent_id`, `workflow_run_id`, `workflow_step_id` columns built in from the start
 - **No ALTER TABLE** on any existing table
 
 ### 5. Agent Referencing Convention
@@ -80,13 +88,13 @@ Spaces require a **workspace path** at creation time — the directory where age
 
 ## Milestones
 
-1. **Space Core Data Model & Infrastructure** — All Space types in `space.ts`, single DB migration (all tables), repositories, managers, RPC handlers for Space container + tasks + goals + session groups.
+1. **Space Core Data Model & Infrastructure** — All Space types in `space.ts`, single DB migration (all tables including `space_workflow_runs`), repositories, managers, RPC handlers for Space container + tasks + workflow runs + session groups.
 2. **Custom Agent Data & Runtime** — Agent types in `space.ts`, `SpaceAgentRepository`, `SpaceAgentManager`, agent RPC handlers, `createCustomAgentInit()` factory, agent resolution helper.
-3. **Workflow Data Model** — Workflow/step/gate/rule types in `space.ts`, `SpaceWorkflowRepository` and `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`, workflow RPC handlers (`spaceWorkflow.*`), built-in templates in `packages/daemon/src/lib/space/workflows/`.
-4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, gate evaluation with security enforcement, step advancement, rule injection.
-5. **Space Frontend Foundation** — Navigation entry point, URL routing, `SpaceStore`, Space creation UX with workspace path picker, minimalist 3-column layout shell (right pane shows placeholder states until M4 makes it functional).
+3. **Workflow Data Model** — Workflow/step/gate/rule types in `space.ts`, `SpaceWorkflowRepository`, `SpaceWorkflowManager` in `packages/daemon/src/lib/space/`, workflow RPC handlers (`spaceWorkflow.*`), built-in templates.
+4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, gate evaluation, step advancement, rule injection. Operates on workflow runs and tasks (no goals).
+5. **Space Frontend Foundation** — Navigation entry point, URL routing, `SpaceStore`, Space creation UX with workspace path picker, minimalist 3-column layout shell (right pane shows placeholder states until M4 provides a running runtime).
 6. **Frontend: Agent & Workflow UI** — Agent creation/editing, visual workflow builder, rules editor — all under `packages/web/src/components/space/`.
-7. **Workflow Selection & Intelligence** — `SpaceGoalManager` workflow assignment, auto-selection logic in `packages/daemon/src/lib/space/runtime/`, Space agent tools in `packages/daemon/src/lib/space/tools/`, prompt enhancement.
+7. **Workflow Selection & Agent Tools** — Workflow selection logic, Space agent tools in `packages/daemon/src/lib/space/tools/`, prompt enhancement with workflow awareness.
 8. **Export/Import & Sharing Foundation** — Export format types in `space.ts`, `spaceExport.*`/`spaceImport.*` RPC handlers in `space-export-import-handlers.ts`, frontend UI under `packages/web/src/components/space/`.
 
 ## Cross-Milestone Dependencies and Sequencing
@@ -100,7 +108,7 @@ Spaces require a **workspace path** at creation time — the directory where age
 - **M8 depends on M2 and M3**: export/import needs both data models
 
 ```
-M1 (Space Core) ──┬──→ M2 (Agent Data & Runtime) ──┬──→ M4 (SpaceRuntime Engine) → M7 (Selection)
+M1 (Space Core) ──┬──→ M2 (Agent Data & Runtime) ──┬──→ M4 (SpaceRuntime Engine) → M7 (Selection & Tools)
                    │                                 │
                    ├──→ M3 (Workflow Data) ──────────┘
                    │         │
@@ -115,4 +123,4 @@ Note: M5 builds a functional shell with placeholder states for the right pane (t
 
 ## Total Estimated Task Count
 
-26 tasks across 8 milestones.
+24 tasks across 8 milestones.

@@ -2,14 +2,14 @@
 
 ## Goal
 
-Define the core data model, database schema, repositories, managers, and RPC handlers for the Space container and its supporting entities (tasks, goals, session groups). This is the foundation that all other milestones build upon.
+Define the core data model, database schema, repositories, managers, and RPC handlers for the Space container and its supporting entities (tasks, workflow runs, session groups). This is the foundation that all other milestones build upon.
 
 ## Isolation Principle
 
 **No existing tables or code are modified.** All entities are new:
 - `spaces` table (not `rooms`)
 - `space_tasks` table (not modifications to `tasks`)
-- `space_goals` table (not modifications to `goals`)
+- `space_workflow_runs` table (tracks active workflow executions)
 - `space_session_groups` / `space_session_group_members` (not modifications to existing session group tables)
 
 Existing repository/manager patterns are used as reference but new files are created.
@@ -18,8 +18,8 @@ Existing repository/manager patterns are used as reference but new files are cre
 
 - New shared types in `packages/shared/src/types/space.ts`
 - Single DB migration creating all Space tables
-- New repositories: `SpaceRepository`, `SpaceTaskRepository`, `SpaceGoalRepository`, `SpaceSessionGroupRepository`
-- New managers: `SpaceManager`, `SpaceTaskManager`, `SpaceGoalManager`
+- New repositories: `SpaceRepository`, `SpaceTaskRepository`, `SpaceWorkflowRunRepository`, `SpaceSessionGroupRepository`
+- New managers: `SpaceManager`, `SpaceTaskManager`
 - New RPC handlers for space CRUD operations
 - New `DaemonEventMap` entries for Space events
 - Unit tests
@@ -34,7 +34,7 @@ Existing repository/manager patterns are used as reference but new files are cre
 
 **Description:**
 
-Create a new shared types file for all Space-related types. These are distinct from the existing room/task/goal types and live in their own module.
+Create a new shared types file for all Space-related types. These are distinct from the existing room/task types and live in their own module.
 
 **Subtasks:**
 
@@ -87,13 +87,34 @@ Create a new shared types file for all Space-related types. These are distinct f
    ```
 
 2. Add `SpaceTask` interface (mirrors `NeoTask` structure but with Space-specific fields built in):
-   - All existing task fields: `id`, `spaceId`, `goalId`, `title`, `description`, `status`, `priority`, `assignedAgent`, `taskType`, `progress`, `dependencies`, etc.
-   - **Built-in from the start**: `customAgentId?: string`, `workflowId?: string`, `workflowStepId?: string`
+   - All existing task fields: `id`, `spaceId`, `title`, `description`, `status`, `priority`, `assignedAgent`, `taskType`, `progress`, `dependencies`, etc.
+   - **Built-in from the start**: `customAgentId?: string`, `workflowRunId?: string`, `workflowStepId?: string`
    - `CreateSpaceTaskParams` and `UpdateSpaceTaskParams`
 
-3. Add `SpaceGoal` interface (mirrors `RoomGoal` structure but with Space-specific fields):
-   - Fields: `id`, `spaceId`, `title`, `description`, `status`, `priority`, `workflowId?: string`, `metrics`, etc.
-   - `CreateSpaceGoalParams` and `UpdateSpaceGoalParams`
+3. Add `SpaceWorkflowRun` interface — tracks an active workflow execution:
+   ```typescript
+   /** An active execution of a workflow */
+   interface SpaceWorkflowRun {
+     id: string;
+     spaceId: string;
+     workflowId: string;
+     /** Title/description of what this run is doing */
+     title: string;
+     description: string;
+     /** Current step index in the workflow */
+     currentStepIndex: number;
+     status: 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'needs_attention';
+     config?: Record<string, unknown>;
+     createdAt: number;
+     updatedAt: number;
+   }
+
+   interface CreateWorkflowRunParams {
+     workflowId: string;
+     title: string;
+     description?: string;
+   }
+   ```
 
 4. Add `SpaceSessionGroup` and `SpaceSessionGroupMember` interfaces for multi-agent session tracking
 
@@ -103,8 +124,9 @@ Create a new shared types file for all Space-related types. These are distinct f
 - All Space types are defined and exported from `@neokai/shared`
 - Types include JSDoc documentation
 - `Space` has `workspacePath` as a required field
-- `SpaceTask` has `customAgentId`, `workflowId`, `workflowStepId` built in (not added via migration later)
-- `SpaceGoal` has `workflowId` built in
+- `SpaceTask` has `customAgentId`, `workflowRunId`, `workflowStepId` built in (not added via migration later)
+- `SpaceWorkflowRun` tracks workflow execution state
+- No `SpaceGoal` type — goals are not part of the Space system
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
@@ -189,28 +211,27 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
    );
 
-   -- Goals within a space (workflow_id built in from start)
-   -- NOTE: space_goals MUST be created BEFORE space_tasks (FK dependency)
-   CREATE TABLE IF NOT EXISTS space_goals (
+   -- Workflow runs — tracks active executions of a workflow
+   -- NOTE: space_workflow_runs MUST be created BEFORE space_tasks (FK dependency)
+   CREATE TABLE IF NOT EXISTS space_workflow_runs (
      id TEXT PRIMARY KEY,
      space_id TEXT NOT NULL,
+     workflow_id TEXT NOT NULL,
      title TEXT NOT NULL,
      description TEXT NOT NULL DEFAULT '',
+     current_step_index INTEGER NOT NULL DEFAULT 0,
      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
-     priority TEXT NOT NULL DEFAULT 'normal',
-     workflow_id TEXT,
-     metrics TEXT,
      config TEXT,
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL,
-     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+     FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
    );
 
    -- Tasks within a space (custom_agent_id, workflow columns built in from start)
    CREATE TABLE IF NOT EXISTS space_tasks (
      id TEXT PRIMARY KEY,
      space_id TEXT NOT NULL,
-     goal_id TEXT,
      title TEXT NOT NULL,
      description TEXT NOT NULL DEFAULT '',
      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'needs_attention', 'completed', 'cancelled')),
@@ -218,7 +239,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      assigned_agent TEXT NOT NULL DEFAULT 'coder',
      custom_agent_id TEXT,
      task_type TEXT NOT NULL DEFAULT 'coding',
-     workflow_id TEXT,
+     workflow_run_id TEXT,
      workflow_step_id TEXT,
      progress TEXT,
      dependencies TEXT NOT NULL DEFAULT '[]',
@@ -227,7 +248,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      created_at INTEGER NOT NULL,
      updated_at INTEGER NOT NULL,
      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-     FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE SET NULL
+     FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
    );
 
    -- Session groups for multi-agent collaboration within spaces
@@ -235,7 +256,6 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      id TEXT PRIMARY KEY,
      space_id TEXT NOT NULL,
      task_id TEXT,
-     goal_id TEXT,
      status TEXT NOT NULL DEFAULT 'active',
      metadata TEXT,
      created_at INTEGER NOT NULL,
@@ -258,10 +278,11 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
    CREATE INDEX idx_space_agents_space_id ON space_agents(space_id);
    CREATE INDEX idx_space_workflows_space_id ON space_workflows(space_id);
    CREATE INDEX idx_space_workflow_steps_workflow_id ON space_workflow_steps(workflow_id);
+   CREATE INDEX idx_space_workflow_runs_space_id ON space_workflow_runs(space_id);
+   CREATE INDEX idx_space_workflow_runs_status ON space_workflow_runs(status);
    CREATE INDEX idx_space_tasks_space_id ON space_tasks(space_id);
-   CREATE INDEX idx_space_tasks_goal_id ON space_tasks(goal_id);
+   CREATE INDEX idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id);
    CREATE INDEX idx_space_tasks_status ON space_tasks(status);
-   CREATE INDEX idx_space_goals_space_id ON space_goals(space_id);
    CREATE INDEX idx_space_session_groups_space_id ON space_session_groups(space_id);
    CREATE INDEX idx_space_session_groups_task_id ON space_session_groups(task_id);
    ```
@@ -269,14 +290,15 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
 4. Write migration tests verifying:
    - All tables are created correctly
    - Foreign key cascades work (delete space → everything deleted)
-   - `space_tasks` has `custom_agent_id`, `workflow_id`, `workflow_step_id` columns from the start
-   - `space_goals` has `workflow_id` column from the start
+   - `space_tasks` has `custom_agent_id`, `workflow_run_id`, `workflow_step_id` columns from the start
+   - `space_workflow_runs` tracks workflow execution state
    - No existing tables are affected
 
 **Acceptance criteria:**
 - Single migration creates all Space tables
 - CASCADE deletes work correctly for the full entity hierarchy
 - All workflow/agent columns are built into tables from the start (no ALTER TABLE)
+- No `space_goals` table — goals are not part of the Space system
 - Migration test passes
 - No modifications to any existing tables
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -291,7 +313,7 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
 
 **Description:**
 
-Create the data access (repositories) and business logic (managers) layers for Spaces, SpaceTasks, and SpaceGoals. Follow existing repository/manager patterns but create entirely new files.
+Create the data access (repositories) and business logic (managers) layers for Spaces, SpaceTasks, and SpaceWorkflowRuns. Follow existing repository/manager patterns but create entirely new files.
 
 **Subtasks:**
 
@@ -307,14 +329,14 @@ Create the data access (repositories) and business logic (managers) layers for S
 
 2. Create `packages/daemon/src/storage/repositories/space-task-repository.ts`:
    - Full CRUD operations following `TaskRepository` patterns
-   - `rowToSpaceTask()` handles `customAgentId`, `workflowId`, `workflowStepId` fields
-   - Batch operations: `listByGoal()`, `listBySpace()`, `listByStatus()`
+   - `rowToSpaceTask()` handles `customAgentId`, `workflowRunId`, `workflowStepId` fields
+   - Batch operations: `listByWorkflowRun()`, `listBySpace()`, `listByStatus()`
    - JSON serialization for `dependencies`, `progress`, `config`
 
-3. Create `packages/daemon/src/storage/repositories/space-goal-repository.ts`:
-   - Full CRUD operations following `GoalRepository` patterns
-   - `rowToSpaceGoal()` handles `workflowId` field
-   - `listBySpace()`, `getActiveGoals()`
+3. Create `packages/daemon/src/storage/repositories/space-workflow-run-repository.ts`:
+   - Full CRUD operations for workflow runs
+   - `rowToWorkflowRun()` mapping
+   - `listBySpace()`, `getActiveRuns()`, `updateStepIndex()`, `updateStatus()`
 
 4. Create `packages/daemon/src/storage/repositories/space-session-group-repository.ts`:
    - CRUD for session groups and members
@@ -329,7 +351,6 @@ Create the data access (repositories) and business logic (managers) layers for S
      - Store the resolved real path in the database (not the original symlink path)
    - Also handles: name uniqueness, overview composition
    - `SpaceTaskManager` — task lifecycle, dependency validation, status transitions
-   - `SpaceGoalManager` — goal lifecycle, status transitions, workflow validation (if `workflowId` provided, verify it exists in same space)
 
 6. Export from `packages/daemon/src/lib/space/index.ts`
 
@@ -338,11 +359,12 @@ Create the data access (repositories) and business logic (managers) layers for S
    - Cascade deletes
    - Workspace path validation
    - JSON round-trips
-   - Goal workflow_id validation
+   - Workflow run status transitions
 
 **Acceptance criteria:**
 - All repositories handle CRUD with proper JSON serialization
-- Managers validate business rules (workspace path, uniqueness, workflow references)
+- Managers validate business rules (workspace path, uniqueness)
+- No `SpaceGoalRepository` or `SpaceGoalManager` — goals are not part of the Space system
 - Unit tests cover happy paths and error cases
 - All files are new — no modifications to existing repositories/managers
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -369,8 +391,8 @@ Add RPC handlers for Space CRUD operations and register new event types in Daemo
    'space.deleted': { sessionId: string; spaceId: string };
    'space.task.created': { sessionId: string; spaceId: string; task: SpaceTask };
    'space.task.updated': { sessionId: string; spaceId: string; task: SpaceTask };
-   'space.goal.created': { sessionId: string; spaceId: string; goal: SpaceGoal };
-   'space.goal.updated': { sessionId: string; spaceId: string; goal: SpaceGoal };
+   'space.workflowRun.created': { sessionId: string; spaceId: string; run: SpaceWorkflowRun };
+   'space.workflowRun.updated': { sessionId: string; spaceId: string; run: SpaceWorkflowRun };
    ```
    Import types from `@neokai/shared`.
 
@@ -381,27 +403,25 @@ Add RPC handlers for Space CRUD operations and register new event types in Daemo
    - `space.update { id, ... }` → `{ space }`
    - `space.archive { id }` → `{ success }`
    - `space.delete { id }` → `{ success }`
-   - `space.overview { id }` → `{ space, tasks, goals, sessions }`
+   - `space.overview { id }` → `{ space, tasks, workflowRuns, sessions }`
 
 3. Create `packages/daemon/src/lib/rpc-handlers/space-task-handlers.ts`:
    - `spaceTask.create`, `spaceTask.list`, `spaceTask.get`, `spaceTask.update`
 
-4. Create `packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts`:
-   - `spaceGoal.create`, `spaceGoal.list`, `spaceGoal.get`, `spaceGoal.update`
-
-5. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()`):
+4. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()`):
    - Add Space repositories and managers to `DaemonAppContext`
-   - Call `setupSpaceHandlers()`, `setupSpaceTaskHandlers()`, `setupSpaceGoalHandlers()`
+   - Call `setupSpaceHandlers()`, `setupSpaceTaskHandlers()`
    - **Only add new registrations** — do not modify existing handler setup
 
-6. Emit DaemonHub events for all mutations
+5. Emit DaemonHub events for all mutations
 
-7. Write unit tests for each RPC handler including error cases
+6. Write unit tests for each RPC handler including error cases
 
 **Acceptance criteria:**
 - All Space CRUD operations work via RPC
 - `space.create` validates workspace path exists and rejects invalid paths
 - DaemonHub events enable real-time UI updates
+- No `spaceGoal.*` handlers — goals are not part of the Space system
 - All handlers are in new files — no modification to existing handler files
 - Error handling returns clear messages
 - Unit tests pass

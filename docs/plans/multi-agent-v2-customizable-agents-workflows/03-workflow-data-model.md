@@ -34,7 +34,7 @@ Define the workflow types, repository, manager, RPC handlers, and built-in templ
 
 **Description:**
 
-Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/SpaceTask/SpaceGoal types from M1 and SpaceAgent types from M2).
+Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/SpaceTask/SpaceWorkflowRun types from M1 and SpaceAgent types from M2).
 
 **Subtasks:**
 

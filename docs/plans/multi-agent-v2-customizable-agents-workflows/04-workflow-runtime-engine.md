@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build `SpaceRuntime` — a new workflow-first orchestration engine — and `WorkflowExecutor` to manage goal-level step sequences, gate evaluation, and rule injection within Spaces. All code lives in `packages/daemon/src/lib/space/runtime/`. No modifications to `RoomRuntime` or any existing runtime code.
+Build `SpaceRuntime` — a new workflow-first orchestration engine — and `WorkflowExecutor` to manage workflow run step sequences, gate evaluation, and rule injection within Spaces. All code lives in `packages/daemon/src/lib/space/runtime/`. No modifications to `RoomRuntime` or any existing runtime code.
 
 ## Isolation Checklist
 
@@ -10,15 +10,15 @@ Build `SpaceRuntime` — a new workflow-first orchestration engine — and `Work
 - `SpaceRuntime` in `packages/daemon/src/lib/space/runtime/space-runtime.ts`
 - `SpaceRuntimeService` in `packages/daemon/src/lib/space/runtime/space-runtime-service.ts`
 - Gate allowlist in `packages/daemon/src/lib/space/runtime/gate-allowlist.ts`
-- All types use `SpaceTask`, `SpaceGoal`, `SpaceWorkflow`, `SpaceAgent` (NOT `NeoTask`, `RoomGoal`, `Workflow`)
+- All types use `SpaceTask`, `SpaceWorkflowRun`, `SpaceWorkflow`, `SpaceAgent` (NOT `NeoTask`, `RoomGoal`, `Workflow`)
 - No modifications to `RoomRuntime`, `TaskGroupManager`, `room-runtime-service.ts`, `room-manager.ts`, or any file under `packages/daemon/src/lib/room/`
 
-## Key Architecture: Workflow-First Orchestration
+## Key Architecture: Workflow Run Orchestration
 
-`SpaceRuntime` is a **new class** that manages the full lifecycle of goals within a Space. Unlike `RoomRuntime` which has a hardcoded planner→coder→leader flow with workflows bolted on, `SpaceRuntime` is designed from the ground up for workflow-driven orchestration.
+`SpaceRuntime` is a **new class** that manages the full lifecycle of workflow runs and tasks within a Space. Unlike `RoomRuntime` which has a hardcoded planner→coder→leader flow, `SpaceRuntime` is designed from the ground up for workflow-driven orchestration.
 
-The `WorkflowExecutor` operates at the **goal level**:
-1. A `SpaceGoal` has an associated `SpaceWorkflow`
+The `WorkflowExecutor` operates on **workflow runs** (not goals):
+1. A `SpaceWorkflowRun` represents an active execution of a workflow
 2. Each step produces `SpaceTask` records. `advance()` **creates task DB records only** (pending status) — it does NOT spawn session groups. The tick loop handles group spawning.
 3. Each task still gets a Worker + Leader group pair (using `space_session_groups`/`space_session_group_members`)
 4. When a step's tasks complete (Leader approves), the executor evaluates the exit gate and advances
@@ -31,7 +31,7 @@ The `WorkflowExecutor` operates at the **goal level**:
 - `SpaceRuntimeService` for lifecycle management
 - Gate security enforcement
 - Rule injection into agent prompts
-- Backward compatibility for spaces without workflows
+- Backward compatibility for spaces without workflows (standalone tasks)
 - Unit and integration tests
 
 ---
@@ -44,25 +44,25 @@ The `WorkflowExecutor` operates at the **goal level**:
 
 **Description:**
 
-Create the `WorkflowExecutor` class that manages goal-level workflow progression within Spaces.
+Create the `WorkflowExecutor` class that manages workflow run progression within Spaces.
 
 **Subtasks:**
 
 1. Create `packages/daemon/src/lib/space/runtime/workflow-executor.ts`:
    - `WorkflowExecutor` class with:
-     - Constructor takes: `workflow: SpaceWorkflow`, `goalId: string`, `currentStepIndex: number`, `taskManager: SpaceTaskManager`, `goalManager: SpaceGoalManager`, `agentManager: SpaceAgentManager`, `workspacePath: string`
-     - `currentStepIndex` enables **restart rehydration**: when creating from persisted state, pass step index derived from latest task's `workflowStepId`. For new goals, pass `0`.
+     - Constructor takes: `workflow: SpaceWorkflow`, `run: SpaceWorkflowRun`, `taskManager: SpaceTaskManager`, `workflowRunRepo: SpaceWorkflowRunRepository`, `agentManager: SpaceAgentManager`, `workspacePath: string`
+     - The `run.currentStepIndex` enables **restart rehydration**: when creating from persisted state, the run already contains the correct step index. For new runs, it starts at `0`.
      - `getCurrentStep(): WorkflowStep | null`
      - `getNextStep(): WorkflowStep | null`
      - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` — evaluates current step's exit gate
-     - `canEnterStep(stepIndex: number): Promise<{ allowed: boolean; reason?: string }>` — evaluates the target step's **entry gate** (if any). Called by `advance()` before entering the next step, and by `SpaceRuntime` before starting the first step of a new goal.
-     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — evaluates exit gate of current step, then evaluates **entry gate** of next step; increments step index, **creates `SpaceTask` DB records only** (pending status), persists `workflowStepId` on new tasks. Does NOT spawn session groups.
+     - `canEnterStep(stepIndex: number): Promise<{ allowed: boolean; reason?: string }>` — evaluates the target step's **entry gate** (if any). Called by `advance()` before entering the next step, and by `SpaceRuntime` before starting the first step of a new run.
+     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — evaluates exit gate of current step, then evaluates **entry gate** of next step; increments step index (persisted on `SpaceWorkflowRun`), **creates `SpaceTask` DB records only** (pending status), sets `workflowRunId` and `workflowStepId` on new tasks. Does NOT spawn session groups.
      - `isComplete(): boolean`
 
 2. Track workflow state:
-   - `space_goals.workflow_id` associates goals with workflows
-   - Current step tracked via latest task's `workflow_step_id` in `space_tasks`
-   - `currentStepIndex` is in-memory; persisted via task metadata
+   - `space_workflow_runs.current_step_index` tracks which step the run is on (persisted)
+   - `space_tasks.workflow_run_id` links tasks to their run
+   - `space_tasks.workflow_step_id` links tasks to the specific step that created them
 
 3. Gate evaluation with security enforcement:
    - `evaluateGate(gate: WorkflowGate, context: GateContext): Promise<GateResult>`
@@ -80,7 +80,7 @@ Create the `WorkflowExecutor` class that manages goal-level workflow progression
    - Default: `['bun run check', 'bun test', 'bun run lint', 'bun run typecheck', 'bun run format:check']`
 
 5. Write unit tests:
-   - Multi-step goal progression using `SpaceGoal`/`SpaceTask`/`SpaceWorkflow` types
+   - Multi-step workflow run progression using `SpaceWorkflowRun`/`SpaceTask`/`SpaceWorkflow` types
    - All gate types evaluated correctly
    - Security: reject non-allowlisted commands, reject path traversal
    - Timeout enforcement (mock Bun.spawn)
@@ -88,8 +88,8 @@ Create the `WorkflowExecutor` class that manages goal-level workflow progression
    - Completion detection, error handling
 
 **Acceptance criteria:**
-- `WorkflowExecutor` advances goals through step sequences
-- All types are Space types (`SpaceTask`, `SpaceGoal`, `SpaceWorkflow`, `SpaceAgentManager`)
+- `WorkflowExecutor` advances workflow runs through step sequences
+- All types are Space types (`SpaceTask`, `SpaceWorkflowRun`, `SpaceWorkflow`, `SpaceAgentManager`)
 - All gate types evaluated with security enforcement
 - Non-allowlisted commands rejected, path traversal rejected
 - Timeout enforced on shell-executing gates
@@ -107,31 +107,30 @@ Create the `WorkflowExecutor` class that manages goal-level workflow progression
 
 **Description:**
 
-Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. This is a **new class** in `packages/daemon/src/lib/space/runtime/space-runtime.ts` that manages the full lifecycle of goals within a Space: workflow resolution, task creation, session group management (via `space_session_groups`), step advancement, and gate enforcement. It does NOT modify `RoomRuntime`.
+Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. This is a **new class** in `packages/daemon/src/lib/space/runtime/space-runtime.ts` that manages workflow runs and standalone tasks: creating runs, spawning tasks per step, managing session groups (via `space_session_groups`), advancing steps, and enforcing gates. It does NOT modify `RoomRuntime`.
 
 **Subtasks:**
 
 1. Create `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
-   - `SpaceRuntimeConfig` includes: `SpaceManager`, `SpaceTaskManager`, `SpaceGoalManager`, `SpaceWorkflowManager`, `SpaceAgentManager`, `SpaceSessionGroupRepository`, and `WorkflowExecutor` factory
-   - Maintain `Map<goalId, WorkflowExecutor>` for active workflows
+   - `SpaceRuntimeConfig` includes: `SpaceManager`, `SpaceTaskManager`, `SpaceWorkflowManager`, `SpaceAgentManager`, `SpaceWorkflowRunRepository`, `SpaceSessionGroupRepository`, and `WorkflowExecutor` factory
+   - Maintain `Map<runId, WorkflowExecutor>` for active workflow runs
    - Implement `executeTick()` method — the main orchestration loop
 
 2. **Executor rehydration on startup** (restart safety):
    - Implement `rehydrateExecutors()` async method called **at the start of the first `executeTick()`** (not in constructor — constructor is synchronous, async work deferred to first tick)
-   - Query all in-progress `SpaceGoal` records with non-null `workflow_id` from `space_goals`
-   - Reconstruct executors: load `SpaceWorkflow`, determine `currentStepIndex` from latest `SpaceTask`'s `workflow_step_id`, create executor
+   - Query all in-progress `SpaceWorkflowRun` records (status = `in_progress`) from `space_workflow_runs`
+   - Reconstruct executors: load `SpaceWorkflow`, create executor with the persisted `currentStepIndex` from the run record
    - Set `rehydrated: boolean` flag to prevent repeat runs
 
-3. **Workflow resolution** for new goals:
-   - When `SpaceGoal` created/started, check `goal.workflowId`
-   - If none, check space's default workflow via `SpaceWorkflowManager.getDefaultWorkflow(spaceId)`
-   - If found, create `WorkflowExecutor` with `currentStepIndex: 0`
-   - Store in executor map
+3. **Starting a workflow run**:
+   - `startWorkflowRun(spaceId, workflowId, title, description?)` → creates `SpaceWorkflowRun` record, creates `WorkflowExecutor`, evaluates entry gate of first step, creates first step's `SpaceTask` records
+   - If no explicit `workflowId`, use space's default workflow via `SpaceWorkflowManager.getDefaultWorkflow(spaceId)`
+   - Store executor in map
 
-4. **Guard against incorrect planning dispatch**:
-   - Goals managed by a `WorkflowExecutor` must NOT be dispatched to a generic planning path
-   - Only the executor decides when to spawn planning tasks (via `advance()` when `agentRef === 'planner'`)
-   - Check: if goal has executor in map (or `goal.workflowId != null`), skip generic planning
+4. **Standalone tasks** (no workflow):
+   - Tasks can be created directly without a workflow run (`workflowRunId` = null)
+   - These enter the standard execution queue and are processed normally
+   - No executor needed — they behave like regular tasks
 
 5. **Task-type assignment for workflow steps**:
    - `agentRef: 'planner'` → `taskType: 'planning'`, uses planning group path with draft promotion
@@ -139,13 +138,14 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
    - Custom agent (`agentRefType: 'custom'`) → `taskType: 'coding'`, `customAgentId` set, status `pending`
    - Helper: `resolveTaskTypeForStep(step: WorkflowStep): 'planning' | 'coding'`
 
-6. **Step advancement and gate enforcement** (goal completion path):
-   - After task completes (Leader approves), check if goal has executor
-   - If yes: `executor.canAdvance()` → evaluate exit gate
+6. **Step advancement and gate enforcement**:
+   - After task completes (Leader approves), check if task belongs to a workflow run (via `workflowRunId`)
+   - If yes: check if all tasks for the current step are complete
+   - If all step tasks complete: `executor.canAdvance()` → evaluate exit gate
    - Gate passes → `executor.advance()` → creates next step's `SpaceTask` records
-   - Gate requires human approval → pause with flag
-   - Gate fails after retries → task → `needs_attention`
-   - All steps complete → mark `SpaceGoal` as complete
+   - Gate requires human approval → pause run with flag
+   - Gate fails after retries → run → `needs_attention`
+   - All steps complete → mark `SpaceWorkflowRun` as complete
 
 7. **Rule injection** into agent prompts:
    - When building worker config for a workflow task, check current step for rules
@@ -153,42 +153,36 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
    - Append rules to system prompt
 
 8. **Executor cleanup** (memory leak prevention):
-   - Remove from map when: goal completes, fails, is cancelled/archived
-   - Hook into `SpaceGoal` state change handlers
+   - Remove from map when: run completes, fails, is cancelled
+   - Hook into `SpaceWorkflowRun` status change handlers
 
 9. **Wire `seedDefaultWorkflow`** from Task 3.4:
    - Call in the `space.create` RPC handler (in `space-handlers.ts`), **after** `SpaceManager.createSpace()` returns — the handler has access to both `SpaceManager` and `SpaceWorkflowManager`, whereas `SpaceManager` itself is constructed without workflow manager dependency
    - Idempotent: safe if space already has a workflow
    - **This is in the Space RPC handler** — NOT in `room-manager.ts`
 
-10. **Backward compatibility**:
-    - Spaces without workflows use a simple default behavior (direct planner→coder flow without executor)
-    - Regression test: verify default flow works when no workflow configured
-
-11. Write integration tests:
-    - `SpaceGoal` → workflow resolution → executor created
+10. Write integration tests:
+    - Start workflow run → executor created → first step tasks created
     - First step `SpaceTask` records created with correct agent and task-type
     - Planning-step tasks use planning group path + draft promotion
     - Coding-step tasks created as pending
     - Custom-agent tasks have `customAgentId` set
-    - **Planning guard**: workflow goal with non-planner first step does NOT trigger generic planning
-    - Exit gates checked between steps; entry gates evaluated before entering each step (including first step of new goal via `canEnterStep(0)`)
+    - Standalone tasks (no workflow) work normally
+    - Exit gates checked between steps; entry gates evaluated before entering each step (including first step via `canEnterStep(0)`)
     - Rules injected into agent prompts per step
-    - Human approval gate pauses correctly
-    - Gate failure → `needs_attention`
-    - **Rehydration**: clear map, reinitialize, verify resume from correct step
-    - **Cleanup**: executor removed after goal completion/failure/cancellation
-    - Regression: goals without workflows work normally
+    - Human approval gate pauses run correctly
+    - Gate failure → `needs_attention` on run
+    - **Rehydration**: clear map, reinitialize, verify in-progress runs resume from correct step
+    - **Cleanup**: executor removed after run completion/failure/cancellation
 
 **Acceptance criteria:**
-- `SpaceRuntime` is a new class that manages full workflow lifecycle for `SpaceGoal`s
-- All operations use Space tables (`space_tasks`, `space_goals`, `space_session_groups`) — NOT existing Room tables
-- Workflow resolution works: explicit, space-default, and no-workflow cases
-- Planning guard prevents spurious planning for non-planner-first workflows
+- `SpaceRuntime` is a new class that manages workflow runs and standalone tasks
+- All operations use Space tables (`space_tasks`, `space_workflow_runs`, `space_session_groups`) — NOT existing Room tables
+- Workflow runs are the unit of orchestration (not goals)
+- Standalone tasks work without a workflow
 - Executors rehydrated on startup, cleaned up on completion
 - `advance()` creates `SpaceTask` DB records only; tick loop handles group spawning
 - `seedDefaultWorkflow` wired into `space.create` RPC handler (NOT `room-manager.ts`)
-- Non-workflow goals unaffected
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -220,10 +214,10 @@ Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure
    - `space.task.updated` events include `workflowStepName` for UI display
    - Frontend can show "Step 2/3: Code Review"
 
-4. Multi-step goal lifecycle:
-   - `SpaceGoal` remains `in_progress` until final step completes
-   - Track `goalId → step → [SpaceTask records]` relationship
-   - Any step failure (gate fails after retries) → goal → `needs_attention`
+4. Multi-step workflow run lifecycle:
+   - `SpaceWorkflowRun` remains `in_progress` until final step completes
+   - Track `runId → step → [SpaceTask records]` relationship
+   - Any step failure (gate fails after retries) → run → `needs_attention`
 
 5. Wire `SpaceRuntimeService` into `DaemonAppContext`:
    - Add as dependency alongside existing `RoomRuntimeService`
@@ -232,13 +226,13 @@ Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure
 6. Write unit tests:
    - Runtime creation/disposal
    - Group metadata includes workflow info
-   - Multi-step goal tracking
+   - Multi-step run tracking
    - Failure in middle step surfaces correctly
 
 **Acceptance criteria:**
 - `SpaceRuntimeService` manages `SpaceRuntime` instances
 - Session groups (in `space_session_groups`) expose workflow metadata
 - Task events include step progression info
-- Multi-step goal lifecycle managed correctly
+- Multi-step workflow run lifecycle managed correctly
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
