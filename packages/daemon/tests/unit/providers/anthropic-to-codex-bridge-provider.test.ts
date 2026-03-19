@@ -296,28 +296,6 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// translateModelIdForSdk()
-	// -------------------------------------------------------------------------
-
-	describe('translateModelIdForSdk()', () => {
-		beforeEach(() => {
-			provider = makeProvider({});
-		});
-
-		it('always returns "default" so the SDK uses ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
-			// Returning 'default' forces the Claude Agent SDK to look up the model
-			// from ANTHROPIC_DEFAULT_SONNET_MODEL (set in buildSdkConfig), which holds
-			// the real Codex model ID.  Without this, the SDK would pass the raw Codex
-			// model ID ('gpt-5.3-codex') to the API and may fall back to Anthropic defaults.
-			expect(provider.translateModelIdForSdk('gpt-5.3-codex')).toBe('default');
-			expect(provider.translateModelIdForSdk('gpt-5.1-codex-mini')).toBe('default');
-			expect(provider.translateModelIdForSdk('gpt-5.4')).toBe('default');
-			expect(provider.translateModelIdForSdk('codex')).toBe('default');
-			expect(provider.translateModelIdForSdk('unknown')).toBe('default');
-		});
-	});
-
-	// -------------------------------------------------------------------------
 	// ownsModel()
 	// -------------------------------------------------------------------------
 

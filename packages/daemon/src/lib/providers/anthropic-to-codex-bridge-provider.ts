@@ -488,18 +488,6 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		};
 	}
 
-	/**
-	 * Translate the Codex model ID to the SDK-compatible 'default' tier name.
-	 *
-	 * Codex model IDs (e.g. 'gpt-5.3-codex') are not known to the Claude Agent
-	 * SDK.  By returning 'default' here the SDK will use ANTHROPIC_DEFAULT_SONNET_MODEL
-	 * (set by buildSdkConfig) to pick the actual model, avoiding any fallback to
-	 * Anthropic model names.
-	 */
-	translateModelIdForSdk(_modelId: string): string {
-		return 'default';
-	}
-
 	/** Stop all bridge servers. Called at provider shutdown (e.g. tests). */
 	stopAllBridgeServers(): void {
 		for (const server of this.bridgeServers.values()) {
