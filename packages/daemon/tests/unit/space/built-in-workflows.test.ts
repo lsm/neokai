@@ -23,7 +23,7 @@ import {
 	getBuiltInWorkflows,
 	seedBuiltInWorkflows,
 } from '../../../src/lib/space/workflows/built-in-workflows.ts';
-import type { BuiltinAgentRole, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -233,13 +233,13 @@ describe('seedBuiltInWorkflows()', () => {
 	const GENERAL_ID = 'agent-general-uuid';
 
 	// Role resolver — mirrors what the real call site does
-	const roleMap: Record<BuiltinAgentRole, string> = {
+	const roleMap: Record<string, string> = {
 		planner: PLANNER_ID,
 		coder: CODER_ID,
 		general: GENERAL_ID,
 		reviewer: 'agent-reviewer-uuid',
 	};
-	const resolveAgentId = (role: BuiltinAgentRole): string | undefined => roleMap[role];
+	const resolveAgentId = (role: string): string | undefined => roleMap[role];
 
 	beforeEach(() => {
 		({ db, dir } = makeDb());
@@ -355,7 +355,7 @@ describe('seedBuiltInWorkflows()', () => {
 
 	test('throws if resolveAgentId returns undefined for a required role', async () => {
 		// Resolver that cannot resolve 'planner'
-		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
+		const brokenResolver = (role: string): string | undefined =>
 			role === 'planner' ? undefined : roleMap[role];
 
 		await expect(seedBuiltInWorkflows(SPACE_ID, manager, brokenResolver)).rejects.toThrow(
@@ -365,7 +365,7 @@ describe('seedBuiltInWorkflows()', () => {
 
 	test('does not persist any workflow when resolveAgentId fails on first-template role', async () => {
 		// Resolver fails on 'planner' — first template's first step
-		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
+		const brokenResolver = (role: string): string | undefined =>
 			role === 'planner' ? undefined : roleMap[role];
 
 		try {
@@ -380,7 +380,7 @@ describe('seedBuiltInWorkflows()', () => {
 	test('does not persist any workflow when resolveAgentId fails on a later-template role', async () => {
 		// 'general' is only needed by RESEARCH_WORKFLOW (2nd template).
 		// Without pre-validation, CODING_WORKFLOW would already be committed when this throws.
-		const brokenResolver = (role: BuiltinAgentRole): string | undefined =>
+		const brokenResolver = (role: string): string | undefined =>
 			role === 'general' ? undefined : roleMap[role];
 
 		try {

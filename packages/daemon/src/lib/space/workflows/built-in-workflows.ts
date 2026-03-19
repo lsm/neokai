@@ -9,12 +9,12 @@
  * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
  *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
  *   replaced with real SpaceAgent UUIDs by `seedBuiltInWorkflows`.
- * - At Space creation time, preset SpaceAgent records are seeded for each
- *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
- *   exist so that the `agentId` values resolve correctly.
+ * - At Space creation time, preset SpaceAgent records are seeded for each role.
+ *   `seedBuiltInWorkflows` must be called after those agents exist so that the
+ *   `agentId` values resolve correctly.
  */
 
-import type { BuiltinAgentRole, SpaceWorkflow, WorkflowStepInput } from '@neokai/shared';
+import type { SpaceWorkflow, WorkflowStepInput } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 
 // ---------------------------------------------------------------------------
@@ -165,7 +165,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
  *
  * NOTE: This function is NOT wired to a call site yet — that happens in
  * Task 4.2 (inside the `space.create` RPC handler, after preset agents are
- * seeded). The resolver should map BuiltinAgentRole → real SpaceAgent ID.
+ * seeded). The resolver should map agent role label → real SpaceAgent ID.
  *
  * Example call site:
  * ```ts
@@ -178,7 +178,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 export async function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	resolveAgentId: (role: BuiltinAgentRole) => string | undefined
+	resolveAgentId: (role: string) => string | undefined
 ): Promise<void> {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
@@ -190,10 +190,8 @@ export async function seedBuiltInWorkflows(
 	// persisting anything. This guarantees all-or-nothing behaviour — a failure
 	// on any role will throw before a single workflow is created.
 	const templates = getBuiltInWorkflows();
-	const neededRoles = new Set<BuiltinAgentRole>(
-		templates.flatMap((t) => t.steps.map((s) => s.agentId as BuiltinAgentRole))
-	);
-	const resolvedIds = new Map<BuiltinAgentRole, string>();
+	const neededRoles = new Set<string>(templates.flatMap((t) => t.steps.map((s) => s.agentId)));
+	const resolvedIds = new Map<string, string>();
 	for (const role of neededRoles) {
 		const agentId = resolveAgentId(role);
 		if (!agentId) {
@@ -209,7 +207,7 @@ export async function seedBuiltInWorkflows(
 	for (const template of templates) {
 		const steps: WorkflowStepInput[] = template.steps.map((s) => ({
 			name: s.name,
-			agentId: resolvedIds.get(s.agentId as BuiltinAgentRole)!,
+			agentId: resolvedIds.get(s.agentId)!,
 			entryGate: s.entryGate,
 			exitGate: s.exitGate,
 			instructions: s.instructions,
