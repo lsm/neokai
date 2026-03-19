@@ -109,6 +109,11 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// Migration 28: Add mission metadata columns to goals table, create mission_metric_history
 	// and mission_executions tables for Goal V2 / Mission System
 	runMigration28(db);
+
+	// Migration 29: Create all Space system tables (spaces, space_agents, space_workflows,
+	// space_workflow_steps, space_workflow_runs, space_tasks, space_session_groups,
+	// space_session_group_members) in FK-safe order
+	runMigration29(db);
 }
 
 /**
@@ -1432,5 +1437,235 @@ function runMigration28(db: BunDatabase): void {
 	db.exec(
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running` +
 			` ON mission_executions(goal_id) WHERE status = 'running'`
+	);
+}
+
+/**
+ * Migration 29: Create all Space system tables
+ *
+ * Creates the following tables in FK-safe order:
+ * - spaces: workspace-first multi-agent container
+ * - space_agents: custom agents per space
+ * - space_workflows: workflow definitions per space
+ * - space_workflow_steps: ordered steps within a workflow
+ * - space_workflow_runs: active/historical workflow executions (before space_tasks — FK dep)
+ * - space_tasks: tasks with built-in custom_agent_id, workflow_run_id, workflow_step_id
+ * - space_session_groups: named groups of related sessions
+ * - space_session_group_members: membership records for session groups
+ *
+ * All tables are created with IF NOT EXISTS so the migration is idempotent.
+ * CASCADE deletes propagate from spaces → all child tables.
+ */
+function runMigration29(db: BunDatabase): void {
+	// -------------------------------------------------------------------------
+	// spaces
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS spaces (
+			id TEXT PRIMARY KEY,
+			workspace_path TEXT NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			background_context TEXT NOT NULL DEFAULT '',
+			instructions TEXT NOT NULL DEFAULT '',
+			default_model TEXT,
+			allowed_models TEXT NOT NULL DEFAULT '[]',
+			session_ids TEXT NOT NULL DEFAULT '[]',
+			status TEXT NOT NULL DEFAULT 'active'
+				CHECK(status IN ('active', 'archived')),
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
+	// Note: workspace_path has a UNIQUE constraint which SQLite implements as an implicit
+	// unique index — no explicit CREATE INDEX needed.
+
+	// -------------------------------------------------------------------------
+	// space_agents
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_agents (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			model TEXT,
+			tools TEXT NOT NULL DEFAULT '[]',
+			system_prompt TEXT NOT NULL DEFAULT '',
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_agents_space_id ON space_agents(space_id)`);
+
+	// -------------------------------------------------------------------------
+	// space_workflows
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflows (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_workflows_space_id ON space_workflows(space_id)`);
+
+	// -------------------------------------------------------------------------
+	// space_workflow_steps
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_steps (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			agent_id TEXT,
+			order_index INTEGER NOT NULL,
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_steps_workflow_id ON space_workflow_steps(workflow_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_steps_order ON space_workflow_steps(workflow_id, order_index)`
+	);
+
+	// -------------------------------------------------------------------------
+	// space_workflow_runs  (must be before space_tasks — FK dependency)
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_workflow_runs (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			current_step_index INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			completed_at INTEGER,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_space_id ON space_workflow_runs(space_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_workflow_id ON space_workflow_runs(workflow_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_workflow_runs_status ON space_workflow_runs(status)`
+	);
+
+	// -------------------------------------------------------------------------
+	// space_tasks
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_tasks (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending'
+				CHECK(status IN ('draft', 'pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled')),
+			priority TEXT NOT NULL DEFAULT 'normal'
+				CHECK(priority IN ('low', 'normal', 'high', 'urgent')),
+			task_type TEXT
+				CHECK(task_type IN ('planning', 'coding', 'research', 'design', 'review')),
+			assigned_agent TEXT
+				CHECK(assigned_agent IN ('coder', 'general')),
+			custom_agent_id TEXT,
+			workflow_run_id TEXT,
+			workflow_step_id TEXT,
+			created_by_task_id TEXT,
+			progress INTEGER,
+			current_step TEXT,
+			result TEXT,
+			error TEXT,
+			depends_on TEXT NOT NULL DEFAULT '[]',
+			input_draft TEXT,
+			active_session TEXT
+				CHECK(active_session IN ('worker', 'leader')),
+			pr_url TEXT,
+			pr_number INTEGER,
+			pr_created_at INTEGER,
+			archived_at INTEGER,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			completed_at INTEGER,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+			FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
+		)
+	`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
+	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_status ON space_tasks(status)`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_run_id ON space_tasks(workflow_run_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
+	);
+
+	// -------------------------------------------------------------------------
+	// space_session_groups
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_session_groups (
+			id TEXT PRIMARY KEY,
+			space_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_groups_space_id ON space_session_groups(space_id)`
+	);
+
+	// -------------------------------------------------------------------------
+	// space_session_group_members
+	// -------------------------------------------------------------------------
+	db.exec(`
+		CREATE TABLE IF NOT EXISTS space_session_group_members (
+			id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			role TEXT NOT NULL
+				CHECK(role IN ('worker', 'leader')),
+			order_index INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
+			UNIQUE(group_id, session_id)
+		)
+	`);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_group_id ON space_session_group_members(group_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
 	);
 }
