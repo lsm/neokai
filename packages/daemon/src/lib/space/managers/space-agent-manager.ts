@@ -13,7 +13,7 @@
 import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
-import { isValidModel, getAvailableModels } from '../../model-service';
+import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
 
 export type SpaceAgentResult<T> =
 	| { ok: true; value: T }
@@ -71,8 +71,11 @@ export class SpaceAgentManager {
 			if (toolsError) return { ok: false, error: toolsError.error, details: toolsError.details };
 		}
 
-		// Validate model if being set to a non-null value
-		// Use updated provider if provided; otherwise fall back to existing agent's provider
+		// Validate model if being set to a non-null value.
+		// Provider resolution:
+		//   - params.provider is a string  → use that provider (scoped validation)
+		//   - params.provider is null       → caller is clearing the provider; validate unfiltered
+		//   - params.provider is undefined  → not being changed; use existing agent's provider
 		if (params.model) {
 			const provider =
 				params.provider !== undefined ? (params.provider ?? undefined) : existing.provider;
@@ -146,7 +149,9 @@ export class SpaceAgentManager {
 	 * Skips validation entirely when the models cache is empty (not yet loaded).
 	 * When a provider is known, uses the provider-aware isValidModel() API so
 	 * that e.g. a GLM model cannot be validated as an Anthropic model.
-	 * Falls back to a synchronous unfiltered check when no provider is given.
+	 * Falls back to getModelInfoUnfiltered() when no provider is given — this
+	 * path includes legacy model ID mappings (e.g. 'claude-3-5-sonnet-20241022'
+	 * → 'sonnet') consistent with how the rest of the codebase resolves models.
 	 */
 	private async validateModel(model: string, provider?: string | null): Promise<string | null> {
 		// Skip all validation if the models cache is not yet populated
@@ -159,8 +164,8 @@ export class SpaceAgentManager {
 			return valid ? null : `Unrecognized model "${model}" for provider "${provider}"`;
 		}
 
-		// No provider — unfiltered synchronous check
-		const found = available.find((m) => m.id === model || m.alias === model);
-		return found ? null : `Unrecognized model: "${model}"`;
+		// No provider — unfiltered async check that includes legacy model ID mappings
+		const info = await getModelInfoUnfiltered(model, 'global');
+		return info ? null : `Unrecognized model: "${model}"`;
 	}
 }

@@ -136,6 +136,20 @@ describe('SpaceAgentManager', () => {
 			expect(good.ok).toBe(true);
 		});
 
+		it('accepts legacy full model IDs via unfiltered path (no provider)', async () => {
+			// 'claude-3-5-sonnet-20241022' is a legacy full ID mapped to 'sonnet' by LEGACY_MODEL_MAPPINGS
+			// getModelInfoUnfiltered must resolve it; the old manual find() would miss it
+			const cache = new Map([['global', [makeModelInfo('sonnet', 'sonnet')]]]);
+			setModelsCache(cache);
+
+			const result = await manager.create({
+				spaceId: 'space-1',
+				name: 'Agent',
+				model: 'claude-3-5-sonnet-20241022',
+			});
+			expect(result.ok).toBe(true);
+		});
+
 		it('uses provider-aware validation when provider is supplied', async () => {
 			const cache = new Map([
 				[
