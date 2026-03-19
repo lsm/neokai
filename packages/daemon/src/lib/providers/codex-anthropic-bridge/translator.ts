@@ -228,6 +228,7 @@ export function buildConversationText(messages: AnthropicMessage[], system?: str
 
 const SSE_SEP = '\n\n';
 
+/** Build a Server-Sent Events formatted string from event name and data. */
 function sseEvent(event: string, data: unknown): string {
 	return `event: ${event}\ndata: ${JSON.stringify(data)}${SSE_SEP}`;
 }
