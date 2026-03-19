@@ -9,12 +9,20 @@
  * - spaceAgent.delete  - Delete an agent (error if referenced by workflows)
  */
 
-import type { MessageHub } from '@neokai/shared';
+import type { MessageHub, BuiltinAgentRole } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceAgentManager } from '../space/managers/space-agent-manager';
 import { Logger } from '../logger';
 
 const log = new Logger('space-agent-handlers');
+
+const VALID_ROLES = new Set<string>(['planner', 'coder', 'general']);
+
+function assertValidRole(role: string): asserts role is BuiltinAgentRole {
+	if (!VALID_ROLES.has(role)) {
+		throw new Error(`Invalid role: "${role}". Must be one of: planner, coder, general`);
+	}
+}
 
 export function setupSpaceAgentHandlers(
 	messageHub: MessageHub,
@@ -37,11 +45,12 @@ export function setupSpaceAgentHandlers(
 		if (!params.spaceId) throw new Error('spaceId is required');
 		if (!params.name) throw new Error('name is required');
 		if (!params.role) throw new Error('role is required');
+		assertValidRole(params.role);
 
 		const result = await spaceAgentManager.create({
 			spaceId: params.spaceId,
 			name: params.name,
-			role: params.role as import('@neokai/shared').BuiltinAgentRole,
+			role: params.role,
 			description: params.description,
 			model: params.model,
 			provider: params.provider,
@@ -99,11 +108,14 @@ export function setupSpaceAgentHandlers(
 
 		if (!params.id) throw new Error('id is required');
 
+		// Validate role if provided
+		if (params.role !== undefined) assertValidRole(params.role);
+
 		const { id, ...updateFields } = params;
 		const result = await spaceAgentManager.update(id, {
 			name: updateFields.name,
 			description: updateFields.description,
-			role: updateFields.role as import('@neokai/shared').BuiltinAgentRole | undefined,
+			role: updateFields.role as BuiltinAgentRole | undefined,
 			model: updateFields.model,
 			provider: updateFields.provider,
 			toolConfig: updateFields.toolConfig,
@@ -130,7 +142,10 @@ export function setupSpaceAgentHandlers(
 		const params = data as { id: string };
 		if (!params.id) throw new Error('id is required');
 
-		// Capture spaceId before deleting
+		// Pre-fetch to capture spaceId for the event payload.
+		// SpaceAgentManager.delete() also calls getById internally; the two reads
+		// are synchronous SQLite operations and the pre-fetch ensures we always
+		// have the spaceId for event routing even after the row is removed.
 		const existing = spaceAgentManager.getById(params.id);
 		if (!existing) throw new Error(`Agent not found: ${params.id}`);
 
@@ -140,7 +155,9 @@ export function setupSpaceAgentHandlers(
 			throw new Error(`${result.error}${detailsMsg}`);
 		}
 
-		daemonHub
+		// Await the event so subscribers (e.g. StateManager) see it before the
+		// handler returns — consistent with how room.delete emits room.deleted.
+		await daemonHub
 			.emit('spaceAgent.deleted', {
 				sessionId: `space:${existing.spaceId}`,
 				spaceId: existing.spaceId,

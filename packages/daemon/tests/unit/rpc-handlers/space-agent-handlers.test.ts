@@ -189,6 +189,27 @@ describe('Space Agent RPC Handlers', () => {
 			).rejects.toThrow('role is required');
 		});
 
+		it('throws for an invalid role value', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.create', {
+					spaceId: 'space-1',
+					name: 'A',
+					role: 'leader',
+				})
+			).rejects.toThrow('Invalid role: "leader"');
+		});
+
+		it('accepts all valid role values', async () => {
+			for (const role of ['planner', 'coder', 'general'] as const) {
+				const result = await call<{ agent: { role: string } }>(
+					hubData.handlers,
+					'spaceAgent.create',
+					{ spaceId: 'space-1', name: `Agent-${role}`, role }
+				);
+				expect(result.agent.role).toBe(role);
+			}
+		});
+
 		it('throws on duplicate name within the same space', async () => {
 			await call(hubData.handlers, 'spaceAgent.create', {
 				spaceId: 'space-1',
@@ -354,6 +375,12 @@ describe('Space Agent RPC Handlers', () => {
 			await expect(
 				call(hubData.handlers, 'spaceAgent.update', { id: agentId, name: 'OtherAgent' })
 			).rejects.toThrow('already exists');
+		});
+
+		it('throws for an invalid role value', async () => {
+			await expect(
+				call(hubData.handlers, 'spaceAgent.update', { id: agentId, role: 'admin' })
+			).rejects.toThrow('Invalid role: "admin"');
 		});
 	});
 
