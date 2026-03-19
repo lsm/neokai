@@ -458,7 +458,7 @@ describe('Stuck worker detection and recovery', () => {
 		});
 	}
 
-	it('should detect a stuck worker (idle, no leader) during tick and re-trigger routing', async () => {
+	it('should detect a stuck worker (idle, leader in restart recovery) during tick and re-trigger routing', async () => {
 		const group = await spawnGroup();
 
 		// Simulate: worker is idle but leader hasn't been created yet
@@ -477,14 +477,14 @@ describe('Stuck worker detection and recovery', () => {
 		// Wait for the fire-and-forget routing to complete
 		await leaderCreated;
 
-		// Leader session should now be created
+		// Leader session should now be created (1 from eager spawn + 1 from routing recovery)
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(1);
+		expect(leaderCalls).toHaveLength(2);
 	});
 
-	it('should detect a stuck worker in interrupted state and re-trigger routing', async () => {
+	it('should detect a stuck worker in interrupted state (leader in restart recovery) and re-trigger routing', async () => {
 		const group = await spawnGroup();
 
 		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'interrupted');
@@ -498,10 +498,11 @@ describe('Stuck worker detection and recovery', () => {
 		await ctx.runtime.tick();
 		await leaderCreated;
 
+		// Leader session should now be created (1 from eager spawn + 1 from routing recovery)
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(1);
+		expect(leaderCalls).toHaveLength(2);
 	});
 
 	it('should not re-trigger routing if worker is still processing (not stuck)', async () => {
@@ -521,7 +522,7 @@ describe('Stuck worker detection and recovery', () => {
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(0);
+		expect(leaderCalls).toHaveLength(1);
 	});
 
 	it('should not re-trigger routing when processing state is undefined (unknown)', async () => {
@@ -540,7 +541,7 @@ describe('Stuck worker detection and recovery', () => {
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(0);
+		expect(leaderCalls).toHaveLength(1);
 	});
 
 	it('should skip stuck-worker recovery for groups with feedbackIteration > 0', async () => {
@@ -564,7 +565,7 @@ describe('Stuck worker detection and recovery', () => {
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(0);
+		expect(leaderCalls).toHaveLength(1);
 	});
 
 	it('should skip stuck-worker recovery for groups awaiting human review', async () => {
@@ -586,24 +587,28 @@ describe('Stuck worker detection and recovery', () => {
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(0);
+		expect(leaderCalls).toHaveLength(1);
 	});
 
-	it('should skip stuck-worker recovery when leader already exists in session factory', async () => {
+	it('should route worker to existing leader when leader already exists in session factory', async () => {
+		// With eager init, the leader is always created in spawn(). When worker is idle and
+		// feedbackIteration == 0, recoverStuckWorkers fires routing regardless of leader existence.
+		// routeWorkerToLeader() detects leaderAlreadyExists=true and just injects the message.
 		const group = await spawnGroup();
 
 		ctx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
 		// Leader EXISTS in session factory (default mock returns true for all)
-		// → recoverStuckWorkers should skip this group
+		// recoverStuckWorkers now triggers routing (we removed the leaderExists skip guard)
+		// but routeWorkerToLeader skips creation since leader already exists — only injects
 
 		await ctx.runtime.tick();
 		await new Promise((r) => setTimeout(r, 5));
 
-		// No extra leader creation (first tick already created one worker session)
+		// Only 1 leader creation total (from eager spawn — no second creation in routing)
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(0);
+		expect(leaderCalls).toHaveLength(1);
 	});
 
 	it('should NOT re-trigger routing when worker is in waiting_for_input (intentional pause)', async () => {
@@ -628,7 +633,7 @@ describe('Stuck worker detection and recovery', () => {
 		const leaderCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 		);
-		expect(leaderCalls).toHaveLength(0);
+		expect(leaderCalls).toHaveLength(1);
 
 		// The group should still be active (not failed, not routed)
 		const updated = ctx.groupRepo.getGroup(group.id);

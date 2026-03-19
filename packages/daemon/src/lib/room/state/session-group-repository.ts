@@ -36,6 +36,12 @@ export interface DeferredLeaderConfig {
 	goalId: string | null;
 	reviewContext?: 'plan_review' | 'code_review';
 	leaderTaskContext?: string;
+	/**
+	 * When true, the leader session was already created eagerly in spawn()
+	 * alongside the worker. Used by findZombieGroups() to know the leader is
+	 * expected in cache even on the first review round (feedbackIteration == 0).
+	 */
+	eagerlyCreated?: boolean;
 }
 
 /** Type-specific metadata for task groups */

@@ -2,8 +2,8 @@
  * TaskGroupManager - Creates and manages (Worker, Leader) session groups
  *
  * Orchestrates the lifecycle of session groups:
- * 1. Spawns worker session immediately, defers leader creation until needed
- * 2. Routes worker terminal output to Leader for review (lazy-starts leader)
+ * 1. Spawns worker and leader sessions together (eager initialization)
+ * 2. Routes worker terminal output to Leader for review
  * 3. Routes Leader feedback back to worker
  * 4. Handles group completion and failure
  *
@@ -201,12 +201,18 @@ export class TaskGroupManager {
 	 *
 	 * Flow:
 	 * 1. Create worktree for task isolation (ALL roles get an isolated worktree)
-	 * 2. Create worker session via workerConfig and start it immediately
-	 * 3. Build leader init but DEFER creation until first review round
-	 * 4. Create session_groups DB record (active group with submittedForReview=false)
-	 * 5. Set task status to in_progress
-	 * 6. Observe worker session for terminal state
-	 * 7. Kick off worker (inject initial message)
+	 * 2. Create session_groups DB record (active group with submittedForReview=false)
+	 * 3. Persist leader bootstrap config in DB metadata (for restart recovery + leaderTaskContext)
+	 * 4. Set task status to in_progress
+	 * 5. Create and start worker session immediately
+	 * 6. Create and start leader session immediately (eager initialization)
+	 * 7. Observe worker session for terminal state BEFORE injecting message (prevents race condition)
+	 * 8. Observe leader session for terminal state
+	 * 9. Kick off worker (inject initial message)
+	 *
+	 * Both sessions are created eagerly so the leader is ready when the worker completes.
+	 * The worker observer is set up before injection to prevent a race where the worker
+	 * completes before the observer fires.
 	 */
 	async spawn(
 		room: Room,
@@ -214,7 +220,7 @@ export class TaskGroupManager {
 		goal: RoomGoal | null,
 		onWorkerTerminal: (groupId: string, state: TerminalState) => void,
 		onLeaderTerminal: (groupId: string, state: TerminalState) => void,
-		_leaderCallbacksFactory: LeaderCallbacksFactory,
+		leaderCallbacksFactory: LeaderCallbacksFactory,
 		workerConfig: WorkerConfig,
 		reviewContext?: ReviewContext
 	): Promise<SessionGroup> {
@@ -251,35 +257,66 @@ export class TaskGroupManager {
 			groupWorkspacePath
 		);
 
-		// Persist deferred Leader bootstrap config in DB metadata.
-		// This survives daemon restart, unlike in-memory maps.
+		// Persist leader bootstrap config in DB metadata.
+		// Survives daemon restart (used by recoverZombieGroups to recreate leader if lost)
+		// and stores leaderTaskContext for the routing message injected when worker completes.
+		// eagerlyCreated=true signals that the leader session was created here in spawn(),
+		// not deferred — this lets recoverZombieGroups skip injecting "continue reviewing"
+		// when feedbackIteration==0 (the leader has no work to review yet on first restore).
 		const deferredLeader: DeferredLeaderConfig = {
 			roomId: room.id,
 			goalId: goal?.id ?? null,
 			reviewContext,
 			leaderTaskContext: workerConfig.leaderTaskContext,
+			eagerlyCreated: true,
 		};
 		this.groupRepo.setDeferredLeader(group.id, deferredLeader);
 
 		// Set task status to in_progress
 		await this.taskManager.startTask(task.id);
 
-		// Create and start ONLY the worker session
+		// Create and start worker session
 		await this.sessionFactory.createAndStartSession(workerInit, workerConfig.role);
 
-		// Kick off worker so the SDK streaming loop starts processing immediately.
-		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
+		// Create and start leader session eagerly alongside the worker.
+		// This ensures the leader is ready when the worker completes and routing is triggered.
+		// Previously the leader was lazily created in routeWorkerToLeader(), but this caused
+		// routing to be skipped when the observer event fired before lazy init ran.
+		const leaderCallbacks = leaderCallbacksFactory(group.id);
+		const leaderConfig: LeaderAgentConfig = {
+			task,
+			goal,
+			room,
+			sessionId: leaderSessionId,
+			workspacePath: groupWorkspacePath,
+			groupId: group.id,
+			model: this._model,
+			reviewContext,
+			goalManager: this.goalManager,
+			taskManager: this.taskManager,
+			groupRepo: this.groupRepo,
+		};
+		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
+		await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
+		log.info(
+			`[spawn] Group ${group.id}: leader session ${leaderSessionId} created eagerly alongside worker`
+		);
 
-		// Observe worker session for terminal state
+		// Observe worker session for terminal state BEFORE injecting the initial message.
+		// This prevents a race where the worker processes and completes synchronously before
+		// the observer is registered, causing the terminal event to be missed entirely.
 		this.observer.observe(workerSessionId, (state) => {
 			onWorkerTerminal(group.id, state);
 		});
 
-		// Observe leader session proactively (even before it's created).
-		// SessionObserver filters by sessionId and callback will fire once leader starts.
+		// Observe leader session for terminal state
 		this.observer.observe(leaderSessionId, (state) => {
 			onLeaderTerminal(group.id, state);
 		});
+
+		// Kick off worker so the SDK streaming loop starts processing immediately.
+		// Observer is already registered above — no race window.
+		await this.sessionFactory.injectMessage(workerSessionId, workerConfig.taskMessage);
 
 		return group;
 	}
@@ -287,12 +324,16 @@ export class TaskGroupManager {
 	/**
 	 * Route worker terminal output to Leader for review.
 	 *
-	 * Lazy-starts the leader session on first call (deferred from spawn).
+	 * The leader session is created eagerly in spawn(), so this method normally just
+	 * injects the worker output into the already-running leader session.
+	 * If the leader is missing (e.g., after a daemon restart where restore failed),
+	 * falls back to recreating it using the deferredLeader bootstrap config.
+	 *
 	 * Increments feedbackIteration to track review rounds (1-based).
 	 *
 	 * Called when worker reaches a terminal state (idle, waiting_for_input, interrupted).
 	 *
-	 * @param leaderCallbacksFactory - Factory to create leader tool callbacks
+	 * @param leaderCallbacksFactory - Factory to create leader tool callbacks (used only for restart recovery)
 	 */
 	async routeWorkerToLeader(
 		groupId: string,

@@ -43,12 +43,14 @@ describe('RoomRuntime flow', () => {
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
+			// Both worker (planner) and leader are created eagerly in spawn()
 			const createCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession'
 			);
-			expect(createCalls).toHaveLength(1);
-			expect(createCalls[0].args[1]).toBe('planner');
-			expect((createCalls[0].args[0] as { model?: string }).model).toBe('planner-model');
+			expect(createCalls).toHaveLength(2);
+			const plannerCall = createCalls.find((c) => c.args[1] === 'planner');
+			expect(plannerCall).toBeDefined();
+			expect((plannerCall!.args[0] as { model?: string }).model).toBe('planner-model');
 
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 			expect(group.workerRole).toBe('planner');
@@ -397,12 +399,13 @@ describe('RoomRuntime flow', () => {
 			const clearedGroup = ctx.groupRepo.getGroup(group!.id);
 			expect(clearedGroup!.humanInterrupted).toBe(false);
 
-			// No leader session should have been created (routing was blocked)
+			// Both worker and leader are created eagerly in spawn (not routing-related).
+			// No additional sessions should be created when routing is blocked.
 			const createCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession'
 			);
-			// Only 1 create call (the initial worker), leader was not created
-			expect(createCalls).toHaveLength(1);
+			// 2 create calls: worker + leader (eager spawn). No extra creation from routing.
+			expect(createCalls).toHaveLength(2);
 
 			// No new inject messages (routing to leader sends an envelope)
 			const injectCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'injectMessage');

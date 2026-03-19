@@ -299,7 +299,7 @@ describe('TaskGroupManager', () => {
 			expect(group.feedbackIteration).toBe(0);
 		});
 
-		it('should create Worker session immediately and defer Leader', async () => {
+		it('should create both Worker and Leader sessions eagerly', async () => {
 			const task = await createTask();
 			const goal = makeGoal(db);
 			const callbacks = createMockLeaderCallbacks();
@@ -320,9 +320,9 @@ describe('TaskGroupManager', () => {
 			const leaderCalls = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
-			// Worker starts immediately, Leader is deferred until routeWorkerToLeader
+			// Both worker and leader start immediately — eager initialization
 			expect(workerCalls).toHaveLength(1);
-			expect(leaderCalls).toHaveLength(0);
+			expect(leaderCalls).toHaveLength(1);
 		});
 
 		it('should set task to in_progress', async () => {
@@ -360,7 +360,7 @@ describe('TaskGroupManager', () => {
 			);
 
 			expect(observer.isObserving(group.workerSessionId)).toBe(true);
-			// Leader is observed proactively so terminal events are not missed after lazy creation.
+			// Leader session is created eagerly alongside the worker, so it is observed immediately.
 			expect(observer.isObserving(group.leaderSessionId)).toBe(true);
 		});
 
@@ -389,6 +389,7 @@ describe('TaskGroupManager', () => {
 				goalId: goal.id,
 				reviewContext: 'code_review',
 				leaderTaskContext: 'Goal context for leader',
+				eagerlyCreated: true,
 			});
 		});
 
@@ -408,6 +409,87 @@ describe('TaskGroupManager', () => {
 
 			const persisted = groupRepo.getGroup(group.id)!;
 			expect(persisted.deferredLeader?.goalId).toBeNull();
+		});
+
+		it('should register worker observer before injecting the initial message', async () => {
+			// Regression test: verifies the race-condition fix where the worker could
+			// complete before the observer was registered, causing the terminal event to
+			// be missed entirely. The observer must be set up BEFORE injectMessage() fires.
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Track call order
+			const callOrder: string[] = [];
+			const trackingFactory = {
+				...sessionFactory,
+				async createAndStartSession(init: unknown, role: string) {
+					callOrder.push(`createAndStartSession:${role}`);
+					await sessionFactory.createAndStartSession(init, role);
+				},
+				async injectMessage(
+					sessionId: string,
+					message: string,
+					opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+				) {
+					callOrder.push(`injectMessage:${sessionId.split(':')[0]}`);
+					await sessionFactory.injectMessage(sessionId, message, opts);
+				},
+			};
+
+			const trackingManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: trackingFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			let observerRegisteredBeforeInject = false;
+			const onWorkerTerminal = () => {};
+			const onLeaderTerminal = () => {};
+
+			// Monkey-patch observer.observe to record when worker is registered
+			const origObserve = observer.observe.bind(observer);
+			let workerObserverRegistered = false;
+			observer.observe = (sessionId: string, cb: unknown) => {
+				if (sessionId.startsWith('coder:')) {
+					workerObserverRegistered = true;
+				}
+				return origObserve(sessionId, cb as Parameters<typeof origObserve>[1]);
+			};
+
+			// Monkey-patch injectMessage to check if worker observer was registered before inject
+			const origInject = trackingFactory.injectMessage.bind(trackingFactory);
+			trackingFactory.injectMessage = async (
+				sessionId: string,
+				message: string,
+				opts?: { deliveryMode?: 'current_turn' | 'next_turn' }
+			) => {
+				if (sessionId.startsWith('coder:')) {
+					observerRegisteredBeforeInject = workerObserverRegistered;
+				}
+				return origInject(sessionId, message, opts);
+			};
+
+			await trackingManager.spawn(
+				room,
+				task,
+				goal,
+				onWorkerTerminal,
+				onLeaderTerminal,
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// Restore observer
+			observer.observe = origObserve;
+
+			expect(observerRegisteredBeforeInject).toBe(true);
 		});
 	});
 
@@ -566,11 +648,17 @@ describe('TaskGroupManager', () => {
 				makeDefaultWorkerConfig()
 			);
 
-			// Deferred leader config should store null goalId
+			// Leader config should store null goalId
 			const persisted = groupRepo.getGroup(group.id)!;
 			expect(persisted.deferredLeader?.goalId).toBeNull();
 
-			// Routing worker to leader should succeed — leader session is created
+			// Leader session is created eagerly in spawn()
+			const leaderCallsAfterSpawn = sessionFactory.calls.filter(
+				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			);
+			expect(leaderCallsAfterSpawn).toHaveLength(1);
+
+			// Routing worker to leader should succeed — leader session already exists
 			const result = await manager.routeWorkerToLeader(
 				group.id,
 				'Worker output for goal-free task',
@@ -579,10 +667,11 @@ describe('TaskGroupManager', () => {
 
 			expect(result).not.toBeNull();
 
-			const leaderCalls = sessionFactory.calls.filter(
+			// No additional leader creation — leader was already created in spawn()
+			const leaderCallsAfterRoute = sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
-			expect(leaderCalls).toHaveLength(1);
+			expect(leaderCallsAfterRoute).toHaveLength(1);
 
 			// Task should not be failed (leader creation succeeded without a goal)
 			const updatedTask = await taskManager.getTask(task.id);
