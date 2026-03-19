@@ -34,13 +34,13 @@ export function createSpaceAgentSchema(db: Database): void {
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
 			model TEXT,
-			provider TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
 			system_prompt TEXT NOT NULL DEFAULT '',
-			role TEXT NOT NULL DEFAULT 'coder',
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
+			role TEXT NOT NULL DEFAULT 'coder',
+			provider TEXT,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
 		)
 	`);
