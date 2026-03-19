@@ -67,11 +67,13 @@ export type SessionType =
 	| 'lobby';
 
 /**
- * Context for room/lobby sessions
+ * Context for room/lobby/space sessions
  */
 export interface SessionContext {
 	roomId?: string;
 	lobbyId?: string;
+	/** Space ID for Space system sessions */
+	spaceId?: string;
 }
 
 /**

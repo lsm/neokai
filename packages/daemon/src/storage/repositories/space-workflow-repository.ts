@@ -5,14 +5,12 @@
  *
  * Storage layout:
  *   space_workflows  — id, space_id, name, description, config (JSON), created_at, updated_at
- *   space_workflow_steps — id, workflow_id, name, description, agent_id (custom UUID | null),
+ *   space_workflow_steps — id, workflow_id, name, description, agent_id (SpaceAgent UUID),
  *                          order_index, config (JSON), created_at, updated_at
  *
  * The `config` column on space_workflows stores: { tags, rules, ...extra }
- * The `config` column on space_workflow_steps stores: { agentRefType, agentRef, entryGate?,
- *   exitGate?, instructions? }
- * The `agent_id` column stores the custom SpaceAgent's UUID when agentRefType='custom',
- *   otherwise null.
+ * The `config` column on space_workflow_steps stores: { entryGate?, exitGate?, instructions? }
+ * The `agent_id` column stores the SpaceAgent UUID for the step.
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -63,8 +61,6 @@ interface WorkflowConfigJson {
 
 // JSON stored inside space_workflow_steps.config
 interface StepConfigJson {
-	agentRefType: 'builtin' | 'custom';
-	agentRef: string;
 	entryGate?: WorkflowGate;
 	exitGate?: WorkflowGate;
 	instructions?: string;
@@ -84,28 +80,19 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function rowToStep(row: StepRow): WorkflowStep {
-	const cfg = parseJson<StepConfigJson>(row.config, {
-		agentRefType: 'builtin',
-		agentRef: 'general',
-	});
-
-	const base = {
+	if (!row.agent_id) {
+		throw new Error(`WorkflowStep ${row.id}: agent_id is null in DB`);
+	}
+	const cfg = parseJson<StepConfigJson>(row.config, {});
+	return {
 		id: row.id,
 		name: row.name,
+		agentId: row.agent_id,
 		order: row.order_index,
 		entryGate: cfg.entryGate,
 		exitGate: cfg.exitGate,
 		instructions: cfg.instructions,
 	};
-
-	if (cfg.agentRefType === 'custom') {
-		return { ...base, agentRefType: 'custom', agentRef: cfg.agentRef } as WorkflowStep;
-	}
-	return {
-		...base,
-		agentRefType: 'builtin',
-		agentRef: cfg.agentRef as 'planner' | 'coder' | 'general',
-	} as WorkflowStep;
 }
 
 function rowToWorkflow(row: WorkflowRow, steps: WorkflowStep[]): SpaceWorkflow {
@@ -309,14 +296,12 @@ export class SpaceWorkflowRepository {
 	): void {
 		const stepId = generateUUID();
 		const stepCfg: StepConfigJson = {
-			agentRefType: input.agentRefType,
-			agentRef: input.agentRef,
 			entryGate: input.entryGate,
 			exitGate: input.exitGate,
 			instructions: input.instructions,
 		};
 
-		const agentId = input.agentRefType === 'custom' ? input.agentRef : null;
+		const agentId = input.agentId;
 
 		this.db
 			.prepare(

