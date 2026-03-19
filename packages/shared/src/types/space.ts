@@ -253,8 +253,8 @@ export interface SpaceWorkflowRun {
 	title: string;
 	/** Optional description or goal for this run */
 	description?: string;
-	/** ID of the step currently being executed */
-	currentStepId: string;
+	/** ID of the step currently being executed; undefined when the run has not yet been assigned a step */
+	currentStepId?: string;
 	/** Current execution status */
 	status: WorkflowRunStatus;
 	/** Optional runtime configuration for this run */
@@ -275,7 +275,11 @@ export interface CreateWorkflowRunParams {
 	workflowId: string;
 	title: string;
 	description?: string;
-	/** ID of the step to start execution from — should be set to workflow.startStepId */
+	/**
+	 * ID of the step to start execution from — should be set to workflow.startStepId.
+	 * Omit to leave the run without an initial step; the executor must call
+	 * updateCurrentStep() before calling advance().
+	 */
 	currentStepId?: string;
 }
 

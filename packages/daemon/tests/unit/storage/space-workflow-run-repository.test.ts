@@ -46,9 +46,17 @@ describe('SpaceWorkflowRunRepository', () => {
 			expect(run.workflowId).toBe(WORKFLOW_ID);
 			expect(run.title).toBe('Run #1');
 			expect(run.status).toBe('pending');
-			expect(run.currentStepId).toBe('');
+			expect(run.currentStepId).toBeUndefined();
 			expect(run.config).toBeUndefined();
 			expect(run.completedAt).toBeUndefined();
+		});
+
+		it('maps NULL currentStepId to undefined (round-trip contract)', () => {
+			// Explicit omission: NULL stored in DB must come back as undefined, not ''
+			const run = repo.createRun({ spaceId, workflowId: WORKFLOW_ID, title: 'No step' });
+			expect(run.currentStepId).toBeUndefined();
+			// Re-fetch from DB to confirm persistence
+			expect(repo.getRun(run.id)!.currentStepId).toBeUndefined();
 		});
 
 		it('creates a run with description', () => {
