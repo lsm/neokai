@@ -434,7 +434,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 * Lazily starts a per-workspace bridge server and returns env vars that
 	 * route the Anthropic SDK to that bridge's local HTTP endpoint.
 	 */
-	buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const workspace = sessionConfig?.workspacePath ?? process.cwd();
 		let bridgeServer = this.bridgeServers.get(workspace);
 
@@ -458,14 +458,38 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			);
 		}
 
+		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
+		// receives real Codex model IDs that the bridge can forward to the app-server.
+		const entry = ANTHROPIC_CODEX_MODELS.find((m) => m.alias === modelId || m.id === modelId);
+		const resolvedId = entry?.id ?? 'gpt-5.3-codex';
+
 		return {
 			envVars: {
 				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
 				ANTHROPIC_API_KEY: 'codex-bridge-placeholder',
+				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+				// Map SDK model tiers to Codex model IDs so the Claude Agent SDK
+				// subprocess never falls back to Anthropic model names (e.g.
+				// 'claude-haiku-4-5-20251001') which the Codex bridge does not recognise.
+				ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.4',
+				ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.1-codex-mini',
 			},
 			isAnthropicCompatible: true,
 			apiVersion: 'v1',
 		};
+	}
+
+	/**
+	 * Translate the Codex model ID to the SDK-compatible 'default' tier name.
+	 *
+	 * Codex model IDs (e.g. 'gpt-5.3-codex') are not known to the Claude Agent
+	 * SDK.  By returning 'default' here the SDK will use ANTHROPIC_DEFAULT_SONNET_MODEL
+	 * (set by buildSdkConfig) to pick the actual model, avoiding any fallback to
+	 * Anthropic model names.
+	 */
+	translateModelIdForSdk(_modelId: string): string {
+		return 'default';
 	}
 
 	/** Stop all bridge servers. Called at provider shutdown (e.g. tests). */

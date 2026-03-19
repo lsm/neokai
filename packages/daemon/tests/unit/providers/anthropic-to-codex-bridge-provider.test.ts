@@ -260,6 +260,55 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				await fs.rm(tmpDir, { recursive: true, force: true });
 			}
 		});
+
+		it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to prevent SDK fallback to Anthropic models', () => {
+			// Regression test: without these env vars the Claude Agent SDK subprocess
+			// defaults to Anthropic model names (e.g. 'claude-haiku-4-5-20251001') which
+			// the Codex bridge does not recognise, producing "model does not exist" errors.
+			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-model' });
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.1-codex-mini');
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.4');
+		});
+
+		it('resolves model alias to canonical ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
+			const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
+			// 'codex' is an alias for 'gpt-5.3-codex'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+		});
+
+		it('resolves codex-mini alias correctly', () => {
+			const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
+			// 'codex-mini' is an alias for 'gpt-5.1-codex-mini'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.1-codex-mini');
+		});
+
+		it('falls back to gpt-5.3-codex for unknown model IDs', () => {
+			const cfg = provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' });
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// translateModelIdForSdk()
+	// -------------------------------------------------------------------------
+
+	describe('translateModelIdForSdk()', () => {
+		beforeEach(() => {
+			provider = makeProvider({});
+		});
+
+		it('always returns "default" so the SDK uses ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
+			// Returning 'default' forces the Claude Agent SDK to look up the model
+			// from ANTHROPIC_DEFAULT_SONNET_MODEL (set in buildSdkConfig), which holds
+			// the real Codex model ID.  Without this, the SDK would pass the raw Codex
+			// model ID ('gpt-5.3-codex') to the API and may fall back to Anthropic defaults.
+			expect(provider.translateModelIdForSdk('gpt-5.3-codex')).toBe('default');
+			expect(provider.translateModelIdForSdk('gpt-5.1-codex-mini')).toBe('default');
+			expect(provider.translateModelIdForSdk('gpt-5.4')).toBe('default');
+			expect(provider.translateModelIdForSdk('codex')).toBe('default');
+			expect(provider.translateModelIdForSdk('unknown')).toBe('default');
+		});
 	});
 
 	// -------------------------------------------------------------------------
