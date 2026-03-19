@@ -9,7 +9,7 @@
  */
 
 import type { MessageHub } from '@neokai/shared';
-import type { CreateSpaceTaskParams, UpdateSpaceTaskParams, SpaceTaskStatus } from '@neokai/shared';
+import type { CreateSpaceTaskParams, UpdateSpaceTaskParams } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SpaceManager } from '../space/managers/space-manager';
 import type { SpaceTaskManager } from '../space/managers/space-task-manager';
@@ -39,8 +39,9 @@ export function setupSpaceTaskHandlers(
 		if (!params.title || params.title.trim() === '') {
 			throw new Error('title is required');
 		}
+		// description is required but may be an empty string — reject only null/undefined
 		if (params.description === undefined || params.description === null) {
-			throw new Error('description is required');
+			throw new Error('description must not be null');
 		}
 
 		// Verify space exists
@@ -96,6 +97,12 @@ export function setupSpaceTaskHandlers(
 			throw new Error('taskId is required');
 		}
 
+		// Verify space exists (consistent with create/list validation pattern)
+		const space = await spaceManager.getSpace(params.spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${params.spaceId}`);
+		}
+
 		const taskManager = taskManagerFactory(params.spaceId);
 		const task = await taskManager.getTask(params.taskId);
 		if (!task) {
@@ -121,14 +128,29 @@ export function setupSpaceTaskHandlers(
 
 		let task;
 
-		// If status is being changed, use the validated transition method
+		// Route to setTaskStatus only when the status is actually changing.
+		// Sending the current status as part of a broader metadata update must not
+		// trigger a transition check (same→same is not in the transition table and
+		// would throw a misleading "Invalid status transition" error).
 		if (updateParams.status !== undefined) {
-			task = await taskManager.setTaskStatus(taskId, updateParams.status as SpaceTaskStatus, {
-				result: updateParams.result ?? undefined,
-				error: updateParams.error ?? undefined,
-			});
+			// Fetch the current task to compare status before routing
+			const currentTask = await taskManager.getTask(taskId);
+			if (!currentTask) {
+				throw new Error(`Task not found: ${taskId}`);
+			}
+
+			if (updateParams.status !== currentTask.status) {
+				// Status is changing — validate via setTaskStatus (enforces transitions)
+				task = await taskManager.setTaskStatus(taskId, updateParams.status, {
+					result: updateParams.result ?? undefined,
+					error: updateParams.error ?? undefined,
+				});
+			} else {
+				// Status is the same — treat as a regular field update
+				task = await taskManager.updateTask(taskId, updateParams);
+			}
 		} else {
-			// General field update via manager's updateTask
+			// No status field — general field update
 			task = await taskManager.updateTask(taskId, updateParams);
 		}
 

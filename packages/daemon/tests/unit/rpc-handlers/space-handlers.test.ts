@@ -6,7 +6,7 @@
  * - space.list: happy path, includeArchived flag
  * - space.get: happy path, missing id, not found
  * - space.update: happy path, missing id, not found
- * - space.archive: happy path, missing id, not found
+ * - space.archive: happy path (emits space.archived with full space), missing id
  * - space.delete: happy path, missing id, not found
  * - space.overview: happy path, missing id, not found
  * - DaemonHub events emitted on mutations
@@ -295,16 +295,28 @@ describe('space-handlers', () => {
 	describe('space.archive', () => {
 		beforeEach(() => setup());
 
-		it('archives the space and emits space.updated with archived status', async () => {
+		it('archives the space and emits dedicated space.archived event with full space', async () => {
+			const archivedSpace = { ...mockSpace, status: 'archived' as const };
+			(spaceManager.archiveSpace as ReturnType<typeof mock>).mockResolvedValue(archivedSpace);
+
 			const result = await call('space.archive', { id: 'space-1' });
 
 			expect((result as Space).status).toBe('archived');
 			expect(spaceManager.archiveSpace).toHaveBeenCalledWith('space-1');
-			expect(daemonHub.emit).toHaveBeenCalledWith('space.updated', {
+			// Must emit space.archived (not space.updated) with the full space object
+			expect(daemonHub.emit).toHaveBeenCalledWith('space.archived', {
 				sessionId: 'global',
 				spaceId: 'space-1',
-				space: { status: 'archived' },
+				space: archivedSpace,
 			});
+		});
+
+		it('does NOT emit space.updated on archive', async () => {
+			await call('space.archive', { id: 'space-1' });
+
+			const calls = (daemonHub.emit as ReturnType<typeof mock>).mock.calls;
+			const updatedCall = calls.find((c: unknown[]) => c[0] === 'space.updated');
+			expect(updatedCall).toBeUndefined();
 		});
 
 		it('throws when id is missing', async () => {

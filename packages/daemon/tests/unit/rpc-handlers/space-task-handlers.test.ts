@@ -2,12 +2,12 @@
  * Tests for Space Task RPC Handlers
  *
  * Covers:
- * - spaceTask.create: happy path, missing spaceId, missing title, missing description,
- *   space not found, dependency not found error propagation
+ * - spaceTask.create: happy path, missing spaceId, missing title, null description,
+ *   empty description (allowed), space not found, dependency not found error propagation
  * - spaceTask.list: happy path, missing spaceId, space not found
- * - spaceTask.get: happy path, missing params, task not found
- * - spaceTask.update: status transition (delegates to setTaskStatus), non-status update
- *   (delegates to updateTask), missing params, task not found propagation
+ * - spaceTask.get: happy path, space existence check, missing params, task not found
+ * - spaceTask.update: status transition (delegates to setTaskStatus), same-status update
+ *   (routes to updateTask — not spurious transition error), non-status update, missing params
  * - DaemonHub events emitted on mutations
  */
 
@@ -156,6 +156,12 @@ describe('space-task-handlers', () => {
 			});
 		});
 
+		it('allows empty string description', async () => {
+			await expect(
+				call('spaceTask.create', { spaceId: 'space-1', title: 'T', description: '' })
+			).resolves.toBeDefined();
+		});
+
 		it('throws when spaceId is missing', async () => {
 			await expect(call('spaceTask.create', { title: 'T', description: 'D' })).rejects.toThrow(
 				'spaceId is required'
@@ -174,9 +180,15 @@ describe('space-task-handlers', () => {
 			).rejects.toThrow('title is required');
 		});
 
-		it('throws when description is missing', async () => {
+		it('throws when description is null', async () => {
+			await expect(
+				call('spaceTask.create', { spaceId: 'space-1', title: 'T', description: null })
+			).rejects.toThrow('description must not be null');
+		});
+
+		it('throws when description is undefined', async () => {
 			await expect(call('spaceTask.create', { spaceId: 'space-1', title: 'T' })).rejects.toThrow(
-				'description is required'
+				'description must not be null'
 			);
 		});
 
@@ -248,6 +260,14 @@ describe('space-task-handlers', () => {
 			expect(result).toEqual(mockTask);
 		});
 
+		it('verifies space existence before fetching task', async () => {
+			setup(null);
+			await expect(call('spaceTask.get', { spaceId: 'ghost', taskId: 'task-1' })).rejects.toThrow(
+				'Space not found: ghost'
+			);
+			expect(taskManager.getTask).not.toHaveBeenCalled();
+		});
+
 		it('throws when spaceId is missing', async () => {
 			await expect(call('spaceTask.get', { taskId: 'task-1' })).rejects.toThrow(
 				'spaceId is required'
@@ -291,6 +311,23 @@ describe('space-task-handlers', () => {
 				taskId: 'task-1',
 				task: expect.objectContaining({ status: 'in_progress' }),
 			});
+		});
+
+		it('does NOT call setTaskStatus when status is unchanged (avoids spurious transition error)', async () => {
+			// mockTask has status: 'pending'; sending status: 'pending' should not call setTaskStatus
+			const result = await call('spaceTask.update', {
+				spaceId: 'space-1',
+				taskId: 'task-1',
+				status: 'pending', // same as current
+				title: 'New title',
+			});
+
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+			expect(taskManager.updateTask).toHaveBeenCalledWith('task-1', {
+				status: 'pending',
+				title: 'New title',
+			});
+			expect(result).toBeDefined();
 		});
 
 		it('delegates non-status update to updateTask', async () => {
@@ -337,17 +374,21 @@ describe('space-task-handlers', () => {
 		});
 
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {
+			// For this test, use a task that is already 'completed' to trigger an invalid transition
+			const completedTask = { ...mockTask, status: 'completed' as const };
+			setup(mockSpace, completedTask);
+
 			(taskManager.setTaskStatus as ReturnType<typeof mock>).mockRejectedValue(
-				new Error("Invalid status transition from 'pending' to 'completed'")
+				new Error("Invalid status transition from 'completed' to 'pending'. Allowed: none")
 			);
 
 			await expect(
 				call('spaceTask.update', {
 					spaceId: 'space-1',
 					taskId: 'task-1',
-					status: 'completed',
+					status: 'pending',
 				})
-			).rejects.toThrow("Invalid status transition from 'pending' to 'completed'");
+			).rejects.toThrow('Invalid status transition');
 		});
 
 		it('propagates errors from updateTask', async () => {

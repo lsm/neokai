@@ -409,6 +409,7 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		spaceId: string;
 		space?: Partial<import('@neokai/shared').Space>;
 	};
+	'space.archived': { sessionId: string; spaceId: string; space: import('@neokai/shared').Space };
 	'space.deleted': { sessionId: string; spaceId: string };
 
 	// Space task events (global events - use 'global' as sessionId)

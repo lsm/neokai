@@ -6,7 +6,7 @@
  * - space.list    - List all Spaces (optionally including archived)
  * - space.get     - Get a Space by ID
  * - space.update  - Update Space metadata
- * - space.archive - Archive a Space
+ * - space.archive - Archive a Space (emits dedicated space.archived event)
  * - space.delete  - Delete a Space
  * - space.overview - Get a Space with tasks, workflowRuns, and sessions
  */
@@ -113,14 +113,12 @@ export function setupSpaceHandlers(
 
 		const space = await spaceManager.archiveSpace(params.id);
 
+		// Emit a dedicated space.archived event (consistent with room.archived pattern),
+		// carrying the full archived space object so subscribers have complete state.
 		daemonHub
-			.emit('space.updated', {
-				sessionId: 'global',
-				spaceId: params.id,
-				space: { status: 'archived' },
-			})
+			.emit('space.archived', { sessionId: 'global', spaceId: params.id, space })
 			.catch((err) => {
-				log.warn('Failed to emit space.updated (archive):', err);
+				log.warn('Failed to emit space.archived:', err);
 			});
 
 		return space;

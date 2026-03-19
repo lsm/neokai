@@ -216,6 +216,7 @@ export async function createDaemonApp(options: CreateDaemonAppOptions): Promise<
 		daemonHub: eventBus,
 		db,
 		gitHubService: gitHubService ?? undefined,
+		spaceManager,
 	});
 
 	// Create WebSocket handlers

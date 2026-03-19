@@ -45,7 +45,7 @@ import { setupDialogHandlers } from './dialog-handlers';
 // Space handlers
 import { setupSpaceHandlers } from './space-handlers';
 import { setupSpaceTaskHandlers, type SpaceTaskManagerFactory } from './space-task-handlers';
-import { SpaceManager } from '../space/managers/space-manager';
+import type { SpaceManager } from '../space/managers/space-manager';
 import { SpaceTaskManager } from '../space/managers/space-task-manager';
 import { SpaceTaskRepository } from '../../storage/repositories/space-task-repository';
 import { SpaceWorkflowRunRepository } from '../../storage/repositories/space-workflow-run-repository';
@@ -59,6 +59,8 @@ export interface RPCHandlerDependencies {
 	daemonHub: DaemonHub;
 	db: Database;
 	gitHubService?: GitHubService;
+	/** Space manager instance — shared with DaemonAppContext (single source of truth) */
+	spaceManager: SpaceManager;
 }
 
 const log = new Logger('rpc-handlers');
@@ -165,14 +167,13 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 	// Dialog handlers (native OS dialogs)
 	setupDialogHandlers(deps.messageHub);
 
-	// Space handlers
-	const spaceManager = new SpaceManager(deps.db.getDatabase());
+	// Space handlers (spaceManager injected from deps — single instance shared with DaemonAppContext)
 	const spaceTaskRepo = new SpaceTaskRepository(deps.db.getDatabase());
 	const spaceWorkflowRunRepo = new SpaceWorkflowRunRepository(deps.db.getDatabase());
 
 	setupSpaceHandlers(
 		deps.messageHub,
-		spaceManager,
+		deps.spaceManager,
 		spaceTaskRepo,
 		spaceWorkflowRunRepo,
 		deps.daemonHub
@@ -182,7 +183,12 @@ export function setupRPCHandlers(deps: RPCHandlerDependencies): RPCHandlerCleanu
 		return new SpaceTaskManager(deps.db.getDatabase(), spaceId);
 	};
 
-	setupSpaceTaskHandlers(deps.messageHub, spaceManager, spaceTaskManagerFactory, deps.daemonHub);
+	setupSpaceTaskHandlers(
+		deps.messageHub,
+		deps.spaceManager,
+		spaceTaskManagerFactory,
+		deps.daemonHub
+	);
 
 	// Return cleanup function to stop background services
 	return () => {
