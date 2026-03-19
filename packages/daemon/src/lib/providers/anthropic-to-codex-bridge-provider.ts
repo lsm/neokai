@@ -415,8 +415,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	}
 
 	getModelForTier(tier: ModelTier): string | undefined {
+		// Routing policy:
+		//   opus    → gpt-5.4          (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
+		//   sonnet  → gpt-5.3-codex    (primary Codex model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
+		//   haiku   → gpt-5.1-codex-mini (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
 		const map: Record<ModelTier, string> = {
-			opus: 'gpt-5.3-codex',
+			opus: 'gpt-5.4',
 			sonnet: 'gpt-5.3-codex',
 			haiku: 'gpt-5.1-codex-mini',
 			default: 'gpt-5.3-codex',
@@ -471,6 +475,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 				// Map SDK model tiers to Codex model IDs so the Claude Agent SDK
 				// subprocess never falls back to Anthropic model names (e.g.
 				// 'claude-haiku-4-5-20251001') which the Codex bridge does not recognise.
+				// Routing policy (mirrors getModelForTier):
+				//   Opus   → gpt-5.4           (latest frontier)
+				//   Sonnet → resolvedId         (user-selected model)
+				//   Haiku  → gpt-5.1-codex-mini (fast/cheap fallback)
 				ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.4',
 				ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
 				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.1-codex-mini',

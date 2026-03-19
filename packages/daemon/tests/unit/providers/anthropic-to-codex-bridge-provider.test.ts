@@ -283,6 +283,12 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.1-codex-mini');
 		});
 
+		it('resolves codex-latest alias correctly', () => {
+			const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
+			// 'codex-latest' is an alias for 'gpt-5.4'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
+		});
+
 		it('falls back to gpt-5.3-codex for unknown model IDs', () => {
 			const cfg = provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' });
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
