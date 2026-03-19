@@ -26,6 +26,10 @@ import type {
 	GoalPriority,
 	WorkspacePath,
 	RuntimeState,
+	MissionType,
+	AutonomyLevel,
+	MissionMetric,
+	CronSchedule,
 } from '@neokai/shared';
 
 /**
@@ -37,6 +41,11 @@ interface CreateGoalParams {
 	description: string;
 	priority?: GoalPriority;
 	metrics?: Record<string, number>;
+	missionType?: MissionType;
+	autonomyLevel?: AutonomyLevel;
+	structuredMetrics?: MissionMetric[];
+	schedule?: CronSchedule;
+	schedulePaused?: boolean;
 }
 
 /**
@@ -85,6 +94,17 @@ class RoomStore {
 
 	/** Goals loading state */
 	readonly goalsLoading = signal<boolean>(false);
+
+	/** Auto-completed task notifications (from semi-autonomous mode) */
+	readonly autoCompletedNotifications = signal<
+		{
+			taskId: string;
+			taskTitle: string;
+			goalId: string;
+			prUrl: string;
+			timestamp: number;
+		}[]
+	>([]);
 
 	// ========================================
 	// Runtime State Signal
@@ -182,6 +202,7 @@ class RoomStore {
 		this.sessions.value = [];
 		this.error.value = null;
 		this.goals.value = [];
+		this.autoCompletedNotifications.value = [];
 		this.runtimeState.value = null;
 
 		// 3. Update active room
@@ -303,6 +324,30 @@ class RoomStore {
 				}
 			});
 			this.cleanupFunctions.push(unsubGoalCompleted);
+
+			// 3b. Auto-completed task notifications (semi-autonomous mode)
+			const unsubAutoCompleted = hub.onEvent<{
+				roomId: string;
+				goalId: string;
+				taskId: string;
+				taskTitle: string;
+				prUrl: string;
+				approvalSource: string;
+			}>('goal.task.auto_completed', (event) => {
+				if (event.roomId === roomId) {
+					this.autoCompletedNotifications.value = [
+						...this.autoCompletedNotifications.value,
+						{
+							taskId: event.taskId,
+							taskTitle: event.taskTitle,
+							goalId: event.goalId,
+							prUrl: event.prUrl,
+							timestamp: Date.now(),
+						},
+					];
+				}
+			});
+			this.cleanupFunctions.push(unsubAutoCompleted);
 
 			// 4. Runtime state changes
 			const unsubRuntimeState = hub.onEvent<{ roomId: string; state: RuntimeState }>(
@@ -610,6 +655,15 @@ class RoomStore {
 			logger.error('Failed to link task to goal:', err);
 			throw err;
 		}
+	}
+
+	/**
+	 * Dismiss an auto-completed task notification
+	 */
+	dismissAutoCompleted(taskId: string): void {
+		this.autoCompletedNotifications.value = this.autoCompletedNotifications.value.filter(
+			(n) => n.taskId !== taskId
+		);
 	}
 
 	// ========================================

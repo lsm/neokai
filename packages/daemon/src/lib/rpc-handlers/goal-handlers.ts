@@ -13,7 +13,16 @@
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
-import type { MessageHub, RoomGoal, GoalStatus, GoalPriority } from '@neokai/shared';
+import type {
+	MessageHub,
+	RoomGoal,
+	GoalStatus,
+	GoalPriority,
+	MissionType,
+	AutonomyLevel,
+	MissionMetric,
+	CronSchedule,
+} from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { GoalManager } from '../room/managers/goal-manager';
 import type { TaskManager } from '../room/managers/task-manager';
@@ -31,6 +40,7 @@ export type GoalManagerLike = Pick<
 	| 'updateGoalStatus'
 	| 'updateGoalProgress'
 	| 'updateGoalPriority'
+	| 'patchGoal'
 	| 'needsHumanGoal'
 	| 'reactivateGoal'
 	| 'linkTaskToGoal'
@@ -107,6 +117,11 @@ export function setupGoalHandlers(
 			title: string;
 			description?: string;
 			priority?: GoalPriority;
+			missionType?: MissionType;
+			autonomyLevel?: AutonomyLevel;
+			structuredMetrics?: MissionMetric[];
+			schedule?: CronSchedule;
+			schedulePaused?: boolean;
 		};
 
 		if (!params.roomId) {
@@ -121,6 +136,11 @@ export function setupGoalHandlers(
 			title: params.title,
 			description: params.description ?? '',
 			priority: params.priority,
+			missionType: params.missionType,
+			autonomyLevel: params.autonomyLevel,
+			structuredMetrics: params.structuredMetrics,
+			schedule: params.schedule,
+			schedulePaused: params.schedulePaused,
 		});
 
 		// Emit goal.created event
@@ -164,12 +184,17 @@ export function setupGoalHandlers(
 		return { goals };
 	});
 
-	// goal.update - Update a goal (dispatches to status/progress/priority based on updates)
+	// goal.update - Update a goal (dispatches to status/progress/priority/patch based on updates)
 	messageHub.onRequest('goal.update', async (data) => {
 		const params = data as {
 			roomId: string;
 			goalId: string;
-			updates: Partial<RoomGoal>;
+			updates: Partial<RoomGoal> & {
+				missionType?: MissionType;
+				autonomyLevel?: AutonomyLevel;
+				structuredMetrics?: MissionMetric[];
+				schedule?: CronSchedule;
+			};
 		};
 
 		if (!params.roomId) {
@@ -185,6 +210,18 @@ export function setupGoalHandlers(
 		const goalManager = goalManagerFactory(params.roomId);
 		const { status, progress, priority, metrics, ...rest } = params.updates;
 
+		// Detect V2 patch fields (title, description, missionType, autonomyLevel,
+		// structuredMetrics, schedule) — these go through patchGoal.
+		const v2Fields = [
+			'title',
+			'description',
+			'missionType',
+			'autonomyLevel',
+			'structuredMetrics',
+			'schedule',
+		] as const;
+		const hasV2Fields = v2Fields.some((f) => f in params.updates);
+
 		let goal: RoomGoal;
 		if (status) {
 			goal = await goalManager.updateGoalStatus(params.goalId, status, {
@@ -198,10 +235,21 @@ export function setupGoalHandlers(
 				progress,
 				metrics as Record<string, number> | undefined
 			);
+		} else if (hasV2Fields) {
+			// General patch: handles title, description, missionType, autonomyLevel,
+			// structuredMetrics, schedule. Also picks up priority when present alongside V2 fields.
+			const patch: Record<string, unknown> = {};
+			if (priority) patch.priority = priority;
+			for (const f of v2Fields) {
+				if (f in params.updates) patch[f] = params.updates[f as keyof typeof params.updates];
+			}
+			goal = await goalManager.patchGoal(params.goalId, patch);
 		} else if (priority) {
 			goal = await goalManager.updateGoalPriority(params.goalId, priority);
 		} else {
-			throw new Error('No update fields provided (status, progress, or priority required)');
+			throw new Error(
+				'No update fields provided (status, progress, priority, or editable fields required)'
+			);
 		}
 
 		emitGoalUpdated(params.roomId, params.goalId, goal);
