@@ -34,6 +34,7 @@ import {
 	currentSpaceTaskIdSignal,
 	currentSessionIdSignal,
 	currentRoomIdSignal,
+	currentRoomTaskIdSignal,
 	navSectionSignal,
 } from '../signals';
 
@@ -477,7 +478,7 @@ describe('navigateToRoom clears space signals', () => {
 });
 
 describe('navigateToSessions clears space signals', () => {
-	it('clears space signals when navigating to /sessions from a space', async () => {
+	it('clears space and room task signals when navigating to /sessions from a space', async () => {
 		navigateToSpace(SPACE_ID);
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		mockLocation.pathname = `/space/${SPACE_ID}`;
@@ -487,11 +488,13 @@ describe('navigateToSessions clears space signals', () => {
 		expect(currentSpaceIdSignal.value).toBeNull();
 		expect(currentSpaceSessionIdSignal.value).toBeNull();
 		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(currentRoomTaskIdSignal.value).toBeNull();
 		expect(navSectionSignal.value).toBe('chats');
 	});
 
-	it('clears space signals on same-path early-return branch', () => {
+	it('clears space and room task signals on same-path early-return branch', () => {
 		currentSpaceIdSignal.value = SPACE_ID;
+		currentRoomTaskIdSignal.value = 'some-task-id';
 		mockLocation.pathname = '/sessions';
 
 		navigateToSessions();
@@ -499,6 +502,7 @@ describe('navigateToSessions clears space signals', () => {
 		expect(currentSpaceIdSignal.value).toBeNull();
 		expect(currentSpaceSessionIdSignal.value).toBeNull();
 		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(currentRoomTaskIdSignal.value).toBeNull();
 	});
 });
 

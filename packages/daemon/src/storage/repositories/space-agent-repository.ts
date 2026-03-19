@@ -7,7 +7,7 @@
  *   SpaceAgent.tools        ↔  tools column (JSON string array; '[]' or null → undefined)
  *   SpaceAgent.toolConfig   ↔  config column (JSON)
  *   SpaceAgent.systemPrompt ↔  system_prompt column
- *   SpaceAgent.role         ↔  role column (BuiltinAgentRole: 'planner'|'coder'|'general'|'reviewer')
+ *   SpaceAgent.role         ↔  role column (free-form string display label, e.g. 'coder', 'planner')
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
