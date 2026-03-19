@@ -114,6 +114,9 @@ export function runMigrations(db: BunDatabase, createBackup: () => void): void {
 	// space_workflow_steps, space_workflow_runs, space_tasks, space_session_groups,
 	// space_session_group_members) in FK-safe order
 	runMigration29(db);
+
+	// Migration 30: Add role and provider columns to space_agents
+	runMigration30(db);
 }
 
 /**
@@ -1668,4 +1671,27 @@ function runMigration29(db: BunDatabase): void {
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_session_group_members_session_id ON space_session_group_members(session_id)`
 	);
+}
+
+/**
+ * Migration 30: Add role and provider columns to space_agents.
+ * - role: determines the agent's function in workflows ('worker'|'reviewer'|'orchestrator')
+ * - provider: optional provider identifier (e.g. 'anthropic', 'glm')
+ */
+function runMigration30(db: BunDatabase): void {
+	// Add role column (idempotent — only adds if missing)
+	try {
+		db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(
+			`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'worker' CHECK(role IN ('worker', 'reviewer', 'orchestrator'))`
+		);
+	}
+
+	// Add provider column (idempotent — only adds if missing)
+	try {
+		db.prepare(`SELECT provider FROM space_agents LIMIT 1`).all();
+	} catch {
+		db.exec(`ALTER TABLE space_agents ADD COLUMN provider TEXT`);
+	}
 }
