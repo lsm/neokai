@@ -17,6 +17,9 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentSpaceIdSignal,
+	currentSpaceSessionIdSignal,
+	currentSpaceTaskIdSignal,
 	navSectionSignal,
 } from './signals.ts';
 
@@ -28,6 +31,9 @@ const ROOM_TASK_ROUTE_PATTERN = /^\/room\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/;
 const SESSIONS_ROUTE_PATTERN = /^\/sessions$/;
 /** Legacy: /room/:id/chat was removed — treat as plain room route for backwards compat */
 const ROOM_CHAT_COMPAT_PATTERN = /^\/room\/([a-f0-9-]+)\/chat$/;
+const SPACE_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)$/;
+const SPACE_SESSION_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)\/session\/([a-f0-9-]+)$/;
+const SPACE_TASK_ROUTE_PATTERN = /^\/space\/([a-f0-9-]+)\/task\/([a-f0-9-]+)$/;
 
 /**
  * Router state and configuration
@@ -95,6 +101,43 @@ export function getRoomTaskIdFromPath(path: string): { roomId: string; taskId: s
 }
 
 /**
+ * Extract space ID from current URL path
+ * Returns null if not on a space route
+ */
+export function getSpaceIdFromPath(path: string): string | null {
+	const match = path.match(SPACE_ROUTE_PATTERN);
+	if (match) return match[1];
+
+	const spaceSessionMatch = path.match(SPACE_SESSION_ROUTE_PATTERN);
+	if (spaceSessionMatch) return spaceSessionMatch[1];
+
+	const spaceTaskMatch = path.match(SPACE_TASK_ROUTE_PATTERN);
+	return spaceTaskMatch ? spaceTaskMatch[1] : null;
+}
+
+/**
+ * Extract space session IDs from current URL path
+ * Returns null if not on a space session route
+ */
+export function getSpaceSessionIdFromPath(
+	path: string
+): { spaceId: string; sessionId: string } | null {
+	const match = path.match(SPACE_SESSION_ROUTE_PATTERN);
+	if (!match) return null;
+	return { spaceId: match[1], sessionId: match[2] };
+}
+
+/**
+ * Extract space task IDs from current URL path
+ * Returns null if not on a space task route
+ */
+export function getSpaceTaskIdFromPath(path: string): { spaceId: string; taskId: string } | null {
+	const match = path.match(SPACE_TASK_ROUTE_PATTERN);
+	if (!match) return null;
+	return { spaceId: match[1], taskId: match[2] };
+}
+
+/**
  * Get current path from window.location
  */
 function getCurrentPath(): string {
@@ -127,6 +170,27 @@ export function createRoomSessionPath(roomId: string, sessionId: string): string
  */
 export function createRoomTaskPath(roomId: string, taskId: string): string {
 	return `/room/${roomId}/task/${taskId}`;
+}
+
+/**
+ * Create space URL path
+ */
+export function createSpacePath(spaceId: string): string {
+	return `/space/${spaceId}`;
+}
+
+/**
+ * Create space session URL path (session viewed within space layout)
+ */
+export function createSpaceSessionPath(spaceId: string, sessionId: string): string {
+	return `/space/${spaceId}/session/${sessionId}`;
+}
+
+/**
+ * Create space task URL path (task detail viewed within space layout)
+ */
+export function createSpaceTaskPath(spaceId: string, taskId: string): string {
+	return `/space/${spaceId}/task/${taskId}`;
 }
 
 /**
@@ -187,6 +251,9 @@ export function navigateToHome(replace = false): void {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		return;
 	}
 
@@ -200,6 +267,9 @@ export function navigateToHome(replace = false): void {
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 	} finally {
 		setTimeout(() => {
 			routerState.isNavigating = false;
@@ -417,6 +487,133 @@ export function navigateToSettings(): void {
 }
 
 /**
+ * Navigate to Spaces section
+ * Sets nav section to 'spaces' and navigates home if needed
+ */
+export function navigateToSpaces(): void {
+	navSectionSignal.value = 'spaces';
+	navigateToHome();
+}
+
+/**
+ * Navigate to a space
+ * Updates both the URL and the signals
+ */
+export function navigateToSpace(spaceId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createSpacePath(spaceId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ spaceId, path: targetPath }, '', targetPath);
+
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
+ * Navigate to a session within a space layout
+ */
+export function navigateToSpaceSession(spaceId: string, sessionId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createSpaceSessionPath(spaceId, sessionId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = sessionId;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ spaceId, sessionId, path: targetPath }, '', targetPath);
+
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = sessionId;
+		currentSpaceTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
+ * Navigate to a task within a space layout
+ */
+export function navigateToSpaceTask(spaceId: string, taskId: string, replace = false): void {
+	if (routerState.isNavigating) {
+		return;
+	}
+
+	const targetPath = createSpaceTaskPath(spaceId, taskId);
+	const currentPath = getCurrentPath();
+
+	if (currentPath === targetPath) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceTaskIdSignal.value = taskId;
+		currentSpaceSessionIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		return;
+	}
+
+	routerState.isNavigating = true;
+
+	try {
+		const historyMethod = replace ? 'replaceState' : 'pushState';
+		window.history[historyMethod]({ spaceId, taskId, path: targetPath }, '', targetPath);
+
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceTaskIdSignal.value = taskId;
+		currentSpaceSessionIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} finally {
+		setTimeout(() => {
+			routerState.isNavigating = false;
+		}, 0);
+	}
+}
+
+/**
  * Handle popstate event (browser back/forward buttons)
  */
 function handlePopState(_event: PopStateEvent): void {
@@ -429,22 +626,61 @@ function handlePopState(_event: PopStateEvent): void {
 	const roomId = getRoomIdFromPath(path);
 	const roomSession = getRoomSessionIdFromPath(path);
 	const roomTask = getRoomTaskIdFromPath(path);
+	const spaceTask = getSpaceTaskIdFromPath(path);
+	const spaceSession = getSpaceSessionIdFromPath(path);
+	const spaceId = getSpaceIdFromPath(path);
 
 	// Update the signals to match the URL
-	// Task takes priority among room sub-routes, then session, then room, then /sessions
-	if (roomTask) {
+	// Space routes take priority over room routes
+	if (spaceTask) {
+		currentSpaceIdSignal.value = spaceTask.spaceId;
+		currentSpaceTaskIdSignal.value = spaceTask.taskId;
+		currentSpaceSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (spaceSession) {
+		currentSpaceIdSignal.value = spaceSession.spaceId;
+		currentSpaceSessionIdSignal.value = spaceSession.sessionId;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (spaceId) {
+		currentSpaceIdSignal.value = spaceId;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (roomTask) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = roomTask.roomId;
 		currentRoomTaskIdSignal.value = roomTask.taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomSession) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = roomSession.roomId;
 		currentRoomSessionIdSignal.value = roomSession.sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (roomId) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
@@ -456,12 +692,18 @@ function handlePopState(_event: PopStateEvent): void {
 			window.history.replaceState({ roomId, path: canonicalPath }, '', canonicalPath);
 		}
 	} else if (SESSIONS_ROUTE_PATTERN.test(path)) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} else {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
@@ -485,39 +727,84 @@ export function initializeRouter(): string | null {
 		return getSessionIdFromPath(getCurrentPath());
 	}
 
-	// Read initial session/room from URL
+	// Read initial session/room/space from URL
 	const initialPath = getCurrentPath();
 	const initialSessionId = getSessionIdFromPath(initialPath);
 	const initialRoomId = getRoomIdFromPath(initialPath);
 	const initialRoomSession = getRoomSessionIdFromPath(initialPath);
 	const initialRoomTask = getRoomTaskIdFromPath(initialPath);
+	const initialSpaceTask = getSpaceTaskIdFromPath(initialPath);
+	const initialSpaceSession = getSpaceSessionIdFromPath(initialPath);
+	const initialSpaceId = getSpaceIdFromPath(initialPath);
 
-	// Set initial signals - task takes priority among room sub-routes, then session, then room, then /sessions
-	if (initialRoomTask) {
+	// Set initial signals — space routes take priority, then room routes
+	if (initialSpaceTask) {
+		currentSpaceIdSignal.value = initialSpaceTask.spaceId;
+		currentSpaceTaskIdSignal.value = initialSpaceTask.taskId;
+		currentSpaceSessionIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (initialSpaceSession) {
+		currentSpaceIdSignal.value = initialSpaceSession.spaceId;
+		currentSpaceSessionIdSignal.value = initialSpaceSession.sessionId;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (initialSpaceId) {
+		currentSpaceIdSignal.value = initialSpaceId;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
+		currentRoomIdSignal.value = null;
+		currentRoomSessionIdSignal.value = null;
+		currentRoomTaskIdSignal.value = null;
+		currentSessionIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
+	} else if (initialRoomTask) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = initialRoomTask.roomId;
 		currentRoomTaskIdSignal.value = initialRoomTask.taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (initialRoomSession) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = initialRoomSession.roomId;
 		currentRoomSessionIdSignal.value = initialRoomSession.sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (initialRoomId) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = initialRoomId;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} else if (SESSIONS_ROUTE_PATTERN.test(initialPath)) {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} else {
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
