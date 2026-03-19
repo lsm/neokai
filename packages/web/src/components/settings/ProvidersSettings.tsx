@@ -100,7 +100,11 @@ export function ProvidersSettings() {
 	const handleLogout = async (providerId: string, providerName: string) => {
 		setPendingProvider(providerId);
 		try {
-			await logoutProvider(providerId);
+			const response = await logoutProvider(providerId);
+			if (!response.success) {
+				toast.error(response.error || `Failed to logout from ${providerName}`);
+				return;
+			}
 			toast.success(`Logged out from ${providerName}`);
 			// Clear refresh failure state for this provider
 			setRefreshFailed((prev) => {
@@ -210,7 +214,7 @@ export function ProvidersSettings() {
 												Refresh Login
 											</Button>
 										)}
-										{/* Show Logout for authenticated providers, or after refresh failure */}
+										{/* Show Logout for authenticated providers */}
 										{(provider.isAuthenticated ||
 											(provider.needsRefresh && refreshFailed.has(provider.id))) && (
 											<Button

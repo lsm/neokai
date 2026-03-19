@@ -132,30 +132,35 @@ export class QueryRunner {
 				? providerRegistry.detectProviderForModel(modelId, explicitProviderId)
 				: providerRegistry.detectProvider(modelId);
 
-			// Check if the provider supports getAuthStatus (OAuth-style providers)
+			// Check if the provider can make API calls (env vars, auth.json, gh CLI — all count).
+			// isAvailable() is the runtime gate; getAuthStatus().isAuthenticated is UI-only
+			// (NeoKai-managed OAuth) and must NOT be used here or env-var users will be blocked.
+			if (provider?.isAvailable && !(await provider.isAvailable())) {
+				const authStatus = provider.getAuthStatus ? await provider.getAuthStatus() : null;
+				const errorMsg = authStatus?.error || 'Please configure credentials.';
+				const authError = new Error(
+					`Provider ${provider.displayName} is not available. ${errorMsg}`
+				);
+				await errorManager.handleError(
+					session.id,
+					authError,
+					ErrorCategory.PROVIDER_AUTH_ERROR,
+					`Provider ${provider.displayName} is not available. Please configure credentials to continue.`,
+					stateManager.getState(),
+					{ providerId: provider.id, providerName: provider.displayName }
+				);
+				throw authError;
+			}
+			// needsRefresh is a UI hint — warn but do not block the session.
 			if (provider?.getAuthStatus) {
 				const authStatus = await provider.getAuthStatus();
-				if (!authStatus.isAuthenticated) {
-					const authError = new Error(
-						`Provider ${provider.displayName} is not authenticated. ` +
-							(authStatus.error || 'Please configure credentials.')
-					);
-					await errorManager.handleError(
-						session.id,
-						authError,
-						ErrorCategory.PROVIDER_AUTH_ERROR,
-						`Authentication with ${provider.displayName} has expired. Please re-authenticate to continue.`,
-						stateManager.getState(),
-						{ providerId: provider.id, providerName: provider.displayName }
-					);
-					throw authError;
-				}
 				if (authStatus.needsRefresh) {
 					logger.warn(
 						`Provider ${provider.displayName} token needs refresh. Attempting to continue.`
 					);
 				}
-			} else {
+			}
+			if (!provider?.isAvailable) {
 				// Fall back to checking Anthropic/GLM auth for SDK-based providers
 				const { getProviderService } = await import('../provider-service');
 				const providerService = getProviderService();

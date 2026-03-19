@@ -18,12 +18,20 @@
  *
  * ## Authentication
  *
- * Credential sources (in priority order):
+ * **Runtime availability** (`isAvailable()`, sources 1–5 via `resolveGitHubToken()`):
+ * Controls whether models are listed and sessions can be created.
  *   1. `~/.neokai/auth.json` (explicitly stored NeoKai credentials)
  *   2. `COPILOT_GITHUB_TOKEN` env var (PAT with copilot_requests scope)
  *   3. `GH_TOKEN` env var
  *   4. `gh auth token` CLI output
  *   5. `~/.config/gh/hosts.yml` oauth_token
+ * Sources 2–5 allow the daemon and CI tests to use external credentials for API
+ * calls without going through the NeoKai login flow.
+ *
+ * **UI auth check** (`getAuthStatus()`, source 1 only):
+ * `getAuthStatus()` checks only `~/.neokai/auth.json`. This is what drives the
+ * Login/Logout buttons. Env-var and external credentials return `isAuthenticated: false`
+ * so the Logout button only appears when NeoKai can actually remove the token.
  *
  * IMPORTANT: `GITHUB_TOKEN` (GitHub Actions token) is NOT used — it lacks
  * Copilot access and causes "Not logged in" errors.
@@ -222,19 +230,17 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	}
 
 	async isAvailable(): Promise<boolean> {
+		// Use full credential discovery (env vars, auth.json, gh CLI, hosts.yml) so models
+		// are listed and sessions work regardless of how credentials were provisioned.
+		// getAuthStatus() is the UI-only check that restricts Login/Logout to auth.json OAuth.
 		const token = await this.resolveGitHubToken();
-		// Classic PATs (ghp_) are rejected by the Copilot CLI — mirror the same guard
-		// as getAuthStatus() so that isAvailable() and getAuthStatus() are consistent.
-		// Without this, a ghp_ token causes models to appear in the picker while the
-		// provider is simultaneously marked unauthenticated in the auth panel.
 		if (!token || token.startsWith('ghp_')) return false;
 		return true;
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
-		// isAvailable() applies the full validity check (token present AND not a classic PAT).
-		// getAuthStatus() mirrors the same logic, so if isAvailable() returns true, the
-		// provider is considered authenticated and models are safe to expose.
+		// isAvailable() uses the full credential discovery chain so model listing works
+		// for env-var users and CI without requiring NeoKai-managed OAuth.
 		if (!(await this.isAvailable())) return [];
 		// Pre-warm the embedded server so buildSdkConfig() has a valid URL by
 		// the time the user picks a model and starts a session.
@@ -308,21 +314,19 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
 	/**
 	 * Get current authentication status.
-	 * Uses resolveGitHubToken() — does NOT fall back to GITHUB_TOKEN (Actions token).
+	 * Only NeoKai-managed credentials (auth.json) are considered authenticated.
+	 * Env vars and external sources (gh CLI, hosts.yml) are for daemon/test use only.
 	 */
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
 		try {
-			const token = await this.resolveGitHubToken();
+			const token = await this.loadStoredGitHubToken();
 			if (!token) {
 				return {
 					isAuthenticated: false,
-					error:
-						'No GitHub token found. Set COPILOT_GITHUB_TOKEN, run `gh auth login`, or use NeoKai OAuth.',
+					error: 'Not logged in. Click Login to authenticate with GitHub Copilot.',
 				};
 			}
 			// Classic PATs (ghp_) are explicitly rejected by the Copilot CLI internals.
-			// Returning isAuthenticated: false here gives an immediate, actionable error
-			// instead of a confusing "Not logged in" from the CLI subprocess.
 			if (token.startsWith('ghp_')) {
 				return {
 					isAuthenticated: false,

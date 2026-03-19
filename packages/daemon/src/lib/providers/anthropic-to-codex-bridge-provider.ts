@@ -5,11 +5,13 @@
  * speaks the Anthropic Messages API (POST /v1/messages with SSE streaming)
  * backed by `codex app-server`.
  *
- * Authentication is discovered in priority order:
- *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable
+ * Authentication discovery for API calls (priority order):
+ *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable (daemon/test use only)
  *   2. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
  *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
  *
+ * UI authentication requires NeoKai-managed OAuth credentials in ~/.neokai/auth.json.
+ * Env var credentials are used internally for API calls but not shown in the UI.
  * OAuth credentials obtained through NeoKai's login flow are written to
  * ~/.neokai/auth.json so they persist across sessions.
  *
@@ -239,14 +241,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	constructor(
 		private readonly env: Record<string, string | undefined> = process.env,
 		authDir?: string,
-		codexAuthDir?: string
+		codexAuthDir?: string,
+		/** Injectable for tests — defaults to the real findCodexCli(). */
+		private readonly codexFinder: () => string | null = findCodexCli
 	) {
 		this.authPath = path.join(authDir ?? path.join(os.homedir(), '.neokai'), 'auth.json');
 		this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
 	}
 
 	async isAvailable(): Promise<boolean> {
-		if (!findCodexCli()) return false;
+		if (!this.codexFinder()) return false;
 		const auth = await this.getBridgeAuth();
 		return !!auth;
 	}
@@ -365,17 +369,19 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-		const auth = await this.getBridgeAuth();
-
-		if (!auth) {
+		// Only NeoKai-managed OAuth credentials are recognised in the UI.
+		// OPENAI_API_KEY / CODEX_API_KEY env vars are for daemon/test use only.
+		const neokaiCreds = await this.loadCredentials();
+		if (!neokaiCreds || neokaiCreds.type !== 'oauth') {
 			return {
 				isAuthenticated: false,
-				error:
-					'No credentials found. Set OPENAI_API_KEY or CODEX_API_KEY, run `kai openai login`, or log in via `codex login`.',
+				error: neokaiCreds
+					? 'API key credentials are not supported via the UI. Click Login to authenticate with OpenAI OAuth.'
+					: 'Not logged in. Click Login to authenticate with OpenAI.',
 			};
 		}
 
-		const codexPath = findCodexCli();
+		const codexPath = this.codexFinder();
 		if (!codexPath) {
 			return {
 				isAuthenticated: false,
@@ -383,33 +389,29 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			};
 		}
 
-		if (auth.type === 'api_key') {
-			return { isAuthenticated: true, method: 'api_key' };
-		}
-
-		const neokaiCreds = await this.loadCredentials();
-		if (neokaiCreds?.type === 'oauth') {
-			if (neokaiCreds.expires) {
-				const bufferMs = 5 * 60 * 1000;
-				if (Date.now() >= neokaiCreds.expires - bufferMs) {
-					return {
-						isAuthenticated: true,
-						method: 'oauth',
-						expiresAt: neokaiCreds.expires,
-						needsRefresh: true,
-					};
-				}
-				return { isAuthenticated: true, method: 'oauth', expiresAt: neokaiCreds.expires };
+		if (neokaiCreds.expires) {
+			const bufferMs = 5 * 60 * 1000;
+			if (Date.now() >= neokaiCreds.expires - bufferMs) {
+				return {
+					isAuthenticated: true,
+					method: 'oauth',
+					expiresAt: neokaiCreds.expires,
+					needsRefresh: true,
+				};
 			}
-			return { isAuthenticated: true, method: 'oauth' };
+			return { isAuthenticated: true, method: 'oauth', expiresAt: neokaiCreds.expires };
 		}
 
 		return { isAuthenticated: true, method: 'oauth' };
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
-		const status = await this.getAuthStatus();
-		return status.isAuthenticated ? ANTHROPIC_CODEX_MODELS : [];
+		// Use isAvailable() (which includes env-var credentials via getBridgeAuth()) so
+		// that the model picker works for all credential sources.  getAuthStatus() is
+		// UI-only: it gates the Login/Logout buttons but must not hide models from users
+		// who authenticate via OPENAI_API_KEY / CODEX_API_KEY env vars.
+		if (!(await this.isAvailable())) return [];
+		return ANTHROPIC_CODEX_MODELS;
 	}
 
 	ownsModel(modelId: string): boolean {
@@ -449,7 +451,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		let bridgeServer = this.bridgeServers.get(workspace);
 
 		if (!bridgeServer) {
-			const codexBinaryPath = findCodexCli() ?? 'codex';
+			const codexBinaryPath = this.codexFinder() ?? 'codex';
 			// buildSdkConfig() is synchronous per the Provider interface.  The async
 			// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
 			const envAuth = this.env.OPENAI_API_KEY

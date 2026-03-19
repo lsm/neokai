@@ -2,7 +2,7 @@
  * Unit tests for AnthropicToCodexBridgeProvider
  *
  * Covers:
- *  - getAuthStatus(): env var, file-based auth, missing credentials, missing binary
+ *  - getAuthStatus(): NeoKai OAuth only (env vars → unauthenticated), file-based auth, missing credentials, missing binary
  *  - getApiKey(): full discovery chain (env → ~/.neokai/auth.json → ~/.codex/auth.json)
  *  - importFromCodexAuth(): one-time migration scenarios (API key, OAuth with/without refresh)
  *  - buildSdkConfig(): per-workspace bridge server isolation and reuse
@@ -22,10 +22,16 @@ import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthr
 function makeProvider(
 	env: Record<string, string | undefined> = {},
 	authDir?: string,
-	codexAuthDir?: string
+	codexAuthDir?: string,
+	codexFinder?: () => string | null
 ): AnthropicToCodexBridgeProvider {
-	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir);
+	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir, codexFinder);
 }
+
+/** A codexFinder that always returns a fake binary path — avoids `which codex` subprocess in tests. */
+const fakeCodexFound = () => '/usr/local/bin/codex';
+/** A codexFinder that always returns null — simulates codex not installed. */
+const fakeCodexMissing = () => null;
 
 /** Write a NeoKai auth.json with an openai entry to a temp dir. */
 async function writeNeokaiAuth(dir: string, credentials: Record<string, unknown>): Promise<void> {
@@ -70,22 +76,28 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			await fs.rm(emptyDir, { recursive: true, force: true });
 		});
 
-		it('returns isAuthenticated=false when no credentials and no binary', async () => {
+		it('returns isAuthenticated=false when no credentials', async () => {
 			provider = makeProvider({}, emptyDir, emptyDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
-			expect(result.error).toContain('No credentials');
+			expect(result.error).toBeTruthy();
 		});
 
-		it('returns isAuthenticated=false with binary-not-found error when key set but no codex', async () => {
-			// Ensure a key is provided so we get past the credentials check
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-test' }, emptyDir, emptyDir);
+		it('returns isAuthenticated=false when only OPENAI_API_KEY env var is set (env vars are daemon/test only)', async () => {
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, emptyDir, emptyDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
-			// Two outcomes: CI/test machine either has codex or not.
-			if (!result.isAuthenticated) {
-				expect(result.error).toContain('codex binary not found');
-			}
-			// If codex IS installed the test is not meaningful but passes.
+			expect(result.isAuthenticated).toBe(false);
+		});
+
+		it('returns isAuthenticated=false when only CODEX_API_KEY env var is set (env vars are daemon/test only)', async () => {
+			provider = makeProvider(
+				{ CODEX_API_KEY: 'codex-env-key' },
+				emptyDir,
+				emptyDir,
+				fakeCodexFound
+			);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(false);
 		});
 
 		it('returns isAuthenticated=false with descriptive error when env vars are empty', async () => {
@@ -93,6 +105,62 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
+		});
+
+		it('returns isAuthenticated=false with binary-not-found error when NeoKai OAuth stored but codex missing', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				expires: Date.now() + 3600_000,
+			});
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexMissing);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(false);
+			expect(result.error).toContain('codex binary not found');
+		});
+
+		it('returns isAuthenticated=true when NeoKai OAuth credentials in auth.json and codex found', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				expires: Date.now() + 3600_000,
+				accountId: 'user_abc123',
+			});
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.method).toBe('oauth');
+		});
+
+		it('returns isAuthenticated=false for api_key type in auth.json (not NeoKai OAuth)', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, { type: 'api_key', access: 'sk-imported-key' });
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(false);
+		});
+
+		it('sets needsRefresh when NeoKai OAuth token is expired', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				// expires 1 minute ago (past the 5-min buffer)
+				expires: Date.now() - 60_000,
+			});
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.needsRefresh).toBe(true);
 		});
 	});
 
@@ -347,6 +415,48 @@ describe('AnthropicToCodexBridgeProvider', () => {
 
 		it('does not own arbitrary unrecognised model IDs', () => {
 			expect(provider.ownsModel('unknown-model-xyz')).toBe(false);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// getModels() — availability check uses isAvailable() not getAuthStatus()
+	// -------------------------------------------------------------------------
+
+	describe('getModels()', () => {
+		let tmpDir: string;
+
+		beforeEach(async () => {
+			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-models-test-'));
+		});
+
+		afterEach(async () => {
+			await fs.rm(tmpDir, { recursive: true, force: true });
+		});
+
+		it('returns models when OPENAI_API_KEY env var is set (env vars still power API calls)', async () => {
+			// getModels() uses isAvailable() which includes env-var credentials.
+			// This ensures models appear in the picker even when the user has not done NeoKai OAuth.
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+			});
+			provider = makeProvider({}, neokaiDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('returns empty array when no credentials and codex not found', async () => {
+			provider = makeProvider({}, tmpDir, tmpDir, fakeCodexMissing);
+			const models = await provider.getModels();
+			expect(models).toEqual([]);
 		});
 	});
 
