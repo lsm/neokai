@@ -47,7 +47,7 @@ This report documents the completion of the provider parity initiative for NeoKa
 | Type safety | ✅ Closed | PR #373: Provider type widened to union of 5 providers; PR #377: Unsafe casts replaced with `as Provider` |
 | UI integration | ✅ Closed | PR #391: Brand-accurate colored provider indicator in status bar; PR #398: Provider-grouped model picker; PR #401: Provider-aware session creation |
 | Routing | ✅ Closed | PR #376: `detectProviderForModel(modelId, providerId)` requires explicit providerId; PR #388: Strict provider-aware model resolution |
-| `tool_choice` | ⚠️ Partial | PR #386: Logs warning when provided but not honored; SDK limitation prevents full support |
+| `tool_choice` | ⚠️ Partial | PR #386: Logs warning when provided but not honored; same behavior as Codex bridge |
 | `stream: false` | ❌ Open | Server explicitly rejects with 400: "Only streaming responses are supported" |
 | Vision | ❌ Open | SDK does not support vision input |
 | Extended thinking | ❌ Open | SDK does not support extended thinking |
@@ -86,7 +86,7 @@ This report documents the completion of the provider parity initiative for NeoKa
 | `stream: false` | ❌ Open | Server always returns SSE; no non-stream path |
 | Vision | ❌ Open | Backend does not support multimodal input |
 | Extended thinking | ❌ Open | Backend does not support extended thinking |
-| `tool_choice` | ❌ Open | Not implemented; logs warning (PR #386) |
+| `tool_choice` | ⚠️ Partial | PR #386: Logs warning when provided but not honored; same behavior as Copilot bridge |
 | Full conversation semantics | ❌ Open | Messages flattened to text, not structured blocks |
 | `stop_sequences` | ❌ Open | Not supported |
 | Sampling controls | ❌ Open | `temperature`, `top_p`, `top_k` not supported |
@@ -123,7 +123,7 @@ type Provider = 'anthropic' | 'glm' | 'minimax';
 type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthropic-codex';
 ```
 
-> **Note:** The primary provider interface type is `ProviderId = string` (defined in `packages/shared/src/provider/types.ts`). The `Provider` literal union above exists in `packages/shared/src/types.ts` and is used for type-narrowing in specific call sites. Runtime provider validation happens via the `ProviderRegistry` — the registry ensures deterministic resolution via explicit `providerId` lookup, not via the string literal union alone.
+> **Note:** The `Provider` union (in `packages/shared/src/types.ts`) is used at the session and RPC layer for type-narrowing. The multi-provider registry interfaces use `ProviderId = string` (defined in `packages/shared/src/provider/types.ts`). Runtime validation happens via the `ProviderRegistry` — it ensures deterministic resolution via explicit `providerId` lookup, not via the string literal union alone.
 
 **PR #377** — Unsafe casts removed:
 - `model-switch-handler.ts`: 4 unsafe casts replaced with `as Provider`
