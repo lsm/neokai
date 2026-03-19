@@ -189,6 +189,21 @@ const DB_SCHEMA = `
 	);
 	CREATE INDEX IF NOT EXISTS idx_mission_metric_history_lookup
 		ON mission_metric_history(goal_id, metric_name, recorded_at);
+	CREATE TABLE mission_executions (
+		id TEXT PRIMARY KEY,
+		goal_id TEXT NOT NULL,
+		execution_number INTEGER NOT NULL,
+		started_at INTEGER,
+		completed_at INTEGER,
+		status TEXT NOT NULL DEFAULT 'running',
+		result_summary TEXT,
+		task_ids TEXT NOT NULL DEFAULT '[]',
+		planning_attempts INTEGER NOT NULL DEFAULT 0,
+		FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
+		UNIQUE(goal_id, execution_number)
+	);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running
+		ON mission_executions(goal_id) WHERE status = 'running';
 `;
 
 export interface RuntimeTestContext {

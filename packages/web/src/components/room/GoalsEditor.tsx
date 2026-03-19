@@ -15,7 +15,7 @@
  * - Notification feed for auto-completed tasks
  */
 
-import { useState } from 'preact/hooks';
+import { useState, useEffect } from 'preact/hooks';
 import type {
 	RoomGoal,
 	GoalPriority,
@@ -26,6 +26,7 @@ import type {
 	AutonomyLevel,
 	MissionMetric,
 	CronSchedule,
+	MissionExecution,
 } from '@neokai/shared';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
@@ -77,6 +78,8 @@ export interface GoalsEditorProps {
 	autoCompletedNotifications?: AutoCompletedNotification[];
 	/** Dismiss a notification */
 	onDismissNotification?: (taskId: string) => void;
+	/** Fetch execution history for a recurring mission (optional) */
+	onListExecutions?: (goalId: string) => Promise<MissionExecution[]>;
 }
 
 // ─── Common Schedule Presets ──────────────────────────────────────────────────
@@ -679,11 +682,11 @@ function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
 	if (metrics.length === 0) return null;
 	return (
 		<div class="space-y-2">
-			{metrics.map((m, i) => {
+			{metrics.map((m) => {
 				const pct = m.target > 0 ? Math.min(100, Math.round((m.current / m.target) * 100)) : 0;
 				const color = pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500';
 				return (
-					<div key={i}>
+					<div key={m.name}>
 						<div class="flex items-center justify-between text-xs mb-1">
 							<span class="text-gray-400">{m.name}</span>
 							<span class="text-gray-300 font-mono">
@@ -757,6 +760,7 @@ interface GoalItemProps {
 	onLinkTask: (taskId: string) => Promise<void>;
 	isExpanded: boolean;
 	onToggleExpand: () => void;
+	onListExecutions?: (goalId: string) => Promise<MissionExecution[]>;
 }
 
 function GoalItem({
@@ -768,13 +772,24 @@ function GoalItem({
 	onLinkTask,
 	isExpanded,
 	onToggleExpand,
+	onListExecutions,
 }: GoalItemProps) {
 	const [isEditing, setIsEditing] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 	const [linkTaskId, setLinkTaskId] = useState('');
 	const [isUpdating, setIsUpdating] = useState(false);
+	const [executions, setExecutions] = useState<MissionExecution[] | null>(null);
 
 	const missionType: MissionType = goal.missionType ?? 'one_shot';
+
+	// Load execution history when recurring mission is expanded
+	useEffect(() => {
+		if (isExpanded && missionType === 'recurring' && onListExecutions && executions === null) {
+			onListExecutions(goal.id)
+				.then(setExecutions)
+				.catch(() => setExecutions([]));
+		}
+	}, [isExpanded, missionType, onListExecutions, goal.id, executions]);
 
 	const handleStatusChange = async (newStatus: GoalStatus) => {
 		setIsUpdating(true);
@@ -860,6 +875,7 @@ function GoalItem({
 			<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 				{/* Header - always visible */}
 				<div
+					data-testid="goal-item-header"
 					class="px-4 py-3 cursor-pointer hover:bg-dark-800 transition-colors"
 					onClick={onToggleExpand}
 				>
@@ -950,6 +966,53 @@ function GoalItem({
 							<div>
 								<h5 class="text-xs font-medium text-gray-400 uppercase mb-2">Schedule</h5>
 								<RecurringScheduleInfo goal={goal} />
+							</div>
+						)}
+
+						{missionType === 'recurring' && onListExecutions && (
+							<div data-testid="execution-history-section">
+								<h5 class="text-xs font-medium text-gray-400 uppercase mb-2">Execution History</h5>
+								{executions === null ? (
+									<Skeleton class="h-10 w-full" />
+								) : executions.length === 0 ? (
+									<p class="text-xs text-gray-500">No executions yet.</p>
+								) : (
+									<div class="space-y-1" data-testid="execution-history-list">
+										{executions.map((ex) => (
+											<div
+												key={ex.id}
+												class="flex items-center gap-3 text-xs bg-dark-700 rounded px-3 py-2"
+												data-testid={`execution-item-${ex.executionNumber}`}
+											>
+												<span
+													class={cn(
+														'w-2 h-2 rounded-full flex-shrink-0',
+														ex.status === 'completed'
+															? 'bg-green-500'
+															: ex.status === 'failed'
+																? 'bg-red-500'
+																: 'bg-yellow-500'
+													)}
+												/>
+												<span class="text-gray-400">#{ex.executionNumber}</span>
+												<span class="text-gray-300 capitalize">{ex.status}</span>
+												{ex.startedAt && (
+													<span class="text-gray-500 ml-auto">
+														{new Date(ex.startedAt * 1000).toLocaleDateString()}
+													</span>
+												)}
+												{ex.resultSummary && (
+													<span
+														class="text-gray-400 truncate max-w-[160px]"
+														title={ex.resultSummary}
+													>
+														{ex.resultSummary}
+													</span>
+												)}
+											</div>
+										))}
+									</div>
+								)}
 							</div>
 						)}
 
@@ -1237,6 +1300,7 @@ export function GoalsEditor({
 	isLoading = false,
 	autoCompletedNotifications = [],
 	onDismissNotification,
+	onListExecutions,
 }: GoalsEditorProps) {
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
@@ -1330,6 +1394,7 @@ export function GoalsEditor({
 							onLinkTask={(taskId) => onLinkTask(goal.id, taskId)}
 							isExpanded={expandedGoalId === goal.id}
 							onToggleExpand={() => toggleExpand(goal.id)}
+							onListExecutions={onListExecutions}
 						/>
 					))}
 				</div>

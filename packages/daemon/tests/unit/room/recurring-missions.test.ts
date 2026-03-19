@@ -15,37 +15,8 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Database } from 'bun:sqlite';
-import {
-	createRuntimeTestContext,
-	makeRoom,
-	type RuntimeTestContext,
-} from './room-runtime-test-helpers';
+import { createRuntimeTestContext, type RuntimeTestContext } from './room-runtime-test-helpers';
 import { GoalRepository } from '../../../src/storage/repositories/goal-repository';
-
-// ============================================================
-// Schema extension: add mission_executions table to test DB
-// ============================================================
-
-function addMissionExecutionsTable(db: Database): void {
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS mission_executions (
-			id TEXT PRIMARY KEY,
-			goal_id TEXT NOT NULL,
-			execution_number INTEGER NOT NULL,
-			started_at INTEGER,
-			completed_at INTEGER,
-			status TEXT NOT NULL DEFAULT 'running',
-			result_summary TEXT,
-			task_ids TEXT NOT NULL DEFAULT '[]',
-			planning_attempts INTEGER NOT NULL DEFAULT 0,
-			FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
-			UNIQUE(goal_id, execution_number)
-		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running
-			ON mission_executions(goal_id) WHERE status = 'running';
-	`);
-}
 
 // ============================================================
 // Tests
@@ -56,7 +27,6 @@ describe('Recurring Missions: getNextGoalForPlanning skips recurring', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -123,7 +93,6 @@ describe('Recurring Missions: tickRecurringMissions triggers execution', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -286,7 +255,6 @@ describe('GoalManager execution methods', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -383,7 +351,6 @@ describe('linkTaskToExecution atomic dual-write', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -452,7 +419,6 @@ describe('executionId in session group metadata', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -490,7 +456,6 @@ describe('replan_goal + recurring mission interaction', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {

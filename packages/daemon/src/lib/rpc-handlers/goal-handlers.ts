@@ -10,6 +10,7 @@
  * - goal.reactivate - Reactivate a goal (return to active)
  * - goal.linkTask - Link a task to a goal
  * - goal.delete - Delete a goal
+ * - goal.listExecutions - List execution history for a recurring mission
  * - task.approve - Human approves a task PR (resumes worker for phase 2)
  */
 
@@ -48,6 +49,7 @@ export type GoalManagerLike = Pick<
 	| 'deleteGoal'
 	| 'getActiveExecution'
 	| 'updateNextRunAt'
+	| 'listExecutions'
 >;
 
 export type GoalManagerFactory = (roomId: string) => GoalManagerLike;
@@ -446,6 +448,21 @@ export function setupGoalHandlers(
 		});
 		emitGoalUpdated(params.roomId, params.goalId, updated);
 		return { goal: updated, nextRunAt };
+	});
+
+	// goal.listExecutions - List execution history for a recurring mission
+	messageHub.onRequest('goal.listExecutions', async (data) => {
+		const params = data as { roomId: string; goalId: string; limit?: number };
+
+		if (!params.roomId) throw new Error('Room ID is required');
+		if (!params.goalId) throw new Error('Goal ID is required');
+
+		const goalManager = goalManagerFactory(params.roomId);
+		const goal = await goalManager.getGoal(params.goalId);
+		if (!goal) throw new Error(`Goal not found: ${params.goalId}`);
+
+		const executions = goalManager.listExecutions(params.goalId, params.limit ?? 20);
+		return { executions };
 	});
 
 	// task.approve - Human approves the PR; resume leader to complete task flow
