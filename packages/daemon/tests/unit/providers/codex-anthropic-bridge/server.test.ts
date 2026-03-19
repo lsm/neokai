@@ -851,7 +851,16 @@ describe('Bridge HTTP server', () => {
 
 		const stream = new ReadableStream<Uint8Array>({
 			start(controller) {
-				void drainToSSE(errorGen(), mockSession, 'test-model', new Map(), controller, 5000);
+				void drainToSSE(
+					errorGen(),
+					mockSession,
+					'test-model',
+					new Map(),
+					controller,
+					5000,
+					'test-session',
+					() => {}
+				);
 			},
 		});
 
@@ -1019,7 +1028,16 @@ describe('drainToSSE controller lifecycle handling', () => {
 		} as unknown as ReadableStreamDefaultController<Uint8Array>;
 
 		await expect(
-			drainToSSE(errorGen(), mockSession, 'test-model', new Map(), closedController, 5000)
+			drainToSSE(
+				errorGen(),
+				mockSession,
+				'test-model',
+				new Map(),
+				closedController,
+				5000,
+				'test-session',
+				() => {}
+			)
 		).resolves.toBeUndefined();
 		expect(killCalled).toBe(true);
 	});

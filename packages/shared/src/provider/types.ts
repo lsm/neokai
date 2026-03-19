@@ -59,6 +59,8 @@ export interface ProviderSessionConfig {
 	baseUrl?: string;
 	/** Workspace/working directory for this session (used for workspace-scoped providers) */
 	workspacePath?: string;
+	/** Session ID for provider-aware routing (e.g. persistent session tracking) */
+	sessionId?: string;
 	/** Additional provider-specific settings */
 	[key: string]: unknown;
 }
