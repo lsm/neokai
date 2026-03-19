@@ -458,19 +458,19 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 	};
 
 	// Space workflow definition events (global events - use 'global' as sessionId)
-	'spaceWorkflow.created': {
+	'space.workflow.created': {
 		sessionId: string;
 		spaceId: string;
 		workflowId: string;
 		workflow: import('@neokai/shared').SpaceWorkflow;
 	};
-	'spaceWorkflow.updated': {
+	'space.workflow.updated': {
 		sessionId: string;
 		spaceId: string;
 		workflowId: string;
 		workflow: import('@neokai/shared').SpaceWorkflow;
 	};
-	'spaceWorkflow.deleted': {
+	'space.workflow.deleted': {
 		sessionId: string;
 		spaceId: string;
 		workflowId: string;
