@@ -18,6 +18,16 @@ export {
 	getBuiltInWorkflows,
 	seedBuiltInWorkflows,
 } from './workflows/built-in-workflows';
+export {
+	WorkflowExecutor,
+	WorkflowGateError,
+} from './runtime/workflow-executor';
+export type { GateContext, GateResult, CommandRunner } from './runtime/workflow-executor';
+export {
+	GATE_QUALITY_CHECK_ALLOWLIST,
+	DEFAULT_GATE_TIMEOUT_MS,
+	MAX_GATE_TIMEOUT_MS,
+} from './runtime/gate-allowlist';
 
 // Types — re-exported from @neokai/shared for convenience
 export type {
