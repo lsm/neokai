@@ -269,7 +269,7 @@ Create built-in workflow templates that serve as defaults and examples. Also cre
 4. `seedDefaultWorkflow(spaceId: string, workflowManager: SpaceWorkflowManager): Promise<void>`:
    - Idempotent: checks if space already has a default workflow
    - Seeds `CODING_WORKFLOW` as default
-   - **Call site wired in Task 4.2** (`SpaceManager.createSpace()` or `SpaceRuntime` initialization), not here
+   - **Call site wired in Task 4.2** (in the `space.create` RPC handler, after `SpaceManager.createSpace()` returns), not here
 
 5. Write unit tests:
    - Template structure validation

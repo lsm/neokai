@@ -51,8 +51,8 @@ Add the navigation entry point for Spaces, URL routing, and core signals. All ne
 3. Add "Spaces" navigation entry in the sidebar:
    - **Required modifications to existing files** (minimal, additive only):
      - `packages/web/src/lib/signals.ts`: Extend `NavSection` union type to include `'spaces'` (e.g., `type NavSection = 'rooms' | 'spaces' | ...`)
-     - `packages/web/src/components/sidebar/nav-config.tsx`: Add a `'spaces'` entry to `MAIN_NAV_ITEMS` array
-     - `packages/web/src/components/sidebar/ContextPanel.tsx`: Add a case for `'spaces'` section that renders the new `SpaceContextPanel` component (the panel itself is a new component under `components/space/`)
+     - `packages/web/src/lib/nav-config.tsx`: Add a `'spaces'` entry to `MAIN_NAV_ITEMS` array
+     - `packages/web/src/islands/ContextPanel.tsx`: Add a case for `'spaces'` section that renders the new `SpaceContextPanel` component (the panel itself is a new component under `components/space/`)
    - These are the **only** existing file modifications in the entire plan. They are small, additive changes (extending a union, adding an array entry, adding a switch case).
    - Create new `packages/web/src/components/space/SpaceContextPanel.tsx` — list of spaces with active/archived filter, "Create Space" button
 
