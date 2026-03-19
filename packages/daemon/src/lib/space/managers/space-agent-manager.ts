@@ -4,13 +4,11 @@
  * Business logic for creating, updating, and deleting Space agents.
  * Enforces:
  *   - Name uniqueness within a Space (DB-level check via LOWER())
- *   - Tool names must come from KNOWN_TOOLS
  *   - Model must be recognized; when a provider is also given, validation is
  *     scoped to that provider via the provider-aware isValidModel() API
  *   - Deletion blocked when agent is referenced by workflow steps
  */
 
-import { KNOWN_TOOLS } from '@neokai/shared';
 import type { SpaceAgent, CreateSpaceAgentParams, UpdateSpaceAgentParams } from '@neokai/shared';
 import type { SpaceAgentRepository } from '../../../storage/repositories/space-agent-repository';
 import { isValidModel, getAvailableModels, getModelInfoUnfiltered } from '../../model-service';
@@ -33,10 +31,6 @@ export class SpaceAgentManager {
 				error: `An agent named "${params.name}" already exists in this Space`,
 			};
 		}
-
-		// Validate tools
-		const toolsError = this.validateTools(params.tools);
-		if (toolsError) return { ok: false, error: toolsError.error, details: toolsError.details };
 
 		// Validate model (provider-aware when provider is supplied)
 		if (params.model) {
@@ -63,12 +57,6 @@ export class SpaceAgentManager {
 					error: `An agent named "${params.name}" already exists in this Space`,
 				};
 			}
-		}
-
-		// Validate tools if being updated
-		if (params.tools !== undefined) {
-			const toolsError = this.validateTools(params.tools);
-			if (toolsError) return { ok: false, error: toolsError.error, details: toolsError.details };
 		}
 
 		// Validate model if being set to a non-null value.
@@ -132,17 +120,6 @@ export class SpaceAgentManager {
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
-
-	private validateTools(tools?: string[]): { error: string; details: string[] } | null {
-		if (!tools || tools.length === 0) return null;
-		const knownSet = new Set<string>(KNOWN_TOOLS);
-		const unknown = tools.filter((t) => !knownSet.has(t));
-		if (unknown.length === 0) return null;
-		return {
-			error: `Unknown tools: ${unknown.join(', ')}`,
-			details: unknown.map((t) => `"${t}" is not a recognized tool`),
-		};
-	}
 
 	/**
 	 * Validate that a model is recognized.

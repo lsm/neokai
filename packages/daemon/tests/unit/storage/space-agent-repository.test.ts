@@ -32,18 +32,17 @@ describe('SpaceAgentRepository', () => {
 
 	describe('create', () => {
 		it('creates an agent with required fields', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
 
 			expect(agent.id).toBeDefined();
 			expect(agent.spaceId).toBe('space-1');
 			expect(agent.name).toBe('Coder');
-			expect(agent.description).toBe('');
-			expect(agent.tools).toEqual([]);
-			expect(agent.systemPrompt).toBe('');
-			expect(agent.role).toBe('worker');
+			expect(agent.description).toBeUndefined();
+			expect(agent.systemPrompt).toBeUndefined();
+			expect(agent.role).toBe('coder');
 			expect(agent.model).toBeUndefined();
 			expect(agent.provider).toBeUndefined();
-			expect(agent.config).toBeUndefined();
+			expect(agent.toolConfig).toBeUndefined();
 			expect(agent.createdAt).toBeGreaterThan(0);
 			expect(agent.updatedAt).toBeGreaterThan(0);
 		});
@@ -51,36 +50,31 @@ describe('SpaceAgentRepository', () => {
 		it('creates an agent with all optional fields', () => {
 			const agent = repo.create({
 				spaceId: 'space-1',
-				name: 'Reviewer',
-				description: 'Reviews PRs',
+				name: 'Planner',
+				role: 'planner',
+				description: 'Plans tasks',
 				model: 'claude-opus-4-6',
 				provider: 'anthropic',
-				tools: ['Read', 'Write'],
-				systemPrompt: 'You are a reviewer',
-				role: 'reviewer',
-				config: { maxRounds: 3 },
+				systemPrompt: 'You are a planner',
+				toolConfig: { maxRounds: 3 },
 			});
 
-			expect(agent.name).toBe('Reviewer');
-			expect(agent.description).toBe('Reviews PRs');
+			expect(agent.name).toBe('Planner');
+			expect(agent.description).toBe('Plans tasks');
 			expect(agent.model).toBe('claude-opus-4-6');
 			expect(agent.provider).toBe('anthropic');
-			expect(agent.tools).toEqual(['Read', 'Write']);
-			expect(agent.systemPrompt).toBe('You are a reviewer');
-			expect(agent.role).toBe('reviewer');
-			expect(agent.config).toEqual({ maxRounds: 3 });
+			expect(agent.systemPrompt).toBe('You are a planner');
+			expect(agent.role).toBe('planner');
+			expect(agent.toolConfig).toEqual({ maxRounds: 3 });
 		});
 
-		it('serializes tools as JSON', () => {
-			repo.create({ spaceId: 'space-1', name: 'Agent', tools: ['Bash', 'Grep', 'Glob'] });
-			const raw = db.prepare(`SELECT tools FROM space_agents WHERE name = 'Agent'`).get() as {
-				tools: string;
-			};
-			expect(raw.tools).toBe('["Bash","Grep","Glob"]');
-		});
-
-		it('serializes config as JSON', () => {
-			repo.create({ spaceId: 'space-1', name: 'Agent', config: { key: 'value', num: 42 } });
+		it('serializes toolConfig as JSON in config column', () => {
+			repo.create({
+				spaceId: 'space-1',
+				name: 'Agent',
+				role: 'coder',
+				toolConfig: { key: 'value', num: 42 },
+			});
 			const raw = db.prepare(`SELECT config FROM space_agents WHERE name = 'Agent'`).get() as {
 				config: string;
 			};
@@ -90,7 +84,7 @@ describe('SpaceAgentRepository', () => {
 
 	describe('getById', () => {
 		it('returns agent by id', () => {
-			const created = repo.create({ spaceId: 'space-1', name: 'Agent' });
+			const created = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			const found = repo.getById(created.id);
 			expect(found?.id).toBe(created.id);
 		});
@@ -102,8 +96,8 @@ describe('SpaceAgentRepository', () => {
 
 	describe('getBySpaceId', () => {
 		it('returns all agents for a space in creation order', () => {
-			repo.create({ spaceId: 'space-1', name: 'A' });
-			repo.create({ spaceId: 'space-1', name: 'B' });
+			repo.create({ spaceId: 'space-1', name: 'A', role: 'coder' });
+			repo.create({ spaceId: 'space-1', name: 'B', role: 'planner' });
 			const agents = repo.getBySpaceId('space-1');
 			expect(agents).toHaveLength(2);
 			expect(agents[0].name).toBe('A');
@@ -122,25 +116,25 @@ describe('SpaceAgentRepository', () => {
 		});
 
 		it('returns true when an agent with that name exists', () => {
-			repo.create({ spaceId: 'space-1', name: 'Coder' });
+			repo.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
 			expect(repo.isNameTaken('space-1', 'Coder')).toBe(true);
 		});
 
 		it('is case-insensitive', () => {
-			repo.create({ spaceId: 'space-1', name: 'Coder' });
+			repo.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
 			expect(repo.isNameTaken('space-1', 'CODER')).toBe(true);
 			expect(repo.isNameTaken('space-1', 'coder')).toBe(true);
 		});
 
 		it('excludes the specified agent id (update scenario)', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Coder' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
 			// Same name, same id — should not count as taken
 			expect(repo.isNameTaken('space-1', 'Coder', agent.id)).toBe(false);
 		});
 
 		it('is scoped to the space', () => {
 			insertSpace(db, 'space-2');
-			repo.create({ spaceId: 'space-1', name: 'Coder' });
+			repo.create({ spaceId: 'space-1', name: 'Coder', role: 'coder' });
 			// Name exists in space-1 but not space-2
 			expect(repo.isNameTaken('space-2', 'Coder')).toBe(false);
 		});
@@ -148,9 +142,9 @@ describe('SpaceAgentRepository', () => {
 
 	describe('getAgentsByIds', () => {
 		it('returns only the requested agents', () => {
-			const a = repo.create({ spaceId: 'space-1', name: 'A' });
-			const b = repo.create({ spaceId: 'space-1', name: 'B' });
-			repo.create({ spaceId: 'space-1', name: 'C' });
+			const a = repo.create({ spaceId: 'space-1', name: 'A', role: 'coder' });
+			const b = repo.create({ spaceId: 'space-1', name: 'B', role: 'planner' });
+			repo.create({ spaceId: 'space-1', name: 'C', role: 'general' });
 
 			const result = repo.getAgentsByIds([a.id, b.id]);
 			expect(result).toHaveLength(2);
@@ -163,7 +157,7 @@ describe('SpaceAgentRepository', () => {
 		});
 
 		it('skips unknown ids without error', () => {
-			const a = repo.create({ spaceId: 'space-1', name: 'A' });
+			const a = repo.create({ spaceId: 'space-1', name: 'A', role: 'coder' });
 			const result = repo.getAgentsByIds([a.id, 'nonexistent']);
 			expect(result).toHaveLength(1);
 		});
@@ -171,23 +165,24 @@ describe('SpaceAgentRepository', () => {
 
 	describe('update', () => {
 		it('updates individual fields', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Original', role: 'worker' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Original', role: 'coder' });
 
 			const updated = repo.update(agent.id, {
 				name: 'Renamed',
-				role: 'orchestrator',
-				tools: ['Bash'],
+				role: 'planner',
+				systemPrompt: 'Updated prompt',
 			});
 
 			expect(updated?.name).toBe('Renamed');
-			expect(updated?.role).toBe('orchestrator');
-			expect(updated?.tools).toEqual(['Bash']);
+			expect(updated?.role).toBe('planner');
+			expect(updated?.systemPrompt).toBe('Updated prompt');
 		});
 
 		it('sets model and provider to null', () => {
 			const agent = repo.create({
 				spaceId: 'space-1',
 				name: 'Agent',
+				role: 'coder',
 				model: 'opus',
 				provider: 'anthropic',
 			});
@@ -197,10 +192,15 @@ describe('SpaceAgentRepository', () => {
 			expect(updated?.provider).toBeUndefined();
 		});
 
-		it('sets config to null', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', config: { k: 'v' } });
-			const updated = repo.update(agent.id, { config: null });
-			expect(updated?.config).toBeUndefined();
+		it('sets toolConfig to null', () => {
+			const agent = repo.create({
+				spaceId: 'space-1',
+				name: 'Agent',
+				role: 'coder',
+				toolConfig: { k: 'v' },
+			});
+			const updated = repo.update(agent.id, { toolConfig: null });
+			expect(updated?.toolConfig).toBeUndefined();
 		});
 
 		it('returns null for unknown id', () => {
@@ -208,7 +208,7 @@ describe('SpaceAgentRepository', () => {
 		});
 
 		it('no-op update returns unchanged agent', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			const updated = repo.update(agent.id, {});
 			expect(updated?.name).toBe('Agent');
 		});
@@ -216,7 +216,7 @@ describe('SpaceAgentRepository', () => {
 
 	describe('delete', () => {
 		it('removes the agent', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			repo.delete(agent.id);
 			expect(repo.getById(agent.id)).toBeNull();
 		});
@@ -228,14 +228,14 @@ describe('SpaceAgentRepository', () => {
 
 	describe('isAgentReferenced', () => {
 		it('returns not-referenced when no steps reference the agent', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			const result = repo.isAgentReferenced(agent.id);
 			expect(result.referenced).toBe(false);
 			expect(result.workflowNames).toEqual([]);
 		});
 
 		it('returns referenced with workflow names when steps use the agent', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			insertWorkflow(db, 'wf-1', 'space-1', 'Deploy Workflow');
 			insertWorkflowStep(db, 'step-1', 'wf-1', agent.id);
 
@@ -245,7 +245,7 @@ describe('SpaceAgentRepository', () => {
 		});
 
 		it('returns unique workflow names even with multiple steps from same workflow', () => {
-			const agent = repo.create({ spaceId: 'space-1', name: 'Agent' });
+			const agent = repo.create({ spaceId: 'space-1', name: 'Agent', role: 'coder' });
 			insertWorkflow(db, 'wf-2', 'space-1', 'CI Workflow');
 			insertWorkflowStep(db, 'step-a', 'wf-2', agent.id);
 			insertWorkflowStep(db, 'step-b', 'wf-2', agent.id);

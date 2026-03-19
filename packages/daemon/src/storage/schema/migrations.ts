@@ -1675,7 +1675,7 @@ function runMigration29(db: BunDatabase): void {
 
 /**
  * Migration 30: Add role and provider columns to space_agents.
- * - role: determines the agent's function in workflows ('worker'|'reviewer'|'orchestrator')
+ * - role: builtin agent role preset ('planner'|'coder'|'general'), matching BuiltinAgentRole
  * - provider: optional provider identifier (e.g. 'anthropic', 'glm')
  *
  * SQLite CHECK constraint limitation:
@@ -1694,7 +1694,7 @@ function runMigration30(db: BunDatabase): void {
 		db.prepare(`SELECT role FROM space_agents LIMIT 1`).all();
 	} catch {
 		db.exec(
-			`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'worker' CHECK(role IN ('worker', 'reviewer', 'orchestrator'))`
+			`ALTER TABLE space_agents ADD COLUMN role TEXT NOT NULL DEFAULT 'coder' CHECK(role IN ('planner', 'coder', 'general'))`
 		);
 	}
 

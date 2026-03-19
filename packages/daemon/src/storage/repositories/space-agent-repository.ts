@@ -2,7 +2,11 @@
  * Space Agent Repository
  *
  * CRUD operations for space_agents table.
- * Handles JSON serialization for tools and config fields.
+ *
+ * Column mapping:
+ *   SpaceAgent.toolConfig   ↔  config column (JSON)
+ *   SpaceAgent.systemPrompt ↔  system_prompt column
+ *   SpaceAgent.role         ↔  role column (BuiltinAgentRole: 'planner'|'coder'|'general')
  */
 
 import type { Database as BunDatabase } from 'bun:sqlite';
@@ -30,13 +34,13 @@ export class SpaceAgentRepository {
 				id,
 				params.spaceId,
 				params.name,
-				params.description ?? '',
+				params.description ?? null,
 				params.model ?? null,
 				params.provider ?? null,
-				JSON.stringify(params.tools ?? []),
-				params.systemPrompt ?? '',
-				params.role ?? 'worker',
-				params.config ? JSON.stringify(params.config) : null,
+				'[]', // tools column kept for DB compatibility, unused in type layer
+				params.systemPrompt ?? null,
+				params.role,
+				params.toolConfig ? JSON.stringify(params.toolConfig) : null,
 				now,
 				now
 			);
@@ -78,6 +82,25 @@ export class SpaceAgentRepository {
 	}
 
 	/**
+	 * Check if a name is already taken within a space.
+	 * Case-insensitive. Pass excludeId to ignore the agent being updated.
+	 */
+	isNameTaken(spaceId: string, name: string, excludeId?: string): boolean {
+		if (excludeId) {
+			const row = this.db
+				.prepare(
+					`SELECT 1 FROM space_agents WHERE space_id = ? AND LOWER(name) = LOWER(?) AND id != ? LIMIT 1`
+				)
+				.get(spaceId, name, excludeId);
+			return row !== null && row !== undefined;
+		}
+		const row = this.db
+			.prepare(`SELECT 1 FROM space_agents WHERE space_id = ? AND LOWER(name) = LOWER(?) LIMIT 1`)
+			.get(spaceId, name);
+		return row !== null && row !== undefined;
+	}
+
+	/**
 	 * Update an agent with partial updates. Returns the updated agent or null if not found.
 	 */
 	update(id: string, params: UpdateSpaceAgentParams): SpaceAgent | null {
@@ -90,7 +113,7 @@ export class SpaceAgentRepository {
 		}
 		if (params.description !== undefined) {
 			fields.push('description = ?');
-			values.push(params.description);
+			values.push(params.description ?? null);
 		}
 		if (params.model !== undefined) {
 			fields.push('model = ?');
@@ -100,21 +123,17 @@ export class SpaceAgentRepository {
 			fields.push('provider = ?');
 			values.push(params.provider ?? null);
 		}
-		if (params.tools !== undefined) {
-			fields.push('tools = ?');
-			values.push(JSON.stringify(params.tools));
-		}
 		if (params.systemPrompt !== undefined) {
 			fields.push('system_prompt = ?');
-			values.push(params.systemPrompt);
+			values.push(params.systemPrompt ?? null);
 		}
 		if (params.role !== undefined) {
 			fields.push('role = ?');
 			values.push(params.role);
 		}
-		if (params.config !== undefined) {
+		if (params.toolConfig !== undefined) {
 			fields.push('config = ?');
-			values.push(params.config ? JSON.stringify(params.config) : null);
+			values.push(params.toolConfig ? JSON.stringify(params.toolConfig) : null);
 		}
 
 		if (fields.length === 0) return this.getById(id);
@@ -132,25 +151,6 @@ export class SpaceAgentRepository {
 	 */
 	delete(id: string): void {
 		this.db.prepare(`DELETE FROM space_agents WHERE id = ?`).run(id);
-	}
-
-	/**
-	 * Check if a name is already taken within a space.
-	 * Case-insensitive. Pass excludeId to ignore the agent being updated.
-	 */
-	isNameTaken(spaceId: string, name: string, excludeId?: string): boolean {
-		if (excludeId) {
-			const row = this.db
-				.prepare(
-					`SELECT 1 FROM space_agents WHERE space_id = ? AND LOWER(name) = LOWER(?) AND id != ? LIMIT 1`
-				)
-				.get(spaceId, name, excludeId);
-			return row !== null && row !== undefined;
-		}
-		const row = this.db
-			.prepare(`SELECT 1 FROM space_agents WHERE space_id = ? AND LOWER(name) = LOWER(?) LIMIT 1`)
-			.get(spaceId, name);
-		return row !== null && row !== undefined;
 	}
 
 	/**
@@ -177,13 +177,12 @@ export class SpaceAgentRepository {
 			id: row.id as string,
 			spaceId: row.space_id as string,
 			name: row.name as string,
-			description: (row.description as string | null) ?? '',
+			description: (row.description as string | null) ?? undefined,
 			model: (row.model as string | null) ?? undefined,
 			provider: (row.provider as string | null) ?? undefined,
-			tools: JSON.parse((row.tools as string | null) ?? '[]') as string[],
-			systemPrompt: (row.system_prompt as string | null) ?? '',
-			role: (row.role as SpaceAgent['role'] | null) ?? 'worker',
-			config: row.config
+			systemPrompt: (row.system_prompt as string | null) ?? undefined,
+			role: (row.role as SpaceAgent['role'] | null) ?? 'coder',
+			toolConfig: row.config
 				? (JSON.parse(row.config as string) as Record<string, unknown>)
 				: undefined,
 			createdAt: row.created_at as number,

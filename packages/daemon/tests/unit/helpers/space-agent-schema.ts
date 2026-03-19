@@ -32,13 +32,13 @@ export function createSpaceAgentSchema(db: Database): void {
 			id TEXT PRIMARY KEY,
 			space_id TEXT NOT NULL,
 			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
+			description TEXT,
 			model TEXT,
 			provider TEXT,
 			tools TEXT NOT NULL DEFAULT '[]',
-			system_prompt TEXT NOT NULL DEFAULT '',
-			role TEXT NOT NULL DEFAULT 'worker'
-				CHECK(role IN ('worker', 'reviewer', 'orchestrator')),
+			system_prompt TEXT,
+			role TEXT NOT NULL DEFAULT 'coder'
+				CHECK(role IN ('planner', 'coder', 'general')),
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
