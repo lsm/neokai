@@ -51,16 +51,14 @@ Create the `WorkflowExecutor` class that manages workflow run progression within
 1. Create `packages/daemon/src/lib/space/runtime/workflow-executor.ts`:
    - `WorkflowExecutor` class with:
      - Constructor takes: `workflow: SpaceWorkflow`, `run: SpaceWorkflowRun`, `taskManager: SpaceTaskManager`, `workflowRunRepo: SpaceWorkflowRunRepository`, `agentManager: SpaceAgentManager`, `workspacePath: string`
-     - The `run.currentStepIndex` enables **restart rehydration**: when creating from persisted state, the run already contains the correct step index. For new runs, it starts at `0`.
-     - `getCurrentStep(): WorkflowStep | null`
-     - `getNextStep(): WorkflowStep | null`
-     - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` — evaluates current step's exit gate
-     - `canEnterStep(stepIndex: number): Promise<{ allowed: boolean; reason?: string }>` — evaluates the target step's **entry gate** (if any). Called by `advance()` before entering the next step, and by `SpaceRuntime` before starting the first step of a new run.
-     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — evaluates exit gate of current step, then evaluates **entry gate** of next step; increments step index (persisted on `SpaceWorkflowRun`), **creates `SpaceTask` DB records only** (pending status), sets `workflowRunId` and `workflowStepId` on new tasks. Does NOT spawn session groups.
+     - The `run.currentStepId` enables **restart rehydration**: when creating from persisted state, the run already contains the correct step ID. For new runs, it starts at the first step's ID.
+     - `getCurrentStep(): WorkflowStep | null` — returns the step currently being executed, or null if complete/cancelled
+     - `getOutgoingTransitions(): WorkflowTransition[]` — returns all outgoing transitions from the current step, sorted ascending by order
+     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — evaluates outgoing transitions from current step in order; follows the first whose condition passes; persists `currentStepId` on `SpaceWorkflowRun`, **creates `SpaceTask` DB records only** (pending status), sets `workflowRunId` and `workflowStepId` on new tasks. Does NOT spawn session groups. If no transitions exist, marks run as completed.
      - `isComplete(): boolean`
 
 2. Track workflow state:
-   - `space_workflow_runs.current_step_index` tracks which step the run is on (persisted)
+   - `space_workflow_runs.current_step_id` tracks which step the run is on (persisted)
    - `space_tasks.workflow_run_id` links tasks to their run
    - `space_tasks.workflow_step_id` links tasks to the specific step that created them
 
@@ -163,7 +161,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
     - Coding-step tasks created as pending
     - Custom-agent tasks have `customAgentId` set
     - Standalone tasks (no workflow) work normally
-    - Exit gates checked between steps; entry gates evaluated before entering each step (including first step via `canEnterStep(0)`)
+    - Transition conditions evaluated before moving to the next step
     - Rules injected into agent prompts per step
     - Human approval gate pauses run correctly
     - Gate failure → `needs_attention` on run
