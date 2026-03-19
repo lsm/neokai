@@ -13,7 +13,9 @@
  * - Requires CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
  * - Makes real API calls (Sonnet model recommended)
  *
- * NOTE: Room online tests are disabled in CI due to resource usage.
+ * NOTE: All room/* online tests are intentionally commented out of the CI matrix
+ * (see .github/workflows/main.yml) due to resource usage. They must be run locally
+ * or enabled per-task. Registered in scripts/validate-online-test-matrix.sh.
  * Run locally with: bun test tests/online/room/mission-lifecycle.test.ts
  */
 
@@ -68,13 +70,17 @@ async function recordMetric(
 	metricName: string,
 	value: number
 ): Promise<RoomGoal> {
-	// Use the RPC-level goal.update to simulate metric recording at the handler layer
-	// (real metric recording is done by agents using the record_metric MCP tool)
+	// Simulate metric recording by patching structuredMetrics.current via goal.update.
+	// (Real metric recording uses the record_metric MCP tool inside agent sessions.)
+	const goal = await getGoal(daemon, roomId, goalId);
+	const updatedMetrics = (goal.structuredMetrics ?? []).map((m) =>
+		m.name === metricName ? { ...m, current: value } : m
+	);
 	const result = (await daemon.messageHub.request('goal.update', {
 		roomId,
 		goalId,
 		updates: {
-			metrics: { [metricName]: value },
+			structuredMetrics: updatedMetrics,
 		},
 	})) as { goal: RoomGoal };
 	return result.goal;
@@ -223,7 +229,7 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 	);
 
 	test(
-		'measurable mission: checkMetricTargets returns allMet=false when target not reached',
+		'measurable mission: recordMetric updates current value; allMet=false before target reached',
 		async () => {
 			const roomId = await createRoom(daemon, 'Measurable Mission Targets');
 
@@ -231,13 +237,19 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 				title: 'Coverage mission',
 				description: 'Get coverage to 80%',
 				missionType: 'measurable',
-				structuredMetrics: [{ name: 'coverage', target: 80, current: 50, unit: '%' }],
+				structuredMetrics: [{ name: 'coverage', target: 80, current: 0, unit: '%' }],
 			});
 
-			// Fetch the goal and verify progress is < 100
-			const fetched = await getGoal(daemon, roomId, mission.id);
-			expect(fetched.missionType).toBe('measurable');
-			expect(fetched.progress ?? 0).toBeLessThan(100);
+			// Record an intermediate metric value (below target)
+			const afterRecord = await recordMetric(daemon, roomId, mission.id, 'coverage', 60);
+
+			// structuredMetrics.current should be updated
+			const metric = afterRecord.structuredMetrics?.find((m) => m.name === 'coverage');
+			expect(metric?.current).toBe(60);
+			expect(metric?.target).toBe(80);
+
+			// Progress should reflect partial completion (60/80 = 75%), not 100%
+			expect(afterRecord.progress ?? 0).toBeLessThan(100);
 		},
 		30_000
 	);
@@ -261,7 +273,7 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 			const scheduleResult = (await daemon.messageHub.request('goal.setSchedule', {
 				roomId,
 				goalId: mission.id,
-				expression: '@daily',
+				cronExpression: '@daily',
 				timezone: 'UTC',
 			})) as { goal: RoomGoal; nextRunAt: number };
 
@@ -287,7 +299,7 @@ describe('Mission Lifecycle Integration Tests (API-dependent)', () => {
 			await daemon.messageHub.request('goal.setSchedule', {
 				roomId,
 				goalId: mission.id,
-				expression: '@daily',
+				cronExpression: '@daily',
 				timezone: 'UTC',
 			});
 

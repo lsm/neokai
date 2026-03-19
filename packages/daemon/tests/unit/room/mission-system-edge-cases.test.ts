@@ -22,26 +22,6 @@ import { GoalManager } from '../../../src/lib/room/managers/goal-manager';
 
 // ─── Schema helper ────────────────────────────────────────────────────────────
 
-function addMissionExecutionsTable(db: Database): void {
-	db.exec(`
-		CREATE TABLE IF NOT EXISTS mission_executions (
-			id TEXT PRIMARY KEY,
-			goal_id TEXT NOT NULL,
-			execution_number INTEGER NOT NULL,
-			started_at INTEGER,
-			completed_at INTEGER,
-			status TEXT NOT NULL DEFAULT 'running',
-			result_summary TEXT,
-			task_ids TEXT NOT NULL DEFAULT '[]',
-			planning_attempts INTEGER NOT NULL DEFAULT 0,
-			FOREIGN KEY (goal_id) REFERENCES goals(id) ON DELETE CASCADE,
-			UNIQUE(goal_id, execution_number)
-		);
-		CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_executions_one_running
-			ON mission_executions(goal_id) WHERE status = 'running';
-	`);
-}
-
 // ─── 1. Scheduler: daemon restart catch-up ────────────────────────────────────
 
 describe('Scheduler: daemon restart catch-up', () => {
@@ -49,7 +29,6 @@ describe('Scheduler: daemon restart catch-up', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -137,7 +116,6 @@ describe('Scheduler: room state interaction', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -399,7 +377,6 @@ describe('Execution identity: executionId in group metadata', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -591,7 +568,6 @@ describe('Per-execution isolation', () => {
 
 	beforeEach(() => {
 		ctx = createRuntimeTestContext();
-		addMissionExecutionsTable(ctx.db as Database);
 	});
 
 	afterEach(() => {
@@ -722,7 +698,7 @@ describe('Autonomy gate: planner exclusion edge cases', () => {
 		expect(plannerCall).toBeDefined();
 	});
 
-	test('supervisedgoal and semi_autonomous goal both spawn planner for empty task list', async () => {
+	test('supervised goal and semi_autonomous goal both spawn planner for empty task list', async () => {
 		await ctx.goalManager.createGoal({
 			title: 'Supervised goal',
 			description: 'Standard goal',

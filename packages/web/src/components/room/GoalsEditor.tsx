@@ -682,11 +682,11 @@ function MetricProgress({ metrics }: { metrics: MissionMetric[] }) {
 	if (metrics.length === 0) return null;
 	return (
 		<div class="space-y-2">
-			{metrics.map((m, i) => {
+			{metrics.map((m) => {
 				const pct = m.target > 0 ? Math.min(100, Math.round((m.current / m.target) * 100)) : 0;
 				const color = pct >= 100 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500';
 				return (
-					<div key={i}>
+					<div key={m.name}>
 						<div class="flex items-center justify-between text-xs mb-1">
 							<span class="text-gray-400">{m.name}</span>
 							<span class="text-gray-300 font-mono">
@@ -873,6 +873,7 @@ function GoalItem({
 			<div class="bg-dark-850 border border-dark-700 rounded-lg overflow-hidden">
 				{/* Header - always visible */}
 				<div
+					data-testid="goal-item-header"
 					class="px-4 py-3 cursor-pointer hover:bg-dark-800 transition-colors"
 					onClick={onToggleExpand}
 				>

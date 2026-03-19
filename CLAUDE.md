@@ -247,7 +247,7 @@ The Mission System (Goal V2) extends the room's goal tracking with structured, a
 ### Key Files
 
 - `packages/daemon/src/lib/room/managers/goal-manager.ts` — Core `GoalManager`: CRUD, metric recording, execution management, scheduler tick.
-- `packages/daemon/src/lib/room/state/goal-repository.ts` — SQLite persistence for goals and V2 columns.
+- `packages/daemon/src/storage/repositories/goal-repository.ts` — SQLite persistence for goals and V2 columns.
 - `packages/daemon/src/lib/room/runtime/cron-utils.ts` — Cron parsing, next-run computation, and catch-up detection.
 - `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` — RPC handlers: `goal.create`, `goal.list`, `goal.update`, `goal.delete`, `goal.listExecutions`, etc.
 - `packages/web/src/components/room/GoalsEditor.tsx` — Mission list UI, create/edit form with type-specific fields, metric progress bars, execution history.

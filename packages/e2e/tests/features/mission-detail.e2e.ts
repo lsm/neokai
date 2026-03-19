@@ -95,8 +95,10 @@ async function expandMission(
 	page: Parameters<typeof waitForWebSocketConnected>[0],
 	title: string
 ): Promise<void> {
-	// Click the header area containing the mission title to toggle expansion
-	const header = page.locator(`h4:has-text("${title}")`).first();
+	// Find the goal-item-header that contains the mission title and click it
+	const header = page
+		.locator(`[data-testid="goal-item-header"]:has(h4:has-text("${title}"))`)
+		.first();
 	await expect(header).toBeVisible({ timeout: 5000 });
 	await header.click();
 }
