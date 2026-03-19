@@ -52,11 +52,11 @@ class AsyncQueue<T> {
 		return new Promise<T>((resolve) => this.waiters.push(resolve));
 	}
 
-	/** Drain all pending items and reject all waiting callers. Used between turns. */
+	/** Drain all pending items and resolve waiting callers with null sentinel. Used between turns. */
 	drain(): void {
 		this.items = [];
-		for (const reject of this.waiters) {
-			reject(null as unknown as T);
+		for (const resolve of this.waiters) {
+			resolve(null as unknown as T);
 		}
 		this.waiters = [];
 	}

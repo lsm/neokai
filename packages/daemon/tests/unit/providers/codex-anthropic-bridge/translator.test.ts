@@ -9,6 +9,7 @@ import {
 	buildToolNameReverseMap,
 	extractSystemText,
 	extractContentText,
+	extractLastUserMessage,
 	isToolResultContinuation,
 	extractToolResults,
 	buildConversationText,
@@ -250,6 +251,51 @@ describe('extractToolResults', () => {
 		];
 		const [result] = extractToolResults(msgs);
 		expect(result.text).toBe('part A part B');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// extractLastUserMessage
+// ---------------------------------------------------------------------------
+
+describe('extractLastUserMessage', () => {
+	it('returns empty string for empty messages array', () => {
+		expect(extractLastUserMessage([])).toBe('');
+	});
+
+	it('returns empty string when last message is assistant', () => {
+		const msgs: AnthropicMessage[] = [
+			{ role: 'user', content: 'hello' },
+			{ role: 'assistant', content: 'hi there' },
+		];
+		expect(extractLastUserMessage(msgs)).toBe('');
+	});
+
+	it('returns text content from last user message', () => {
+		const msgs: AnthropicMessage[] = [
+			{ role: 'assistant', content: 'hi there' },
+			{ role: 'user', content: 'hello world' },
+		];
+		expect(extractLastUserMessage(msgs)).toBe('hello world');
+	});
+
+	it('returns text from string content', () => {
+		const msgs: AnthropicMessage[] = [{ role: 'user', content: 'plain text' }];
+		expect(extractLastUserMessage(msgs)).toBe('plain text');
+	});
+
+	it('returns empty string for tool result (not user role)', () => {
+		const msgs: AnthropicMessage[] = [
+			{ role: 'user', content: 'use the tool' },
+			{
+				role: 'user',
+				content: [
+					{ type: 'tool_result', tool_use_id: 'call-1', content: 'tool output' },
+				],
+			},
+		];
+		// Last message has role 'user' but content is tool_result blocks, not text
+		expect(extractLastUserMessage(msgs)).toBe('');
 	});
 });
 
