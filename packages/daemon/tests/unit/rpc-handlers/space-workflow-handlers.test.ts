@@ -51,8 +51,7 @@ const mockWorkflow: SpaceWorkflow = {
 		{
 			id: 'step-1',
 			name: 'Code',
-			agentRefType: 'builtin',
-			agentRef: 'coder',
+			agentId: 'agent-uuid-1',
 			order: 0,
 		},
 	],
@@ -153,7 +152,7 @@ describe('space-workflow-handlers', () => {
 			const result = (await call('spaceWorkflow.create', {
 				spaceId: 'space-1',
 				name: 'Test Workflow',
-				steps: [{ name: 'Code', agentRefType: 'builtin', agentRef: 'coder' }],
+				steps: [{ name: 'Code', agentId: 'agent-uuid-1' }],
 			})) as { workflow: SpaceWorkflow };
 
 			expect(result.workflow).toEqual(mockWorkflow);
@@ -202,7 +201,7 @@ describe('space-workflow-handlers', () => {
 				call('spaceWorkflow.create', {
 					spaceId: 'space-1',
 					name: 'Test Workflow',
-					steps: [{ name: 'Code', agentRefType: 'builtin', agentRef: 'coder' }],
+					steps: [{ name: 'Code', agentId: 'agent-uuid-1' }],
 				})
 			).rejects.toThrow('already exists in this space');
 		});
@@ -364,19 +363,19 @@ describe('space-workflow-handlers', () => {
 			);
 		});
 
-		it('propagates step validation error (invalid builtin agentRef)', async () => {
+		it('propagates step validation error (unknown agentId)', async () => {
 			(workflowManager.updateWorkflow as ReturnType<typeof mock>).mockImplementation(() => {
-				throw new WorkflowValidationError('step[0]: invalid builtin agentRef "leader"');
+				throw new WorkflowValidationError(
+					'step[0]: agentId "unknown-uuid" does not match any SpaceAgent in this space'
+				);
 			});
 
 			await expect(
 				call('spaceWorkflow.update', {
 					id: 'wf-1',
-					steps: [
-						{ id: 's1', name: 'Lead', agentRefType: 'builtin', agentRef: 'leader', order: 0 },
-					],
+					steps: [{ id: 's1', name: 'Lead', agentId: 'unknown-uuid', order: 0 }],
 				})
-			).rejects.toThrow('invalid builtin agentRef');
+			).rejects.toThrow('does not match any SpaceAgent in this space');
 		});
 	});
 

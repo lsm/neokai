@@ -51,6 +51,8 @@ export function setupSpaceWorkflowHandlers(
 
 		const workflow = workflowManager.createWorkflow(params);
 
+		// sessionId: 'global' — spaceWorkflow.* events are global broadcast events,
+		// not channel-scoped. The SpaceStore (M5) will subscribe globally and filter by spaceId.
 		daemonHub
 			.emit('spaceWorkflow.created', {
 				sessionId: 'global',
@@ -190,7 +192,9 @@ export function setupSpaceWorkflowHandlers(
 			throw new Error(`Workflow not found: ${params.id}`);
 		}
 
-		daemonHub
+		// Await so subscribers (e.g. SpaceStore in M5) see the deletion before the handler returns,
+		// consistent with how spaceAgent.delete emits spaceAgent.deleted.
+		await daemonHub
 			.emit('spaceWorkflow.deleted', {
 				sessionId: 'global',
 				spaceId: workflow.spaceId,
