@@ -100,17 +100,33 @@ function getOutputTokens(events: SseEvent[]): number {
 async function callCopilotBridge(
 	bridgeUrl: string,
 	messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-	model: string
+	model: string,
+	system?: string
 ): Promise<SseEvent[]> {
 	const response = await fetch(`${bridgeUrl}/v1/messages`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ model, messages, stream: true, max_tokens: 256 }),
+		body: JSON.stringify({
+			model,
+			messages,
+			stream: true,
+			max_tokens: 256,
+			...(system ? { system } : {}),
+		}),
 	});
 	if (!response.ok) {
 		throw new Error(`Bridge HTTP ${response.status}: ${await response.text()}`);
 	}
-	return parseSseEvents(await response.text());
+	const events = parseSseEvents(await response.text());
+	// Detect Anthropic SSE error events and surface them as descriptive test failures.
+	const errorEvent = events.find((e) => e.event === 'error');
+	if (errorEvent) {
+		const err = (errorEvent.data as { error?: { type?: string; message?: string } }).error;
+		throw new Error(
+			`Copilot bridge returned SSE error: ${err?.type ?? 'unknown'} — ${err?.message ?? '(no message)'}`
+		);
+	}
+	return events;
 }
 
 /** Per-turn idle timeout. The Copilot API can take 60-90 s per turn. */
@@ -552,7 +568,8 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 				const events = await callCopilotBridge(
 					bridgeUrl,
 					[{ role: 'user', content: 'Say hello.' }],
-					testModelId
+					testModelId,
+					'You are a helpful assistant. Always respond with plain text.'
 				);
 
 				const inputTokens = getInputTokens(events);
