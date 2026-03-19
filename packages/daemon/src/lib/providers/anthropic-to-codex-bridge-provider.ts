@@ -406,8 +406,12 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	}
 
 	async getModels(): Promise<ModelInfo[]> {
-		const status = await this.getAuthStatus();
-		return status.isAuthenticated ? ANTHROPIC_CODEX_MODELS : [];
+		// Use isAvailable() (which includes env-var credentials via getBridgeAuth()) so
+		// that the model picker works for all credential sources.  getAuthStatus() is
+		// UI-only: it gates the Login/Logout buttons but must not hide models from users
+		// who authenticate via OPENAI_API_KEY / CODEX_API_KEY env vars.
+		if (!(await this.isAvailable())) return [];
+		return ANTHROPIC_CODEX_MODELS;
 	}
 
 	ownsModel(modelId: string): boolean {

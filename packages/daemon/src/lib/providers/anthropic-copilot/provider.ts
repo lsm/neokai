@@ -18,12 +18,20 @@
  *
  * ## Authentication
  *
- * Credential sources (in priority order):
+ * **UI/availability check** (source 1 only):
+ * `isAvailable()` and `getAuthStatus()` check only `~/.neokai/auth.json`.
+ * This is what drives the Login/Logout buttons and model picker visibility.
+ * Env-var and external credentials are intentionally invisible to the UI so
+ * that the Logout button only appears when NeoKai can actually remove the token.
+ *
+ * **Runtime session credential resolution** (sources 1–5, via `resolveGitHubToken()`):
  *   1. `~/.neokai/auth.json` (explicitly stored NeoKai credentials)
  *   2. `COPILOT_GITHUB_TOKEN` env var (PAT with copilot_requests scope)
  *   3. `GH_TOKEN` env var
  *   4. `gh auth token` CLI output
  *   5. `~/.config/gh/hosts.yml` oauth_token
+ * Sources 2–5 allow the daemon and tests to use external credentials for API
+ * calls without going through the NeoKai login flow.
  *
  * IMPORTANT: `GITHUB_TOKEN` (GitHub Actions token) is NOT used — it lacks
  * Copilot access and causes "Not logged in" errors.

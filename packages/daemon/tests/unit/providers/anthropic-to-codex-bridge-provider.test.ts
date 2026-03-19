@@ -419,6 +419,48 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// getModels() — availability check uses isAvailable() not getAuthStatus()
+	// -------------------------------------------------------------------------
+
+	describe('getModels()', () => {
+		let tmpDir: string;
+
+		beforeEach(async () => {
+			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-models-test-'));
+		});
+
+		afterEach(async () => {
+			await fs.rm(tmpDir, { recursive: true, force: true });
+		});
+
+		it('returns models when OPENAI_API_KEY env var is set (env vars still power API calls)', async () => {
+			// getModels() uses isAvailable() which includes env-var credentials.
+			// This ensures models appear in the picker even when the user has not done NeoKai OAuth.
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('returns models when NeoKai OAuth credentials are in auth.json', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+			});
+			provider = makeProvider({}, neokaiDir, tmpDir, fakeCodexFound);
+			const models = await provider.getModels();
+			expect(models.length).toBeGreaterThan(0);
+		});
+
+		it('returns empty array when no credentials and codex not found', async () => {
+			provider = makeProvider({}, tmpDir, tmpDir, fakeCodexMissing);
+			const models = await provider.getModels();
+			expect(models).toEqual([]);
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// importFromCodexAuth() — one-time migration from ~/.codex/auth.json
 	// -------------------------------------------------------------------------
 

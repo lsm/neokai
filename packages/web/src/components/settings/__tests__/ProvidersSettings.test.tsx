@@ -594,6 +594,77 @@ describe('ProvidersSettings', () => {
 				expect(mockToastSuccess).not.toHaveBeenCalled();
 			});
 		});
+
+		it('should show both Refresh Login and Logout buttons when isAuthenticated and needsRefresh are true', async () => {
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI', {
+					isAuthenticated: true,
+					method: 'oauth',
+					needsRefresh: true,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('OpenAI');
+			});
+
+			const refreshButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Refresh Login')
+			);
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			expect(refreshButton).toBeDefined();
+			expect(logoutButton).toBeDefined();
+		});
+
+		it('should show Logout button after refresh failure even when isAuthenticated is false', async () => {
+			// refreshFailed path: needsRefresh: true, isAuthenticated: false → after refresh failure
+			// the condition (isAuthenticated || (needsRefresh && refreshFailed.has(id))) becomes true
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI', {
+					isAuthenticated: false,
+					needsRefresh: true,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockRefreshProvider.mockResolvedValue({ success: false, error: 'Token expired' });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('OpenAI');
+			});
+
+			// Initially no Logout button since isAuthenticated is false and refreshFailed is empty
+			expect(
+				Array.from(container.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Logout')
+				)
+			).toBeUndefined();
+
+			// Click Refresh Login to trigger a failed refresh (adds provider to refreshFailed)
+			const refreshButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Refresh Login')
+			);
+			refreshButton?.click();
+
+			await waitFor(() => {
+				expect(mockRefreshProvider).toHaveBeenCalledWith('openai');
+				expect(mockToastError).toHaveBeenCalledWith('Token expired');
+			});
+
+			// Logout button now visible because refreshFailed contains 'openai'
+			await waitFor(() => {
+				const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+					btn.textContent?.includes('Logout')
+				);
+				expect(logoutButton).toBeDefined();
+			});
+		});
 	});
 
 	describe('OAuth Modal', () => {
