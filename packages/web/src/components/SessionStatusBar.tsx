@@ -26,11 +26,48 @@ import {
 	getModelFamilyIcon,
 	getProviderLabel,
 	groupModelsByProvider,
+	filterModelsForPicker,
 	useMessageHub,
 } from '../hooks';
 import { Spinner } from './ui/Spinner.tsx';
 import { Tooltip } from './ui/Tooltip.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
+
+/**
+ * Brand-accurate provider dot colors (hex values outside Tailwind's palette).
+ * Keep in sync with PROVIDER_LABELS in packages/web/src/hooks/useModelSwitcher.ts —
+ * when a new provider is added there, add a matching entry here.
+ */
+const PROVIDER_DOT_COLORS: Record<string, { color: string; ring?: boolean }> = {
+	anthropic: { color: '#D97757' }, // Anthropic brand orange
+	'anthropic-copilot': { color: '#8957E5' }, // GitHub Copilot purple
+	'anthropic-codex': { color: '#FFFFFF', ring: true }, // OpenAI white (ring for visibility)
+	glm: { color: '#7DD3FC' }, // ChatGLM light blue
+	minimax: { color: '#FCA5A5' }, // MiniMax light red
+};
+
+/**
+ * ProviderBadge - Small colored dot indicating the provider next to the model name.
+ * Shows for all providers including Anthropic (orange dot).
+ * Returns null only when provider is undefined/unknown.
+ * The dot's title/aria-label provide the provider name for accessibility.
+ */
+function ProviderBadge({ provider }: { provider: string | undefined }) {
+	if (!provider) return null;
+	const config = PROVIDER_DOT_COLORS[provider];
+	const backgroundColor = config?.color ?? '#9CA3AF'; // gray-400 fallback
+	const label = getProviderLabel(provider);
+	return (
+		<span
+			class={`inline-block w-2 h-2 rounded-full flex-shrink-0${config?.ring ? ' ring-1 ring-gray-300' : ''}`}
+			style={{ backgroundColor }}
+			title={label}
+			aria-label={label}
+			role="img"
+			data-testid="provider-badge"
+		/>
+	);
+}
 
 /**
  * Thinking level display labels
@@ -202,8 +239,10 @@ export default function SessionStatusBar({
 	// Get MessageHub for RPC calls
 	const { callIfConnected } = useMessageHub();
 
-	// Provider auth statuses for availability dots in model picker
-	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, boolean>>(new Map());
+	// Provider auth statuses for availability dots and model filtering in model picker
+	const [providerAuthStatuses, setProviderAuthStatuses] = useState<Map<string, ProviderAuthStatus>>(
+		new Map()
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -211,9 +250,9 @@ export default function SessionStatusBar({
 			.then((res) => {
 				if (cancelled) return;
 				const result = res as { providers?: ProviderAuthStatus[] } | null;
-				const statusMap = new Map<string, boolean>();
+				const statusMap = new Map<string, ProviderAuthStatus>();
 				for (const p of result?.providers ?? []) {
-					statusMap.set(p.id, p.isAuthenticated);
+					statusMap.set(p.id, p);
 				}
 				setProviderAuthStatuses(statusMap);
 			})
@@ -382,42 +421,70 @@ export default function SessionStatusBar({
 					</Tooltip>
 				)}
 
-				{/* Model Switcher */}
-				<div class="relative">
-					<Tooltip
-						content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
-						position="top"
-						delay={300}
-					>
-						<button
-							class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-							onClick={toggleModelDropdown}
-							disabled={modelLoading || modelSwitching || coordinatorSwitching}
-							title={currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'}
+				{/* Model Switcher + Provider Badge */}
+				<div class="flex items-center gap-1.5">
+					<div class="relative">
+						<Tooltip
+							content={currentModelInfo ? `Model: ${currentModelInfo.name}` : 'Switch Model'}
+							position="top"
+							delay={300}
 						>
-							{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
-						</button>
-					</Tooltip>
+							<button
+								class="control-btn w-8 h-8 flex items-center justify-center bg-dark-700 hover:bg-dark-600 border border-gray-600 sm:border-gray-600 rounded-full transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+								onClick={toggleModelDropdown}
+								disabled={modelLoading || modelSwitching || coordinatorSwitching}
+								title={
+									currentModelInfo ? `Switch Model (${currentModelInfo.name})` : 'Switch Model'
+								}
+							>
+								{modelSwitching ? <Spinner size="sm" /> : currentModelIcon}
+							</button>
+						</Tooltip>
 
-					{/* Model Dropdown */}
-					{modelDropdown.isOpen && (
-						<div
-							class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn`}
-						>
-							<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
-							{Array.from(groupModelsByProvider(availableModels).entries()).map(
-								([provider, models], groupIndex) => {
-									const isAuthenticated = providerAuthStatuses.get(provider) ?? false;
+						{/* Model Dropdown */}
+						{modelDropdown.isOpen && (
+							<div
+								data-testid="model-dropdown"
+								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn`}
+							>
+								<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
+								{Array.from(
+									groupModelsByProvider(
+										filterModelsForPicker(
+											availableModels,
+											providerAuthStatuses,
+											currentModelInfo?.provider
+										)
+									).entries()
+								).map(([provider, models], groupIndex) => {
+									const authStatus = providerAuthStatuses.get(provider);
+									const isAuthenticated = authStatus?.isAuthenticated;
+									const needsRefresh = authStatus?.needsRefresh ?? false;
+									// Dot: gray = unknown, green = ok, yellow = expiring, red = unauthenticated (only current shown)
+									const dotClass =
+										isAuthenticated === undefined
+											? 'bg-gray-500'
+											: !isAuthenticated
+												? 'bg-red-500'
+												: needsRefresh
+													? 'bg-yellow-500'
+													: 'bg-green-500';
 									return (
-										<div key={provider}>
+										<div key={provider} data-testid="provider-section">
 											{groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
 											<div class="px-3 py-1 flex items-center gap-1.5">
+												<span class={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
 												<span
-													class={`w-2 h-2 rounded-full flex-shrink-0 ${isAuthenticated ? 'bg-green-500' : 'bg-gray-500'}`}
-												/>
-												<span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+													data-testid="provider-group-header"
+													class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+												>
 													{getProviderLabel(provider)}
 												</span>
+												{needsRefresh && (
+													<span class="text-yellow-400 text-[10px]" title="Token expiring soon">
+														⚠
+													</span>
+												)}
 											</div>
 											{models.map((model) => {
 												const isCurrent =
@@ -435,15 +502,21 @@ export default function SessionStatusBar({
 														<span class="text-base">{getModelFamilyIcon(model.family)}</span>
 														<span class="flex-1 truncate">{model.name}</span>
 														{isCurrent && <span class="text-blue-400 text-[10px]">✓</span>}
+														{needsRefresh && (
+															<span class="text-yellow-400 text-[10px]" title="Token expiring">
+																⚠
+															</span>
+														)}
 													</button>
 												);
 											})}
 										</div>
 									);
-								}
-							)}
-						</div>
-					)}
+								})}
+							</div>
+						)}
+					</div>
+					<ProviderBadge provider={currentModelInfo?.provider} />
 				</div>
 
 				{/* Thinking Level */}

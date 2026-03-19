@@ -32,7 +32,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
 import type { ToolBridgeRegistry } from './tool-bridge.js';
 import type { ToolResult } from './conversation.js';
-import { AnthropicStreamWriter } from './sse.js';
+import { AnthropicStreamWriter, estimateTokens } from './sse.js';
 import { Logger } from '../../logger.js';
 
 const logger = new Logger('anthropic-copilot-streaming');
@@ -84,10 +84,12 @@ function streamSession(
 	res: ServerResponse,
 	registry: ToolBridgeRegistry | undefined,
 	startFn: (finish: () => void, writeFailed: () => void) => void,
-	onDone: () => void
+	onDone: () => void,
+	/** Raw input text used for heuristic token estimation (system prompt + formatted messages). */
+	inputText = ''
 ): Promise<StreamingOutcome> {
 	const writer = new AnthropicStreamWriter();
-	writer.start(res, model);
+	writer.start(res, model, estimateTokens(inputText.length));
 
 	let sessionDone = false;
 	let pendingDeltas: string[] = [];
@@ -232,7 +234,9 @@ export function runSessionStreaming(
 	req: IncomingMessage,
 	res: ServerResponse,
 	registry?: ToolBridgeRegistry,
-	onDone: () => void = () => {}
+	onDone: () => void = () => {},
+	/** Raw input text (system prompt + formatted messages) for heuristic token estimation. */
+	inputText = ''
 ): Promise<StreamingOutcome> {
 	return streamSession(
 		session,
@@ -251,7 +255,8 @@ export function runSessionStreaming(
 				finish();
 			});
 		},
-		onDone
+		onDone,
+		inputText
 	);
 }
 
@@ -268,7 +273,9 @@ export function resumeSessionStreaming(
 	res: ServerResponse,
 	registry: ToolBridgeRegistry,
 	toolResults: ToolResult[],
-	onDone: () => void = () => {}
+	onDone: () => void = () => {},
+	/** Raw input text (system prompt + full message history) for heuristic token estimation. */
+	inputText = ''
 ): Promise<StreamingOutcome> {
 	return streamSession(
 		session,
@@ -283,6 +290,7 @@ export function resumeSessionStreaming(
 				registry.resolveToolResult(toolUseId, result, isError);
 			}
 		},
-		onDone
+		onDone,
+		inputText
 	);
 }

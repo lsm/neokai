@@ -70,6 +70,11 @@ import { cn } from '../lib/utils.ts';
 import { lobbyStore } from '../lib/lobby-store.ts';
 import { MobileMenuButton } from '../components/ui/MobileMenuButton.tsx';
 import type { RoomContext } from '../components/ChatHeader.tsx';
+import { navSectionSignal, settingsSectionSignal } from '../lib/signals.ts';
+import { ErrorCategory } from '../types/error.ts';
+import type { StructuredError } from '../types/error.ts';
+import { getProviderLabel } from '../hooks/index.ts';
+import type { ErrorBannerAction } from '../components/ErrorBanner.tsx';
 
 interface ChatContainerProps {
 	sessionId: string;
@@ -772,6 +777,38 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 	// Combined error (local + store)
 	const error = localError || storeError?.message || null;
 
+	// Build provider-specific action buttons for structured errors
+	const errorDetails = storeError?.details as StructuredError | undefined;
+	const errorCategory = errorDetails?.category;
+	const errorProviderId = errorDetails?.metadata?.providerId as string | undefined;
+	const errorActions = useMemo((): ErrorBannerAction[] => {
+		if (!errorDetails || !errorCategory) return [];
+		const providerLabel = errorProviderId ? getProviderLabel(errorProviderId) : 'Provider';
+		if (errorCategory === ErrorCategory.PROVIDER_AUTH_ERROR) {
+			return [
+				{
+					label: `Re-authenticate ${providerLabel}`,
+					onClick: () => {
+						navSectionSignal.value = 'settings';
+						settingsSectionSignal.value = 'providers';
+					},
+				},
+			];
+		}
+		if (errorCategory === ErrorCategory.PROVIDER_UNAVAILABLE) {
+			const defaultAnthropicModel = availableModels.find((m) => m.provider === 'anthropic');
+			const actions: ErrorBannerAction[] = [];
+			if (defaultAnthropicModel) {
+				actions.push({
+					label: 'Switch to Anthropic',
+					onClick: () => switchModel(defaultAnthropicModel),
+				});
+			}
+			return actions;
+		}
+		return [];
+	}, [errorDetails, errorCategory, errorProviderId, availableModels, switchModel]);
+
 	// Derive loading state from sessionStore
 	// sessionState being null means the RPC hasn't returned yet (truly loading)
 	// session (sessionInfo) can be null even after RPC returns for room sessions
@@ -1023,6 +1060,7 @@ export default function ChatContainer({ sessionId, readonly = false }: ChatConta
 						setLocalError(null);
 						sessionStore.clearError();
 					}}
+					actions={errorActions.length > 0 ? errorActions : undefined}
 				/>
 			)}
 

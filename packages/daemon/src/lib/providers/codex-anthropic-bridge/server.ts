@@ -37,6 +37,18 @@ import { Logger } from '../../logger.js';
 
 const logger = new Logger('codex-bridge-server');
 
+function isClosedControllerError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+
+	const maybeCodeError = error as Error & { code?: string };
+	return (
+		maybeCodeError.code === 'ERR_INVALID_STATE' ||
+		error.message.includes('Controller is already closed')
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Anthropic JSON error envelope
 // ---------------------------------------------------------------------------
@@ -98,108 +110,126 @@ export async function drainToSSE(
 	let textBlockOpen = false;
 	let blockIndex = 0;
 	let outputTokens = 0;
+	let suspendedCallId: string | null = null;
 
-	const msgId = generateMsgId();
-	// TODO: input_tokens is hard-coded to 0 here because thread/tokenUsage/updated
-	// arrives after streaming starts and message_start is already sent by then.
-	// To surface real input token counts, drainToSSE would need to either buffer
-	// events until turn_done is available or emit a corrected usage event afterward.
-	send(messageStartSSE(msgId, model, 0));
-	send(pingSSE());
+	try {
+		const msgId = generateMsgId();
+		// TODO: input_tokens is hard-coded to 0 here because thread/tokenUsage/updated
+		// arrives after streaming starts and message_start is already sent by then.
+		// To surface real input token counts, drainToSSE would need to either buffer
+		// events until turn_done is available or emit a corrected usage event afterward.
+		send(messageStartSSE(msgId, model, 0));
+		send(pingSSE());
 
-	// Use gen.next() manually instead of for-await-of.  The for-await-of
-	// construct calls gen.return() on early exit (break / return), which
-	// permanently closes the generator — preventing the next HTTP request
-	// from resuming it after a tool_use round-trip.
-	while (true) {
-		const { value: event, done } = await gen.next();
-		if (done) break;
+		// Use gen.next() manually instead of for-await-of.  The for-await-of
+		// construct calls gen.return() on early exit (break / return), which
+		// permanently closes the generator — preventing the next HTTP request
+		// from resuming it after a tool_use round-trip.
+		while (true) {
+			const { value: event, done } = await gen.next();
+			if (done) break;
 
-		logger.debug(
-			`drainToSSE event: ${event.type}${event.type === 'text_delta' ? ` text=${JSON.stringify((event as { text: string }).text)}` : ''}`
-		);
+			logger.debug(
+				`drainToSSE event: ${event.type}${event.type === 'text_delta' ? ` text=${JSON.stringify((event as { text: string }).text)}` : ''}`
+			);
 
-		if (event.type === 'text_delta') {
-			if (!textBlockOpen) {
-				send(contentBlockStartTextSSE(blockIndex));
-				textBlockOpen = true;
-			}
-			send(textDeltaSSE(blockIndex, event.text));
-			outputTokens += Math.ceil(event.text.length / 4);
-		} else if (event.type === 'tool_call') {
-			// Close any open text block first
-			if (textBlockOpen) {
+			if (event.type === 'text_delta') {
+				if (!textBlockOpen) {
+					send(contentBlockStartTextSSE(blockIndex));
+					textBlockOpen = true;
+				}
+				send(textDeltaSSE(blockIndex, event.text));
+				outputTokens += Math.ceil(event.text.length / 4);
+			} else if (event.type === 'tool_call') {
+				// Close any open text block first
+				if (textBlockOpen) {
+					send(contentBlockStopSSE(blockIndex));
+					blockIndex++;
+					textBlockOpen = false;
+				}
+				// Emit the tool_use block
+				send(contentBlockStartToolUseSSE(blockIndex, event.callId, event.toolName));
+				send(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)));
 				send(contentBlockStopSSE(blockIndex));
-				blockIndex++;
-				textBlockOpen = false;
-			}
-			// Emit the tool_use block
-			send(contentBlockStartToolUseSSE(blockIndex, event.callId, event.toolName));
-			send(inputJsonDeltaSSE(blockIndex, JSON.stringify(event.toolInput)));
-			send(contentBlockStopSSE(blockIndex));
-			// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
-			// hasn't finished the turn yet), so always use the heuristic count here.
-			send(messageDeltaSSE('tool_use', { outputTokens }));
-			send(messageStopSSE());
+				// At tool_call time, thread/tokenUsage/updated has not yet fired (the model
+				// hasn't finished the turn yet), so always use the heuristic count here.
+				send(messageDeltaSSE('tool_use', { outputTokens }));
+				send(messageStopSSE());
 
-			// Store the session so the next HTTP request can resume it.
-			// Schedule a TTL timer to kill the subprocess if the client never
-			// sends the tool result (e.g. HTTP client disconnected).
-			const callId = event.callId;
-			const cleanupTimer = setTimeout(() => {
-				logger.warn(`codex-bridge: TTL expired, killing abandoned session callId=${callId}`);
+				// Store the session so the next HTTP request can resume it.
+				// Schedule a TTL timer to kill the subprocess if the client never
+				// sends the tool result (e.g. HTTP client disconnected).
+				const callId = event.callId;
+				const cleanupTimer = setTimeout(() => {
+					logger.warn(`codex-bridge: TTL expired, killing abandoned session callId=${callId}`);
+					session.kill();
+					toolSessions.delete(callId);
+				}, ttlMs);
+
+				toolSessions.set(callId, {
+					gen,
+					session,
+					provideResult: event.provideResult,
+					model,
+					cleanupTimer,
+				});
+				suspendedCallId = callId;
+
+				logger.debug(`codex-bridge: tool_call suspended callId=${callId}`);
+				// End this HTTP response without closing the generator
+				controller.close();
+				return;
+			} else if (event.type === 'turn_done') {
+				if (textBlockOpen) {
+					send(contentBlockStopSSE(blockIndex));
+					textBlockOpen = false;
+				}
+				// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
+				// or from legacy inline usage. Fall back to heuristic count if both are 0.
+				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
+				send(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }));
+				send(messageStopSSE());
 				session.kill();
-				toolSessions.delete(callId);
-			}, ttlMs);
-
-			toolSessions.set(callId, {
-				gen,
-				session,
-				provideResult: event.provideResult,
-				model,
-				cleanupTimer,
-			});
-
-			logger.debug(`codex-bridge: tool_call suspended callId=${callId}`);
-			// End this HTTP response without closing the generator
-			controller.close();
-			return;
-		} else if (event.type === 'turn_done') {
-			if (textBlockOpen) {
-				send(contentBlockStopSSE(blockIndex));
-				textBlockOpen = false;
+				controller.close();
+				return;
+			} else if (event.type === 'error') {
+				logger.error('codex-bridge: BridgeSession error:', event.message);
+				// Close any open text block before emitting the error event
+				if (textBlockOpen) {
+					send(contentBlockStopSSE(blockIndex));
+					textBlockOpen = false;
+				}
+				// Emit an Anthropic-format error SSE event then close the stream
+				send(errorSSE('api_error', event.message));
+				session.kill();
+				controller.close();
+				return;
 			}
-			// event.outputTokens is populated from thread/tokenUsage/updated (v2 protocol)
-			// or from legacy inline usage. Fall back to heuristic count if both are 0.
-			const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
-			send(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }));
-			send(messageStopSSE());
-			session.kill();
-			controller.close();
-			return;
-		} else if (event.type === 'error') {
-			logger.error('codex-bridge: BridgeSession error:', event.message);
-			// Close any open text block before emitting the error event
-			if (textBlockOpen) {
-				send(contentBlockStopSSE(blockIndex));
-				textBlockOpen = false;
+		}
+
+		// Generator exhausted without turn_done — close gracefully
+		if (textBlockOpen) {
+			send(contentBlockStopSSE(blockIndex));
+		}
+		send(messageDeltaSSE('end_turn', { outputTokens: outputTokens }));
+		send(messageStopSSE());
+		session.kill();
+		controller.close();
+	} catch (error) {
+		if (isClosedControllerError(error)) {
+			logger.debug('codex-bridge: SSE controller already closed, ending stream drain');
+			if (suspendedCallId) {
+				const suspended = toolSessions.get(suspendedCallId);
+				if (suspended) {
+					clearTimeout(suspended.cleanupTimer);
+					toolSessions.delete(suspendedCallId);
+				}
 			}
-			// Emit an Anthropic-format error SSE event then close the stream
-			send(errorSSE('api_error', event.message));
 			session.kill();
-			controller.close();
 			return;
 		}
+		throw error;
 	}
-
-	// Generator exhausted without turn_done — close gracefully
-	if (textBlockOpen) {
-		send(contentBlockStopSSE(blockIndex));
-	}
-	send(messageDeltaSSE('end_turn', { outputTokens: outputTokens }));
-	send(messageStopSSE());
-	session.kill();
-	controller.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +284,12 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				Connection: 'keep-alive',
 				'X-Accel-Buffering': 'no',
 			};
+
+			if (body.tool_choice !== undefined) {
+				logger.warn(
+					`tool_choice is not supported by the Codex bridge and will be ignored (received: ${JSON.stringify(body.tool_choice)})`
+				);
+			}
 
 			// ------------------------------------------------------------------
 			// Tool-continuation: resume a suspended generator

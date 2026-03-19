@@ -70,12 +70,13 @@ describe('RoomRuntime — measurable missions', () => {
 		ctx.runtime.start();
 		await ctx.runtime.tick();
 
-		// A planner session should be spawned for the metric-based replan
+		// A planner session should be spawned for the metric-based replan (+ leader eagerly)
 		const createCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession'
 		);
-		expect(createCalls).toHaveLength(1);
-		expect(createCalls[0].args[1]).toBe('planner');
+		expect(createCalls).toHaveLength(2);
+		const plannerCall = createCalls.find((c) => c.args[1] === 'planner');
+		expect(plannerCall).toBeDefined();
 
 		// Goal should still be active (not completed)
 		const updated = await ctx.goalManager.getGoal(goal.id);
@@ -141,8 +142,8 @@ describe('RoomRuntime — measurable missions', () => {
 		const createCalls = ctx.sessionFactory.calls.filter(
 			(c) => c.method === 'createAndStartSession'
 		);
-		// A worker gets spawned for the task, not a planner
-		expect(createCalls).toHaveLength(1);
+		// A worker + leader are spawned eagerly for the task (not a planner)
+		expect(createCalls).toHaveLength(2);
 		expect(createCalls[0].args[1]).not.toBe('planner');
 
 		// Goal remains active

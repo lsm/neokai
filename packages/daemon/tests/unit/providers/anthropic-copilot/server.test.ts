@@ -19,6 +19,7 @@ import {
 } from '../../../../src/lib/providers/anthropic-copilot/index';
 import { initializeProviders, resetProviderFactory } from '../../../../src/lib/providers/factory';
 import { getProviderRegistry, resetProviderRegistry } from '../../../../src/lib/providers/registry';
+import { Logger } from '../../../../src/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Mock CopilotSession
@@ -952,5 +953,75 @@ describe('factory registration', () => {
 		const p = registry.get('anthropic-copilot');
 		expect(p).toBeDefined();
 		expect(p?.id).toBe('anthropic-copilot');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// tool_choice pass-through — Copilot bridge
+// ---------------------------------------------------------------------------
+
+describe('tool_choice warning — copilot bridge', () => {
+	let session: MockCopilotSession;
+	let client: CopilotClient & { lastSession?: MockCopilotSession };
+	let serverUrl: string;
+	let stopServer: () => Promise<void>;
+
+	beforeEach(async () => {
+		session = new MockCopilotSession();
+		client = makeMockClient(() => session);
+		const server = await startEmbeddedServer(client, '/tmp');
+		serverUrl = server.url;
+		stopServer = server.stop;
+	});
+
+	afterEach(async () => {
+		await stopServer();
+	});
+
+	it('logs a warning when tool_choice is provided', async () => {
+		const warnSpy = spyOn(Logger.prototype, 'warn');
+
+		const r = await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'hello' }],
+			tool_choice: { type: 'auto' },
+		});
+
+		expect(r.status).toBe(200);
+		const warnMessages = warnSpy.mock.calls.map((args) => args.map(String).join(' '));
+		expect(warnMessages.some((m) => m.includes('tool_choice'))).toBe(true);
+
+		warnSpy.mockRestore();
+	});
+
+	it('processes the request successfully even when tool_choice is provided', async () => {
+		const r = await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'hello' }],
+			tool_choice: { type: 'none' },
+		});
+
+		expect(r.status).toBe(200);
+		const types = r.events.map((e) => e.type);
+		expect(types).toContain('message_stop');
+	});
+
+	it('does NOT log a warning when tool_choice is absent', async () => {
+		const warnSpy = spyOn(Logger.prototype, 'warn');
+
+		await postMessages(serverUrl, {
+			model: 'claude-sonnet-4.6',
+			max_tokens: 100,
+			messages: [{ role: 'user', content: 'hello' }],
+		});
+
+		const toolChoiceWarns = warnSpy.mock.calls.filter((args) =>
+			args.map(String).join(' ').includes('tool_choice')
+		);
+		expect(toolChoiceWarns.length).toBe(0);
+
+		warnSpy.mockRestore();
 	});
 });

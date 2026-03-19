@@ -6,8 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:te
 import type { ModelInfo } from '@neokai/shared';
 import { Logger } from '@neokai/shared/logger';
 import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
-import { resetProviderFactory } from '../../../src/lib/providers/factory';
-import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
+import { initializeProviders, resetProviderFactory } from '../../../src/lib/providers/factory';
+import {
+	ProviderRegistry,
+	getProviderRegistry,
+	resetProviderRegistry,
+} from '../../../src/lib/providers/registry';
 
 // Mock provider for testing
 class MockProvider implements Provider {
@@ -292,15 +296,6 @@ describe('ProviderRegistry', () => {
 				errorSpy.mockRestore();
 			}
 		});
-
-		it('detectProvider (deprecated) still returns first-registered match for legacy paths', () => {
-			// anthropic registered first — heuristic fallback returns it
-			registry.register(makeAnthropicProvider());
-			registry.register(makeAnthropicCopilotProvider());
-
-			const result = registry.detectProvider('claude-opus-4.6');
-			expect(result?.id).toBe('anthropic');
-		});
 	});
 
 	describe('validateProviderSwitch', () => {
@@ -347,6 +342,117 @@ describe('ProviderRegistry', () => {
 
 			registry.clear();
 			expect(registry.size).toBe(0);
+		});
+	});
+
+	describe('initializeProviders — all five providers registered', () => {
+		// Outer beforeEach already resets registry+factory; no per-test resets needed.
+
+		it('should register exactly five built-in providers', () => {
+			const reg = initializeProviders();
+
+			const ids = reg
+				.getAll()
+				.map((p) => p.id)
+				.sort();
+			expect(ids).toEqual(
+				['anthropic', 'anthropic-codex', 'anthropic-copilot', 'glm', 'minimax'].sort()
+			);
+		});
+
+		it('should include anthropic provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('anthropic')).toBe(true);
+		});
+
+		it('should include glm provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('glm')).toBe(true);
+		});
+
+		it('should include minimax provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('minimax')).toBe(true);
+		});
+
+		it('should include anthropic-codex provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('anthropic-codex')).toBe(true);
+		});
+
+		it('should include anthropic-copilot provider', () => {
+			const reg = initializeProviders();
+			expect(reg.has('anthropic-copilot')).toBe(true);
+		});
+
+		it('should return the same singleton registry on repeated calls without reset', () => {
+			const reg1 = initializeProviders();
+			const reg2 = initializeProviders();
+			// The global singleton must be the same reference — not a new instance
+			expect(reg1).toBe(reg2);
+			expect(reg2.size).toBe(5);
+		});
+
+		it('should use the global registry singleton', () => {
+			initializeProviders();
+			const globalReg = getProviderRegistry();
+			expect(globalReg.size).toBe(5);
+		});
+	});
+
+	describe('ownsModel collision — anthropic vs anthropic-copilot vs anthropic-codex', () => {
+		it('anthropic and anthropic-copilot both claim claude- models', () => {
+			const anthropic = makeAnthropicProvider();
+			const copilot = makeAnthropicCopilotProvider();
+
+			expect(anthropic.ownsModel('claude-sonnet-4.6')).toBe(true);
+			expect(copilot.ownsModel('claude-sonnet-4.6')).toBe(true);
+		});
+
+		it('anthropic-codex additionally claims gpt- models', () => {
+			const codex = makeAnthropicCodexProvider();
+
+			expect(codex.ownsModel('gpt-5.3-codex')).toBe(true);
+			expect(codex.ownsModel('claude-opus-4.6')).toBe(true);
+		});
+
+		it('detectProvider (deprecated heuristic) is ambiguous — returns first registered for claude- models', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+
+			// Heuristic returns first match — non-deterministic when collision exists
+			const result = registry.detectProvider('claude-sonnet-4.6');
+			expect(result?.id).toBe('anthropic'); // First registered wins
+		});
+
+		it('detectProviderForModel is deterministic for colliding model IDs', () => {
+			registry.register(makeAnthropicProvider());
+			registry.register(makeAnthropicCopilotProvider());
+			registry.register(makeAnthropicCodexProvider());
+
+			// Explicit routing — no ambiguity regardless of registration order
+			expect(registry.detectProviderForModel('claude-sonnet-4.6', 'anthropic')?.id).toBe(
+				'anthropic'
+			);
+			expect(registry.detectProviderForModel('claude-sonnet-4.6', 'anthropic-copilot')?.id).toBe(
+				'anthropic-copilot'
+			);
+			expect(registry.detectProviderForModel('claude-opus-4.6', 'anthropic-codex')?.id).toBe(
+				'anthropic-codex'
+			);
+		});
+
+		it('detectProviderForModel returns undefined for unknown provider regardless of model', () => {
+			registry.register(makeAnthropicProvider());
+
+			// Suppress the expected error log produced by detectProviderForModel
+			const errorSpy = spyOn(Logger.prototype, 'error').mockImplementation(mock(() => {}));
+			try {
+				const result = registry.detectProviderForModel('claude-sonnet-4.6', 'unknown-provider');
+				expect(result).toBeUndefined();
+			} finally {
+				errorSpy.mockRestore();
+			}
 		});
 	});
 

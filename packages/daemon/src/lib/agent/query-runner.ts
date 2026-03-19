@@ -143,9 +143,10 @@ export class QueryRunner {
 					await errorManager.handleError(
 						session.id,
 						authError,
-						ErrorCategory.AUTHENTICATION,
-						undefined,
-						stateManager.getState()
+						ErrorCategory.PROVIDER_AUTH_ERROR,
+						`Authentication with ${provider.displayName} has expired. Please re-authenticate to continue.`,
+						stateManager.getState(),
+						{ providerId: provider.id, providerName: provider.displayName }
 					);
 					throw authError;
 				}
@@ -318,8 +319,35 @@ export class QueryRunner {
 
 				if (!apiErrorHandled) {
 					let category = ErrorCategory.SYSTEM;
+					const providerId = session.config.provider as string | undefined;
+
+					// Detect provider-specific errors before general categorization
+					const isProviderSession =
+						providerId && providerId !== 'anthropic' && providerId !== 'glm';
 
 					if (
+						isProviderSession &&
+						(errorMessage.includes('401') ||
+							errorMessage.includes('403') ||
+							errorMessage.includes('unauthorized') ||
+							errorMessage.includes('Unauthorized') ||
+							errorMessage.includes('token expired') ||
+							errorMessage.includes('token_expired') ||
+							errorMessage.includes('not authenticated') ||
+							errorMessage.includes('invalid_api_key'))
+					) {
+						category = ErrorCategory.PROVIDER_AUTH_ERROR;
+					} else if (
+						isProviderSession &&
+						(errorMessage.includes('ECONNREFUSED') ||
+							errorMessage.includes('ENOTFOUND') ||
+							errorMessage.includes('EHOSTUNREACH') ||
+							errorMessage.includes('service unavailable') ||
+							errorMessage.includes('503') ||
+							errorMessage.includes('502'))
+					) {
+						category = ErrorCategory.PROVIDER_UNAVAILABLE;
+					} else if (
 						errorMessage.includes('401') ||
 						errorMessage.includes('unauthorized') ||
 						errorMessage.includes('invalid_api_key')
@@ -353,6 +381,7 @@ export class QueryRunner {
 						{
 							errorMessage,
 							queueSize: messageQueue.size(),
+							providerId: providerId ?? 'anthropic',
 						}
 					);
 				}

@@ -43,12 +43,14 @@ describe('RoomRuntime flow', () => {
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
+			// Both worker (planner) and leader are created eagerly in spawn()
 			const createCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession'
 			);
-			expect(createCalls).toHaveLength(1);
-			expect(createCalls[0].args[1]).toBe('planner');
-			expect((createCalls[0].args[0] as { model?: string }).model).toBe('planner-model');
+			expect(createCalls).toHaveLength(2);
+			const plannerCall = createCalls.find((c) => c.args[1] === 'planner');
+			expect(plannerCall).toBeDefined();
+			expect((plannerCall!.args[0] as { model?: string }).model).toBe('planner-model');
 
 			const group = ctx.groupRepo.getActiveGroups('room-1')[0];
 			expect(group.workerRole).toBe('planner');
@@ -397,12 +399,13 @@ describe('RoomRuntime flow', () => {
 			const clearedGroup = ctx.groupRepo.getGroup(group!.id);
 			expect(clearedGroup!.humanInterrupted).toBe(false);
 
-			// No leader session should have been created (routing was blocked)
+			// Both worker and leader are created eagerly in spawn (not routing-related).
+			// No additional sessions should be created when routing is blocked.
 			const createCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession'
 			);
-			// Only 1 create call (the initial worker), leader was not created
-			expect(createCalls).toHaveLength(1);
+			// 2 create calls: worker + leader (eager spawn). No extra creation from routing.
+			expect(createCalls).toHaveLength(2);
 
 			// No new inject messages (routing to leader sends an envelope)
 			const injectCalls = ctx.sessionFactory.calls.filter((c) => c.method === 'injectMessage');
@@ -968,6 +971,66 @@ describe('RoomRuntime flow', () => {
 			const afterResume = ctx.groupRepo.getGroup(group.id)!;
 			expect(afterResume.waitingForQuestion).toBe(false);
 			expect(afterResume.waitingSession).toBeNull();
+		});
+
+		it('should ignore terminal event when leaderHasWork == false (leader not yet given any work)', async () => {
+			// Spawn only — do NOT route worker to leader; leaderHasWork stays false
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.leaderHasWork).toBe(false);
+
+			// Fire a spurious idle event on the leader (e.g. from a race or startup artifact)
+			await ctx.runtime.onLeaderTerminalState(group!.id, {
+				sessionId: group!.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Group must remain unchanged — no completion, no error, no inject
+			const updated = ctx.groupRepo.getGroup(group!.id)!;
+			expect(updated.completedAt).toBeNull();
+			expect(updated.leaderHasWork).toBe(false);
+
+			const injectToLeader = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group!.leaderSessionId
+			);
+			expect(injectToLeader).toHaveLength(0);
+		});
+
+		it('should process terminal event when leaderHasWork == true, regardless of feedbackIteration or submittedForReview', async () => {
+			// Spawn only — feedbackIteration stays 0, submittedForReview stays false
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.leaderHasWork).toBe(false);
+
+			// Directly mark the leader as having received work (simulates routeWorkerToLeader
+			// or resumeLeaderFromHuman having run). feedbackIteration and submittedForReview
+			// deliberately left at their reset values (0 / false) to prove the guard uses
+			// leaderHasWork, not those fields.
+			ctx.groupRepo.setLeaderHasWork(group!.id);
+			expect(ctx.groupRepo.getGroup(group!.id)!.leaderHasWork).toBe(true);
+
+			// Fire a waiting_for_input terminal event — this has an observable side-effect:
+			// onLeaderTerminalState sets waitingForQuestion=true. If the guard erroneously
+			// dropped the event, waitingForQuestion would remain false.
+			await ctx.runtime.onLeaderTerminalState(group!.id, {
+				sessionId: group!.leaderSessionId,
+				kind: 'waiting_for_input',
+			});
+
+			// Handler ran: waitingForQuestion flag was set (concrete proof the guard passed)
+			const updated = ctx.groupRepo.getGroup(group!.id)!;
+			expect(updated.waitingForQuestion).toBe(true);
+			expect(updated.waitingSession).toBe('leader');
+			// Group is still active (not completed)
+			expect(updated.completedAt).toBeNull();
 		});
 	});
 

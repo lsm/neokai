@@ -198,6 +198,12 @@ async function handleMessages(
 		return;
 	}
 
+	if (body.tool_choice !== undefined) {
+		logger.warn(
+			`tool_choice is not supported by the Copilot SDK and will be ignored (received: ${JSON.stringify(body.tool_choice)})`
+		);
+	}
+
 	const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
 	const hasToolResults = extractToolResultIds(body.messages).length > 0;
 
@@ -230,7 +236,11 @@ async function handleMessages(
 						// next HTTP request will route correctly without any help here.
 						// Cleanup (cleanupConversation / releaseConversation) is handled
 						// below based on the StreamingOutcome kind.
-					}
+					},
+					// Heuristic input_tokens for the continuation turn: the full
+					// conversation history (system + all messages including tool results)
+					// is re-serialised on every request, so we use that as the input text.
+					(extractSystemText(body.system) ?? '') + formatAnthropicPrompt(body.messages)
 				);
 				if (outcome.kind === 'completed') {
 					// streamSession already called session.disconnect() — use
@@ -323,7 +333,9 @@ async function handleNewToolConversation(
 			body.model,
 			req,
 			res,
-			conv.registry
+			conv.registry,
+			() => {},
+			(systemMessage ?? '') + prompt
 		);
 		if (outcome.kind === 'completed') {
 			// streamSession already called session.disconnect() — use
@@ -372,7 +384,16 @@ async function handlePlainRequest(
 	}
 
 	try {
-		await runSessionStreaming(session, prompt, body.model, req, res);
+		await runSessionStreaming(
+			session,
+			prompt,
+			body.model,
+			req,
+			res,
+			undefined,
+			() => {},
+			(systemMessage ?? '') + prompt
+		);
 	} catch (err) {
 		logger.error('Streaming failed:', err);
 		// Disconnect the session in case runSessionStreaming threw before its

@@ -13,6 +13,8 @@ import {
 	getModelFamilyIcon,
 	getProviderLabel,
 	groupModelsByProvider,
+	mapRawModelsToModelInfos,
+	filterModelsForPicker,
 } from '../useModelSwitcher.ts';
 
 // Mock the connection manager
@@ -974,5 +976,152 @@ describe('useModelSwitcher', () => {
 			// Server-provided alias is used directly
 			expect(result.current.availableModels[0].alias).toBe('copilot-anthropic-opus');
 		});
+	});
+});
+
+describe('mapRawModelsToModelInfos', () => {
+	it('maps display_name to name and falls back alias to id', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet', description: '' },
+		]);
+		expect(result[0].name).toBe('Claude Sonnet');
+		expect(result[0].alias).toBe('claude-sonnet-4-6');
+	});
+
+	it('detects opus family', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-opus-4-6', display_name: 'Opus', description: '' },
+		]);
+		expect(result[0].family).toBe('opus');
+	});
+
+	it('detects gpt family', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gpt-4o', display_name: 'GPT-4o', description: '' },
+		]);
+		expect(result[0].family).toBe('gpt');
+	});
+
+	it('detects gemini family', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'gemini-1-5-pro', display_name: 'Gemini', description: '' },
+		]);
+		expect(result[0].family).toBe('gemini');
+	});
+
+	it('defaults provider to anthropic when not provided', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-sonnet-4-6', display_name: 'Sonnet', description: '' },
+		]);
+		expect(result[0].provider).toBe('anthropic');
+	});
+
+	it('sorts by PROVIDER_ORDER: anthropic before copilot before codex', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'codex-sonnet', display_name: 'Codex', description: '', provider: 'anthropic-codex' },
+			{ id: 'claude-sonnet', display_name: 'Sonnet', description: '', provider: 'anthropic' },
+			{
+				id: 'copilot-sonnet',
+				display_name: 'Copilot',
+				description: '',
+				provider: 'anthropic-copilot',
+			},
+		]);
+		expect(result[0].provider).toBe('anthropic');
+		expect(result[1].provider).toBe('anthropic-copilot');
+		expect(result[2].provider).toBe('anthropic-codex');
+	});
+
+	it('sorts within provider by family: opus before sonnet before haiku', () => {
+		const result = mapRawModelsToModelInfos([
+			{ id: 'claude-haiku-3', display_name: 'Haiku', description: '', provider: 'anthropic' },
+			{ id: 'claude-opus-4', display_name: 'Opus', description: '', provider: 'anthropic' },
+			{ id: 'claude-sonnet-4', display_name: 'Sonnet', description: '', provider: 'anthropic' },
+		]);
+		expect(result[0].family).toBe('opus');
+		expect(result[1].family).toBe('sonnet');
+		expect(result[2].family).toBe('haiku');
+	});
+});
+
+// Helper to create a minimal ModelInfo
+function makeModel(id: string, provider: string) {
+	return {
+		id,
+		name: id,
+		alias: id,
+		family: 'sonnet',
+		provider,
+		contextWindow: 200000,
+		description: '',
+		releaseDate: '',
+		available: true,
+	};
+}
+
+// Helper to create a ProviderAuthStatus map entry
+function makeAuth(id: string, isAuthenticated: boolean, needsRefresh = false) {
+	return { id, displayName: id, isAuthenticated, needsRefresh };
+}
+
+describe('filterModelsForPicker', () => {
+	const anthropicModel = makeModel('claude-sonnet', 'anthropic');
+	const copilotModel = makeModel('copilot-sonnet', 'anthropic-copilot');
+	const codexModel = makeModel('codex-sonnet', 'anthropic-codex');
+
+	it('shows all models when auth map is empty (optimistic)', () => {
+		const result = filterModelsForPicker([anthropicModel, copilotModel, codexModel], new Map());
+		expect(result).toHaveLength(3);
+	});
+
+	it('hides models from unauthenticated providers', () => {
+		const authMap = new Map([
+			['anthropic', makeAuth('anthropic', true)],
+			['anthropic-copilot', makeAuth('anthropic-copilot', false)],
+		]);
+		const result = filterModelsForPicker([anthropicModel, copilotModel], authMap);
+		expect(result).toHaveLength(1);
+		expect(result[0].provider).toBe('anthropic');
+	});
+
+	it('keeps the current provider even when unauthenticated', () => {
+		const authMap = new Map([['anthropic-copilot', makeAuth('anthropic-copilot', false)]]);
+		const result = filterModelsForPicker(
+			[anthropicModel, copilotModel],
+			authMap,
+			'anthropic-copilot' // current provider
+		);
+		// Both should appear: anthropic (not in map = optimistic), copilot (current)
+		expect(result).toHaveLength(2);
+	});
+
+	it('shows needsRefresh providers (token expiring but still authenticated)', () => {
+		const authMap = new Map([['anthropic-copilot', makeAuth('anthropic-copilot', true, true)]]);
+		const result = filterModelsForPicker([copilotModel], authMap);
+		expect(result).toHaveLength(1);
+	});
+
+	it('hides non-current unauthenticated and shows current unauthenticated', () => {
+		const authMap = new Map([
+			['anthropic', makeAuth('anthropic', false)],
+			['anthropic-copilot', makeAuth('anthropic-copilot', false)],
+			['anthropic-codex', makeAuth('anthropic-codex', true)],
+		]);
+		const result = filterModelsForPicker(
+			[anthropicModel, copilotModel, codexModel],
+			authMap,
+			'anthropic' // current: unauthenticated but must show
+		);
+		// anthropic = current (keep), copilot = unauth+not current (hide), codex = auth (keep)
+		expect(result.map((m) => m.provider)).toEqual(['anthropic', 'anthropic-codex']);
+	});
+
+	it('shows provider absent from auth map optimistically', () => {
+		const authMap = new Map([
+			['anthropic', makeAuth('anthropic', true)],
+			// 'anthropic-copilot' not in map
+		]);
+		const result = filterModelsForPicker([anthropicModel, copilotModel], authMap);
+		expect(result).toHaveLength(2);
 	});
 });

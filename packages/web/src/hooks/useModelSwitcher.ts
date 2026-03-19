@@ -19,6 +19,7 @@
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
+import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
 import { toast } from '../lib/toast';
 
@@ -59,8 +60,17 @@ export function getModelFamilyIcon(family: string): string {
 	return MODEL_FAMILY_ICONS[family] || MODEL_FAMILY_ICONS.__default__;
 }
 
-/** Model family sort order */
-const FAMILY_ORDER: Record<string, number> = {
+/** Provider sort order for model picker grouping */
+export const PROVIDER_ORDER: Record<string, number> = {
+	anthropic: 0,
+	'anthropic-copilot': 1,
+	'anthropic-codex': 2,
+	glm: 3,
+	minimax: 4,
+};
+
+/** Model family sort order (exported for shared use) */
+export const FAMILY_ORDER: Record<string, number> = {
 	opus: 0,
 	sonnet: 1,
 	haiku: 2,
@@ -70,14 +80,63 @@ const FAMILY_ORDER: Record<string, number> = {
 	gemini: 6,
 };
 
-/** Provider sort order for model picker grouping */
-const PROVIDER_ORDER: Record<string, number> = {
-	anthropic: 0,
-	'anthropic-copilot': 1,
-	'anthropic-codex': 2,
-	glm: 3,
-	minimax: 4,
-};
+/** Raw model shape returned by the `models.list` RPC */
+export interface RawModelEntry {
+	id: string;
+	display_name: string;
+	description: string;
+	alias?: string;
+	provider?: string;
+}
+
+/**
+ * Map raw `models.list` RPC entries to `ModelInfo` objects and sort them
+ * by provider (PROVIDER_ORDER) then family (FAMILY_ORDER).
+ *
+ * This is the canonical mapping used by both `useModelSwitcher` and
+ * `NewSessionModal` so that family detection and sort order stay in sync.
+ */
+export function mapRawModelsToModelInfos(models: RawModelEntry[]): ModelInfo[] {
+	const modelInfos = models.map((m) => {
+		let family = 'sonnet';
+		const mid = m.id.toLowerCase();
+		if (mid.includes('opus')) {
+			family = 'opus';
+		} else if (mid.includes('haiku')) {
+			family = 'haiku';
+		} else if (mid.startsWith('glm-')) {
+			family = 'glm';
+		} else if (mid.startsWith('minimax-')) {
+			family = 'minimax';
+		} else if (mid.startsWith('gpt-')) {
+			family = 'gpt';
+		} else if (mid.startsWith('gemini-')) {
+			family = 'gemini';
+		}
+		return {
+			id: m.id,
+			name: m.display_name,
+			alias: m.alias || m.id,
+			family,
+			provider: m.provider || 'anthropic',
+			contextWindow: 200000,
+			description: m.description || '',
+			releaseDate: '',
+			available: true,
+		};
+	});
+
+	modelInfos.sort((a, b) => {
+		const providerA = PROVIDER_ORDER[a.provider || 'anthropic'] ?? 99;
+		const providerB = PROVIDER_ORDER[b.provider || 'anthropic'] ?? 99;
+		if (providerA !== providerB) return providerA - providerB;
+		const familyA = FAMILY_ORDER[a.family] ?? 99;
+		const familyB = FAMILY_ORDER[b.family] ?? 99;
+		return familyA - familyB;
+	});
+
+	return modelInfos;
+}
 
 /**
  * Group models by their provider, preserving insertion order of the input array.
@@ -117,6 +176,30 @@ export function getProviderLabel(provider: string): string {
 }
 
 /**
+ * Filter a model list for display in the model picker, respecting auth status.
+ *
+ * Rules:
+ * - Models from authenticated providers are always shown.
+ * - Models from unauthenticated providers are hidden, UNLESS the model is the
+ *   currently active one (to avoid confusing the user about their session).
+ * - Models from providers with `needsRefresh: true` are shown (callers should
+ *   add a visual warning badge).
+ * - Models from providers absent from the auth map are shown (optimistic).
+ */
+export function filterModelsForPicker(
+	models: ModelInfo[],
+	providerAuthMap: Map<string, ProviderAuthStatus>,
+	currentProvider?: string
+): ModelInfo[] {
+	return models.filter((m) => {
+		const auth = providerAuthMap.get(m.provider);
+		if (!auth) return true; // provider unknown → optimistic show
+		if (m.provider === currentProvider) return true; // always keep active provider
+		return auth.isAuthenticated; // hide unauthenticated (needsRefresh stays visible)
+	});
+}
+
+/**
  * Hook for managing model switching
  *
  * @param sessionId - Current session ID
@@ -148,61 +231,9 @@ export function useModelSwitcher(sessionId: string): UseModelSwitcherResult {
 			// Fetch available models (includes all providers for cross-provider switching)
 			const { models } = (await hub.request('models.list', {
 				useCache: true,
-			})) as {
-				models: Array<{
-					id: string;
-					display_name: string;
-					description: string;
-					alias?: string;
-					provider?: string;
-				}>;
-			};
+			})) as { models: RawModelEntry[] };
 
-			const modelInfos: ModelInfo[] = models.map((m) => {
-				// Determine family from model ID
-				let family: string = 'sonnet';
-				const modelId = m.id.toLowerCase();
-				if (modelId.includes('opus')) {
-					family = 'opus';
-				} else if (modelId.includes('haiku')) {
-					family = 'haiku';
-				} else if (modelId.startsWith('glm-')) {
-					family = 'glm';
-				} else if (modelId.startsWith('minimax-')) {
-					family = 'minimax';
-				} else if (modelId.startsWith('gpt-')) {
-					family = 'gpt';
-				} else if (modelId.startsWith('gemini-')) {
-					family = 'gemini';
-				}
-
-				return {
-					id: m.id,
-					name: m.display_name,
-					// Use server-provided alias (unique per provider, e.g. 'copilot-anthropic-sonnet' for Copilot bridge)
-					alias: m.alias || m.id,
-					family,
-					// Use server-provided provider for correct routing
-					provider: m.provider || 'anthropic',
-					contextWindow: 200000,
-					description: m.description || '',
-					releaseDate: '',
-					available: true,
-				};
-			});
-
-			// Sort by provider first, then by family order within each provider group.
-			// This pre-sort is required so that groupModelsByProvider() preserves
-			// the intended provider order via Map insertion order.
-			modelInfos.sort((a, b) => {
-				const providerA = PROVIDER_ORDER[a.provider || 'anthropic'] ?? 99;
-				const providerB = PROVIDER_ORDER[b.provider || 'anthropic'] ?? 99;
-				if (providerA !== providerB) return providerA - providerB;
-				const familyA = FAMILY_ORDER[a.family] ?? 99;
-				const familyB = FAMILY_ORDER[b.family] ?? 99;
-				return familyA - familyB;
-			});
-			setAvailableModels(modelInfos);
+			setAvailableModels(mapRawModelsToModelInfos(models));
 		} catch {
 			// Error handled silently - loading state will be cleared
 		} finally {

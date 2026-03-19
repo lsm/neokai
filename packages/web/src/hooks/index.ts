@@ -19,6 +19,7 @@ export {
 	PROVIDER_LABELS,
 	getProviderLabel,
 	groupModelsByProvider,
+	filterModelsForPicker,
 } from './useModelSwitcher';
 export {
 	useMessageHub,

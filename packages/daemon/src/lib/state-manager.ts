@@ -540,7 +540,13 @@ export class StateManager {
 
 		// Get all session state in one place
 		const sessionData = agentSession.getSessionData();
-		const agentState = agentSession.getProcessingState();
+		// Prefer event-sourced processingStateCache over the session's in-memory state.
+		// Room leader/worker sessions are live in RoomRuntimeService.agentSessions but are
+		// loaded separately into SessionCache (as "ghosts") when state.session is fetched.
+		// The ghost's in-memory processingState becomes stale once the live session changes
+		// state. processingStateCache is always up-to-date via session.updated DaemonHub events.
+		const agentState =
+			this.processingStateCache.get(sessionId) ?? agentSession.getProcessingState();
 		const commands = await agentSession.getSlashCommands();
 
 		// Get error from cache (null if no error or error has been cleared)
