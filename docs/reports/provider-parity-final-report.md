@@ -114,16 +114,16 @@ This report documents the completion of the provider parity initiative for NeoKa
 
 ### Type System Widening
 
-**PR #373** — Provider type widened from 3 to 5 providers:
+**PR #373** — Provider type widened from 3 to 5 providers in `packages/shared/src/types.ts`:
 ```typescript
-// Before
+// Before (packages/shared/src/types.ts)
 type Provider = 'anthropic' | 'glm' | 'minimax';
 
-// After
+// After (packages/shared/src/types.ts)
 type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthropic-codex';
 ```
 
-> **Note:** Runtime provider validation happens via the `ProviderRegistry` in `packages/daemon/src/lib/providers/registry.ts`, not solely through the string literal union. The `ProviderId` type is `string`, and the registry ensures deterministic resolution via explicit `providerId` lookup.
+> **Note:** The primary provider interface type is `ProviderId = string` (defined in `packages/shared/src/provider/types.ts`). The `Provider` literal union above exists in `packages/shared/src/types.ts` and is used for type-narrowing in specific call sites. Runtime provider validation happens via the `ProviderRegistry` — the registry ensures deterministic resolution via explicit `providerId` lookup, not via the string literal union alone.
 
 **PR #377** — Unsafe casts removed:
 - `model-switch-handler.ts`: 4 unsafe casts replaced with `as Provider`
@@ -134,7 +134,7 @@ type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthrop
 **PR #376** — Deterministic provider resolution:
 - `detectProviderForModel(modelId, providerId)` requires explicit providerId via `registry.get()`
 - `detectProvider` marked `@deprecated`
-- All call sites updated to pass explicit providerId
+- New call sites use `detectProviderForModel` with explicit providerId; legacy call sites in `provider-service.ts`, `context-manager.ts`, and `query-runner.ts` retain the deprecated `detectProvider` for backward compatibility (those methods are themselves marked `@deprecated`)
 
 **PR #388** — Strict model resolution:
 - `getModelInfo`, `resolveModelAlias`, `isValidModel` all require `providerId`
@@ -214,8 +214,8 @@ type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthrop
 
 ### Online Tests
 
-- `providers-anthropic-copilot` — Matrix shard for Copilot bridge
-- `providers-anthropic-to-codex-bridge` — Matrix shard for Codex bridge
+- `packages/daemon/tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts` — Full conversation and tool-use flows (`providers-anthropic-copilot` CI shard; requires real `COPILOT_GITHUB_TOKEN`)
+- `packages/daemon/tests/online/providers/anthropic-to-codex-bridge-provider.test.ts` — Full conversation and tool-use flows (`providers-anthropic-to-codex-bridge` CI shard; requires real `OPENAI_API_KEY`)
 
 ### E2E Tests
 
