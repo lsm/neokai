@@ -646,41 +646,8 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		const credentials = await this.loadCredentials();
 		if (!credentials?.refresh) return false;
 
-		try {
-			const response = await fetch(OAUTH_CONFIG.tokenUrl, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					grant_type: 'refresh_token',
-					refresh_token: credentials.refresh,
-					client_id: OAUTH_CONFIG.clientId,
-				}),
-			});
-
-			if (!response.ok) {
-				logger.error('Token refresh failed:', response.statusText);
-				return false;
-			}
-
-			const tokens = (await response.json()) as OpenAIOAuthToken;
-			const newCreds: StoredCredentials = {
-				type: 'oauth',
-				access: tokens.access_token,
-				refresh: tokens.refresh_token || credentials.refresh,
-				expires: Date.now() + tokens.expires_in * 1000,
-				accountId: credentials.accountId ?? this.extractAccountId(tokens.access_token),
-				planType: credentials.planType ?? this.extractPlanType(tokens.access_token),
-			};
-
-			await this.saveCredentials(newCreds);
-			this.cachedCredentials = newCreds;
-			this.cachedBridgeAuth = this.toBridgeAuth(newCreds) ?? null;
-			this.cachedApiKey = newCreds.access; // sync so buildSdkConfig() picks up the new token
-			return true;
-		} catch (error) {
-			logger.error('Token refresh failed:', error);
-			return false;
-		}
+		const result = await this.refreshStoredOauthCredentials();
+		return result !== undefined;
 	}
 
 	async logout(): Promise<void> {

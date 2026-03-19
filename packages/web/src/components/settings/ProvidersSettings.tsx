@@ -24,6 +24,7 @@ export function ProvidersSettings() {
 	const [loading, setLoading] = useState(true);
 	const [oauthFlow, setOauthFlow] = useState<OAuthFlowState | null>(null);
 	const [pendingProvider, setPendingProvider] = useState<string | null>(null);
+	const [refreshFailed, setRefreshFailed] = useState<Set<string>>(new Set());
 
 	// Load provider auth statuses
 	const loadProviders = async () => {
@@ -97,6 +98,7 @@ export function ProvidersSettings() {
 	};
 
 	const handleLogout = async (providerId: string, providerName: string) => {
+		setPendingProvider(providerId);
 		try {
 			await logoutProvider(providerId);
 			toast.success(`Logged out from ${providerName}`);
@@ -104,6 +106,8 @@ export function ProvidersSettings() {
 			await loadProviders();
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : 'Failed to logout');
+		} finally {
+			setPendingProvider(null);
 		}
 	};
 
@@ -113,12 +117,19 @@ export function ProvidersSettings() {
 			const response = await refreshProvider(providerId);
 			if (response.success) {
 				toast.success(`Token refreshed for ${providerName}`);
+				setRefreshFailed((prev) => {
+					const next = new Set(prev);
+					next.delete(providerId);
+					return next;
+				});
 				await loadProviders();
 			} else {
 				toast.error(response.error || 'Failed to refresh token');
+				setRefreshFailed((prev) => new Set(prev).add(providerId));
 			}
 		} catch (error) {
 			toast.error(error instanceof Error ? error.message : 'Failed to refresh token');
+			setRefreshFailed((prev) => new Set(prev).add(providerId));
 		} finally {
 			setPendingProvider(null);
 		}
@@ -181,8 +192,8 @@ export function ProvidersSettings() {
 											</p>
 										)}
 									</div>
-									<div class="flex-shrink-0 ml-4">
-										{provider.needsRefresh ? (
+									<div class="flex-shrink-0 ml-4 flex items-center gap-2">
+										{provider.needsRefresh && (
 											<Button
 												variant="warning"
 												size="sm"
@@ -192,16 +203,22 @@ export function ProvidersSettings() {
 											>
 												Refresh Login
 											</Button>
-										) : provider.isAuthenticated ? (
+										)}
+										{/* Show Logout for authenticated providers, or after refresh failure */}
+										{(provider.isAuthenticated ||
+											(provider.needsRefresh && refreshFailed.has(provider.id))) && (
 											<Button
 												variant="secondary"
 												size="sm"
 												onClick={() => handleLogout(provider.id, provider.displayName)}
-												disabled={pendingProvider === provider.id}
+												loading={pendingProvider === provider.id}
+												disabled={!!pendingProvider}
 											>
 												Logout
 											</Button>
-										) : (
+										)}
+										{/* Show Login for unauthenticated providers */}
+										{!provider.isAuthenticated && !provider.needsRefresh && (
 											<Button
 												variant="primary"
 												size="sm"
