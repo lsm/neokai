@@ -11,6 +11,8 @@ import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { ProviderContextManager } from '../../../src/lib/providers/context-manager';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
+import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 // Mock provider for testing
 class MockProvider implements Provider {
@@ -1043,5 +1045,48 @@ describe('ProviderContextManager', () => {
 			expect(providers.length).toBe(1);
 			expect(providers[0].id).toBe('anthropic');
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// No-Anthropic-model-leak invariant — real provider buildSdkConfig()
+//
+// These tests use the actual provider classes (not mocks) to assert that
+// ANTHROPIC_DEFAULT_HAIKU_MODEL never contains a claude-* model name.
+//
+// Root cause of the original bug: without ANTHROPIC_DEFAULT_*_MODEL being set
+// to bridge-compatible model IDs, the Claude Agent SDK subprocess falls back to
+// its built-in defaults (e.g. claude-haiku-4-5-20251001) for background calls
+// such as summarisation and compaction. Both the Codex and Copilot bridges reject
+// those names with "model does not exist" errors.
+// ---------------------------------------------------------------------------
+
+describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()', () => {
+	it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+		const p = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+		const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-codex-leak' });
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+		p.stopAllBridgeServers();
+	});
+
+	it('Codex provider: all three DEFAULT_*_MODEL slots are non-Anthropic model names', () => {
+		const p = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+		const cfg = p.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-codex-all' });
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).not.toMatch(/^claude-/);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).not.toMatch(/^claude-/);
+		p.stopAllBridgeServers();
+	});
+
+	it('Copilot provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		// Inject a fake server URL — buildSdkConfig() requires the embedded server to be
+		// started, but for this assertion we only care about the env var values it returns.
+		(p as unknown as Record<string, unknown>)['serverCache'] = {
+			url: 'http://127.0.0.1:54321',
+			stop: async () => {},
+		};
+		const cfg = p.buildSdkConfig('copilot-anthropic-sonnet');
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
 	});
 });

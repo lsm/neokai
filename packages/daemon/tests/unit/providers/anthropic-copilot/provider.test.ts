@@ -298,6 +298,16 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
 			expect(cfg.envVars['ANTHROPIC_API_KEY']).toBe('');
 		});
+
+		it('ANTHROPIC_DEFAULT_HAIKU_MODEL is not a claude-* model name', () => {
+			// Regression guard: the haiku tier for Copilot must map to gpt-5-mini (a model
+			// served by the Copilot bridge), not to a claude-* name. Without this env var
+			// the Claude Agent SDK subprocess defaults to claude-haiku-4-5-20251001 for
+			// background calls (summarisation, compaction), which may not be routed correctly.
+			const cfg = provider.buildSdkConfig('copilot-anthropic-sonnet');
+			expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+			expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).toBe('gpt-5-mini');
+		});
 	});
 
 	describe('getModels() pre-warms embedded server', () => {

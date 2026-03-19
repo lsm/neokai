@@ -293,6 +293,20 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			const cfg = provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' });
 			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
 		});
+
+		it('no claude-* model name leaks through ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
+			// Regression guard for the original bug: without these env vars being set to
+			// Codex model IDs, the Claude Agent SDK subprocess falls back to its built-in
+			// defaults (e.g. claude-haiku-4-5-20251001) for background calls such as
+			// summarisation and compaction. The Codex bridge rejects those names with
+			// "model does not exist". All three tier slots must be non-Anthropic model IDs.
+			const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
+				workspacePath: '/tmp/ws-no-leak',
+			});
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).not.toMatch(/^claude-/);
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toMatch(/^claude-/);
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).not.toMatch(/^claude-/);
+		});
 	});
 
 	// -------------------------------------------------------------------------
