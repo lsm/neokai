@@ -43,7 +43,10 @@ function createMockDaemonHub() {
 }
 
 // Mock SessionFactory
-function createMockSessionFactory(initialLiveSessions: string[] = []) {
+function createMockSessionFactory(
+	initialLiveSessions: string[] = [],
+	options?: { restoreSessionFails?: boolean }
+) {
 	const calls: Array<{ method: string; args: unknown[] }> = [];
 	const liveSessions = new Set<string>(initialLiveSessions);
 	const removedWorktrees: string[] = [];
@@ -79,6 +82,22 @@ function createMockSessionFactory(initialLiveSessions: string[] = []) {
 		async removeWorktree(workspacePath: string) {
 			calls.push({ method: 'removeWorktree', args: [workspacePath] });
 			removedWorktrees.push(workspacePath);
+			return true;
+		},
+		async restoreSession(sessionId: string) {
+			calls.push({ method: 'restoreSession', args: [sessionId] });
+			// If restore fails (simulating session not in DB), don't add to liveSessions
+			if (options?.restoreSessionFails) {
+				return false;
+			}
+			liveSessions.add(sessionId);
+			return true;
+		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
+			return true;
+		},
+		setSessionMcpServers(_sessionId: string, _mcpServers: Record<string, unknown>) {
 			return true;
 		},
 	} satisfies SessionFactory & {
@@ -769,6 +788,121 @@ describe('TaskGroupManager', () => {
 
 			expect(updated!.submittedForReview).toBe(false);
 			expect(updated!.feedbackIteration).toBe(1);
+		});
+
+		it('should restore dead worker session before routing feedback', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory with the worker already in live sessions (normal spawn behavior)
+			const factory = createMockSessionFactory([]);
+			// Create a new manager with the factory
+			const testManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: factory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await testManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First route to Leader so group is in awaiting_leader state
+			await testManager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
+
+			// Simulate worker session dying (e.g., after daemon restart or eviction)
+			// Remove worker from live sessions to simulate dead session
+			factory.liveSessions.delete(group.workerSessionId);
+
+			// Verify worker session is not in cache
+			expect(factory.hasSession(group.workerSessionId)).toBe(false);
+
+			// Now route leader feedback back to worker
+			await testManager.routeLeaderToWorker(group.id, 'Fix the tests');
+
+			// Verify session was restored before injecting message
+			const restoreCalls = factory.calls.filter(
+				(c) => c.method === 'restoreSession' && c.args[0] === group.workerSessionId
+			);
+			expect(restoreCalls).toHaveLength(1);
+
+			// injectMessage lazily starts the SDK query, no explicit startSession needed
+			const injectCalls = factory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					c.args[1] === 'Fix the tests'
+			);
+			expect(injectCalls).toHaveLength(1);
+		});
+
+		it('should fail group when worker session restore fails', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory that fails restoreSession (simulating session not in DB)
+			const failFactory = createMockSessionFactory([], { restoreSessionFails: true });
+			const failManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: failFactory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await failManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First route to Leader so group is in awaiting_leader state
+			await failManager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
+
+			// Simulate worker session dying (not in cache)
+			failFactory.liveSessions.delete(group.workerSessionId);
+
+			// Verify worker session is not in cache
+			expect(failFactory.hasSession(group.workerSessionId)).toBe(false);
+
+			// Now route leader feedback back to worker - should fail gracefully
+			const result = await failManager.routeLeaderToWorker(group.id, 'Fix the tests');
+
+			// Verify restore was attempted
+			const restoreCalls = failFactory.calls.filter(
+				(c) => c.method === 'restoreSession' && c.args[0] === group.workerSessionId
+			);
+			expect(restoreCalls).toHaveLength(1);
+
+			// Verify group was failed instead of throwing
+			expect(result).toBeNull();
+
+			// Verify task is marked as needs_attention (failTask sets this status)
+			const failedTask = await taskManager.getTask(task.id);
+			expect(failedTask!.status).toBe('needs_attention');
+			expect(failedTask!.error).toContain('Worker session lost during restart');
 		});
 	});
 

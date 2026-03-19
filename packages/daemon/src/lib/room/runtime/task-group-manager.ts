@@ -498,6 +498,26 @@ export class TaskGroupManager {
 			this.groupRepo.setHumanInterrupted(groupId, false);
 		}
 
+		// Ensure worker session is alive before attempting to route feedback.
+		// If the worker session is not in the runtime cache (e.g., after daemon restart
+		// or session eviction), restore it from DB.
+		// injectMessage will lazily start the SDK query via ensureQueryStarted().
+		if (!this.sessionFactory.hasSession(group.workerSessionId)) {
+			const restored = await this.sessionFactory.restoreSession(group.workerSessionId);
+			if (restored) {
+				log.info(
+					`[routeLeaderToWorker] Group ${groupId}: restored worker session ${group.workerSessionId} from DB`
+				);
+			} else {
+				log.error(
+					`[routeLeaderToWorker] Group ${groupId}: failed to restore worker session ` +
+						`${group.workerSessionId} — session not found in DB`
+				);
+				await this.fail(groupId, 'Worker session lost during restart; task will be re-queued');
+				return null;
+			}
+		}
+
 		// If worker is waiting for input (AskUserQuestion), answer the question.
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);
