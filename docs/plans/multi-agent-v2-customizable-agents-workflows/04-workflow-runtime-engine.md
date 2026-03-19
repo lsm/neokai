@@ -216,7 +216,7 @@ Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure
 
 5. Create RPC handler for starting workflow runs in `packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts`:
    - `spaceWorkflowRun.start { spaceId, workflowId, title, description? }` → `{ run: SpaceWorkflowRun }`:
-     - `workflowId` is **required** — callers must provide it (UI workflow picker) or the Space agent selects it via AI auto-select. Return an error if omitted.
+     - `workflowId` is **required** — callers must provide it (UI workflow picker) or the Space agent selects it via AI auto-select (the Space agent calls `list_workflows`, reasons about the best fit, then calls `start_workflow_run` with its chosen `workflowId` — `workflowId` is always present at the RPC boundary). Return an error if omitted.
      - Validate `workflowId` exists in the space
      - Creates `SpaceWorkflowRun` record via `SpaceWorkflowRunRepository`
      - Calls `SpaceRuntimeService.createOrGetRuntime(spaceId)` then `runtime.startWorkflowRun()` to create the executor and first step's tasks
