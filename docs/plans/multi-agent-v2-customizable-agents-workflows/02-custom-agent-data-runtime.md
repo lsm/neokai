@@ -140,7 +140,7 @@ Add RPC handlers and DaemonEventMap entries for custom agent CRUD within Spaces.
    - `spaceAgent.update { id, ... }` → `{ agent }`
    - `spaceAgent.delete { id }` → `{ success }` (error if referenced by workflows)
 
-3. Wire handlers in `app.ts` (add new registration, don't modify existing)
+3. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration, don't modify existing)
 
 4. Emit DaemonHub events for create/update/delete
 

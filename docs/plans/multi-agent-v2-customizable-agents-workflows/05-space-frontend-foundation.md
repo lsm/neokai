@@ -49,11 +49,12 @@ Add the navigation entry point for Spaces, URL routing, and core signals. All ne
    - **Keep existing signals unchanged** — add new signals alongside
 
 3. Add "Spaces" navigation entry in the sidebar:
-   - New section in `packages/web/src/components/sidebar/` (or equivalent navigation component)
-   - "Spaces" appears alongside existing "Rooms" in the sidebar
-   - Shows list of spaces with active/archived filter
-   - "Create Space" button
-   - **Approach**: If the sidebar component can be extended without modifying its core structure, add a new section. Otherwise, create a new sidebar section component and compose it into the layout.
+   - **Required modifications to existing files** (minimal, additive only):
+     - `packages/web/src/lib/signals.ts`: Extend `NavSection` union type to include `'spaces'` (e.g., `type NavSection = 'rooms' | 'spaces' | ...`)
+     - `packages/web/src/components/sidebar/nav-config.tsx`: Add a `'spaces'` entry to `MAIN_NAV_ITEMS` array
+     - `packages/web/src/components/sidebar/ContextPanel.tsx`: Add a case for `'spaces'` section that renders the new `SpaceContextPanel` component (the panel itself is a new component under `components/space/`)
+   - These are the **only** existing file modifications in the entire plan. They are small, additive changes (extending a union, adding an array entry, adding a switch case).
+   - Create new `packages/web/src/components/space/SpaceContextPanel.tsx` — list of spaces with active/archived filter, "Create Space" button
 
 4. Update `packages/web/src/islands/MainContent.tsx` routing logic:
    - Add condition: if `currentSpaceIdSignal` → render `SpaceIsland` component
@@ -69,7 +70,7 @@ Add the navigation entry point for Spaces, URL routing, and core signals. All ne
 - "Spaces" appears in sidebar navigation
 - URL routing works for all space paths
 - Signals track active space/session/task
-- Existing navigation and routing completely unaffected
+- Existing navigation and routing minimally affected (only `NavSection` union, `MAIN_NAV_ITEMS` array, `ContextPanel` switch case, `MainContent` routing condition)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 

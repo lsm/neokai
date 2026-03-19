@@ -189,6 +189,23 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      FOREIGN KEY (workflow_id) REFERENCES space_workflows(id) ON DELETE CASCADE
    );
 
+   -- Goals within a space (workflow_id built in from start)
+   -- NOTE: space_goals MUST be created BEFORE space_tasks (FK dependency)
+   CREATE TABLE IF NOT EXISTS space_goals (
+     id TEXT PRIMARY KEY,
+     space_id TEXT NOT NULL,
+     title TEXT NOT NULL,
+     description TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
+     priority TEXT NOT NULL DEFAULT 'normal',
+     workflow_id TEXT,
+     metrics TEXT,
+     config TEXT,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
+   );
+
    -- Tasks within a space (custom_agent_id, workflow columns built in from start)
    CREATE TABLE IF NOT EXISTS space_tasks (
      id TEXT PRIMARY KEY,
@@ -211,22 +228,6 @@ Create a single DB migration that creates ALL Space-related tables. Since these 
      updated_at INTEGER NOT NULL,
      FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
      FOREIGN KEY (goal_id) REFERENCES space_goals(id) ON DELETE SET NULL
-   );
-
-   -- Goals within a space (workflow_id built in from start)
-   CREATE TABLE IF NOT EXISTS space_goals (
-     id TEXT PRIMARY KEY,
-     space_id TEXT NOT NULL,
-     title TEXT NOT NULL,
-     description TEXT NOT NULL DEFAULT '',
-     status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled', 'needs_attention')),
-     priority TEXT NOT NULL DEFAULT 'normal',
-     workflow_id TEXT,
-     metrics TEXT,
-     config TEXT,
-     created_at INTEGER NOT NULL,
-     updated_at INTEGER NOT NULL,
-     FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
    );
 
    -- Session groups for multi-agent collaboration within spaces
@@ -388,7 +389,7 @@ Add RPC handlers for Space CRUD operations and register new event types in Daemo
 4. Create `packages/daemon/src/lib/rpc-handlers/space-goal-handlers.ts`:
    - `spaceGoal.create`, `spaceGoal.list`, `spaceGoal.get`, `spaceGoal.update`
 
-5. Wire handlers in `packages/daemon/src/app.ts`:
+5. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()`):
    - Add Space repositories and managers to `DaemonAppContext`
    - Call `setupSpaceHandlers()`, `setupSpaceTaskHandlers()`, `setupSpaceGoalHandlers()`
    - **Only add new registrations** — do not modify existing handler setup

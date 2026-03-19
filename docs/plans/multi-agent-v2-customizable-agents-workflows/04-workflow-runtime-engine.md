@@ -55,7 +55,8 @@ Create the `WorkflowExecutor` class that manages goal-level workflow progression
      - `getCurrentStep(): WorkflowStep | null`
      - `getNextStep(): WorkflowStep | null`
      - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` — evaluates current step's exit gate
-     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — increments step, **creates `SpaceTask` DB records only** (pending status), persists `workflowStepId` on new tasks. Does NOT spawn session groups.
+     - `canEnterStep(stepIndex: number): Promise<{ allowed: boolean; reason?: string }>` — evaluates the target step's **entry gate** (if any). Called by `advance()` before entering the next step, and by `SpaceRuntime` before starting the first step of a new goal.
+     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — evaluates exit gate of current step, then evaluates **entry gate** of next step; increments step index, **creates `SpaceTask` DB records only** (pending status), persists `workflowStepId` on new tasks. Does NOT spawn session groups.
      - `isComplete(): boolean`
 
 2. Track workflow state:
@@ -156,9 +157,9 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
    - Hook into `SpaceGoal` state change handlers
 
 9. **Wire `seedDefaultWorkflow`** from Task 3.4:
-   - In `SpaceManager.createSpace()` (or the `space.create` RPC handler), call `seedDefaultWorkflow()`
+   - Call in the `space.create` RPC handler (in `space-handlers.ts`), **after** `SpaceManager.createSpace()` returns — the handler has access to both `SpaceManager` and `SpaceWorkflowManager`, whereas `SpaceManager` itself is constructed without workflow manager dependency
    - Idempotent: safe if space already has a workflow
-   - **This is in `SpaceManager`** — NOT in `room-manager.ts`
+   - **This is in the Space RPC handler** — NOT in `room-manager.ts`
 
 10. **Backward compatibility**:
     - Spaces without workflows use a simple default behavior (direct planner→coder flow without executor)
@@ -171,7 +172,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
     - Coding-step tasks created as pending
     - Custom-agent tasks have `customAgentId` set
     - **Planning guard**: workflow goal with non-planner first step does NOT trigger generic planning
-    - Exit gates checked between steps, entry gates before step
+    - Exit gates checked between steps; entry gates evaluated before entering each step (including first step of new goal via `canEnterStep(0)`)
     - Rules injected into agent prompts per step
     - Human approval gate pauses correctly
     - Gate failure → `needs_attention`
@@ -186,7 +187,7 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
 - Planning guard prevents spurious planning for non-planner-first workflows
 - Executors rehydrated on startup, cleaned up on completion
 - `advance()` creates `SpaceTask` DB records only; tick loop handles group spawning
-- `seedDefaultWorkflow` wired into `SpaceManager.createSpace()` (NOT `room-manager.ts`)
+- `seedDefaultWorkflow` wired into `space.create` RPC handler (NOT `room-manager.ts`)
 - Non-workflow goals unaffected
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

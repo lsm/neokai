@@ -230,7 +230,7 @@ Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Regist
    - `spaceWorkflow.delete { id }` → `{ success }`
    - `spaceWorkflow.setDefault { spaceId, workflowId }` → `{ success }`
 
-3. Wire handlers in `app.ts` (add new registration only — do not modify existing handler setup)
+3. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration only, do not modify existing handler setup)
 
 4. Emit DaemonHub events: `spaceWorkflow.created`, `spaceWorkflow.updated`, `spaceWorkflow.deleted`
 
