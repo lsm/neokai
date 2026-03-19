@@ -193,6 +193,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
+		// Extended thinking is not supported by the Codex app-server protocol. The protocol
+		// (item/tool/call, turn/start, thread/start) has no thinking-related parameters,
+		// and SSE events contain no thinking_delta events. Codex (OpenAI-backed) does not
+		// expose extended thinking capability.
 		extendedThinking: false,
 		maxContextWindow: 200000,
 		functionCalling: true,
@@ -441,6 +445,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 */
 	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const workspace = sessionConfig?.workspacePath ?? process.cwd();
+		const sessionId = sessionConfig?.sessionId ?? 'default';
 		let bridgeServer = this.bridgeServers.get(workspace);
 
 		if (!bridgeServer) {
@@ -471,7 +476,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		return {
 			envVars: {
 				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
-				ANTHROPIC_API_KEY: 'codex-bridge-placeholder',
+				ANTHROPIC_API_KEY: `codex-bridge-${sessionId}`,
 				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
 				// Map SDK model tiers to Codex model IDs so the Claude Agent SDK
 				// subprocess never falls back to Anthropic model names (e.g.

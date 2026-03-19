@@ -221,7 +221,7 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		it('returns isAnthropicCompatible=true and a placeholder API key', () => {
 			const cfg = provider.buildSdkConfig('codex-1', { workspacePath: '/tmp/ws-compat' });
 			expect(cfg.isAnthropicCompatible).toBe(true);
-			expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-placeholder');
+			expect(cfg.envVars.ANTHROPIC_API_KEY).toBe('codex-bridge-default');
 			expect(cfg.envVars.ANTHROPIC_BASE_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
 		});
 
