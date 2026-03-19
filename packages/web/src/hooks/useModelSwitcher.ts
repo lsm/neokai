@@ -19,6 +19,7 @@
 
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import type { ModelInfo } from '@neokai/shared';
+import type { ProviderAuthStatus } from '@neokai/shared/provider';
 import { connectionManager } from '../lib/connection-manager';
 import { toast } from '../lib/toast';
 
@@ -172,6 +173,30 @@ export const PROVIDER_LABELS: Record<string, string> = {
  */
 export function getProviderLabel(provider: string): string {
 	return PROVIDER_LABELS[provider] || provider;
+}
+
+/**
+ * Filter a model list for display in the model picker, respecting auth status.
+ *
+ * Rules:
+ * - Models from authenticated providers are always shown.
+ * - Models from unauthenticated providers are hidden, UNLESS the model is the
+ *   currently active one (to avoid confusing the user about their session).
+ * - Models from providers with `needsRefresh: true` are shown (callers should
+ *   add a visual warning badge).
+ * - Models from providers absent from the auth map are shown (optimistic).
+ */
+export function filterModelsForPicker(
+	models: ModelInfo[],
+	providerAuthMap: Map<string, ProviderAuthStatus>,
+	currentProvider?: string
+): ModelInfo[] {
+	return models.filter((m) => {
+		const auth = providerAuthMap.get(m.provider);
+		if (!auth) return true; // provider unknown → optimistic show
+		if (m.provider === currentProvider) return true; // always keep active provider
+		return auth.isAuthenticated; // hide unauthenticated (needsRefresh stays visible)
+	});
 }
 
 /**
