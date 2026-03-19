@@ -34,11 +34,11 @@ export class SpaceAgentRepository {
 				id,
 				params.spaceId,
 				params.name,
-				params.description ?? null,
+				params.description ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
 				params.model ?? null,
 				params.provider ?? null,
 				'[]', // tools column kept for DB compatibility, unused in type layer
-				params.systemPrompt ?? null,
+				params.systemPrompt ?? '', // NOT NULL DEFAULT '' in Mig29 — never pass null
 				params.role,
 				params.toolConfig ? JSON.stringify(params.toolConfig) : null,
 				now,
@@ -113,7 +113,7 @@ export class SpaceAgentRepository {
 		}
 		if (params.description !== undefined) {
 			fields.push('description = ?');
-			values.push(params.description ?? null);
+			values.push(params.description ?? ''); // NOT NULL — null means clear → ''
 		}
 		if (params.model !== undefined) {
 			fields.push('model = ?');
@@ -125,7 +125,7 @@ export class SpaceAgentRepository {
 		}
 		if (params.systemPrompt !== undefined) {
 			fields.push('system_prompt = ?');
-			values.push(params.systemPrompt ?? null);
+			values.push(params.systemPrompt ?? ''); // NOT NULL — null means clear → ''
 		}
 		if (params.role !== undefined) {
 			fields.push('role = ?');
@@ -177,10 +177,10 @@ export class SpaceAgentRepository {
 			id: row.id as string,
 			spaceId: row.space_id as string,
 			name: row.name as string,
-			description: (row.description as string | null) ?? undefined,
+			description: (row.description as string) || undefined, // '' or null → undefined
 			model: (row.model as string | null) ?? undefined,
 			provider: (row.provider as string | null) ?? undefined,
-			systemPrompt: (row.system_prompt as string | null) ?? undefined,
+			systemPrompt: (row.system_prompt as string) || undefined, // '' or null → undefined
 			role: (row.role as SpaceAgent['role'] | null) ?? 'coder',
 			toolConfig: row.config
 				? (JSON.parse(row.config as string) as Record<string, unknown>)
