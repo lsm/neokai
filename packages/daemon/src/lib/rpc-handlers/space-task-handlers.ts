@@ -124,6 +124,15 @@ export function setupSpaceTaskHandlers(
 		}
 
 		const { spaceId, taskId, ...updateParams } = params;
+
+		// Verify space exists — consistent with create/list/get validation.
+		// Without this check, a bad spaceId would surface as "Task not found" rather
+		// than "Space not found", which is misleading.
+		const space = await spaceManager.getSpace(spaceId);
+		if (!space) {
+			throw new Error(`Space not found: ${spaceId}`);
+		}
+
 		const taskManager = taskManagerFactory(spaceId);
 
 		let task;
@@ -146,7 +155,10 @@ export function setupSpaceTaskHandlers(
 					error: updateParams.error ?? undefined,
 				});
 			} else {
-				// Status is the same — treat as a regular field update
+				// Status is the same — treat as a regular field update.
+				// updateParams still contains the unchanged status field; SpaceTaskManager.updateTask
+				// strips it internally (guard: params.status !== task.status is false) so no
+				// transition check fires and the status column is left untouched in the DB.
 				task = await taskManager.updateTask(taskId, updateParams);
 			}
 		} else {

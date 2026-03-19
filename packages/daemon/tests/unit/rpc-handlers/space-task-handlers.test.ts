@@ -373,6 +373,15 @@ describe('space-task-handlers', () => {
 			);
 		});
 
+		it('throws Space not found when space does not exist', async () => {
+			setup(null); // spaceManager.getSpace returns null
+			await expect(
+				call('spaceTask.update', { spaceId: 'ghost', taskId: 'task-1', title: 'X' })
+			).rejects.toThrow('Space not found: ghost');
+			expect(taskManager.updateTask).not.toHaveBeenCalled();
+			expect(taskManager.setTaskStatus).not.toHaveBeenCalled();
+		});
+
 		it('propagates errors from setTaskStatus (invalid transitions)', async () => {
 			// For this test, use a task that is already 'completed' to trigger an invalid transition
 			const completedTask = { ...mockTask, status: 'completed' as const };
