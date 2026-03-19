@@ -265,6 +265,7 @@ export async function drainToSSE(
 					toolSessions.delete(suspendedCallId);
 				}
 			}
+			onError?.();
 			session.kill();
 			return;
 		}
@@ -409,6 +410,7 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				const toolContinuationPs = persistentSessions.get(tsSessionId);
 				const onTurnDone = toolContinuationPs
 					? () => {
+							toolContinuationPs.turnInProgress = false;
 							toolContinuationPs.idleTimer = scheduleIdle(tsSessionId);
 						}
 					: () => {
