@@ -1849,7 +1849,7 @@ describe('Room Agent Tools', () => {
 		});
 
 		describe('cancel_task tool', () => {
-			it('should cancel a pending task and return cancelledTaskIds', async () => {
+			it('should cancel a pending task and return cancelledTaskIds with clean message', async () => {
 				const task = await taskManager.createTask({ title: 'T', description: 'D' });
 				const leaderHandlers = createRoomAgentToolHandlers({
 					roomId,
@@ -1860,6 +1860,8 @@ describe('Room Agent Tools', () => {
 				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
 				expect(result.success).toBe(true);
 				expect(result.cancelledTaskIds).toContain(task.id);
+				// No "0 dependent" phrasing when there are no cascaded dependents
+				expect(result.message).not.toContain('0 dependent');
 				const updated = await taskManager.getTask(task.id);
 				expect(updated?.status).toBe('cancelled');
 			});
@@ -1908,6 +1910,24 @@ describe('Room Agent Tools', () => {
 				await taskManager.startTask(task.id);
 				// Create an active group — triggers the guard
 				insertGroup(task.id, 'awaiting_worker');
+				const leaderHandlers = createRoomAgentToolHandlers({
+					roomId,
+					goalManager,
+					taskManager,
+					groupRepo,
+					// no runtimeService — simulates leader context
+				});
+				const result = parseResult(await leaderHandlers.cancel_task({ task_id: task.id }));
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('runtime service');
+			});
+
+			it('should reject cancellation of review task with active group without runtimeService', async () => {
+				const task = await taskManager.createTask({ title: 'T', description: 'D' });
+				await taskManager.startTask(task.id);
+				await taskManager.reviewTask(task.id);
+				// Create an active group — triggers the guard
+				insertGroup(task.id, 'awaiting_human');
 				const leaderHandlers = createRoomAgentToolHandlers({
 					roomId,
 					goalManager,

@@ -227,8 +227,9 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 
 			// Guard: cancelling a task with an active session group requires runtime service
 			// to stop the running session. Without it, the DB would be updated but the
-			// worker session would continue running against a cancelled task.
-			if (task.status === 'in_progress' && !runtimeService) {
+			// worker/leader sessions would continue running against a cancelled task.
+			// Covers both in_progress and review — both have active session groups.
+			if ((task.status === 'in_progress' || task.status === 'review') && !runtimeService) {
 				const activeGroup = groupRepo.getGroupByTaskId(args.task_id);
 				if (activeGroup && activeGroup.completedAt === null) {
 					return jsonResult({
@@ -273,10 +274,14 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 					}
 				}
 			}
+			const dependentCount = cancelledTaskIds.length - 1;
 			return jsonResult({
 				success: true,
 				cancelledTaskIds,
-				message: `Task ${args.task_id} and ${cancelledTaskIds.length - 1} dependent task(s) cancelled`,
+				message:
+					dependentCount > 0
+						? `Task ${args.task_id} and ${dependentCount} dependent task(s) cancelled`
+						: `Task ${args.task_id} cancelled`,
 			});
 		},
 
@@ -1100,8 +1105,8 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 			'Update task fields (title, description, priority, or dependencies). Works for tasks in any status.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
-				title: z.string().optional().describe('New title for the task'),
-				description: z.string().optional().describe('New description for the task'),
+				title: z.string().trim().min(1).optional().describe('New title for the task'),
+				description: z.string().trim().min(1).optional().describe('New description for the task'),
 				priority: z
 					.enum(['low', 'normal', 'high', 'urgent'])
 					.optional()
@@ -1126,6 +1131,8 @@ export function createLeaderContextMcpServer(config: LeaderContextMcpConfig) {
 			'Change a task status with transition validation. Use to retry failed tasks (needs_attention → pending), revive to review, or move between valid states.',
 			{
 				task_id: z.string().describe('ID of the task to update'),
+				// 'draft' is intentionally excluded: tasks reach draft status only via the planning
+				// phase (planner agent creates them). The leader must not put tasks back to draft.
 				status: z
 					.enum(['pending', 'in_progress', 'review', 'completed', 'needs_attention', 'cancelled'])
 					.describe('New status for the task'),
