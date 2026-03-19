@@ -404,6 +404,29 @@ describe('startEmbeddedServer', () => {
 		}
 	});
 
+	it('sets availableTools:[] on plain sessions to prevent built-in tool use', async () => {
+		let captured: unknown;
+		const cap = makeMockClient(() => session);
+		spyOn(cap, 'createSession').mockImplementation(async (cfg: unknown) => {
+			captured = cfg;
+			return session as unknown as CopilotSession;
+		});
+		const s2 = await startEmbeddedServer(cap, '/tmp');
+		try {
+			await postMessages(s2.url, {
+				model: 'x',
+				max_tokens: 100,
+				messages: [{ role: 'user', content: 'hi' }],
+			});
+			// Plain sessions (no tools in request) must set availableTools: [] to
+			// prevent the Copilot model from autonomously using built-in bash/file
+			// tools, which can cause hangs or empty text output.
+			expect((captured as Record<string, unknown>)['availableTools']).toEqual([]);
+		} finally {
+			await s2.stop();
+		}
+	});
+
 	// -------------------------------------------------------------------------
 	// Error paths
 	// -------------------------------------------------------------------------

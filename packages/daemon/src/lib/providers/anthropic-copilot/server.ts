@@ -121,6 +121,11 @@ function buildPlainSessionConfig(
 		streaming: true,
 		infiniteSessions: { enabled: true },
 		workingDirectory: cwd,
+		// Restrict to no built-in tools — plain sessions have no caller-defined tools,
+		// so Copilot's built-in bash/file tools must also be disabled.  Without this
+		// the model may autonomously invoke built-in tools (hanging or returning only
+		// tool-call content) instead of producing a text response.
+		availableTools: [],
 		...(systemMessage
 			? { systemMessage: { mode: 'replace' as const, content: systemMessage } }
 			: {}),

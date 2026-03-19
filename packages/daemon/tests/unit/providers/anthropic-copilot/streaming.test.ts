@@ -251,6 +251,81 @@ function parseEvents(written: string[]): Array<{ type: string; data: unknown }> 
 // Token accounting via inputText parameter
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// output_tokens — assistant.message fallback
+// ---------------------------------------------------------------------------
+
+describe('runSessionStreaming — output_tokens via assistant.message fallback', () => {
+	it('counts output chars from assistant.message.content when no message_delta events arrived', async () => {
+		// Simulate the Copilot SDK sending assistant.message (complete response)
+		// WITHOUT any preceding assistant.message_delta events.  This is valid
+		// Copilot SDK behaviour observed in CI: the SDK delivers the full text
+		// in a single assistant.message event instead of streaming deltas.
+		const session = new MockSession();
+		const { written, res } = makeMockRes();
+		const { req } = makeMockReq();
+
+		const responseText = 'Hello! How can I help you today?'; // 32 chars → ceil(32/4) = 8
+
+		const p = runSessionStreaming(
+			session as unknown as CopilotSession,
+			'prompt',
+			'model',
+			req,
+			res
+		);
+		await Promise.resolve();
+		// Emit assistant.message with full content (NO assistant.message_delta)
+		session.emit('assistant.message', { content: responseText });
+		session.emit('session.idle');
+		await p;
+
+		const events = parseEvents(written);
+		const delta = events.find((e) => e.type === 'message_delta');
+		const outputTokens = (
+			(delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>
+		)['output_tokens'];
+		expect(outputTokens).toBe(estimateTokens(responseText.length)); // = 8
+		expect(outputTokens).toBeGreaterThan(0);
+	});
+
+	it('does not double-count when both assistant.message_delta and assistant.message arrive', async () => {
+		// Normal streaming path: deltas arrive first, then assistant.message fires.
+		// The fallback must NOT add assistant.message.content on top of the deltas.
+		const session = new MockSession();
+		const { written, res } = makeMockRes();
+		const { req } = makeMockReq();
+
+		const delta1 = 'Hello ';
+		const delta2 = 'world!';
+		// assistant.message.content is the combined text — should NOT be counted again.
+		const fullContent = delta1 + delta2;
+
+		const p = runSessionStreaming(
+			session as unknown as CopilotSession,
+			'prompt',
+			'model',
+			req,
+			res
+		);
+		await Promise.resolve();
+		session.emit('assistant.message_delta', { deltaContent: delta1 });
+		session.emit('assistant.message_delta', { deltaContent: delta2 });
+		// Now assistant.message fires — pendingDeltas is non-empty, so fallback skips.
+		session.emit('assistant.message', { content: fullContent });
+		session.emit('session.idle');
+		await p;
+
+		const events = parseEvents(written);
+		const delta = events.find((e) => e.type === 'message_delta');
+		const outputTokens = (
+			(delta!.data as Record<string, unknown>)['usage'] as Record<string, unknown>
+		)['output_tokens'];
+		// Should count delta1+delta2 only (12 chars → 3), NOT fullContent twice (24 chars → 6).
+		expect(outputTokens).toBe(estimateTokens(fullContent.length)); // = ceil(12/4) = 3
+	});
+});
+
 describe('runSessionStreaming — inputText / input_tokens', () => {
 	it('message_start carries non-zero input_tokens when inputText is provided', async () => {
 		const session = new MockSession();

@@ -137,6 +137,12 @@ function streamSession(
 				break;
 
 			case 'assistant.message':
+				// Fallback: if the SDK delivered the full response without any
+				// preceding assistant.message_delta events (valid Copilot SDK
+				// behaviour), capture it now so outputCharCount is non-zero.
+				if (pendingDeltas.length === 0 && event.data.content) {
+					pendingDeltas.push(event.data.content as string);
+				}
 				flushDeltas();
 				break;
 
