@@ -791,6 +791,91 @@ describe('SpaceWorkflowManager', () => {
 		).toThrow(WorkflowValidationError);
 	});
 
+	test('custom gate rejects shell injection via semicolon', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Custom Inject Semi',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'custom', command: './scripts/verify.sh; rm -rf /' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('custom gate rejects shell injection via pipe', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Custom Inject Pipe',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'custom', command: './scripts/verify.sh | cat /etc/passwd' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('custom gate rejects shell injection via backtick', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Custom Inject Backtick',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'custom', command: './scripts/verify.sh `whoami`' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('quality_check gate rejects newline injection', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'QC Newline Inject',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'quality_check', command: 'bun test\nrm -rf /' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('custom gate rejects newline injection', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Custom Newline Inject',
+				steps: [
+					{
+						name: 'Step',
+						agentRefType: 'builtin',
+						agentRef: 'coder',
+						exitGate: { type: 'custom', command: './scripts/verify.sh\nrm -rf /' },
+					},
+				],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
 	// -------------------------------------------------------------------------
 	// Gate timeoutMs validation
 	// -------------------------------------------------------------------------

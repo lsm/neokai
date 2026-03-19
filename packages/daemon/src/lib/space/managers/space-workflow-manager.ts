@@ -32,28 +32,42 @@ const VALID_BUILTIN_ROLES: ReadonlySet<BuiltinAgentRole> = new Set(['planner', '
 /**
  * Allowlisted command prefixes for quality_check gates.
  * Commands must start with one of these prefixes to be accepted.
+ *
+ * Each entry ends with a space (or is already a full command word) so that
+ * prefix matching cannot be satisfied by a command that merely *starts with*
+ * the same letters (e.g., 'tsc-wrapper' must not match 'tsc ').
  */
 const QUALITY_CHECK_ALLOWLIST: readonly string[] = [
 	'bun test',
-	'bun run',
+	'bun run ',
 	'npm test',
-	'npm run',
+	'npm run ',
 	'npx ',
 	'yarn test',
-	'yarn run',
+	'yarn run ',
 	'pnpm test',
-	'pnpm run',
+	'pnpm run ',
 	'make ',
 	'cargo test',
 	'cargo check',
-	'go test',
-	'pytest',
+	'go test ',
+	'pytest ',
 	'python -m pytest',
-	'tsc',
+	'tsc ',
 	'biome ',
 	'eslint ',
 	'oxlint ',
 ];
+
+/**
+ * Shell metacharacters (and control characters) that are rejected in gate
+ * commands regardless of gate type.  The gate executor is expected to invoke
+ * commands directly without a shell, but we validate at storage time so that
+ * stored commands are safe even if the execution path changes.
+ *
+ * Covers: ; & | ` $ < > \ and the newline/carriage-return control characters.
+ */
+const SHELL_METACHAR_RE = /[;&|`$<>\\\n\r]/;
 
 /** Maximum allowed timeout for gate evaluation (ms) */
 const MAX_GATE_TIMEOUT_MS = 300_000;
@@ -216,15 +230,15 @@ export class SpaceWorkflowManager {
 	// -------------------------------------------------------------------------
 
 	private validateName(spaceId: string, name: string, excludeId: string | null): void {
-		const trimmed = name.trim();
-		if (!trimmed) {
+		// name is already trimmed by callers (createWorkflow / updateWorkflow)
+		if (!name) {
 			throw new WorkflowValidationError('Workflow name must not be empty');
 		}
 		const existing = this.repo.listWorkflows(spaceId);
 		for (const wf of existing) {
-			if (wf.name === trimmed && wf.id !== excludeId) {
+			if (wf.name === name && wf.id !== excludeId) {
 				throw new WorkflowValidationError(
-					`A workflow named "${trimmed}" already exists in this space`
+					`A workflow named "${name}" already exists in this space`
 				);
 			}
 		}
@@ -306,10 +320,7 @@ export class SpaceWorkflowManager {
 		if (!QUALITY_CHECK_ALLOWLIST.some((prefix) => trimmed.startsWith(prefix.toLowerCase()))) {
 			return false;
 		}
-		// Reject shell metacharacters that could be used to inject arbitrary commands.
-		// The gate executor is expected to run the command directly (not via a shell),
-		// but we validate here so that stored commands are safe regardless of executor.
-		if (/[;&|`$<>\\]/.test(command)) {
+		if (SHELL_METACHAR_RE.test(command)) {
 			return false;
 		}
 		return true;
@@ -317,6 +328,13 @@ export class SpaceWorkflowManager {
 
 	private validateCustomGateCommand(command: string, location: string): void {
 		const trimmed = command.trim();
+
+		// Reject shell metacharacters and control characters in the path.
+		if (SHELL_METACHAR_RE.test(trimmed)) {
+			throw new WorkflowValidationError(
+				`${location}: custom gate command must not contain shell metacharacters or control characters: "${trimmed}"`
+			);
+		}
 
 		// Must be a relative path (not absolute)
 		if (trimmed.startsWith('/')) {
@@ -326,7 +344,7 @@ export class SpaceWorkflowManager {
 		}
 
 		// Must not contain '..' traversal
-		const parts = trimmed.split(/[/\\]/);
+		const parts = trimmed.split(/[/]/);
 		for (const part of parts) {
 			if (part === '..') {
 				throw new WorkflowValidationError(
@@ -336,7 +354,7 @@ export class SpaceWorkflowManager {
 		}
 
 		// Should start with './' for clarity
-		if (!trimmed.startsWith('./') && !trimmed.startsWith('.\\')) {
+		if (!trimmed.startsWith('./')) {
 			throw new WorkflowValidationError(
 				`${location}: custom gate command must start with './' (relative to workspace root): "${trimmed}"`
 			);
