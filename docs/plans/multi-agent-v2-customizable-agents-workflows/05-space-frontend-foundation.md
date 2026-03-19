@@ -101,7 +101,6 @@ Create `SpaceStore` for managing all Space-related reactive state. Follows the e
    - Computed signals:
      - `activeTasks` — tasks filtered by active status
      - `activeRuns` — workflow runs filtered by in-progress status
-     - `defaultWorkflow` — the space's default workflow
      - `tasksByRun` — tasks grouped by workflow run ID
 
    - Methods:

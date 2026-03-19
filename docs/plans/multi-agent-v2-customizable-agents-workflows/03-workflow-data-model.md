@@ -172,8 +172,7 @@ Build the data access and business logic layers for workflows within Spaces. The
      - At least one step required
      - Step order contiguous (0, 1, 2, ...)
      - Gate command validation: `quality_check` → allowlist only; `custom` → relative path, no `..`; `timeoutMs` within range 0–300000
-   - Business logic:
-     - Workflow selection is either explicit workflowId (caller-provided) or AI auto-select via `list_workflows` + `start_workflow_run`. No default workflow concept.
+   - Business logic: workflow selection is either explicit workflowId (caller-provided) or AI auto-select via `list_workflows` + `start_workflow_run`. No default workflow concept, no `isDefault` flag.
 
 3. Export from `packages/daemon/src/lib/space/index.ts`
 
@@ -190,7 +189,7 @@ Build the data access and business logic layers for workflows within Spaces. The
 - Repository handles CRUD with proper step management using `space_workflows`/`space_workflow_steps` tables
 - Manager validates workflow integrity including gate security
 - Agent reference validation queries `SpaceAgentManager` (NOT a nonexistent `CustomAgentManager`)
-- Default workflow switching works correctly
+- No `isDefault` flag on `SpaceWorkflow` — workflow selection is explicit workflowId or AI auto-select only
 - All files in Space namespace — nothing in `packages/daemon/src/lib/room/`
 - Unit tests cover all paths
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
@@ -223,7 +222,7 @@ Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Regist
    - `spaceWorkflow.get { id }` → `{ workflow }`
    - `spaceWorkflow.update { id, ... }` → `{ workflow }`
    - `spaceWorkflow.delete { id }` → `{ success }`
-   - `spaceWorkflow.setDefault { spaceId, workflowId }` → `{ success }`
+   - **No `spaceWorkflow.setDefault`** — there is no default workflow concept
 
 3. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration only, do not modify existing handler setup)
 
@@ -248,7 +247,7 @@ Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Regist
 
 **Description:**
 
-Create built-in workflow templates that serve as defaults and examples. Also create the seeding utility. All files in Space namespace.
+Create built-in workflow templates that serve as examples. All files in Space namespace.
 
 **Subtasks:**
 
@@ -259,22 +258,16 @@ Create built-in workflow templates that serve as defaults and examples. Also cre
 
 2. Each template includes appropriate gates with only allowlisted commands
 
-3. `getBuiltInWorkflows(): SpaceWorkflow[]` — returns templates without space-specific IDs
+3. `getBuiltInWorkflows(): SpaceWorkflow[]` — returns templates without space-specific IDs (no `isDefault` flag, no seeding logic)
 
-4. `seedDefaultWorkflow(spaceId: string, workflowManager: SpaceWorkflowManager): Promise<void>`:
-   - Idempotent: checks if space already has a default workflow
-   - Seeds `CODING_WORKFLOW` as default
-   - **Call site wired in Task 4.2** (in the `space.create` RPC handler, after `SpaceManager.createSpace()` returns), not here
-
-5. Write unit tests:
+4. Write unit tests:
    - Template structure validation
    - All agent refs are valid builtins (no 'leader')
-   - Idempotent seeding
 
 **Acceptance criteria:**
 - Three built-in workflow templates defined
 - Templates mirror existing behavior (Leader is implicit, not a step)
-- `seedDefaultWorkflow` implemented and tested but NOT wired (that's M4)
+- No `seedDefaultWorkflow` — there is no default workflow concept; users pick or the Space agent auto-selects via AI
 - All files in `packages/daemon/src/lib/space/workflows/` (NOT `room/workflows/`)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
