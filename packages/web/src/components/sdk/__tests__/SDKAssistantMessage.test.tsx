@@ -302,14 +302,8 @@ describe('SDKAssistantMessage', () => {
 			const message = createAgentToolMessage();
 			const { container } = render(<SDKAssistantMessage message={message} />);
 
-			// SubagentBlock should show the subagent type
+			// SubagentBlock should show the subagent type and description
 			expect(container.textContent).toContain('Plan');
-		});
-
-		it('should show description in SubagentBlock for Agent tool', () => {
-			const message = createAgentToolMessage();
-			const { container } = render(<SDKAssistantMessage message={message} />);
-
 			expect(container.textContent).toContain('Plan the implementation');
 		});
 	});
