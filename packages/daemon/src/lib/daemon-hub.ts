@@ -457,6 +457,24 @@ export interface DaemonEventMap extends Record<string, BaseEventData> {
 		agentId: string;
 	};
 
+	// Space workflow definition events (global events - use 'global' as sessionId)
+	// NOTE: namespace is 'spaceWorkflow.*' (not 'space.workflow.*') — matches SpaceStore subscriptions in M5
+	'spaceWorkflow.created': {
+		sessionId: string;
+		spaceId: string;
+		workflow: import('@neokai/shared').SpaceWorkflow;
+	};
+	'spaceWorkflow.updated': {
+		sessionId: string;
+		spaceId: string;
+		workflow: import('@neokai/shared').SpaceWorkflow;
+	};
+	'spaceWorkflow.deleted': {
+		sessionId: string;
+		spaceId: string;
+		workflowId: string;
+	};
+
 	// Feature Flag events (PHASE 3: Gradual rollout infrastructure)
 	'featureFlag.updated': {
 		sessionId: string;
