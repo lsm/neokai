@@ -326,22 +326,6 @@ export interface SpaceSessionGroup {
 // ============================================================================
 
 /**
- * Preset agent roles — used as a UI label/tag that describes the agent's purpose
- * and drives default system prompt behavior in `buildCustomAgentSystemPrompt`.
- *
- * This is metadata only — it does NOT gate code routing. All agents (preset or
- * user-created) are regular `SpaceAgent` records resolved by ID at runtime.
- * SpaceRuntime seeds one agent per role when a new Space is created; users may
- * rename, reconfigure, or delete any of them.
- *
- * - 'coder': Standard implementation worker (git workflow, PRs, tests)
- * - 'general': General-purpose worker (broader scope, same toolset as coder)
- * - 'planner': Planning/orchestration agent (treated as worker for now)
- * - 'reviewer': Review-specialist worker (review-specific prompt additions)
- */
-export type BuiltinAgentRole = 'planner' | 'coder' | 'general' | 'reviewer';
-
-/**
  * A named agent configuration within a Space.
  * SpaceAgents can be referenced by name in SpaceWorkflow steps.
  */
@@ -355,11 +339,10 @@ export interface SpaceAgent {
 	/** Optional description of this agent's specialization */
 	description?: string;
 	/**
-	 * Builtin role preset — determines default tools and behavior.
-	 * One of: 'planner', 'coder', 'general', 'reviewer'.
-	 * NOTE: 'leader' is NOT a valid role here — Leader is implicit in SpaceRuntime.
+	 * Role label — a free-form string describing the agent's purpose (e.g. 'coder', 'general').
+	 * Used only for display and default system prompt labeling; has no runtime routing effect.
 	 */
-	role: BuiltinAgentRole;
+	role: string;
 	/** Model ID override (e.g., 'claude-haiku-4-5') — uses space default if unset */
 	model?: string;
 	/** Provider name override (e.g., 'anthropic', 'openai') */
@@ -386,7 +369,7 @@ export interface SpaceAgent {
 export interface CreateSpaceAgentParams {
 	spaceId: string;
 	name: string;
-	role: BuiltinAgentRole;
+	role: string;
 	description?: string;
 	model?: string;
 	provider?: string;
@@ -402,7 +385,7 @@ export interface CreateSpaceAgentParams {
 export interface UpdateSpaceAgentParams {
 	name?: string;
 	description?: string | null;
-	role?: BuiltinAgentRole;
+	role?: string;
 	model?: string | null;
 	provider?: string | null;
 	systemPrompt?: string | null;

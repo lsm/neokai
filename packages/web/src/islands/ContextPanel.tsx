@@ -17,6 +17,7 @@ import {
 	navigateToSettings,
 	navigateToHome,
 	navigateToRooms,
+	navigateToSpaces,
 } from '../lib/router.ts';
 import { roomStore } from '../lib/room-store.ts';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -28,6 +29,7 @@ import { MAIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from '../lib/nav-config.tsx';
 import { SessionList } from './SessionList.tsx';
 import { RoomList } from './RoomList.tsx';
 import { RoomContextPanel } from './RoomContextPanel.tsx';
+import { SpaceContextPanel } from '../components/space/SpaceContextPanel.tsx';
 import { ConnectionNotReadyError } from '../lib/errors.ts';
 
 // Settings section configuration
@@ -146,6 +148,13 @@ export function ContextPanel() {
 			emptyDesc: 'Create a room to organize work',
 			actionLabel: 'Create Room',
 		},
+		spaces: {
+			title: 'Spaces',
+			emptyIcon: '🚀',
+			emptyTitle: 'No spaces yet',
+			emptyDesc: 'Create a space to orchestrate agents',
+			actionLabel: 'Create Space',
+		},
 		projects: {
 			title: 'Projects',
 			emptyIcon: '📁',
@@ -226,6 +235,9 @@ export function ContextPanel() {
 				break;
 			case 'rooms':
 				navigateToRooms();
+				break;
+			case 'spaces':
+				navigateToSpaces();
 				break;
 			case 'settings':
 				navigateToSettings();
@@ -346,6 +358,16 @@ export function ContextPanel() {
 				)}
 				{navSection === 'rooms' && !isRoomDetail && (
 					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
+				)}
+				{navSection === 'spaces' && (
+					// TODO: replace empty array with real space list from state once
+					// the Spaces data layer is wired up (Task 5.x).
+					// onCreateSpace is intentionally omitted here — "Create Space" will be
+					// triggered from the header CTA button once space creation is implemented.
+					<SpaceContextPanel
+						spaces={[]}
+						onSpaceSelect={() => (contextPanelOpenSignal.value = false)}
+					/>
 				)}
 				{navSection === 'projects' && (
 					<div class="flex-1 flex items-center justify-center p-6">

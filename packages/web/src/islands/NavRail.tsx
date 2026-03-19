@@ -4,6 +4,7 @@ import {
 	navigateToSettings,
 	navigateToHome,
 	navigateToRooms,
+	navigateToSpaces,
 } from '../lib/router.ts';
 import { NavIconButton } from '../components/ui/NavIconButton.tsx';
 import { borderColors } from '../lib/design-tokens.ts';
@@ -24,6 +25,9 @@ export function NavRail() {
 				break;
 			case 'rooms':
 				navigateToRooms();
+				break;
+			case 'spaces':
+				navigateToSpaces();
 				break;
 			case 'settings':
 				navigateToSettings();

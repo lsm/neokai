@@ -3,12 +3,14 @@ import {
 	currentRoomIdSignal,
 	currentRoomSessionIdSignal,
 	currentRoomTaskIdSignal,
+	currentSpaceIdSignal,
 	navSectionSignal,
 	settingsSectionSignal,
 } from '../lib/signals.ts';
 import { sessions } from '../lib/state.ts';
 import ChatContainer from './ChatContainer.tsx';
 import Room from './Room.tsx';
+import SpaceIsland from './SpaceIsland.tsx';
 import Lobby from './Lobby.tsx';
 import { SessionsPage } from './SessionsPage.tsx';
 import { GeneralSettings } from '../components/settings/GeneralSettings.tsx';
@@ -25,11 +27,17 @@ export default function MainContent() {
 	const roomId = currentRoomIdSignal.value;
 	const roomSessionId = currentRoomSessionIdSignal.value;
 	const roomTaskId = currentRoomTaskIdSignal.value;
+	const spaceId = currentSpaceIdSignal.value;
 	const sessionsList = sessions.value;
 	const navSection = navSectionSignal.value;
 	const settingsSection = settingsSectionSignal.value;
 
-	// Room route takes priority
+	// Space route takes priority
+	if (spaceId) {
+		return <SpaceIsland key={spaceId} spaceId={spaceId} />;
+	}
+
+	// Room route
 	if (roomId) {
 		return (
 			<Room key={roomId} roomId={roomId} sessionViewId={roomSessionId} taskViewId={roomTaskId} />
