@@ -43,6 +43,7 @@ RPC_FILES=(
 )
 
 ROOM_FILES=(
+  mission-lifecycle.test.ts
   room-advanced-scenarios.test.ts
   room-chat-agent-tools.test.ts
   room-chat-constraints.test.ts

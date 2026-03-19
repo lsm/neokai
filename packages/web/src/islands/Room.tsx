@@ -227,6 +227,7 @@ export default function Room({ roomId, sessionViewId, taskViewId }: RoomProps) {
 										isLoading={roomStore.goalsLoading.value}
 										autoCompletedNotifications={roomStore.autoCompletedNotifications.value}
 										onDismissNotification={(taskId) => roomStore.dismissAutoCompleted(taskId)}
+										onListExecutions={(goalId) => roomStore.listExecutions(goalId)}
 									/>
 								</div>
 							)}

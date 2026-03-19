@@ -30,6 +30,7 @@ import type {
 	AutonomyLevel,
 	MissionMetric,
 	CronSchedule,
+	MissionExecution,
 } from '@neokai/shared';
 
 /**
@@ -655,6 +656,22 @@ class RoomStore {
 			logger.error('Failed to link task to goal:', err);
 			throw err;
 		}
+	}
+
+	/**
+	 * List execution history for a recurring mission.
+	 */
+	async listExecutions(goalId: string, limit = 20): Promise<MissionExecution[]> {
+		const roomId = this.roomId.value;
+		if (!roomId) throw new Error('No room selected');
+		const hub = connectionManager.getHubIfConnected();
+		if (!hub) throw new Error('Not connected');
+		const result = await hub.request<{ executions: MissionExecution[] }>('goal.listExecutions', {
+			roomId,
+			goalId,
+			limit,
+		});
+		return result.executions;
 	}
 
 	/**

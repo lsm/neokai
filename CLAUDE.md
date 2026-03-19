@@ -217,6 +217,50 @@ make self-test TEST=tests/core/navigation-3-column.e2e.ts
 - Always run a single E2E test file at a time — too slow to run all together
 - If a test scenario can't be triggered through the UI (e.g., token expiry, malformed server responses), it belongs in daemon integration tests, not E2E
 
+## Mission System
+
+The Mission System (Goal V2) extends the room's goal tracking with structured, automated workflows. Use the following terminology consistently across code, tests, and documentation.
+
+### Mission Types
+
+| Type | `missionType` value | Description |
+|------|-------------------|-------------|
+| One-shot | `one_shot` | Single-run goal with no metrics or schedule; the default. |
+| Measurable | `measurable` | Tracks progress toward numeric KPIs via `structuredMetrics`. |
+| Recurring | `recurring` | Runs on a cron schedule; creates a new execution each run. |
+
+### Autonomy Levels
+
+| Level | `autonomyLevel` value | Description |
+|-------|----------------------|-------------|
+| Supervised | `supervised` | Worker submits PRs for human review before merging. Default. |
+| Semi-autonomous | `semi_autonomous` | Worker can merge approved PRs without human confirmation. |
+
+### Key Terminology
+
+- **Mission** — The V2 term for a `RoomGoal`; use "mission" in UI copy and new API names. The DB table is still `goals` for backward compatibility.
+- **Execution** — A single run of a recurring mission. Stored in `mission_executions` with a monotonically increasing `executionNumber`.
+- **Metric** — A `MissionMetric` struct `{name, target, current, unit?}` in `structuredMetrics`. Measurable missions track one or more metrics.
+- **Execution ID** — A UUID stored in the session group's metadata (`executionId`) that links worker/leader sessions to a specific execution record.
+- **Schedule** — A cron expression plus timezone stored in `goal.schedule.expression` / `goal.schedule.timezone`. Use `@daily`, `@weekly`, or a 5-field cron string.
+
+### Key Files
+
+- `packages/daemon/src/lib/room/managers/goal-manager.ts` — Core `GoalManager`: CRUD, metric recording, execution management, scheduler tick.
+- `packages/daemon/src/lib/room/state/goal-repository.ts` — SQLite persistence for goals and V2 columns.
+- `packages/daemon/src/lib/room/runtime/cron-utils.ts` — Cron parsing, next-run computation, and catch-up detection.
+- `packages/daemon/src/lib/rpc-handlers/goal-handlers.ts` — RPC handlers: `goal.create`, `goal.list`, `goal.update`, `goal.delete`, `goal.listExecutions`, etc.
+- `packages/web/src/components/room/GoalsEditor.tsx` — Mission list UI, create/edit form with type-specific fields, metric progress bars, execution history.
+- `packages/web/src/lib/room-store.ts` — `RoomStore.listExecutions()` — fetches execution history via `goal.listExecutions` RPC.
+
+### DB Tables
+
+- `goals` — Stores all missions with V2 columns: `mission_type`, `autonomy_level`, `schedule`, `next_run_at`, `structured_metrics`, `consecutive_failures`, `replan_count`.
+- `mission_executions` — One row per execution run: `id`, `goal_id`, `execution_number`, `status`, `started_at`, `completed_at`, `result_summary`, `task_ids`.
+- `mission_metric_history` — Time-series metric snapshots: `goal_id`, `metric_name`, `value`, `recorded_at`.
+
+---
+
 ## Branching Strategy & CI
 
 - **`dev`** (default): Active development. PRs target `dev`. E2E tests run after merge.
