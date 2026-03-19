@@ -22,10 +22,16 @@ import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthr
 function makeProvider(
 	env: Record<string, string | undefined> = {},
 	authDir?: string,
-	codexAuthDir?: string
+	codexAuthDir?: string,
+	codexFinder?: () => string | null
 ): AnthropicToCodexBridgeProvider {
-	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir);
+	return new AnthropicToCodexBridgeProvider(env, authDir, codexAuthDir, codexFinder);
 }
+
+/** A codexFinder that always returns a fake binary path — avoids `which codex` subprocess in tests. */
+const fakeCodexFound = () => '/usr/local/bin/codex';
+/** A codexFinder that always returns null — simulates codex not installed. */
+const fakeCodexMissing = () => null;
 
 /** Write a NeoKai auth.json with an openai entry to a temp dir. */
 async function writeNeokaiAuth(dir: string, credentials: Record<string, unknown>): Promise<void> {
@@ -112,20 +118,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
 		});
 
 		it('canLogout is false when credentials come from OPENAI_API_KEY env var', async () => {
-			// Codex binary may or may not be installed; test is meaningful only when authenticated
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
+			// fakeCodexFound bypasses the `which codex` subprocess so the test always reaches the canLogout code path
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
-			if (result.isAuthenticated) {
-				expect(result.canLogout).toBe(false);
-			}
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.canLogout).toBe(false);
 		});
 
 		it('canLogout is false when credentials come from CODEX_API_KEY env var', async () => {
-			provider = makeProvider({ CODEX_API_KEY: 'codex-env-key' }, tmpDir, tmpDir);
+			provider = makeProvider({ CODEX_API_KEY: 'codex-env-key' }, tmpDir, tmpDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
-			if (result.isAuthenticated) {
-				expect(result.canLogout).toBe(false);
-			}
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.canLogout).toBe(false);
 		});
 
 		it('canLogout is true when OAuth credentials are stored in ~/.neokai/auth.json', async () => {
@@ -138,18 +142,18 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				expires: Date.now() + 3600_000,
 				accountId: 'user_abc123',
 			});
-			provider = makeProvider({}, neokaiDir, codexDir);
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
-			if (result.isAuthenticated) {
-				expect(result.canLogout).toBe(true);
-			}
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.canLogout).toBe(true);
 		});
 
 		it('canLogout is undefined (not set) when not authenticated', async () => {
-			provider = makeProvider({}, tmpDir, tmpDir);
+			// fakeCodexMissing simulates codex not installed — getAuthStatus returns isAuthenticated: false
+			provider = makeProvider({}, tmpDir, tmpDir, fakeCodexMissing);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
-			// canLogout is not relevant when not authenticated
+			// canLogout is not set when not authenticated
 			expect(result.canLogout).toBeUndefined();
 		});
 	});

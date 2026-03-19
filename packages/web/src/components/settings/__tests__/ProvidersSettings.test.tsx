@@ -20,12 +20,14 @@ const {
 	mockListProviderAuthStatus,
 	mockLoginProvider,
 	mockLogoutProvider,
+	mockRefreshProvider,
 	mockToastError,
 	mockToastSuccess,
 } = vi.hoisted(() => ({
 	mockListProviderAuthStatus: vi.fn(),
 	mockLoginProvider: vi.fn(),
 	mockLogoutProvider: vi.fn(),
+	mockRefreshProvider: vi.fn(),
 	mockToastError: vi.fn(),
 	mockToastSuccess: vi.fn(),
 }));
@@ -35,6 +37,7 @@ vi.mock('../../../lib/api-helpers.ts', () => ({
 	listProviderAuthStatus: () => mockListProviderAuthStatus(),
 	loginProvider: (providerId: string) => mockLoginProvider(providerId),
 	logoutProvider: (providerId: string) => mockLogoutProvider(providerId),
+	refreshProvider: (providerId: string) => mockRefreshProvider(providerId),
 }));
 
 // Mock toast module
@@ -145,6 +148,8 @@ describe('ProvidersSettings', () => {
 		vi.clearAllMocks();
 		// Default mock for listProviderAuthStatus
 		mockListProviderAuthStatus.mockResolvedValue({ providers: [] });
+		// Default mock for refreshProvider
+		mockRefreshProvider.mockResolvedValue({ success: true });
 	});
 
 	afterEach(() => {
@@ -650,6 +655,45 @@ describe('ProvidersSettings', () => {
 				);
 				expect(logoutButton).toBeDefined();
 			});
+		});
+
+		it('should not show Logout button after refresh failure when canLogout is false', async () => {
+			// Scenario: provider with needsRefresh, canLogout: false (env-var-backed token).
+			// After a failed refresh the condition is:
+			//   (isAuthenticated || (needsRefresh && refreshFailed.has(id))) && canLogout !== false
+			// With canLogout: false the Logout button must remain hidden even after refresh failure.
+			const mockProviders = [
+				createMockProvider('openai', 'OpenAI (Codex)', {
+					isAuthenticated: false,
+					needsRefresh: true,
+					canLogout: false,
+				}),
+			];
+			mockListProviderAuthStatus.mockResolvedValue({ providers: mockProviders });
+			mockRefreshProvider.mockResolvedValue({ success: false, error: 'Token expired' });
+
+			const { container } = render(<ProvidersSettings />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('OpenAI (Codex)');
+			});
+
+			// Click Refresh Login to trigger a failed refresh (adds provider to refreshFailed)
+			const refreshButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Refresh Login')
+			);
+			refreshButton?.click();
+
+			await waitFor(() => {
+				expect(mockRefreshProvider).toHaveBeenCalledWith('openai');
+				expect(mockToastError).toHaveBeenCalledWith('Token expired');
+			});
+
+			// Logout button must still be absent — canLogout: false overrides refreshFailed
+			const logoutButton = Array.from(container.querySelectorAll('button')).find((btn) =>
+				btn.textContent?.includes('Logout')
+			);
+			expect(logoutButton).toBeUndefined();
 		});
 	});
 

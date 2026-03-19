@@ -239,14 +239,16 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	constructor(
 		private readonly env: Record<string, string | undefined> = process.env,
 		authDir?: string,
-		codexAuthDir?: string
+		codexAuthDir?: string,
+		/** Injectable for tests — defaults to the real findCodexCli(). */
+		private readonly codexFinder: () => string | null = findCodexCli
 	) {
 		this.authPath = path.join(authDir ?? path.join(os.homedir(), '.neokai'), 'auth.json');
 		this.codexAuthPath = path.join(codexAuthDir ?? path.join(os.homedir(), '.codex'), 'auth.json');
 	}
 
 	async isAvailable(): Promise<boolean> {
-		if (!findCodexCli()) return false;
+		if (!this.codexFinder()) return false;
 		const auth = await this.getBridgeAuth();
 		return !!auth;
 	}
@@ -375,7 +377,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			};
 		}
 
-		const codexPath = findCodexCli();
+		const codexPath = this.codexFinder();
 		if (!codexPath) {
 			return {
 				isAuthenticated: false,
@@ -458,7 +460,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 		let bridgeServer = this.bridgeServers.get(workspace);
 
 		if (!bridgeServer) {
-			const codexBinaryPath = findCodexCli() ?? 'codex';
+			const codexBinaryPath = this.codexFinder() ?? 'codex';
 			// buildSdkConfig() is synchronous per the Provider interface.  The async
 			// discovery chain populates cachedBridgeAuth via isAvailable()/getAuthStatus().
 			const envAuth = this.env.OPENAI_API_KEY
