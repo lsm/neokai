@@ -2157,6 +2157,21 @@ export class RoomRuntime {
 			const workerState = this.sessionFactory.getProcessingState(group.workerSessionId);
 			if (workerState !== 'idle' && workerState !== 'interrupted') continue;
 
+			// Skip if the worker has no new messages since the last forwarding.
+			// This prevents spurious re-routing when feedbackIteration was reset by
+			// resumeLeaderFromHuman (or resumeWorkerFromHuman) but the worker has not
+			// produced any new output yet — re-routing would inject a sentinel string
+			// into the leader while it is already processing the human's message.
+			// When getWorkerMessages is absent (some test contexts), fall through to
+			// preserve the original safety-net behavior.
+			if (this.getWorkerMessages) {
+				const newMessages = this.getWorkerMessages(
+					group.workerSessionId,
+					group.lastForwardedMessageId
+				);
+				if (newMessages.length === 0) continue;
+			}
+
 			// Guard against duplicate in-flight recovery: if a previous tick already
 			// triggered routing for this group and it hasn't completed yet, skip it.
 			// feedbackIteration is incremented only after routeWorkerToLeader succeeds,

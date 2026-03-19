@@ -688,6 +688,49 @@ describe('Stuck worker detection and recovery', () => {
 		expect(updated!.waitingForQuestion).toBe(true);
 	});
 
+	it('should NOT re-trigger routing after resumeLeaderFromHuman resets feedbackIteration to 0', async () => {
+		// Scenario: worker routed to leader (feedbackIteration=1), leader submitted for review,
+		// human resumed via resumeLeaderFromHuman which reset feedbackIteration=0.
+		// The worker is idle but has no NEW messages — re-routing would corrupt the leader's context.
+		//
+		// Use a separate context with getWorkerMessages so the new guard can operate.
+		const localCtx = createRuntimeTestContext({
+			getWorkerMessages: (_sessionId: string, _afterId: string | null) => [],
+			// Return empty: worker has no new output since last forwarding
+		});
+
+		const group = await (async () => {
+			await createGoalAndTask(localCtx);
+			localCtx.runtime.start();
+			await localCtx.runtime.tick();
+			const groups = localCtx.groupRepo.getActiveGroups('room-1');
+			return groups[0];
+		})();
+
+		// Manually advance to a post-routing state (simulates feedbackIteration reset by human resume)
+		localCtx.groupRepo.incrementFeedbackIteration(group.id, group.version);
+		const afterIncrement = localCtx.groupRepo.getGroup(group.id)!;
+		localCtx.groupRepo.resetFeedbackIteration(group.id, afterIncrement.version);
+		// Mark leaderHasWork=true (routing already happened before the reset)
+		localCtx.groupRepo.setLeaderHasWork(group.id);
+
+		// Worker is idle — but has no new messages (getWorkerMessages returns [])
+		localCtx.sessionFactory.processingStates.set(group.workerSessionId, 'idle');
+
+		const callsBefore = localCtx.sessionFactory.calls.length;
+
+		await localCtx.runtime.tick();
+		await new Promise((r) => setTimeout(r, 10));
+
+		// No new injectMessage calls should have been made (routing was suppressed)
+		const newCalls = localCtx.sessionFactory.calls.slice(callsBefore);
+		const injectCalls = newCalls.filter((c) => c.method === 'injectMessage');
+		expect(injectCalls).toHaveLength(0);
+
+		localCtx.runtime.stop();
+		localCtx.db.close();
+	});
+
 	it('should not fire duplicate routing on successive ticks while recovery is in-flight', async () => {
 		const group = await spawnGroup();
 
