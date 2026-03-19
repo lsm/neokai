@@ -159,7 +159,6 @@ If installed but not found, add the Codex installation directory to your PATH.
 **Solution:**
 1. Re-authenticate through NeoKai's authentication flow
 2. For ChatGPT Plus/Pro: Log out and log back in through Settings → Authentication
-3. Alternatively, use `kai openai login` CLI command if available
 
 ### Workspace Isolation
 

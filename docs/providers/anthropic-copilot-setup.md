@@ -43,7 +43,10 @@ NeoKai includes a built-in GitHub OAuth device flow specifically for Copilot aut
 1. Open NeoKai in your browser
 2. Navigate to Settings → Authentication (or provider settings)
 3. Look for "Connect GitHub" or similar option to initiate the OAuth flow
-4. Complete the GitHub authorization in your browser
+4. You'll receive a **device code** (e.g., `ABCD-1234`) displayed in NeoKai
+5. Visit the verification URL (typically `github.com/login/device`) and enter the device code
+6. Complete the GitHub authorization in your browser
+7. Return to NeoKai — the connection should complete automatically
 
 The OAuth token is stored in `~/.neokai/auth.json` and automatically used on subsequent sessions.
 
