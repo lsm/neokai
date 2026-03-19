@@ -348,6 +348,37 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			});
 		});
 
+		it('does not show stale models from previous open when auth fails on re-open', async () => {
+			// First open: both succeed — models populate
+			let resolveAuth!: (v: unknown) => void;
+			mockRequest.mockImplementation((method: string) => {
+				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
+				if (method === 'auth.providers') return Promise.resolve(ALL_AUTH_OK);
+				return Promise.resolve(null);
+			});
+
+			const { rerender } = render(<NewSessionModal {...DEFAULT_PROPS} isOpen={true} />);
+			await waitFor(() => {
+				expect(document.querySelectorAll('optgroup').length).toBeGreaterThan(0);
+			});
+
+			// Close modal
+			rerender(<NewSessionModal {...DEFAULT_PROPS} isOpen={false} />);
+
+			// Second open: auth fails — model picker must stay hidden
+			mockRequest.mockImplementation((method: string) => {
+				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
+				if (method === 'auth.providers') return Promise.reject(new Error('auth gone'));
+				return Promise.resolve(null);
+			});
+
+			rerender(<NewSessionModal {...DEFAULT_PROPS} isOpen={true} />);
+			await new Promise((r) => setTimeout(r, 50));
+
+			// Stale models from first open must not re-appear
+			expect(document.querySelectorAll('optgroup').length).toBe(0);
+		});
+
 		it('hides model picker entirely when auth.providers fetch fails', async () => {
 			// auth.providers rejects — models.list resolves normally.
 			// With Promise.all both outcomes are atomic: if auth fails the model picker

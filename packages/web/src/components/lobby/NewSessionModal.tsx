@@ -96,18 +96,30 @@ export function NewSessionModal({
 
 	useEffect(() => {
 		if (!isOpen) return;
+
+		// Clear stale picker data immediately so the modal never shows previous results
+		// while the fresh auth check is still pending.
+		setAvailableModels([]);
+		setProviderAuthStatuses(new Map());
+
+		let cancelled = false;
+
 		// Fetch both together so a failure in either suppresses the model picker atomically.
-		// If auth status cannot be determined we must not show unfiltered models, and since
-		// both promises are resolved together there is no window where models repopulate
-		// after an auth failure.
+		// If auth status cannot be determined we must not show unfiltered models.
 		Promise.all([fetchAvailableModels(), fetchProviderAuthStatuses()])
 			.then(([models, statuses]) => {
+				if (cancelled) return;
 				setAvailableModels(models);
 				setProviderAuthStatuses(statuses);
 			})
 			.catch(() => {
-				// Either models or auth unavailable — keep model picker hidden
+				// Either models or auth unavailable — keep model picker hidden.
+				// No state update needed: already cleared at effect start.
 			});
+
+		return () => {
+			cancelled = true;
+		};
 	}, [isOpen]);
 
 	/** Resolve the selected model by composite key `provider:id` */
