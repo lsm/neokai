@@ -2,11 +2,11 @@
  * Built-in Workflow Templates Unit Tests
  *
  * Covers:
- * - Template structure: correct agent refs, gate types, step count
- * - No 'leader' agent refs in any template
+ * - Template structure: correct agentId placeholders, gate types, step count
+ * - agentId placeholders are valid builtin role names (no 'leader')
  * - getBuiltInWorkflows() returns all three templates
- * - seedDefaultWorkflow(): creates CODING_WORKFLOW when space is empty
- * - seedDefaultWorkflow(): idempotent — no second workflow when one exists
+ * - seedBuiltInWorkflows(): seeds all three templates with real agent IDs
+ * - seedBuiltInWorkflows(): idempotent — no re-seed if workflows already exist
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
@@ -21,9 +21,9 @@ import {
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
 	getBuiltInWorkflows,
-	seedDefaultWorkflow,
+	seedBuiltInWorkflows,
 } from '../../../src/lib/space/workflows/built-in-workflows.ts';
-import type { SpaceWorkflow } from '@neokai/shared';
+import type { BuiltinAgentRole, SpaceWorkflow } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,11 +51,28 @@ function seedSpace(db: BunDatabase, spaceId: string): void {
 	).run(spaceId, `/tmp/ws-${spaceId}`, `Space ${spaceId}`, Date.now(), Date.now());
 }
 
+function seedAgent(
+	db: BunDatabase,
+	agentId: string,
+	spaceId: string,
+	name: string,
+	role: string
+): void {
+	db.prepare(
+		`INSERT INTO space_agents (id, space_id, name, description, model, tools, system_prompt,
+     role, config, created_at, updated_at)
+     VALUES (?, ?, ?, '', null, '[]', '', ?, null, ?, ?)`
+	).run(agentId, spaceId, name, role, Date.now(), Date.now());
+}
+
+/** Valid builtin roles — 'leader' must NOT appear in any template step. */
+const VALID_BUILTIN_ROLES = new Set<string>(['planner', 'coder', 'general', 'reviewer']);
+
 /**
- * Returns true if any step in the workflow references 'leader'.
+ * Returns true if any step in the workflow has 'leader' as its agentId placeholder.
  */
-function hasLeaderRef(wf: SpaceWorkflow): boolean {
-	return wf.steps.some((s) => s.agentRef === 'leader');
+function hasLeaderAgentId(wf: SpaceWorkflow): boolean {
+	return wf.steps.some((s) => s.agentId === 'leader');
 }
 
 // ---------------------------------------------------------------------------
@@ -67,16 +84,12 @@ describe('CODING_WORKFLOW template', () => {
 		expect(CODING_WORKFLOW.steps).toHaveLength(2);
 	});
 
-	test('first step uses planner builtin', () => {
-		const step = CODING_WORKFLOW.steps[0];
-		expect(step.agentRefType).toBe('builtin');
-		expect(step.agentRef).toBe('planner');
+	test('first step agentId placeholder is planner', () => {
+		expect(CODING_WORKFLOW.steps[0].agentId).toBe('planner');
 	});
 
-	test('second step uses coder builtin', () => {
-		const step = CODING_WORKFLOW.steps[1];
-		expect(step.agentRefType).toBe('builtin');
-		expect(step.agentRef).toBe('coder');
+	test('second step agentId placeholder is coder', () => {
+		expect(CODING_WORKFLOW.steps[1].agentId).toBe('coder');
 	});
 
 	test('planner step exit gate is human_approval', () => {
@@ -88,7 +101,7 @@ describe('CODING_WORKFLOW template', () => {
 	});
 
 	test('does not reference leader', () => {
-		expect(hasLeaderRef(CODING_WORKFLOW)).toBe(false);
+		expect(hasLeaderAgentId(CODING_WORKFLOW)).toBe(false);
 	});
 
 	test('steps have ascending order values', () => {
@@ -107,16 +120,12 @@ describe('RESEARCH_WORKFLOW template', () => {
 		expect(RESEARCH_WORKFLOW.steps).toHaveLength(2);
 	});
 
-	test('first step uses planner builtin', () => {
-		const step = RESEARCH_WORKFLOW.steps[0];
-		expect(step.agentRefType).toBe('builtin');
-		expect(step.agentRef).toBe('planner');
+	test('first step agentId placeholder is planner', () => {
+		expect(RESEARCH_WORKFLOW.steps[0].agentId).toBe('planner');
 	});
 
-	test('second step uses general builtin', () => {
-		const step = RESEARCH_WORKFLOW.steps[1];
-		expect(step.agentRefType).toBe('builtin');
-		expect(step.agentRef).toBe('general');
+	test('second step agentId placeholder is general', () => {
+		expect(RESEARCH_WORKFLOW.steps[1].agentId).toBe('general');
 	});
 
 	test('planner step exit gate is auto', () => {
@@ -128,7 +137,7 @@ describe('RESEARCH_WORKFLOW template', () => {
 	});
 
 	test('does not reference leader', () => {
-		expect(hasLeaderRef(RESEARCH_WORKFLOW)).toBe(false);
+		expect(hasLeaderAgentId(RESEARCH_WORKFLOW)).toBe(false);
 	});
 
 	test('steps have ascending order values', () => {
@@ -147,10 +156,8 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 		expect(REVIEW_ONLY_WORKFLOW.steps).toHaveLength(1);
 	});
 
-	test('step uses coder builtin', () => {
-		const step = REVIEW_ONLY_WORKFLOW.steps[0];
-		expect(step.agentRefType).toBe('builtin');
-		expect(step.agentRef).toBe('coder');
+	test('step agentId placeholder is coder', () => {
+		expect(REVIEW_ONLY_WORKFLOW.steps[0].agentId).toBe('coder');
 	});
 
 	test('coder step exit gate is pr_review', () => {
@@ -158,7 +165,7 @@ describe('REVIEW_ONLY_WORKFLOW template', () => {
 	});
 
 	test('does not reference leader', () => {
-		expect(hasLeaderRef(REVIEW_ONLY_WORKFLOW)).toBe(false);
+		expect(hasLeaderAgentId(REVIEW_ONLY_WORKFLOW)).toBe(false);
 	});
 
 	test('step order is 0', () => {
@@ -195,38 +202,55 @@ describe('getBuiltInWorkflows()', () => {
 		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
 
-	test('no template references leader as builtin agent', () => {
+	test('no template references leader as agent', () => {
 		for (const wf of getBuiltInWorkflows()) {
-			expect(hasLeaderRef(wf)).toBe(false);
+			expect(hasLeaderAgentId(wf)).toBe(false);
 		}
 	});
 
-	test('all builtin agent refs are valid (planner/coder/general)', () => {
-		const validRoles = new Set(['planner', 'coder', 'general']);
+	test('all agentId placeholders are valid builtin role names', () => {
 		for (const wf of getBuiltInWorkflows()) {
 			for (const step of wf.steps) {
-				if (step.agentRefType === 'builtin') {
-					expect(validRoles.has(step.agentRef)).toBe(true);
-				}
+				expect(VALID_BUILTIN_ROLES.has(step.agentId)).toBe(true);
 			}
 		}
 	});
 });
 
 // ---------------------------------------------------------------------------
-// seedDefaultWorkflow()
+// seedBuiltInWorkflows()
 // ---------------------------------------------------------------------------
 
-describe('seedDefaultWorkflow()', () => {
+describe('seedBuiltInWorkflows()', () => {
 	let db: BunDatabase;
 	let dir: string;
 	let manager: SpaceWorkflowManager;
 	const SPACE_ID = 'seed-test-space';
 
+	// Preset agent IDs seeded in the space
+	const PLANNER_ID = 'agent-planner-uuid';
+	const CODER_ID = 'agent-coder-uuid';
+	const GENERAL_ID = 'agent-general-uuid';
+
+	// Role resolver — mirrors what the real call site does
+	const roleMap: Record<BuiltinAgentRole, string> = {
+		planner: PLANNER_ID,
+		coder: CODER_ID,
+		general: GENERAL_ID,
+		reviewer: 'agent-reviewer-uuid',
+	};
+	const resolveAgentId = (role: BuiltinAgentRole): string | undefined => roleMap[role];
+
 	beforeEach(() => {
 		({ db, dir } = makeDb());
 		seedSpace(db, SPACE_ID);
+		// Seed preset agents so the manager's agentLookup (when wired) would find them
+		seedAgent(db, PLANNER_ID, SPACE_ID, 'Planner', 'planner');
+		seedAgent(db, CODER_ID, SPACE_ID, 'Coder', 'coder');
+		seedAgent(db, GENERAL_ID, SPACE_ID, 'General', 'general');
+
 		const repo = new SpaceWorkflowRepository(db);
+		// No agentLookup — seeder bypasses lookup by passing real IDs directly
 		manager = new SpaceWorkflowManager(repo);
 	});
 
@@ -243,50 +267,75 @@ describe('seedDefaultWorkflow()', () => {
 		}
 	});
 
-	test('creates CODING_WORKFLOW for an empty space', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
+	test('seeds all three built-in templates for an empty space', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(1);
-		expect(workflows[0].name).toBe(CODING_WORKFLOW.name);
+		expect(workflows).toHaveLength(3);
 	});
 
-	test('seeded workflow has the planner and coder steps', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
-		const [wf] = manager.listWorkflows(SPACE_ID);
-		expect(wf.steps).toHaveLength(2);
-		expect(wf.steps[0].agentRef).toBe('planner');
-		expect(wf.steps[1].agentRef).toBe('coder');
+	test('seeded workflow names match all three templates', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const names = manager.listWorkflows(SPACE_ID).map((w) => w.name);
+		expect(names).toContain(CODING_WORKFLOW.name);
+		expect(names).toContain(RESEARCH_WORKFLOW.name);
+		expect(names).toContain(REVIEW_ONLY_WORKFLOW.name);
 	});
 
-	test('seeded workflow has human_approval exit gate on planner step', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
-		const [wf] = manager.listWorkflows(SPACE_ID);
-		expect(wf.steps[0].exitGate?.type).toBe('human_approval');
+	test('CODING_WORKFLOW seeded correctly — planner + coder steps with real agent IDs', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
+		expect(wf).toBeDefined();
+		expect(wf!.steps).toHaveLength(2);
+		expect(wf!.steps[0].agentId).toBe(PLANNER_ID);
+		expect(wf!.steps[1].agentId).toBe(CODER_ID);
 	});
 
-	test('seeded workflow has pr_review exit gate on coder step', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
-		const [wf] = manager.listWorkflows(SPACE_ID);
-		expect(wf.steps[1].exitGate?.type).toBe('pr_review');
+	test('CODING_WORKFLOW seeded with human_approval + pr_review gates', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === CODING_WORKFLOW.name);
+		expect(wf!.steps[0].exitGate?.type).toBe('human_approval');
+		expect(wf!.steps[1].exitGate?.type).toBe('pr_review');
 	});
 
-	test('seeded workflow gets a real spaceId assigned', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
-		const [wf] = manager.listWorkflows(SPACE_ID);
-		expect(wf.spaceId).toBe(SPACE_ID);
+	test('RESEARCH_WORKFLOW seeded correctly — planner + general with auto gates', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === RESEARCH_WORKFLOW.name);
+		expect(wf).toBeDefined();
+		expect(wf!.steps).toHaveLength(2);
+		expect(wf!.steps[0].agentId).toBe(PLANNER_ID);
+		expect(wf!.steps[1].agentId).toBe(GENERAL_ID);
+		expect(wf!.steps[0].exitGate?.type).toBe('auto');
+		expect(wf!.steps[1].exitGate?.type).toBe('auto');
 	});
 
-	test('seeded workflow gets a real id assigned (non-empty)', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
-		const [wf] = manager.listWorkflows(SPACE_ID);
-		expect(wf.id).toBeTruthy();
+	test('REVIEW_ONLY_WORKFLOW seeded correctly — single coder step with pr_review gate', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		const wf = manager.listWorkflows(SPACE_ID).find((w) => w.name === REVIEW_ONLY_WORKFLOW.name);
+		expect(wf).toBeDefined();
+		expect(wf!.steps).toHaveLength(1);
+		expect(wf!.steps[0].agentId).toBe(CODER_ID);
+		expect(wf!.steps[0].exitGate?.type).toBe('pr_review');
 	});
 
-	test('is idempotent — second call does not create another workflow', async () => {
-		await seedDefaultWorkflow(SPACE_ID, manager);
-		await seedDefaultWorkflow(SPACE_ID, manager);
+	test('all seeded workflows have the real spaceId assigned', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.spaceId).toBe(SPACE_ID);
+		}
+	});
+
+	test('all seeded workflows have non-empty ids assigned', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		for (const wf of manager.listWorkflows(SPACE_ID)) {
+			expect(wf.id).toBeTruthy();
+		}
+	});
+
+	test('is idempotent — second call does not create additional workflows', async () => {
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 		const workflows = manager.listWorkflows(SPACE_ID);
-		expect(workflows).toHaveLength(1);
+		expect(workflows).toHaveLength(3);
 	});
 
 	test('is idempotent — leaves user-created workflows untouched', async () => {
@@ -294,10 +343,10 @@ describe('seedDefaultWorkflow()', () => {
 		manager.createWorkflow({
 			spaceId: SPACE_ID,
 			name: 'My Custom Workflow',
-			steps: [{ name: 'Code', agentRefType: 'builtin', agentRef: 'coder' }],
+			steps: [{ name: 'Code', agentId: CODER_ID }],
 		});
 
-		await seedDefaultWorkflow(SPACE_ID, manager);
+		await seedBuiltInWorkflows(SPACE_ID, manager, resolveAgentId);
 
 		const workflows = manager.listWorkflows(SPACE_ID);
 		expect(workflows).toHaveLength(1);

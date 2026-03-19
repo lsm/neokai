@@ -16,7 +16,7 @@ export {
 	RESEARCH_WORKFLOW,
 	REVIEW_ONLY_WORKFLOW,
 	getBuiltInWorkflows,
-	seedDefaultWorkflow,
+	seedBuiltInWorkflows,
 } from './workflows/built-in-workflows';
 
 // Types — re-exported from @neokai/shared for convenience

@@ -6,45 +6,16 @@
  *
  * Design notes:
  * - Leader is always implicit in SpaceRuntime — never a workflow step.
- * - Templates use placeholder `id` / `spaceId` (empty strings); the seeding
- *   utility stamps in the real spaceId at creation time.
- * - Steps carry stable template-scoped IDs so that the in-memory template
- *   objects satisfy the `SpaceWorkflow` shape.
+ * - Templates use placeholder `id` / `spaceId` (empty strings) and role names
+ *   as `agentId` placeholders ('planner', 'coder', 'general'). These are
+ *   replaced with real SpaceAgent UUIDs by `seedBuiltInWorkflows`.
+ * - At Space creation time, preset SpaceAgent records are seeded for each
+ *   BuiltinAgentRole. `seedBuiltInWorkflows` must be called after those agents
+ *   exist so that the `agentId` values resolve correctly.
  */
 
-import type { SpaceWorkflow, WorkflowStepInput } from '@neokai/shared';
+import type { BuiltinAgentRole, SpaceWorkflow, WorkflowStepInput } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
-
-// ---------------------------------------------------------------------------
-// Template helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Converts SpaceWorkflow steps to WorkflowStepInput[] (drops id/order)
- * so they can be passed to SpaceWorkflowManager.createWorkflow().
- */
-function stepsToInputs(steps: SpaceWorkflow['steps']): WorkflowStepInput[] {
-	return steps.map((s): WorkflowStepInput => {
-		if (s.agentRefType === 'custom') {
-			return {
-				name: s.name,
-				agentRefType: 'custom',
-				agentRef: s.agentRef,
-				entryGate: s.entryGate,
-				exitGate: s.exitGate,
-				instructions: s.instructions,
-			};
-		}
-		return {
-			name: s.name,
-			agentRefType: 'builtin',
-			agentRef: s.agentRef,
-			entryGate: s.entryGate,
-			exitGate: s.exitGate,
-			instructions: s.instructions,
-		};
-	});
-}
 
 // ---------------------------------------------------------------------------
 // Built-in templates
@@ -57,7 +28,8 @@ function stepsToInputs(steps: SpaceWorkflow['steps']): WorkflowStepInput[] {
  * - Planner produces a plan; human must approve before coding begins.
  * - Coder implements the plan; a PR review is required before the run completes.
  *
- * Leader is implicit per group — not modelled as a step.
+ * Steps use role names as `agentId` placeholders. Call `seedBuiltInWorkflows`
+ * to persist the workflow with real SpaceAgent IDs.
  */
 export const CODING_WORKFLOW: SpaceWorkflow = {
 	id: '',
@@ -69,8 +41,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: 'tpl-coding-planner',
 			name: 'Plan',
-			agentRefType: 'builtin',
-			agentRef: 'planner',
+			agentId: 'planner',
 			exitGate: {
 				type: 'human_approval',
 				description: 'Review and approve the plan before coding begins',
@@ -80,8 +51,7 @@ export const CODING_WORKFLOW: SpaceWorkflow = {
 		{
 			id: 'tpl-coding-coder',
 			name: 'Code',
-			agentRefType: 'builtin',
-			agentRef: 'coder',
+			agentId: 'coder',
 			exitGate: {
 				type: 'pr_review',
 				description: 'Wait for PR review and approval before completing',
@@ -112,8 +82,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			id: 'tpl-research-planner',
 			name: 'Plan Research',
-			agentRefType: 'builtin',
-			agentRef: 'planner',
+			agentId: 'planner',
 			exitGate: {
 				type: 'auto',
 				description: 'Automatically advance after planning is complete',
@@ -123,8 +92,7 @@ export const RESEARCH_WORKFLOW: SpaceWorkflow = {
 		{
 			id: 'tpl-research-general',
 			name: 'Research',
-			agentRefType: 'builtin',
-			agentRef: 'general',
+			agentId: 'general',
 			exitGate: {
 				type: 'auto',
 				description: 'Automatically complete after research is done',
@@ -155,8 +123,7 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 		{
 			id: 'tpl-review-coder',
 			name: 'Code',
-			agentRefType: 'builtin',
-			agentRef: 'coder',
+			agentId: 'coder',
 			exitGate: {
 				type: 'pr_review',
 				description: 'Wait for PR review and approval before completing',
@@ -177,27 +144,41 @@ export const REVIEW_ONLY_WORKFLOW: SpaceWorkflow = {
 /**
  * Returns all built-in workflow templates.
  *
- * The returned objects have empty `id` and `spaceId` fields — they are
- * templates, not persisted entities. Callers that need real workflows must
- * seed them into a Space via `seedDefaultWorkflow` or `createWorkflow`.
+ * The returned objects have empty `id` and `spaceId` fields and use role names
+ * (e.g., `'planner'`, `'coder'`, `'general'`) as `agentId` placeholders.
+ * They are templates, not persisted entities. Call `seedBuiltInWorkflows`
+ * to persist them with real SpaceAgent IDs for a given space.
  */
 export function getBuiltInWorkflows(): SpaceWorkflow[] {
 	return [CODING_WORKFLOW, RESEARCH_WORKFLOW, REVIEW_ONLY_WORKFLOW];
 }
 
 /**
- * Seeds `CODING_WORKFLOW` as the default workflow for the given space.
+ * Seeds all three built-in workflow templates into the given space.
+ *
+ * Each template step's `agentId` placeholder (e.g., `'planner'`, `'coder'`,
+ * `'general'`) is resolved to a real SpaceAgent UUID via `resolveAgentId`.
+ * If a role cannot be resolved, that step is skipped and the workflow is
+ * still created — the unresolved step will use the placeholder string.
  *
  * Idempotent: if the space already has at least one workflow, this is a no-op.
- * (The assumption is that any existing workflow was intentionally created,
- * either by a prior seed or by the user.)
  *
  * NOTE: This function is NOT wired to a call site yet — that happens in
- * Task 4.2 (inside the `space.create` RPC handler).
+ * Task 4.2 (inside the `space.create` RPC handler, after preset agents are
+ * seeded). The resolver should map BuiltinAgentRole → real SpaceAgent ID.
+ *
+ * Example call site:
+ * ```ts
+ * const agents = spaceAgentManager.listBySpaceId(spaceId);
+ * await seedBuiltInWorkflows(spaceId, workflowManager, (role) =>
+ *   agents.find(a => a.role === role)?.id
+ * );
+ * ```
  */
-export async function seedDefaultWorkflow(
+export async function seedBuiltInWorkflows(
 	spaceId: string,
-	workflowManager: SpaceWorkflowManager
+	workflowManager: SpaceWorkflowManager,
+	resolveAgentId: (role: BuiltinAgentRole) => string | undefined
 ): Promise<void> {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
@@ -205,12 +186,23 @@ export async function seedDefaultWorkflow(
 		return;
 	}
 
-	workflowManager.createWorkflow({
-		spaceId,
-		name: CODING_WORKFLOW.name,
-		description: CODING_WORKFLOW.description,
-		steps: stepsToInputs(CODING_WORKFLOW.steps),
-		rules: [],
-		tags: [...CODING_WORKFLOW.tags],
-	});
+	for (const template of getBuiltInWorkflows()) {
+		const steps: WorkflowStepInput[] = template.steps.map((s) => ({
+			name: s.name,
+			// Resolve role placeholder to real agent ID; fall back to placeholder if unresolvable.
+			agentId: resolveAgentId(s.agentId as BuiltinAgentRole) ?? s.agentId,
+			entryGate: s.entryGate,
+			exitGate: s.exitGate,
+			instructions: s.instructions,
+		}));
+
+		workflowManager.createWorkflow({
+			spaceId,
+			name: template.name,
+			description: template.description,
+			steps,
+			rules: [],
+			tags: [...template.tags],
+		});
+	}
 }
