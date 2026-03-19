@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for Space URL routing
  *
@@ -22,6 +21,9 @@ import {
 	navigateToSpaceSession,
 	navigateToSpaceTask,
 	navigateToSpaces,
+	navigateToSession,
+	navigateToRoom,
+	navigateToSessions,
 	initializeRouter,
 	cleanupRouter,
 } from '../router';
@@ -395,5 +397,133 @@ describe('Popstate handling for space routes', () => {
 		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
 		expect(currentRoomIdSignal.value).toBeNull();
 		expect(navSectionSignal.value).toBe('spaces');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// P0 regression: existing navigate functions must clear space signals
+// ---------------------------------------------------------------------------
+
+describe('navigateToSession clears space signals', () => {
+	it('clears space signals when navigating to a session from a space', async () => {
+		// Start on a space
+		navigateToSpace(SPACE_ID);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		mockLocation.pathname = `/space/${SPACE_ID}`;
+
+		navigateToSession(SESSION_ID);
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(navSectionSignal.value).toBe('chats');
+	});
+
+	it('clears space signals on same-path early-return branch', () => {
+		// Pre-set space signals to simulate stale state
+		currentSpaceIdSignal.value = SPACE_ID;
+		currentSpaceSessionIdSignal.value = SESSION_ID;
+		currentSpaceTaskIdSignal.value = TASK_ID;
+		mockLocation.pathname = `/session/${SESSION_ID}`;
+
+		navigateToSession(SESSION_ID);
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+	});
+});
+
+describe('navigateToRoom clears space signals', () => {
+	it('clears space signals when navigating to a room from a space', async () => {
+		navigateToSpace(SPACE_ID);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		mockLocation.pathname = `/space/${SPACE_ID}`;
+
+		const ROOM_ID = '880e8400-e29b-41d4-a716-446655440003';
+		navigateToRoom(ROOM_ID);
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(navSectionSignal.value).toBe('rooms');
+	});
+
+	it('clears space signals on same-path early-return branch', () => {
+		const ROOM_ID = '880e8400-e29b-41d4-a716-446655440003';
+		currentSpaceIdSignal.value = SPACE_ID;
+		mockLocation.pathname = `/room/${ROOM_ID}`;
+
+		navigateToRoom(ROOM_ID);
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+	});
+});
+
+describe('navigateToSessions clears space signals', () => {
+	it('clears space signals when navigating to /sessions from a space', async () => {
+		navigateToSpace(SPACE_ID);
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		mockLocation.pathname = `/space/${SPACE_ID}`;
+
+		navigateToSessions();
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+		expect(navSectionSignal.value).toBe('chats');
+	});
+
+	it('clears space signals on same-path early-return branch', () => {
+		currentSpaceIdSignal.value = SPACE_ID;
+		mockLocation.pathname = '/sessions';
+
+		navigateToSessions();
+
+		expect(currentSpaceIdSignal.value).toBeNull();
+		expect(currentSpaceSessionIdSignal.value).toBeNull();
+		expect(currentSpaceTaskIdSignal.value).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// P1 regression: same-path early-return branches in navigateToSpace* set navSection
+// ---------------------------------------------------------------------------
+
+describe('navigateToSpace same-path branch sets navSection', () => {
+	it('sets navSection to spaces even when already on the same space path', () => {
+		mockLocation.pathname = `/space/${SPACE_ID}`;
+		navSectionSignal.value = 'home'; // simulate out-of-sync state
+
+		navigateToSpace(SPACE_ID);
+
+		expect(navSectionSignal.value).toBe('spaces');
+		expect(mockHistory.pushState).not.toHaveBeenCalled();
+	});
+});
+
+describe('navigateToSpaceSession same-path branch sets navSection', () => {
+	it('sets navSection to spaces even when already on the same space/session path', () => {
+		mockLocation.pathname = `/space/${SPACE_ID}/session/${SESSION_ID}`;
+		navSectionSignal.value = 'home';
+
+		navigateToSpaceSession(SPACE_ID, SESSION_ID);
+
+		expect(navSectionSignal.value).toBe('spaces');
+		expect(mockHistory.pushState).not.toHaveBeenCalled();
+	});
+});
+
+describe('navigateToSpaceTask same-path branch sets navSection', () => {
+	it('sets navSection to spaces even when already on the same space/task path', () => {
+		mockLocation.pathname = `/space/${SPACE_ID}/task/${TASK_ID}`;
+		navSectionSignal.value = 'home';
+
+		navigateToSpaceTask(SPACE_ID, TASK_ID);
+
+		expect(navSectionSignal.value).toBe('spaces');
+		expect(mockHistory.pushState).not.toHaveBeenCalled();
 	});
 });

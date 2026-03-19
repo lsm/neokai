@@ -212,6 +212,9 @@ export function navigateToSession(sessionId: string, replace = false): void {
 	if (currentPath === targetPath) {
 		// Still update the signal in case it's out of sync
 		currentSessionIdSignal.value = sessionId;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		return;
 	}
 
@@ -228,6 +231,9 @@ export function navigateToSession(sessionId: string, replace = false): void {
 
 		// Update the signal
 		currentSessionIdSignal.value = sessionId;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
@@ -299,6 +305,9 @@ export function navigateToRoom(roomId: string, replace = false): void {
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		return;
 	}
 
@@ -313,11 +322,14 @@ export function navigateToRoom(roomId: string, replace = false): void {
 			targetPath
 		);
 
-		// Update the signals - room takes priority, clear session, room session, and task
+		// Update the signals - room takes priority, clear session, room session, task, and space
 		currentRoomIdSignal.value = roomId;
 		currentRoomSessionIdSignal.value = null;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
@@ -350,6 +362,9 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		currentRoomSessionIdSignal.value = sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		return;
 	}
 
@@ -369,6 +384,9 @@ export function navigateToRoomSession(roomId: string, sessionId: string, replace
 		currentRoomSessionIdSignal.value = sessionId;
 		currentRoomTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} finally {
 		// Use setTimeout to break the synchronous cycle
@@ -399,6 +417,9 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		currentRoomTaskIdSignal.value = taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		return;
 	}
 
@@ -412,6 +433,9 @@ export function navigateToRoomTask(roomId: string, taskId: string, replace = fal
 		currentRoomTaskIdSignal.value = taskId;
 		currentRoomSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		navSectionSignal.value = 'rooms';
 	} finally {
 		setTimeout(() => {
@@ -435,6 +459,9 @@ export function navigateToSessions(replace = false): void {
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		return;
 	}
 
@@ -447,6 +474,9 @@ export function navigateToSessions(replace = false): void {
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
 		currentRoomSessionIdSignal.value = null;
+		currentSpaceIdSignal.value = null;
+		currentSpaceSessionIdSignal.value = null;
+		currentSpaceTaskIdSignal.value = null;
 		navSectionSignal.value = 'chats';
 	} finally {
 		setTimeout(() => {
@@ -513,6 +543,7 @@ export function navigateToSpace(spaceId: string, replace = false): void {
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
 		return;
 	}
 
@@ -552,6 +583,7 @@ export function navigateToSpaceSession(spaceId: string, sessionId: string, repla
 		currentSpaceTaskIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
 		return;
 	}
 
@@ -591,6 +623,7 @@ export function navigateToSpaceTask(spaceId: string, taskId: string, replace = f
 		currentSpaceSessionIdSignal.value = null;
 		currentSessionIdSignal.value = null;
 		currentRoomIdSignal.value = null;
+		navSectionSignal.value = 'spaces';
 		return;
 	}
 
