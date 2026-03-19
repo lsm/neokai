@@ -234,7 +234,7 @@ export function createRoomAgentToolHandlers(config: RoomAgentToolsConfig) {
 				if (activeGroup && activeGroup.completedAt === null) {
 					return jsonResult({
 						success: false,
-						error: `Cannot cancel in_progress task ${args.task_id} without runtime service — the active worker session would not be stopped.`,
+						error: `Cannot cancel task ${args.task_id} (status '${task.status}') without runtime service — the active worker session would not be stopped.`,
 					});
 				}
 			}
