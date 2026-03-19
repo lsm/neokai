@@ -443,12 +443,12 @@ describe('resolveAgentInit', () => {
 		};
 	}
 
-	it('uses createCustomAgentInit when task has customAgentId', () => {
-		const customAgent = makeAgent({ id: 'custom-agent-1', name: 'MyAgent' });
-		const manager = makeMockAgentManager(customAgent);
+	it('resolves agent by ID and calls createCustomAgentInit', () => {
+		const agent = makeAgent({ id: 'agent-1', name: 'MyAgent' });
+		const manager = makeMockAgentManager(agent);
 
 		const config = makeResolveConfig({
-			task: makeTask({ customAgentId: 'custom-agent-1' }),
+			task: makeTask({ customAgentId: 'agent-1' }),
 			agentManager: manager,
 		});
 
@@ -459,25 +459,39 @@ describe('resolveAgentInit', () => {
 		expect(init.systemPrompt?.append).toContain('MyAgent');
 	});
 
-	it('throws when customAgentId is set but agent not found', () => {
-		const manager = makeMockAgentManager(null); // agent not found
+	it('always calls createCustomAgentInit — no builtin fork', () => {
+		// A preset/seeded agent is just a regular SpaceAgent record.
+		// resolveAgentInit resolves it by ID identically to any other agent.
+		const presetAgent = makeAgent({ id: 'preset-coder', name: 'Coder', role: 'coder' });
+		const manager = makeMockAgentManager(presetAgent);
+
+		const config = makeResolveConfig({
+			task: makeTask({ customAgentId: 'preset-coder' }),
+			agentManager: manager,
+		});
+
+		const init = resolveAgentInit(config);
+		expect(init.sessionId).toBe('session-resolve');
+		expect(init.systemPrompt?.append).toContain('Coder Agent');
+	});
+
+	it('throws when task has no agentId', () => {
+		const config = makeResolveConfig({
+			task: makeTask({ customAgentId: undefined }),
+		});
+
+		expect(() => resolveAgentInit(config)).toThrow('has no agentId');
+	});
+
+	it('throws when agent ID not found in manager', () => {
+		const manager = makeMockAgentManager(null);
 
 		const config = makeResolveConfig({
 			task: makeTask({ customAgentId: 'missing-agent' }),
 			agentManager: manager,
 		});
 
-		expect(() => resolveAgentInit(config)).toThrow('Custom agent not found: missing-agent');
-	});
-
-	it('throws for built-in agent path (not yet implemented, M4)', () => {
-		const config = makeResolveConfig({
-			task: makeTask({ customAgentId: undefined }), // no custom agent
-		});
-
-		expect(() => resolveAgentInit(config)).toThrow(
-			'Built-in Space agent factories are not yet implemented'
-		);
+		expect(() => resolveAgentInit(config)).toThrow('Agent not found: missing-agent');
 	});
 
 	it('passes workflowRun context to createCustomAgentInit', () => {

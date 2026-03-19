@@ -326,16 +326,18 @@ export interface SpaceSessionGroup {
 // ============================================================================
 
 /**
- * Builtin agent roles available in the Space system.
+ * Preset agent roles — used as a UI label/tag that describes the agent's purpose
+ * and drives default system prompt behavior in `buildCustomAgentSystemPrompt`.
  *
- * NOTE: 'leader' is intentionally NOT a valid agent role — the Leader agent is
- * always implicit and managed by SpaceRuntime. User-configurable agents are
- * limited to worker roles: 'planner', 'coder', 'general', 'reviewer'.
+ * This is metadata only — it does NOT gate code routing. All agents (preset or
+ * user-created) are regular `SpaceAgent` records resolved by ID at runtime.
+ * SpaceRuntime seeds one agent per role when a new Space is created; users may
+ * rename, reconfigure, or delete any of them.
  *
  * - 'coder': Standard implementation worker (git workflow, PRs, tests)
- * - 'general': General-purpose worker (same as coder, broader scope)
- * - 'planner': Orchestrator-style agent (reserved for future; treated as worker)
- * - 'reviewer': Specialized worker for reviewing code/PRs (includes review-specific instructions)
+ * - 'general': General-purpose worker (broader scope, same toolset as coder)
+ * - 'planner': Planning/orchestration agent (treated as worker for now)
+ * - 'reviewer': Review-specialist worker (review-specific prompt additions)
  */
 export type BuiltinAgentRole = 'planner' | 'coder' | 'general' | 'reviewer';
 
@@ -464,28 +466,20 @@ export interface WorkflowGate {
 }
 
 /**
- * Discriminated union encoding the agent reference within a workflow step.
- *
- * Using a union (rather than two separate fields) lets TypeScript enforce that
- * 'leader' is rejected at compile time when agentRefType is 'builtin'.
- *
- * - `builtin`: agentRef is one of the BuiltinAgentRole values ('planner', 'coder', 'general').
- *   NOTE: 'leader' is NOT a valid builtin agentRef — Leader is always implicit in SpaceRuntime.
- * - `custom`: agentRef is the UUID (`id`) of a SpaceAgent defined in this Space.
- */
-export type WorkflowStepAgent =
-	| { agentRefType: 'builtin'; agentRef: BuiltinAgentRole }
-	| { agentRefType: 'custom'; agentRef: string };
-
-/**
  * A single step within a SpaceWorkflow.
  * Each step runs one agent and optionally has entry/exit gates.
+ *
+ * All agents are referenced by ID — there is no separate builtin/custom distinction.
+ * Preset agents (coder, general, planner, reviewer) seeded at Space creation time
+ * are regular SpaceAgent records that happen to have a well-known role label.
  */
-export type WorkflowStep = WorkflowStepAgent & {
+export interface WorkflowStep {
 	/** Unique identifier for this step (stable across renames) */
 	id: string;
 	/** Human-readable name for display */
 	name: string;
+	/** ID of the SpaceAgent assigned to execute this step */
+	agentId: string;
 	/**
 	 * Gate checked before this step begins execution.
 	 * If absent, the step starts automatically when the previous step's exit gate passes.
@@ -500,7 +494,7 @@ export type WorkflowStep = WorkflowStepAgent & {
 	instructions?: string;
 	/** Zero-based execution order within the workflow */
 	order: number;
-};
+}
 
 /**
  * A rule that applies to workflow execution, similar to room-level rules.
@@ -523,26 +517,11 @@ export interface WorkflowRule {
 }
 
 /**
- * Distributive Omit that preserves discriminated union structure.
- *
- * TypeScript's built-in `Omit<T, K>` does not distribute over union members —
- * when applied to an intersection type that wraps a union (like `WorkflowStep`),
- * it collapses the discriminant and silently drops union enforcement.
- * `DistributiveOmit` maps over each union branch individually so that
- * discriminated-union invariants are preserved in the result.
- */
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
-/**
  * Input shape for a workflow step at creation time.
  * `id` and `order` are backend-assigned and must not be provided by callers.
  * The backend assigns `id` (UUID) and derives `order` from the array position.
- *
- * Uses `DistributiveOmit` (not `Omit`) so that the `WorkflowStepAgent`
- * discriminated union is preserved: TypeScript will still reject
- * `agentRef: 'leader'` when `agentRefType: 'builtin'` at compile time.
  */
-export type WorkflowStepInput = DistributiveOmit<WorkflowStep, 'id' | 'order'>;
+export type WorkflowStepInput = Omit<WorkflowStep, 'id' | 'order'>;
 
 /**
  * Input shape for a workflow rule at creation time.

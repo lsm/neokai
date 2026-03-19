@@ -375,19 +375,16 @@ export interface ResolveAgentInitConfig {
 }
 
 /**
- * Resolve the correct AgentSessionInit for a Space task.
+ * Resolve the AgentSessionInit for a Space task by loading the assigned SpaceAgent.
  *
- * - If `task.customAgentId` is set: resolve the custom SpaceAgent and build
- *   a session init via `createCustomAgentInit()`.
- * - Otherwise: delegate to built-in agent factories (not yet implemented — M4).
+ * All agents — including the seeded preset agents (coder, general, planner, reviewer)
+ * — are regular `SpaceAgent` records resolved by ID. There is no separate builtin
+ * code path: every task must have a `customAgentId` that points to an agent row in
+ * the Space's agent table. SpaceRuntime is responsible for ensuring this is set
+ * (e.g. by seeding preset agents at Space creation and assigning one to each task).
  *
- * This helper is the single dispatch point for task-to-agent resolution in
- * SpaceRuntime (M4). It ensures custom agents take precedence over built-ins
- * when a custom agent is assigned.
- *
+ * @throws {Error} When `task.customAgentId` is unset — the task must have an agent.
  * @throws {Error} When `task.customAgentId` references a non-existent agent.
- * @throws {Error} When `task.customAgentId` is unset and built-in factories
- *   have not yet been implemented (M4 work).
  */
 export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionInit {
 	const {
@@ -400,29 +397,26 @@ export function resolveAgentInit(config: ResolveAgentInitConfig): AgentSessionIn
 		previousTaskSummaries,
 	} = config;
 
-	if (task.customAgentId) {
-		const customAgent = agentManager.getById(task.customAgentId);
-		if (!customAgent) {
-			throw new Error(`Custom agent not found: ${task.customAgentId} (task: ${task.id})`);
-		}
-
-		return createCustomAgentInit({
-			customAgent,
-			task,
-			workflowRun: workflowRun ?? null,
-			space,
-			sessionId,
-			workspacePath,
-			previousTaskSummaries,
-		});
+	if (!task.customAgentId) {
+		throw new Error(
+			`Task "${task.id}" has no agentId — assign a SpaceAgent to the task before calling resolveAgentInit()`
+		);
 	}
 
-	// Built-in agent factories for Space tasks are implemented in M4.
-	// For now, throw a descriptive error to avoid silent failures.
-	throw new Error(
-		`Built-in Space agent factories are not yet implemented (M4). ` +
-			`Task "${task.id}" has no customAgentId — assign a custom agent or wait for M4.`
-	);
+	const agent = agentManager.getById(task.customAgentId);
+	if (!agent) {
+		throw new Error(`Agent not found: ${task.customAgentId} (task: ${task.id})`);
+	}
+
+	return createCustomAgentInit({
+		customAgent: agent,
+		task,
+		workflowRun: workflowRun ?? null,
+		space,
+		sessionId,
+		workspacePath,
+		previousTaskSummaries,
+	});
 }
 
 // ============================================================================
