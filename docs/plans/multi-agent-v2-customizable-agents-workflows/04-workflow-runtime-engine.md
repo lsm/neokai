@@ -219,11 +219,23 @@ Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure
    - Track `runId → step → [SpaceTask records]` relationship
    - Any step failure (gate fails after retries) → run → `needs_attention`
 
-5. Wire `SpaceRuntimeService` into `DaemonAppContext`:
+5. Create RPC handler for starting workflow runs in `packages/daemon/src/lib/rpc-handlers/space-workflow-run-handlers.ts`:
+   - `spaceWorkflowRun.start { spaceId, workflowId?, title, description? }` → `{ run: SpaceWorkflowRun }`:
+     - If `workflowId` provided, validate it exists in the space
+     - If `workflowId` omitted, use space's default workflow (error if none)
+     - Creates `SpaceWorkflowRun` record via `SpaceWorkflowRunRepository`
+     - Calls `SpaceRuntimeService.createOrGetRuntime(spaceId)` then `runtime.startWorkflowRun()` to create the executor and first step's tasks
+     - Emits `space.workflowRun.created` event
+   - `spaceWorkflowRun.list { spaceId, status? }` → `{ runs: SpaceWorkflowRun[] }`
+   - `spaceWorkflowRun.get { id }` → `{ run: SpaceWorkflowRun }`
+   - `spaceWorkflowRun.cancel { id }` → `{ success }` — cancels run and all pending tasks
+   - Wire in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()`)
+
+6. Wire `SpaceRuntimeService` into `DaemonAppContext`:
    - Add as dependency alongside existing `RoomRuntimeService`
    - **No modifications to `RoomRuntimeService`** — just add `SpaceRuntimeService` as an additional registration
 
-6. Write unit tests:
+7. Write unit tests:
    - Runtime creation/disposal
    - Group metadata includes workflow info
    - Multi-step run tracking
@@ -231,6 +243,7 @@ Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure
 
 **Acceptance criteria:**
 - `SpaceRuntimeService` manages `SpaceRuntime` instances
+- `spaceWorkflowRun.start` RPC handler creates run and triggers first step task creation
 - Session groups (in `space_session_groups`) expose workflow metadata
 - Task events include step progression info
 - Multi-step workflow run lifecycle managed correctly

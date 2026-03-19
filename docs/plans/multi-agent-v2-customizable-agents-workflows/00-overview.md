@@ -123,4 +123,4 @@ Note: M5 builds a functional shell with placeholder states for the right pane (t
 
 ## Total Estimated Task Count
 
-24 tasks across 8 milestones.
+25 tasks across 8 milestones.
