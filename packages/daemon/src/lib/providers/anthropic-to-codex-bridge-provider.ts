@@ -416,9 +416,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	getModelForTier(tier: ModelTier): string | undefined {
 		// Routing policy:
-		//   opus    → gpt-5.4          (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
-		//   sonnet  → gpt-5.3-codex    (primary Codex model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
+		//   opus    → gpt-5.4           (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
+		//   sonnet  → gpt-5.3-codex     (primary Codex model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
 		//   haiku   → gpt-5.1-codex-mini (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
+		//   default → gpt-5.3-codex     (same as sonnet; no separate env var needed)
 		const map: Record<ModelTier, string> = {
 			opus: 'gpt-5.4',
 			sonnet: 'gpt-5.3-codex',
