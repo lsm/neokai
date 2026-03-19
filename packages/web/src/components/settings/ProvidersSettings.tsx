@@ -214,20 +214,19 @@ export function ProvidersSettings() {
 												Refresh Login
 											</Button>
 										)}
-										{/* Show Logout for authenticated providers where credentials are managed by NeoKai */}
+										{/* Show Logout for authenticated providers */}
 										{(provider.isAuthenticated ||
-											(provider.needsRefresh && refreshFailed.has(provider.id))) &&
-											provider.canLogout !== false && (
-												<Button
-													variant="secondary"
-													size="sm"
-													onClick={() => handleLogout(provider.id, provider.displayName)}
-													loading={pendingProvider === provider.id}
-													disabled={!!pendingProvider}
-												>
-													Logout
-												</Button>
-											)}
+											(provider.needsRefresh && refreshFailed.has(provider.id))) && (
+											<Button
+												variant="secondary"
+												size="sm"
+												onClick={() => handleLogout(provider.id, provider.displayName)}
+												loading={pendingProvider === provider.id}
+												disabled={!!pendingProvider}
+											>
+												Logout
+											</Button>
+										)}
 										{/* Show Login for unauthenticated providers */}
 										{!provider.isAuthenticated && !provider.needsRefresh && (
 											<Button

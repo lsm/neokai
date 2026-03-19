@@ -2,7 +2,7 @@
  * Unit tests for AnthropicToCodexBridgeProvider
  *
  * Covers:
- *  - getAuthStatus(): env var, file-based auth, missing credentials, missing binary
+ *  - getAuthStatus(): NeoKai OAuth only (env vars → unauthenticated), file-based auth, missing credentials, missing binary
  *  - getApiKey(): full discovery chain (env → ~/.neokai/auth.json → ~/.codex/auth.json)
  *  - importFromCodexAuth(): one-time migration scenarios (API key, OAuth with/without refresh)
  *  - buildSdkConfig(): per-workspace bridge server isolation and reuse
@@ -76,22 +76,28 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			await fs.rm(emptyDir, { recursive: true, force: true });
 		});
 
-		it('returns isAuthenticated=false when no credentials and no binary', async () => {
+		it('returns isAuthenticated=false when no credentials', async () => {
 			provider = makeProvider({}, emptyDir, emptyDir);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
-			expect(result.error).toContain('No credentials');
+			expect(result.error).toBeTruthy();
 		});
 
-		it('returns isAuthenticated=false with binary-not-found error when key set but no codex', async () => {
-			// Ensure a key is provided so we get past the credentials check
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-test' }, emptyDir, emptyDir);
+		it('returns isAuthenticated=false when only OPENAI_API_KEY env var is set (env vars are daemon/test only)', async () => {
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, emptyDir, emptyDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
-			// Two outcomes: CI/test machine either has codex or not.
-			if (!result.isAuthenticated) {
-				expect(result.error).toContain('codex binary not found');
-			}
-			// If codex IS installed the test is not meaningful but passes.
+			expect(result.isAuthenticated).toBe(false);
+		});
+
+		it('returns isAuthenticated=false when only CODEX_API_KEY env var is set (env vars are daemon/test only)', async () => {
+			provider = makeProvider(
+				{ CODEX_API_KEY: 'codex-env-key' },
+				emptyDir,
+				emptyDir,
+				fakeCodexFound
+			);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(false);
 		});
 
 		it('returns isAuthenticated=false with descriptive error when env vars are empty', async () => {
@@ -100,41 +106,25 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			expect(result.isAuthenticated).toBe(false);
 			expect(result.error).toBeTruthy();
 		});
-	});
 
-	// -------------------------------------------------------------------------
-	// getAuthStatus() — canLogout field
-	// -------------------------------------------------------------------------
-
-	describe('getAuthStatus() canLogout field', () => {
-		let tmpDir: string;
-
-		beforeEach(async () => {
-			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-codex-logout-test-'));
-		});
-
-		afterEach(async () => {
-			await fs.rm(tmpDir, { recursive: true, force: true });
-		});
-
-		it('canLogout is false when credentials come from OPENAI_API_KEY env var', async () => {
-			// fakeCodexFound bypasses the `which codex` subprocess so the test always reaches the canLogout code path
-			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir, fakeCodexFound);
+		it('returns isAuthenticated=false with binary-not-found error when NeoKai OAuth stored but codex missing', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				expires: Date.now() + 3600_000,
+			});
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexMissing);
 			const result = await provider.getAuthStatus();
-			expect(result.isAuthenticated).toBe(true);
-			expect(result.canLogout).toBe(false);
+			expect(result.isAuthenticated).toBe(false);
+			expect(result.error).toContain('codex binary not found');
 		});
 
-		it('canLogout is false when credentials come from CODEX_API_KEY env var', async () => {
-			provider = makeProvider({ CODEX_API_KEY: 'codex-env-key' }, tmpDir, tmpDir, fakeCodexFound);
-			const result = await provider.getAuthStatus();
-			expect(result.isAuthenticated).toBe(true);
-			expect(result.canLogout).toBe(false);
-		});
-
-		it('canLogout is true when OAuth credentials are stored in ~/.neokai/auth.json', async () => {
-			const neokaiDir = path.join(tmpDir, 'neokai');
-			const codexDir = path.join(tmpDir, 'codex');
+		it('returns isAuthenticated=true when NeoKai OAuth credentials in auth.json and codex found', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
 			await writeNeokaiAuth(neokaiDir, {
 				type: 'oauth',
 				access: 'oauth-access-token',
@@ -145,16 +135,32 @@ describe('AnthropicToCodexBridgeProvider', () => {
 			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(true);
-			expect(result.canLogout).toBe(true);
+			expect(result.method).toBe('oauth');
 		});
 
-		it('canLogout is undefined (not set) when not authenticated', async () => {
-			// fakeCodexMissing simulates codex not installed — getAuthStatus returns isAuthenticated: false
-			provider = makeProvider({}, tmpDir, tmpDir, fakeCodexMissing);
+		it('returns isAuthenticated=false for api_key type in auth.json (not NeoKai OAuth)', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, { type: 'api_key', access: 'sk-imported-key' });
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
 			const result = await provider.getAuthStatus();
 			expect(result.isAuthenticated).toBe(false);
-			// canLogout is not set when not authenticated
-			expect(result.canLogout).toBeUndefined();
+		});
+
+		it('sets needsRefresh when NeoKai OAuth token is expired', async () => {
+			const neokaiDir = path.join(emptyDir, 'neokai');
+			const codexDir = path.join(emptyDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				// expires 1 minute ago (past the 5-min buffer)
+				expires: Date.now() - 60_000,
+			});
+			provider = makeProvider({}, neokaiDir, codexDir, fakeCodexFound);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(true);
+			expect(result.needsRefresh).toBe(true);
 		});
 	});
 

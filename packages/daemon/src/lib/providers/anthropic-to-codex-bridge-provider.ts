@@ -5,11 +5,13 @@
  * speaks the Anthropic Messages API (POST /v1/messages with SSE streaming)
  * backed by `codex app-server`.
  *
- * Authentication is discovered in priority order:
- *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable
+ * Authentication discovery for API calls (priority order):
+ *   1. OPENAI_API_KEY / CODEX_API_KEY environment variable (daemon/test use only)
  *   2. ~/.neokai/auth.json  — NeoKai's own auth store (key "openai")
  *   3. ~/.codex/auth.json   — imported once into ~/.neokai/auth.json (for users who ran `codex login`)
  *
+ * UI authentication requires NeoKai-managed OAuth credentials in ~/.neokai/auth.json.
+ * Env var credentials are used internally for API calls but not shown in the UI.
  * OAuth credentials obtained through NeoKai's login flow are written to
  * ~/.neokai/auth.json so they persist across sessions.
  *
@@ -367,13 +369,15 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	}
 
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
-		const auth = await this.getBridgeAuth();
-
-		if (!auth) {
+		// Only NeoKai-managed OAuth credentials are recognised in the UI.
+		// OPENAI_API_KEY / CODEX_API_KEY env vars are for daemon/test use only.
+		const neokaiCreds = await this.loadCredentials();
+		if (!neokaiCreds || neokaiCreds.type !== 'oauth') {
 			return {
 				isAuthenticated: false,
-				error:
-					'No credentials found. Set OPENAI_API_KEY or CODEX_API_KEY, run `kai openai login`, or log in via `codex login`.',
+				error: neokaiCreds
+					? 'API key credentials are not supported via the UI. Click Login to authenticate with OpenAI OAuth.'
+					: 'Not logged in. Click Login to authenticate with OpenAI.',
 			};
 		}
 
@@ -385,37 +389,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			};
 		}
 
-		// Credentials from env vars cannot be removed via the UI
-		const fromEnvVar = !!(this.env.OPENAI_API_KEY || this.env.CODEX_API_KEY);
-
-		if (auth.type === 'api_key') {
-			return { isAuthenticated: true, method: 'api_key', canLogout: !fromEnvVar };
-		}
-
-		const neokaiCreds = await this.loadCredentials();
-		if (neokaiCreds?.type === 'oauth') {
-			if (neokaiCreds.expires) {
-				const bufferMs = 5 * 60 * 1000;
-				if (Date.now() >= neokaiCreds.expires - bufferMs) {
-					return {
-						isAuthenticated: true,
-						method: 'oauth',
-						expiresAt: neokaiCreds.expires,
-						needsRefresh: true,
-						canLogout: true,
-					};
-				}
+		if (neokaiCreds.expires) {
+			const bufferMs = 5 * 60 * 1000;
+			if (Date.now() >= neokaiCreds.expires - bufferMs) {
 				return {
 					isAuthenticated: true,
 					method: 'oauth',
 					expiresAt: neokaiCreds.expires,
-					canLogout: true,
+					needsRefresh: true,
 				};
 			}
-			return { isAuthenticated: true, method: 'oauth', canLogout: true };
+			return { isAuthenticated: true, method: 'oauth', expiresAt: neokaiCreds.expires };
 		}
 
-		return { isAuthenticated: true, method: 'oauth', canLogout: true };
+		return { isAuthenticated: true, method: 'oauth' };
 	}
 
 	async getModels(): Promise<ModelInfo[]> {

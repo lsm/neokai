@@ -222,11 +222,9 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 	}
 
 	async isAvailable(): Promise<boolean> {
-		const token = await this.resolveGitHubToken();
-		// Classic PATs (ghp_) are rejected by the Copilot CLI — mirror the same guard
-		// as getAuthStatus() so that isAvailable() and getAuthStatus() are consistent.
-		// Without this, a ghp_ token causes models to appear in the picker while the
-		// provider is simultaneously marked unauthenticated in the auth panel.
+		// Only NeoKai-managed credentials (auth.json) make the provider available in the UI.
+		// Env vars and external sources (gh CLI, hosts.yml) are for daemon/test use only.
+		const token = await this.loadStoredGitHubToken();
 		if (!token || token.startsWith('ghp_')) return false;
 		return true;
 	}
@@ -308,21 +306,19 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
 	/**
 	 * Get current authentication status.
-	 * Uses resolveGitHubToken() — does NOT fall back to GITHUB_TOKEN (Actions token).
+	 * Only NeoKai-managed credentials (auth.json) are considered authenticated.
+	 * Env vars and external sources (gh CLI, hosts.yml) are for daemon/test use only.
 	 */
 	async getAuthStatus(): Promise<ProviderAuthStatusInfo> {
 		try {
-			const token = await this.resolveGitHubToken();
+			const token = await this.loadStoredGitHubToken();
 			if (!token) {
 				return {
 					isAuthenticated: false,
-					error:
-						'No GitHub token found. Set COPILOT_GITHUB_TOKEN, run `gh auth login`, or use NeoKai OAuth.',
+					error: 'Not logged in. Click Login to authenticate with GitHub Copilot.',
 				};
 			}
 			// Classic PATs (ghp_) are explicitly rejected by the Copilot CLI internals.
-			// Returning isAuthenticated: false here gives an immediate, actionable error
-			// instead of a confusing "Not logged in" from the CLI subprocess.
 			if (token.startsWith('ghp_')) {
 				return {
 					isAuthenticated: false,
@@ -331,30 +327,13 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 						'Use a fine-grained PAT with Copilot access, or run the OAuth login flow.',
 				};
 			}
-			// canLogout: true when auth.json has a stored NeoKai-managed token.
-			// auth.json takes priority over env vars in discoverGitHubToken, so if a
-			// stored token exists it is the active credential and logout will succeed.
-			const canLogout = await this.hasNeoKaiManagedCredentials();
-			return { isAuthenticated: true, needsRefresh: false, canLogout };
+			return { isAuthenticated: true, needsRefresh: false };
 		} catch (error) {
 			return {
 				isAuthenticated: false,
 				error: error instanceof Error ? error.message : 'Unknown error',
 			};
 		}
-	}
-
-	/**
-	 * Returns true when NeoKai has stored credentials in auth.json that are the
-	 * active token source. auth.json is checked first in discoverGitHubToken(), so
-	 * if a stored token exists it is what is currently being used — logout will work.
-	 * Used to determine whether the Logout button in the UI will have any effect.
-	 */
-	private async hasNeoKaiManagedCredentials(): Promise<boolean> {
-		// auth.json has highest priority in discoverGitHubToken — if a stored token
-		// exists, that is the active credential and logout will remove it successfully.
-		const stored = await this.loadStoredGitHubToken();
-		return !!stored;
 	}
 
 	/**
