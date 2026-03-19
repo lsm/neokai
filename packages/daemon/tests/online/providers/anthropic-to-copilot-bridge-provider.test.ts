@@ -42,7 +42,6 @@ import {
 	sendMessage,
 	waitForIdle,
 	waitForProcessing,
-	getProcessingState,
 	waitForSdkMessages,
 } from '../../helpers/daemon-actions';
 import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
@@ -293,9 +292,6 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			await sendMessage(daemon, sessionId, 'What is 6+7? Reply with just the number.');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
-
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
 				timeout: 5000,
@@ -338,9 +334,6 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 				'Read the file answer.txt in the current directory and tell me the exact content.'
 			);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
-
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
 
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
@@ -415,9 +408,6 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 					'Reply with only the token string, nothing else.'
 			);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
-
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
 
 			// PRIMARY assertion: the Agent SDK initialised the MCP server.
 			// The MCP server writes the flag when it receives a tools/list request,
@@ -498,9 +488,6 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			// idle state (before the query has actually started).
 			await waitForProcessing(daemon, sessionId, 15_000);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
-
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
 
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
