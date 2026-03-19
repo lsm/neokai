@@ -360,6 +360,10 @@ export function ContextPanel() {
 					<RoomList onRoomSelect={() => (contextPanelOpenSignal.value = false)} />
 				)}
 				{navSection === 'spaces' && (
+					// TODO: replace empty array with real space list from state once
+					// the Spaces data layer is wired up (Task 5.x).
+					// onCreateSpace is intentionally omitted here — "Create Space" will be
+					// triggered from the header CTA button once space creation is implemented.
 					<SpaceContextPanel
 						spaces={[]}
 						onSpaceSelect={() => (contextPanelOpenSignal.value = false)}

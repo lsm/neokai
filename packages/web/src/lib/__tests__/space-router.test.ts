@@ -277,13 +277,26 @@ describe('navigateToSpaceTask', () => {
 });
 
 describe('navigateToSpaces', () => {
-	it('sets navSection to spaces and navigates home', () => {
+	it('sets navSection to spaces and preserves space context when already on a space', () => {
 		mockLocation.pathname = `/space/${SPACE_ID}`;
 		currentSpaceIdSignal.value = SPACE_ID;
 
 		navigateToSpaces();
 
 		expect(navSectionSignal.value).toBe('spaces');
+		// Does NOT clear the current space — user stays on their space view
+		expect(currentSpaceIdSignal.value).toBe(SPACE_ID);
+	});
+
+	it('navigates home and clears space context when not already on a space', () => {
+		mockLocation.pathname = `/room/some-room-id`;
+		currentSpaceIdSignal.value = null;
+
+		navigateToSpaces();
+
+		expect(navSectionSignal.value).toBe('spaces');
+		// navigateToHome is called, which clears space signals
+		expect(currentSpaceIdSignal.value).toBeNull();
 	});
 });
 

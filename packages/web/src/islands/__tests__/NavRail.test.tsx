@@ -16,10 +16,18 @@ vi.mock('../../lib/router.ts', () => ({
 	navigateToSessions: vi.fn(),
 	navigateToSettings: vi.fn(),
 	navigateToHome: vi.fn(),
+	navigateToRooms: vi.fn(),
+	navigateToSpaces: vi.fn(),
 }));
 
 // Import mocked functions for assertions
-import { navigateToSessions, navigateToSettings, navigateToHome } from '../../lib/router.ts';
+import {
+	navigateToSessions,
+	navigateToSettings,
+	navigateToHome,
+	navigateToRooms,
+	navigateToSpaces,
+} from '../../lib/router.ts';
 
 describe('NavRail', () => {
 	beforeEach(() => {
@@ -41,7 +49,9 @@ describe('NavRail', () => {
 
 			// Check all navigation buttons are rendered
 			expect(screen.getByTitle('Home')).toBeTruthy();
+			expect(screen.getByTitle('Rooms')).toBeTruthy();
 			expect(screen.getByTitle('Chats')).toBeTruthy();
+			expect(screen.getByTitle('Spaces')).toBeTruthy();
 			expect(screen.getByTitle('Settings')).toBeTruthy();
 		});
 
@@ -118,6 +128,35 @@ describe('NavRail', () => {
 			fireEvent.click(homeButton);
 
 			expect(navigateToHome).toHaveBeenCalledTimes(1);
+		});
+
+		it('should call navigateToRooms when Rooms button is clicked', () => {
+			render(<NavRail />);
+
+			const roomsButton = screen.getByRole('button', { name: 'Rooms' });
+			fireEvent.click(roomsButton);
+
+			expect(navigateToRooms).toHaveBeenCalledTimes(1);
+		});
+
+		it('should call navigateToSpaces when Spaces button is clicked', () => {
+			render(<NavRail />);
+
+			const spacesButton = screen.getByRole('button', { name: 'Spaces' });
+			fireEvent.click(spacesButton);
+
+			expect(navigateToSpaces).toHaveBeenCalledTimes(1);
+		});
+
+		it('should highlight Spaces button when navSection is spaces', () => {
+			navSectionSignal.value = 'spaces';
+			render(<NavRail />);
+
+			const spacesButton = screen.getByRole('button', { name: 'Spaces' });
+			expect(spacesButton.getAttribute('aria-pressed')).toBe('true');
+
+			const chatsButton = screen.getByRole('button', { name: 'Chats' });
+			expect(chatsButton.getAttribute('aria-pressed')).toBe('false');
 		});
 	});
 

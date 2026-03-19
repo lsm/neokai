@@ -518,11 +518,14 @@ export function navigateToSettings(): void {
 
 /**
  * Navigate to Spaces section
- * Sets nav section to 'spaces' and navigates home if needed
+ * Sets nav section to 'spaces'; only navigates home if not already viewing a space
  */
 export function navigateToSpaces(): void {
 	navSectionSignal.value = 'spaces';
-	navigateToHome();
+	// If not already on a space URL, go home so the spaces list is visible
+	if (!currentSpaceIdSignal.value) {
+		navigateToHome();
+	}
 }
 
 /**
