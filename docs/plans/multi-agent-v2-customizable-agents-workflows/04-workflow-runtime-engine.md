@@ -2,37 +2,37 @@
 
 ## Goal
 
-Build a goal-level workflow executor that orchestrates agent step sequences while preserving the existing Leader/Worker group model. The executor reads `Workflow` definitions from the data layer and manages step progression, gate evaluation, and rule injection.
+Build `SpaceRuntime` — a new workflow-first orchestration engine — and `WorkflowExecutor` to manage goal-level step sequences, gate evaluation, and rule injection within Spaces. All code lives in `packages/daemon/src/lib/space/runtime/`. No modifications to `RoomRuntime` or any existing runtime code.
 
-## Key Architecture: Goal-Level Orchestration with Preserved Leader/Worker Pairs
+## Isolation Checklist
 
-The `WorkflowExecutor` operates at the **goal level**, not the task level:
+- `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/workflow-executor.ts`
+- `SpaceRuntime` in `packages/daemon/src/lib/space/runtime/space-runtime.ts`
+- `SpaceRuntimeService` in `packages/daemon/src/lib/space/runtime/space-runtime-service.ts`
+- Gate allowlist in `packages/daemon/src/lib/space/runtime/gate-allowlist.ts`
+- All types use `SpaceTask`, `SpaceGoal`, `SpaceWorkflow`, `SpaceAgent` (NOT `NeoTask`, `RoomGoal`, `Workflow`)
+- No modifications to `RoomRuntime`, `TaskGroupManager`, `room-runtime-service.ts`, `room-manager.ts`, or any file under `packages/daemon/src/lib/room/`
 
-1. A goal has an associated workflow (e.g., Planner -> Coder -> Security Reviewer)
-2. Each workflow step produces **tasks**. The executor creates tasks for the current step's agent.
-3. Each task still gets a **Worker + Leader group pair**. The Leader reviews the Worker's output via the existing `submit_for_review` -> `complete_task` / `send_to_worker` cycle.
-4. When a step's tasks complete (Leader approves), the executor evaluates the **exit gate** and, if passed, advances to the next step (creating new tasks for the next agent).
-5. Custom agents with `role: 'reviewer'` are specialized Workers (e.g., produce a security audit), NOT replacements for the Leader. The Leader still approves/rejects their output.
+## Key Architecture: Workflow-First Orchestration
 
-**What changes in `RoomRuntime`:**
-- `onWorkerTerminalState` / `onLeaderTerminalState` remain unchanged within a group
-- After a task completes (Leader approves via `complete_task`), the goal-level completion path checks the `WorkflowExecutor` to decide whether to advance to the next step or mark the goal as complete
-- The existing `submittedForReview` / `approved` / `feedbackIteration` semantics are unchanged per group
+`SpaceRuntime` is a **new class** that manages the full lifecycle of goals within a Space. Unlike `RoomRuntime` which has a hardcoded planner→coder→leader flow with workflows bolted on, `SpaceRuntime` is designed from the ground up for workflow-driven orchestration.
 
-**What does NOT change:**
-- Worker/Leader pair creation in `TaskGroupManager`
-- `createLeaderCallbacks()` and Leader tool contract (`complete_task` must follow `submit_for_review`)
-- The `onWorkerTerminalState` -> Leader routing flow
-- Non-workflow tasks (fallback to existing hardcoded behavior)
+The `WorkflowExecutor` operates at the **goal level**:
+1. A `SpaceGoal` has an associated `SpaceWorkflow`
+2. Each step produces `SpaceTask` records. `advance()` **creates task DB records only** (pending status) — it does NOT spawn session groups. The tick loop handles group spawning.
+3. Each task still gets a Worker + Leader group pair (using `space_session_groups`/`space_session_group_members`)
+4. When a step's tasks complete (Leader approves), the executor evaluates the exit gate and advances
+5. Custom agents with `role: 'reviewer'` are specialized Workers, NOT Leader replacements
 
 ## Scope
 
-- New `WorkflowExecutor` class that interprets workflow step sequences at the goal level
-- Integration with existing `RoomRuntime` goal completion path
-- Gate evaluation logic with security enforcement (auto, human_approval, quality_check, pr_review, custom)
-- Rule injection into agent system prompts
-- Backward compatibility: rooms without a custom workflow use the default built-in behavior
-- Unit and online tests
+- `WorkflowExecutor` class with gate evaluation and step progression
+- `SpaceRuntime` class with workflow-driven tick loop
+- `SpaceRuntimeService` for lifecycle management
+- Gate security enforcement
+- Rule injection into agent prompts
+- Backward compatibility for spaces without workflows
+- Unit and integration tests
 
 ---
 
@@ -40,69 +40,65 @@ The `WorkflowExecutor` operates at the **goal level**, not the task level:
 
 **Agent:** coder
 **Priority:** high
-**Depends on:** Task 3.3, Task 2.3
+**Depends on:** Task 3.2, Task 2.3
 
 **Description:**
 
-Create the `WorkflowExecutor` class that manages the progression of a goal through workflow steps.
+Create the `WorkflowExecutor` class that manages goal-level workflow progression within Spaces.
 
 **Subtasks:**
 
-1. Create `packages/daemon/src/lib/room/runtime/workflow-executor.ts`:
+1. Create `packages/daemon/src/lib/space/runtime/workflow-executor.ts`:
    - `WorkflowExecutor` class with:
-     - Constructor takes: `workflow: Workflow`, `goalId: string`, `currentStepIndex: number`, `taskManager: TaskManager`, `goalManager: GoalManager`, `customAgentManager: CustomAgentManager`, `workspacePath: string`
-     - `currentStepIndex` enables **restart rehydration**: when creating an executor from persisted state, pass the step index derived from the latest task's `current_workflow_step_id`. For new goals, pass `0`.
-     - `getCurrentStep(): WorkflowStep | null` -- returns `workflow.steps[currentStepIndex]`
-     - `getNextStep(): WorkflowStep | null` -- returns the next step in sequence
-     - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` -- evaluates the current step's exit gate
-     - `advance(): Promise<{ step: WorkflowStep; tasks: NeoTask[] }>` -- moves to the next step, increments `currentStepIndex`, **creates task DB records only** (with status `pending` or via `spawnPlanningGroup()` for planner steps), persists `current_workflow_step_id` on the new tasks. Does NOT spawn session groups — the `RoomRuntime` tick loop picks up pending tasks and spawns groups as usual. This keeps the executor as a pure task-creation/state-management layer, not a group-management layer.
-     - `isComplete(): boolean` -- returns true if all steps have been executed and gates passed
-   - **`GoalManager` dependency**: needed by `advance()` to read goal state (e.g., check goal is still active) and by `isComplete()` to verify goal status. If the executor only needs read access, `GoalRepository` can be used directly instead.
+     - Constructor takes: `workflow: SpaceWorkflow`, `goalId: string`, `currentStepIndex: number`, `taskManager: SpaceTaskManager`, `goalManager: SpaceGoalManager`, `agentManager: SpaceAgentManager`, `workspacePath: string`
+     - `currentStepIndex` enables **restart rehydration**: when creating from persisted state, pass step index derived from latest task's `workflowStepId`. For new goals, pass `0`.
+     - `getCurrentStep(): WorkflowStep | null`
+     - `getNextStep(): WorkflowStep | null`
+     - `canAdvance(): Promise<{ allowed: boolean; reason?: string }>` — evaluates current step's exit gate
+     - `advance(): Promise<{ step: WorkflowStep; tasks: SpaceTask[] }>` — increments step, **creates `SpaceTask` DB records only** (pending status), persists `workflowStepId` on new tasks. Does NOT spawn session groups.
+     - `isComplete(): boolean`
 
-2. Track workflow state on the goal:
-   - Use `goals.workflow_id` (added in consolidated Migration B) to associate goals with workflows
-   - Track current step via task metadata (latest task's `current_workflow_step_id`)
-   - The `currentStepIndex` in the executor is the in-memory representation; the persisted representation is `current_workflow_step_id` on the latest task for the goal
+2. Track workflow state:
+   - `space_goals.workflow_id` associates goals with workflows
+   - Current step tracked via latest task's `workflow_step_id` in `space_tasks`
+   - `currentStepIndex` is in-memory; persisted via task metadata
 
-3. Implement gate evaluation with security enforcement:
+3. Gate evaluation with security enforcement:
    - `evaluateGate(gate: WorkflowGate, context: GateContext): Promise<GateResult>`
-   - `GateContext` includes: `workspacePath`, `goalId`, `taskId`, `lastTaskSummary`, etc.
    - Gate types:
      - `auto`: always passes
-     - `human_approval`: checks approval flag (reuses existing pattern from `submittedForReview`/`approved`)
-     - `quality_check`: runs command from **allowlist only** (e.g., `bun run check`, `bun test`) with timeout enforcement. Reject any command not in the allowlist.
-     - `pr_review`: reuses existing `runWorkerExitGate` logic from lifecycle-hooks.ts
-     - `custom`: validates command is a relative path within workspace (no `..`, no absolute paths), then runs with timeout via `Bun.spawn`. Logs command output for debugging.
-   - **Timeout enforcement**: All shell-executing gates (`quality_check`, `custom`) use `gate.timeoutMs` (default: 60000ms, max: 300000ms) via `Bun.spawn`'s timeout option. On timeout, gate fails with a descriptive error.
-   - **Retry logic**: On gate failure, if `gate.maxRetries > 0` and retries remain, re-evaluate the gate (do NOT re-run the agent step). After all retries exhausted, fail the gate and transition the task to `needs_attention`.
+     - `human_approval`: checks approval flag
+     - `quality_check`: runs **allowlisted command only** with timeout via `Bun.spawn`
+     - `pr_review`: reuses existing PR review pattern (can import utility functions)
+     - `custom`: validates relative path (no `..`, no absolute), runs with timeout
+   - **Timeout**: `gate.timeoutMs` (default: 60000ms, max: 300000ms)
+   - **Retry**: On failure, if `maxRetries > 0` and retries remain, re-evaluate gate only (NOT re-run agent). After exhaustion → `needs_attention`.
 
-4. Define the quality check command allowlist:
-   - Create `packages/daemon/src/lib/room/runtime/gate-allowlist.ts`
-   - Default allowlist: `['bun run check', 'bun test', 'bun run lint', 'bun run typecheck', 'bun run format:check']`
-   - Allowlist is configurable via room settings (future extensibility)
+4. Quality check command allowlist:
+   - Create `packages/daemon/src/lib/space/runtime/gate-allowlist.ts`
+   - Default: `['bun run check', 'bun test', 'bun run lint', 'bun run typecheck', 'bun run format:check']`
 
 5. Write unit tests:
-   - Step progression through a multi-step workflow at the goal level
-   - Gate evaluation for each gate type
-   - Gate security: reject non-allowlisted commands for quality_check, reject path traversal for custom gates
+   - Multi-step goal progression using `SpaceGoal`/`SpaceTask`/`SpaceWorkflow` types
+   - All gate types evaluated correctly
+   - Security: reject non-allowlisted commands, reject path traversal
    - Timeout enforcement (mock Bun.spawn)
    - Retry logic (re-evaluate gate, not re-run step)
-   - Workflow completion detection
-   - Error handling (missing step, gate failure, timeout)
+   - Completion detection, error handling
 
 **Acceptance criteria:**
-- `WorkflowExecutor` can advance a goal through a sequence of steps
-- All gate types are evaluated correctly with security enforcement
-- Non-allowlisted commands are rejected
-- Path traversal in custom gates is rejected
-- Timeout is enforced on all shell-executing gates
-- Retry re-evaluates gate only (not agent step)
+- `WorkflowExecutor` advances goals through step sequences
+- All types are Space types (`SpaceTask`, `SpaceGoal`, `SpaceWorkflow`, `SpaceAgentManager`)
+- All gate types evaluated with security enforcement
+- Non-allowlisted commands rejected, path traversal rejected
+- Timeout enforced on shell-executing gates
+- Retry re-evaluates gate only
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 4.2a: Integrate WorkflowExecutor into RoomRuntime — Workflow Resolution and Step Spawning
+### Task 4.2: SpaceRuntime — Workflow Resolution, Task Spawning, and Step Advancement
 
 **Agent:** coder
 **Priority:** high
@@ -110,181 +106,138 @@ Create the `WorkflowExecutor` class that manages the progression of a goal throu
 
 **Description:**
 
-Update `RoomRuntime` to resolve workflows for goals and spawn tasks using the `WorkflowExecutor`. This is the first part of the runtime integration, focused on workflow resolution and task creation.
+Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. This is a **new class** in `packages/daemon/src/lib/space/runtime/space-runtime.ts` that manages the full lifecycle of goals within a Space: workflow resolution, task creation, session group management (via `space_session_groups`), step advancement, and gate enforcement. It does NOT modify `RoomRuntime`.
 
 **Subtasks:**
 
-1. Add `WorkflowManager`, `GoalManager`, and `WorkflowExecutor` factory as dependencies in `RoomRuntimeConfig`
+1. Create `packages/daemon/src/lib/space/runtime/space-runtime.ts`:
+   - `SpaceRuntimeConfig` includes: `SpaceManager`, `SpaceTaskManager`, `SpaceGoalManager`, `SpaceWorkflowManager`, `SpaceAgentManager`, `SpaceSessionGroupRepository`, and `WorkflowExecutor` factory
+   - Maintain `Map<goalId, WorkflowExecutor>` for active workflows
+   - Implement `executeTick()` method — the main orchestration loop
 
-2. **Executor rehydration on runtime startup** (restart safety):
-   - Implement a `rehydrateExecutors()` async method called **at the start of the first `executeTick()`** (not in the constructor, since the existing RoomRuntime constructor is synchronous with async work deferred to the first tick)
-   - Query all in-progress goals that have a non-null `workflow_id`
-   - For each such goal, reconstruct a `WorkflowExecutor`:
-     - Load the `Workflow` from `WorkflowManager`
-     - Determine `currentStepIndex` from the latest task's `current_workflow_step_id` (find the step in the workflow by ID, get its `order` index)
-     - Create the executor with `new WorkflowExecutor(workflow, goalId, currentStepIndex, ...)`
-   - Populate the `Map<goalId, WorkflowExecutor>` with rehydrated executors
-   - Set a `rehydrated: boolean` flag to prevent running rehydration on subsequent ticks
-   - **Without this**, any in-progress workflow goal will stall after a server restart (no executor in the map) or restart from step 1 (spawning duplicate tasks)
+2. **Executor rehydration on startup** (restart safety):
+   - Implement `rehydrateExecutors()` async method called **at the start of the first `executeTick()`** (not in constructor — constructor is synchronous, async work deferred to first tick)
+   - Query all in-progress `SpaceGoal` records with non-null `workflow_id` from `space_goals`
+   - Reconstruct executors: load `SpaceWorkflow`, determine `currentStepIndex` from latest `SpaceTask`'s `workflow_step_id`, create executor
+   - Set `rehydrated: boolean` flag to prevent repeat runs
 
-3. Add workflow resolution logic in the goal processing path:
-   - When a new goal is created or started, check if it has a `workflowId`
-   - If no explicit `workflowId`, check room's default workflow
-   - If a workflow is found, create a `WorkflowExecutor` instance for the goal with `currentStepIndex: 0`
-   - Store in the `Map<goalId, WorkflowExecutor>` on the runtime
+3. **Workflow resolution** for new goals:
+   - When `SpaceGoal` created/started, check `goal.workflowId`
+   - If none, check space's default workflow via `SpaceWorkflowManager.getDefaultWorkflow(spaceId)`
+   - If found, create `WorkflowExecutor` with `currentStepIndex: 0`
+   - Store in executor map
 
-4. **Executor cleanup policy** (prevent memory leak):
-   - Remove executor from the map when:
-     - Goal completes (all steps done, goal marked complete)
-     - Goal fails (goes to `needs_attention` after gate failure)
-     - Goal is cancelled or archived
-   - Hook into existing goal state change handlers for cleanup
-   - Long-lived rooms with many processed goals must not accumulate stale executor entries
+4. **Guard against incorrect planning dispatch**:
+   - Goals managed by a `WorkflowExecutor` must NOT be dispatched to a generic planning path
+   - Only the executor decides when to spawn planning tasks (via `advance()` when `agentRef === 'planner'`)
+   - Check: if goal has executor in map (or `goal.workflowId != null`), skip generic planning
 
-5. **Guard `getNextGoalForPlanning()` against workflow-managed goals:**
+5. **Task-type assignment for workflow steps**:
+   - `agentRef: 'planner'` → `taskType: 'planning'`, uses planning group path with draft promotion
+   - `agentRef: 'coder'|'general'` → `taskType: 'coding'`, status `pending`, standard execution queue
+   - Custom agent (`agentRefType: 'custom'`) → `taskType: 'coding'`, `customAgentId` set, status `pending`
+   - Helper: `resolveTaskTypeForStep(step: WorkflowStep): 'planning' | 'coding'`
 
-   The existing `getNextGoalForPlanning()` iterates all active goals and returns any goal with no tasks for `spawnPlanningGroup()`. A workflow goal whose first step is NOT a planner (e.g., `REVIEW_ONLY_WORKFLOW` starts with a coder step) would be incorrectly picked up and have an unwanted planning group spawned.
+6. **Step advancement and gate enforcement** (goal completion path):
+   - After task completes (Leader approves), check if goal has executor
+   - If yes: `executor.canAdvance()` → evaluate exit gate
+   - Gate passes → `executor.advance()` → creates next step's `SpaceTask` records
+   - Gate requires human approval → pause with flag
+   - Gate fails after retries → task → `needs_attention`
+   - All steps complete → mark `SpaceGoal` as complete
 
-   **Fix**: Update `getNextGoalForPlanning()` to **skip goals that have an associated `WorkflowExecutor` entry** in the executor map (or equivalently, check `goal.workflowId != null`). Workflow-managed goals are handled entirely by the executor; planning is only triggered via `advance()` when the workflow step calls for a planner agent.
+7. **Rule injection** into agent prompts:
+   - When building worker config for a workflow task, check current step for rules
+   - Filter by `rule.appliesTo` matching current step's **ID** (empty = all steps)
+   - Append rules to system prompt
 
-   **Without this fix**, any workflow goal with a non-planner first step will have a spurious planning group spawned on every tick, producing incorrect behavior.
+8. **Executor cleanup** (memory leak prevention):
+   - Remove from map when: goal completes, fails, is cancelled/archived
+   - Hook into `SpaceGoal` state change handlers
 
-6. **Task-type assignment and planning/execution integration for workflow steps:**
+9. **Wire `seedDefaultWorkflow`** from Task 3.4:
+   - In `SpaceManager.createSpace()` (or the `space.create` RPC handler), call `seedDefaultWorkflow()`
+   - Idempotent: safe if space already has a workflow
+   - **This is in `SpaceManager`** — NOT in `room-manager.ts`
 
-   The existing `executeTick()` has a hard split between planning tasks and execution tasks:
-   - Planning: `getNextGoalForPlanning()` → `spawnPlanningGroup()` creates a task with `taskType: 'planning'`. The planner's `create_task` tool creates draft children with `taskType: 'coding'`. On completion, `promoteDraftTasksIfPlanning()` promotes drafts to pending.
-   - Execution: pending tasks with `taskType !== 'planning'` are picked up by the execution queue.
+10. **Backward compatibility**:
+    - Spaces without workflows use a simple default behavior (direct planner→coder flow without executor)
+    - Regression test: verify default flow works when no workflow configured
 
-   For workflow steps, the executor must integrate with this split:
-   - **Step with `agentRef: 'planner'` (builtin)**: Use the existing `spawnPlanningGroup()` path. Set `taskType: 'planning'` on the created task. Draft promotion still fires on completion. The planner's draft children inherit `workflowId` and `currentWorkflowStepId` from the parent planning task.
-   - **Step with `agentRef: 'coder'` or `agentRef: 'general'` (builtin)**: Create tasks with `taskType: 'coding'` and `status: 'pending'` directly. These enter the standard execution queue.
-   - **Step with custom agent (`agentRefType: 'custom'`)**: Create tasks with `taskType: 'coding'` and `customAgentId` set. Status: `pending`. The existing tick loop picks them up and resolves the custom agent (from Task 2.3).
-   - **Key invariant**: `advance()` must set the correct `taskType` based on the step's `agentRef`. A helper function `resolveTaskTypeForStep(step: WorkflowStep): 'planning' | 'coding'` maps step agent refs to task types.
-
-7. **Wire `seedDefaultWorkflow` call site** (from Task 3.5):
-   - In `room-manager.ts` room creation path, call `seedDefaultWorkflow()` for new rooms
-   - Idempotent: safe to call even if room already has a workflow
-
-8. Backward compatibility:
-   - If no workflow is associated with a goal/room, use the existing hardcoded behavior (no behavior change)
-   - The existing `taskType` and `assignedAgent` fields continue to work as before
-   - **Explicit regression test**: verify that the entire existing flow (goal -> planner -> coder -> leader) works identically when no workflow is configured
-
-9. Write integration tests:
-   - Goal with workflow resolves to WorkflowExecutor
-   - First step tasks are created with correct agent and task-type assignment
-   - Planning-step tasks use `spawnPlanningGroup()` path and draft promotion works
-   - Coding-step tasks are created as pending with `taskType: 'coding'`
-   - Custom-agent-step tasks are created with `customAgentId` set
-   - **Planning guard test**: verify workflow goal with non-planner first step (e.g., coder) does NOT trigger `getNextGoalForPlanning()` / `spawnPlanningGroup()`
-   - **Rehydration test**: simulate restart (clear executor map, reinitialize via `rehydrateExecutors()`) and verify in-progress workflow goals resume from correct step
-   - **Cleanup test**: verify executor is removed from map after goal completion/failure/cancellation
-   - Goals without workflows use existing behavior (regression test covering the full goal -> planner -> coder -> leader flow)
+11. Write integration tests:
+    - `SpaceGoal` → workflow resolution → executor created
+    - First step `SpaceTask` records created with correct agent and task-type
+    - Planning-step tasks use planning group path + draft promotion
+    - Coding-step tasks created as pending
+    - Custom-agent tasks have `customAgentId` set
+    - **Planning guard**: workflow goal with non-planner first step does NOT trigger generic planning
+    - Exit gates checked between steps, entry gates before step
+    - Rules injected into agent prompts per step
+    - Human approval gate pauses correctly
+    - Gate failure → `needs_attention`
+    - **Rehydration**: clear map, reinitialize, verify resume from correct step
+    - **Cleanup**: executor removed after goal completion/failure/cancellation
+    - Regression: goals without workflows work normally
 
 **Acceptance criteria:**
-- Workflow resolution works for goals with explicit, room-default, and no workflows
-- **`getNextGoalForPlanning()` skips workflow-managed goals** — no spurious planning groups for non-planner-first workflows
-- **Executors are rehydrated on runtime startup** (via `rehydrateExecutors()` at first tick) — in-progress workflow goals resume from the correct step after restart
-- **Executors are cleaned up** — no stale entries accumulate in the map
-- `advance()` creates task DB records only (pending status); group spawning is handled by the tick loop
-- Task creation uses the correct `taskType` based on workflow step agent ref (planning vs coding)
-- Planning-type workflow steps integrate with `spawnPlanningGroup()` and draft promotion
-- `seedDefaultWorkflow` is wired into room creation
-- Existing non-workflow goals are completely unaffected (comprehensive regression test)
+- `SpaceRuntime` is a new class that manages full workflow lifecycle for `SpaceGoal`s
+- All operations use Space tables (`space_tasks`, `space_goals`, `space_session_groups`) — NOT existing Room tables
+- Workflow resolution works: explicit, space-default, and no-workflow cases
+- Planning guard prevents spurious planning for non-planner-first workflows
+- Executors rehydrated on startup, cleaned up on completion
+- `advance()` creates `SpaceTask` DB records only; tick loop handles group spawning
+- `seedDefaultWorkflow` wired into `SpaceManager.createSpace()` (NOT `room-manager.ts`)
+- Non-workflow goals unaffected
 - Integration tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 4.2b: Integrate WorkflowExecutor into RoomRuntime — Step Advancement and Gate Enforcement
+### Task 4.3: SpaceRuntimeService and Task/Group Lifecycle
 
 **Agent:** coder
 **Priority:** high
-**Depends on:** Task 4.2a
+**Depends on:** Task 4.2
 
 **Description:**
 
-Update the goal completion path in `RoomRuntime` to use `WorkflowExecutor` for gate evaluation and step advancement.
+Build `SpaceRuntimeService` for managing `SpaceRuntime` lifecycle, and configure session group metadata for workflow tracking.
 
 **Subtasks:**
 
-1. Update the goal-level task completion handler:
-   - After a task completes (Leader approves via `complete_task`), check if the goal has a `WorkflowExecutor`
-   - If yes, call `executor.canAdvance()` to evaluate the current step's exit gate
-   - If gate passes, call `executor.advance()` to create tasks for the next step
-   - If gate requires human approval, set appropriate flag and pause
-   - If gate fails (after retries), set task to `needs_attention`
-   - If all steps complete, mark the goal as complete
+1. Create `packages/daemon/src/lib/space/runtime/space-runtime-service.ts`:
+   - `createOrGetRuntime(spaceId: string): SpaceRuntime`
+   - `stopRuntime(spaceId: string): void`
+   - Manage runtime instances per space
+   - Handle startup/shutdown lifecycle
 
-2. Inject workflow rules into agent system prompts:
-   - When building the `WorkerConfig` for a workflow task, check the current step for associated rules
-   - Append applicable rules (filtered by `rule.appliesTo` matching the current step's **ID**) to the system prompt
-   - Rules with empty `appliesTo` are injected for all steps
+2. Update `SpaceSessionGroupRepository` metadata:
+   - `workflowId` and `currentStepId` in group metadata
+   - Groups expose workflow context for UI display
 
-3. Write integration tests:
-   - Run a goal through a 3-step workflow (plan -> code -> review)
-   - Verify exit gates are checked between steps
-   - Verify entry gates are checked before step starts
-   - Verify rules are injected into agent prompts
-   - Verify human approval gate pauses execution
-   - Verify gate failure transitions to needs_attention
+3. Task status events with workflow context:
+   - `space.task.updated` events include `workflowStepName` for UI display
+   - Frontend can show "Step 2/3: Code Review"
 
-**Acceptance criteria:**
-- Goals with workflows progress through steps when tasks complete
-- Gates between steps are enforced (including security constraints)
-- Rules are injected into agent prompts per step
-- Human approval gates pause correctly
-- Gate failures are handled gracefully
-- Integration tests pass
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
+4. Multi-step goal lifecycle:
+   - `SpaceGoal` remains `in_progress` until final step completes
+   - Track `goalId → step → [SpaceTask records]` relationship
+   - Any step failure (gate fails after retries) → goal → `needs_attention`
 
----
-
-### Task 4.3: Workflow-Aware Task Status and Group Lifecycle
-
-**Agent:** coder
-**Priority:** normal
-**Depends on:** Task 4.2b
-
-**Description:**
-
-Update task status tracking and group lifecycle to reflect workflow step progression in the UI and API.
-
-**Subtasks:**
-
-1. Update task and goal fields for workflow tracking:
-   - `NeoTask.workflowId` and `NeoTask.currentWorkflowStepId` are already available from consolidated Migration B (Task 3.2)
-   - Update `TaskRepository` to read/write these fields (update `rowToTask()` mapping, SQL INSERT/UPDATE statements)
-   - Update `GoalRepository` to read/write `goals.workflow_id` (update `rowToGoal()` mapping, SQL INSERT/UPDATE statements)
-
-2. Update `SessionGroup` and `TaskGroupMetadata`:
-   - Add `workflowId` and `currentStepId` to `TaskGroupMetadata` in `session-group-repository.ts`
-   - Also update `SessionGroup` (the public view) to expose `workflowId`/`currentStepId` since consumers use `group.workflowId`, not `group.metadata.workflowId`
-
-3. Update task status events to include workflow context:
-   - `room.task.update` events should include `workflowStepName` for UI display
-   - The frontend can show "Step 2/3: Code Review" in the task view
-
-4. Update `TaskSummary` to include workflow info:
-   - Add `workflowStepName?: string` and `workflowTotalSteps?: number` to `TaskSummary`
-
-5. Handle multi-step goal lifecycle:
-   - A workflow goal spawns sequential sets of tasks (one set per step)
-   - Track the relationship: `goalId -> step -> [task1, task2, ...]`
-   - The goal remains `in_progress` until the final step completes
-   - If any step fails (gate fails after retries), the goal goes to `needs_attention`
+5. Wire `SpaceRuntimeService` into `DaemonAppContext`:
+   - Add as dependency alongside existing `RoomRuntimeService`
+   - **No modifications to `RoomRuntimeService`** — just add `SpaceRuntimeService` as an additional registration
 
 6. Write unit tests:
-   - Task fields updated correctly at each step transition
-   - GoalRepository correctly reads/writes workflow_id
-   - SessionGroup exposes workflow metadata
+   - Runtime creation/disposal
+   - Group metadata includes workflow info
    - Multi-step goal tracking
    - Failure in middle step surfaces correctly
 
 **Acceptance criteria:**
-- Tasks and goals track their current workflow step
-- SessionGroup exposes workflow metadata to consumers
-- UI events include step progression info
-- Multi-step goal lifecycle is managed correctly
+- `SpaceRuntimeService` manages `SpaceRuntime` instances
+- Session groups (in `space_session_groups`) expose workflow metadata
+- Task events include step progression info
+- Multi-step goal lifecycle managed correctly
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

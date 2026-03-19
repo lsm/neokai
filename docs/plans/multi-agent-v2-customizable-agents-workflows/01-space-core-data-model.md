@@ -320,7 +320,13 @@ Create the data access (repositories) and business logic (managers) layers for S
    - `getGroupsByTask()`, `getGroupsBySpace()`, `addMember()`, `removeMember()`
 
 5. Create managers in `packages/daemon/src/lib/space/managers/`:
-   - `SpaceManager` — validates workspace path exists (via `fs.access`), name uniqueness, handles overview composition
+   - `SpaceManager` — workspace path validation:
+     - Resolve symlinks to real path (via `fs.realpath`) before all checks
+     - Validate path exists on disk (via `fs.access`)
+     - Validate path is unique across active (non-archived) spaces (prevent agent conflicts from two spaces sharing a directory)
+     - Warn (but don't block) if path is not a git repository (check for `.git` directory), since agents need git workflow
+     - Store the resolved real path in the database (not the original symlink path)
+   - Also handles: name uniqueness, overview composition
    - `SpaceTaskManager` — task lifecycle, dependency validation, status transitions
    - `SpaceGoalManager` — goal lifecycle, status transitions, workflow validation (if `workflowId` provided, verify it exists in same space)
 

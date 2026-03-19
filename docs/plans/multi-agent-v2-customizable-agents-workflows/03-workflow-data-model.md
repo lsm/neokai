@@ -2,16 +2,26 @@
 
 ## Goal
 
-Define the data model, database schema, repository layer, and CRUD RPC handlers for custom workflows. A workflow defines a sequence of agent steps with runtime gates between them and configurable rules.
+Define the workflow types, repository, manager, RPC handlers, and built-in templates for custom workflows within Spaces. A workflow defines a sequence of agent steps with runtime gates between them and configurable rules. All code lives in the Space namespace — no existing Room code is modified.
+
+## Isolation Checklist
+
+- Types in `packages/shared/src/types/space.ts` (NOT `neo.ts`)
+- Repository in `packages/daemon/src/storage/repositories/space-workflow-repository.ts`
+- Manager in `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`
+- RPC handlers use `spaceWorkflow.*` namespace (NOT `workflow.*`)
+- DaemonEventMap entries use `spaceWorkflow.*` namespace
+- Built-in templates in `packages/daemon/src/lib/space/workflows/built-in-workflows.ts`
+- Exports from `packages/daemon/src/lib/space/index.ts` (NOT `room/index.ts`)
+- DB tables `space_workflows` and `space_workflow_steps` already created in M1 migration — **no new migration needed**
 
 ## Scope
 
-- New shared types for workflows, workflow steps, gates, and rules
-- New DB migration (consolidated Migration B, shared with M4 and M7) adding `workflows`, `workflow_steps` tables, `tasks` workflow columns, and `goals.workflow_id`
-- New `WorkflowRepository` and `WorkflowManager`
-- New RPC handlers for workflow CRUD
-- New event types registered in `DaemonEventMap`
-- Referential integrity for custom agent references
+- Workflow shared types (gates, steps, rules) in `space.ts`
+- `SpaceWorkflowRepository` and `SpaceWorkflowManager`
+- RPC handlers for workflow CRUD (`spaceWorkflow.*`)
+- DaemonEventMap registration (`spaceWorkflow.created/updated/deleted`)
+- Built-in workflow templates
 - Unit tests
 
 ---
@@ -20,198 +30,179 @@ Define the data model, database schema, repository layer, and CRUD RPC handlers 
 
 **Agent:** coder
 **Priority:** high
-**Depends on:** (none -- can start immediately, types are independent)
+**Depends on:** (none — types are independent)
 
 **Description:**
 
-Add new shared types for workflow definitions. A workflow is a sequence of steps where each step invokes an agent (built-in or custom), with optional gates between steps and rules that govern behavior.
+Add workflow types to `packages/shared/src/types/space.ts` (alongside the Space/SpaceTask/SpaceGoal types from M1 and SpaceAgent types from M2).
 
 **Subtasks:**
 
-1. Add the following types to `packages/shared/src/types/neo.ts`:
+1. Add the following types to `packages/shared/src/types/space.ts`:
 
    ```typescript
-   /** Gate type -- runtime checkpoints between workflow steps */
+   /** Gate type — runtime checkpoints between workflow steps */
    type WorkflowGateType =
-     | 'auto'           // Automatically proceed to next step
-     | 'human_approval' // Pause for human approval before proceeding
-     | 'quality_check'  // Run automated quality checks from allowlist (tests, lint, etc.)
-     | 'pr_review'      // Existing PR review gate (worker exit gate pattern)
-     | 'custom';        // Custom gate with workspace-scoped script execution
+     | 'auto'           // Automatically proceed
+     | 'human_approval' // Pause for human approval
+     | 'quality_check'  // Run automated checks from allowlist
+     | 'pr_review'      // PR review gate
+     | 'custom';        // Custom workspace-scoped script
 
    /** A gate between workflow steps */
    interface WorkflowGate {
      type: WorkflowGateType;
      /**
-      * For quality_check gates: must be one of the predefined allowlisted commands
-      * (e.g., 'bun run check', 'bun test').
-      * For custom gates: path to a script within the workspace directory
-      * (no absolute paths, no '..', must be within workspace).
-      * See 00-overview.md "Gate Security Model" for full constraints.
+      * For quality_check: must be an allowlisted command (e.g., 'bun run check').
+      * For custom: relative path to script within workspace (no '..', no absolute paths).
+      * See 00-overview.md "Gate Security Model".
       */
      command?: string;
-     /** Human-readable description of what this gate checks */
      description?: string;
      /**
-      * Max retries before escalating (0 = no retry, just fail the gate).
-      * Retry semantics: re-evaluates the gate command/check only (does NOT
-      * re-run the agent step). After maxRetries exhausted, the gate fails
-      * and the task transitions to 'needs_attention' for human intervention.
+      * Max retries before escalating (0 = no retry).
+      * Retry re-evaluates the gate only, does NOT re-run the agent step.
+      * After retries exhausted, gate fails and task → 'needs_attention'.
       */
      maxRetries?: number;
-     /**
-      * Timeout in milliseconds for gate command execution.
-      * Default: 60000 (60s). Max: 300000 (300s).
-      * Only applies to quality_check and custom gates.
-      */
+     /** Timeout in ms for gate command. Default: 60000. Max: 300000. */
      timeoutMs?: number;
    }
 
    /** A single step in a workflow */
    interface WorkflowStep {
      id: string;
-     /** Display name for this step */
      name: string;
      /**
       * Which agent executes this step.
-      * - When agentRefType is 'builtin': one of 'planner', 'coder', 'general'
-      * - When agentRefType is 'custom': a custom agent ID
-      * Note: 'leader' is NOT a valid agentRef — the Leader is always implicitly
-      * created alongside any Worker. See 00-overview.md architecture decisions.
+      * - builtin: 'planner', 'coder', 'general' (NOT 'leader' — Leader is implicit)
+      * - custom: a SpaceAgent ID
       */
      agentRef: string;
-     /** Whether agentRef is a built-in role or a custom agent ID */
      agentRefType: 'builtin' | 'custom';
-     /** Gate to pass before this step can start (null for the first step) */
      entryGate?: WorkflowGate | null;
-     /** Gate to pass after this step completes */
      exitGate?: WorkflowGate | null;
-     /** Step-specific instructions injected into the agent's context */
      instructions?: string;
-     /** Order index within the workflow */
      order: number;
    }
 
-   /** Rule definition for a workflow (similar to room instructions) */
+   /** Rule injected into agent prompts */
    interface WorkflowRule {
      id: string;
-     /** Rule name */
      name: string;
-     /** Rule content -- injected into agent system prompts */
      content: string;
      /**
-      * Which steps this rule applies to, by step **ID** (not step name).
-      * Using IDs ensures rules survive step renames in the workflow editor.
-      * Empty array = applies to all steps.
+      * Which steps this rule applies to, by step **ID** (not name).
+      * IDs survive step renames. Empty array = applies to all steps.
       */
      appliesTo?: string[];
    }
 
-   /** A complete workflow definition */
-   interface Workflow {
+   /** A complete workflow definition within a Space */
+   interface SpaceWorkflow {
      id: string;
-     roomId: string;
+     spaceId: string;
      name: string;
      description: string;
      steps: WorkflowStep[];
      rules: WorkflowRule[];
-     /** Whether this is the default workflow for the room */
      isDefault: boolean;
-     /** Tags for categorization (e.g., 'coding', 'review', 'research') */
      tags: string[];
      config?: Record<string, unknown>;
      createdAt: number;
      updatedAt: number;
    }
+
+   interface CreateSpaceWorkflowParams {
+     name: string;
+     description?: string;
+     steps: Omit<WorkflowStep, 'id'>[];
+     rules?: Omit<WorkflowRule, 'id'>[];
+     tags?: string[];
+     config?: Record<string, unknown>;
+   }
+
+   interface UpdateSpaceWorkflowParams {
+     name?: string;
+     description?: string;
+     steps?: Omit<WorkflowStep, 'id'>[];
+     rules?: Omit<WorkflowRule, 'id'>[];
+     tags?: string[];
+     config?: Record<string, unknown>;
+   }
    ```
 
-2. Add `CreateWorkflowParams` and `UpdateWorkflowParams` interfaces
-
-3. Export all new types from the shared package
+2. Export all types from shared package barrel (`packages/shared/src/mod.ts`)
 
 **Acceptance criteria:**
-- All workflow types are defined and exported from `@neokai/shared`
-- Types support the full workflow lifecycle: creation, step sequencing, gates, rules
-- JSDoc documentation on all interfaces, with clear semantics for `maxRetries` (re-evaluate gate only, not re-run step), `command` security constraints, and `agentRef` valid values
-- Gate `timeoutMs` field is included with documented defaults and max
-- 'leader' is explicitly documented as NOT a valid `agentRef` value
+- All workflow types defined and exported from `@neokai/shared` via `space.ts`
+- JSDoc on all interfaces with clear semantics for `maxRetries`, `command` constraints, and `agentRef` valid values
+- `leader` explicitly documented as NOT a valid `agentRef`
+- No modifications to `packages/shared/src/types/neo.ts`
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 3.2: Database Migration for Workflows (Consolidated Migration B)
+### Task 3.2: SpaceWorkflowRepository and SpaceWorkflowManager
 
 **Agent:** coder
 **Priority:** high
-**Depends on:** Task 3.1
+**Depends on:** Task 3.1, Task 1.2
 
 **Description:**
 
-Add a SQLite migration creating `workflows` and `workflow_steps` tables, plus workflow tracking columns on `tasks` and `goals`. This is **consolidated Migration B** — a single migration covering M3, M4, and M7 schema needs.
+Build the data access and business logic layers for workflows within Spaces. The `space_workflows` and `space_workflow_steps` tables were already created in the M1 migration — **no new migration needed**.
 
 **Subtasks:**
 
-1. Add a new migration in `packages/daemon/src/storage/schema/migrations.ts`:
+1. Create `packages/daemon/src/storage/repositories/space-workflow-repository.ts`:
+   - `createWorkflow(params: CreateSpaceWorkflowParams & { spaceId: string }): SpaceWorkflow`
+   - `getWorkflow(id: string): SpaceWorkflow | null` — joins with `space_workflow_steps`
+   - `listWorkflows(spaceId: string): SpaceWorkflow[]`
+   - `updateWorkflow(id: string, params: UpdateSpaceWorkflowParams): SpaceWorkflow | null`
+   - `deleteWorkflow(id: string): boolean`
+   - `getDefaultWorkflow(spaceId: string): SpaceWorkflow | null`
+   - `setDefaultWorkflow(spaceId: string, workflowId: string): void`
+   - `getWorkflowsReferencingAgent(agentId: string): SpaceWorkflow[]` — finds workflows referencing a custom agent (used for deletion protection in `SpaceAgentManager`)
+   - Handle step CRUD within workflow transactions (replace all steps on update)
+   - JSON serialization for `rules`, `tags`, `entry_gate`, `exit_gate`
+   - `rowToWorkflow()` and `rowToStep()` mapping functions
 
-   ```sql
-   -- Workflow definitions
-   CREATE TABLE IF NOT EXISTS workflows (
-     id TEXT PRIMARY KEY,
-     room_id TEXT NOT NULL,
-     name TEXT NOT NULL,
-     description TEXT NOT NULL DEFAULT '',
-     rules TEXT NOT NULL DEFAULT '[]',
-     is_default INTEGER NOT NULL DEFAULT 0,
-     tags TEXT NOT NULL DEFAULT '[]',
-     config TEXT,
-     created_at INTEGER NOT NULL,
-     updated_at INTEGER NOT NULL,
-     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
-   );
+2. Create `packages/daemon/src/lib/space/managers/space-workflow-manager.ts`:
+   - Validation:
+     - Name unique within space
+     - Step agent references valid: builtin must be `'planner'|'coder'|'general'` (NOT `'leader'`); custom must reference existing `SpaceAgent` in same space (query `SpaceAgentManager`)
+     - At least one step required
+     - Step order contiguous (0, 1, 2, ...)
+     - Gate command validation: `quality_check` → allowlist only; `custom` → relative path, no `..`; `timeoutMs` within range 0–300000
+   - Business logic:
+     - Setting new default unsets previous default
+     - Deleting default workflow clears the space's default
 
-   -- Workflow step definitions
-   CREATE TABLE IF NOT EXISTS workflow_steps (
-     id TEXT PRIMARY KEY,
-     workflow_id TEXT NOT NULL,
-     name TEXT NOT NULL,
-     agent_ref TEXT NOT NULL,
-     agent_ref_type TEXT NOT NULL DEFAULT 'builtin' CHECK(agent_ref_type IN ('builtin', 'custom')),
-     entry_gate TEXT,
-     exit_gate TEXT,
-     instructions TEXT,
-     step_order INTEGER NOT NULL,
-     FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
-   );
+3. Export from `packages/daemon/src/lib/space/index.ts`
 
-   -- Workflow tracking on tasks (for M4 runtime)
-   ALTER TABLE tasks ADD COLUMN workflow_id TEXT;
-   ALTER TABLE tasks ADD COLUMN current_workflow_step_id TEXT;
-
-   -- Workflow assignment on goals (for M7 selection)
-   ALTER TABLE goals ADD COLUMN workflow_id TEXT;
-   ```
-
-2. Add indexes:
-   - `CREATE INDEX idx_workflows_room_id ON workflows(room_id)`
-   - `CREATE INDEX idx_workflow_steps_workflow_id ON workflow_steps(workflow_id)`
-
-3. Write a migration test verifying:
-   - Tables are created
-   - Foreign key cascade works (delete workflow -> steps deleted)
-   - Room cascade works (delete room -> workflows deleted)
-   - `tasks.workflow_id` and `tasks.current_workflow_step_id` columns exist and are nullable
-   - `goals.workflow_id` column exists and is nullable
-   - Existing tasks and goals are unaffected
+4. Write unit tests:
+   - Full CRUD lifecycle
+   - Step ordering validation
+   - Agent reference validation (builtin + custom via `SpaceAgentManager`)
+   - Rejection of 'leader' as builtin agent ref
+   - Gate command validation (allowlist, path validation)
+   - Default workflow management
+   - JSON round-trip for gates and rules
+   - `getWorkflowsReferencingAgent` returns correct results
 
 **Acceptance criteria:**
-- Single migration covers all workflow-related schema changes (M3 + M4 + M7)
-- CASCADE deletes work correctly
-- Migration test passes
+- Repository handles CRUD with proper step management using `space_workflows`/`space_workflow_steps` tables
+- Manager validates workflow integrity including gate security
+- Agent reference validation queries `SpaceAgentManager` (NOT a nonexistent `CustomAgentManager`)
+- Default workflow switching works correctly
+- All files in Space namespace — nothing in `packages/daemon/src/lib/room/`
+- Unit tests cover all paths
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 3.3: WorkflowRepository and WorkflowManager
+### Task 3.3: Workflow RPC Handlers and DaemonEventMap Registration
 
 **Agent:** coder
 **Priority:** high
@@ -219,144 +210,76 @@ Add a SQLite migration creating `workflows` and `workflow_steps` tables, plus wo
 
 **Description:**
 
-Create the data access and business logic layers for workflows, including referential integrity for custom agent references.
+Add RPC handlers for workflow CRUD using the `spaceWorkflow.*` namespace. Register events in DaemonEventMap.
 
 **Subtasks:**
 
-1. Create `packages/daemon/src/storage/repositories/workflow-repository.ts`:
-   - `createWorkflow(params: CreateWorkflowParams & { roomId: string }): Workflow`
-   - `getWorkflow(id: string): Workflow | null` -- joins with `workflow_steps` to build full object
-   - `listWorkflows(roomId: string): Workflow[]`
-   - `updateWorkflow(id: string, params: UpdateWorkflowParams): Workflow | null`
-   - `deleteWorkflow(id: string): boolean`
-   - `getDefaultWorkflow(roomId: string): Workflow | null`
-   - `setDefaultWorkflow(roomId: string, workflowId: string): void`
-   - `getWorkflowsReferencingAgent(agentId: string): Workflow[]` -- finds workflows that reference a custom agent (used for deletion protection in `CustomAgentManager`)
-   - Handle step CRUD within workflow transactions (replace all steps on update)
-   - JSON serialization for `rules`, `tags`, `entry_gate`, `exit_gate`
-   - Implement `rowToWorkflow()` and `rowToStep()` mapping functions following existing repository patterns
-
-2. Create `packages/daemon/src/lib/room/managers/workflow-manager.ts`:
-   - Wraps repository with validation:
-     - Workflow name uniqueness within a room
-     - Step agent references are valid:
-       - Built-in: must be one of `'planner'`, `'coder'`, `'general'` (NOT `'leader'` — Leader is implicit)
-       - Custom: must reference an existing custom agent ID in the same room (query `CustomAgentManager`)
-     - At least one step required
-     - Step order is contiguous (0, 1, 2, ...)
-     - Gate command validation:
-       - `quality_check` gates: command must be in the allowlist
-       - `custom` gates: command must be a relative path within workspace, no `..` traversal
-       - `timeoutMs` must be within range (0-300000)
-   - Business logic:
-     - When setting a new default, unset the previous default
-     - When deleting a workflow that is the default, clear the room's default
-
-3. Export from `packages/daemon/src/lib/room/index.ts`
-
-4. Write unit tests:
-   - Full CRUD lifecycle
-   - Step ordering validation
-   - Agent reference validation (both builtin and custom)
-   - Rejection of 'leader' as a builtin agent ref
-   - Gate command validation (allowlist for quality_check, path validation for custom)
-   - Default workflow management
-   - JSON round-trip for gates and rules
-   - `getWorkflowsReferencingAgent` returns correct results
-
-**Acceptance criteria:**
-- Repository handles all CRUD with proper step management
-- Manager validates workflow integrity including gate security constraints
-- Agent reference validation prevents invalid references
-- Default workflow switching works correctly
-- Unit tests cover all paths
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-### Task 3.4: Workflow RPC Handlers and DaemonEventMap Registration
-
-**Agent:** coder
-**Priority:** normal
-**Depends on:** Task 3.3
-
-**Description:**
-
-Add RPC handlers for frontend access to workflow CRUD operations. Register new event types in `DaemonEventMap`.
-
-**Subtasks:**
-
-1. **Register new event types in `DaemonEventMap`** (`packages/daemon/src/lib/daemon-hub.ts`):
-   Add the following entries:
+1. Register in `DaemonEventMap` (`packages/daemon/src/lib/daemon-hub.ts`):
    ```typescript
-   // Workflow events (routed via room channel: sessionId = 'room:${roomId}')
-   'workflow.created': { sessionId: string; roomId: string; workflow: Workflow };
-   'workflow.updated': { sessionId: string; roomId: string; workflow: Workflow };
-   'workflow.deleted': { sessionId: string; roomId: string; workflowId: string };
+   'spaceWorkflow.created': { sessionId: string; spaceId: string; workflow: SpaceWorkflow };
+   'spaceWorkflow.updated': { sessionId: string; spaceId: string; workflow: SpaceWorkflow };
+   'spaceWorkflow.deleted': { sessionId: string; spaceId: string; workflowId: string };
    ```
-   Import the `Workflow` type from `@neokai/shared`.
+   Import `SpaceWorkflow` from `@neokai/shared`.
 
-2. Create `packages/daemon/src/lib/rpc-handlers/workflow-handlers.ts`:
-   - `workflow.create { roomId, name, description, steps, rules, tags }` -> `{ workflow }`
-   - `workflow.list { roomId }` -> `{ workflows }`
-   - `workflow.get { id }` -> `{ workflow }`
-   - `workflow.update { id, ... }` -> `{ workflow }`
-   - `workflow.delete { id }` -> `{ success }`
-   - `workflow.setDefault { roomId, workflowId }` -> `{ success }`
+2. Create `packages/daemon/src/lib/rpc-handlers/space-workflow-handlers.ts`:
+   - `spaceWorkflow.create { spaceId, name, description, steps, rules, tags }` → `{ workflow }`
+   - `spaceWorkflow.list { spaceId }` → `{ workflows }`
+   - `spaceWorkflow.get { id }` → `{ workflow }`
+   - `spaceWorkflow.update { id, ... }` → `{ workflow }`
+   - `spaceWorkflow.delete { id }` → `{ success }`
+   - `spaceWorkflow.setDefault { spaceId, workflowId }` → `{ success }`
 
-3. Wire handlers in `packages/daemon/src/app.ts`
+3. Wire handlers in `app.ts` (add new registration only — do not modify existing handler setup)
 
-4. Emit DaemonHub events using registered types:
-   - `workflow.created`, `workflow.updated`, `workflow.deleted`
+4. Emit DaemonHub events: `spaceWorkflow.created`, `spaceWorkflow.updated`, `spaceWorkflow.deleted`
 
 5. Write unit tests for all handlers
 
 **Acceptance criteria:**
-- All CRUD operations work via RPC
-- DaemonHub events are registered in `DaemonEventMap` (TypeScript compilation succeeds)
-- DaemonHub events enable real-time UI updates
+- All CRUD operations work via `spaceWorkflow.*` RPC namespace
+- DaemonHub events use `spaceWorkflow.*` namespace (matching what `SpaceStore` subscribes to in M5)
 - Error handling covers not-found, validation failures
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 3.5: Built-in Workflow Templates (Definitions Only)
+### Task 3.4: Built-in Workflow Templates
 
 **Agent:** coder
 **Priority:** normal
-**Depends on:** Task 3.3
+**Depends on:** Task 3.2
 
 **Description:**
 
-Create built-in workflow template definitions that mirror the existing hardcoded behavior. These serve as defaults and examples for users building custom workflows. **This task only defines templates and the seeding utility function.** The actual call site that seeds workflows during room creation is wired in Task 4.2a (M4), avoiding a circular M3 -> M4 dependency.
+Create built-in workflow templates that serve as defaults and examples. Also create the seeding utility. All files in Space namespace.
 
 **Subtasks:**
 
-1. Create `packages/daemon/src/lib/room/workflows/built-in-workflows.ts` with:
-   - `CODING_WORKFLOW`: Planner -> Coder (with `human_approval` exit gate on Planner for plan review, `pr_review` exit gate on Coder) -- mirrors current RoomRuntime behavior. Note: Leader is implicit per group, not a workflow step.
-   - `RESEARCH_WORKFLOW`: Planner -> General (with `auto` gates)
-   - `REVIEW_ONLY_WORKFLOW`: Coder (single step, `pr_review` exit gate, no planning step)
+1. Create `packages/daemon/src/lib/space/workflows/built-in-workflows.ts`:
+   - `CODING_WORKFLOW`: Planner → Coder (with `human_approval` exit gate on Planner, `pr_review` exit gate on Coder) — mirrors current multi-agent behavior. Leader is implicit per group, not a step.
+   - `RESEARCH_WORKFLOW`: Planner → General (with `auto` gates)
+   - `REVIEW_ONLY_WORKFLOW`: Coder (single step, `pr_review` exit gate, no planning)
 
-2. Each template includes appropriate gates:
-   - Templates include default rules matching current room instructions behavior
-   - Gate commands for `quality_check` use only allowlisted commands
+2. Each template includes appropriate gates with only allowlisted commands
 
-3. Add a `getBuiltInWorkflows(): Workflow[]` export function that returns template definitions (without room-specific IDs)
+3. `getBuiltInWorkflows(): SpaceWorkflow[]` — returns templates without space-specific IDs
 
-4. Create a `seedDefaultWorkflow(roomId: string, workflowManager: WorkflowManager): Promise<void>` utility function:
-   - Idempotent: checks if room already has a default workflow before seeding
-   - Only seeds `CODING_WORKFLOW` as the default
-   - **Not wired into any call site in this task** — the call site in `room-manager.ts` is added in Task 4.2a after the runtime can execute workflows
+4. `seedDefaultWorkflow(spaceId: string, workflowManager: SpaceWorkflowManager): Promise<void>`:
+   - Idempotent: checks if space already has a default workflow
+   - Seeds `CODING_WORKFLOW` as default
+   - **Call site wired in Task 4.2** (`SpaceManager.createSpace()` or `SpaceRuntime` initialization), not here
 
 5. Write unit tests:
-   - Verify template structure (correct steps, valid agent refs, valid gates)
-   - Verify all agent references are valid built-in roles (no 'leader')
-   - Verify idempotent seeding logic (calling `seedDefaultWorkflow` twice does not create duplicates)
+   - Template structure validation
+   - All agent refs are valid builtins (no 'leader')
+   - Idempotent seeding
 
 **Acceptance criteria:**
-- Three built-in workflow templates are defined
-- Templates mirror existing runtime behavior accurately (Leader is implicit, not a step)
-- `seedDefaultWorkflow` utility is implemented and tested but NOT wired into room creation (that's Task 4.2a)
+- Three built-in workflow templates defined
+- Templates mirror existing behavior (Leader is implicit, not a step)
+- `seedDefaultWorkflow` implemented and tested but NOT wired (that's M4)
+- All files in `packages/daemon/src/lib/space/workflows/` (NOT `room/workflows/`)
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

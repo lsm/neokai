@@ -2,73 +2,88 @@
 
 ## Goal
 
-Enable intelligent workflow selection so the room agent can automatically choose the appropriate workflow based on task context, goal type, and tags. Also support manual workflow override on tasks and goals.
+Enable intelligent workflow selection within Spaces so the Space agent can automatically choose the appropriate workflow based on task context. Also support manual workflow override on goals and tasks, and enhance agent prompts with workflow awareness. All code lives in the Space namespace — no existing Room code is modified.
+
+## Isolation Checklist
+
+- Selection logic in `packages/daemon/src/lib/space/runtime/workflow-selector.ts`
+- Space agent tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts` (NOT `room-agent-tools.ts`)
+- `SpaceGoalManager` workflow assignment in `packages/daemon/src/lib/space/managers/space-goal-manager.ts` (NOT `GoalManager` or `GoalRepository`)
+- No modifications to `room-agent-tools.ts`, `GoalRepository`, `GoalManager`, or any Room file
 
 ## Note on Auto-Selection
 
-The auto-selection algorithm in Task 7.2 is an **MVP heuristic** — a simple priority-based chain with tag matching and basic keyword matching. It is explicitly NOT meant to be sophisticated. The priority chain ensures deterministic, predictable behavior. Future iterations can replace the keyword matching step with more intelligent approaches (e.g., LLM-based classification, learned preferences) without changing the interface.
+The auto-selection algorithm is an **MVP heuristic** — a simple priority-based chain with tag matching and basic keyword matching. It is explicitly NOT sophisticated. Future iterations can replace keyword matching with LLM-based classification without changing the interface.
 
 ## Scope
 
-- Workflow selection logic (pure testable unit, independent of runtime)
-- Room agent tool updates for workflow assignment
-- Goal/task-level workflow override
-- Auto-selection based on tags and task content
-- GoalRepository/GoalManager updates for `workflow_id` column (from consolidated Migration B)
-- Unit and online tests
+- Pure, testable workflow selection logic
+- Space agent tool updates for workflow assignment
+- Goal/task-level workflow override via `SpaceGoalManager`/`SpaceTaskManager`
+- Agent prompt enhancement with workflow context
+- Unit tests
 
 ---
 
-### Task 7.1: Add Workflow Selection to Room Agent Tools
+### Task 7.1: Workflow Selection Logic and Goal Assignment
 
 **Agent:** coder
 **Priority:** high
-**Depends on:** Task 4.2b, Task 3.4
+**Depends on:** Task 4.2
 
 **Description:**
 
-Update the room agent tools to support workflow selection and assignment when creating goals and tasks. Also wire up the `goals.workflow_id` column (added in consolidated Migration B).
+Implement workflow selection as a pure testable unit and wire goal/task workflow assignment into Space agent tools. All in the Space namespace.
 
 **Subtasks:**
 
-1. Update `GoalRepository` and `GoalManager` for `workflow_id`:
-   - Update `rowToGoal()` mapping function to include `workflowId` from the `workflow_id` column
-   - Update all SQL INSERT/UPDATE statements for `goals` table to read/write `workflow_id`
-   - Update `CreateGoalParams` and `UpdateGoalParams` to include `workflowId?: string`
-   - Add validation in `GoalManager`: if `workflowId` is provided, verify the workflow exists and belongs to the same room. **This validation applies to external callers only** (RPC handlers, room agent tools). The `WorkflowExecutor` (M4) accesses `GoalManager`/`GoalRepository` directly for internal state updates (e.g., reading goal status during step advancement) and should NOT re-validate workflows it already loaded — this avoids redundant DB round-trips in the hot path. Provide a low-level `updateGoalWorkflowStep(goalId, stepId)` method that bypasses workflow existence validation for internal use.
+1. Create `packages/daemon/src/lib/space/runtime/workflow-selector.ts`:
+   - `selectWorkflow(context: WorkflowSelectionContext): SpaceWorkflow | null`
+   - `WorkflowSelectionContext`: `{ spaceId, taskTitle, taskDescription, taskType, goalTitle, goalDescription, availableWorkflows: SpaceWorkflow[] }`
+   - Selection algorithm (deterministic priority chain):
+     1. Task has explicit `workflowId` → use it
+     2. Task's goal has `workflowId` → use it
+     3. Space has default workflow → use it
+     4. Tag-based: match `taskType` against workflow tags
+     5. MVP keyword matching: substring match task title/description against workflow descriptions
+     6. Fall back to null (use default behavior)
 
-2. Update `create_goal` tool in `packages/daemon/src/lib/room/tools/room-agent-tools.ts`:
-   - Add optional `workflowId` parameter
-   - When set, the goal uses the specified workflow for all its tasks
-   - Validate the workflow belongs to the same room
+2. **Unit-testable without runtime**: `selectWorkflow()` takes only data inputs (all `SpaceWorkflow` type).
 
-3. Update `create_task` tool:
-   - Add optional `workflowId` parameter
-   - When set, overrides the goal-level or room-default workflow for this specific task
-   - Validate the workflow belongs to the same room
+3. Wire into `SpaceGoalManager` (already in `packages/daemon/src/lib/space/managers/`):
+   - `createGoal` accepts optional `workflowId`
+   - Validation: if provided, workflow must exist in same space (query `SpaceWorkflowManager`)
+   - **External caller validation only**: internal `updateGoalWorkflowStep(goalId, stepId)` bypasses existence check for `WorkflowExecutor` use (avoids redundant DB round-trips)
 
-4. Add `list_workflows` tool to room agent tools:
-   - Returns available workflows in the room (name, description, tags, step count)
-   - The room agent can use this to recommend or select workflows
+4. Create Space agent tools in `packages/daemon/src/lib/space/tools/space-agent-tools.ts`:
+   - `create_goal` tool accepts optional `workflowId`
+   - `create_task` tool accepts optional `workflowId` (overrides goal-level)
+   - `list_workflows` tool returns available `SpaceWorkflow` records
+   - **This is a new file** — NOT modifying `room-agent-tools.ts`
 
-5. Write unit tests:
-   - GoalRepository reads/writes workflow_id correctly
-   - Goal creation with workflow assignment
-   - Task creation with workflow override
-   - Validation of workflow references (exists, same room)
-   - `list_workflows` tool returns correct data
+5. Integration point in `SpaceRuntime`:
+   - `resolveWorkflowForGoal(goalId: string): SpaceWorkflow | null` — calls `selectWorkflow()`
+
+6. Write unit tests:
+   - All priority chain levels tested
+   - Explicit assignment wins over defaults
+   - Tag matching works
+   - Keyword matching handles common patterns and no-match gracefully
+   - Null fallback when no workflows exist
+   - Goal workflow assignment validation via `SpaceGoalManager`
 
 **Acceptance criteria:**
-- Goals and tasks can have workflows assigned via room agent tools
-- GoalRepository correctly persists and retrieves `workflow_id`
-- Workflow validation prevents cross-room references
-- Room agent has visibility into available workflows
-- Unit tests pass
+- `selectWorkflow()` is a pure function with no runtime dependencies, using `SpaceWorkflow` type
+- Deterministic priority chain with clear precedence
+- Goals and tasks can have workflows assigned via `SpaceGoalManager`/`SpaceTaskManager`
+- Space agent tools in new file `space-agent-tools.ts` (NOT modifying `room-agent-tools.ts`)
+- Validation prevents cross-space references
+- Unit tests cover all selection paths
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
 ---
 
-### Task 7.2: Workflow Auto-Selection Logic
+### Task 7.2: Space Agent Prompt Enhancement
 
 **Agent:** coder
 **Priority:** normal
@@ -76,85 +91,36 @@ Update the room agent tools to support workflow selection and assignment when cr
 
 **Description:**
 
-Implement automatic workflow selection as a **pure, testable unit** based on task/goal content and workflow tags. This is an MVP heuristic with deterministic priority-based resolution. The selection logic is independent of the runtime and can be tested without `RoomRuntime`.
+Enhance Space agent prompts with workflow awareness so agents can recommend and work within workflows intelligently. All prompt building in Space namespace.
 
 **Subtasks:**
 
-1. Create `packages/daemon/src/lib/room/runtime/workflow-selector.ts`:
-   - `selectWorkflow(context: WorkflowSelectionContext): Workflow | null`
-   - `WorkflowSelectionContext`: `{ roomId, taskTitle, taskDescription, taskType, goalTitle, goalDescription, availableWorkflows }`
-   - Selection algorithm (deterministic priority chain):
-     1. If task has explicit `workflowId` -> use it
-     2. If task's goal has `workflowId` -> use it
-     3. If room has a default workflow -> use it
-     4. Tag-based matching: match `taskType` against workflow tags (e.g., `taskType: 'coding'` matches workflow tagged `coding`)
-     5. **MVP keyword matching**: simple substring matching of task title/description against workflow descriptions. This is explicitly a rough heuristic — it will be replaced with more intelligent approaches in future iterations.
-     6. Fall back to null (use hardcoded behavior)
+1. Create Space chat agent system prompt builder in `packages/daemon/src/lib/space/agents/space-chat-agent.ts`:
+   - Include available `SpaceWorkflow` records (names, descriptions, tags)
+   - Include `SpaceAgent` information
+   - Guidance: "When creating goals, consider which workflow best fits the work"
+   - **New file** — NOT modifying existing room agent prompt builders
 
-2. **Unit-testable without runtime**: The `selectWorkflow()` function takes only data inputs (no runtime dependencies). It can be thoroughly tested with pure unit tests.
+2. Add `get_workflow_detail` tool to `space-agent-tools.ts`:
+   - Takes `workflowId`, returns full `SpaceWorkflow` with steps, gates, rules
 
-3. Create a separate integration point in `RoomRuntime`:
-   - `resolveWorkflowForGoal(goalId: string): Workflow | null` — calls `selectWorkflow()` with the appropriate context
-   - This is the only place where the selector touches the runtime
+3. Add `suggest_workflow` tool to `space-agent-tools.ts`:
+   - Takes `description` of intended work
+   - Returns best-matching `SpaceWorkflow` records via `selectWorkflow()` logic
 
-4. Write unit tests for the pure selection logic:
-   - Explicit assignment takes priority
-   - Goal-level assignment is inherited by tasks
-   - Room default is used when nothing else matches
-   - Tag-based matching works correctly
-   - Keyword matching works for common patterns (and gracefully handles no matches)
-   - Null fallback when no workflows exist
-   - Priority chain is deterministic (higher-priority rules always win)
-
-**Acceptance criteria:**
-- `selectWorkflow()` is a pure function with no runtime dependencies
-- Automatic workflow selection works with a clear, deterministic priority chain
-- Fallback to built-in behavior is seamless
-- Unit tests cover all selection paths independently of runtime
-- Changes must be on a feature branch with a GitHub PR created via `gh pr create`
-
----
-
-### Task 7.3: Room Agent Prompt Enhancement for Workflow Awareness
-
-**Agent:** coder
-**Priority:** normal
-**Depends on:** Task 7.2
-
-**Description:**
-
-Update the room agent (chat session) system prompt and tools to be workflow-aware, so the room agent can intelligently recommend and manage workflows during conversations.
-
-**Subtasks:**
-
-1. Update room agent system prompt building (in the session setup for `room:chat:${roomId}`):
-   - Include a section listing available workflows with their names, descriptions, and tags
-   - Include guidance: "When creating goals, consider which workflow best fits the work type"
-   - Include custom agent information: "Custom agents available: [names with descriptions]"
-
-2. Add `get_workflow_detail` tool:
-   - Takes `workflowId`
-   - Returns full workflow with steps, gates, and rules
-   - Helps the room agent understand workflow specifics before recommending
-
-3. Add `suggest_workflow` tool:
-   - Takes `description` of the intended work
-   - Returns the best-matching workflow(s) based on `selectWorkflow()` logic
-   - Returns multiple candidates ranked by match quality
-   - Explicitly notes this is heuristic-based (not AI-powered matching)
-
-4. Update the Planner agent prompt:
-   - When a goal has an assigned workflow, include the workflow structure in the planning context
-   - The planner should create tasks that align with workflow steps (e.g., if workflow expects a "security review" step, tasks should be structured to produce reviewable output)
+4. Update Planner agent prompt for workflow context (in Space planner setup):
+   - When `SpaceGoal` has an assigned workflow, include structure in planning context
+   - Planner creates tasks aligned with workflow steps
 
 5. Write unit tests:
-   - Room agent prompt includes workflow information
-   - `suggest_workflow` tool returns relevant matches
-   - Planner receives workflow context when available
+   - Prompt includes workflow information
+   - `suggest_workflow` returns relevant matches
+   - Planner receives workflow context
 
 **Acceptance criteria:**
-- Room agent is aware of available workflows and can recommend them
-- Workflow context flows through to planner for aligned task creation
+- Space agent aware of available workflows
+- All prompt builders in Space namespace (new files, not modifying Room prompts)
+- Workflow context flows to planner for aligned task creation
 - New tools work correctly
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

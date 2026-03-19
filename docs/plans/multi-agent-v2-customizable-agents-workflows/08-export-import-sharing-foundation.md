@@ -1,24 +1,32 @@
-# Milestone 8: Data Layer -- Export/Import & Sharing Foundation
+# Milestone 8: Data Layer — Export/Import & Sharing Foundation
 
 ## Goal
 
-Implement export and import of custom agent definitions and workflow configurations as JSON. This creates a pure data layer that enables sharing between rooms and across installations, laying the groundwork for a future marketplace.
+Implement export and import of custom agent definitions and workflow configurations as JSON within the Space system. This creates a pure data layer enabling sharing between Spaces and across installations. All code lives in the Space namespace — no existing Room code is modified.
+
+## Isolation Checklist
+
+- Export/import types in `packages/shared/src/types/space.ts` (NOT `neo.ts`)
+- Export format utilities in `packages/daemon/src/lib/space/data/export-format.ts`
+- RPC handlers in `packages/daemon/src/lib/rpc-handlers/space-export-import-handlers.ts`
+- RPC namespace: `spaceExport.*` / `spaceImport.*` (NOT `export.*` / `import.*`)
+- All handlers use `spaceId` context (NOT `roomId`)
+- Frontend UI in `packages/web/src/components/space/ImportPreviewDialog.tsx` (NOT `room/`)
+- No modifications to any existing handler, type file, or UI component
 
 ## Version Migration Strategy
 
-The export format uses `version: 1` as a literal type for strict validation. When `version: 2` is introduced in the future:
-- **Import**: The importer will include transform functions (`v1ToV2`, etc.) that upgrade older formats on import. Importing always targets the current version.
-- **Export**: Always exports in the latest version format.
-- **Rejection**: Versions newer than the current runtime are rejected with a clear error ("This export was created by a newer version of NeoKai. Please upgrade to import it.").
-
-This strategy is documented here as a design decision. The actual transform functions will be implemented when v2 is needed.
+The export format uses `version: 1` as a literal type for strict validation:
+- **Import**: Includes transform functions (`v1ToV2`, etc.) for upgrading older formats. Always targets current version.
+- **Export**: Always in latest version format.
+- **Rejection**: Versions newer than current runtime are rejected with clear error.
 
 ## Scope
 
-- JSON export format for agents and workflows
+- JSON export format for agents and workflows (types in `space.ts`)
 - Import with validation and conflict resolution
-- RPC handlers for export/import
-- Frontend UI for export/import actions
+- RPC handlers (`spaceExport.*`/`spaceImport.*`)
+- Frontend UI under `packages/web/src/components/space/`
 - Unit tests
 
 ---
@@ -27,20 +35,19 @@ This strategy is documented here as a design decision. The actual transform func
 
 **Agent:** coder
 **Priority:** normal
-**Depends on:** Task 1.3, Task 3.3
+**Depends on:** Task 2.1, Task 3.2
 
 **Description:**
 
-Define a standardized JSON format for exporting and importing custom agents and workflows. The format should be self-contained and portable.
+Define a standardized JSON format for exporting and importing custom agents and workflows. All types in `space.ts`.
 
 **Subtasks:**
 
-1. Add export/import types to `packages/shared/src/types/neo.ts`:
+1. Add export/import types to `packages/shared/src/types/space.ts`:
 
    ```typescript
-   /** Exported agent definition (room-agnostic) */
-   interface ExportedAgent {
-     /** Schema version for future compatibility. See version migration strategy in 08-export-import-sharing-foundation.md. */
+   /** Exported agent definition (space-agnostic) */
+   interface ExportedSpaceAgent {
      version: 1;
      type: 'agent';
      name: string;
@@ -53,9 +60,8 @@ Define a standardized JSON format for exporting and importing custom agents and 
      config?: Record<string, unknown>;
    }
 
-   /** Exported workflow definition (room-agnostic) */
-   interface ExportedWorkflow {
-     /** Schema version for future compatibility. */
+   /** Exported workflow definition (space-agnostic) */
+   interface ExportedSpaceWorkflow {
      version: 1;
      type: 'workflow';
      name: string;
@@ -73,10 +79,10 @@ Define a standardized JSON format for exporting and importing custom agents and 
        name: string;
        content: string;
        /**
-        * Step references in the export format use step **order indices** (0, 1, 2, ...),
-        * NOT step UUIDs. This is because step UUIDs are room-specific and stripped on export.
-        * The `exportWorkflow()` function remaps `appliesTo` from step IDs to order indices.
-        * The `importWorkflow()` function remaps order indices back to newly generated step IDs.
+        * Step references use step **order indices** (0, 1, 2, ...), NOT UUIDs.
+        * UUIDs are space-specific and stripped on export.
+        * exportWorkflow() remaps appliesTo from step IDs to order indices.
+        * importWorkflow() remaps order indices back to newly generated step IDs.
         */
        appliesTo?: number[];
      }>;
@@ -84,44 +90,45 @@ Define a standardized JSON format for exporting and importing custom agents and 
      config?: Record<string, unknown>;
    }
 
-   /** A bundle containing agents and/or workflows */
-   interface ExportBundle {
+   /** Bundle containing agents and/or workflows from a Space */
+   interface SpaceExportBundle {
      version: 1;
      type: 'bundle';
      name: string;
      description?: string;
-     agents: ExportedAgent[];
-     workflows: ExportedWorkflow[];
-     exportedAt: string; // ISO timestamp
-     exportedFrom?: string; // room name (optional metadata)
+     agents: ExportedSpaceAgent[];
+     workflows: ExportedSpaceWorkflow[];
+     exportedAt: string;
+     exportedFrom?: string; // space name (optional metadata)
    }
    ```
 
-2. Create `packages/daemon/src/lib/room/data/export-format.ts`:
-   - `exportAgent(agent: CustomAgent): ExportedAgent`
-   - `exportWorkflow(workflow: Workflow): ExportedWorkflow` — **must remap `rules[].appliesTo` from step UUIDs to step order indices** (build a `Map<stepId, order>` from the workflow steps, then replace each ID in `appliesTo` with its corresponding order index). This ensures rules survive the export/import round-trip since step UUIDs are regenerated on import.
-   - `exportBundle(agents: CustomAgent[], workflows: Workflow[], name: string): ExportBundle`
-   - Strip room-specific IDs and timestamps from exports
+2. Create `packages/daemon/src/lib/space/data/export-format.ts`:
+   - `exportAgent(agent: SpaceAgent): ExportedSpaceAgent`
+   - `exportWorkflow(workflow: SpaceWorkflow): ExportedSpaceWorkflow` — **must remap `rules[].appliesTo` from step UUIDs to step order indices** (build `Map<stepId, order>`, replace each ID with order index)
+   - `exportBundle(agents: SpaceAgent[], workflows: SpaceWorkflow[], name: string): SpaceExportBundle`
+   - Strip space-specific IDs and timestamps
 
-3. Create validation functions:
-   - `validateExportedAgent(data: unknown): ExportedAgent` -- validates and coerces
-   - `validateExportedWorkflow(data: unknown): ExportedWorkflow`
-   - `validateExportBundle(data: unknown): ExportBundle`
-   - Use zod schemas for validation
-   - **Version handling**: Accept `version: 1` only. If `version > 1`, reject with message: "This export requires a newer version of NeoKai." If version is missing or < 1, reject as invalid.
+3. Validation functions:
+   - `validateExportedAgent(data: unknown): ExportedSpaceAgent`
+   - `validateExportedWorkflow(data: unknown): ExportedSpaceWorkflow`
+   - `validateExportBundle(data: unknown): SpaceExportBundle`
+   - Use zod schemas
+   - Version handling: accept v1 only; v2+ → "requires newer version"; missing/< 1 → invalid
 
 4. Write unit tests:
-   - Round-trip: export -> serialize -> deserialize -> validate
-   - **Rule appliesTo round-trip**: export a workflow with rules targeting specific steps -> verify `appliesTo` contains order indices (not UUIDs) in exported JSON -> import into new room -> verify rules target the correct new step IDs
+   - Round-trip: export → serialize → deserialize → validate
+   - **Rule appliesTo round-trip**: export with step-specific rules → verify order indices in JSON → import → verify correct new step IDs
    - Validation rejects malformed data
-   - Room-specific fields (id, roomId, timestamps) are stripped on export
-   - Version validation: accepts v1, rejects v2+, rejects missing version
+   - Space-specific fields (id, spaceId, timestamps) stripped on export
+   - Version validation
 
 **Acceptance criteria:**
-- Export format is well-defined and versioned
-- Validation catches malformed imports
-- Version checking provides clear upgrade messages
-- Room-specific data is stripped on export
+- Export format well-defined and versioned
+- All types in `space.ts` (NOT `neo.ts`)
+- Type names use Space prefix (`ExportedSpaceAgent`, `SpaceExportBundle`)
+- `appliesTo` correctly remapped between UUIDs and order indices
+- Version checking provides clear messages
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -135,47 +142,41 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 **Description:**
 
-Add RPC handlers for exporting and importing agents and workflows.
+Add RPC handlers for exporting and importing agents and workflows using `spaceExport.*`/`spaceImport.*` namespace with `spaceId` context.
 
 **Subtasks:**
 
-1. Create `packages/daemon/src/lib/rpc-handlers/export-import-handlers.ts`:
-   - `export.agents { roomId, agentIds? }` -> returns `{ bundle: ExportBundle }` (all or specific agents)
-   - `export.workflows { roomId, workflowIds? }` -> returns `{ bundle: ExportBundle }` (all or specific workflows)
-   - `export.bundle { roomId, agentIds?, workflowIds? }` -> returns full bundle
-   - `import.preview { bundle, roomId }` -> returns `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors: ValidationError[] }` (dry run showing what will be created, with conflict detection AND full `WorkflowManager` validation including gate security checks — non-allowlisted commands, path traversal, etc. Surface validation errors in the preview so users see them BEFORE committing to import)
-   - `import.execute { roomId, bundle, conflictResolution }` -> creates agents/workflows in target room (re-validates on execute as well)
+1. Create `packages/daemon/src/lib/rpc-handlers/space-export-import-handlers.ts`:
+   - `spaceExport.agents { spaceId, agentIds? }` → `{ bundle: SpaceExportBundle }`
+   - `spaceExport.workflows { spaceId, workflowIds? }` → `{ bundle: SpaceExportBundle }`
+   - `spaceExport.bundle { spaceId, agentIds?, workflowIds? }` → full bundle
+   - `spaceImport.preview { bundle, spaceId }` → `{ agents: ImportPreview[], workflows: ImportPreview[], validationErrors }` — dry run with conflict detection AND full `SpaceWorkflowManager` validation (gate security checks)
+   - `spaceImport.execute { spaceId, bundle, conflictResolution }` → creates entities (re-validates)
 
-2. Implement conflict resolution:
-   - `ImportPreview` includes: `name`, `action: 'create' | 'conflict'`, `existingId?: string`
+2. Conflict resolution:
+   - `ImportPreview`: `name`, `action: 'create' | 'conflict'`, `existingId?`
    - `conflictResolution`: `'skip' | 'rename' | 'replace'` per item
-   - When `rename`: append " (imported)" to name
-   - When `replace`: update existing agent/workflow
-   - When `skip`: do not import
 
-3. Handle cross-references and ID remapping:
-   - Workflows referencing custom agents: if the referenced agent is in the bundle, map the new ID after import
-   - If the referenced agent is NOT in the bundle and not present in the target room, flag it in the preview as a warning (workflow step will reference a non-existent agent)
-   - **Step ID remapping for rules**: When importing a workflow, new step UUIDs are generated for each step. Remap `rules[].appliesTo` from order indices (in the export format) back to the newly generated step UUIDs using the `Map<order, newStepId>` built during step creation. This ensures rule-step associations survive the round-trip.
+3. Cross-references and ID remapping:
+   - Workflows referencing custom agents: map new ID after import if agent is in bundle
+   - Missing agents: flag as warning in preview
+   - **Step ID remapping for rules**: new step UUIDs generated on import; remap `rules[].appliesTo` from order indices back to new step UUIDs using `Map<order, newStepId>`
 
-4. Wire handlers in `app.ts`
+4. Wire handlers in `app.ts` (add new registration only)
 
 5. Write unit tests:
-   - Export includes correct data
-   - Import preview detects conflicts
-   - Import preview surfaces gate validation errors (non-allowlisted quality_check commands, path traversal in custom gates)
-   - Import with different conflict resolutions
-   - Cross-reference mapping works (agent ID remapping + step ID remapping for rules.appliesTo)
-   - Missing cross-references are flagged as warnings
-   - Error handling for invalid bundles
-   - Version validation on import
+   - Export includes correct data from `space_agents`/`space_workflows` tables
+   - Preview detects conflicts and gate validation errors
+   - All conflict resolutions work
+   - Cross-reference mapping (agent ID + step ID remapping for rules.appliesTo)
+   - All handlers use `spaceId` (NOT `roomId`)
 
 **Acceptance criteria:**
-- Export produces valid JSON bundles
-- Import preview accurately detects conflicts, missing cross-references, AND gate validation errors
-- Gate security validation runs during preview (not deferred to execute)
-- Conflict resolution options all work correctly
-- Cross-references between agents and workflows are handled
+- RPC namespace is `spaceExport.*`/`spaceImport.*` (NOT `export.*`/`import.*`)
+- All handlers use `spaceId` context (NOT `roomId`)
+- Export reads from `space_agents`/`space_workflows` tables
+- Import writes to `space_agents`/`space_workflows` tables
+- Preview detects conflicts, missing references, AND gate validation errors
 - Unit tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
 
@@ -189,46 +190,41 @@ Add RPC handlers for exporting and importing agents and workflows.
 
 **Description:**
 
-Add export and import UI actions to the custom agent and workflow list views.
+Add export and import actions to agent and workflow list views within the Space UI. All components under `packages/web/src/components/space/`.
 
 **Subtasks:**
 
-1. Add export functionality:
-   - "Export" button on individual agent/workflow cards (exports single item)
-   - "Export All" button on list views (exports all agents or workflows)
-   - "Export Bundle" button on room settings (exports everything)
-   - Export triggers a file download with `.neokai.json` extension
-   - File named: `{room-name}-{type}-{date}.neokai.json`
+1. Export functionality:
+   - "Export" on individual agent/workflow cards (in `SpaceAgentList` and `WorkflowList`)
+   - "Export All" on list views
+   - "Export Bundle" in Space settings
+   - Downloads `.neokai.json` file: `{space-name}-{type}-{date}.neokai.json`
 
-2. Add import functionality:
+2. Import functionality:
    - "Import" button on list views
-   - Opens file picker for `.json` or `.neokai.json` files
-   - After file selection, calls `import.preview` and shows preview dialog:
-     - List of items to import with name, type, and conflict status
-     - Missing cross-reference warnings (e.g., "Workflow 'X' references agent 'Y' which is not in this room")
-     - Conflict resolution options per item (skip/rename/replace)
-     - "Import" and "Cancel" buttons
-   - On confirm, calls `import.execute`
-   - Shows success/error toast
-   - Version mismatch shows clear upgrade message
+   - File picker for `.json`/`.neokai.json`
+   - Preview dialog showing items, conflicts, cross-reference warnings
+   - Conflict resolution per item (skip/rename/replace)
+   - Success/error toast, version mismatch message
 
-3. Create `packages/web/src/components/room/ImportPreviewDialog.tsx`:
-   - Modal showing import preview results
-   - Checkbox per item to include/exclude
-   - Conflict resolution dropdown per conflicting item
+3. Create `packages/web/src/components/space/ImportPreviewDialog.tsx`:
+   - Modal with import preview results
+   - Checkbox per item, conflict resolution dropdown per conflict
    - Warning section for missing cross-references
-   - Summary line: "Will create X agents and Y workflows"
+   - Summary: "Will create X agents and Y workflows"
+   - **This is under `components/space/`** — NOT `components/room/`
 
 4. Write e2e tests:
-   - Export a custom agent, verify download
-   - Import a previously exported agent into the same room (conflict scenario)
-   - Import into a room with no conflicts
-   - Import a bundle with both agents and workflows
+   - Export agent from Space, verify download
+   - Import with conflict (same name in same space)
+   - Import into space with no conflicts
+   - Import bundle with both agents and workflows
 
 **Acceptance criteria:**
-- Export downloads a valid JSON file
-- Import flow shows preview before executing
-- Missing cross-references are warned about
-- Conflict resolution works as expected
+- All UI components under `packages/web/src/components/space/`
+- Export downloads valid JSON with `spaceId` context
+- Import preview before executing
+- Missing cross-references warned
+- Conflict resolution works
 - E2E tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`
