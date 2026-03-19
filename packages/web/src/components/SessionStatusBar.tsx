@@ -441,6 +441,7 @@ export default function SessionStatusBar({
 						{/* Model Dropdown */}
 						{modelDropdown.isOpen && (
 							<div
+								data-testid="model-dropdown"
 								class={`absolute bottom-full mb-2 left-0 bg-dark-800 border ${borderColors.ui.secondary} rounded-lg shadow-xl w-52 py-1 z-50 animate-slideIn`}
 							>
 								<div class="px-3 py-1.5 text-xs font-semibold text-gray-400">Select Model</div>
@@ -448,13 +449,16 @@ export default function SessionStatusBar({
 									([provider, models], groupIndex) => {
 										const isAuthenticated = providerAuthStatuses.get(provider) ?? false;
 										return (
-											<div key={provider}>
+											<div key={provider} data-testid={`provider-section`}>
 												{groupIndex > 0 && <div class="mx-2 my-1 border-t border-gray-700" />}
 												<div class="px-3 py-1 flex items-center gap-1.5">
 													<span
 														class={`w-2 h-2 rounded-full flex-shrink-0 ${isAuthenticated ? 'bg-green-500' : 'bg-gray-500'}`}
 													/>
-													<span class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">
+													<span
+														data-testid="provider-group-header"
+														class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide"
+													>
 														{getProviderLabel(provider)}
 													</span>
 												</div>

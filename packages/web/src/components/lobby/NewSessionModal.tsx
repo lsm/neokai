@@ -220,6 +220,7 @@ export function NewSessionModal({
 					{/* Path Input */}
 					<input
 						type="text"
+						data-testid="new-session-workspace-input"
 						value={selectedPath}
 						onInput={(e) => setSelectedPath((e.target as HTMLInputElement).value)}
 						placeholder="Enter workspace path..."
