@@ -5,8 +5,11 @@
  *
  * Responsibilities:
  * - Validate workflow integrity (unique name, step agent refs, gate security)
- * - Enforce default workflow invariants (single default per space)
  * - Protect custom agents that are referenced by steps
+ *
+ * Workflow selection: either explicit workflowId provided by the caller, or
+ * AI auto-select at runtime via list_workflows + start_workflow_run. There is
+ * no default workflow concept.
  */
 
 import type {
@@ -114,12 +117,6 @@ export class SpaceWorkflowManager {
 		const trimmedName = params.name.trim();
 		this.validateName(params.spaceId, trimmedName, null);
 		this.validateSteps(params.spaceId, params.steps ?? []);
-
-		// If this new workflow should be the default, unset any current default first
-		if (params.isDefault) {
-			this.repo.clearDefaultWorkflow(params.spaceId);
-		}
-
 		return this.repo.createWorkflow({ ...params, name: trimmedName });
 	}
 
@@ -133,10 +130,6 @@ export class SpaceWorkflowManager {
 
 	listWorkflows(spaceId: string): SpaceWorkflow[] {
 		return this.repo.listWorkflows(spaceId);
-	}
-
-	getDefaultWorkflow(spaceId: string): SpaceWorkflow | null {
-		return this.repo.getDefaultWorkflow(spaceId);
 	}
 
 	// -------------------------------------------------------------------------
@@ -177,11 +170,6 @@ export class SpaceWorkflowManager {
 			this.validateSteps(existing.spaceId, inputs);
 		}
 
-		// If switching isDefault to true, clear any existing default
-		if (params.isDefault === true && !existing.isDefault) {
-			this.repo.clearDefaultWorkflow(existing.spaceId);
-		}
-
 		return this.repo.updateWorkflow(id, params);
 	}
 
@@ -192,25 +180,7 @@ export class SpaceWorkflowManager {
 	deleteWorkflow(id: string): boolean {
 		const existing = this.repo.getWorkflow(id);
 		if (!existing) return false;
-
-		const deleted = this.repo.deleteWorkflow(id);
-
-		// If we deleted the default workflow, the foreign key CASCADE handles DB cleanup.
-		// No further action needed — callers can create a new default if desired.
-
-		return deleted;
-	}
-
-	// -------------------------------------------------------------------------
-	// Default workflow management
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Set a workflow as the default for its space.
-	 * Atomically clears any previous default and marks the new one.
-	 */
-	setDefaultWorkflow(spaceId: string, workflowId: string): boolean {
-		return this.repo.setDefaultWorkflow(spaceId, workflowId);
+		return this.repo.deleteWorkflow(id);
 	}
 
 	// -------------------------------------------------------------------------

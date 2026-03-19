@@ -553,13 +553,7 @@ export interface SpaceWorkflow {
 	steps: WorkflowStep[];
 	/** Rules that govern agent behavior during this workflow */
 	rules: WorkflowRule[];
-	/**
-	 * Whether this is the default workflow for the Space.
-	 * Only one workflow per Space may have isDefault = true.
-	 * The default workflow is selected automatically when no explicit workflow is chosen.
-	 */
-	isDefault: boolean;
-	/** Tags for categorization and workflow selection heuristics */
+	/** Tags for categorization */
 	tags: string[];
 	/** Additional runtime configuration (opaque bag for future extensibility) */
 	config?: Record<string, unknown>;
@@ -585,8 +579,6 @@ export interface CreateSpaceWorkflowParams {
 	 * Rules governing agent behavior. `id` is backend-assigned.
 	 */
 	rules?: WorkflowRuleInput[];
-	/** Whether this workflow should be the default for the Space (default: false) */
-	isDefault?: boolean;
 	/** Tags for categorization (default: []). */
 	tags?: string[];
 	config?: Record<string, unknown>;
@@ -613,7 +605,6 @@ export interface UpdateSpaceWorkflowParams {
 	 * Replaces the entire rule list. Pass `[]` or `null` to clear all rules.
 	 */
 	rules?: WorkflowRule[] | null;
-	isDefault?: boolean;
 	/**
 	 * Replaces the tag list. Pass `[]` or `null` to clear all tags.
 	 */

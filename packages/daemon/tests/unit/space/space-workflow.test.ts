@@ -3,7 +3,6 @@
  *
  * Covers:
  * - Repository: full CRUD with step management
- * - Repository: getDefaultWorkflow / setDefaultWorkflow
  * - Repository: getWorkflowsReferencingAgent
  * - Repository: JSON round-trips (rules, tags, gates)
  * - Manager: name uniqueness within space
@@ -12,8 +11,6 @@
  * - Manager: custom agent ref validation via SpaceAgentLookup
  * - Manager: gate command validation (quality_check allowlist, custom relative path, no ..)
  * - Manager: timeoutMs bounds (0–300000)
- * - Manager: setting new default unsets previous default
- * - Manager: deleting default workflow clears it
  * - Manager: step ordering via array position
  */
 
@@ -119,19 +116,8 @@ describe('SpaceWorkflowRepository', () => {
 		expect(wf.steps[0].agentRefType).toBe('builtin');
 		expect(wf.steps[0].agentRef).toBe('coder');
 		expect(wf.steps[1].order).toBe(1);
-		expect(wf.isDefault).toBe(false);
 		expect(wf.tags).toEqual([]);
 		expect(wf.rules).toEqual([]);
-	});
-
-	test('createWorkflow with isDefault=true persists the flag', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'Default WF',
-			steps: [coderStep],
-			isDefault: true,
-		});
-		expect(wf.isDefault).toBe(true);
 	});
 
 	test('createWorkflow stores tags and config', () => {
@@ -158,14 +144,12 @@ describe('SpaceWorkflowRepository', () => {
 			steps: [coderStep],
 			rules: [{ name: 'Rule1', content: 'Follow TDD', appliesTo: [] }],
 			tags: ['a', 'b'],
-			isDefault: true,
 			config: { key: 'value' },
 		});
 
 		const fetched = repo.getWorkflow(created.id)!;
 		expect(fetched.name).toBe('Full');
 		expect(fetched.description).toBe('A full workflow');
-		expect(fetched.isDefault).toBe(true);
 		expect(fetched.tags).toEqual(['a', 'b']);
 		expect(fetched.rules).toHaveLength(1);
 		expect(fetched.rules[0].name).toBe('Rule1');
@@ -236,59 +220,6 @@ describe('SpaceWorkflowRepository', () => {
 
 	test('deleteWorkflow returns false for missing id', () => {
 		expect(repo.deleteWorkflow('no-such-id')).toBe(false);
-	});
-
-	// -------------------------------------------------------------------------
-	// Default workflow management
-	// -------------------------------------------------------------------------
-
-	test('getDefaultWorkflow returns null when no default exists', () => {
-		repo.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
-		expect(repo.getDefaultWorkflow('space-1')).toBeNull();
-	});
-
-	test('getDefaultWorkflow returns the default workflow', () => {
-		repo.createWorkflow({ spaceId: 'space-1', name: 'WF1', steps: [coderStep] });
-		const def = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF2',
-			steps: [plannerStep],
-			isDefault: true,
-		});
-		const result = repo.getDefaultWorkflow('space-1');
-		expect(result?.id).toBe(def.id);
-	});
-
-	test('setDefaultWorkflow atomically swaps default', () => {
-		const wf1 = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF1',
-			steps: [coderStep],
-			isDefault: true,
-		});
-		const wf2 = repo.createWorkflow({ spaceId: 'space-1', name: 'WF2', steps: [plannerStep] });
-
-		repo.setDefaultWorkflow('space-1', wf2.id);
-
-		expect(repo.getWorkflow(wf1.id)?.isDefault).toBe(false);
-		expect(repo.getWorkflow(wf2.id)?.isDefault).toBe(true);
-		expect(repo.getDefaultWorkflow('space-1')?.id).toBe(wf2.id);
-	});
-
-	test('setDefaultWorkflow returns false for wrong spaceId', () => {
-		const wf = repo.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
-		expect(repo.setDefaultWorkflow('space-2', wf.id)).toBe(false);
-	});
-
-	test('clearDefaultWorkflow unsets all defaults in space', () => {
-		const wf = repo.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF',
-			steps: [coderStep],
-			isDefault: true,
-		});
-		repo.clearDefaultWorkflow('space-1');
-		expect(repo.getWorkflow(wf.id)?.isDefault).toBe(false);
 	});
 
 	// -------------------------------------------------------------------------
@@ -946,55 +877,10 @@ describe('SpaceWorkflowManager', () => {
 		).toThrow(WorkflowValidationError);
 	});
 
-	// -------------------------------------------------------------------------
-	// Default workflow management
-	// -------------------------------------------------------------------------
-
-	test('createWorkflow with isDefault=true unsets previous default', () => {
-		const wf1 = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF1',
-			steps: [coderStep],
-			isDefault: true,
-		});
-		expect(manager.getWorkflow(wf1.id)?.isDefault).toBe(true);
-
-		const wf2 = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF2',
-			steps: [plannerStep],
-			isDefault: true,
-		});
-		expect(manager.getWorkflow(wf1.id)?.isDefault).toBe(false);
-		expect(manager.getWorkflow(wf2.id)?.isDefault).toBe(true);
-		expect(manager.getDefaultWorkflow('space-1')?.id).toBe(wf2.id);
-	});
-
-	test('setDefaultWorkflow swaps the default', () => {
-		const wf1 = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF1',
-			steps: [coderStep],
-			isDefault: true,
-		});
-		const wf2 = manager.createWorkflow({ spaceId: 'space-1', name: 'WF2', steps: [plannerStep] });
-
-		manager.setDefaultWorkflow('space-1', wf2.id);
-
-		expect(manager.getWorkflow(wf1.id)?.isDefault).toBe(false);
-		expect(manager.getWorkflow(wf2.id)?.isDefault).toBe(true);
-	});
-
-	test('deleteWorkflow removes workflow (default cleared by delete)', () => {
-		const wf = manager.createWorkflow({
-			spaceId: 'space-1',
-			name: 'WF',
-			steps: [coderStep],
-			isDefault: true,
-		});
-		manager.deleteWorkflow(wf.id);
+	test('deleteWorkflow removes an existing workflow', () => {
+		const wf = manager.createWorkflow({ spaceId: 'space-1', name: 'WF', steps: [coderStep] });
+		expect(manager.deleteWorkflow(wf.id)).toBe(true);
 		expect(manager.getWorkflow(wf.id)).toBeNull();
-		expect(manager.getDefaultWorkflow('space-1')).toBeNull();
 	});
 
 	test('deleteWorkflow returns false for non-existent workflow', () => {

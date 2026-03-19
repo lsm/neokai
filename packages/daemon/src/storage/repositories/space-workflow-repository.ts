@@ -8,7 +8,7 @@
  *   space_workflow_steps — id, workflow_id, name, description, agent_id (custom UUID | null),
  *                          order_index, config (JSON), created_at, updated_at
  *
- * The `config` column on space_workflows stores: { isDefault, tags, rules, ...extra }
+ * The `config` column on space_workflows stores: { tags, rules, ...extra }
  * The `config` column on space_workflow_steps stores: { agentRefType, agentRef, entryGate?,
  *   exitGate?, instructions? }
  * The `agent_id` column stores the custom SpaceAgent's UUID when agentRefType='custom',
@@ -56,7 +56,6 @@ interface StepRow {
 
 // JSON stored inside space_workflows.config
 interface WorkflowConfigJson {
-	isDefault?: boolean;
 	tags?: string[];
 	rules?: WorkflowRule[];
 	extra?: Record<string, unknown>;
@@ -118,7 +117,6 @@ export function rowToWorkflow(row: WorkflowRow, steps: WorkflowStep[]): SpaceWor
 		description: row.description || undefined,
 		steps,
 		rules: cfg.rules ?? [],
-		isDefault: cfg.isDefault ?? false,
 		tags: cfg.tags ?? [],
 		config: cfg.extra,
 		createdAt: row.created_at,
@@ -142,7 +140,6 @@ export class SpaceWorkflowRepository {
 		const now = Date.now();
 
 		const cfg: WorkflowConfigJson = {
-			isDefault: params.isDefault ?? false,
 			tags: params.tags ?? [],
 			rules: this.assignRuleIds(params.rules ?? []),
 			extra: params.config,
@@ -192,20 +189,6 @@ export class SpaceWorkflowRepository {
 		return rows.map((r) => rowToWorkflow(r, this.fetchSteps(r.id)));
 	}
 
-	getDefaultWorkflow(spaceId: string): SpaceWorkflow | null {
-		const rows = this.db
-			.prepare(`SELECT * FROM space_workflows WHERE space_id = ?`)
-			.all(spaceId) as WorkflowRow[];
-		for (const row of rows) {
-			const cfg = parseJson<WorkflowConfigJson>(row.config, {});
-			if (cfg.isDefault) {
-				const steps = this.fetchSteps(row.id);
-				return rowToWorkflow(row, steps);
-			}
-		}
-		return null;
-	}
-
 	// -------------------------------------------------------------------------
 	// Update
 	// -------------------------------------------------------------------------
@@ -234,10 +217,6 @@ export class SpaceWorkflowRepository {
 		let cfgChanged = false;
 		const newCfg: WorkflowConfigJson = { ...existingCfg };
 
-		if (params.isDefault !== undefined) {
-			newCfg.isDefault = params.isDefault;
-			cfgChanged = true;
-		}
 		if (params.tags !== undefined) {
 			newCfg.tags = params.tags ?? [];
 			cfgChanged = true;
@@ -288,71 +267,6 @@ export class SpaceWorkflowRepository {
 	deleteWorkflow(id: string): boolean {
 		const result = this.db.prepare(`DELETE FROM space_workflows WHERE id = ?`).run(id);
 		return result.changes > 0;
-	}
-
-	// -------------------------------------------------------------------------
-	// Default workflow management
-	// -------------------------------------------------------------------------
-
-	/**
-	 * Set the default workflow for a space.
-	 * Clears isDefault on all other workflows in the space, then sets isDefault=true
-	 * on the specified workflow. Runs in a transaction.
-	 */
-	setDefaultWorkflow(spaceId: string, workflowId: string): boolean {
-		// Verify the target exists before opening the transaction
-		const exists = this.db
-			.prepare(`SELECT id FROM space_workflows WHERE id = ? AND space_id = ?`)
-			.get(workflowId, spaceId);
-		if (!exists) return false;
-
-		const tx = this.db.transaction(() => {
-			// Clear isDefault on all workflows in this space
-			const all = this.db
-				.prepare(`SELECT * FROM space_workflows WHERE space_id = ?`)
-				.all(spaceId) as WorkflowRow[];
-
-			for (const w of all) {
-				const cfg = parseJson<WorkflowConfigJson>(w.config, {});
-				if (cfg.isDefault) {
-					cfg.isDefault = false;
-					this.db
-						.prepare(`UPDATE space_workflows SET config = ?, updated_at = ? WHERE id = ?`)
-						.run(JSON.stringify(cfg), Date.now(), w.id);
-				}
-			}
-
-			// Re-read the target row inside the transaction so we always work from current state
-			const target = this.db
-				.prepare(`SELECT * FROM space_workflows WHERE id = ?`)
-				.get(workflowId) as WorkflowRow;
-			const targetCfg = parseJson<WorkflowConfigJson>(target.config, {});
-			targetCfg.isDefault = true;
-			this.db
-				.prepare(`UPDATE space_workflows SET config = ?, updated_at = ? WHERE id = ?`)
-				.run(JSON.stringify(targetCfg), Date.now(), workflowId);
-		});
-
-		tx();
-		return true;
-	}
-
-	/**
-	 * Clear isDefault from a workflow (e.g., when its space's default is being deleted).
-	 */
-	clearDefaultWorkflow(spaceId: string): void {
-		const rows = this.db
-			.prepare(`SELECT * FROM space_workflows WHERE space_id = ?`)
-			.all(spaceId) as WorkflowRow[];
-		for (const w of rows) {
-			const cfg = parseJson<WorkflowConfigJson>(w.config, {});
-			if (cfg.isDefault) {
-				cfg.isDefault = false;
-				this.db
-					.prepare(`UPDATE space_workflows SET config = ?, updated_at = ? WHERE id = ?`)
-					.run(JSON.stringify(cfg), Date.now(), w.id);
-			}
-		}
 	}
 
 	// -------------------------------------------------------------------------
