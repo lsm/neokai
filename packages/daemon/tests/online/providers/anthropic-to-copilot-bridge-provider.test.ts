@@ -559,7 +559,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	// -------------------------------------------------------------------------
 
 	test(
-		'token usage: SSE stream contains non-zero input_tokens and output_tokens',
+		'token usage: session metadata contains non-zero input_tokens and output_tokens',
 		async () => {
 			// Route through the daemon session lifecycle (uses the existing Copilot
 			// provider that was already warmed up in beforeAll).  Creating a fresh
@@ -579,10 +579,15 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			await sendMessage(daemon, sessionId, 'Say hello in one sentence.');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
+			// Wait for SDK messages to be persisted — consistent with other tests that
+			// also use waitForSdkMessages before querying session state.
+			await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
+
 			// Token counts are accumulated in session metadata by the SDK message handler.
 			// The Copilot bridge emits heuristic input/output counts via SSE (input from
 			// prompt length, output from response character count), which the Claude Agent
-			// SDK processes and stores in the assistant message's usage field.
+			// SDK processes and stores in the assistant message's usage field, then
+			// persists to session.metadata.inputTokens/outputTokens.
 			const { session } = (await daemon.messageHub.request('session.get', {
 				sessionId,
 			})) as { session: { metadata?: { inputTokens?: number; outputTokens?: number } } };
