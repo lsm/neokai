@@ -24,6 +24,8 @@ const ERROR_CATEGORY_COLORS: Record<ErrorCategory, string> = {
 	timeout: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
 	permission: 'bg-red-500/10 text-red-400 border-red-500/30',
 	rate_limit: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
+	provider_auth_error: 'bg-red-500/10 text-red-400 border-red-500/30',
+	provider_unavailable: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
 };
 
 const ERROR_CATEGORY_ICONS: Record<ErrorCategory, string> = {
@@ -37,6 +39,8 @@ const ERROR_CATEGORY_ICONS: Record<ErrorCategory, string> = {
 	timeout: '⏱️',
 	permission: '🔒',
 	rate_limit: '⏸️',
+	provider_auth_error: '🔑',
+	provider_unavailable: '🔌',
 };
 
 export function ErrorDialog({ isOpen, onClose, error, isDev: _isDev = false }: ErrorDialogProps) {
