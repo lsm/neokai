@@ -79,10 +79,11 @@ Build the visual workflow editor for composing agent steps with gates.
 **Subtasks:**
 
 1. Create `packages/web/src/components/space/WorkflowList.tsx`:
-   - Workflow cards: name, description, step count, default badge, tag chips
-   - "Create Workflow" button, "Set as Default" action per card
+   - Workflow cards: name, description, step count
+   - "Create Workflow" button
    - Real-time updates via SpaceStore
    - Mini step visualization (horizontal dots/icons showing the step sequence)
+   - **No "Set as Default" button** — the AI agent selects the appropriate workflow based on user intent
 
 2. Create `packages/web/src/components/space/WorkflowEditor.tsx`:
    - Workflow name and description fields at top
@@ -150,30 +151,25 @@ Add the rules editor to the workflow builder, tags editor, and integrate all age
      - Remove button
    - Rules saved as part of the workflow
 
-2. Tags editor:
-   - Tag input (comma-separated or chip input)
-   - Suggestions: "coding", "review", "research", "design", "deployment"
-
-3. Integration into Space layout:
+2. Integration into Space layout:
    - Agent management: accessible via SpaceNavPanel "Agents" link → renders `SpaceAgentList`/`SpaceAgentEditor` in middle column
    - Workflow management: via "Workflows" link → renders `WorkflowList`/`WorkflowEditor`
    - Back navigation between list and editor views
 
-4. Export all new components from `packages/web/src/components/space/index.ts`
+3. Export all new components from `packages/web/src/components/space/index.ts`
 
-5. Write e2e tests:
+4. Write e2e tests:
    - Create a workflow with 3 steps from template
    - Add a custom rule targeting specific steps
    - Save and verify persistence
-   - Set as default workflow
    - Edit existing workflow
    - Delete workflow
    - Create a custom agent, use it in a workflow step
 
 **Acceptance criteria:**
 - Rules can be created and associated with specific steps
-- Tags help categorize workflows
 - Agent and workflow management integrated into Space layout
 - Full CRUD flows work end-to-end
+- No "Set as Default" toggle — workflow selection is handled by the AI agent
 - E2E tests pass
 - Changes must be on a feature branch with a GitHub PR created via `gh pr create`

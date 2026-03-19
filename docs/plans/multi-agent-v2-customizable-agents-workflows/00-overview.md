@@ -94,7 +94,7 @@ Spaces require a **workspace path** at creation time — the directory where age
 4. **Workflow Runtime Engine** — `WorkflowExecutor` in `packages/daemon/src/lib/space/runtime/`, `SpaceRuntime` orchestration engine, `SpaceRuntimeService`, `spaceWorkflowRun.*` RPC handlers, gate evaluation, step advancement, rule injection. Operates on workflow runs and tasks (no goals).
 5. **Space Frontend Foundation** — Navigation entry point, URL routing, `SpaceStore`, Space creation UX with workspace path picker, minimalist 3-column layout shell (right pane shows placeholder states until M4 provides a running runtime).
 6. **Frontend: Agent & Workflow UI** — Agent creation/editing, visual workflow builder, rules editor — all under `packages/web/src/components/space/`.
-7. **Workflow Selection & Agent Tools** — Workflow selection logic, Space agent tools in `packages/daemon/src/lib/space/tools/`, prompt enhancement with workflow awareness.
+7. **Workflow Selection & Agent Tools** — Two-mode workflow selection (explicit workflowId OR AI auto-select via LLM reasoning), Space agent tools in `packages/daemon/src/lib/space/tools/`, prompt enhancement so the agent can intelligently choose workflows.
 8. **Export/Import & Sharing Foundation** — Export format types in `space.ts`, `spaceExport.*`/`spaceImport.*` RPC handlers in `space-export-import-handlers.ts`, frontend UI under `packages/web/src/components/space/`.
 
 ## Cross-Milestone Dependencies and Sequencing
