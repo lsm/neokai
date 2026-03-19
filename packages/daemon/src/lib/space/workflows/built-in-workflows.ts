@@ -18,7 +18,7 @@
  */
 
 import { generateUUID } from '@neokai/shared';
-import type { BuiltinAgentRole, SpaceWorkflow } from '@neokai/shared';
+import type { SpaceWorkflow } from '@neokai/shared';
 import type { SpaceWorkflowManager } from '../managers/space-workflow-manager';
 
 // ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 export function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	resolveAgentId: (role: BuiltinAgentRole) => string | undefined
+	resolveAgentId: (role: string) => string | undefined
 ): void {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {
@@ -230,7 +230,7 @@ export function seedBuiltInWorkflows(
 		const steps = template.steps.map((s) => ({
 			id: stepIdMap.get(s.id)!,
 			name: s.name,
-			agentId: resolvedIds.get(s.agentId as BuiltinAgentRole)!,
+			agentId: resolvedIds.get(s.agentId)!,
 			instructions: s.instructions,
 		}));
 
