@@ -18,9 +18,7 @@ import { Database as BunDatabase } from 'bun:sqlite';
 import { runMigrations } from '../../../src/storage/schema/index.ts';
 import { SpaceWorkflowRepository } from '../../../src/storage/repositories/space-workflow-repository.ts';
 import { SpaceWorkflowRunRepository } from '../../../src/storage/repositories/space-workflow-run-repository.ts';
-import { SpaceAgentRepository } from '../../../src/storage/repositories/space-agent-repository.ts';
 import { SpaceTaskManager } from '../../../src/lib/space/managers/space-task-manager.ts';
-import { SpaceAgentManager } from '../../../src/lib/space/managers/space-agent-manager.ts';
 import {
 	WorkflowExecutor,
 	WorkflowGateError,
@@ -30,7 +28,7 @@ import type {
 	GateContext,
 } from '../../../src/lib/space/runtime/workflow-executor.ts';
 import { GATE_QUALITY_CHECK_ALLOWLIST } from '../../../src/lib/space/runtime/gate-allowlist.ts';
-import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowGate, WorkflowStep } from '@neokai/shared';
+import type { SpaceWorkflow, SpaceWorkflowRun, WorkflowGate } from '@neokai/shared';
 
 // ---------------------------------------------------------------------------
 // Test DB helpers
@@ -113,7 +111,6 @@ describe('WorkflowExecutor', () => {
 	let workflowRepo: SpaceWorkflowRepository;
 	let runRepo: SpaceWorkflowRunRepository;
 	let taskManager: SpaceTaskManager;
-	let agentManager: SpaceAgentManager;
 
 	const SPACE_ID = 'space-1';
 	const WORKSPACE = '/tmp/ws-1';
@@ -131,7 +128,6 @@ describe('WorkflowExecutor', () => {
 		workflowRepo = new SpaceWorkflowRepository(db);
 		runRepo = new SpaceWorkflowRunRepository(db);
 		taskManager = new SpaceTaskManager(db, SPACE_ID);
-		agentManager = new SpaceAgentManager(new SpaceAgentRepository(db));
 	});
 
 	afterEach(() => {
@@ -161,7 +157,6 @@ describe('WorkflowExecutor', () => {
 			run,
 			taskManager,
 			runRepo,
-			agentManager,
 			WORKSPACE,
 			runner ?? makeOkRunner()
 		);
@@ -538,6 +533,19 @@ describe('WorkflowExecutor', () => {
 			const executor = makeExecutor(workflow, run, makeOkRunner()); // runner would succeed but should never be called
 			const result = await executor.evaluateGate(
 				{ type: 'quality_check', command: 'rm -rf /tmp/danger' },
+				{ workspacePath: WORKSPACE }
+			);
+			expect(result.passed).toBe(false);
+			expect(result.reason).toContain('allowlist');
+		});
+
+		test('SECURITY: rejects allowlisted prefix with extra arguments (exact-match enforcement)', async () => {
+			// 'bun test /etc/shadow' starts with 'bun test' but must NOT pass because
+			// extra arguments could be exploited to read or execute arbitrary paths.
+			const { workflow, run } = createWorkflowAndRun([{ name: 'Step A', agentId: AGENT_ID_A }]);
+			const executor = makeExecutor(workflow, run, makeOkRunner());
+			const result = await executor.evaluateGate(
+				{ type: 'quality_check', command: 'bun test /etc/shadow' },
 				{ workspacePath: WORKSPACE }
 			);
 			expect(result.passed).toBe(false);
@@ -961,6 +969,53 @@ describe('WorkflowExecutor', () => {
 			const executor = makeExecutor(workflow, run);
 			const result = await executor.canEnterStep(1);
 			expect(result.allowed).toBe(true);
+		});
+	});
+
+	// =========================================================================
+	// needs_attention guard
+	// =========================================================================
+
+	describe('needs_attention guard', () => {
+		test('advance() throws after a gate failure sets needs_attention', async () => {
+			const { workflow, run } = createWorkflowAndRun([
+				{
+					name: 'Step A',
+					agentId: AGENT_ID_A,
+					exitGate: makeGate({ type: 'human_approval' }),
+				},
+				{ name: 'Step B', agentId: AGENT_ID_B },
+			]);
+			const executor = makeExecutor(workflow, run);
+
+			// First call: gate fails → WorkflowGateError, run → needs_attention
+			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+
+			// Second call: must throw because run is now needs_attention,
+			// NOT silently re-evaluate the gate
+			await expect(executor.advance()).rejects.toThrow('needs_attention');
+		});
+
+		test('advance() does not set needs_attention again on second call', async () => {
+			const { workflow, run } = createWorkflowAndRun([
+				{
+					name: 'Step A',
+					agentId: AGENT_ID_A,
+					exitGate: makeGate({ type: 'human_approval' }),
+				},
+				{ name: 'Step B', agentId: AGENT_ID_B },
+			]);
+			const executor = makeExecutor(workflow, run);
+
+			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
+
+			// Run is needs_attention; second call should throw but NOT change status
+			const statusBefore = runRepo.getRun(run.id)?.status;
+			await expect(executor.advance()).rejects.toThrow('needs_attention');
+			const statusAfter = runRepo.getRun(run.id)?.status;
+
+			expect(statusBefore).toBe('needs_attention');
+			expect(statusAfter).toBe('needs_attention'); // unchanged
 		});
 	});
 

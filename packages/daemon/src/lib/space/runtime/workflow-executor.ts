@@ -23,7 +23,6 @@ import type {
 } from '@neokai/shared';
 import type { SpaceWorkflowRunRepository } from '../../../storage/repositories/space-workflow-run-repository';
 import type { SpaceTaskManager } from '../managers/space-task-manager';
-import type { SpaceAgentManager } from '../managers/space-agent-manager';
 import {
 	GATE_QUALITY_CHECK_ALLOWLIST,
 	DEFAULT_GATE_TIMEOUT_MS,
@@ -88,7 +87,7 @@ export type CommandRunner = (
 	args: string[],
 	cwd: string,
 	timeoutMs: number
-) => Promise<{ exitCode: number | null; timedOut?: boolean }>;
+) => Promise<{ exitCode: number | null; timedOut?: boolean; stderr?: string }>;
 
 // ---------------------------------------------------------------------------
 // Shell security helpers (re-applied at execution time for defence-in-depth)
@@ -102,11 +101,18 @@ export type CommandRunner = (
  */
 const SHELL_METACHAR_RE = /[;&|`$<>\\\n\r]/;
 
+/**
+ * Returns true only when `command` exactly matches an allowlisted entry.
+ *
+ * Exact matching (not prefix) prevents callers from appending arbitrary
+ * arguments to an allowlisted command (e.g. `bun test /etc/shadow` must not
+ * pass even though it starts with the allowlisted `bun test`).
+ */
 function isAllowlistedCommand(command: string): boolean {
 	const trimmed = command.trim();
 	if (SHELL_METACHAR_RE.test(trimmed)) return false;
 	const lower = trimmed.toLowerCase();
-	return GATE_QUALITY_CHECK_ALLOWLIST.some((prefix) => lower.startsWith(prefix.toLowerCase()));
+	return GATE_QUALITY_CHECK_ALLOWLIST.some((allowed) => lower === allowed.toLowerCase());
 }
 
 interface PathValidation {
@@ -140,28 +146,38 @@ function validateCustomPath(command: string): PathValidation {
 const defaultCommandRunner: CommandRunner = async (args, cwd, timeoutMs) => {
 	const proc = Bun.spawn(args, {
 		cwd,
-		stdout: 'pipe',
+		// stdout is ignored — only the exit code matters for gate evaluation.
+		// stderr is piped so we can capture it for failure diagnostics.
+		// IMPORTANT: we must drain stderr before awaiting proc.exited, otherwise
+		// a process that writes more than ~64KB to stderr will fill the OS pipe
+		// buffer and block indefinitely (deadlock).
+		stdout: 'ignore',
 		stderr: 'pipe',
 	});
 
-	if (timeoutMs <= 0) {
-		const exitCode = await proc.exited;
-		return { exitCode };
+	let killed = false;
+	let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+	if (timeoutMs > 0) {
+		killTimer = setTimeout(() => {
+			killed = true;
+			proc.kill();
+		}, timeoutMs);
 	}
 
-	let killed = false;
-	const timer = setTimeout(() => {
-		killed = true;
-		proc.kill();
-	}, timeoutMs);
+	// Drain stderr and wait for exit concurrently.  Both must complete before
+	// we inspect the exit code.  The concurrent drain prevents pipe deadlock.
+	const [stderr] = await Promise.all([
+		new Response(proc.stderr).text().catch(() => ''),
+		proc.exited,
+	]);
 
-	await proc.exited;
-	clearTimeout(timer);
+	if (killTimer !== undefined) clearTimeout(killTimer);
 
 	if (killed) {
-		return { exitCode: null, timedOut: true };
+		return { exitCode: null, timedOut: true, stderr };
 	}
-	return { exitCode: proc.exitCode };
+	return { exitCode: proc.exitCode, stderr };
 };
 
 // ---------------------------------------------------------------------------
@@ -174,8 +190,6 @@ export class WorkflowExecutor {
 		private run: SpaceWorkflowRun,
 		private taskManager: SpaceTaskManager,
 		private workflowRunRepo: SpaceWorkflowRunRepository,
-		/** Reserved for future use (e.g., resolving agent config when spawning sessions) */
-		private agentManager: SpaceAgentManager,
 		private workspacePath: string,
 		private commandRunner: CommandRunner = defaultCommandRunner
 	) {}
@@ -276,6 +290,14 @@ export class WorkflowExecutor {
 			throw new Error('Cannot advance: workflow run is already complete');
 		}
 
+		// A gate failure sets status to needs_attention; require explicit external
+		// reset (e.g. updating run.config with the approval flag) before retrying.
+		if (this.run.status === 'needs_attention') {
+			throw new Error(
+				'Cannot advance: run status is needs_attention — resolve the gate failure and reset status before retrying'
+			);
+		}
+
 		const current = this.getCurrentStep();
 		if (!current) {
 			throw new Error('Cannot advance: no current step');
@@ -285,7 +307,7 @@ export class WorkflowExecutor {
 		if (current.exitGate) {
 			const exitResult = await this.evaluateGateWithRetry(current.exitGate, this.getGateContext());
 			if (!exitResult.passed) {
-				await this.markNeedsAttention();
+				this.markNeedsAttention();
 				throw new WorkflowGateError(
 					`Exit gate failed for step "${current.name}": ${exitResult.reason ?? 'gate evaluation failed'}`,
 					'exit'
@@ -418,7 +440,7 @@ export class WorkflowExecutor {
 	}
 
 	/** Sets run status to needs_attention and syncs this.run. */
-	private async markNeedsAttention(): Promise<void> {
+	private markNeedsAttention(): void {
 		const updated = this.workflowRunRepo.updateStatus(this.run.id, 'needs_attention');
 		if (updated) this.run = updated;
 	}
@@ -467,7 +489,7 @@ export class WorkflowExecutor {
 		const effectiveTimeout = resolveTimeout(timeoutMs);
 		const args = command.trim().split(/\s+/);
 
-		let result: { exitCode: number | null; timedOut?: boolean };
+		let result: { exitCode: number | null; timedOut?: boolean; stderr?: string };
 		try {
 			result = await this.commandRunner(args, cwd, effectiveTimeout);
 		} catch (err) {
@@ -482,9 +504,11 @@ export class WorkflowExecutor {
 		}
 
 		if (result.exitCode !== 0) {
+			// Include the last 500 chars of stderr to make failures actionable.
+			const stderrSnippet = result.stderr?.trim() ? `: ${result.stderr.slice(-500).trim()}` : '';
 			return {
 				passed: false,
-				reason: `Command exited with code ${result.exitCode ?? 'null'}`,
+				reason: `Command exited with code ${result.exitCode ?? 'null'}${stderrSnippet}`,
 			};
 		}
 
