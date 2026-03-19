@@ -3,6 +3,11 @@
 **Date:** 2026-03-18
 **Scope:** Full anthropic-copilot and anthropic-to-codex-bridge provider support implementation
 
+> **Supersedes:** This report supersedes the following original parity reports:
+> - `docs/reports/anthropic-copilot-parity-report.md`
+> - `docs/codex-anthropic-api-parity-review.md`
+> - `docs/reports/codex-anthropic-parity-report.md`
+
 ## Executive Summary
 
 This report documents the completion of the provider parity initiative for NeoKai, implementing first-class support for two new providers: `anthropic-copilot` (GitHub Copilot) and `anthropic-codex` (Anthropic Codex).
@@ -23,10 +28,11 @@ This report documents the completion of the provider parity initiative for NeoKa
 
 - Vision input (multimodal)
 - Extended thinking
-- `stream: false` response mode (Codex bridge)
+- `stream: false` response mode (both bridges, explicitly rejected with 400 for Copilot)
 - `tool_choice` enforcement (both bridges)
-- Full structured conversation semantics (Codex bridge)
-- `stop_sequences` support
+- Full structured conversation semantics (both bridges - messages flattened to text)
+- `stop_sequences` support (both bridges)
+- Sampling controls: `temperature`, `top_p`, `top_k` (both bridges)
 
 ---
 
@@ -42,17 +48,22 @@ This report documents the completion of the provider parity initiative for NeoKa
 | UI integration | ✅ Closed | PR #391: Brand-accurate colored provider indicator in status bar; PR #398: Provider-grouped model picker; PR #401: Provider-aware session creation |
 | Routing | ✅ Closed | PR #376: `detectProviderForModel(modelId, providerId)` requires explicit providerId; PR #388: Strict provider-aware model resolution |
 | `tool_choice` | ⚠️ Partial | PR #386: Logs warning when provided but not honored; SDK limitation prevents full support |
+| `stream: false` | ❌ Open | Server explicitly rejects with 400: "Only streaming responses are supported" |
 | Vision | ❌ Open | SDK does not support vision input |
 | Extended thinking | ❌ Open | SDK does not support extended thinking |
+| Sampling controls | ❌ Open | `temperature`, `top_p`, `top_k` not forwarded to SDK |
+| `stop_sequences` | ❌ Open | Not supported |
+| Full conversation semantics | ⚠️ Partial | Messages flattened to prompt text; structured blocks not preserved |
 
 ### Test Evidence
 
 **Unit Tests:**
-- `packages/daemon/tests/unit/providers/anthropic-copilot/` — 185+ tests covering SSE flow, tool_use/tool_result round-trip, parallel tool calls, continuation routing, error handling, auth/env wiring
+- `packages/daemon/tests/unit/providers/anthropic-copilot/` — 215 tests covering SSE flow, tool_use/tool_result round-trip, parallel tool calls, continuation routing, error handling, auth/env wiring
 - `packages/daemon/tests/unit/providers/provider-registry.test.ts` — Tests all 5 providers registered by `initializeProviders`
 - `packages/daemon/tests/unit/model-service-provider-routing.test.ts` — Tests `getModelInfo`, `resolveModelAlias`, `isValidModel` with explicit providerId
 
 **Online Tests:**
+- `packages/daemon/tests/online/providers/anthropic-to-copilot-bridge-provider.test.ts` — Full conversation and tool-use flows
 - `providers-anthropic-copilot` shard in CI matrix
 
 **E2E Tests:**
@@ -78,6 +89,9 @@ This report documents the completion of the provider parity initiative for NeoKa
 | `tool_choice` | ❌ Open | Not implemented; logs warning (PR #386) |
 | Full conversation semantics | ❌ Open | Messages flattened to text, not structured blocks |
 | `stop_sequences` | ❌ Open | Not supported |
+| Sampling controls | ❌ Open | `temperature`, `top_p`, `top_k` not supported |
+| Parallel tool output | ❌ Open | Codex does not emit multiple tool_use blocks in one response |
+| `metadata` fields | ❌ Open | Not supported |
 
 ### Test Evidence
 
@@ -88,6 +102,7 @@ This report documents the completion of the provider parity initiative for NeoKa
 - `packages/daemon/tests/unit/providers/codex-anthropic-bridge/translator.test.ts` — Request translation, multiple tool results handling
 
 **Online Tests:**
+- `packages/daemon/tests/online/providers/anthropic-to-codex-bridge-provider.test.ts` — Full conversation and tool-use flows
 - `providers-anthropic-to-codex-bridge` shard in CI matrix
 
 **E2E Tests:**
@@ -107,6 +122,8 @@ type Provider = 'anthropic' | 'glm' | 'minimax';
 // After
 type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthropic-codex';
 ```
+
+> **Note:** Runtime provider validation happens via the `ProviderRegistry` in `packages/daemon/src/lib/providers/registry.ts`, not solely through the string literal union. The `ProviderId` type is `string`, and the registry ensures deterministic resolution via explicit `providerId` lookup.
 
 **PR #377** — Unsafe casts removed:
 - `model-switch-handler.ts`: 4 unsafe casts replaced with `as Provider`
@@ -140,14 +157,15 @@ type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthrop
 
 ### Auth UX
 
-**Task 6.1** — Auth status indicator in chat UI:
+**PR #410** — Filter unauthenticated providers from model picker:
+- Unauthenticated providers hidden from model picker dropdown
 - Authentication state visible in UI
 - Unauthenticated state handling
 - Actionable error messages
 
 ### Graceful Degradation
 
-**Task 6.2** — Provider unavailability handling:
+**PR #408** — Provider unavailability handling:
 - Provider availability checked on mount
 - Graceful fallback when provider unavailable
 - User-friendly error messaging
@@ -160,15 +178,17 @@ type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthrop
 
 | Gap | Provider | Reason | Notes |
 |-----|----------|--------|-------|
-| `stream: false` | Codex | Blocking | Current implementation always returns SSE; needs non-stream response path |
+| `stream: false` | Both | Blocking | Copilot explicitly rejects (400); Codex always returns SSE |
 | `tool_choice` enforcement | Both | Feature gap | SDK/backend limitations; warning logging in place (PR #386) |
 
 ### Medium Priority
 
 | Gap | Provider | Reason | Notes |
 |-----|----------|--------|-------|
-| Full conversation semantics | Codex | Accuracy | Text flattening loses structure; complex to implement |
-| `stop_sequences` | Codex | Feature gap | Not supported by Codex backend |
+| Full conversation semantics | Both | Accuracy | Text flattening loses structure; complex to implement |
+| `stop_sequences` | Both | Feature gap | Not supported by backends |
+| Sampling controls | Both | Feature gap | `temperature`, `top_p`, `top_k` not forwarded |
+| Parallel tool output | Codex | Backend limitation | Codex does not emit multiple tool_use blocks in one response |
 
 ### Low Priority (SDK/Backend Limitations)
 
@@ -176,6 +196,7 @@ type Provider = 'anthropic' | 'glm' | 'minimax' | 'anthropic-copilot' | 'anthrop
 |-----|----------|-------|
 | Vision input | Both | SDK/backend does not support multimodal |
 | Extended thinking | Both | SDK/backend does not support extended thinking |
+| `metadata` fields | Codex | Not supported |
 
 ---
 

@@ -1,5 +1,7 @@
 # Codex Anthropic Bridge API Parity Review
 
+> **Note:** This report has been superseded by `docs/reports/provider-parity-final-report.md`.
+
 Date: 2026-03-16
 
 ## Verdict

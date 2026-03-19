@@ -1,5 +1,7 @@
 # Codex Anthropic Parity Report
 
+> **Note:** This report has been superseded by `docs/reports/provider-parity-final-report.md`.
+
 **Date:** 2026-03-16  
 **Repo:** `/Users/lsm/focus/dev-neokai`  
 **Scope:** `packages/daemon/src/lib/providers/anthropic-to-codex-bridge-provider.ts` + `packages/daemon/src/lib/providers/codex-anthropic-bridge/*`
