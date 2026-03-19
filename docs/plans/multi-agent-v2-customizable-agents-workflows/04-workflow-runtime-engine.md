@@ -117,11 +117,11 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
 2. **Executor rehydration on startup** (restart safety):
    - Implement `rehydrateExecutors()` async method called **at the start of the first `executeTick()`** (not in constructor — constructor is synchronous, async work deferred to first tick)
    - Query all in-progress `SpaceWorkflowRun` records (status = `in_progress`) from `space_workflow_runs`
-   - Reconstruct executors: load `SpaceWorkflow`, create executor with the persisted `currentStepIndex` from the run record
+   - Reconstruct executors: load `SpaceWorkflow`, create executor with the persisted `currentStepId` from the run record
    - Set `rehydrated: boolean` flag to prevent repeat runs
 
 3. **Starting a workflow run**:
-   - `startWorkflowRun(spaceId, workflowId, title, description?)` → creates `SpaceWorkflowRun` record, creates `WorkflowExecutor`, evaluates entry gate of first step, creates first step's `SpaceTask` records
+   - `startWorkflowRun(spaceId, workflowId, title, description?)` → creates `SpaceWorkflowRun` record with `currentStepId` set to the first step, creates `WorkflowExecutor`, creates first step's `SpaceTask` records
    - `workflowId` is **always required** — either the caller provides it explicitly (UI picker, API) or the Space agent selects it via AI auto-select (`list_workflows` → reason → `start_workflow_run`). There is no default workflow fallback.
    - Store executor in map
 
@@ -136,14 +136,14 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
    - Custom agent (`agentRefType: 'custom'`) → `taskType: 'coding'`, `customAgentId` set, status `pending`
    - Helper: `resolveTaskTypeForStep(step: WorkflowStep): 'planning' | 'coding'`
 
-6. **Step advancement and gate enforcement**:
+6. **Step advancement and transition evaluation**:
    - After task completes (Leader approves), check if task belongs to a workflow run (via `workflowRunId`)
    - If yes: check if all tasks for the current step are complete
-   - If all step tasks complete: `executor.canAdvance()` → evaluate exit gate
-   - Gate passes → `executor.advance()` → creates next step's `SpaceTask` records
-   - Gate requires human approval → pause run with flag
-   - Gate fails after retries → run → `needs_attention`
-   - All steps complete → mark `SpaceWorkflowRun` as complete
+   - If all step tasks complete: call `executor.advance()` — evaluates outgoing transition conditions internally
+   - Transition passes → `advance()` persists the new `currentStepId` and creates next step's `SpaceTask` records
+   - Transition requires human approval → pause run with flag
+   - All transitions fail after retries → run → `needs_attention`
+   - No outgoing transitions (terminal step) → `advance()` marks `SpaceWorkflowRun` as complete
 
 7. **Rule injection** into agent prompts:
    - When building worker config for a workflow task, check current step for rules
