@@ -114,6 +114,9 @@ class SpaceStore {
 	/** Subscription cleanup functions */
 	private cleanupFunctions: Array<() => void> = [];
 
+	/** The space-specific channel that was joined, for cleanup on switch */
+	private activeSpaceChannel: string | null = null;
+
 	// ========================================
 	// Space Selection (with Promise-Chain Lock)
 	// ========================================
@@ -124,6 +127,12 @@ class SpaceStore {
 	 * Uses promise-chain locking to prevent race conditions:
 	 * - Each selectSpace() waits for previous selectSpace() to complete
 	 * - Unsubscribe -> Update state -> Subscribe happens atomically
+	 *
+	 * Note: errors from `doSelect` are already handled internally (set on
+	 * `this.error`) and are logged. The chain `.catch()` is a safety net so
+	 * that an unexpected rejection never permanently breaks the promise chain
+	 * — callers always receive a resolved promise and observe errors via the
+	 * `error` signal.
 	 */
 	selectSpace(spaceId: string | null): Promise<void> {
 		this.selectPromise = this.selectPromise
@@ -149,8 +158,15 @@ class SpaceStore {
 			return;
 		}
 
-		// 1. Stop current subscriptions
+		// 1. Stop current subscriptions and leave old channel
 		this.stopSubscriptions();
+		if (this.activeSpaceChannel) {
+			const hub = connectionManager.getHubIfConnected();
+			if (hub) {
+				hub.leaveChannel(this.activeSpaceChannel);
+			}
+			this.activeSpaceChannel = null;
+		}
 
 		// 2. Clear state
 		this.space.value = null;
@@ -187,6 +203,13 @@ class SpaceStore {
 	 */
 	private async startSubscriptions(spaceId: string): Promise<void> {
 		const hub = await connectionManager.getHub();
+
+		// Join the space-specific channel so spaceAgent.* events are delivered.
+		// The daemon emits those events with sessionId: `space:${spaceId}`, which
+		// the server router delivers only to members of that channel.
+		const spaceChannel = `space:${spaceId}`;
+		hub.joinChannel(spaceChannel);
+		this.activeSpaceChannel = spaceChannel;
 
 		// --- space.updated ---
 		const unsubSpaceUpdated = hub.onEvent<{
@@ -580,7 +603,7 @@ class SpaceStore {
 		if (!hub) throw new Error('Not connected');
 
 		const task = await hub.request<SpaceTask>('spaceTask.update', {
-			id: taskId,
+			taskId,
 			spaceId,
 			...params,
 		});

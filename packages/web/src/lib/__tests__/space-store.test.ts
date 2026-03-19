@@ -257,6 +257,30 @@ describe('SpaceStore — promise-chain lock', () => {
 	});
 });
 
+describe('SpaceStore — channel join/leave', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('joins space:${spaceId} channel on selectSpace()', async () => {
+		await spaceStore.selectSpace('space-1');
+		expect(mockHub.joinChannel).toHaveBeenCalledWith('space:space-1');
+	});
+
+	it('leaves space:${spaceId} channel on clearSpace()', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.clearSpace();
+		expect(mockHub.leaveChannel).toHaveBeenCalledWith('space:space-1');
+	});
+
+	it('leaves old channel and joins new channel on space switch', async () => {
+		await spaceStore.selectSpace('space-1');
+		await spaceStore.selectSpace('space-2');
+
+		expect(mockHub.leaveChannel).toHaveBeenCalledWith('space:space-1');
+		expect(mockHub.joinChannel).toHaveBeenCalledWith('space:space-2');
+	});
+});
+
 describe('SpaceStore — event subscriptions auto-cleanup', () => {
 	beforeEach(resetStore);
 	afterEach(() => vi.clearAllMocks());
@@ -736,12 +760,12 @@ describe('SpaceStore — CRUD methods', () => {
 		expect(task.id).toBe('new-task');
 	});
 
-	it('updateTask calls spaceTask.update RPC and returns updated SpaceTask', async () => {
+	it('updateTask calls spaceTask.update RPC with taskId (not id)', async () => {
 		await spaceStore.selectSpace('space-1');
 		const task = await spaceStore.updateTask('t1', { status: 'in_progress' });
 
 		expect(mockHub.request).toHaveBeenCalledWith('spaceTask.update', {
-			id: 't1',
+			taskId: 't1',
 			spaceId: 'space-1',
 			status: 'in_progress',
 		});

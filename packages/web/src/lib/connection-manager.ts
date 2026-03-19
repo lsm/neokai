@@ -496,6 +496,10 @@ export class ConnectionManager {
 			if (activeRoomId) {
 				await this.messageHub.joinChannel(`room:${activeRoomId}`);
 			}
+			const activeSpaceId = spaceStore.spaceId.value;
+			if (activeSpaceId) {
+				await this.messageHub.joinChannel(`space:${activeSpaceId}`);
+			}
 
 			// CRITICAL: Refresh ALL state (session store, app state, and global state)
 			// This ensures UI is in sync even if events were missed during background
