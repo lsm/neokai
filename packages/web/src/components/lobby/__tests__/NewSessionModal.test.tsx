@@ -349,6 +349,9 @@ describe('NewSessionModal — provider-aware session creation', () => {
 		});
 
 		it('hides model picker entirely when auth.providers fetch fails', async () => {
+			// auth.providers rejects — models.list resolves normally.
+			// With Promise.all both outcomes are atomic: if auth fails the model picker
+			// must not appear even though models resolved successfully.
 			mockRequest.mockImplementation((method: string) => {
 				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
 				if (method === 'auth.providers') return Promise.reject(new Error('unavailable'));
@@ -359,8 +362,7 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			// Give both promises time to settle
 			await new Promise((r) => setTimeout(r, 50));
 			// Model picker uses optgroups — none should exist when auth failed
-			const optgroups = document.querySelectorAll('optgroup');
-			expect(optgroups.length).toBe(0);
+			expect(document.querySelectorAll('optgroup').length).toBe(0);
 			// The "Model (optional)" label must not be visible
 			const labels = Array.from(document.querySelectorAll('label'));
 			expect(labels.some((l) => l.textContent?.includes('Model'))).toBe(false);

@@ -96,16 +96,17 @@ export function NewSessionModal({
 
 	useEffect(() => {
 		if (!isOpen) return;
-		fetchAvailableModels()
-			.then((models) => setAvailableModels(models))
+		// Fetch both together so a failure in either suppresses the model picker atomically.
+		// If auth status cannot be determined we must not show unfiltered models, and since
+		// both promises are resolved together there is no window where models repopulate
+		// after an auth failure.
+		Promise.all([fetchAvailableModels(), fetchProviderAuthStatuses()])
+			.then(([models, statuses]) => {
+				setAvailableModels(models);
+				setProviderAuthStatuses(statuses);
+			})
 			.catch(() => {
-				// silently ignore — model picker remains hidden
-			});
-		fetchProviderAuthStatuses()
-			.then((statuses) => setProviderAuthStatuses(statuses))
-			.catch(() => {
-				// Auth status unavailable — hide model picker to avoid showing unfiltered models
-				setAvailableModels([]);
+				// Either models or auth unavailable — keep model picker hidden
 			});
 	}, [isOpen]);
 
