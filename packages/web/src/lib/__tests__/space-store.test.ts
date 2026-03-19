@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Unit tests for SpaceStore
  *
@@ -6,13 +5,14 @@
  * - Space selection and clearSpace
  * - Promise-chain lock (race condition prevention)
  * - State clearing on space switch
- * - Event subscriptions: tasks, workflowRuns, agents, workflows
+ * - Event subscriptions: space.updated/archived/deleted, tasks, workflowRuns, agents, workflows
  * - Auto-cleanup on space switch
- * - Computed signals: activeTasks, activeRuns, tasksByRun, standaloneTask
+ * - Computed signals: activeTasks, activeRuns, tasksByRun, standaloneTasks
  * - CRUD methods call correct RPC endpoints
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Space, SpaceTask, SpaceWorkflowRun, SpaceAgent, SpaceWorkflow } from '@neokai/shared';
 
 // -------------------------------------------------------
 // Mocks — declared before imports so vi.mock hoisting works
@@ -21,7 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 let mockEventHandlers: Map<string, (event: unknown) => void>;
 let mockHub: ReturnType<typeof makeMockHub>;
 
-function makeSpace(id = 'space-1') {
+function makeSpace(id = 'space-1'): Space {
 	return {
 		id,
 		name: 'Test Space',
@@ -30,20 +30,20 @@ function makeSpace(id = 'space-1') {
 		backgroundContext: '',
 		instructions: '',
 		sessionIds: [],
-		status: 'active' as const,
+		status: 'active',
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
 }
 
-function makeTask(id: string, status = 'pending', workflowRunId?: string) {
+function makeTask(id: string, status = 'pending', workflowRunId?: string): SpaceTask {
 	return {
 		id,
 		spaceId: 'space-1',
 		title: `Task ${id}`,
 		description: '',
-		status,
-		priority: 'normal' as const,
+		status: status as SpaceTask['status'],
+		priority: 'normal',
 		dependsOn: [],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
@@ -51,20 +51,20 @@ function makeTask(id: string, status = 'pending', workflowRunId?: string) {
 	};
 }
 
-function makeRun(id: string, status = 'pending') {
+function makeRun(id: string, status = 'pending'): SpaceWorkflowRun {
 	return {
 		id,
 		spaceId: 'space-1',
 		workflowId: 'wf-1',
 		title: `Run ${id}`,
 		currentStepIndex: 0,
-		status,
+		status: status as SpaceWorkflowRun['status'],
 		createdAt: Date.now(),
 		updatedAt: Date.now(),
 	};
 }
 
-function makeAgent(id: string) {
+function makeAgent(id: string): SpaceAgent {
 	return {
 		id,
 		spaceId: 'space-1',
@@ -75,7 +75,7 @@ function makeAgent(id: string) {
 	};
 }
 
-function makeWorkflow(id: string) {
+function makeWorkflow(id: string): SpaceWorkflow {
 	return {
 		id,
 		spaceId: 'space-1',
@@ -107,12 +107,17 @@ function makeMockHub() {
 			}
 			if (method === 'spaceAgent.list') return { agents: [] };
 			if (method === 'spaceWorkflow.list') return { workflows: [] };
-			if (method === 'space.update') return { space: makeSpace() };
-			if (method === 'spaceTask.create') return { task: makeTask('new-task') };
-			if (method === 'spaceTask.update') return { task: makeTask('t1', 'in_progress') };
-			if (method === 'spaceWorkflowRun.create') return { run: makeRun('new-run') };
+			// Daemon returns Space directly (not wrapped)
+			if (method === 'space.update') return makeSpace();
+			// Daemon returns SpaceTask directly (not wrapped)
+			if (method === 'spaceTask.create') return makeTask('new-task');
+			if (method === 'spaceTask.update') return makeTask('t1', 'in_progress');
+			// spaceWorkflowRun.create is a stub — would return SpaceWorkflowRun directly
+			if (method === 'spaceWorkflowRun.create') return makeRun('new-run');
+			// spaceAgent handlers return wrapped { agent }
 			if (method === 'spaceAgent.create') return { agent: makeAgent('new-agent') };
 			if (method === 'spaceAgent.update') return { agent: makeAgent('a1') };
+			// spaceWorkflow handlers return wrapped { workflow }
 			if (method === 'spaceWorkflow.create') return { workflow: makeWorkflow('new-wf') };
 			if (method === 'spaceWorkflow.update') return { workflow: makeWorkflow('wf1') };
 			return {};
@@ -225,8 +230,29 @@ describe('SpaceStore — promise-chain lock', () => {
 		await spaceStore.selectSpace('space-2');
 
 		// state was cleared when switching
-		// (space-2 overview returns empty tasks, so tasks should be empty)
 		expect(spaceStore.tasks.value).toEqual([]);
+		expect(spaceStore.spaceId.value).toBe('space-2');
+	});
+
+	it('future selectSpace calls still work after a doSelect error', async () => {
+		// Simulate a failure in fetchInitialState for the first call
+		mockHub.request.mockRejectedValueOnce(new Error('network error'));
+
+		await spaceStore.selectSpace('space-1');
+		// First call failed — error should be set but chain not broken
+		expect(spaceStore.error.value).toBeTruthy();
+
+		// Reset mock to succeed
+		mockHub.request.mockImplementation(async (method: string) => {
+			if (method === 'space.overview')
+				return { space: makeSpace('space-2'), tasks: [], workflowRuns: [], sessions: [] };
+			if (method === 'spaceAgent.list') return { agents: [] };
+			if (method === 'spaceWorkflow.list') return { workflows: [] };
+			return {};
+		});
+
+		// Second call should still work
+		await spaceStore.selectSpace('space-2');
 		expect(spaceStore.spaceId.value).toBe('space-2');
 	});
 });
@@ -238,6 +264,9 @@ describe('SpaceStore — event subscriptions auto-cleanup', () => {
 	it('registers event handlers on selectSpace()', async () => {
 		await spaceStore.selectSpace('space-1');
 
+		expect(mockEventHandlers.has('space.updated')).toBe(true);
+		expect(mockEventHandlers.has('space.archived')).toBe(true);
+		expect(mockEventHandlers.has('space.deleted')).toBe(true);
 		expect(mockEventHandlers.has('space.task.created')).toBe(true);
 		expect(mockEventHandlers.has('space.task.updated')).toBe(true);
 		expect(mockEventHandlers.has('space.workflowRun.created')).toBe(true);
@@ -263,10 +292,105 @@ describe('SpaceStore — event subscriptions auto-cleanup', () => {
 		const firstSpaceHandlerCount = mockEventHandlers.size;
 		expect(firstSpaceHandlerCount).toBeGreaterThan(0);
 
-		// Switch to space-2; old handlers should be removed and new ones added
 		await spaceStore.selectSpace('space-2');
 		// Handlers should still exist but now filter for space-2
 		expect(mockEventHandlers.size).toBeGreaterThan(0);
+	});
+});
+
+describe('SpaceStore — space.updated event', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('merges partial space update into space signal', async () => {
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.space.value?.name).toBe('Test Space');
+
+		const handler = mockEventHandlers.get('space.updated');
+		expect(handler).toBeDefined();
+
+		handler!({ sessionId: 'global', spaceId: 'space-1', space: { name: 'Renamed Space' } });
+
+		expect(spaceStore.space.value?.name).toBe('Renamed Space');
+		// Other fields preserved
+		expect(spaceStore.space.value?.workspacePath).toBe('/workspace');
+	});
+
+	it('ignores space.updated event with no space payload', async () => {
+		await spaceStore.selectSpace('space-1');
+		const originalName = spaceStore.space.value?.name;
+
+		const handler = mockEventHandlers.get('space.updated');
+		handler!({ sessionId: 'global', spaceId: 'space-1' });
+
+		expect(spaceStore.space.value?.name).toBe(originalName);
+	});
+
+	it('ignores space.updated event for a different space', async () => {
+		await spaceStore.selectSpace('space-1');
+		const originalName = spaceStore.space.value?.name;
+
+		const handler = mockEventHandlers.get('space.updated');
+		handler!({ sessionId: 'global', spaceId: 'space-99', space: { name: 'Other' } });
+
+		expect(spaceStore.space.value?.name).toBe(originalName);
+	});
+});
+
+describe('SpaceStore — space.archived event', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('clears selection when space is archived externally', async () => {
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.spaceId.value).toBe('space-1');
+
+		const handler = mockEventHandlers.get('space.archived');
+		handler!({ sessionId: 'global', spaceId: 'space-1', space: makeSpace() });
+
+		// Allow the async clearSpace to run
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(spaceStore.spaceId.value).toBeNull();
+	});
+
+	it('ignores space.archived event for a different space', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.archived');
+		handler!({ sessionId: 'global', spaceId: 'space-99', space: makeSpace('space-99') });
+
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(spaceStore.spaceId.value).toBe('space-1');
+	});
+});
+
+describe('SpaceStore — space.deleted event', () => {
+	beforeEach(resetStore);
+	afterEach(() => vi.clearAllMocks());
+
+	it('clears selection when space is deleted externally', async () => {
+		await spaceStore.selectSpace('space-1');
+		expect(spaceStore.spaceId.value).toBe('space-1');
+
+		const handler = mockEventHandlers.get('space.deleted');
+		handler!({ sessionId: 'global', spaceId: 'space-1' });
+
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(spaceStore.spaceId.value).toBeNull();
+	});
+
+	it('ignores space.deleted event for a different space', async () => {
+		await spaceStore.selectSpace('space-1');
+
+		const handler = mockEventHandlers.get('space.deleted');
+		handler!({ sessionId: 'global', spaceId: 'space-99' });
+
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(spaceStore.spaceId.value).toBe('space-1');
 	});
 });
 
@@ -281,7 +405,7 @@ describe('SpaceStore — space.task.created event', () => {
 		expect(handler).toBeDefined();
 
 		const task = makeTask('new-t');
-		handler({ sessionId: 'global', spaceId: 'space-1', taskId: 'new-t', task });
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 'new-t', task });
 
 		expect(spaceStore.tasks.value).toContainEqual(task);
 	});
@@ -292,7 +416,7 @@ describe('SpaceStore — space.task.created event', () => {
 		spaceStore.tasks.value = [task];
 
 		const handler = mockEventHandlers.get('space.task.created');
-		handler({ sessionId: 'global', spaceId: 'space-1', taskId: 'dup', task });
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 'dup', task });
 
 		expect(spaceStore.tasks.value.length).toBe(1);
 	});
@@ -302,7 +426,7 @@ describe('SpaceStore — space.task.created event', () => {
 		const task = makeTask('other');
 
 		const handler = mockEventHandlers.get('space.task.created');
-		handler({ sessionId: 'global', spaceId: 'space-99', taskId: 'other', task });
+		handler!({ sessionId: 'global', spaceId: 'space-99', taskId: 'other', task });
 
 		expect(spaceStore.tasks.value).not.toContainEqual(task);
 	});
@@ -318,7 +442,7 @@ describe('SpaceStore — space.task.updated event', () => {
 
 		const updated = makeTask('t1', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't1', task: updated });
 
 		expect(spaceStore.tasks.value[0].status).toBe('in_progress');
 	});
@@ -329,7 +453,7 @@ describe('SpaceStore — space.task.updated event', () => {
 
 		const task = makeTask('t2', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler({ sessionId: 'global', spaceId: 'space-1', taskId: 't2', task });
+		handler!({ sessionId: 'global', spaceId: 'space-1', taskId: 't2', task });
 
 		expect(spaceStore.tasks.value).toContainEqual(task);
 	});
@@ -340,7 +464,7 @@ describe('SpaceStore — space.task.updated event', () => {
 
 		const updated = makeTask('t1', 'in_progress');
 		const handler = mockEventHandlers.get('space.task.updated');
-		handler({ sessionId: 'global', spaceId: 'space-99', taskId: 't1', task: updated });
+		handler!({ sessionId: 'global', spaceId: 'space-99', taskId: 't1', task: updated });
 
 		expect(spaceStore.tasks.value[0].status).toBe('pending');
 	});
@@ -355,7 +479,7 @@ describe('SpaceStore — space.workflowRun.created event', () => {
 
 		const run = makeRun('run-1');
 		const handler = mockEventHandlers.get('space.workflowRun.created');
-		handler({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1', run });
+		handler!({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1', run });
 
 		expect(spaceStore.workflowRuns.value).toContainEqual(run);
 	});
@@ -366,7 +490,7 @@ describe('SpaceStore — space.workflowRun.created event', () => {
 		spaceStore.workflowRuns.value = [run];
 
 		const handler = mockEventHandlers.get('space.workflowRun.created');
-		handler({ sessionId: 'global', spaceId: 'space-1', runId: 'run-dup', run });
+		handler!({ sessionId: 'global', spaceId: 'space-1', runId: 'run-dup', run });
 
 		expect(spaceStore.workflowRuns.value.length).toBe(1);
 	});
@@ -376,7 +500,7 @@ describe('SpaceStore — space.workflowRun.created event', () => {
 		const run = makeRun('run-other');
 
 		const handler = mockEventHandlers.get('space.workflowRun.created');
-		handler({ sessionId: 'global', spaceId: 'space-99', runId: 'run-other', run });
+		handler!({ sessionId: 'global', spaceId: 'space-99', runId: 'run-other', run });
 
 		expect(spaceStore.workflowRuns.value.length).toBe(0);
 	});
@@ -391,7 +515,7 @@ describe('SpaceStore — space.workflowRun.updated event', () => {
 		spaceStore.workflowRuns.value = [makeRun('run-1', 'pending')];
 
 		const handler = mockEventHandlers.get('space.workflowRun.updated');
-		handler({
+		handler!({
 			sessionId: 'global',
 			spaceId: 'space-1',
 			runId: 'run-1',
@@ -406,7 +530,7 @@ describe('SpaceStore — space.workflowRun.updated event', () => {
 		spaceStore.workflowRuns.value = [makeRun('run-1', 'pending')];
 
 		const handler = mockEventHandlers.get('space.workflowRun.updated');
-		handler({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1' });
+		handler!({ sessionId: 'global', spaceId: 'space-1', runId: 'run-1' });
 
 		expect(spaceStore.workflowRuns.value[0].status).toBe('pending');
 	});
@@ -421,7 +545,7 @@ describe('SpaceStore — spaceAgent events', () => {
 		const agent = makeAgent('a1');
 
 		const handler = mockEventHandlers.get('spaceAgent.created');
-		handler({ sessionId: 'global', spaceId: 'space-1', agent });
+		handler!({ sessionId: 'global', spaceId: 'space-1', agent });
 
 		expect(spaceStore.agents.value).toContainEqual(agent);
 	});
@@ -432,7 +556,7 @@ describe('SpaceStore — spaceAgent events', () => {
 
 		const updated = { ...makeAgent('a1'), name: 'New Name' };
 		const handler = mockEventHandlers.get('spaceAgent.updated');
-		handler({ sessionId: 'global', spaceId: 'space-1', agent: updated });
+		handler!({ sessionId: 'global', spaceId: 'space-1', agent: updated });
 
 		expect(spaceStore.agents.value[0].name).toBe('New Name');
 	});
@@ -442,7 +566,7 @@ describe('SpaceStore — spaceAgent events', () => {
 		spaceStore.agents.value = [makeAgent('a1'), makeAgent('a2')];
 
 		const handler = mockEventHandlers.get('spaceAgent.deleted');
-		handler({ sessionId: 'global', spaceId: 'space-1', agentId: 'a1' });
+		handler!({ sessionId: 'global', spaceId: 'space-1', agentId: 'a1' });
 
 		expect(spaceStore.agents.value.map((a) => a.id)).toEqual(['a2']);
 	});
@@ -450,7 +574,7 @@ describe('SpaceStore — spaceAgent events', () => {
 	it('ignores events for a different space', async () => {
 		await spaceStore.selectSpace('space-1');
 		const handler = mockEventHandlers.get('spaceAgent.created');
-		handler({ sessionId: 'global', spaceId: 'space-99', agent: makeAgent('a1') });
+		handler!({ sessionId: 'global', spaceId: 'space-99', agent: makeAgent('a1') });
 
 		expect(spaceStore.agents.value.length).toBe(0);
 	});
@@ -465,7 +589,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		const wf = makeWorkflow('wf1');
 
 		const handler = mockEventHandlers.get('spaceWorkflow.created');
-		handler({ sessionId: 'global', spaceId: 'space-1', workflow: wf });
+		handler!({ sessionId: 'global', spaceId: 'space-1', workflow: wf });
 
 		expect(spaceStore.workflows.value).toContainEqual(wf);
 	});
@@ -476,7 +600,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 
 		const updated = { ...makeWorkflow('wf1'), name: 'New' };
 		const handler = mockEventHandlers.get('spaceWorkflow.updated');
-		handler({ sessionId: 'global', spaceId: 'space-1', workflow: updated });
+		handler!({ sessionId: 'global', spaceId: 'space-1', workflow: updated });
 
 		expect(spaceStore.workflows.value[0].name).toBe('New');
 	});
@@ -486,7 +610,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		spaceStore.workflows.value = [makeWorkflow('wf1'), makeWorkflow('wf2')];
 
 		const handler = mockEventHandlers.get('spaceWorkflow.deleted');
-		handler({ sessionId: 'global', spaceId: 'space-1', workflowId: 'wf1' });
+		handler!({ sessionId: 'global', spaceId: 'space-1', workflowId: 'wf1' });
 
 		expect(spaceStore.workflows.value.map((w) => w.id)).toEqual(['wf2']);
 	});
@@ -496,7 +620,7 @@ describe('SpaceStore — spaceWorkflow events', () => {
 		const handler = mockEventHandlers.get('spaceWorkflow.deleted');
 		spaceStore.workflows.value = [makeWorkflow('wf1')];
 
-		handler({ sessionId: 'global', spaceId: 'space-99', workflowId: 'wf1' });
+		handler!({ sessionId: 'global', spaceId: 'space-99', workflowId: 'wf1' });
 
 		expect(spaceStore.workflows.value.length).toBe(1);
 	});
@@ -546,7 +670,7 @@ describe('SpaceStore — computed signals', () => {
 		expect(byRun.has('undefined')).toBe(false);
 	});
 
-	it('standaloneTask returns tasks without a workflowRunId', async () => {
+	it('standaloneTasks returns tasks without a workflowRunId', async () => {
 		await spaceStore.selectSpace('space-1');
 		spaceStore.tasks.value = [
 			makeTask('t1', 'pending', 'run-1'),
@@ -554,7 +678,7 @@ describe('SpaceStore — computed signals', () => {
 			makeTask('t3', 'pending'),
 		];
 
-		expect(spaceStore.standaloneTask.value.map((t) => t.id)).toEqual(['t2', 't3']);
+		expect(spaceStore.standaloneTasks.value.map((t) => t.id)).toEqual(['t2', 't3']);
 	});
 
 	it('computed signals update reactively', async () => {
@@ -571,7 +695,7 @@ describe('SpaceStore — CRUD methods', () => {
 	beforeEach(resetStore);
 	afterEach(() => vi.clearAllMocks());
 
-	it('updateSpace calls space.update RPC', async () => {
+	it('updateSpace calls space.update RPC and applies direct response', async () => {
 		await spaceStore.selectSpace('space-1');
 		await spaceStore.updateSpace({ name: 'New Name' });
 
@@ -579,6 +703,8 @@ describe('SpaceStore — CRUD methods', () => {
 			id: 'space-1',
 			name: 'New Name',
 		});
+		// space signal updated from the direct Space response
+		expect(spaceStore.space.value?.id).toBe('space-1');
 	});
 
 	it('archiveSpace calls space.archive RPC and clears selection', async () => {
@@ -597,26 +723,29 @@ describe('SpaceStore — CRUD methods', () => {
 		expect(spaceStore.spaceId.value).toBeNull();
 	});
 
-	it('createTask calls spaceTask.create RPC with spaceId', async () => {
+	it('createTask calls spaceTask.create RPC and returns SpaceTask', async () => {
 		await spaceStore.selectSpace('space-1');
-		await spaceStore.createTask({ title: 'New Task', description: 'desc' });
+		const task = await spaceStore.createTask({ title: 'New Task', description: 'desc' });
 
 		expect(mockHub.request).toHaveBeenCalledWith('spaceTask.create', {
 			spaceId: 'space-1',
 			title: 'New Task',
 			description: 'desc',
 		});
+		// Returns SpaceTask directly (daemon response is not wrapped)
+		expect(task.id).toBe('new-task');
 	});
 
-	it('updateTask calls spaceTask.update RPC', async () => {
+	it('updateTask calls spaceTask.update RPC and returns updated SpaceTask', async () => {
 		await spaceStore.selectSpace('space-1');
-		await spaceStore.updateTask('t1', { status: 'in_progress' });
+		const task = await spaceStore.updateTask('t1', { status: 'in_progress' });
 
 		expect(mockHub.request).toHaveBeenCalledWith('spaceTask.update', {
 			id: 't1',
 			spaceId: 'space-1',
 			status: 'in_progress',
 		});
+		expect(task.status).toBe('in_progress');
 	});
 
 	it('startWorkflowRun calls spaceWorkflowRun.create RPC', async () => {
@@ -694,7 +823,6 @@ describe('SpaceStore — CRUD methods', () => {
 	});
 
 	it('throws when calling CRUD methods with no space selected', async () => {
-		// Ensure no space selected
 		await spaceStore.clearSpace();
 
 		await expect(spaceStore.createTask({ title: 'T', description: 'D' })).rejects.toThrow(

@@ -80,7 +80,7 @@ class SpaceStore {
 	/** Tasks that are currently in progress */
 	readonly activeTasks = computed(() => this.tasks.value.filter((t) => t.status === 'in_progress'));
 
-	/** Workflow runs that are currently active */
+	/** Workflow runs that are currently active (pending or in_progress) */
 	readonly activeRuns = computed(() =>
 		this.workflowRuns.value.filter((r) => r.status === 'pending' || r.status === 'in_progress')
 	);
@@ -98,13 +98,17 @@ class SpaceStore {
 	});
 
 	/** Tasks not associated with any workflow run */
-	readonly standaloneTask = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
+	readonly standaloneTasks = computed(() => this.tasks.value.filter((t) => !t.workflowRunId));
 
 	// ========================================
 	// Private State
 	// ========================================
 
-	/** Promise-chain lock for atomic space switching */
+	/**
+	 * Promise-chain lock for atomic space switching.
+	 * The `.catch()` ensures a rejection in `doSelect` never permanently breaks
+	 * the chain — future `selectSpace` calls will still execute.
+	 */
 	private selectPromise: Promise<void> = Promise.resolve();
 
 	/** Subscription cleanup functions */
@@ -122,7 +126,11 @@ class SpaceStore {
 	 * - Unsubscribe -> Update state -> Subscribe happens atomically
 	 */
 	selectSpace(spaceId: string | null): Promise<void> {
-		this.selectPromise = this.selectPromise.then(() => this.doSelect(spaceId));
+		this.selectPromise = this.selectPromise
+			.then(() => this.doSelect(spaceId))
+			.catch((err) => {
+				logger.error('selectSpace chain error:', err);
+			});
 		return this.selectPromise;
 	}
 
@@ -142,7 +150,7 @@ class SpaceStore {
 		}
 
 		// 1. Stop current subscriptions
-		await this.stopSubscriptions();
+		this.stopSubscriptions();
 
 		// 2. Clear state
 		this.space.value = null;
@@ -179,6 +187,47 @@ class SpaceStore {
 	 */
 	private async startSubscriptions(spaceId: string): Promise<void> {
 		const hub = await connectionManager.getHub();
+
+		// --- space.updated ---
+		const unsubSpaceUpdated = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+			space?: Partial<Space>;
+		}>('space.updated', (event) => {
+			if (event.spaceId === spaceId && event.space && this.space.value) {
+				this.space.value = { ...this.space.value, ...event.space } as Space;
+			}
+		});
+		this.cleanupFunctions.push(unsubSpaceUpdated);
+
+		// --- space.archived ---
+		const unsubSpaceArchived = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+			space: Space;
+		}>('space.archived', (event) => {
+			if (event.spaceId === spaceId) {
+				// Space archived externally — clear selection
+				this.clearSpace().catch((err) => {
+					logger.error('Failed to clear space after external archive:', err);
+				});
+			}
+		});
+		this.cleanupFunctions.push(unsubSpaceArchived);
+
+		// --- space.deleted ---
+		const unsubSpaceDeleted = hub.onEvent<{
+			sessionId: string;
+			spaceId: string;
+		}>('space.deleted', (event) => {
+			if (event.spaceId === spaceId) {
+				// Space deleted externally — clear selection
+				this.clearSpace().catch((err) => {
+					logger.error('Failed to clear space after external delete:', err);
+				});
+			}
+		});
+		this.cleanupFunctions.push(unsubSpaceDeleted);
 
 		// --- space.task.created ---
 		const unsubTaskCreated = hub.onEvent<{
@@ -416,9 +465,9 @@ class SpaceStore {
 	}
 
 	/**
-	 * Stop all current subscriptions
+	 * Stop all current subscriptions (synchronous)
 	 */
-	private async stopSubscriptions(): Promise<void> {
+	private stopSubscriptions(): void {
 		for (const cleanup of this.cleanupFunctions) {
 			try {
 				cleanup();
@@ -434,7 +483,8 @@ class SpaceStore {
 	// ========================================
 
 	/**
-	 * Refresh current space state from server
+	 * Refresh current space state from server.
+	 * Called by the connection manager on WebSocket reconnect.
 	 */
 	async refresh(): Promise<void> {
 		const spaceId = this.spaceId.value;
@@ -453,7 +503,8 @@ class SpaceStore {
 	// ========================================
 
 	/**
-	 * Update the current space metadata
+	 * Update the current space metadata.
+	 * Note: daemon's space.update returns Space directly (not wrapped).
 	 */
 	async updateSpace(params: UpdateSpaceParams): Promise<void> {
 		const spaceId = this.spaceId.value;
@@ -462,10 +513,7 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const { space } = await hub.request<{ space: Space }>('space.update', {
-			id: spaceId,
-			...params,
-		});
+		const space = await hub.request<Space>('space.update', { id: spaceId, ...params });
 		if (space) {
 			this.space.value = space;
 		}
@@ -506,7 +554,8 @@ class SpaceStore {
 	// ========================================
 
 	/**
-	 * Create a new task in the space
+	 * Create a new task in the space.
+	 * Note: daemon's spaceTask.create returns SpaceTask directly (not wrapped).
 	 */
 	async createTask(params: Omit<CreateSpaceTaskParams, 'spaceId'>): Promise<SpaceTask> {
 		const spaceId = this.spaceId.value;
@@ -515,15 +564,13 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const { task } = await hub.request<{ task: SpaceTask }>('spaceTask.create', {
-			...params,
-			spaceId,
-		});
+		const task = await hub.request<SpaceTask>('spaceTask.create', { ...params, spaceId });
 		return task;
 	}
 
 	/**
-	 * Update a task
+	 * Update a task.
+	 * Note: daemon's spaceTask.update returns SpaceTask directly (not wrapped).
 	 */
 	async updateTask(taskId: string, params: UpdateSpaceTaskParams): Promise<SpaceTask> {
 		const spaceId = this.spaceId.value;
@@ -532,7 +579,7 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const { task } = await hub.request<{ task: SpaceTask }>('spaceTask.update', {
+		const task = await hub.request<SpaceTask>('spaceTask.update', {
 			id: taskId,
 			spaceId,
 			...params,
@@ -545,7 +592,13 @@ class SpaceStore {
 	// ========================================
 
 	/**
-	 * Start a new workflow run
+	 * Start a new workflow run.
+	 *
+	 * TODO(M6): The `spaceWorkflowRun.create` RPC handler is not yet registered
+	 * in the daemon — workflow runs are currently created internally by the
+	 * SpaceRuntime. This method is a stub for the future client-initiated API.
+	 * The event subscriptions for space.workflowRun.created/updated are already
+	 * active and will reflect runs created by the runtime.
 	 */
 	async startWorkflowRun(
 		params: Omit<CreateWorkflowRunParams, 'spaceId'>
@@ -556,7 +609,7 @@ class SpaceStore {
 		const hub = connectionManager.getHubIfConnected();
 		if (!hub) throw new Error('Not connected');
 
-		const { run } = await hub.request<{ run: SpaceWorkflowRun }>('spaceWorkflowRun.create', {
+		const run = await hub.request<SpaceWorkflowRun>('spaceWorkflowRun.create', {
 			...params,
 			spaceId,
 		});

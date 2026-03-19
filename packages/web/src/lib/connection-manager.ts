@@ -33,6 +33,7 @@ import { appState, connectionState } from './state';
 import { globalStore } from './global-store';
 import { sessionStore } from './session-store';
 import { roomStore } from './room-store';
+import { spaceStore } from './space-store';
 import { ConnectionNotReadyError, ConnectionTimeoutError } from './errors';
 import { createDeferred } from './timeout';
 import { currentSessionIdSignal, slashCommandsSignal } from './signals';
@@ -505,6 +506,7 @@ export class ConnectionManager {
 				appState.refreshAll(),
 				globalStore.refresh(),
 				roomStore.refresh(),
+				spaceStore.refresh(),
 			]);
 		} catch {
 			// FIX: Use forceReconnect() instead of close()
