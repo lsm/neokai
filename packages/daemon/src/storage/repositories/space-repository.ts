@@ -1,0 +1,225 @@
+/**
+ * Space Repository
+ *
+ * Repository for Space CRUD operations.
+ */
+
+import type { Database as BunDatabase } from 'bun:sqlite';
+import { generateUUID } from '@neokai/shared';
+import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@neokai/shared';
+import type { SQLiteValue } from '../types';
+
+export class SpaceRepository {
+	constructor(private db: BunDatabase) {}
+
+	/**
+	 * Create a new space
+	 */
+	createSpace(params: CreateSpaceParams): Space {
+		const id = generateUUID();
+		const now = Date.now();
+
+		const stmt = this.db.prepare(
+			`INSERT INTO spaces (id, workspace_path, name, description, background_context, instructions, default_model, allowed_models, session_ids, status, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		);
+
+		stmt.run(
+			id,
+			params.workspacePath,
+			params.name,
+			params.description ?? '',
+			params.backgroundContext ?? '',
+			params.instructions ?? '',
+			params.defaultModel ?? null,
+			JSON.stringify(params.allowedModels ?? []),
+			'[]',
+			'active',
+			params.config ? JSON.stringify(params.config) : null,
+			now,
+			now
+		);
+
+		return this.getSpace(id)!;
+	}
+
+	/**
+	 * Get a space by ID
+	 */
+	getSpace(id: string): Space | null {
+		const stmt = this.db.prepare(`SELECT * FROM spaces WHERE id = ?`);
+		const row = stmt.get(id) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+		return this.rowToSpace(row);
+	}
+
+	/**
+	 * Get a space by workspace path (any status, including archived).
+	 *
+	 * NOTE: This intentionally returns archived spaces. The `workspace_path` column
+	 * has a UNIQUE constraint in the schema, so archived spaces permanently claim their
+	 * path — no new space can be created for the same path after archiving. This is
+	 * the chosen design: workspace paths are a permanent identifier, not a reusable slot.
+	 */
+	getSpaceByPath(workspacePath: string): Space | null {
+		const stmt = this.db.prepare(`SELECT * FROM spaces WHERE workspace_path = ?`);
+		const row = stmt.get(workspacePath) as Record<string, unknown> | undefined;
+
+		if (!row) return null;
+		return this.rowToSpace(row);
+	}
+
+	/**
+	 * List all spaces, optionally including archived ones
+	 */
+	listSpaces(includeArchived = false): Space[] {
+		let query = `SELECT * FROM spaces`;
+		if (!includeArchived) {
+			query += ` WHERE status = 'active'`;
+		}
+		query += ` ORDER BY updated_at DESC`;
+
+		const stmt = this.db.prepare(query);
+		const rows = stmt.all() as Record<string, unknown>[];
+		return rows.map((r) => this.rowToSpace(r));
+	}
+
+	/**
+	 * Update a space with partial updates
+	 */
+	updateSpace(id: string, params: UpdateSpaceParams): Space | null {
+		const fields: string[] = [];
+		const values: SQLiteValue[] = [];
+
+		if (params.name !== undefined) {
+			fields.push('name = ?');
+			values.push(params.name);
+		}
+		if (params.description !== undefined) {
+			fields.push('description = ?');
+			values.push(params.description);
+		}
+		if (params.backgroundContext !== undefined) {
+			fields.push('background_context = ?');
+			values.push(params.backgroundContext);
+		}
+		if (params.instructions !== undefined) {
+			fields.push('instructions = ?');
+			values.push(params.instructions);
+		}
+		if (params.defaultModel !== undefined) {
+			fields.push('default_model = ?');
+			values.push(params.defaultModel ?? null);
+		}
+		if (params.allowedModels !== undefined) {
+			fields.push('allowed_models = ?');
+			values.push(JSON.stringify(params.allowedModels));
+		}
+		if (params.config !== undefined) {
+			fields.push('config = ?');
+			values.push(JSON.stringify(params.config));
+		}
+
+		if (fields.length > 0) {
+			fields.push('updated_at = ?');
+			values.push(Date.now());
+			values.push(id);
+			const stmt = this.db.prepare(`UPDATE spaces SET ${fields.join(', ')} WHERE id = ?`);
+			stmt.run(...values);
+		}
+
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Archive a space
+	 */
+	archiveSpace(id: string): Space | null {
+		const stmt = this.db.prepare(
+			`UPDATE spaces SET status = 'archived', updated_at = ? WHERE id = ?`
+		);
+		stmt.run(Date.now(), id);
+		return this.getSpace(id);
+	}
+
+	/**
+	 * Add a session to a space
+	 */
+	addSessionToSpace(spaceId: string, sessionId: string): Space | null {
+		const tx = this.db.transaction(() => {
+			const space = this.getSpace(spaceId);
+			if (!space) return null;
+
+			if (space.sessionIds.includes(sessionId)) {
+				return space;
+			}
+
+			const sessionIds = [...space.sessionIds, sessionId];
+			const stmt = this.db.prepare(
+				`UPDATE spaces SET session_ids = ?, updated_at = ? WHERE id = ?`
+			);
+			stmt.run(JSON.stringify(sessionIds), Date.now(), spaceId);
+			return this.getSpace(spaceId);
+		});
+
+		return tx() as Space | null;
+	}
+
+	/**
+	 * Remove a session from a space
+	 */
+	removeSessionFromSpace(spaceId: string, sessionId: string): Space | null {
+		const tx = this.db.transaction(() => {
+			const space = this.getSpace(spaceId);
+			if (!space) return null;
+
+			if (!space.sessionIds.includes(sessionId)) {
+				return space;
+			}
+
+			const sessionIds = space.sessionIds.filter((id) => id !== sessionId);
+			const stmt = this.db.prepare(
+				`UPDATE spaces SET session_ids = ?, updated_at = ? WHERE id = ?`
+			);
+			stmt.run(JSON.stringify(sessionIds), Date.now(), spaceId);
+			return this.getSpace(spaceId);
+		});
+
+		return tx() as Space | null;
+	}
+
+	/**
+	 * Delete a space by ID
+	 */
+	deleteSpace(id: string): boolean {
+		const stmt = this.db.prepare(`DELETE FROM spaces WHERE id = ?`);
+		const result = stmt.run(id);
+		return result.changes > 0;
+	}
+
+	/**
+	 * Convert a database row to a Space object
+	 */
+	private rowToSpace(row: Record<string, unknown>): Space {
+		const rawModels = JSON.parse((row.allowed_models as string) ?? '[]') as string[];
+		const rawConfig = row.config as string | null;
+		const config = rawConfig ? (JSON.parse(rawConfig) as Record<string, unknown>) : undefined;
+
+		return {
+			id: row.id as string,
+			workspacePath: row.workspace_path as string,
+			name: row.name as string,
+			description: (row.description as string) ?? '',
+			backgroundContext: (row.background_context as string) ?? '',
+			instructions: (row.instructions as string) ?? '',
+			defaultModel: (row.default_model as string | null) ?? undefined,
+			allowedModels: rawModels.length > 0 ? rawModels : undefined,
+			sessionIds: JSON.parse(row.session_ids as string) as string[],
+			status: row.status as 'active' | 'archived',
+			config,
+			createdAt: row.created_at as number,
+			updatedAt: row.updated_at as number,
+		};
+	}
+}

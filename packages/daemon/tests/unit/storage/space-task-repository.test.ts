@@ -1,0 +1,247 @@
+/**
+ * SpaceTaskRepository Tests
+ */
+
+import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { SpaceRepository } from '../../../src/storage/repositories/space-repository';
+import { SpaceTaskRepository } from '../../../src/storage/repositories/space-task-repository';
+import { createSpaceTables } from '../helpers/space-test-db';
+
+describe('SpaceTaskRepository', () => {
+	let db: Database;
+	let spaceRepo: SpaceRepository;
+	let repo: SpaceTaskRepository;
+	let spaceId: string;
+	let workflowId: string;
+	let workflowRunId: string;
+	let workflowStepId: string;
+
+	beforeEach(() => {
+		db = new Database(':memory:');
+		createSpaceTables(db);
+		spaceRepo = new SpaceRepository(db as any);
+		repo = new SpaceTaskRepository(db as any);
+
+		const space = spaceRepo.createSpace({ workspacePath: '/workspace/test', name: 'Test' });
+		spaceId = space.id;
+
+		// Set up workflow records for FK-constrained fields
+		const now = Date.now();
+		workflowId = 'wf-1';
+		workflowRunId = 'run-1';
+		workflowStepId = 'step-1';
+
+		(db as any)
+			.prepare(
+				`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
+			)
+			.run(workflowId, spaceId, 'Workflow', now, now);
+
+		(db as any)
+			.prepare(
+				`INSERT INTO space_workflow_runs (id, space_id, workflow_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			)
+			.run(workflowRunId, spaceId, workflowId, 'Run 1', now, now);
+
+		(db as any)
+			.prepare(
+				`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
+			)
+			.run(workflowStepId, workflowId, 'Step 1', 0, now, now);
+	});
+
+	afterEach(() => {
+		db.close();
+	});
+
+	describe('createTask', () => {
+		it('creates a task with required fields', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Fix bug',
+				description: 'Fix the login bug',
+			});
+
+			expect(task.id).toBeDefined();
+			expect(task.spaceId).toBe(spaceId);
+			expect(task.title).toBe('Fix bug');
+			expect(task.description).toBe('Fix the login bug');
+			expect(task.status).toBe('pending');
+			expect(task.priority).toBe('normal');
+			expect(task.dependsOn).toEqual([]);
+			expect(task.customAgentId).toBeUndefined();
+			expect(task.workflowRunId).toBeUndefined();
+			expect(task.workflowStepId).toBeUndefined();
+		});
+
+		it('creates a task with workflow routing fields', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Step task',
+				description: '',
+				customAgentId: 'agent-1',
+				workflowRunId,
+				workflowStepId,
+			});
+
+			expect(task.customAgentId).toBe('agent-1');
+			expect(task.workflowRunId).toBe(workflowRunId);
+			expect(task.workflowStepId).toBe(workflowStepId);
+		});
+
+		it('creates a task with draft status', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'Draft task',
+				description: '',
+				status: 'draft',
+			});
+			expect(task.status).toBe('draft');
+		});
+	});
+
+	describe('getTask', () => {
+		it('returns task by ID', () => {
+			const created = repo.createTask({ spaceId, title: 'T', description: '' });
+			expect(repo.getTask(created.id)).not.toBeNull();
+		});
+
+		it('returns null for unknown ID', () => {
+			expect(repo.getTask('nonexistent')).toBeNull();
+		});
+	});
+
+	describe('listBySpace', () => {
+		it('lists non-archived tasks for a space', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+			const b = repo.createTask({ spaceId, title: 'B', description: '' });
+			repo.archiveTask(b.id);
+
+			const tasks = repo.listBySpace(spaceId);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].title).toBe('A');
+		});
+
+		it('includes archived tasks when requested', () => {
+			repo.createTask({ spaceId, title: 'A', description: '' });
+			const b = repo.createTask({ spaceId, title: 'B', description: '' });
+			repo.archiveTask(b.id);
+
+			expect(repo.listBySpace(spaceId, true)).toHaveLength(2);
+		});
+	});
+
+	describe('listByWorkflowRun', () => {
+		it('lists tasks by workflow run ID', () => {
+			repo.createTask({ spaceId, title: 'A', description: '', workflowRunId });
+			repo.createTask({ spaceId, title: 'C', description: '' });
+
+			const tasks = repo.listByWorkflowRun(workflowRunId);
+			expect(tasks).toHaveLength(1);
+			expect(tasks[0].title).toBe('A');
+		});
+	});
+
+	describe('listByStatus', () => {
+		it('lists tasks by status', () => {
+			repo.createTask({ spaceId, title: 'Pending', description: '', status: 'pending' });
+			repo.createTask({ spaceId, title: 'Draft', description: '', status: 'draft' });
+
+			const pending = repo.listByStatus(spaceId, 'pending');
+			expect(pending).toHaveLength(1);
+			expect(pending[0].title).toBe('Pending');
+		});
+	});
+
+	describe('updateTask', () => {
+		it('updates status and sets started_at for in_progress', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, { status: 'in_progress' });
+			expect(updated!.status).toBe('in_progress');
+			expect(updated!.startedAt).toBeDefined();
+		});
+
+		it('sets completed_at for completed status', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { status: 'in_progress' });
+			const updated = repo.updateTask(task.id, { status: 'completed' });
+			expect(updated!.completedAt).toBeDefined();
+		});
+
+		it('auto-clears active_session on terminal status', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			repo.updateTask(task.id, { status: 'in_progress', activeSession: 'worker' });
+			const updated = repo.updateTask(task.id, { status: 'completed' });
+			expect(updated!.activeSession).toBeNull();
+		});
+
+		it('updates customAgentId, workflowRunId, workflowStepId', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const updated = repo.updateTask(task.id, {
+				customAgentId: 'custom-agent',
+				workflowRunId,
+				workflowStepId,
+			});
+			expect(updated!.customAgentId).toBe('custom-agent');
+			expect(updated!.workflowRunId).toBe(workflowRunId);
+			expect(updated!.workflowStepId).toBe(workflowStepId);
+		});
+
+		it('clears nullable fields', () => {
+			const task = repo.createTask({
+				spaceId,
+				title: 'T',
+				description: '',
+				customAgentId: 'ca',
+			});
+			const updated = repo.updateTask(task.id, { customAgentId: null });
+			expect(updated!.customAgentId).toBeUndefined();
+		});
+	});
+
+	describe('archiveTask', () => {
+		it('sets archivedAt timestamp', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			const archived = repo.archiveTask(task.id);
+			expect(archived!.archivedAt).toBeDefined();
+		});
+	});
+
+	describe('deleteTask', () => {
+		it('deletes a task', () => {
+			const task = repo.createTask({ spaceId, title: 'T', description: '' });
+			expect(repo.deleteTask(task.id)).toBe(true);
+			expect(repo.getTask(task.id)).toBeNull();
+		});
+
+		it('returns false for unknown ID', () => {
+			expect(repo.deleteTask('nonexistent')).toBe(false);
+		});
+	});
+
+	describe('promoteDraftTasksByCreator', () => {
+		it('promotes draft tasks to pending', () => {
+			repo.createTask({
+				spaceId,
+				title: 'D',
+				description: '',
+				status: 'draft',
+				createdByTaskId: 'planner-1',
+			});
+			repo.createTask({
+				spaceId,
+				title: 'P',
+				description: '',
+				status: 'pending',
+				createdByTaskId: 'planner-1',
+			});
+
+			const count = repo.promoteDraftTasksByCreator('planner-1');
+			expect(count).toBe(1);
+
+			const tasks = repo.listBySpace(spaceId);
+			expect(tasks.every((t) => t.status !== 'draft')).toBe(true);
+		});
+	});
+});
