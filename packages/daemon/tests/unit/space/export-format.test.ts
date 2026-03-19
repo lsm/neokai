@@ -598,7 +598,10 @@ describe('validateExportedWorkflow', () => {
 			version: 1,
 			type: 'workflow',
 			name: 'W',
-			steps: [],
+			steps: [
+				{ agentRef: 'Agent A', name: 'Step A' },
+				{ agentRef: 'Agent B', name: 'Step B' },
+			],
 			transitions: [
 				{ fromStep: 'Step A', toStep: 'Step B', condition: { type: 'human' }, order: 0 },
 			],
@@ -614,12 +617,87 @@ describe('validateExportedWorkflow', () => {
 		}
 	});
 
+	test('accepts condition type with expression', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			steps: [
+				{ agentRef: 'Agent A', name: 'Step A' },
+				{ agentRef: 'Agent B', name: 'Step B' },
+			],
+			transitions: [
+				{
+					fromStep: 'Step A',
+					toStep: 'Step B',
+					condition: { type: 'condition', expression: 'bun test --exit-zero' },
+				},
+			],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.transitions[0].condition).toEqual({
+				type: 'condition',
+				expression: 'bun test --exit-zero',
+			});
+		}
+	});
+
+	test('rejects condition type without expression', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			steps: [
+				{ agentRef: 'Agent A', name: 'Step A' },
+				{ agentRef: 'Agent B', name: 'Step B' },
+			],
+			transitions: [{ fromStep: 'Step A', toStep: 'Step B', condition: { type: 'condition' } }],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('expression');
+		}
+	});
+
+	test('rejects condition type with blank expression', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'W',
+			steps: [
+				{ agentRef: 'Agent A', name: 'Step A' },
+				{ agentRef: 'Agent B', name: 'Step B' },
+			],
+			transitions: [
+				{
+					fromStep: 'Step A',
+					toStep: 'Step B',
+					condition: { type: 'condition', expression: '   ' },
+				},
+			],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+	});
+
 	test('rejects transition with empty fromStep', () => {
 		const data = {
 			version: 1,
 			type: 'workflow',
 			name: 'Bad',
-			steps: [],
+			steps: [{ agentRef: 'Agent B', name: 'Step B' }],
 			transitions: [{ fromStep: '', toStep: 'Step B' }],
 			startStep: 'Step B',
 			rules: [],
@@ -627,6 +705,85 @@ describe('validateExportedWorkflow', () => {
 		};
 		const result = validateExportedWorkflow(data);
 		expect(result.ok).toBe(false);
+	});
+
+	test('rejects transition whose fromStep does not match any step name', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [{ agentRef: 'Agent A', name: 'Step A' }],
+			transitions: [{ fromStep: 'ghost', toStep: 'Step A' }],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('fromStep');
+			expect(result.error).toContain('ghost');
+		}
+	});
+
+	test('rejects transition whose toStep does not match any step name', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [{ agentRef: 'Agent A', name: 'Step A' }],
+			transitions: [{ fromStep: 'Step A', toStep: 'phantom' }],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('toStep');
+			expect(result.error).toContain('phantom');
+		}
+	});
+
+	test('rejects workflow with duplicate step names', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [
+				{ agentRef: 'Agent A', name: 'Step A' },
+				{ agentRef: 'Agent B', name: 'Step A' }, // duplicate
+			],
+			transitions: [],
+			startStep: 'Step A',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('duplicate step name');
+			expect(result.error).toContain('Step A');
+		}
+	});
+
+	test('rejects startStep that does not match any step name', () => {
+		const data = {
+			version: 1,
+			type: 'workflow',
+			name: 'Bad',
+			steps: [{ agentRef: 'Agent A', name: 'Step A' }],
+			transitions: [],
+			startStep: 'nonexistent',
+			rules: [],
+			tags: [],
+		};
+		const result = validateExportedWorkflow(data);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('startStep');
+			expect(result.error).toContain('nonexistent');
+		}
 	});
 
 	test('rejects version > 1 with "requires newer version"', () => {
@@ -809,6 +966,36 @@ describe('round-trip: export → JSON → validate', () => {
 			expect(result.value.transitions[0].toStep).toBe('Review step');
 			// startStep preserved as step name
 			expect(result.value.startStep).toBe('Code step');
+		}
+	});
+
+	test('condition type with expression round-trip', () => {
+		const workflow = makeWorkflow({
+			steps: [
+				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Build' },
+				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Deploy' },
+			],
+			transitions: [
+				{
+					id: 'trans-uuid-1',
+					from: 'step-uuid-1',
+					to: 'step-uuid-2',
+					condition: { type: 'condition', expression: 'bun test --exit-zero' },
+				},
+			],
+			startStepId: 'step-uuid-1',
+			rules: [],
+		});
+		const exported = exportWorkflow(workflow, []);
+		const json = JSON.stringify(exported);
+		const parsed = JSON.parse(json) as unknown;
+		const result = validateExportedWorkflow(parsed);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.value.transitions[0].condition).toEqual({
+				type: 'condition',
+				expression: 'bun test --exit-zero',
+			});
 		}
 	});
 

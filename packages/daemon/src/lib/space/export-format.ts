@@ -33,13 +33,23 @@ import type {
 // Zod schemas
 // ============================================================================
 
-const workflowConditionSchema = z.object({
-	type: z.enum(['always', 'human', 'condition']),
-	expression: z.string().optional(),
-	description: z.string().optional(),
-	maxRetries: z.number().int().nonnegative().optional(),
-	timeoutMs: z.number().int().nonnegative().optional(),
-});
+const workflowConditionSchema = z
+	.object({
+		type: z.enum(['always', 'human', 'condition']),
+		expression: z.string().optional(),
+		description: z.string().optional(),
+		maxRetries: z.number().int().nonnegative().optional(),
+		timeoutMs: z.number().int().nonnegative().optional(),
+	})
+	.superRefine((val, ctx) => {
+		if (val.type === 'condition' && (!val.expression || !val.expression.trim())) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "'condition' type requires a non-empty expression",
+				path: ['expression'],
+			});
+		}
+	});
 
 const exportedWorkflowStepSchema = z.object({
 	agentRef: z.string().min(1),
@@ -289,6 +299,40 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
 	if (!result.success) {
 		return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
 	}
+
+	// Referential integrity checks — enforce the cross-reference invariants that
+	// the rest of the format depends on (step names as stable cross-reference keys).
+	const stepNameSet = new Set<string>();
+	for (const step of result.data.steps) {
+		if (stepNameSet.has(step.name)) {
+			return { ok: false, error: `invalid: duplicate step name: "${step.name}"` };
+		}
+		stepNameSet.add(step.name);
+	}
+	// startStep must reference a known step name (skip check when steps is empty)
+	if (result.data.steps.length > 0 && !stepNameSet.has(result.data.startStep)) {
+		return {
+			ok: false,
+			error: `invalid: startStep "${result.data.startStep}" does not reference a known step name`,
+		};
+	}
+	// Transition endpoints must reference known step names
+	for (let i = 0; i < result.data.transitions.length; i++) {
+		const t = result.data.transitions[i];
+		if (!stepNameSet.has(t.fromStep)) {
+			return {
+				ok: false,
+				error: `invalid: transitions[${i}].fromStep "${t.fromStep}" does not reference a known step name`,
+			};
+		}
+		if (!stepNameSet.has(t.toStep)) {
+			return {
+				ok: false,
+				error: `invalid: transitions[${i}].toStep "${t.toStep}" does not reference a known step name`,
+			};
+		}
+	}
+
 	return { ok: true, value: { version: 1, ...result.data } };
 }
 
@@ -319,14 +363,14 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
 	for (let i = 0; i < rawAgents.length; i++) {
 		const agentResult = validateExportedAgent(rawAgents[i]);
 		if (!agentResult.ok) {
-			return { ok: false, error: `invalid: agents[${i}]: ${agentResult.error}` };
+			return { ok: false, error: `agents[${i}]: ${agentResult.error}` };
 		}
 	}
 	const rawWorkflows = Array.isArray(raw.workflows) ? raw.workflows : [];
 	for (let i = 0; i < rawWorkflows.length; i++) {
 		const wfResult = validateExportedWorkflow(rawWorkflows[i]);
 		if (!wfResult.ok) {
-			return { ok: false, error: `invalid: workflows[${i}]: ${wfResult.error}` };
+			return { ok: false, error: `workflows[${i}]: ${wfResult.error}` };
 		}
 	}
 
