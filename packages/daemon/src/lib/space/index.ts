@@ -11,6 +11,13 @@ export {
 export { SpaceWorkflowManager, WorkflowValidationError } from './managers/space-workflow-manager';
 export type { SpaceAgentLookup } from './managers/space-workflow-manager';
 export { SpaceWorkflowRepository } from '../../storage/repositories/space-workflow-repository';
+export {
+	CODING_WORKFLOW,
+	RESEARCH_WORKFLOW,
+	REVIEW_ONLY_WORKFLOW,
+	getBuiltInWorkflows,
+	seedDefaultWorkflow,
+} from './workflows/built-in-workflows';
 
 // Types — re-exported from @neokai/shared for convenience
 export type {
