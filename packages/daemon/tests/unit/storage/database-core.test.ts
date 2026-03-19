@@ -86,6 +86,15 @@ describe('DatabaseCore', () => {
 			expect(result.synchronous).toBe(1); // NORMAL = 1
 		});
 
+		it('should set busy timeout to reduce SQLITE_BUSY write failures', async () => {
+			dbCore = new DatabaseCore(dbPath);
+			await dbCore.initialize();
+
+			const db = dbCore.getDb();
+			const result = db.prepare('PRAGMA busy_timeout').get() as { timeout: number };
+			expect(result.timeout).toBe(5000);
+		});
+
 		it('should enable foreign key constraints', async () => {
 			dbCore = new DatabaseCore(dbPath);
 			await dbCore.initialize();
