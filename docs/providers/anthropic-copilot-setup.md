@@ -4,7 +4,7 @@ This document covers how to configure the `anthropic-copilot` provider in NeoKai
 
 ## Overview
 
-The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatible API endpoint. This allows NeoKai to use Copilot models (like `claude-sonnet-4-20250514`, `claude-opus-4-20250514`, etc.) through the standard Anthropic API interface.
+The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatible API endpoint. This allows NeoKai to use Copilot models (like `claude-opus-4.6`, `claude-sonnet-4.6`, `gpt-5.3-codex`, `gemini-3-pro-preview`, `gpt-5-mini`) through the standard Anthropic API interface.
 
 ### What It Does
 
@@ -27,39 +27,52 @@ The `anthropic-copilot` provider exposes GitHub Copilot as an Anthropic-compatib
 
 The provider discovers GitHub credentials in the following order:
 
-1. **NeoKai OAuth** — If you've logged in via Claude Code OAuth (handled automatically)
-2. **`COPILOT_GITHUB_TOKEN`** — Environment variable with a PAT (Personal Access Token)
+1. **`~/.neokai/auth.json`** — Stored credentials from a previously completed NeoKai GitHub OAuth device flow
+2. **`COPILOT_GITHUB_TOKEN`** — Environment variable with a fine-grained PAT
 3. **`GH_TOKEN`** — Environment variable (fallback)
 4. **`gh auth token`** — CLI command output
 5. **`~/.config/gh/hosts.yml`** — OAuth token from GitHub CLI configuration
 
-> **Important:** The `GITHUB_TOKEN` environment variable (used by GitHub Actions) is **NOT** used — it lacks the required `copilot_requests` scope.
+> **Important:** The `GITHUB_TOKEN` environment variable (used by GitHub Actions) is **NOT** used — it lacks the required `copilot_requests` scope. Classic PATs (tokens starting with `ghp_`) are **hard rejected** by the Copilot CLI.
 
-### Option 1: NeoKai OAuth (Recommended for Claude Code Users)
+### Option 1: NeoKai GitHub OAuth (Recommended)
 
-If you're already logged into Claude Code, NeoKai automatically uses your Claude Code OAuth token for Copilot. No additional configuration needed.
+NeoKai includes a built-in GitHub OAuth device flow specifically for Copilot authentication.
+
+**To trigger the OAuth flow:**
+1. Open NeoKai in your browser
+2. Navigate to Settings → Authentication (or provider settings)
+3. Look for "Connect GitHub" or similar option to initiate the OAuth flow
+4. Complete the GitHub authorization in your browser
+
+The OAuth token is stored in `~/.neokai/auth.json` and automatically used on subsequent sessions.
 
 ### Option 2: COPILOT_GITHUB_TOKEN Environment Variable
 
-Set a Personal Access Token (PAT) with the `copilot_requests` scope:
+> **Important:** You MUST use a **fine-grained PAT**, not a classic PAT. Classic PATs (starting with `ghp_`) are hard rejected by the GitHub Copilot CLI.
+
+Set a fine-grained Personal Access Token:
 
 ```bash
 # In your shell or .env file
-export COPILOT_GITHUB_TOKEN=ghp_your_token_here
+export COPILOT_GITHUB_TOKEN=github_pat_your_token_here
 ```
 
-To create a PAT:
+To create a fine-grained PAT:
 1. Go to GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens
 2. Generate new token with:
+   - Token name: NeoKai Copilot
    - Repository access: All repositories
    - Permissions: Copilot (Access: read/write)
 
+> **Note:** Classic PATs (starting with `ghp_`) are NOT supported and will be rejected with the error: "Classic PATs (ghp_...) are not supported by the GitHub Copilot CLI."
+
 ### Option 3: GH_TOKEN Environment Variable
 
-If you have a GitHub token already set in your environment:
+If you have a fine-grained GitHub token already set in your environment:
 
 ```bash
-export GH_TOKEN=ghp_your_token_here
+export GH_TOKEN=github_pat_your_token_here
 ```
 
 ### Option 4: gh auth login
@@ -70,7 +83,7 @@ If you have the GitHub CLI installed and authenticated:
 gh auth login
 ```
 
-The provider will use `gh auth token` to retrieve your authentication token.
+The provider will use `gh auth token` to retrieve your authentication token. This returns an OAuth token (not a classic PAT), which is supported.
 
 ### Option 5: ~/.config/gh/hosts.yml
 
@@ -82,25 +95,17 @@ If you've authenticated via GitHub CLI, your OAuth token is stored in `~/.config
 
 ### Step 1: Choose Your Authentication Method
 
-For most users, **Option 1 (NeoKai OAuth)** works automatically if you're logged into Claude Code.
+For most users, **Option 1 (NeoKai GitHub OAuth)** is recommended:
+1. Open NeoKai settings and initiate the GitHub OAuth flow
+2. Authorize NeoKai to access your GitHub account for Copilot
+3. Credentials are stored automatically
 
-If you need to configure manually:
-
-### Option A: Using a PAT
-
-1. Create a Personal Access Token with `copilot_requests` scope (see Option 2 above)
-2. Add to your environment:
-
-```bash
-# Add to ~/.env or export in shell
-COPILOT_GITHUB_TOKEN=ghp_your_token_here
-```
-
-### Option B: Using GitHub CLI
+### Alternative: Using GitHub CLI
 
 1. Install GitHub CLI if not installed: `brew install gh`
 2. Authenticate: `gh auth login`
 3. Ensure Copilot is enabled in your GitHub account settings
+4. The provider will automatically discover your token
 
 ### Step 2: Verify Configuration
 
@@ -114,15 +119,18 @@ Start NeoKai and check the provider status in the UI. You should see Copilot mod
 
 ### Classic PAT Rejection
 
-**Symptom:** Authentication fails with error: "Invalid authentication credentials"
+**Symptom:** Authentication fails with error: "Classic PATs (ghp_...) are not supported by the GitHub Copilot CLI."
 
-**Cause:** Your PAT may lack the required `copilot_requests` scope, or the token has expired.
+**Cause:** You're using a classic PAT (token starting with `ghp_`). Classic PATs are hard rejected by Copilot.
 
 **Solution:**
 1. Go to GitHub Settings → Developer settings → Personal access tokens
-2. Ensure your token has the `copilot_requests` scope enabled
-3. Regenerate the token if expired
-4. Update `COPILOT_GITHUB_TOKEN` with the new token
+2. Delete any classic PATs you may have created
+3. Create a **fine-grained token** instead:
+   - Token name: NeoKai Copilot
+   - Repository access: All repositories
+   - Permissions: Copilot (Access: read/write)
+4. Use the new fine-grained token (starts with `github_pat_`, not `ghp_`)
 
 ### Token Validation Failures
 
@@ -132,7 +140,6 @@ Start NeoKai and check the provider status in the UI. You should see Copilot mod
 
 **Solution:**
 - The provider automatically performs this exchange for tokens from sources 4 and 5
-- If you're using a PAT directly (source 2), ensure it has the correct scope
 - For enterprise GitHub accounts, ensure Copilot is enabled in your organization
 
 ### Enterprise GitHub
@@ -144,7 +151,7 @@ Start NeoKai and check the provider status in the UI. You should see Copilot mod
 **Solution:**
 1. Contact your organization admin to enable Copilot
 2. Ensure you have Copilot access granted in your organization settings
-3. For enterprise-managed users, you may need to use a PAT with organization-specific scopes
+3. For enterprise-managed users, you may need to use a fine-grained PAT with organization-specific scopes
 
 ### Linux Specific: Node.js Version
 

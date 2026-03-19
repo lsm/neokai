@@ -4,7 +4,7 @@ This document covers how to configure the `anthropic-codex` provider in NeoKai, 
 
 ## Overview
 
-The `anthropic-codex` provider exposes OpenAI Codex as an Anthropic-compatible API endpoint. This allows NeoKai to use Codex models (like `claude-3-5-sonnet-20241022`, etc.) through the standard Anthropic API interface.
+The `anthropic-codex` provider exposes OpenAI Codex as an Anthropic-compatible API endpoint. This allows NeoKai to use Codex models (like `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.1-codex-mini`) through the standard Anthropic API interface.
 
 ### What It Does
 
@@ -32,7 +32,7 @@ The Codex provider requires the `codex` CLI to be installed and available on you
 
 **Installation:**
 
-1. Download Codex CLI from [https://openai.com/codex](https://openai.com/codex)
+1. Download and install the Codex CLI from the official source (typically via npm or the OpenAI developer portal)
 2. Follow the installation instructions for your platform
 3. Verify installation:
 
@@ -46,12 +46,12 @@ If `codex` is not found on PATH, NeoKai will display an error: "codex binary not
 
 ## Authentication Methods
 
-The provider discovers Codex/OpenAI credentials in the following order:
+The provider discovers Codex/OpenAI credentials in the following priority order:
 
-1. **`OPENAI_API_KEY`** — Environment variable
-2. **`CODEX_API_KEY`** — Environment variable (Codex-specific)
-3. **NeoKai OAuth** — Login via Claude Code (ChatGPT Plus/Pro)
-4. **Legacy migration** — Tokens from `~/.codex/auth.json` (users who previously ran `codex login`)
+1. **`OPENAI_API_KEY`** — Environment variable (checked first)
+2. **`CODEX_API_KEY`** — Environment variable (checked second)
+3. **`~/.neokai/auth.json`** — Stored credentials from a previously completed NeoKai OAuth flow
+4. **Legacy migration** — One-time import from `~/.codex/auth.json` (users who previously ran `codex login`)
 
 ### Option 1: OPENAI_API_KEY
 
@@ -74,8 +74,12 @@ export CODEX_API_KEY=codex-your-key-here
 ### Option 3: NeoKai OAuth (ChatGPT Plus/Pro)
 
 If you have a ChatGPT Plus or Pro subscription:
-1. Log in through NeoKai's authentication flow
-2. Your ChatGPT subscription credentials are used automatically
+
+1. Open NeoKai in your browser
+2. Navigate to Settings → Authentication
+3. Log in with your ChatGPT account (Plus or Pro required)
+
+The OAuth flow uses a PKCE + redirect flow with a callback server on port 1455. Ensure this port is available before initiating the flow.
 
 ### Option 4: Legacy codex login Migration
 
@@ -89,9 +93,8 @@ Users who previously ran `codex login` have their credentials stored in `~/.code
 
 ### Step 1: Install Codex CLI
 
-Download and install the Codex CLI from [https://openai.com/codex](https://openai.com/codex)
+Download and install the Codex CLI from the official source, then verify:
 
-Verify installation:
 ```bash
 codex --version
 ```
@@ -137,7 +140,7 @@ Start NeoKai and check the provider status in the UI. You should see Codex model
 **Cause:** The `codex` CLI is not installed or not available on your system PATH.
 
 **Solution:**
-1. Download Codex CLI from [https://openai.com/codex](https://openai.com/codex)
+1. Download and install the Codex CLI from the official source
 2. Follow the installation instructions for your platform
 3. Ensure the `codex` command is available in your terminal:
 
@@ -156,6 +159,7 @@ If installed but not found, add the Codex installation directory to your PATH.
 **Solution:**
 1. Re-authenticate through NeoKai's authentication flow
 2. For ChatGPT Plus/Pro: Log out and log back in through Settings → Authentication
+3. Alternatively, use `kai openai login` CLI command if available
 
 ### Workspace Isolation
 
@@ -180,6 +184,7 @@ If installed but not found, add the Codex installation directory to your PATH.
 2. Ensure there are no extra spaces or quotes in your environment variable
 3. Check that you're using a valid API key from [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 4. For Codex-specific keys, use `CODEX_API_KEY` instead
+5. Alternatively, try running `kai openai login` to authenticate via CLI
 
 ---
 
@@ -201,12 +206,8 @@ Token usage (`input_tokens`, `output_tokens`) is estimated based on character co
 
 The Codex bridge flattens the full block-structured Anthropic conversation to plain text rather than preserving the structured message format. This means:
 - Multi-message conversations are converted to a single text prompt
-- Role information is preserved through prefixes (e.g., "Human:", "Assistant:")
+- Role information is preserved through prefixes (e.g., "User:", "Assistant:")
 - Some semantic nuances of structured messages may be lost
-
-### Single-Tool-Result Limitation
-
-When providing multiple tool results in a single continuation request, the Codex bridge currently uses only the first tool result (`toolResults[0]`). Additional tool results in the same response are not processed.
 
 ### tool_choice Not Supported
 
@@ -220,6 +221,6 @@ The following Anthropic API parameters are not forwarded to Codex:
 - `metadata`
 - Advanced sampling controls
 
-### Non-Streaming Not Supported
+### Streaming-Only Response
 
-The bridge requires `stream=true`. Requests with `stream=false` will receive a 400 error, though the response will still be delivered as SSE.
+The Codex bridge always responds with SSE (Server-Sent Events), regardless of the `stream` parameter. While it accepts `stream=false` for API compatibility, the response will still be delivered as SSE.
