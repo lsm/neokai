@@ -7,6 +7,7 @@
 import type { MessageHub, QuestionDraftResponse } from '@neokai/shared';
 import type { DaemonHub } from '../daemon-hub';
 import type { SessionManager } from '../session-manager';
+import type { AgentSession } from '../agent/agent-session';
 
 /**
  * Payload for question.respond RPC call
@@ -36,8 +37,37 @@ interface QuestionCancelPayload {
 export function setupQuestionHandlers(
 	messageHub: MessageHub,
 	sessionManager: SessionManager,
-	_daemonHub: DaemonHub
+	_daemonHub: DaemonHub,
+	/**
+	 * Optional lookup for room worker/leader sessions.
+	 *
+	 * Room worker and leader sessions live in RoomRuntimeService.agentSessions,
+	 * a separate in-memory map from SessionManager's cache. If SessionManager is
+	 * used alone it creates a fresh AgentSession from the DB (no live SDK query,
+	 * pendingResolver = null) and handleQuestionResponse always throws.
+	 *
+	 * Pass RoomRuntimeService.getAgentSession.bind(runtimeService) here so the
+	 * handler resolves the correct live instance first.
+	 */
+	getRuntimeSession?: (sessionId: string) => AgentSession | undefined
 ): void {
+	/**
+	 * Resolve the AgentSession that owns the live SDK query for a given session ID.
+	 *
+	 * Prefers the runtime pool (worker/leader sessions) over SessionManager's cache
+	 * because SessionManager.getSessionAsync() loads a fresh instance from the DB
+	 * when the session is not in its own cache — that instance has no pendingResolver
+	 * and handleQuestionResponse would always throw "No pending question to respond to".
+	 */
+	async function resolveSession(sessionId: string): Promise<AgentSession | null> {
+		// Room worker/leader sessions: check runtime pool first
+		const runtimeSession = getRuntimeSession?.(sessionId);
+		if (runtimeSession) return runtimeSession;
+
+		// Lobby/room-chat sessions: fall back to SessionManager
+		return sessionManager.getSessionAsync(sessionId);
+	}
+
 	/**
 	 * question.respond - Send user's response to pending question
 	 *
@@ -47,7 +77,7 @@ export function setupQuestionHandlers(
 	messageHub.onRequest('question.respond', async (data) => {
 		const { sessionId, toolUseId, responses } = data as QuestionRespondPayload;
 
-		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		const agentSession = await resolveSession(sessionId);
 		if (!agentSession) {
 			throw new Error(`Session not found: ${sessionId}`);
 		}
@@ -65,7 +95,7 @@ export function setupQuestionHandlers(
 	messageHub.onRequest('question.saveDraft', async (data) => {
 		const { sessionId, draftResponses } = data as QuestionSaveDraftPayload;
 
-		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		const agentSession = await resolveSession(sessionId);
 		if (!agentSession) {
 			throw new Error(`Session not found: ${sessionId}`);
 		}
@@ -83,7 +113,7 @@ export function setupQuestionHandlers(
 	messageHub.onRequest('question.cancel', async (data) => {
 		const { sessionId, toolUseId } = data as QuestionCancelPayload;
 
-		const agentSession = await sessionManager.getSessionAsync(sessionId);
+		const agentSession = await resolveSession(sessionId);
 		if (!agentSession) {
 			throw new Error(`Session not found: ${sessionId}`);
 		}

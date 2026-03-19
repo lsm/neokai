@@ -93,6 +93,17 @@ export class RoomRuntimeService {
 		return agentModels?.worker ?? room.defaultModel ?? this.ctx.defaultModel;
 	}
 
+	/**
+	 * Get an active AgentSession by ID from the runtime session pool.
+	 *
+	 * Room worker/leader sessions are stored here (not in SessionManager's cache),
+	 * so this must be used when routing question responses to the correct instance.
+	 * Returns undefined if the session is not currently active in this service.
+	 */
+	getAgentSession(sessionId: string): AgentSession | undefined {
+		return this.agentSessions.get(sessionId);
+	}
+
 	pauseRuntime(roomId: string): boolean {
 		const runtime = this.runtimes.get(roomId);
 		if (!runtime) return false;
@@ -252,6 +263,15 @@ export class RoomRuntimeService {
 				// started lazily when injectMessage() is called. Eagerly starting
 				// without a queued message causes a 15s startup timeout because the
 				// SDK waits for user input that never arrives.
+				return true;
+			},
+			startSession: async (sessionId) => {
+				const session = agentSessions.get(sessionId);
+				if (!session) return false;
+				// Eagerly start the SDK query for waiting_for_input sessions so the
+				// SDK re-encounters the pending AskUserQuestion in its session file
+				// and re-calls canUseTool, re-establishing the pendingResolver.
+				await session.ensureQueryStarted();
 				return true;
 			},
 			setSessionMcpServers: (sessionId, mcpServers) => {
@@ -578,13 +598,22 @@ export class RoomRuntimeService {
 						// Restore MCP servers (planner-tools, leader-agent-tools)
 						await runtime.restoreMcpServersForGroup(group);
 
-						// Inject continuation message to resume work
-						// Groups awaiting human review don't need a message — human will provide one
-						if (!group.submittedForReview) {
+						// Resume work after restart.
+						// - Groups awaiting human review: no message needed, human will provide one.
+						// - Groups waiting for a question answer: start the SDK query so it
+						//   re-encounters the pending AskUserQuestion tool call and re-establishes
+						//   pendingResolver. Injecting a user message would corrupt the conversation
+						//   by adding an orphaned turn after the unanswered tool use.
+						// - All other groups: inject a continuation message to resume work.
+						if (!group.submittedForReview && !group.waitingForQuestion) {
 							await sessionFactory.injectMessage(
 								group.workerSessionId,
 								'The system was restarted. Continue working on the task.'
 							);
+						} else if (group.waitingForQuestion) {
+							const sessionId =
+								group.waitingSession === 'leader' ? group.leaderSessionId : group.workerSessionId;
+							await sessionFactory.startSession(sessionId);
 						}
 					} catch (error) {
 						log.error(`Failed to restore/inject continuation for group ${group.id}:`, error);

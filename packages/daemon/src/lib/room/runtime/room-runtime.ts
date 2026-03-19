@@ -2080,6 +2080,34 @@ export class RoomRuntime {
 				continue; // Awaiting human - no continuation message needed
 			}
 
+			// Groups waiting for a question answer need special handling.
+			// Injecting a regular continuation message would leave an orphaned user
+			// message after the pending AskUserQuestion tool use (invalid conversation
+			// state) and confuse the agent once it resumes.
+			// Instead, just start the SDK query so the SDK re-encounters the pending
+			// AskUserQuestion in its session file and re-calls canUseTool, which
+			// re-establishes the pendingResolver so the user can submit their answer.
+			if (group.waitingForQuestion) {
+				try {
+					const sessionId =
+						group.waitingSession === 'leader' ? group.leaderSessionId : group.workerSessionId;
+					const restored = group.waitingSession === 'leader' ? leaderRestored : workerRestored;
+					if (restored) {
+						await this.sessionFactory.startSession(sessionId);
+						log.info(
+							`[ZombieRecovery] Group ${group.id}: started SDK query for ` +
+								`${group.waitingSession} session waiting for question answer`
+						);
+					}
+				} catch (error) {
+					log.error(
+						`[ZombieRecovery] Group ${group.id}: failed to start session for waitingForQuestion:`,
+						error
+					);
+				}
+				continue; // Skip regular continuation message injection
+			}
+
 			try {
 				if (workerRestored) {
 					await this.sessionFactory.injectMessage(
