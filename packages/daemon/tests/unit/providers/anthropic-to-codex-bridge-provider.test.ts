@@ -97,6 +97,64 @@ describe('AnthropicToCodexBridgeProvider', () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// getAuthStatus() — canLogout field
+	// -------------------------------------------------------------------------
+
+	describe('getAuthStatus() canLogout field', () => {
+		let tmpDir: string;
+
+		beforeEach(async () => {
+			tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'neokai-codex-logout-test-'));
+		});
+
+		afterEach(async () => {
+			await fs.rm(tmpDir, { recursive: true, force: true });
+		});
+
+		it('canLogout is false when credentials come from OPENAI_API_KEY env var', async () => {
+			// Codex binary may or may not be installed; test is meaningful only when authenticated
+			provider = makeProvider({ OPENAI_API_KEY: 'sk-env-key' }, tmpDir, tmpDir);
+			const result = await provider.getAuthStatus();
+			if (result.isAuthenticated) {
+				expect(result.canLogout).toBe(false);
+			}
+		});
+
+		it('canLogout is false when credentials come from CODEX_API_KEY env var', async () => {
+			provider = makeProvider({ CODEX_API_KEY: 'codex-env-key' }, tmpDir, tmpDir);
+			const result = await provider.getAuthStatus();
+			if (result.isAuthenticated) {
+				expect(result.canLogout).toBe(false);
+			}
+		});
+
+		it('canLogout is true when OAuth credentials are stored in ~/.neokai/auth.json', async () => {
+			const neokaiDir = path.join(tmpDir, 'neokai');
+			const codexDir = path.join(tmpDir, 'codex');
+			await writeNeokaiAuth(neokaiDir, {
+				type: 'oauth',
+				access: 'oauth-access-token',
+				refresh: 'oauth-refresh-token',
+				expires: Date.now() + 3600_000,
+				accountId: 'user_abc123',
+			});
+			provider = makeProvider({}, neokaiDir, codexDir);
+			const result = await provider.getAuthStatus();
+			if (result.isAuthenticated) {
+				expect(result.canLogout).toBe(true);
+			}
+		});
+
+		it('canLogout is undefined (not set) when not authenticated', async () => {
+			provider = makeProvider({}, tmpDir, tmpDir);
+			const result = await provider.getAuthStatus();
+			expect(result.isAuthenticated).toBe(false);
+			// canLogout is not relevant when not authenticated
+			expect(result.canLogout).toBeUndefined();
+		});
+	});
+
+	// -------------------------------------------------------------------------
 	// getApiKey() — credential discovery chain
 	// -------------------------------------------------------------------------
 

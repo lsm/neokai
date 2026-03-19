@@ -21,6 +21,12 @@ export interface ProviderAuthStatus {
 	expiresAt?: number;
 	/** Whether token needs refresh */
 	needsRefresh?: boolean;
+	/**
+	 * Whether logout via the UI is supported for this credential.
+	 * False when credentials come from external sources (env vars, system CLI) that
+	 * NeoKai cannot remove. Defaults to true when not set.
+	 */
+	canLogout?: boolean;
 	/** User information (if available) */
 	user?: {
 		email?: string;

@@ -331,13 +331,28 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 						'Use a fine-grained PAT with Copilot access, or run the OAuth login flow.',
 				};
 			}
-			return { isAuthenticated: true, needsRefresh: false };
+			// canLogout: true only when credentials are managed by NeoKai (auth.json)
+			// and are not overridden by env vars that we cannot remove.
+			const canLogout = await this.hasNeoKaiManagedCredentials();
+			return { isAuthenticated: true, needsRefresh: false, canLogout };
 		} catch (error) {
 			return {
 				isAuthenticated: false,
 				error: error instanceof Error ? error.message : 'Unknown error',
 			};
 		}
+	}
+
+	/**
+	 * Returns true when NeoKai has stored credentials in auth.json that will be
+	 * the active token source (i.e. no env-var override takes priority).
+	 * Used to determine whether the Logout button in the UI will have any effect.
+	 */
+	private async hasNeoKaiManagedCredentials(): Promise<boolean> {
+		// Env vars take priority in discoverGitHubToken — if set, logout is a no-op
+		if (this.env.COPILOT_GITHUB_TOKEN || this.env.GH_TOKEN) return false;
+		const stored = await this.loadStoredGitHubToken();
+		return !!stored;
 	}
 
 	/**

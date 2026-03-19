@@ -226,6 +226,58 @@ describe('AnthropicToCopilotBridgeProvider', () => {
 			expect(status.isAuthenticated).toBe(false);
 			expect(status.error).toContain('Classic PATs');
 		});
+
+		it('canLogout is false when authenticated via COPILOT_GITHUB_TOKEN env var', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'gho_tok' });
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+			expect(status.canLogout).toBe(false);
+		});
+
+		it('canLogout is false when authenticated via GH_TOKEN env var', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', { GH_TOKEN: 'gho_tok' });
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+			expect(status.canLogout).toBe(false);
+		});
+
+		it('canLogout is true when authenticated via NeoKai-stored token in auth.json (no env vars)', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue('gho_stored_tok' as never);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+			expect(status.canLogout).toBe(true);
+		});
+
+		it('canLogout is false when authenticated via gh CLI (no stored NeoKai credentials)', async () => {
+			const p = new AnthropicToCopilotBridgeProvider('/tmp', {});
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'loadStoredGitHubToken' as never
+			).mockResolvedValue(undefined as never);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhCliToken' as never).mockResolvedValue(
+				'gho_cli_tok' as never
+			);
+			spyOn(
+				p as unknown as Record<string, unknown>,
+				'validateCopilotToken' as never
+			).mockResolvedValue(true as never);
+			spyOn(p as unknown as Record<string, unknown>, 'tryGhHostsToken' as never).mockResolvedValue(
+				undefined as never
+			);
+			const status = await p.getAuthStatus();
+			expect(status.isAuthenticated).toBe(true);
+			expect(status.canLogout).toBe(false);
+		});
 	});
 
 	describe('buildSdkConfig', () => {

@@ -383,8 +383,11 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			};
 		}
 
+		// Credentials from env vars cannot be removed via the UI
+		const fromEnvVar = !!(this.env.OPENAI_API_KEY || this.env.CODEX_API_KEY);
+
 		if (auth.type === 'api_key') {
-			return { isAuthenticated: true, method: 'api_key' };
+			return { isAuthenticated: true, method: 'api_key', canLogout: !fromEnvVar };
 		}
 
 		const neokaiCreds = await this.loadCredentials();
@@ -397,14 +400,20 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 						method: 'oauth',
 						expiresAt: neokaiCreds.expires,
 						needsRefresh: true,
+						canLogout: true,
 					};
 				}
-				return { isAuthenticated: true, method: 'oauth', expiresAt: neokaiCreds.expires };
+				return {
+					isAuthenticated: true,
+					method: 'oauth',
+					expiresAt: neokaiCreds.expires,
+					canLogout: true,
+				};
 			}
-			return { isAuthenticated: true, method: 'oauth' };
+			return { isAuthenticated: true, method: 'oauth', canLogout: true };
 		}
 
-		return { isAuthenticated: true, method: 'oauth' };
+		return { isAuthenticated: true, method: 'oauth', canLogout: true };
 	}
 
 	async getModels(): Promise<ModelInfo[]> {

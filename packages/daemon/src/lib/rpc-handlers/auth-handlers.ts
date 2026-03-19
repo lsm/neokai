@@ -57,6 +57,7 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 							method: status.method,
 							expiresAt: status.expiresAt,
 							needsRefresh: status.needsRefresh,
+							canLogout: status.canLogout,
 							user: status.user,
 							error: status.error,
 						};
