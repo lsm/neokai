@@ -115,10 +115,13 @@ export class SpaceTaskManager {
 			updates.error = options.error;
 		}
 
-		// Clear error/result when restarting
+		// Clear error/result/progress when restarting from a failed/cancelled state.
+		// For needs_attention: allowed targets are pending, in_progress, review.
+		// For cancelled: allowed targets are pending, in_progress (review is not valid from cancelled).
 		if (
-			(task.status === 'needs_attention' || task.status === 'cancelled') &&
-			(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')
+			(task.status === 'needs_attention' &&
+				(newStatus === 'pending' || newStatus === 'in_progress' || newStatus === 'review')) ||
+			(task.status === 'cancelled' && (newStatus === 'pending' || newStatus === 'in_progress'))
 		) {
 			updates.error = null;
 			updates.result = null;
@@ -209,35 +212,27 @@ export class SpaceTaskManager {
 	}
 
 	/**
-	 * Move task to review
+	 * Move task to review (work done, awaiting human approval).
+	 * Validates the transition via setTaskStatus, then applies PR metadata.
 	 */
 	async reviewTask(taskId: string, prUrl?: string): Promise<SpaceTask> {
-		const task = await this.getTask(taskId);
-		if (!task) {
-			throw new Error(`Task not found: ${taskId}`);
-		}
+		// setTaskStatus handles existence check, transition validation, and field clearing
+		await this.setTaskStatus(taskId, 'review');
 
-		if (!isValidSpaceTaskTransition(task.status, 'review')) {
-			throw new Error(
-				`Invalid status transition from '${task.status}' to 'review'. ` +
-					`Allowed: ${VALID_SPACE_TASK_TRANSITIONS[task.status].join(', ') || 'none'}`
-			);
-		}
-
-		const updates: Parameters<SpaceTaskRepository['updateTask']>[1] = {
-			status: 'review',
+		// Apply PR metadata on top of the transition
+		const prUpdates: Parameters<SpaceTaskRepository['updateTask']>[1] = {
 			currentStep: prUrl ?? 'Awaiting review',
 			progress: 80,
 		};
 
 		if (prUrl !== undefined) {
-			updates.prUrl = prUrl;
+			prUpdates.prUrl = prUrl;
 			const match = prUrl.match(/\/pull\/(\d+)/);
-			updates.prNumber = match ? parseInt(match[1], 10) : null;
-			updates.prCreatedAt = Date.now();
+			prUpdates.prNumber = match ? parseInt(match[1], 10) : null;
+			prUpdates.prCreatedAt = Date.now();
 		}
 
-		const updated = this.taskRepo.updateTask(taskId, updates);
+		const updated = this.taskRepo.updateTask(taskId, prUpdates);
 		if (!updated) {
 			throw new Error(`Failed to update task: ${taskId}`);
 		}

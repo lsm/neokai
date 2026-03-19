@@ -127,6 +127,30 @@ describe('SpaceTaskManager', () => {
 			expect(restarted.progress).toBeUndefined();
 		});
 
+		it('clears error and result when restarting from cancelled -> pending', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.setTaskStatus(task.id, 'needs_attention', { error: 'Failed' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.cancelTask(task.id);
+
+			const restarted = await manager.setTaskStatus(task.id, 'pending');
+			expect(restarted.status).toBe('pending');
+			expect(restarted.error).toBeUndefined();
+			expect(restarted.progress).toBeUndefined();
+		});
+
+		it('clears fields when restarting from cancelled -> in_progress', async () => {
+			const task = await manager.createTask({ title: 'T', description: '' });
+			await manager.setTaskStatus(task.id, 'in_progress');
+			await manager.cancelTask(task.id);
+
+			const restarted = await manager.setTaskStatus(task.id, 'in_progress');
+			expect(restarted.status).toBe('in_progress');
+			expect(restarted.error).toBeUndefined();
+			expect(restarted.progress).toBeUndefined();
+		});
+
 		it('throws for unknown task', async () => {
 			await expect(manager.setTaskStatus('nonexistent', 'in_progress')).rejects.toThrow(
 				'not found'

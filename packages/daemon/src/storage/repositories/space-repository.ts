@@ -55,7 +55,12 @@ export class SpaceRepository {
 	}
 
 	/**
-	 * Get a space by workspace path
+	 * Get a space by workspace path (any status, including archived).
+	 *
+	 * NOTE: This intentionally returns archived spaces. The `workspace_path` column
+	 * has a UNIQUE constraint in the schema, so archived spaces permanently claim their
+	 * path — no new space can be created for the same path after archiving. This is
+	 * the chosen design: workspace paths are a permanent identifier, not a reusable slot.
 	 */
 	getSpaceByPath(workspacePath: string): Space | null {
 		const stmt = this.db.prepare(`SELECT * FROM spaces WHERE workspace_path = ?`);

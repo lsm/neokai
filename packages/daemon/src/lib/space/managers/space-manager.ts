@@ -12,9 +12,11 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceRepository } from '../../../storage/repositories/space-repository';
+import { Logger } from '../../logger';
 import type { Space, CreateSpaceParams, UpdateSpaceParams } from '@neokai/shared';
 
 const execAsync = promisify(exec);
+const log = new Logger('SpaceManager');
 
 export class SpaceManager {
 	private spaceRepo: SpaceRepository;
@@ -42,10 +44,7 @@ export class SpaceManager {
 		// Warn if not a git repository (non-fatal)
 		const isGit = await this.isGitRepository(resolvedPath);
 		if (!isGit) {
-			// Warn only — using a logger would require injecting one; warn via stderr for now
-			process.stderr.write(
-				`[SpaceManager] Warning: workspace path is not a git repository: ${resolvedPath}\n`
-			);
+			log.warn(`workspace path is not a git repository: ${resolvedPath}`);
 		}
 
 		return this.spaceRepo.createSpace({ ...params, workspacePath: resolvedPath });

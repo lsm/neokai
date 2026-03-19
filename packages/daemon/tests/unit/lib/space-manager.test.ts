@@ -88,6 +88,17 @@ describe('SpaceManager', () => {
 				'already exists'
 			);
 		});
+
+		it('throws if workspace path is used by an archived space (paths are permanent identifiers)', async () => {
+			// Design decision: workspace_path has a UNIQUE DB constraint with no status filter,
+			// so archived spaces permanently claim their path. This test documents that behavior.
+			const space = await manager.createSpace({ workspacePath: tmpDir, name: 'First' });
+			await manager.archiveSpace(space.id);
+
+			await expect(manager.createSpace({ workspacePath: tmpDir, name: 'Second' })).rejects.toThrow(
+				'already exists'
+			);
+		});
 	});
 
 	describe('getSpace', () => {

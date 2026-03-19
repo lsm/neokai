@@ -118,6 +118,9 @@ export class SpaceTaskRepository {
 			values.push(params.status);
 
 			if (params.status === 'in_progress') {
+				// Always stamp started_at on entry to in_progress, including re-entries from
+				// needs_attention or cancelled. This records when the most recent work began,
+				// not when the task was originally created. Mirrors TaskRepository behavior.
 				fields.push('started_at = ?');
 				values.push(Date.now());
 			} else if (
