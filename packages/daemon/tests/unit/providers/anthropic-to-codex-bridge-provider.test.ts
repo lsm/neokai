@@ -260,6 +260,53 @@ describe('AnthropicToCodexBridgeProvider', () => {
 				await fs.rm(tmpDir, { recursive: true, force: true });
 			}
 		});
+
+		it('sets ANTHROPIC_DEFAULT_*_MODEL env vars to prevent SDK fallback to Anthropic models', () => {
+			// Regression test: without these env vars the Claude Agent SDK subprocess
+			// defaults to Anthropic model names (e.g. 'claude-haiku-4-5-20251001') which
+			// the Codex bridge does not recognise, producing "model does not exist" errors.
+			const cfg = provider.buildSdkConfig('gpt-5.3-codex', { workspacePath: '/tmp/ws-model' });
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('gpt-5.1-codex-mini');
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('gpt-5.4');
+		});
+
+		it('resolves model alias to canonical ID in ANTHROPIC_DEFAULT_SONNET_MODEL', () => {
+			const cfg = provider.buildSdkConfig('codex', { workspacePath: '/tmp/ws-alias' });
+			// 'codex' is an alias for 'gpt-5.3-codex'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+		});
+
+		it('resolves codex-mini alias correctly', () => {
+			const cfg = provider.buildSdkConfig('codex-mini', { workspacePath: '/tmp/ws-mini' });
+			// 'codex-mini' is an alias for 'gpt-5.1-codex-mini'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.1-codex-mini');
+		});
+
+		it('resolves codex-latest alias correctly', () => {
+			const cfg = provider.buildSdkConfig('codex-latest', { workspacePath: '/tmp/ws-latest' });
+			// 'codex-latest' is an alias for 'gpt-5.4'
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.4');
+		});
+
+		it('falls back to gpt-5.3-codex for unknown model IDs', () => {
+			const cfg = provider.buildSdkConfig('unknown-model', { workspacePath: '/tmp/ws-unk' });
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('gpt-5.3-codex');
+		});
+
+		it('no claude-* model name leaks through ANTHROPIC_DEFAULT_*_MODEL env vars', () => {
+			// Regression guard for the original bug: without these env vars being set to
+			// Codex model IDs, the Claude Agent SDK subprocess falls back to its built-in
+			// defaults (e.g. claude-haiku-4-5-20251001) for background calls such as
+			// summarisation and compaction. The Codex bridge rejects those names with
+			// "model does not exist". All three tier slots must be non-Anthropic model IDs.
+			const cfg = provider.buildSdkConfig('gpt-5.3-codex', {
+				workspacePath: '/tmp/ws-no-leak',
+			});
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_HAIKU_MODEL).not.toMatch(/^claude-/);
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_SONNET_MODEL).not.toMatch(/^claude-/);
+			expect(cfg.envVars.ANTHROPIC_DEFAULT_OPUS_MODEL).not.toMatch(/^claude-/);
+		});
 	});
 
 	// -------------------------------------------------------------------------

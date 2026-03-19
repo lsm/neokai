@@ -555,31 +555,45 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 	);
 
 	// -------------------------------------------------------------------------
-	// 7. Token usage — SSE stream has non-zero input_tokens and output_tokens
+	// 7. Token usage — session metadata has non-zero input_tokens and output_tokens
 	// -------------------------------------------------------------------------
 
 	test(
-		'token usage: SSE stream contains non-zero input_tokens and output_tokens',
+		'token usage: session metadata contains non-zero input_tokens and output_tokens',
 		async () => {
-			const directProvider = new AnthropicToCopilotBridgeProvider();
-			const bridgeUrl = await directProvider.ensureServerStarted();
+			// Route through the daemon session lifecycle (uses the existing Copilot
+			// provider that was already warmed up in beforeAll).  Creating a fresh
+			// AnthropicToCopilotBridgeProvider here would spin up a new CopilotClient
+			// subprocess whose first createSession call lists models, which can return
+			// 429 after the preceding tests have exhausted the rate limit window.
+			const workspacePath = join(TMP_DIR, `copilot-token-usage-${Date.now()}`);
+			mkdirSync(workspacePath, { recursive: true });
 
-			try {
-				const events = await callCopilotBridge(
-					bridgeUrl,
-					[{ role: 'user', content: 'Say hello.' }],
-					testModelId,
-					'You are a helpful assistant. Always respond with plain text.'
-				);
+			const { sessionId } = (await daemon.messageHub.request('session.create', {
+				workspacePath,
+				title: 'Copilot Token Usage Test',
+				config: { model: testModelId, permissionMode: 'acceptEdits' },
+			})) as { sessionId: string };
+			daemon.trackSession(sessionId);
 
-				const inputTokens = getInputTokens(events);
-				const outputTokens = getOutputTokens(events);
+			await sendMessage(daemon, sessionId, 'Say hello in one sentence.');
+			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-				expect(inputTokens).toBeGreaterThan(0);
-				expect(outputTokens).toBeGreaterThan(0);
-			} finally {
-				await directProvider.shutdown();
-			}
+			// Wait for SDK messages to be persisted — consistent with other tests that
+			// also use waitForSdkMessages before querying session state.
+			await waitForSdkMessages(daemon, sessionId, { minCount: 1, timeout: 5000 });
+
+			// Token counts are accumulated in session metadata by the SDK message handler.
+			// The Copilot bridge emits heuristic input/output counts via SSE (input from
+			// prompt length, output from response character count), which the Claude Agent
+			// SDK processes and stores in the assistant message's usage field, then
+			// persists to session.metadata.inputTokens/outputTokens.
+			const { session } = (await daemon.messageHub.request('session.get', {
+				sessionId,
+			})) as { session: { metadata?: { inputTokens?: number; outputTokens?: number } } };
+
+			expect(session.metadata?.inputTokens ?? 0).toBeGreaterThan(0);
+			expect(session.metadata?.outputTokens ?? 0).toBeGreaterThan(0);
 		},
 		TEST_TIMEOUT
 	);

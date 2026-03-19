@@ -11,6 +11,8 @@ import type { Provider, ProviderSdkConfig } from '@neokai/shared/provider';
 import { ProviderContextManager } from '../../../src/lib/providers/context-manager';
 import { ProviderRegistry, resetProviderRegistry } from '../../../src/lib/providers/registry';
 import { resetProviderFactory } from '../../../src/lib/providers/factory';
+import { AnthropicToCodexBridgeProvider } from '../../../src/lib/providers/anthropic-to-codex-bridge-provider';
+import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 // Mock provider for testing
 class MockProvider implements Provider {
@@ -1043,5 +1045,69 @@ describe('ProviderContextManager', () => {
 			expect(providers.length).toBe(1);
 			expect(providers[0].id).toBe('anthropic');
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// No-Anthropic-model-leak invariant — real provider buildSdkConfig()
+//
+// These tests use the actual provider classes (not mocks) to assert that
+// ANTHROPIC_DEFAULT_HAIKU_MODEL never contains a claude-* model name.
+//
+// Root cause of the original bug: without ANTHROPIC_DEFAULT_*_MODEL being set
+// to bridge-compatible model IDs, the Claude Agent SDK subprocess falls back to
+// its built-in defaults (e.g. claude-haiku-4-5-20251001) for background calls
+// such as summarisation and compaction.
+//
+// The invariant differs per provider:
+//   Codex bridge:   all three tier slots must be gpt-* model IDs — the bridge
+//                   rejects any claude-* name with "model does not exist".
+//   Copilot bridge: only the haiku slot is at risk. Copilot intentionally routes
+//                   claude-sonnet-4.6 / claude-opus-4.6 for those tiers, but
+//                   gpt-5-mini is required for haiku — a claude-haiku fallback
+//                   would not be served correctly by the Copilot bridge.
+// ---------------------------------------------------------------------------
+
+describe('no-Anthropic-model-leak invariant — real provider buildSdkConfig()', () => {
+	// Use a shared let so afterEach can clean up even when assertions throw.
+	let codexProvider: AnthropicToCodexBridgeProvider | undefined;
+
+	afterEach(() => {
+		codexProvider?.stopAllBridgeServers();
+		codexProvider = undefined;
+	});
+
+	it('Codex provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+		codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+		const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
+			workspacePath: '/tmp/ws-codex-leak',
+		});
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+	});
+
+	it('Codex provider: all three DEFAULT_*_MODEL slots are non-Anthropic model names', () => {
+		codexProvider = new AnthropicToCodexBridgeProvider({ OPENAI_API_KEY: 'sk-test' });
+		const cfg = codexProvider.buildSdkConfig('gpt-5.3-codex', {
+			workspacePath: '/tmp/ws-codex-all',
+		});
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_SONNET_MODEL']).not.toMatch(/^claude-/);
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_OPUS_MODEL']).not.toMatch(/^claude-/);
+	});
+
+	it('Copilot provider: ANTHROPIC_DEFAULT_HAIKU_MODEL does not start with claude-', () => {
+		const p = new AnthropicToCopilotBridgeProvider('/tmp', { COPILOT_GITHUB_TOKEN: 'tok' });
+		// Inject a fake server URL — buildSdkConfig() requires the embedded server to be
+		// started, but for this assertion we only care about the env var values it returns.
+		(p as unknown as Record<string, unknown>)['serverCache'] = {
+			url: 'http://127.0.0.1:54321',
+			stop: async () => {},
+		};
+		const cfg = p.buildSdkConfig('copilot-anthropic-sonnet');
+		// Only the haiku slot must be non-claude-*. Sonnet/opus intentionally use
+		// claude-sonnet-4.6 / claude-opus-4.6 (the Copilot bridge serves those).
+		expect(cfg.envVars['ANTHROPIC_DEFAULT_HAIKU_MODEL']).not.toMatch(/^claude-/);
+		// p.shutdown() intentionally omitted: serverCache.stop is a no-op and no
+		// real embedded server was started, so there is nothing to clean up.
 	});
 });

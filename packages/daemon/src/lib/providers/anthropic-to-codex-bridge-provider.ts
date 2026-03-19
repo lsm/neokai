@@ -415,8 +415,13 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	}
 
 	getModelForTier(tier: ModelTier): string | undefined {
+		// Routing policy:
+		//   opus    → gpt-5.4           (latest frontier, matches ANTHROPIC_DEFAULT_OPUS_MODEL)
+		//   sonnet  → gpt-5.3-codex     (primary Codex model, matches ANTHROPIC_DEFAULT_SONNET_MODEL)
+		//   haiku   → gpt-5.1-codex-mini (fast/cheap, matches ANTHROPIC_DEFAULT_HAIKU_MODEL)
+		//   default → gpt-5.3-codex     (same as sonnet; no separate env var needed)
 		const map: Record<ModelTier, string> = {
-			opus: 'gpt-5.3-codex',
+			opus: 'gpt-5.4',
 			sonnet: 'gpt-5.3-codex',
 			haiku: 'gpt-5.1-codex-mini',
 			default: 'gpt-5.3-codex',
@@ -434,7 +439,7 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 	 * Lazily starts a per-workspace bridge server and returns env vars that
 	 * route the Anthropic SDK to that bridge's local HTTP endpoint.
 	 */
-	buildSdkConfig(_modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
+	buildSdkConfig(modelId: string, sessionConfig?: ProviderSessionConfig): ProviderSdkConfig {
 		const workspace = sessionConfig?.workspacePath ?? process.cwd();
 		let bridgeServer = this.bridgeServers.get(workspace);
 
@@ -458,10 +463,26 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 			);
 		}
 
+		// Resolve alias (e.g. 'codex' → 'gpt-5.3-codex') so ANTHROPIC_DEFAULT_*_MODEL
+		// receives real Codex model IDs that the bridge can forward to the app-server.
+		const entry = ANTHROPIC_CODEX_MODELS.find((m) => m.alias === modelId || m.id === modelId);
+		const resolvedId = entry?.id ?? 'gpt-5.3-codex';
+
 		return {
 			envVars: {
 				ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridgeServer.port}`,
 				ANTHROPIC_API_KEY: 'codex-bridge-placeholder',
+				CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+				// Map SDK model tiers to Codex model IDs so the Claude Agent SDK
+				// subprocess never falls back to Anthropic model names (e.g.
+				// 'claude-haiku-4-5-20251001') which the Codex bridge does not recognise.
+				// Routing policy (mirrors getModelForTier):
+				//   Opus   → gpt-5.4           (latest frontier)
+				//   Sonnet → resolvedId         (user-selected model)
+				//   Haiku  → gpt-5.1-codex-mini (fast/cheap fallback)
+				ANTHROPIC_DEFAULT_OPUS_MODEL: 'gpt-5.4',
+				ANTHROPIC_DEFAULT_SONNET_MODEL: resolvedId,
+				ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gpt-5.1-codex-mini',
 			},
 			isAnthropicCompatible: true,
 			apiVersion: 'v1',

@@ -133,15 +133,20 @@ function streamSession(
 	const unsubscribe = session.on((event: SessionEvent) => {
 		switch (event.type) {
 			case 'assistant.message_delta':
-				if (event.data.deltaContent) pendingDeltas.push(event.data.deltaContent as string);
+				if (typeof event.data.deltaContent === 'string' && event.data.deltaContent)
+					pendingDeltas.push(event.data.deltaContent);
 				break;
 
 			case 'assistant.message':
 				// Fallback: if the SDK delivered the full response without any
 				// preceding assistant.message_delta events (valid Copilot SDK
 				// behaviour), capture it now so outputCharCount is non-zero.
-				if (pendingDeltas.length === 0 && event.data.content) {
-					pendingDeltas.push(event.data.content as string);
+				if (
+					pendingDeltas.length === 0 &&
+					typeof event.data.content === 'string' &&
+					event.data.content
+				) {
+					pendingDeltas.push(event.data.content);
 				}
 				flushDeltas();
 				break;
