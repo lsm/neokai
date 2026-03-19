@@ -137,6 +137,7 @@ describe('SpaceTaskManager', () => {
 			const restarted = await manager.setTaskStatus(task.id, 'pending');
 			expect(restarted.status).toBe('pending');
 			expect(restarted.error).toBeUndefined();
+			expect(restarted.result).toBeUndefined();
 			expect(restarted.progress).toBeUndefined();
 		});
 
