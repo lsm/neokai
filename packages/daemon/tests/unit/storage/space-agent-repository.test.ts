@@ -192,6 +192,25 @@ describe('SpaceAgentRepository', () => {
 			expect(updated?.provider).toBeUndefined();
 		});
 
+		it('clears description and systemPrompt to undefined via null (NOT NULL roundtrip)', () => {
+			// Verifies the NOT NULL '' → null → undefined coercion chain introduced in the P0 fix:
+			//   update stores '' for null inputs (avoids NOT NULL violation)
+			//   rowToAgent maps '' back to undefined (consistent with SpaceAgent optional fields)
+			const agent = repo.create({
+				spaceId: 'space-1',
+				name: 'Agent',
+				role: 'coder',
+				description: 'Some description',
+				systemPrompt: 'Some prompt',
+			});
+			expect(agent.description).toBe('Some description');
+			expect(agent.systemPrompt).toBe('Some prompt');
+
+			const updated = repo.update(agent.id, { description: null, systemPrompt: null });
+			expect(updated?.description).toBeUndefined();
+			expect(updated?.systemPrompt).toBeUndefined();
+		});
+
 		it('sets toolConfig to null', () => {
 			const agent = repo.create({
 				spaceId: 'space-1',
