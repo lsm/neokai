@@ -989,6 +989,42 @@ describe('Bridge HTTP server', () => {
 	});
 });
 
+describe('drainToSSE controller lifecycle handling', () => {
+	it('exits cleanly when the SSE controller is already closed', async () => {
+		async function* errorGen(): AsyncGenerator<BridgeEvent> {
+			yield { type: 'error', message: 'upstream disconnected' };
+		}
+
+		let killCalled = false;
+		const mockSession = {
+			kill: () => {
+				killCalled = true;
+			},
+		} as unknown as import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeSession;
+
+		const closedError = Object.assign(
+			new TypeError('Invalid state: Controller is already closed'),
+			{
+				code: 'ERR_INVALID_STATE',
+			}
+		);
+
+		const closedController = {
+			enqueue: () => {
+				throw closedError;
+			},
+			close: () => {
+				throw closedError;
+			},
+		} as unknown as ReadableStreamDefaultController<Uint8Array>;
+
+		await expect(
+			drainToSSE(errorGen(), mockSession, 'test-model', new Map(), closedController, 5000)
+		).resolves.toBeUndefined();
+		expect(killCalled).toBe(true);
+	});
+});
+
 // ---------------------------------------------------------------------------
 // createAnthropicError helper unit tests
 // ---------------------------------------------------------------------------

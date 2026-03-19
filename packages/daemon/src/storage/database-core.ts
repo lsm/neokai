@@ -43,6 +43,10 @@ export class DatabaseCore {
 		// - Better crash recovery (no data loss on unexpected shutdown)
 		this.db.exec('PRAGMA journal_mode = WAL');
 
+		// Wait briefly when the DB is locked by another connection/process instead of
+		// failing writes immediately with SQLITE_BUSY.
+		this.db.exec('PRAGMA busy_timeout = 5000');
+
 		// Set synchronous mode to NORMAL for durability with good performance
 		// NORMAL = fsync only at critical moments (WAL checkpoints)
 		// This ensures durability while maintaining performance
