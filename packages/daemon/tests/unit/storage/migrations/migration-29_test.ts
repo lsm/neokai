@@ -181,7 +181,8 @@ describe('Migration 29: Space system tables', () => {
 
 		const expectedIndexes = [
 			'idx_spaces_status',
-			'idx_spaces_workspace_path',
+			// Note: idx_spaces_workspace_path is NOT created — workspace_path UNIQUE constraint
+			// already creates an implicit index, so an explicit one would be redundant.
 			'idx_space_agents_space_id',
 			'idx_space_workflows_space_id',
 			'idx_space_workflow_steps_workflow_id',
@@ -192,6 +193,7 @@ describe('Migration 29: Space system tables', () => {
 			'idx_space_tasks_space_id',
 			'idx_space_tasks_status',
 			'idx_space_tasks_workflow_run_id',
+			'idx_space_tasks_workflow_step_id',
 			'idx_space_tasks_custom_agent_id',
 			'idx_space_session_groups_space_id',
 			'idx_space_session_group_members_group_id',
@@ -438,6 +440,76 @@ describe('Migration 29: Space system tables', () => {
 			db.exec(
 				`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
 				 VALUES ('sp-u2', '/workspace/unique', 'Space U2', ${now}, ${now})`
+			);
+		}).toThrow();
+	});
+
+	// -------------------------------------------------------------------------
+	// SET NULL on space_workflow_steps delete
+	// -------------------------------------------------------------------------
+
+	test('deleting a workflow step sets space_tasks.workflow_step_id to NULL', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+
+		db.exec(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-step', '/workspace/stepnull', 'StepNull Space', ${now}, ${now})`
+		);
+		db.exec(
+			`INSERT INTO space_workflows (id, space_id, name, created_at, updated_at)
+			 VALUES ('wf-step', 'sp-step', 'Workflow Step', ${now}, ${now})`
+		);
+		db.exec(
+			`INSERT INTO space_workflow_steps (id, workflow_id, name, order_index, created_at, updated_at)
+			 VALUES ('step-s1', 'wf-step', 'Step 1', 0, ${now}, ${now})`
+		);
+		db.exec(
+			`INSERT INTO space_tasks (id, space_id, title, workflow_step_id, created_at, updated_at)
+			 VALUES ('task-step', 'sp-step', 'Task Step', 'step-s1', ${now}, ${now})`
+		);
+
+		// Delete the workflow step
+		db.exec(`DELETE FROM space_workflow_steps WHERE id = 'step-s1'`);
+
+		// Task should still exist, but workflow_step_id should be NULL
+		const task = db.prepare(`SELECT * FROM space_tasks WHERE id = 'task-step'`).get() as Record<
+			string,
+			unknown
+		>;
+		expect(task).toBeTruthy();
+		expect(task['workflow_step_id']).toBeNull();
+	});
+
+	// -------------------------------------------------------------------------
+	// space_session_group_members uniqueness
+	// -------------------------------------------------------------------------
+
+	test('space_session_group_members prevents duplicate (group_id, session_id)', () => {
+		runMigrations(db, () => {});
+
+		const now = Date.now();
+		db.exec(
+			`INSERT INTO spaces (id, workspace_path, name, created_at, updated_at)
+			 VALUES ('sp-uniq', '/workspace/memberuniq', 'MemberUniq Space', ${now}, ${now})`
+		);
+		db.exec(
+			`INSERT INTO space_session_groups (id, space_id, name, created_at, updated_at)
+			 VALUES ('sg-uniq', 'sp-uniq', 'Group Uniq', ${now}, ${now})`
+		);
+
+		// First insert — should succeed
+		db.exec(
+			`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
+			 VALUES ('sgm-dup-1', 'sg-uniq', 'sess-dup', 'worker', 0, ${now})`
+		);
+
+		// Second insert with same (group_id, session_id) — should fail
+		expect(() => {
+			db.exec(
+				`INSERT INTO space_session_group_members (id, group_id, session_id, role, order_index, created_at)
+				 VALUES ('sgm-dup-2', 'sg-uniq', 'sess-dup', 'leader', 1, ${now})`
 			);
 		}).toThrow();
 	});

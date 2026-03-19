@@ -1479,7 +1479,8 @@ function runMigration29(db: BunDatabase): void {
 		)
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_status ON spaces(status)`);
-	db.exec(`CREATE INDEX IF NOT EXISTS idx_spaces_workspace_path ON spaces(workspace_path)`);
+	// Note: workspace_path has a UNIQUE constraint which SQLite implements as an implicit
+	// unique index — no explicit CREATE INDEX needed.
 
 	// -------------------------------------------------------------------------
 	// space_agents
@@ -1611,7 +1612,8 @@ function runMigration29(db: BunDatabase): void {
 			completed_at INTEGER,
 			updated_at INTEGER NOT NULL,
 			FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE,
-			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL
+			FOREIGN KEY (workflow_run_id) REFERENCES space_workflow_runs(id) ON DELETE SET NULL,
+			FOREIGN KEY (workflow_step_id) REFERENCES space_workflow_steps(id) ON DELETE SET NULL
 		)
 	`);
 	db.exec(`CREATE INDEX IF NOT EXISTS idx_space_tasks_space_id ON space_tasks(space_id)`);
@@ -1621,6 +1623,9 @@ function runMigration29(db: BunDatabase): void {
 	);
 	db.exec(
 		`CREATE INDEX IF NOT EXISTS idx_space_tasks_custom_agent_id ON space_tasks(custom_agent_id)`
+	);
+	db.exec(
+		`CREATE INDEX IF NOT EXISTS idx_space_tasks_workflow_step_id ON space_tasks(workflow_step_id)`
 	);
 
 	// -------------------------------------------------------------------------
@@ -1653,7 +1658,8 @@ function runMigration29(db: BunDatabase): void {
 				CHECK(role IN ('worker', 'leader')),
 			order_index INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
-			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE
+			FOREIGN KEY (group_id) REFERENCES space_session_groups(id) ON DELETE CASCADE,
+			UNIQUE(group_id, session_id)
 		)
 	`);
 	db.exec(
