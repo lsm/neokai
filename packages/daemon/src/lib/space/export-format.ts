@@ -192,6 +192,11 @@ export function exportWorkflow(
 			const orderIndices = rule.appliesTo
 				.map((stepId) => stepIdToOrder.get(stepId))
 				.filter((idx): idx is number => idx !== undefined);
+			// If all referenced step UUIDs are absent from the workflow (e.g., stale data),
+			// orderIndices will be empty and `appliesTo` is omitted. This changes the rule
+			// semantics from "applies to specific steps" to "applies to all steps" — an
+			// intentional graceful degradation: a rule that can't resolve its targets is
+			// treated as a global rule rather than silently dropped.
 			if (orderIndices.length > 0) {
 				exported.appliesTo = orderIndices;
 			}
@@ -285,7 +290,9 @@ export function validateExportedWorkflow(data: unknown): ValidationResult<Export
  * Validate an unknown value as a SpaceExportBundle.
  *
  * Version handling: same as validateExportedAgent.
- * Also validates each embedded agent and workflow against their respective schemas.
+ * Each embedded agent and workflow is validated individually via
+ * `validateExportedAgent` / `validateExportedWorkflow` so that nested version
+ * checks (e.g. a v2 agent inside a v1 bundle) are caught and reported.
  */
 export function validateExportBundle(data: unknown): ValidationResult<SpaceExportBundle> {
 	if (typeof data !== 'object' || data === null) {
@@ -298,6 +305,25 @@ export function validateExportBundle(data: unknown): ValidationResult<SpaceExpor
 	if (!result.success) {
 		return { ok: false, error: `invalid: ${result.error.issues.map((i) => i.message).join('; ')}` };
 	}
+
+	// Validate each nested agent and workflow using the full per-item validators
+	// so that their individual version fields are also checked.
+	const raw = data as Record<string, unknown>;
+	const rawAgents = Array.isArray(raw.agents) ? raw.agents : [];
+	for (let i = 0; i < rawAgents.length; i++) {
+		const agentResult = validateExportedAgent(rawAgents[i]);
+		if (!agentResult.ok) {
+			return { ok: false, error: `invalid: agents[${i}]: ${agentResult.error}` };
+		}
+	}
+	const rawWorkflows = Array.isArray(raw.workflows) ? raw.workflows : [];
+	for (let i = 0; i < rawWorkflows.length; i++) {
+		const wfResult = validateExportedWorkflow(rawWorkflows[i]);
+		if (!wfResult.ok) {
+			return { ok: false, error: `invalid: workflows[${i}]: ${wfResult.error}` };
+		}
+	}
+
 	return {
 		ok: true,
 		value: {

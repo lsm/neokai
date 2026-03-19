@@ -714,7 +714,14 @@ export interface ExportedSpaceAgent {
 	systemPrompt?: string;
 	/** Tool configuration */
 	tools?: Record<string, unknown>;
-	/** Additional configuration */
+	/**
+	 * Additional agent configuration.
+	 *
+	 * Forward-compatibility stub: `SpaceAgent` does not currently expose a `config`
+	 * field, so `exportAgent()` never populates this. It is reserved here for future
+	 * agent-level configuration that cannot be expressed through the named fields above,
+	 * and for hand-crafted export payloads that need to carry extra metadata.
+	 */
 	config?: Record<string, unknown>;
 }
 

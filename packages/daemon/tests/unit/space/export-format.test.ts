@@ -518,6 +518,44 @@ describe('validateExportBundle', () => {
 		expect(validateExportBundle(null).ok).toBe(false);
 		expect(validateExportBundle([]).ok).toBe(false);
 	});
+
+	test('rejects bundle whose nested agent has version > 1', () => {
+		const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
+		// Override the nested agent's version to simulate a v2 agent embedded in a v1 bundle
+		const agents = bundle.agents as Array<Record<string, unknown>>;
+		agents[0] = { ...agents[0], version: 2 };
+		const result = validateExportBundle(bundle);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('agents[0]');
+			expect(result.error).toContain('requires newer version');
+		}
+	});
+
+	test('rejects bundle whose nested workflow has version > 1', () => {
+		const bundle = exportBundle([], [makeWorkflow()], 'B') as Record<string, unknown>;
+		const workflows = bundle.workflows as Array<Record<string, unknown>>;
+		workflows[0] = { ...workflows[0], version: 3 };
+		const result = validateExportBundle(bundle);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('workflows[0]');
+			expect(result.error).toContain('requires newer version');
+		}
+	});
+
+	test('rejects bundle whose nested agent has invalid (missing) version', () => {
+		const bundle = exportBundle([makeAgent()], [], 'B') as Record<string, unknown>;
+		const agents = bundle.agents as Array<Record<string, unknown>>;
+		const { version: _v, ...agentWithoutVersion } = agents[0];
+		agents[0] = agentWithoutVersion;
+		const result = validateExportBundle(bundle);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.error).toContain('agents[0]');
+			expect(result.error).toContain('invalid');
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
