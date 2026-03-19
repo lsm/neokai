@@ -373,7 +373,8 @@ function ToolUseBlock({
 	const isOutputRemoved = resultData?.isOutputRemoved || false;
 
 	// Use SubagentBlock for Task tool (no delete button)
-	if (block.name === 'Task') {
+	// SDK 0.2.76+ renamed the tool from 'Task' to 'Agent', support both for compatibility
+	if (block.name === 'Task' || block.name === 'Agent') {
 		return (
 			<SubagentBlock
 				input={block.input as unknown as AgentInput}

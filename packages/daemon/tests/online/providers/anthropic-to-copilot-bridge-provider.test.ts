@@ -38,12 +38,7 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonServerContext } from '../../helpers/daemon-server';
 import { createDaemonServer } from '../../helpers/daemon-server';
-import {
-	sendMessage,
-	waitForIdle,
-	getProcessingState,
-	waitForSdkMessages,
-} from '../../helpers/daemon-actions';
+import { sendMessage, waitForIdle, waitForSdkMessages } from '../../helpers/daemon-actions';
 import { AnthropicToCopilotBridgeProvider } from '../../../src/lib/providers/anthropic-copilot/index';
 
 const TMP_DIR = process.env.TMPDIR || '/tmp';
@@ -292,12 +287,9 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			await sendMessage(daemon, sessionId, 'What is 6+7? Reply with just the number.');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
-
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 			const assistantMessages = sdkMessages.filter(
 				(m) => (m as { type?: string }).type === 'assistant'
@@ -338,12 +330,9 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
-
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 
 			// At least one tool_use block proves the bridge fired.
@@ -415,9 +404,6 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			);
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
-
 			// PRIMARY assertion: the Agent SDK initialised the MCP server.
 			// The MCP server writes the flag when it receives a tools/list request,
 			// which precedes the first model inference.  By the time waitForIdle
@@ -437,7 +423,7 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			// proves the tool was exposed; whether the model uses it is out of scope.
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 			if (hasToolUseBlock(sdkMessages, 'get_answer')) {
 				const text = sdkMessages
@@ -491,15 +477,17 @@ describe('AnthropicToCopilotBridgeProvider (Online)', () => {
 			expect(session.config?.provider).toBe('anthropic-copilot');
 
 			// Send a message and verify the copilot backend responds.
+			// sendMessage() already polls until processing starts, so waitForIdle()
+			// will not resolve against the pre-send idle state.
 			await sendMessage(daemon, sessionId, 'Reply with exactly: COPILOT_OK');
 			await waitForIdle(daemon, sessionId, IDLE_TIMEOUT);
 
-			const state = await getProcessingState(daemon, sessionId);
-			expect(state.status).toBe('idle');
-
+			// waitForIdle may resolve on a brief idle between Copilot retry cycles
+			// before the assistant message is persisted. Use a long timeout so we
+			// keep polling until the real response arrives.
 			const { sdkMessages } = await waitForSdkMessages(daemon, sessionId, {
 				minCount: 1,
-				timeout: 5000,
+				timeout: IDLE_TIMEOUT,
 			});
 			const text = sdkMessages
 				.filter((m) => (m as { type?: string }).type === 'assistant')

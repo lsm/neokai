@@ -170,6 +170,36 @@ function createTaskToolMessage(): Extract<SDKMessage, { type: 'assistant' }> {
 	} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
 }
 
+function createAgentToolMessage(): Extract<SDKMessage, { type: 'assistant' }> {
+	return {
+		type: 'assistant',
+		message: {
+			id: 'msg_test',
+			type: 'message',
+			role: 'assistant',
+			content: [
+				{
+					type: 'tool_use',
+					id: 'toolu_agent123',
+					name: 'Agent',
+					input: {
+						subagent_type: 'Plan',
+						description: 'Plan the implementation',
+						prompt: 'Create a plan for this feature',
+					},
+				},
+			],
+			model: 'claude-3-5-sonnet-20241022',
+			stop_reason: 'tool_use',
+			stop_sequence: null,
+			usage: { input_tokens: 10, output_tokens: 20 },
+		},
+		parent_tool_use_id: null,
+		uuid: createUUID(),
+		session_id: 'test-session',
+	} as unknown as Extract<SDKMessage, { type: 'assistant' }>;
+}
+
 function createErrorMessage(): Extract<SDKMessage, { type: 'assistant' }> {
 	return {
 		type: 'assistant',
@@ -266,6 +296,15 @@ describe('SDKAssistantMessage', () => {
 
 			// SubagentBlock should show the subagent type
 			expect(container.textContent).toContain('Explore');
+		});
+
+		it('should render Agent tool as SubagentBlock (SDK 0.2.76+ renamed Task to Agent)', () => {
+			const message = createAgentToolMessage();
+			const { container } = render(<SDKAssistantMessage message={message} />);
+
+			// SubagentBlock should show the subagent type and description
+			expect(container.textContent).toContain('Plan');
+			expect(container.textContent).toContain('Plan the implementation');
 		});
 	});
 
