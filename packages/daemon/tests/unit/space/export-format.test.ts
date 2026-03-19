@@ -276,6 +276,29 @@ describe('exportWorkflow', () => {
 		expect(exported.rules[1].appliesTo).toBeUndefined();
 	});
 
+	test('partial appliesTo resolution — keeps resolved subset, drops stale UUIDs', () => {
+		// Workflow has 2 steps: step-uuid-1 (order 0) and step-uuid-2 (order 1).
+		// Rule references step-uuid-1 (valid) and step-uuid-STALE (not in steps list).
+		const workflow = makeWorkflow({
+			steps: [
+				{ id: 'step-uuid-1', agentId: 'agent-uuid-1', name: 'Step A', order: 0 },
+				{ id: 'step-uuid-2', agentId: 'agent-uuid-2', name: 'Step B', order: 1 },
+			],
+			rules: [
+				{
+					id: 'rule-uuid-1',
+					name: 'Partial rule',
+					content: 'One valid, one stale.',
+					appliesTo: ['step-uuid-1', 'step-uuid-STALE'],
+				},
+			],
+		});
+		const exported = exportWorkflow(workflow, []);
+
+		// Only the resolved index (0) should appear; stale UUID is dropped
+		expect(exported.rules[0].appliesTo).toEqual([0]);
+	});
+
 	test('strips rule IDs', () => {
 		const workflow = makeWorkflow();
 		const exported = exportWorkflow(workflow, []);

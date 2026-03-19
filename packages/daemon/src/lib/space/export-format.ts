@@ -109,6 +109,10 @@ export type ValidationResult<T> = { ok: true; value: T } | { ok: false; error: s
 /**
  * Convert a SpaceAgent to the portable export format.
  * Strips `id`, `spaceId`, `createdAt`, `updatedAt`.
+ *
+ * `SpaceAgent.toolConfig` (per-tool configuration map) is intentionally **not**
+ * exported — it is an implementation detail of the runtime and is not part of the
+ * portable format. Only `tools` (the list of tool names) is exported.
  */
 export function exportAgent(agent: SpaceAgent): ExportedSpaceAgent {
 	const exported: ExportedSpaceAgent = {

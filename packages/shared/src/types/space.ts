@@ -662,7 +662,19 @@ export interface ExportedWorkflowStep {
 	exitGate?: WorkflowGate;
 	/** Step-specific instructions appended to the agent's system prompt */
 	instructions?: string;
-	/** Zero-based execution order — array position is authoritative on import */
+	/**
+	 * Zero-based execution order for this step.
+	 *
+	 * **On import**: array position is authoritative — the importer assigns new
+	 * order indices from the array index and ignores this field.
+	 *
+	 * **For `appliesTo` in `ExportedWorkflowRule`**: the indices stored in
+	 * `appliesTo` correspond to this field's value (not to the step's position in
+	 * the `steps` array). Because order values are always sequential and 0-based
+	 * after a round-trip through the DB, the two are equivalent in practice —
+	 * but importers should match `appliesTo` values against `order` fields, not
+	 * array indices, for correctness when order values diverge.
+	 */
 	order: number;
 }
 
