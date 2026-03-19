@@ -348,7 +348,7 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			});
 		});
 
-		it('shows all providers when auth.providers is unavailable (optimistic)', async () => {
+		it('hides model picker entirely when auth.providers fetch fails', async () => {
 			mockRequest.mockImplementation((method: string) => {
 				if (method === 'models.list') return Promise.resolve({ models: MOCK_MODELS });
 				if (method === 'auth.providers') return Promise.reject(new Error('unavailable'));
@@ -356,11 +356,14 @@ describe('NewSessionModal — provider-aware session creation', () => {
 			});
 
 			render(<NewSessionModal {...DEFAULT_PROPS} />);
-			await waitFor(() => {
-				const optgroups = document.querySelectorAll('optgroup');
-				// All three providers shown even though auth is unavailable
-				expect(optgroups.length).toBeGreaterThanOrEqual(3);
-			});
+			// Give both promises time to settle
+			await new Promise((r) => setTimeout(r, 50));
+			// Model picker uses optgroups — none should exist when auth failed
+			const optgroups = document.querySelectorAll('optgroup');
+			expect(optgroups.length).toBe(0);
+			// The "Model (optional)" label must not be visible
+			const labels = Array.from(document.querySelectorAll('label'));
+			expect(labels.some((l) => l.textContent?.includes('Model'))).toBe(false);
 		});
 	});
 });

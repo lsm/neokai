@@ -104,7 +104,8 @@ export function NewSessionModal({
 		fetchProviderAuthStatuses()
 			.then((statuses) => setProviderAuthStatuses(statuses))
 			.catch(() => {
-				// silently ignore — all providers shown (optimistic)
+				// Auth status unavailable — hide model picker to avoid showing unfiltered models
+				setAvailableModels([]);
 			});
 	}, [isOpen]);
 
