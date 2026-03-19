@@ -13,6 +13,8 @@ import type {
 	ProviderAuthResponse,
 	ProviderAuthRequest,
 	ProviderLogoutRequest,
+	ProviderRefreshRequest,
+	ProviderRefreshResponse,
 	ListProviderAuthStatusResponse,
 } from '@neokai/shared/provider';
 import type { AuthManager } from '../auth-manager';
@@ -156,6 +158,47 @@ export function setupAuthHandlers(messageHub: MessageHub, authManager: AuthManag
 				return {
 					success: false,
 					error: error instanceof Error ? error.message : 'Logout failed',
+				};
+			}
+		}
+	);
+
+	// Refresh token for a provider
+	messageHub.onRequest(
+		'auth.refresh',
+		async (req: ProviderRefreshRequest): Promise<ProviderRefreshResponse> => {
+			const { providerId } = req;
+			const registry = getProviderRegistry();
+
+			const provider = registry.get(providerId);
+			if (!provider) {
+				return {
+					success: false,
+					error: `Provider not found: ${providerId}`,
+				};
+			}
+
+			if (!provider.refreshToken) {
+				return {
+					success: false,
+					error: `Provider ${providerId} does not support token refresh`,
+				};
+			}
+
+			try {
+				const refreshed = await provider.refreshToken();
+				if (!refreshed) {
+					return {
+						success: false,
+						error: 'Token refresh failed. Please try logging out and logging in again.',
+					};
+				}
+				return { success: true };
+			} catch (error) {
+				log.error(`Token refresh failed for ${providerId}:`, error);
+				return {
+					success: false,
+					error: error instanceof Error ? error.message : 'Token refresh failed',
 				};
 			}
 		}

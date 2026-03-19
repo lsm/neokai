@@ -65,6 +65,24 @@ export interface ProviderLogoutRequest {
 }
 
 /**
+ * Request to refresh token for a provider
+ */
+export interface ProviderRefreshRequest {
+	/** Provider identifier */
+	providerId: string;
+}
+
+/**
+ * Response from refreshing provider token
+ */
+export interface ProviderRefreshResponse {
+	/** Whether the refresh was successful */
+	success: boolean;
+	/** Error message if failed */
+	error?: string;
+}
+
+/**
  * Response from listing provider auth statuses
  */
 export interface ListProviderAuthStatusResponse {

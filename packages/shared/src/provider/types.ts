@@ -191,6 +191,13 @@ export interface Provider {
 	logout?(): Promise<void>;
 
 	/**
+	 * Optional: Refresh authentication token for this provider.
+	 * Used when token has expired and needs refresh without full logout/login.
+	 * Returns true if refresh succeeded, false otherwise.
+	 */
+	refreshToken?(): Promise<boolean>;
+
+	/**
 	 * Optional: Shut down any resources held by this provider (e.g. an embedded
 	 * HTTP server). Called during daemon shutdown so the event loop can exit.
 	 */

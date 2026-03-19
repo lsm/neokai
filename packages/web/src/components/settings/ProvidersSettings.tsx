@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'preact/hooks';
 import { toast } from '../../lib/toast.ts';
 import type { ProviderAuthStatus, ProviderAuthResponse } from '@neokai/shared/provider';
-import { listProviderAuthStatus, loginProvider, logoutProvider } from '../../lib/api-helpers.ts';
+import {
+	listProviderAuthStatus,
+	loginProvider,
+	logoutProvider,
+	refreshProvider,
+} from '../../lib/api-helpers.ts';
 import { SettingsSection } from './SettingsSection.tsx';
 import { OAuthModal } from './OAuthModal.tsx';
 import { Button } from '../ui/Button.tsx';
@@ -102,6 +107,23 @@ export function ProvidersSettings() {
 		}
 	};
 
+	const handleRefresh = async (providerId: string, providerName: string) => {
+		setPendingProvider(providerId);
+		try {
+			const response = await refreshProvider(providerId);
+			if (response.success) {
+				toast.success(`Token refreshed for ${providerName}`);
+				await loadProviders();
+			} else {
+				toast.error(response.error || 'Failed to refresh token');
+			}
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : 'Failed to refresh token');
+		} finally {
+			setPendingProvider(null);
+		}
+	};
+
 	const handleOAuthCancel = () => {
 		setOauthFlow(null);
 		// Refresh to get current state
@@ -160,7 +182,17 @@ export function ProvidersSettings() {
 										)}
 									</div>
 									<div class="flex-shrink-0 ml-4">
-										{provider.isAuthenticated ? (
+										{provider.needsRefresh ? (
+											<Button
+												variant="warning"
+												size="sm"
+												onClick={() => handleRefresh(provider.id, provider.displayName)}
+												loading={pendingProvider === provider.id}
+												disabled={!!pendingProvider}
+											>
+												Refresh Login
+											</Button>
+										) : provider.isAuthenticated ? (
 											<Button
 												variant="secondary"
 												size="sm"

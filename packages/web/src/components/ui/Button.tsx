@@ -2,7 +2,7 @@ import { ComponentChildren, JSX } from 'preact';
 import { cn } from '../../lib/utils.ts';
 import { borderColors } from '../../lib/design-tokens.ts';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'warning';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export interface ButtonProps
@@ -40,6 +40,8 @@ export function Button({
 		secondary: `bg-dark-800 hover:bg-dark-700 text-gray-100 border ${borderColors.ui.secondary} hover:border-dark-500 active:scale-[0.98]`,
 		ghost: 'hover:bg-dark-800 text-gray-300 hover:text-gray-100 active:scale-[0.98]',
 		danger: 'bg-red-600 hover:bg-red-700 text-white shadow-sm hover:shadow active:scale-[0.98]',
+		warning:
+			'bg-yellow-600 hover:bg-yellow-700 text-white shadow-sm hover:shadow active:scale-[0.98]',
 	};
 
 	const sizes = {
