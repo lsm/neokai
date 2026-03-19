@@ -498,6 +498,17 @@ export class TaskGroupManager {
 			this.groupRepo.setHumanInterrupted(groupId, false);
 		}
 
+		// Ensure worker session is alive before attempting to route feedback.
+		// If the worker session is not in the runtime cache (e.g., after daemon restart
+		// or session eviction), restore it from DB and start the SDK query.
+		// This mirrors the fix in question-handlers for leader→worker routing.
+		if (!this.sessionFactory.hasSession(group.workerSessionId)) {
+			const restored = await this.sessionFactory.restoreSession(group.workerSessionId);
+			if (restored) {
+				await this.sessionFactory.startSession(group.workerSessionId);
+			}
+		}
+
 		// If worker is waiting for input (AskUserQuestion), answer the question.
 		// Otherwise inject feedback as a regular message.
 		const answered = await this.sessionFactory.answerQuestion(group.workerSessionId, message);

@@ -81,6 +81,19 @@ function createMockSessionFactory(initialLiveSessions: string[] = []) {
 			removedWorktrees.push(workspacePath);
 			return true;
 		},
+		async restoreSession(sessionId: string) {
+			calls.push({ method: 'restoreSession', args: [sessionId] });
+			// Restore adds session to liveSessions (simulating DB restore)
+			liveSessions.add(sessionId);
+			return true;
+		},
+		async startSession(sessionId: string) {
+			calls.push({ method: 'startSession', args: [sessionId] });
+			return true;
+		},
+		setSessionMcpServers(_sessionId: string, _mcpServers: Record<string, unknown>) {
+			return true;
+		},
 	} satisfies SessionFactory & {
 		calls: Array<{ method: string; args: unknown[] }>;
 		liveSessions: Set<string>;
@@ -769,6 +782,69 @@ describe('TaskGroupManager', () => {
 
 			expect(updated!.submittedForReview).toBe(false);
 			expect(updated!.feedbackIteration).toBe(1);
+		});
+
+		it('should restore dead worker session before routing feedback', async () => {
+			const task = await createTask();
+			const goal = makeGoal(db);
+			const callbacks = createMockLeaderCallbacks();
+
+			// Create a factory with the worker already in live sessions (normal spawn behavior)
+			const factory = createMockSessionFactory([]);
+			// Create a new manager with the factory
+			const testManager = new TaskGroupManager({
+				groupRepo,
+				sessionObserver: observer,
+				taskManager,
+				goalManager,
+				sessionFactory: factory,
+				workspacePath: '/workspace',
+				getRoom: (roomId) => (roomId === 'room-1' ? room : null),
+				getTask: (taskId) => taskManager.getTask(taskId),
+				getGoal: (goalId) => goalManager.getGoal(goalId),
+			});
+
+			const group = await testManager.spawn(
+				room,
+				task,
+				goal,
+				() => {},
+				() => {},
+				(_groupId) => callbacks,
+				makeDefaultWorkerConfig()
+			);
+
+			// First route to Leader so group is in awaiting_leader state
+			await testManager.routeWorkerToLeader(group.id, 'Worker output', (_groupId) => callbacks);
+
+			// Simulate worker session dying (e.g., after daemon restart or eviction)
+			// Remove worker from live sessions to simulate dead session
+			factory.liveSessions.delete(group.workerSessionId);
+
+			// Verify worker session is not in cache
+			expect(factory.hasSession(group.workerSessionId)).toBe(false);
+
+			// Now route leader feedback back to worker
+			await testManager.routeLeaderToWorker(group.id, 'Fix the tests');
+
+			// Verify session was restored and started before injecting message
+			const restoreCalls = factory.calls.filter(
+				(c) => c.method === 'restoreSession' && c.args[0] === group.workerSessionId
+			);
+			expect(restoreCalls).toHaveLength(1);
+
+			const startCalls = factory.calls.filter(
+				(c) => c.method === 'startSession' && c.args[0] === group.workerSessionId
+			);
+			expect(startCalls).toHaveLength(1);
+
+			const injectCalls = factory.calls.filter(
+				(c) =>
+					c.method === 'injectMessage' &&
+					c.args[0] === group.workerSessionId &&
+					c.args[1] === 'Fix the tests'
+			);
+			expect(injectCalls).toHaveLength(1);
 		});
 	});
 
