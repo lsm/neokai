@@ -23,6 +23,7 @@ import type {
 import type { SessionObserver, TerminalState } from '../state/session-observer';
 import type { TaskManager } from '../managers/task-manager';
 import type { GoalManager } from '../managers/goal-manager';
+import type { DaemonHub } from '../../daemon-hub';
 import type { LeaderToolCallbacks } from '../agents/leader-agent';
 import { createLeaderAgentInit } from '../agents/leader-agent';
 import type { LeaderAgentConfig, ReviewContext } from '../agents/leader-agent';
@@ -161,6 +162,8 @@ export interface TaskGroupManagerConfig {
 	getTask: (taskId: string) => Promise<NeoTask | null>;
 	/** Fetch goal from DB by ID. Used to get CURRENT goal data at route time. */
 	getGoal: (goalId: string) => Promise<RoomGoal | null>;
+	/** Used to emit task update events when leader modifies tasks */
+	daemonHub?: DaemonHub;
 }
 
 export class TaskGroupManager {
@@ -172,6 +175,7 @@ export class TaskGroupManager {
 	private readonly getRoom: (roomId: string) => Room | null;
 	private readonly getTaskById: (taskId: string) => Promise<NeoTask | null>;
 	private readonly getGoalById: (goalId: string) => Promise<RoomGoal | null>;
+	private readonly daemonHub?: DaemonHub;
 	readonly workspacePath: string;
 	private _model?: string;
 	readonly workerModel?: string;
@@ -188,6 +192,7 @@ export class TaskGroupManager {
 		this.workspacePath = config.workspacePath;
 		this._model = config.model;
 		this.workerModel = config.workerModel;
+		this.daemonHub = config.daemonHub;
 	}
 
 	/** Get the current model for leader sessions */
@@ -307,6 +312,7 @@ export class TaskGroupManager {
 			goalManager: this.goalManager,
 			taskManager: this.taskManager,
 			groupRepo: this.groupRepo,
+			daemonHub: this.daemonHub,
 		};
 		const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 		await this.sessionFactory.createAndStartSession(leaderInit, 'leader');
@@ -427,6 +433,7 @@ export class TaskGroupManager {
 				goalManager: this.goalManager,
 				taskManager: this.taskManager,
 				groupRepo: this.groupRepo,
+				daemonHub: this.daemonHub,
 			};
 			const leaderInit = createLeaderAgentInit(leaderConfig, leaderCallbacks);
 
