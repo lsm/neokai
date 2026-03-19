@@ -9,7 +9,12 @@
 
 import type { Database as BunDatabase } from 'bun:sqlite';
 import { SpaceTaskRepository } from '../../../storage/repositories/space-task-repository';
-import type { SpaceTask, SpaceTaskStatus, CreateSpaceTaskParams } from '@neokai/shared';
+import type {
+	SpaceTask,
+	SpaceTaskStatus,
+	CreateSpaceTaskParams,
+	UpdateSpaceTaskParams,
+} from '@neokai/shared';
 
 /**
  * Valid task status transitions for space tasks
@@ -274,6 +279,31 @@ export class SpaceTaskManager {
 		}
 
 		return this.taskRepo.deleteTask(taskId);
+	}
+
+	/**
+	 * Update task fields directly (non-status fields).
+	 * For status transitions use setTaskStatus instead.
+	 */
+	async updateTask(taskId: string, params: UpdateSpaceTaskParams): Promise<SpaceTask> {
+		const task = await this.getTask(taskId);
+		if (!task) {
+			throw new Error(`Task not found: ${taskId}`);
+		}
+
+		// Status changes must go through setTaskStatus for transition validation
+		if (params.status !== undefined && params.status !== task.status) {
+			throw new Error('Use setTaskStatus to change task status — it enforces valid transitions');
+		}
+
+		// Strip status from the update params so the repo call is clean
+		const { status: _status, ...repoParams } = params;
+		const updated = this.taskRepo.updateTask(taskId, repoParams);
+		if (!updated) {
+			throw new Error(`Failed to update task: ${taskId}`);
+		}
+
+		return updated;
 	}
 
 	/**
