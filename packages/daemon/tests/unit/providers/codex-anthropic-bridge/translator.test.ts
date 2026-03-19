@@ -289,9 +289,7 @@ describe('extractLastUserMessage', () => {
 			{ role: 'user', content: 'use the tool' },
 			{
 				role: 'user',
-				content: [
-					{ type: 'tool_result', tool_use_id: 'call-1', content: 'tool output' },
-				],
+				content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'tool output' }],
 			},
 		];
 		// Last message has role 'user' but content is tool_result blocks, not text

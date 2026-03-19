@@ -106,7 +106,10 @@ function extractSessionId(req: Request): string {
 
 /** Create a sorted comma-separated key from tool names — used to detect tool set changes. */
 function toolsKey(anthropicTools: { name: string }[]): string {
-	return anthropicTools.map((t) => t.name).sort().join(',');
+	return anthropicTools
+		.map((t) => t.name)
+		.sort()
+		.join(',');
 }
 
 /** Persistent Codex session across multiple conversation turns. */
@@ -465,7 +468,11 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 
 			// Check for concurrent turn — return 409 if a turn is already in progress
 			if (ps?.turnInProgress) {
-				return createAnthropicError(409, 'api_error', 'A turn is already in progress for this session');
+				return createAnthropicError(
+					409,
+					'api_error',
+					'A turn is already in progress for this session'
+				);
 			}
 
 			let bridgeSession: BridgeSession;
