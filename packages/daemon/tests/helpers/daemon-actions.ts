@@ -179,6 +179,14 @@ export async function waitForIdle(
  *
  * Use this before waitForIdle to avoid the race where waitForIdle resolves
  * against the pre-send idle state (before the session starts processing).
+ *
+ * CAUTION: Only use this with backends that are reliably slow enough that the
+ * processing window will still be observable when this function is called.
+ * If the session completes processing before this call begins (possible with
+ * fast mock/proxy backends), this will subscribe for a 'processing' event
+ * that never arrives and will hang until the timeout expires with an error.
+ * For fast-path tests, rely on sendMessage's built-in processing-start poll
+ * (lines 39-63) and call waitForIdle directly.
  */
 export async function waitForProcessing(
 	daemon: DaemonServerContext,
