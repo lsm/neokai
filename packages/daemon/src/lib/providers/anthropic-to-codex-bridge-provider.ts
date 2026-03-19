@@ -193,6 +193,10 @@ export class AnthropicToCodexBridgeProvider implements Provider {
 
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
+		// Extended thinking is not supported by the Codex app-server protocol. The protocol
+		// (item/tool/call, turn/start, thread/start) has no thinking-related parameters,
+		// and SSE events contain no thinking_delta events. Codex (OpenAI-backed) does not
+		// expose extended thinking capability.
 		extendedThinking: false,
 		maxContextWindow: 200000,
 		functionCalling: true,

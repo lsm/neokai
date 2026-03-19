@@ -175,6 +175,10 @@ export class AnthropicToCopilotBridgeProvider implements Provider {
 
 	readonly capabilities: ProviderCapabilities = {
 		streaming: true,
+		// Extended thinking is not supported by the Copilot SDK. The SDK's createSession()
+		// and send() methods have no thinking-related options (no 'betas', no 'thinking' param),
+		// and the SSE events contain no thinking_delta events. GitHub Copilot's API does not
+		// expose Claude's extended thinking capability.
 		extendedThinking: false,
 		maxContextWindow: 272000,
 		/**
