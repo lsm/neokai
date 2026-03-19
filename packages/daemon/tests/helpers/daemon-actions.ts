@@ -111,10 +111,16 @@ async function waitForProcessingState(
 			);
 		}, timeout);
 
-		// Subscribe to events FIRST to ensure no events are missed once room is joined
+		// Subscribe to events FIRST to ensure no events are missed once room is joined.
+		// Filter by sessionId: the client may have joined channels from prior test sessions,
+		// so events from those channels must not trigger resolution for the wrong session.
 		unsubscribe = daemon.messageHub.onEvent('state.session', (data: unknown) => {
 			if (resolved) return;
-			const state = data as { agentState?: { status: string } };
+			const state = data as {
+				sessionInfo?: { id?: string };
+				agentState?: { status: string };
+			};
+			if (state.sessionInfo?.id !== sessionId) return;
 			const currentStatus = state.agentState?.status;
 
 			if (currentStatus === targetStatus) {
