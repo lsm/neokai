@@ -1000,6 +1000,36 @@ describe('RoomRuntime flow', () => {
 			);
 			expect(injectToLeader).toHaveLength(0);
 		});
+
+		it('should process terminal event when feedbackIteration == 0 but submittedForReview == true (bypass workflow)', async () => {
+			// Spawn only — feedbackIteration stays at 0
+			const { task } = await createGoalAndTask(ctx);
+			ctx.runtime.start();
+			await ctx.runtime.tick();
+
+			const group = ctx.groupRepo.getGroupByTaskId(task.id);
+			expect(group).toBeDefined();
+			expect(group!.feedbackIteration).toBe(0);
+
+			// Bypass workflow: submittedForReview is set before routing (e.g. bypass marker)
+			ctx.groupRepo.setSubmittedForReview(group!.id, true);
+			const groupAfter = ctx.groupRepo.getGroup(group!.id)!;
+			expect(groupAfter.submittedForReview).toBe(true);
+
+			// Terminal event must NOT be dropped — the guard passes when submittedForReview==true
+			// The event flows through normal handling (leader hasn't called a tool → no-op aside
+			// from clearing activeSession, which is already null here).
+			await ctx.runtime.onLeaderTerminalState(group!.id, {
+				sessionId: group!.leaderSessionId,
+				kind: 'idle',
+			});
+
+			// Group is still active (no tool was called, so no completion)
+			const updated = ctx.groupRepo.getGroup(group!.id)!;
+			expect(updated.completedAt).toBeNull();
+			// submittedForReview flag is preserved (leader didn't call a completion tool)
+			expect(updated.submittedForReview).toBe(true);
+		});
 	});
 
 	describe('lifecycle hooks', () => {

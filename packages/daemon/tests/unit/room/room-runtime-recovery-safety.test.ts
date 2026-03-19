@@ -442,8 +442,14 @@ describe('Stuck worker detection and recovery', () => {
 	}
 
 	/**
-	 * Helper: await the next leader session creation by spying on createAndStartSession.
+	 * Helper: await the NEXT leader session creation by spying on createAndStartSession.
 	 * Returns a Promise that resolves when 'createAndStartSession' is called with role 'leader'.
+	 *
+	 * Note: with eager init, spawn() already calls createAndStartSession('leader') once.
+	 * These tests simulate restart-recovery scenarios where the leader is missing from
+	 * the session cache (hasSession returns false for the leader). The spy therefore
+	 * intercepts the *second* leader creation call — the one triggered by recoverStuckWorkers
+	 * → routeWorkerToLeader's restart-recovery fallback path.
 	 */
 	function waitForLeaderCreation(): Promise<void> {
 		return new Promise((resolve) => {

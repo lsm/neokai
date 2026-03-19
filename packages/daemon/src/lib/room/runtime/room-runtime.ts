@@ -2753,7 +2753,10 @@ export class RoomRuntime {
 				'plan_review'
 			);
 		} catch (err) {
-			// spawn() already called failTask() before throwing — log and continue
+			// spawn() calls failTask() only for worktree-creation failures (line ~241).
+			// If session init throws after startTask(), the task stays in_progress.
+			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+			// next tick once the process stabilises.
 			log.error(`Failed to spawn planning group for goal ${goal.id}: ${err}`);
 			await this.emitTaskUpdateById(planningTask.id);
 			return;
@@ -2885,7 +2888,10 @@ export class RoomRuntime {
 				'code_review'
 			);
 		} catch (err) {
-			// spawn() already called failTask() before throwing — log and continue to next task
+			// spawn() calls failTask() only for worktree-creation failures (line ~241).
+			// If session init throws after startTask(), the task stays in_progress.
+			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+			// next tick once the process stabilises.
 			log.error(`Failed to spawn group for task ${task.id}: ${err}`);
 			await this.emitTaskUpdateById(task.id);
 			return;

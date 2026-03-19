@@ -30,7 +30,14 @@ export interface RateLimitBackoff {
 	sessionRole: 'worker' | 'leader';
 }
 
-/** Persisted bootstrap context for lazily creating Leader sessions */
+/**
+ * Persisted bootstrap context for the Leader session.
+ * Survives daemon restart and is used by recoverZombieGroups() to recreate a
+ * missing leader from scratch, and by routeWorkerToLeader() as the restart-recovery
+ * fallback when the leader is absent from the in-memory session cache.
+ * Also carries leaderTaskContext — the message prefix prepended on the first
+ * worker→leader routing call.
+ */
 export interface DeferredLeaderConfig {
 	roomId: string;
 	goalId: string | null;
