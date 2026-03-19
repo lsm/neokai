@@ -84,6 +84,8 @@ export type ToolSession = {
 	provideResult: (text: string) => void;
 	/** Model from the original request — preserved across tool round-trips. */
 	model: string;
+	/** Session ID for re-associating with persistent session on resume. */
+	sessionId: string;
 	/** TTL timer — fires if the HTTP client never sends the tool result. */
 	cleanupTimer: ReturnType<typeof setTimeout>;
 };
@@ -91,6 +93,34 @@ export type ToolSession = {
 function generateMsgId(): string {
 	return `msg_${Math.random().toString(36).slice(2, 14)}`;
 }
+
+/** Extract session ID from Authorization header (format: Bearer codex-bridge-{sessionId}). */
+function extractSessionId(req: Request): string {
+	const auth = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? '';
+	const token = auth.startsWith('Bearer ') ? auth.slice(7) : auth;
+	if (token.startsWith('codex-bridge-')) return token.slice('codex-bridge-'.length);
+	return 'default';
+}
+
+/** Create a sorted comma-separated key from tool names — used to detect tool set changes. */
+function toolsKey(anthropicTools: { name: string }[]): string {
+	return anthropicTools.map((t) => t.name).sort().join(',');
+}
+
+/** Persistent Codex session across multiple conversation turns. */
+type PersistentSession = {
+	session: BridgeSession;
+	model: string;
+	/** Sorted comma-separated tool names — used to detect tool set changes. */
+	toolsKey: string;
+	/** True until the first turn/start has been called (system message injected then). */
+	isFirstTurn: boolean;
+	/** Idle TTL timer — fires when no activity for IDLE_SESSION_TTL_MS. */
+	idleTimer: ReturnType<typeof setTimeout>;
+};
+
+/** How long (ms) a persistent session stays alive with no activity. */
+const IDLE_SESSION_TTL_MS = 10 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // SSE drain loop — shared between new turns and tool continuations
@@ -102,7 +132,9 @@ export async function drainToSSE(
 	model: string,
 	toolSessions: Map<string, ToolSession>,
 	controller: ReadableStreamDefaultController<Uint8Array>,
-	ttlMs: number
+	ttlMs: number,
+	sessionId: string,
+	onTurnDone: () => void
 ): Promise<void> {
 	const enc = new TextEncoder();
 	const send = (s: string) => controller.enqueue(enc.encode(s));
@@ -171,6 +203,7 @@ export async function drainToSSE(
 					session,
 					provideResult: event.provideResult,
 					model,
+					sessionId,
 					cleanupTimer,
 				});
 				suspendedCallId = callId;
@@ -189,7 +222,7 @@ export async function drainToSSE(
 				const endOutputTokens = event.outputTokens > 0 ? event.outputTokens : outputTokens;
 				send(messageDeltaSSE('end_turn', { outputTokens: endOutputTokens }));
 				send(messageStopSSE());
-				session.kill();
+				onTurnDone();
 				controller.close();
 				return;
 			} else if (event.type === 'error') {
@@ -255,7 +288,23 @@ export type BridgeServer = {
 export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 	/** Active tool-call sessions waiting for tool results. */
 	const toolSessions = new Map<string, ToolSession>();
+	/** Persistent Codex sessions across multiple conversation turns. */
+	const persistentSessions = new Map<string, PersistentSession>();
 	const ttlMs = config.toolSessionTtlMs ?? DEFAULT_TOOL_SESSION_TTL_MS;
+
+	/** Helper: schedule idle cleanup for a persistent session. */
+	function scheduleIdle(sessionId: string): ReturnType<typeof setTimeout> {
+		const timer = setTimeout(() => {
+			const ps = persistentSessions.get(sessionId);
+			if (ps) {
+				logger.info(`codex-bridge: idle timeout, killing session ${sessionId}`);
+				ps.session.kill();
+				persistentSessions.delete(sessionId);
+			}
+		}, IDLE_SESSION_TTL_MS);
+		timer.unref?.();
+		return timer;
+	}
 
 	const server = Bun.serve({
 		port: 0, // random available port
@@ -349,47 +398,118 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 					);
 				}
 
-				const { gen, session, model: sessionModel } = primaryStored;
+				const { gen, session, model: sessionModel, sessionId: tsSessionId } = primaryStored;
+				const toolContinuationPs = persistentSessions.get(tsSessionId);
+				const onTurnDone = toolContinuationPs
+					? () => {
+							toolContinuationPs.idleTimer = scheduleIdle(tsSessionId);
+						}
+					: () => {
+							primaryStored.session.kill();
+						};
 				const stream = new ReadableStream<Uint8Array>({
 					start(controller) {
-						void drainToSSE(gen, session, sessionModel, toolSessions, controller, ttlMs);
+						void drainToSSE(
+							gen,
+							session,
+							sessionModel,
+							toolSessions,
+							controller,
+							ttlMs,
+							tsSessionId,
+							onTurnDone
+						);
 					},
 				});
 				return new Response(stream, { headers: sseHeaders });
 			}
 
 			// ------------------------------------------------------------------
-			// New conversation turn: spawn a fresh Codex session
+			// New conversation turn: look up or create a persistent session
 			// ------------------------------------------------------------------
+			const neokaiSessionId = extractSessionId(req);
 			const model = body.model;
 			const system = extractSystemText(body.system);
-			const userText = buildConversationText(body.messages, system);
 			const anthropicTools = body.tools ?? [];
 			const dynamicTools = buildDynamicTools(anthropicTools);
 			const originalToolNames = anthropicTools.map((t) => t.name);
+			const currentToolsKey = toolsKey(anthropicTools);
 
-			let session: BridgeSession;
-			try {
-				const conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.auth);
-				session = new BridgeSession(
-					conn,
-					model,
-					dynamicTools,
-					config.cwd,
-					config.auth,
-					originalToolNames
-				);
-				await session.initialize();
-			} catch (err) {
-				logger.error('codex-bridge: failed to start BridgeSession:', err);
-				return createAnthropicError(500, 'api_error', `Internal Server Error: ${String(err)}`);
+			// Look up or create a persistent session
+			let ps = persistentSessions.get(neokaiSessionId);
+			if (ps && (ps.model !== model || ps.toolsKey !== currentToolsKey)) {
+				// Model or tool set changed — retire the old session and start fresh
+				clearTimeout(ps.idleTimer);
+				ps.session.kill();
+				persistentSessions.delete(neokaiSessionId);
+				ps = undefined;
 			}
 
-			const gen = session.startTurn(userText);
+			let bridgeSession: BridgeSession;
+			if (ps) {
+				// Reuse existing session — cancel idle timer while the turn runs
+				clearTimeout(ps.idleTimer);
+				bridgeSession = ps.session;
+			} else {
+				// First turn for this NeoKai session — spin up a new Codex subprocess
+				let conn: AppServerConn;
+				try {
+					conn = AppServerConn.create(config.codexBinaryPath, config.cwd, config.auth);
+					bridgeSession = new BridgeSession(
+						conn,
+						model,
+						dynamicTools,
+						config.cwd,
+						config.auth,
+						originalToolNames
+					);
+					await bridgeSession.initialize();
+				} catch (err) {
+					logger.error('codex-bridge: failed to start BridgeSession:', err);
+					return createAnthropicError(500, 'api_error', `Internal Server Error: ${String(err)}`);
+				}
+				ps = {
+					session: bridgeSession,
+					model,
+					toolsKey: currentToolsKey,
+					isFirstTurn: true,
+					idleTimer: setTimeout(() => {}, 0), // placeholder, set below
+				};
+				persistentSessions.set(neokaiSessionId, ps);
+			}
+
+			// Build the text to send Codex for this turn.
+			// First turn: include the full conversation history (as structured text) so Codex
+			// has context from any messages that pre-date the persistent session.
+			// Subsequent turns: Codex already has the thread history — send only the new
+			// user message to avoid duplicating context.
+			const { extractLastUserMessage } = await import('./translator.js');
+			const userText = ps.isFirstTurn
+				? buildConversationText(body.messages, system)
+				: extractLastUserMessage(body.messages);
+			ps.isFirstTurn = false;
+
+			const gen = bridgeSession.startTurn(userText);
+
+			// Schedule idle timer on turn completion
+			const capturedPs = ps;
+			const capturedSessionId = neokaiSessionId;
+			const onTurnDone = () => {
+				capturedPs.idleTimer = scheduleIdle(capturedSessionId);
+			};
 
 			const stream = new ReadableStream<Uint8Array>({
 				start(controller) {
-					void drainToSSE(gen, session, model, toolSessions, controller, ttlMs);
+					void drainToSSE(
+						gen,
+						bridgeSession,
+						model,
+						toolSessions,
+						controller,
+						ttlMs,
+						capturedSessionId,
+						onTurnDone
+					);
 				},
 			});
 			return new Response(stream, { headers: sseHeaders });
@@ -410,6 +530,13 @@ export function createBridgeServer(config: BridgeServerConfig): BridgeServer {
 				stored.session.kill();
 				toolSessions.delete(callId);
 				logger.debug(`codex-bridge: cleaned up suspended session callId=${callId} on stop`);
+			}
+			// Clean up persistent sessions
+			for (const [sessionId, ps] of persistentSessions) {
+				clearTimeout(ps.idleTimer);
+				ps.session.kill();
+				persistentSessions.delete(sessionId);
+				logger.debug(`codex-bridge: cleaned up persistent session ${sessionId} on stop`);
 			}
 			server.stop();
 		},

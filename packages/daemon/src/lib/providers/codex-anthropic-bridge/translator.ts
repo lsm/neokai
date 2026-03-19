@@ -150,6 +150,17 @@ export function extractContentText(content: AnthropicMessage['content']): string
 }
 
 /**
+ * Extract the text content of the last user message.
+ * Used for subsequent turns in persistent sessions where Codex already
+ * has the conversation history — only the new user input needs to be sent.
+ */
+export function extractLastUserMessage(messages: AnthropicMessage[]): string {
+	const last = messages.at(-1);
+	if (!last) return '';
+	return extractContentText(last.content);
+}
+
+/**
  * Check whether the last user message contains tool_result blocks.
  * Used to distinguish tool-continuation requests from new conversation turns.
  */

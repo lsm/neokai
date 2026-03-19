@@ -407,32 +407,65 @@ describe('BridgeSession thread/tokenUsage/updated', () => {
 });
 
 // ---------------------------------------------------------------------------
-// BridgeSession single-use guard (regression: P1 fix)
+// BridgeSession multi-turn support (persistent sessions)
 // ---------------------------------------------------------------------------
 
 describe('BridgeSession.startTurn()', () => {
-	it('throws if called a second time on the same instance', async () => {
-		const conn = makeStubConn();
+	it('allows calling startTurn sequentially on the same instance', async () => {
+		const { conn, fireNotification } = makeEventableStubConn();
 		const session = new BridgeSession(conn, 'test-model', [], '/tmp');
 		await session.initialize();
 
-		// Kick off gen1.next() without awaiting — the generator will run past the
-		// turnStarted guard (setting the flag to true), then block on queue.next().
+		// First turn: schedule notifications after generator starts waiting
+		const events1: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
 		const gen1 = session.startTurn('first');
-		const firstNextPromise = gen1.next();
 
-		// The mock request() resolves immediately (no real async work), so a few
-		// microtask yields are sufficient to advance the generator past
-		// `await conn.request('turn/start')` and set turnStarted = true.
-		// No wall-clock delay needed — using Promise.resolve() avoids a race on slow CI.
-		for (let i = 0; i < 10; i++) await Promise.resolve();
+		// Use setTimeout to fire notifications after generator starts waiting
+		const events1Promise = (async () => {
+			for await (const event of gen1) {
+				events1.push(event);
+			}
+		})();
 
-		// Second startTurn() call: its first next() should throw synchronously.
+		setTimeout(() => {
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-1', items: [], status: 'completed', error: null },
+				usage: { inputTokens: 10, outputTokens: 5 },
+			});
+		}, 5);
+
+		await events1Promise;
+
+		const doneEvents1 = events1.filter((e) => e.type === 'turn_done');
+		expect(doneEvents1).toHaveLength(1);
+		expect((doneEvents1[0] as { inputTokens: number }).inputTokens).toBe(10);
+
+		// Second turn: startTurn should NOT throw — this is now allowed for
+		// persistent sessions where Codex maintains conversation history.
+		const events2: import('../../../../src/lib/providers/codex-anthropic-bridge/process-manager').BridgeEvent[] =
+			[];
 		const gen2 = session.startTurn('second');
-		await expect(gen2.next()).rejects.toThrow('startTurn() called more than once');
 
-		// Suppress unhandled-rejection noise from the first generator that is
-		// blocked indefinitely on queue.next().
-		firstNextPromise.catch(() => {});
+		const events2Promise = (async () => {
+			for await (const event of gen2) {
+				events2.push(event);
+			}
+		})();
+
+		setTimeout(() => {
+			fireNotification('turn/completed', {
+				threadId: 'thread-1',
+				turn: { id: 'turn-2', items: [], status: 'completed', error: null },
+				usage: { inputTokens: 20, outputTokens: 10 },
+			});
+		}, 5);
+
+		await events2Promise;
+
+		const doneEvents2 = events2.filter((e) => e.type === 'turn_done');
+		expect(doneEvents2).toHaveLength(1);
+		expect((doneEvents2[0] as { inputTokens: number }).inputTokens).toBe(20);
 	});
 });

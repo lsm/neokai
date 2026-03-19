@@ -428,6 +428,7 @@ export class ProviderService {
 		// the correct cwd per request (encoded in ANTHROPIC_AUTH_TOKEN by the provider).
 		const sessionConfig = {
 			workspacePath: session.workspacePath,
+			sessionId: session.id,
 			...(session.config.providerConfig
 				? {
 						apiKey: session.config.providerConfig.apiKey,
