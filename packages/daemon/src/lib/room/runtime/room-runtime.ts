@@ -768,6 +768,18 @@ export class RoomRuntime {
 		const group = this.groupRepo.getGroup(groupId);
 		if (!group) return;
 
+		// Guard: leader hasn't received any work yet. This can happen if a spurious idle event
+		// fires before the first worker→leader routing (e.g. a race during startup). Ignore it.
+		// leaderHasWork is set to true by routeWorkerToLeader and resumeLeaderFromHuman before
+		// calling injectMessage, so it is never reset and survives feedbackIteration resets.
+		if (!group.leaderHasWork) {
+			log.debug(
+				`[onLeaderTerminalState] Group ${groupId}: ignoring terminal event ` +
+					`(leaderHasWork=false) — leader hasn't received work yet`
+			);
+			return;
+		}
+
 		// Clear active session indicator — leader is no longer generating output
 		const leaderTask = await this.taskManager.getTask(group.taskId);
 		if (leaderTask?.activeSession === 'leader') {
@@ -1410,6 +1422,8 @@ export class RoomRuntime {
 		let injected = false;
 		if (leaderAvailable) {
 			try {
+				// Set leaderHasWork before injecting so the terminal event is not dropped.
+				this.groupRepo.setLeaderHasWork(group.id);
 				await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 				injected = true;
 			} catch (error) {
@@ -1667,6 +1681,8 @@ export class RoomRuntime {
 		}
 
 		try {
+			// Set leaderHasWork before injecting so the terminal event is not dropped.
+			this.groupRepo.setLeaderHasWork(group.id);
 			await this.sessionFactory.injectMessage(group.leaderSessionId, message);
 		} catch (error) {
 			log.error(`Failed to inject message into leader session ${group.leaderSessionId}:`, error);
@@ -1960,12 +1976,11 @@ export class RoomRuntime {
 	 * checkpoints when there are no zombies (common case).
 	 *
 	 * Leader zombie detection rules:
-	 * - A leader is "expected" if feedbackIteration > 0 (at least one review round completed)
-	 *   OR if deferredLeader is null (no deferred bootstrap config means the leader was already
-	 *   live at some point and may have gone missing after a process restart).
-	 * - When deferredLeader is set (non-null), the leader is lazily created by routeWorkerToLeader;
-	 *   before that happens feedbackIteration == 0 and the leader session does not yet exist —
-	 *   this is normal and must NOT be treated as a zombie.
+	 * - A leader is "expected" if feedbackIteration > 0 (at least one review round completed),
+	 *   OR deferredLeader is null (leader was previously live and may be missing after restart),
+	 *   OR deferredLeader.eagerlyCreated is true (leader was created eagerly in spawn()).
+	 * - Old lazy-init groups (eagerlyCreated unset, feedbackIteration == 0) have NOT created
+	 *   the leader yet — missing leader is expected and must NOT be flagged as zombie.
 	 */
 	private findZombieGroups(): SessionGroup[] {
 		const allActiveGroups = this.groupRepo.getActiveGroups(this.roomId);
@@ -1973,13 +1988,16 @@ export class RoomRuntime {
 
 		for (const group of allActiveGroups) {
 			const workerMissing = !this.sessionFactory.hasSession(group.workerSessionId);
-			// Leader is expected to exist when:
-			//   1. feedbackIteration > 0: leader was created in a prior review round, or
-			//   2. deferredLeader == null: no pending lazy-creation config means the leader
-			//      was previously live and may be missing after a restart.
-			// Groups where deferredLeader is set and feedbackIteration == 0 have NOT created
-			// the leader yet — missing leader is expected there and must NOT be flagged.
-			const leaderExpected = group.feedbackIteration > 0 || group.deferredLeader === null;
+			// Leader is expected when:
+			//   1. feedbackIteration > 0: at least one review round completed (leader was live)
+			//   2. deferredLeader === null: no pending config means leader was previously live
+			//   3. deferredLeader.eagerlyCreated === true: leader was created eagerly in spawn()
+			// Old lazy-init groups (eagerlyCreated unset, feedbackIteration == 0) are NOT flagged:
+			// the missing leader is expected there and routeWorkerToLeader will create it.
+			const leaderExpected =
+				group.feedbackIteration > 0 ||
+				group.deferredLeader === null ||
+				group.deferredLeader?.eagerlyCreated === true;
 			const leaderMissing =
 				leaderExpected && !this.sessionFactory.hasSession(group.leaderSessionId);
 
@@ -2044,9 +2062,13 @@ export class RoomRuntime {
 					});
 					leaderRestored = true;
 				} else {
-					// Leader restoration failure is not fatal - leader may be lazily created
+					// Leader restoration failure: group may have been created with old lazy-init
+					// code (leader never persisted to DB), or the DB record was lost.
+					// For new eager-init groups the leader was persisted at spawn() time, so this
+					// indicates data loss; recovery falls back to recreating the leader from
+					// deferredLeader config in routeWorkerToLeader() when the worker finishes.
 					log.warn(
-						`Could not restore leader ${group.leaderSessionId} for group ${group.id} - may be lazily created later.`
+						`Could not restore leader ${group.leaderSessionId} for group ${group.id} - will be recreated when worker routes output.`
 					);
 				}
 			}
@@ -2066,10 +2088,26 @@ export class RoomRuntime {
 					);
 				}
 				if (leaderRestored) {
-					await this.sessionFactory.injectMessage(
-						group.leaderSessionId,
-						'The system was restarted. Continue reviewing from where you left off.'
-					);
+					// Only inject "continue reviewing" if the leader has already received work
+					// (feedbackIteration > 0 means at least one worker→leader routing happened).
+					// When feedbackIteration == 0 the leader was eagerly created in spawn() but
+					// has not been given any worker output yet — it will receive work when the
+					// worker finishes and routeWorkerToLeader() fires.
+					if (group.feedbackIteration > 0) {
+						// Set leaderHasWork before injecting so the terminal event is not
+						// dropped by onLeaderTerminalState. Defensive: if leaderHasWork was
+						// already true (normal case for feedbackIteration>0), this is a no-op.
+						this.groupRepo.setLeaderHasWork(group.id);
+						await this.sessionFactory.injectMessage(
+							group.leaderSessionId,
+							'The system was restarted. Continue reviewing from where you left off.'
+						);
+					} else {
+						log.debug(
+							`[recoverZombieGroups] Group ${group.id}: leader restored but feedbackIteration=0 ` +
+								`— skipping "continue reviewing" inject; worker will route output on completion.`
+						);
+					}
 				}
 			} catch (error) {
 				log.error(`Failed to inject continuation message for group ${group.id}:`, error);
@@ -2089,7 +2127,8 @@ export class RoomRuntime {
 	 * - feedbackIteration == 0: no review rounds have completed (worker → leader routing never happened)
 	 * - Worker session IS in the session factory (not a zombie)
 	 * - Worker session processing state is terminal (idle or interrupted)
-	 * - Leader session is NOT in the session factory (not yet created)
+	 * - Leader session may or may not exist (with eager init, it always exists; with old lazy
+	 *   init, it may not exist yet — both cases are handled by routeWorkerToLeader)
 	 * - Group is NOT awaiting human review
 	 * - Group is NOT rate-limited
 	 * - Group is NOT paused waiting for a question answer (waiting_for_input is intentional pause)
@@ -2113,13 +2152,25 @@ export class RoomRuntime {
 			// Worker must be in the session factory (not a zombie)
 			if (!this.sessionFactory.hasSession(group.workerSessionId)) continue;
 
-			// Leader must NOT exist yet (routing hasn't happened)
-			if (this.sessionFactory.hasSession(group.leaderSessionId)) continue;
-
 			// Worker must be in a terminal state (idle or interrupted)
 			// Note: waiting_for_input is excluded — it is handled separately as an intentional pause
 			const workerState = this.sessionFactory.getProcessingState(group.workerSessionId);
 			if (workerState !== 'idle' && workerState !== 'interrupted') continue;
+
+			// Skip if the worker has no new messages since the last forwarding.
+			// This prevents spurious re-routing when feedbackIteration was reset by
+			// resumeLeaderFromHuman (or resumeWorkerFromHuman) but the worker has not
+			// produced any new output yet — re-routing would inject a sentinel string
+			// into the leader while it is already processing the human's message.
+			// When getWorkerMessages is absent (some test contexts), fall through to
+			// preserve the original safety-net behavior.
+			if (this.getWorkerMessages) {
+				const newMessages = this.getWorkerMessages(
+					group.workerSessionId,
+					group.lastForwardedMessageId
+				);
+				if (newMessages.length === 0) continue;
+			}
 
 			// Guard against duplicate in-flight recovery: if a previous tick already
 			// triggered routing for this group and it hasn't completed yet, skip it.
@@ -2131,11 +2182,11 @@ export class RoomRuntime {
 			}
 
 			log.warn(
-				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but leader never created ` +
-					`(feedbackIteration=0, waitingForQuestion=false). Re-triggering worker→leader routing.`
+				`[StuckWorker] Group ${group.id}: worker is '${workerState}' but routing to leader not yet ` +
+					`completed (feedbackIteration=0, waitingForQuestion=false). Re-triggering worker→leader routing.`
 			);
 			this.appendGroupEvent(group.id, 'status', {
-				text: `Worker found in ${workerState} state without a leader — re-triggering routing to Leader.`,
+				text: `Worker found in ${workerState} state with routing not yet complete — re-triggering routing to Leader.`,
 			});
 
 			// Mark as in-flight before firing, clear when done (success or error)
@@ -2727,7 +2778,10 @@ export class RoomRuntime {
 				'plan_review'
 			);
 		} catch (err) {
-			// spawn() already called failTask() before throwing — log and continue
+			// spawn() calls failTask() only for worktree-creation failures (line ~241).
+			// If session init throws after startTask(), the task stays in_progress.
+			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+			// next tick once the process stabilises.
 			log.error(`Failed to spawn planning group for goal ${goal.id}: ${err}`);
 			await this.emitTaskUpdateById(planningTask.id);
 			return;
@@ -2859,7 +2913,10 @@ export class RoomRuntime {
 				'code_review'
 			);
 		} catch (err) {
-			// spawn() already called failTask() before throwing — log and continue to next task
+			// spawn() calls failTask() only for worktree-creation failures (line ~241).
+			// If session init throws after startTask(), the task stays in_progress.
+			// The zombie/stuck-worker recovery will detect and re-trigger routing on the
+			// next tick once the process stabilises.
 			log.error(`Failed to spawn group for task ${task.id}: ${err}`);
 			await this.emitTaskUpdateById(task.id);
 			return;

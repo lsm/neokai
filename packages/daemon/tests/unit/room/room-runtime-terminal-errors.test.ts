@@ -63,11 +63,12 @@ describe('RoomRuntime - terminal error detection', () => {
 			const updatedGroup = ctx.groupRepo.getGroup(group.id);
 			expect(updatedGroup!.completedAt).not.toBeNull();
 
-			// No leader session should have been created
-			const leaderCalls = ctx.sessionFactory.calls.filter(
-				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
+			// Leader was created eagerly in spawn, but routing (inject) must NOT have happened
+			// because the task was failed before the worker output reached the leader
+			const leaderInjectCalls = ctx.sessionFactory.calls.filter(
+				(c) => c.method === 'injectMessage' && c.args[0] === group.leaderSessionId
 			);
-			expect(leaderCalls).toHaveLength(0);
+			expect(leaderInjectCalls).toHaveLength(0);
 		});
 
 		it('fails task immediately on HTTP 401 error in worker output', async () => {

@@ -58,7 +58,7 @@ describe('RoomRuntime', () => {
 			ctx.runtime.start();
 			await ctx.runtime.tick();
 
-			// Worker starts immediately, leader is deferred until routeWorkerToLeader
+			// Both worker and leader are created eagerly in spawn()
 			const workerCalls = ctx.sessionFactory.calls.filter(
 				(c) => c.method === 'createAndStartSession' && c.args[1] !== 'leader'
 			);
@@ -66,7 +66,7 @@ describe('RoomRuntime', () => {
 				(c) => c.method === 'createAndStartSession' && c.args[1] === 'leader'
 			);
 			expect(workerCalls).toHaveLength(1);
-			expect(leaderCalls).toHaveLength(0);
+			expect(leaderCalls).toHaveLength(1);
 
 			// Task should be in_progress
 			const updated = await ctx.taskManager.getTask(task.id);
