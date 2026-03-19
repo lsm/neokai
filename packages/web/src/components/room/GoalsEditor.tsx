@@ -391,8 +391,8 @@ function GoalForm({
 	const [priority, setPriority] = useState<GoalPriority>(initialPriority);
 	const [missionType, setMissionType] = useState<MissionType>(initialMissionType);
 	const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>(initialAutonomyLevel);
-	const [metricEntries, setMetricEntries] = useState<MetricEntry[]>(
-		() => (initialMetrics ?? []).map(newMetricEntry)
+	const [metricEntries, setMetricEntries] = useState<MetricEntry[]>(() =>
+		(initialMetrics ?? []).map(newMetricEntry)
 	);
 	const [schedulePreset, setSchedulePreset] = useState<string>(() =>
 		scheduleToPreset(initialSchedule)
@@ -438,7 +438,8 @@ function GoalForm({
 				priority,
 				missionType,
 				autonomyLevel,
-				structuredMetrics: missionType === 'measurable' ? metricEntries.map((e) => e.metric) : undefined,
+				structuredMetrics:
+					missionType === 'measurable' ? metricEntries.map((e) => e.metric) : undefined,
 				schedule: buildSchedule(),
 			});
 			onCancel(); // only close on success
@@ -625,20 +626,18 @@ function GoalForm({
 			<div>
 				<label class="block text-sm font-medium text-gray-300 mb-2">Autonomy Level</label>
 				<div class="grid grid-cols-2 gap-2">
-					{(
-						[
-							{
-								value: 'supervised' as const,
-								label: 'Supervised',
-								desc: 'Human approves every step',
-							},
-							{
-								value: 'semi_autonomous' as const,
-								label: 'Semi-Autonomous',
-								desc: 'Tasks auto-approve; planners need review',
-							},
-						]
-					).map(({ value, label, desc }) => (
+					{[
+						{
+							value: 'supervised' as const,
+							label: 'Supervised',
+							desc: 'Human approves every step',
+						},
+						{
+							value: 'semi_autonomous' as const,
+							label: 'Semi-Autonomous',
+							desc: 'Tasks auto-approve; planners need review',
+						},
+					].map(({ value, label, desc }) => (
 						<button
 							key={value}
 							type="button"
@@ -882,12 +881,7 @@ function GoalItem({
 								<MetricProgress metrics={goal.structuredMetrics} />
 							) : missionType === 'recurring' && goal.schedule ? (
 								<div class="flex items-center gap-2 text-xs text-gray-500">
-									<svg
-										class="w-3 h-3"
-										fill="none"
-										viewBox="0 0 24 24"
-										stroke="currentColor"
-									>
+									<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 										<path
 											stroke-linecap="round"
 											stroke-linejoin="round"
@@ -898,9 +892,7 @@ function GoalItem({
 									<span class="font-mono">{goal.schedule.expression}</span>
 									{goal.schedulePaused && <span class="text-yellow-500">· Paused</span>}
 									{goal.nextRunAt && !goal.schedulePaused && (
-										<span>
-											· Next: {new Date(goal.nextRunAt * 1000).toLocaleDateString()}
-										</span>
+										<span>· Next: {new Date(goal.nextRunAt * 1000).toLocaleDateString()}</span>
 									)}
 								</div>
 							) : (
@@ -912,10 +904,7 @@ function GoalItem({
 								{goal.linkedTaskIds.length} task{goal.linkedTaskIds.length !== 1 ? 's' : ''}
 							</span>
 						)}
-						<div
-							class="flex items-center gap-1 flex-shrink-0"
-							onClick={(e) => e.stopPropagation()}
-						>
+						<div class="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
 							<Button variant="ghost" size="sm" onClick={() => setIsEditing(true)}>
 								Edit
 							</Button>
@@ -1228,9 +1217,7 @@ function MissionTypeFilter({
 					data-testid={`filter-${opt.value}`}
 				>
 					{opt.label}
-					{counts[opt.value] > 0 && (
-						<span class="ml-1 opacity-70">{counts[opt.value]}</span>
-					)}
+					{counts[opt.value] > 0 && <span class="ml-1 opacity-70">{counts[opt.value]}</span>}
 				</button>
 			))}
 		</div>
