@@ -196,8 +196,16 @@ export class SpaceWorkflowManager {
 		transitions: WorkflowTransitionInput[],
 		startStepId: string | null | undefined
 	): void {
-		// Build set of known step IDs (use provided id or the position as a fallback label)
 		const knownStepIds = new Set<string>(steps.filter((s) => s.id).map((s) => s.id as string));
+
+		// When transitions reference step IDs but some steps have no explicit id, we cannot
+		// validate the references at all — an invalid transition would only surface at runtime.
+		// Require all steps to have explicit IDs when transitions are provided.
+		if (transitions.length > 0 && knownStepIds.size < steps.length) {
+			throw new WorkflowValidationError(
+				'All steps must have explicit id values when transitions are specified'
+			);
+		}
 
 		for (let i = 0; i < transitions.length; i++) {
 			const t = transitions[i];
@@ -207,18 +215,15 @@ export class SpaceWorkflowManager {
 			if (!t.to || !t.to.trim()) {
 				throw new WorkflowValidationError(`transition[${i}]: 'to' step ID must not be empty`);
 			}
-			// Only validate if steps have explicit IDs
-			if (knownStepIds.size > 0) {
-				if (!knownStepIds.has(t.from)) {
-					throw new WorkflowValidationError(
-						`transition[${i}]: 'from' step ID "${t.from}" does not match any step in this workflow`
-					);
-				}
-				if (!knownStepIds.has(t.to)) {
-					throw new WorkflowValidationError(
-						`transition[${i}]: 'to' step ID "${t.to}" does not match any step in this workflow`
-					);
-				}
+			if (!knownStepIds.has(t.from)) {
+				throw new WorkflowValidationError(
+					`transition[${i}]: 'from' step ID "${t.from}" does not match any step in this workflow`
+				);
+			}
+			if (!knownStepIds.has(t.to)) {
+				throw new WorkflowValidationError(
+					`transition[${i}]: 'to' step ID "${t.to}" does not match any step in this workflow`
+				);
 			}
 			if (t.condition) {
 				this.validateCondition(t.condition, `transition[${i}].condition`);

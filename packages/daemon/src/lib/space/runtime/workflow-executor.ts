@@ -55,15 +55,11 @@ export interface ConditionResult {
 }
 
 /**
- * Error thrown by advance() when a transition condition fails after all retries.
+ * Error thrown by advance() when all outgoing transition conditions fail after retries.
  * The run's status will already be set to 'needs_attention' when this is thrown.
  */
 export class WorkflowGateError extends Error {
-	constructor(
-		message: string,
-		/** Always 'transition' in the graph model */
-		public readonly gatePosition: 'transition'
-	) {
+	constructor(message: string) {
 		super(message);
 		this.name = 'WorkflowGateError';
 	}
@@ -267,7 +263,10 @@ export class WorkflowExecutor {
 			return { step: current, tasks: [] };
 		}
 
-		// Evaluate transitions in order, follow first matching one
+		// Evaluate transitions in order; follow the first one whose condition passes.
+		// A failing condition does NOT stop evaluation — the next transition is tried.
+		// Only when every transition has been evaluated and none passed is the run marked
+		// needs_attention and a WorkflowGateError thrown.
 		const context = this.getConditionContext();
 		let lastReason: string | undefined;
 
@@ -281,25 +280,24 @@ export class WorkflowExecutor {
 
 			const result = await this.evaluateConditionWithRetry(condition, context);
 			if (result.passed) {
-				return this.followTransition(transition);
+				const advanced = await this.followTransition(transition);
+				// Clear humanApproved after consuming a human gate to prevent stale re-use
+				// in cycles: the next time a human transition is reached the user must
+				// explicitly approve again.
+				if (condition.type === 'human') {
+					this.clearHumanApproval();
+				}
+				return advanced;
 			}
 
 			lastReason = result.reason;
-
-			// Blocking condition failed after retries → needs_attention
-			this.markNeedsAttention();
-			throw new WorkflowGateError(
-				`Transition condition failed from step "${current.name}": ${lastReason ?? 'condition evaluation failed'}`,
-				'transition'
-			);
+			// Condition did not pass — continue to next transition
 		}
 
-		// All transitions evaluated but none passed (shouldn't reach here given the loop structure,
-		// but guard against it for type safety)
+		// All transitions evaluated; none passed → needs_attention
 		this.markNeedsAttention();
 		throw new WorkflowGateError(
-			`No matching transition from step "${current.name}": ${lastReason ?? 'no condition passed'}`,
-			'transition'
+			`No matching transition from step "${current.name}": ${lastReason ?? 'no condition passed'}`
 		);
 	}
 
@@ -343,12 +341,21 @@ export class WorkflowExecutor {
 		return { step: nextStep, tasks: [task] };
 	}
 
-	/** Evaluates a condition with retry semantics as specified by condition.maxRetries. */
+	/**
+	 * Evaluates a condition with retry semantics as specified by condition.maxRetries.
+	 *
+	 * Note: for `human` conditions, the context is captured once before the retry loop
+	 * and `humanApproved` cannot change between retries within a single advance() call.
+	 * `maxRetries` has no practical effect for `human` conditions — they are short-circuited
+	 * after the first evaluation.
+	 */
 	private async evaluateConditionWithRetry(
 		condition: WorkflowCondition,
 		context: ConditionContext
 	): Promise<ConditionResult> {
-		const maxAttempts = 1 + (condition.maxRetries ?? 0);
+		// human conditions cannot change between retries in the same advance() call;
+		// short-circuit after the first evaluation to avoid redundant checks.
+		const maxAttempts = condition.type === 'human' ? 1 : 1 + (condition.maxRetries ?? 0);
 		let lastResult: ConditionResult = { passed: false, reason: 'Condition never evaluated' };
 
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -365,14 +372,33 @@ export class WorkflowExecutor {
 		if (updated) this.run = updated;
 	}
 
-	/** Executes a condition expression and returns whether it exited with code 0. */
+	/**
+	 * Clears the humanApproved flag from run.config after it has been consumed.
+	 * This prevents a stale approval from auto-passing subsequent human gates in cycles.
+	 */
+	private clearHumanApproval(): void {
+		const config = (this.run.config ?? {}) as Record<string, unknown>;
+		if (config.humanApproved !== undefined) {
+			const rest = { ...config };
+			delete rest.humanApproved;
+			const updated = this.workflowRunRepo.updateRun(this.run.id, { config: rest });
+			if (updated) this.run = updated;
+		}
+	}
+
+	/**
+	 * Executes a condition expression via the shell and returns whether it exited with code 0.
+	 *
+	 * The expression is passed to `sh -c` so that shell semantics (quoting, pipes,
+	 * redirects, arguments with spaces) work as expected.
+	 */
 	private async runConditionExpression(
 		expression: string,
 		cwd: string,
 		timeoutMs?: number
 	): Promise<ConditionResult> {
 		const effectiveTimeout = resolveTimeout(timeoutMs);
-		const args = expression.trim().split(/\s+/);
+		const args = ['sh', '-c', expression.trim()];
 
 		let result: { exitCode: number | null; timedOut?: boolean; stderr?: string };
 		try {

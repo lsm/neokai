@@ -195,7 +195,7 @@ export function getBuiltInWorkflows(): SpaceWorkflow[] {
 export function seedBuiltInWorkflows(
 	spaceId: string,
 	workflowManager: SpaceWorkflowManager,
-	resolveAgentId: (role: string) => string | undefined
+	resolveAgentId: (role: BuiltinAgentRole) => string | undefined
 ): void {
 	const existing = workflowManager.listWorkflows(spaceId);
 	if (existing.length > 0) {

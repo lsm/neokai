@@ -804,7 +804,7 @@ describe('WorkflowExecutor', () => {
 	// =========================================================================
 
 	describe('WorkflowGateError', () => {
-		test('condition failure has gatePosition = transition', async () => {
+		test('condition failure throws WorkflowGateError with descriptive message', async () => {
 			const { workflow, run } = createLinearWorkflow([
 				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
 				{
@@ -824,7 +824,7 @@ describe('WorkflowExecutor', () => {
 			}
 
 			expect(caught).toBeDefined();
-			expect(caught!.gatePosition).toBe('transition');
+			expect(caught!.message).toContain('Step A');
 		});
 	});
 
@@ -877,8 +877,9 @@ describe('WorkflowExecutor', () => {
 	// =========================================================================
 
 	describe('multiple transitions — first matching wins', () => {
-		test('evaluates in order and follows first passing transition', async () => {
-			// Step A has two transitions: one with human (blocked), one with always
+		test('skips failing human condition and follows always fallback', async () => {
+			// Step A has two transitions: order 0 is human (blocked), order 1 is always (fallback).
+			// The executor should skip the failing human gate and follow the always fallback.
 			const workflow = workflowRepo.createWorkflow({
 				spaceId: SPACE_ID,
 				name: `Multi-Trans-${Date.now()}`,
@@ -888,9 +889,9 @@ describe('WorkflowExecutor', () => {
 					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
 				],
 				transitions: [
-					// Order 0 → human condition (will fail, not approved)
+					// Order 0 → human condition (not approved → fails)
 					{ from: STEP_A, to: STEP_B, condition: { type: 'human' }, order: 0 },
-					// Order 1 → always (fallback)
+					// Order 1 → always (fallback, should be reached)
 					{ from: STEP_A, to: STEP_C, condition: { type: 'always' }, order: 1 },
 				],
 				startStepId: STEP_A,
@@ -905,10 +906,123 @@ describe('WorkflowExecutor', () => {
 
 			const executor = makeExecutor(workflow, run);
 
-			// human condition at order 0 is blocked → should throw (blocking condition failure)
-			// because the executor marks needs_attention on the first failing blocking condition
+			// human at order 0 fails, always at order 1 passes → follows always fallback to Step C
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Step C');
+			expect(runRepo.getRun(run.id)?.status).not.toBe('needs_attention');
+		});
+
+		test('marks needs_attention when all transitions fail', async () => {
+			// Both outgoing transitions require human approval; neither passes
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-Trans-AllFail-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					{ from: STEP_A, to: STEP_B, condition: { type: 'human' }, order: 0 },
+					{ from: STEP_A, to: STEP_C, condition: { type: 'human' }, order: 1 },
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'All-Fail Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run);
+
+			// Both human conditions fail → needs_attention
 			await expect(executor.advance()).rejects.toThrow(WorkflowGateError);
 			expect(runRepo.getRun(run.id)?.status).toBe('needs_attention');
+		});
+
+		test('follows first passing condition transition when multiple condition transitions exist', async () => {
+			// Order 0 fails (exit 1), order 1 passes (exit 0) → follows order 1
+			const failThenPass: CommandRunner = (() => {
+				let calls = 0;
+				return async () => ({ exitCode: ++calls === 1 ? 1 : 0 });
+			})();
+
+			const workflow = workflowRepo.createWorkflow({
+				spaceId: SPACE_ID,
+				name: `Multi-Cond-${Date.now()}`,
+				steps: [
+					{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+					{ id: STEP_B, name: 'Step B', agentId: AGENT_B },
+					{ id: STEP_C, name: 'Step C', agentId: AGENT_C },
+				],
+				transitions: [
+					{
+						from: STEP_A,
+						to: STEP_B,
+						condition: { type: 'condition', expression: 'check' },
+						order: 0,
+					},
+					{
+						from: STEP_A,
+						to: STEP_C,
+						condition: { type: 'condition', expression: 'check' },
+						order: 1,
+					},
+				],
+				startStepId: STEP_A,
+			});
+
+			const run = runRepo.createRun({
+				spaceId: SPACE_ID,
+				workflowId: workflow.id,
+				title: 'First-Pass Run',
+				currentStepId: workflow.startStepId,
+			});
+
+			const executor = makeExecutor(workflow, run, failThenPass);
+			const result = await executor.advance();
+			expect(result.step.name).toBe('Step C');
+		});
+	});
+
+	// =========================================================================
+	// humanApproved flag clearing
+	// =========================================================================
+
+	describe('humanApproved flag clearing', () => {
+		test('clears humanApproved from run.config after following a human transition', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT_B, incomingCondition: { type: 'human' } },
+			]);
+			const approvedRun = runRepo.updateRun(run.id, { config: { humanApproved: true } })!;
+			const executor = makeExecutor(workflow, approvedRun);
+
+			await executor.advance();
+
+			// humanApproved should be cleared so a future human gate in a cycle is not auto-passed
+			const updated = runRepo.getRun(run.id)!;
+			expect(
+				(updated.config as Record<string, unknown> | undefined)?.humanApproved
+			).toBeUndefined();
+		});
+
+		test('does not clear humanApproved when following an always transition', async () => {
+			const { workflow, run } = createLinearWorkflow([
+				{ id: STEP_A, name: 'Step A', agentId: AGENT_A },
+				{ id: STEP_B, name: 'Step B', agentId: AGENT_B, incomingCondition: { type: 'always' } },
+			]);
+			// Set humanApproved — it should remain untouched after following an always transition
+			const approvedRun = runRepo.updateRun(run.id, { config: { humanApproved: true } })!;
+			const executor = makeExecutor(workflow, approvedRun);
+
+			await executor.advance();
+
+			const updated = runRepo.getRun(run.id)!;
+			expect((updated.config as Record<string, unknown> | undefined)?.humanApproved).toBe(true);
 		});
 	});
 

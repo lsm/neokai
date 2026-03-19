@@ -665,6 +665,33 @@ describe('SpaceWorkflowManager', () => {
 		).toThrow(WorkflowValidationError);
 	});
 
+	test('createWorkflow rejects transitions when any step lacks an explicit id', () => {
+		// Steps without explicit IDs cannot be referenced in transitions at validation time.
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Anon Steps Trans',
+				// Neither step has an explicit id — backend would assign UUIDs at persist time
+				steps: [
+					{ name: 'Plan', agentId: 'agent-planner' },
+					{ name: 'Code', agentId: 'agent-coder' },
+				],
+				transitions: [{ from: 'anything', to: 'anything-else' }],
+			})
+		).toThrow(WorkflowValidationError);
+	});
+
+	test('createWorkflow allows transitions when all steps have explicit ids', () => {
+		expect(() =>
+			manager.createWorkflow({
+				spaceId: 'space-1',
+				name: 'Explicit IDs',
+				steps: [coderStep, plannerStep],
+				transitions: [{ from: coderStep.id!, to: plannerStep.id! }],
+			})
+		).not.toThrow();
+	});
+
 	// -------------------------------------------------------------------------
 	// Condition validation
 	// -------------------------------------------------------------------------
