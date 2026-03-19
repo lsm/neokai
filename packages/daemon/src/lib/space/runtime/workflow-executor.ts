@@ -281,7 +281,7 @@ export class WorkflowExecutor {
 			const result = await this.evaluateConditionWithRetry(condition, context);
 			if (result.passed) {
 				const advanced = await this.followTransition(transition);
-				// Clear humanApproved after consuming a human gate to prevent stale re-use
+				// Clear humanApproved after consuming a human transition to prevent stale re-use
 				// in cycles: the next time a human transition is reached the user must
 				// explicitly approve again.
 				if (condition.type === 'human') {
@@ -374,7 +374,7 @@ export class WorkflowExecutor {
 
 	/**
 	 * Clears the humanApproved flag from run.config after it has been consumed.
-	 * This prevents a stale approval from auto-passing subsequent human gates in cycles.
+	 * This prevents a stale approval from auto-passing subsequent human transitions in cycles.
 	 */
 	private clearHumanApproval(): void {
 		const config = (this.run.config ?? {}) as Record<string, unknown>;

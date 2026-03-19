@@ -69,17 +69,14 @@ Define a standardized JSON format for exporting and importing custom agents and 
      steps: Array<{
        name: string;
        /**
-        * For builtin agents: the agent type string ('planner', 'coder', 'general').
-        * For custom agents: the agent **name** (NOT the UUID).
-        * Custom agent UUIDs are space-specific and stripped on export.
-        * exportWorkflow() resolves custom agent UUIDs to names via SpaceAgentManager.
-        * importWorkflow() resolves names back to UUIDs by looking up agents in the
+        * The agent name used for import resolution (NOT the UUID).
+        * SpaceAgent UUIDs are space-specific and stripped on export.
+        * exportWorkflow() resolves agentId UUIDs to SpaceAgent names via SpaceAgentManager.
+        * importWorkflow() resolves names back to agentId UUIDs by looking up agents in the
         * target space (or in the bundle if importing both agents and workflows together).
         */
-       agentRef: string;
-       agentRefType: 'builtin' | 'custom';
+       agentName: string;
        instructions?: string;
-       order: number;
      }>;
      rules: Array<{
        name: string;
@@ -111,7 +108,7 @@ Define a standardized JSON format for exporting and importing custom agents and 
 
 2. Create `packages/daemon/src/lib/space/data/export-format.ts`:
    - `exportAgent(agent: SpaceAgent): ExportedSpaceAgent`
-   - `exportWorkflow(workflow: SpaceWorkflow, agents: SpaceAgent[]): ExportedSpaceWorkflow` — **must remap**: (1) `rules[].appliesTo` from step UUIDs to step order indices; (2) custom agent `agentRef` from UUIDs to agent **names** (lookup in provided agents array)
+   - `exportWorkflow(workflow: SpaceWorkflow, agents: SpaceAgent[]): ExportedSpaceWorkflow` — **must remap**: (1) `rules[].appliesTo` from step UUIDs to step order indices; (2) step `agentId` UUIDs to agent **names** via `agentName` field (lookup in provided agents array)
    - `exportBundle(agents: SpaceAgent[], workflows: SpaceWorkflow[], name: string): SpaceExportBundle`
    - Strip space-specific IDs and timestamps
 
@@ -164,7 +161,7 @@ Add RPC handlers for exporting and importing agents and workflows using `spaceEx
    - `conflictResolution`: `'skip' | 'rename' | 'replace'` per item
 
 3. Cross-references and ID remapping:
-   - **Custom agent name→UUID remapping**: Exported workflow steps with `agentRefType: 'custom'` have agent **names** (not UUIDs). On import, resolve names to UUIDs by: (1) checking the bundle's imported agents (if importing both), (2) checking existing agents in target space by name. If agent not found, flag as warning in preview.
+   - **Agent name→UUID remapping**: Exported workflow steps use `agentName` (not UUID). On import, resolve names to `agentId` UUIDs by: (1) checking the bundle's imported agents (if importing both), (2) checking existing agents in target space by name. If agent not found, flag as warning in preview.
    - **Step ID remapping for rules**: new step UUIDs generated on import; remap `rules[].appliesTo` from order indices back to new step UUIDs using `Map<order, newStepId>`
 
 4. Wire handlers in `packages/daemon/src/lib/rpc-handlers/index.ts` (via `setupRPCHandlers()` — add new registration only)

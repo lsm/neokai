@@ -124,10 +124,10 @@ Build `SpaceRuntime` — the workflow-first orchestration engine for Spaces. Thi
    - No executor needed — they behave like regular tasks
 
 5. **Task-type assignment for workflow steps**:
-   - `agentRef: 'planner'` → `taskType: 'planning'`, uses planning group path with draft promotion
-   - `agentRef: 'coder'|'general'` → `taskType: 'coding'`, status `pending`, standard execution queue
-   - Custom agent (`agentRefType: 'custom'`) → `taskType: 'coding'`, `customAgentId` set, status `pending`
-   - Helper: `resolveTaskTypeForStep(step: WorkflowStep): 'planning' | 'coding'`
+   - Agent with `role: 'planner'` → `taskType: 'planning'`, uses planning group path with draft promotion
+   - Agent with `role: 'coder'|'general'` → `taskType: 'coding'`, status `pending`, standard execution queue
+   - Custom agent (no preset role) → `taskType: 'coding'`, `customAgentId` set to `step.agentId`, status `pending`
+   - Helper: `resolveTaskTypeForStep(step: WorkflowStep, agent: SpaceAgent): 'planning' | 'coding'`
 
 6. **Step advancement and transition evaluation**:
    - After task completes (Leader approves), check if task belongs to a workflow run (via `workflowRunId`)

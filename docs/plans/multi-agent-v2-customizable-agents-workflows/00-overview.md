@@ -73,10 +73,10 @@ All schema changes are in a **single migration** since everything is new:
 ### 5. Agent Referencing Convention
 
 Unified naming for agent references:
-- `agentRef: string` + `agentRefType: 'builtin' | 'custom'` — used on `WorkflowStep` for workflow definitions
-- `customAgentId?: string` on `SpaceTask` — task-level custom agent assignment
-- `assignedAgent: AgentType` on `SpaceTask` — built-in agent assignment
-- The `agentRef`/`agentRefType` pair is the canonical way to reference agents in workflow definitions. `customAgentId` is the runtime assignment mechanism.
+- `agentId: string` on `WorkflowStep` — UUID of the `SpaceAgent` assigned to this step. All agents (preset and custom) are regular `SpaceAgent` records; there is no separate builtin/custom type distinction.
+- `customAgentId?: string` on `SpaceTask` — task-level custom agent assignment at runtime
+- `assignedAgent: AgentType` on `SpaceTask` — built-in agent assignment at runtime
+- For export/import, `agentId` UUIDs are resolved to agent names and back (see Milestone 8).
 
 ### 6. Space Creation Requires Workspace Path
 
